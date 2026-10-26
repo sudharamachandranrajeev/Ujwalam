@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/preset.schema.json",
+  "title": "Preset manifest",
+  "type": "object",
+  "required": [
+    "id", "version", "function", "functionVersion", "name", "params", "themeOverrides",
+    "family", "tags", "canvases", "parity", "status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "$ref": "common.schema.json#/$defs/id" },
+    "version": { "$ref": "common.schema.json#/$defs/semver" },
+    "function": { "$ref": "common.schema.json#/$defs/id" },
+    "functionVersion": { "$ref": "common.schema.json#/$defs/semverRange" },
+    "name": { "type": "string", "minLength": 1 },
+    "params": { "type": "object" },
+    "trigger": { "type": "object", "description": "Trigger binding; optional while planned" },
+    "themeOverrides": { "type": "object" },
+    "family": { "$ref": "common.schema.json#/$defs/id" },
+    "tags": {
+      "type": "object",
+      "required": ["motion", "intensity", "mood", "colourUse", "flashes"],
+      "additionalProperties": false,
+      "properties": {
+        "motion": { "type": "string" },
+        "intensity": { "type": "string" },
+        "mood": { "type": "string" },
+        "colourUse": { "type": "string" },
+        "flashes": { "type": "string" }
+      }
+    },
+    "canvases": { "$ref": "common.schema.json#/$defs/canvases" },
+    "status": { "enum": ["planned", "in-progress", "done"] },
+    "parity": { "enum": ["none", "pending", "pass", "fail"] },
+    "legacySource": { "type": "string", "pattern": "^legacy/[^\\\\]+$", "description": "Path relative to repo root, under legacy/, forward slashes" },
+    "legacySourceVerified": { "type": "boolean" },
+    "legacyNote": { "type": "string" },
+    "similar": { "type": "array", "items": { "$ref": "common.schema.json#/$defs/id" }, "uniqueItems": true }
+  },
+  "if": { "properties": { "parity": { "not": { "const": "none" } } }, "required": ["parity"] },
+  "then": { "required": ["legacySource"], "properties": { "legacySource": true } }
+}

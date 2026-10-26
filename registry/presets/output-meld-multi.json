@@ -1,0 +1,26 @@
+{
+  "id": "output-meld-multi",
+  "version": "0.1.0",
+  "function": "output-graph",
+  "functionVersion": "^0.1.0",
+  "name": "MELD MULTI output",
+  "params": {},
+  "themeOverrides": {},
+  "family": "outputs",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/CLAUDE.legacy.md",
+  "legacySourceVerified": false,
+  "legacyNote": "Named in legacy/CLAUDE.legacy.md only; actual output settings are not in the copy. Per answers doc, values migrate from the user Meld session at O0/O1."
+}

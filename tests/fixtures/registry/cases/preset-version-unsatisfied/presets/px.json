@@ -1,0 +1,23 @@
+{
+  "id": "px",
+  "version": "1.0.0",
+  "function": "fx",
+  "functionVersion": "^2.0.0",
+  "name": "Px",
+  "params": {},
+  "themeOverrides": {},
+  "family": "fam",
+  "tags": {
+    "motion": "pulse",
+    "intensity": "low",
+    "mood": "calm",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/README.md"
+}

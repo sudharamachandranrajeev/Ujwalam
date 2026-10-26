@@ -1,0 +1,24 @@
+{
+  "id": "chat-engage-caricature",
+  "version": "0.1.0",
+  "function": "keyed-character-clip",
+  "functionVersion": "^0.1.0",
+  "name": "Chat Engage caricature",
+  "params": {},
+  "themeOverrides": {},
+  "family": "character-effects",
+  "tags": {
+    "motion": "slide",
+    "intensity": "low",
+    "mood": "playful",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/chat-engage"
+}

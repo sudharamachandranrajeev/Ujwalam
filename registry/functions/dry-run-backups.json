@@ -1,0 +1,24 @@
+{
+  "id": "dry-run-backups",
+  "version": "0.1.0",
+  "category": "control-safety-tooling",
+  "family": "safety",
+  "name": "Dry run and backups",
+  "description": "Dry run by default for bulk changes; automatic backups. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.12"
+}

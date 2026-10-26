@@ -1,0 +1,24 @@
+{
+  "id": "chat-moderation",
+  "version": "0.1.0",
+  "category": "chat-community",
+  "family": "moderation",
+  "name": "Moderation",
+  "description": "Blocklist in and out, self-echo filter, reply routing to the source platform. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.5"
+}

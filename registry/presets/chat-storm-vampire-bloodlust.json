@@ -1,0 +1,29 @@
+{
+  "id": "chat-storm-vampire-bloodlust",
+  "version": "0.1.0",
+  "function": "full-canvas-burst",
+  "functionVersion": "^0.1.0",
+  "name": "Chat Storm: Vampire bloodlust",
+  "params": {},
+  "themeOverrides": {},
+  "family": "burst-effects",
+  "tags": {
+    "motion": "pulse",
+    "intensity": "high",
+    "mood": "horror",
+    "colourUse": "brand-red",
+    "flashes": "low"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/chat-storm",
+  "legacyNote": "Selected in legacy by ?color=bloodlust; all eight live in one page.",
+  "similar": [
+    "chat-storm-werewolf-claw",
+    "chat-storm-ghost-possession"
+  ]
+}

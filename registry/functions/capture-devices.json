@@ -1,0 +1,24 @@
+{
+  "id": "capture-devices",
+  "version": "0.1.0",
+  "category": "sources-camera-audio",
+  "family": "devices",
+  "name": "Capture devices",
+  "description": "Capture card, webcam, mic with permission and disconnect handling. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.4"
+}

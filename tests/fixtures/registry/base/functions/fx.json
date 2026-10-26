@@ -1,0 +1,23 @@
+{
+  "id": "fx",
+  "version": "1.2.0",
+  "category": "effects",
+  "family": "fam",
+  "name": "Fx",
+  "description": "fixture",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 500,
+  "maxConcurrent": 1,
+  "flashesPerSec": 1,
+  "budgetCost": 1,
+  "status": "planned"
+}

@@ -1,0 +1,25 @@
+{
+  "id": "legacy-overlays-all",
+  "version": "0.1.0",
+  "function": "html-layer",
+  "functionVersion": "^0.1.0",
+  "name": "All legacy overlays",
+  "params": {},
+  "themeOverrides": {},
+  "family": "html-layers",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays",
+  "legacyNote": "Whole overlays/ folder; each overlay has its own preset below."
+}

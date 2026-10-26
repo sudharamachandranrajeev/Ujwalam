@@ -1,0 +1,24 @@
+{
+  "id": "voice-callout-hud-bar",
+  "version": "0.1.0",
+  "function": "text-slam",
+  "functionVersion": "^0.1.0",
+  "name": "Voice Callout HUD bar",
+  "params": {},
+  "themeOverrides": {},
+  "family": "text-effects",
+  "tags": {
+    "motion": "slam",
+    "intensity": "medium",
+    "mood": "aggressive",
+    "colourUse": "tokens",
+    "flashes": "low"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/voice-callout"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "test-bench",
+  "version": "0.1.0",
+  "category": "control-safety-tooling",
+  "family": "tooling",
+  "name": "Test bench",
+  "description": "Preview page, fire test events, both canvases. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.12"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "timed-message-groups",
+  "version": "0.1.0",
+  "category": "chat-community",
+  "family": "engagement",
+  "name": "Timed message groups",
+  "description": "One random line per tick, per platform. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.5"
+}

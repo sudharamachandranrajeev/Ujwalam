@@ -1,0 +1,24 @@
+{
+  "id": "single-monitor-hud",
+  "version": "0.1.0",
+  "category": "layers-graphics",
+  "family": "hud",
+  "name": "Single-monitor HUD",
+  "description": "Status, timer, chat over the game. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.1"
+}

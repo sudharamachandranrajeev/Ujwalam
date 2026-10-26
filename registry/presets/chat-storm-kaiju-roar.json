@@ -1,0 +1,29 @@
+{
+  "id": "chat-storm-kaiju-roar",
+  "version": "0.1.0",
+  "function": "full-canvas-burst",
+  "functionVersion": "^0.1.0",
+  "name": "Chat Storm: Kaiju roar",
+  "params": {},
+  "themeOverrides": {},
+  "family": "burst-effects",
+  "tags": {
+    "motion": "shake",
+    "intensity": "high",
+    "mood": "aggressive",
+    "colourUse": "tokens",
+    "flashes": "low"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/chat-storm",
+  "legacyNote": "Selected in legacy by ?color=roar; all eight live in one page.",
+  "similar": [
+    "chat-storm-zombie-horde",
+    "chat-storm-sparkling-party"
+  ]
+}

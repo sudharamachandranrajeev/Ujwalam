@@ -1,0 +1,26 @@
+{
+  "id": "device-insta360-link-2c",
+  "version": "0.1.0",
+  "function": "capture-devices",
+  "functionVersion": "^0.1.0",
+  "name": "Insta360 Link 2C binding",
+  "params": {},
+  "themeOverrides": {},
+  "family": "devices",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/meld/layer-map.md",
+  "legacySourceVerified": false,
+  "legacyNote": "Named in layer-map.md; binding detail is in session.json."
+}

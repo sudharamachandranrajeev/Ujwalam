@@ -1,0 +1,24 @@
+{
+  "id": "text-slam",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "text-effects",
+  "name": "Text slam",
+  "description": "Word slams in with sparks and shake. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.2"
+}

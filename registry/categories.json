@@ -1,0 +1,74 @@
+[
+  {
+    "id": "layers-graphics",
+    "version": "0.1.0",
+    "section": "4.1",
+    "name": "Layers & graphics engine"
+  },
+  {
+    "id": "effects",
+    "version": "0.1.0",
+    "section": "4.2",
+    "name": "Effects engine"
+  },
+  {
+    "id": "triggers-automation",
+    "version": "0.1.0",
+    "section": "4.3",
+    "name": "Triggers & automation (rules engine)"
+  },
+  {
+    "id": "sources-camera-audio",
+    "version": "0.1.0",
+    "section": "4.4",
+    "name": "Sources, camera & audio"
+  },
+  {
+    "id": "chat-community",
+    "version": "0.1.0",
+    "section": "4.5",
+    "name": "Chat & community"
+  },
+  {
+    "id": "theme-brand",
+    "version": "0.1.0",
+    "section": "4.6",
+    "name": "Theme & brand"
+  },
+  {
+    "id": "scenes-packages",
+    "version": "0.1.0",
+    "section": "4.7",
+    "name": "Scenes, packages & generation (C1)"
+  },
+  {
+    "id": "chat-scene-control",
+    "version": "0.1.0",
+    "section": "4.8",
+    "name": "Chat scene control (C2)"
+  },
+  {
+    "id": "chat-engagement-suggestion",
+    "version": "0.1.0",
+    "section": "4.9",
+    "name": "Chat engagement + scene-suggestion identifier (C4)"
+  },
+  {
+    "id": "ai-clipping",
+    "version": "0.1.0",
+    "section": "4.10",
+    "name": "AI clipping (C5)"
+  },
+  {
+    "id": "outputs",
+    "version": "0.1.0",
+    "section": "4.11",
+    "name": "Outputs (superseded by output graph, docs/plan/2026-10-26-output-graph.md)"
+  },
+  {
+    "id": "control-safety-tooling",
+    "version": "0.1.0",
+    "section": "4.12",
+    "name": "Control, safety & dev tooling"
+  }
+]

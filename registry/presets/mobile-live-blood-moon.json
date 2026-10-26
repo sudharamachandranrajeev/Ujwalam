@@ -1,0 +1,25 @@
+{
+  "id": "mobile-live-blood-moon",
+  "version": "0.1.0",
+  "function": "scene-recipe",
+  "functionVersion": "^0.1.0",
+  "name": "Mobile Live - Blood Moon (H/V, 14 layers)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "scenes",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/themes/bloodmoon/scene-layers.json",
+  "legacyNote": "Recipes: scene-horizontal.json, scene-vertical.json in the same folder."
+}

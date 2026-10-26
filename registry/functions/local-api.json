@@ -1,0 +1,24 @@
+{
+  "id": "local-api",
+  "version": "0.1.0",
+  "category": "control-safety-tooling",
+  "family": "control",
+  "name": "Local API",
+  "description": "JSON-RPC with token; obs-websocket v5 subset. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.12"
+}

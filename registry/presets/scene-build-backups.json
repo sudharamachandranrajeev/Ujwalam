@@ -1,0 +1,24 @@
+{
+  "id": "scene-build-backups",
+  "version": "0.1.0",
+  "function": "dry-run-backups",
+  "functionVersion": "^0.1.0",
+  "name": "scene-build backups",
+  "params": {},
+  "themeOverrides": {},
+  "family": "safety",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/scene-build.mjs"
+}

@@ -1,0 +1,26 @@
+{
+  "id": "meld-screenshot",
+  "version": "0.1.0",
+  "function": "program-screenshot",
+  "functionVersion": "^0.1.0",
+  "name": "meld.screenshot (H)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "tooling",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/meld.mjs",
+  "legacySourceVerified": false,
+  "legacyNote": "Documented as \"meld.mjs do command meld.screenshot\"; V has no legacy equivalent."
+}

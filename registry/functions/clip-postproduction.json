@@ -1,0 +1,24 @@
+{
+  "id": "clip-postproduction",
+  "version": "0.1.0",
+  "category": "ai-clipping",
+  "family": "clipping",
+  "name": "Post-stream clip production (C5)",
+  "description": "Transcribe, rank, master edit, three variants, captions, export. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.10"
+}

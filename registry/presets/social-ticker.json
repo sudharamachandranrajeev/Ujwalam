@@ -1,0 +1,24 @@
+{
+  "id": "social-ticker",
+  "version": "0.1.0",
+  "function": "scrolling-ticker",
+  "functionVersion": "^0.1.0",
+  "name": "Social Ticker",
+  "params": {},
+  "themeOverrides": {},
+  "family": "ticker",
+  "tags": {
+    "motion": "scroll",
+    "intensity": "low",
+    "mood": "informational",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/social-ticker"
+}

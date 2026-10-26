@@ -1,0 +1,25 @@
+{
+  "id": "chat-storm-pool",
+  "version": "0.1.0",
+  "function": "effect-pool",
+  "functionVersion": "^0.1.0",
+  "name": "Chat Storm 8-effect pool",
+  "params": {},
+  "themeOverrides": {},
+  "family": "pools",
+  "tags": {
+    "motion": "burst",
+    "intensity": "high",
+    "mood": "electric",
+    "colourUse": "multi",
+    "flashes": "medium"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/chat-storm",
+  "legacyNote": "Legacy ?color=auto picks one of eight at random per message."
+}

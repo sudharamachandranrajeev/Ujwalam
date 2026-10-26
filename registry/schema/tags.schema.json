@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/tags.schema.json",
+  "title": "Tag vocabulary",
+  "type": "object",
+  "required": ["version", "tags"],
+  "additionalProperties": false,
+  "$defs": {
+    "values": {
+      "type": "array", "minItems": 1, "uniqueItems": true,
+      "items": { "type": "string", "pattern": "^[a-z0-9-]+$" }
+    }
+  },
+  "properties": {
+    "version": { "$ref": "common.schema.json#/$defs/semver" },
+    "tags": {
+      "type": "object",
+      "required": ["motion", "intensity", "mood", "colourUse", "flashes"],
+      "additionalProperties": false,
+      "properties": {
+        "motion": { "$ref": "#/$defs/values" },
+        "intensity": { "$ref": "#/$defs/values" },
+        "mood": { "$ref": "#/$defs/values" },
+        "colourUse": { "$ref": "#/$defs/values" },
+        "flashes": { "$ref": "#/$defs/values" }
+      }
+    }
+  }
+}

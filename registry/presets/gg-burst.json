@@ -1,0 +1,24 @@
+{
+  "id": "gg-burst",
+  "version": "0.1.0",
+  "function": "text-slam",
+  "functionVersion": "^0.1.0",
+  "name": "GG Burst (GG, POW)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "text-effects",
+  "tags": {
+    "motion": "slam",
+    "intensity": "medium",
+    "mood": "playful",
+    "colourUse": "tokens",
+    "flashes": "low"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/gg-burst"
+}

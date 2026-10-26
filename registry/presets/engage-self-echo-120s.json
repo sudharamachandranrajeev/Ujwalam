@@ -1,0 +1,25 @@
+{
+  "id": "engage-self-echo-120s",
+  "version": "0.1.0",
+  "function": "chat-moderation",
+  "functionVersion": "^0.1.0",
+  "name": "Self-echo filter (120 s)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "moderation",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/engage/lib/pipeline.mjs",
+  "legacyNote": "echoWindowSec default 120."
+}

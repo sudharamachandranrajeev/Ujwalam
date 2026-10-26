@@ -1,0 +1,24 @@
+{
+  "id": "chat-ingest",
+  "version": "0.1.0",
+  "category": "chat-community",
+  "family": "chat-input",
+  "name": "Unified multi-chat ingest",
+  "description": "Twitch EventSub, YouTube streamList, Kick via bridge, Streamer.bot connector. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.5"
+}

@@ -1,0 +1,41 @@
+{
+  "id": "chat-storm",
+  "version": "0.1.0",
+  "name": "Chat Storm (8 effects)",
+  "presets": [
+    {
+      "preset": "chat-storm-red-lightning",
+      "weight": 1
+    },
+    {
+      "preset": "chat-storm-blue-lightning",
+      "weight": 1
+    },
+    {
+      "preset": "chat-storm-vampire-bloodlust",
+      "weight": 1
+    },
+    {
+      "preset": "chat-storm-werewolf-claw",
+      "weight": 1
+    },
+    {
+      "preset": "chat-storm-ghost-possession",
+      "weight": 1
+    },
+    {
+      "preset": "chat-storm-kaiju-roar",
+      "weight": 1
+    },
+    {
+      "preset": "chat-storm-zombie-horde",
+      "weight": 1
+    },
+    {
+      "preset": "chat-storm-sparkling-party",
+      "weight": 1
+    }
+  ],
+  "noRepeatLastN": 1,
+  "legacySource": "legacy/overlays/chat-storm"
+}

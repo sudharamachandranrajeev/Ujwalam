@@ -1,0 +1,25 @@
+{
+  "id": "chat-engage",
+  "version": "0.1.0",
+  "function": "engagement-bot",
+  "functionVersion": "^0.1.0",
+  "name": "Chat Engage (templates, tiers, rate limits)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "engagement",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/engage/templates.json",
+  "legacyNote": "Config in legacy/engage/engage.config.json. Do not open engage/logs or engage/memory (not copied)."
+}

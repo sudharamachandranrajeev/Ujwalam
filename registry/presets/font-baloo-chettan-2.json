@@ -1,0 +1,25 @@
+{
+  "id": "font-baloo-chettan-2",
+  "version": "0.1.0",
+  "function": "local-fonts",
+  "functionVersion": "^0.1.0",
+  "name": "Baloo Chettan 2 (Malayalam)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "fonts",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/brand/fonts/BalooChettan2-Malayalam-500.woff2",
+  "legacyNote": "Licence UNVERIFIED, see docs/licence-headers.md."
+}

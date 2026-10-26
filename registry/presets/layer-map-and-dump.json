@@ -1,0 +1,25 @@
+{
+  "id": "layer-map-and-dump",
+  "version": "0.1.0",
+  "function": "layer-map-snapshot",
+  "functionVersion": "^0.1.0",
+  "name": "layer-map.md and dump",
+  "params": {},
+  "themeOverrides": {},
+  "family": "docs",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/meld/layer-map.md",
+  "legacyNote": "Dumps: legacy/themes/bloodmoon/scene-h.dump.json, scene-v.dump.json."
+}

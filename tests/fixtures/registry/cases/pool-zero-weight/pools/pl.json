@@ -1,0 +1,12 @@
+{
+  "id": "pl",
+  "version": "1.0.0",
+  "name": "Pl",
+  "presets": [
+    {
+      "preset": "px",
+      "weight": 0
+    }
+  ],
+  "noRepeatLastN": 1
+}

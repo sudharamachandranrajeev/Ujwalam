@@ -1,0 +1,29 @@
+{
+  "id": "chat-charge",
+  "version": "0.1.0",
+  "function": "edge-discharge",
+  "functionVersion": "^0.1.0",
+  "name": "Chat Charge (red/blue)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "edge-effects",
+  "tags": {
+    "motion": "burst",
+    "intensity": "medium",
+    "mood": "electric",
+    "colourUse": "multi",
+    "flashes": "medium"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/chat-charge",
+  "legacyNote": "Colour red or blue per message (?color=auto).",
+  "similar": [
+    "chat-storm-red-lightning",
+    "chat-storm-blue-lightning"
+  ]
+}

@@ -1,0 +1,24 @@
+{
+  "id": "atmos-frame",
+  "version": "0.1.0",
+  "function": "atmosphere-layer",
+  "functionVersion": "^0.1.0",
+  "name": "Atmos Frame",
+  "params": {},
+  "themeOverrides": {},
+  "family": "atmosphere-effects",
+  "tags": {
+    "motion": "drift",
+    "intensity": "low",
+    "mood": "horror",
+    "colourUse": "tokens",
+    "flashes": "low"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/atmos-frame"
+}

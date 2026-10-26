@@ -1,0 +1,25 @@
+{
+  "id": "cam-pop-rule",
+  "version": "0.1.0",
+  "function": "rule-engine",
+  "functionVersion": "^0.1.0",
+  "name": "Cam Pop rule",
+  "params": {},
+  "themeOverrides": {},
+  "family": "rules",
+  "tags": {
+    "motion": "stepped",
+    "intensity": "low",
+    "mood": "playful",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/cam-pop.mjs",
+  "legacyNote": "Config in legacy/tools/cam-pop.json."
+}

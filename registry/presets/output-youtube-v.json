@@ -1,0 +1,26 @@
+{
+  "id": "output-youtube-v",
+  "version": "0.1.0",
+  "function": "output-graph",
+  "functionVersion": "^0.1.0",
+  "name": "YouTube vertical output",
+  "params": {},
+  "themeOverrides": {},
+  "family": "outputs",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/CLAUDE.legacy.md",
+  "legacySourceVerified": false,
+  "legacyNote": "As above."
+}

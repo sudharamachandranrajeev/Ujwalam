@@ -1,0 +1,24 @@
+{
+  "id": "ingest-kick",
+  "version": "0.1.0",
+  "function": "chat-ingest",
+  "functionVersion": "^0.1.0",
+  "name": "Kick chat (via Streamer.bot bridge)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "chat-input",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/kit/sources/streamerbot.js"
+}

@@ -1,0 +1,19 @@
+{
+  "name": "ujwalam",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local-first streaming studio: Meld-style UX, embedded libobs, AI clipping, chat-driven scenes and effects.",
+  "license": "GPL-2.0-or-later",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "validate:registry": "node tools/registry-validate.mjs registry",
+    "legacy:verify": "node tools/legacy-verify.mjs",
+    "test": "node --test \"tests/*.test.mjs\""
+  },
+  "devDependencies": {
+    "ajv": "8.20.0"
+  }
+}

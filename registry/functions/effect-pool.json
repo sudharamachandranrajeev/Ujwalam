@@ -1,0 +1,24 @@
+{
+  "id": "effect-pool",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "pools",
+  "name": "Effect pool",
+  "description": "Weighted random pick per trigger. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.2"
+}

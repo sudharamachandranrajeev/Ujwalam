@@ -1,0 +1,24 @@
+{
+  "id": "mock-meld",
+  "version": "0.1.0",
+  "function": "mock-services",
+  "functionVersion": "^0.1.0",
+  "name": "mock-meld",
+  "params": {},
+  "themeOverrides": {},
+  "family": "tooling",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/mock-meld.mjs"
+}

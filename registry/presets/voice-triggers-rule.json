@@ -1,0 +1,24 @@
+{
+  "id": "voice-triggers-rule",
+  "version": "0.1.0",
+  "function": "rule-engine",
+  "functionVersion": "^0.1.0",
+  "name": "Voice triggers (DOMINATION, HARDPOINT, KILL, SUPER, WEAPON)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "rules",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/streamerbot/voice-triggers.json"
+}

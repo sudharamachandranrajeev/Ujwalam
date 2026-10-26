@@ -1,0 +1,38 @@
+# media
+*.mp4
+*.mkv
+*.mov
+*.flv
+*.ts
+*.wav
+*.m4a
+*.webm
+
+# analysis caches
+cache/
+.cache/
+analysis-cache/
+
+# dependencies and build
+node_modules/
+__pycache__/
+.venv/
+
+# logs
+*.log
+logs/
+
+# local-only and secrets
+*.local.*
+*.env
+.env*
+secrets/
+**/secrets.local.js
+.claude/settings.local.json
+
+# labels are tracked (keep explicit)
+!data/labels/
+!data/labels/.gitkeep
+
+# Private reference copy; never committed or distributed. Integrity: legacy.manifest.sha256
+legacy/

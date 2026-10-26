@@ -1,0 +1,24 @@
+{
+  "id": "theme-halloween-2026",
+  "version": "0.1.0",
+  "function": "theme-from-media",
+  "functionVersion": "^0.1.0",
+  "name": "Halloween 2026 theme",
+  "params": {},
+  "themeOverrides": {},
+  "family": "themes",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/themes/halloween-2026"
+}

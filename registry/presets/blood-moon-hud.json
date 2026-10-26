@@ -1,0 +1,24 @@
+{
+  "id": "blood-moon-hud",
+  "version": "0.1.0",
+  "function": "hud-composite",
+  "functionVersion": "^0.1.0",
+  "name": "Blood Moon HUD",
+  "params": {},
+  "themeOverrides": {},
+  "family": "hud",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "informational",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/blood-moon-hud"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "timed-messages",
+  "version": "0.1.0",
+  "function": "timed-message-groups",
+  "functionVersion": "^0.1.0",
+  "name": "Timed messages (Stream Tips, Ask For Suggestions, Appreciation)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "engagement",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/streamerbot/messages.json"
+}

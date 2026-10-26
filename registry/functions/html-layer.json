@@ -1,0 +1,24 @@
+{
+  "id": "html-layer",
+  "version": "0.1.0",
+  "category": "layers-graphics",
+  "family": "html-layers",
+  "name": "Full-canvas transparent HTML layer",
+  "description": "H/V aware, auto-reload when server restarts. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.1"
+}

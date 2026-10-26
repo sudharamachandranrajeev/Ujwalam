@@ -1,0 +1,25 @@
+{
+  "id": "chat-spotlight",
+  "version": "0.1.0",
+  "function": "chat-spotlight",
+  "functionVersion": "^0.1.0",
+  "name": "Chat Spotlight (native rebuild of Spark widget)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "chat-display",
+  "tags": {
+    "motion": "slam",
+    "intensity": "medium",
+    "mood": "playful",
+    "colourUse": "tokens",
+    "flashes": "low"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/spark/chat-spotlight.html",
+  "legacyNote": "Layer map lists spark/chat-spotlight.html as the Mobile Live Full view layer."
+}

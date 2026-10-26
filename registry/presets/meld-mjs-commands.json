@@ -1,0 +1,24 @@
+{
+  "id": "meld-mjs-commands",
+  "version": "0.1.0",
+  "function": "local-api",
+  "functionVersion": "^0.1.0",
+  "name": "meld.mjs commands",
+  "params": {},
+  "themeOverrides": {},
+  "family": "control",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/meld.mjs"
+}

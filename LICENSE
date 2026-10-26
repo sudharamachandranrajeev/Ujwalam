@@ -1,0 +1,10 @@
+SPDX-License-Identifier: GPL-2.0-or-later
+
+Ujwalam is licensed under the GNU General Public License, version 2 or (at your
+option) any later version.
+
+Full text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.txt
+FSF licence list: https://www.gnu.org/licenses/license-list.html#GPLv2
+
+PLACEHOLDER: the full licence text is not yet vendored in this file. Replace it
+with the verbatim GPL-2.0 text before any distribution (see docs/licence-headers.md).

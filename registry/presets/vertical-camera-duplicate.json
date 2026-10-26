@@ -1,0 +1,26 @@
+{
+  "id": "vertical-camera-duplicate",
+  "version": "0.1.0",
+  "function": "source-duplicator",
+  "functionVersion": "^0.1.0",
+  "name": "Vertical camera duplicate",
+  "params": {},
+  "themeOverrides": {},
+  "family": "devices",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/cam-pop.mjs",
+  "legacySourceVerified": false,
+  "legacyNote": "cam-pop.mjs documents that the vertical camera is a Duplicator of the horizontal; the layer itself is in meld/session.json."
+}

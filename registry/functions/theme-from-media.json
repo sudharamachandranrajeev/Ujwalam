@@ -1,0 +1,24 @@
+{
+  "id": "theme-from-media",
+  "version": "0.1.0",
+  "category": "theme-brand",
+  "family": "themes",
+  "name": "Theme from media",
+  "description": "OKLab k-means, WCAG-pushed text roles, provenance flags. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.6"
+}

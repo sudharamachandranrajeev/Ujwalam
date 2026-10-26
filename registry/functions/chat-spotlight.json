@@ -1,0 +1,24 @@
+{
+  "id": "chat-spotlight",
+  "version": "0.1.0",
+  "category": "layers-graphics",
+  "family": "chat-display",
+  "name": "Chat spotlight",
+  "description": "Highlight one message, slam a keyword, sender badge. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.1"
+}

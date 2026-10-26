@@ -1,0 +1,25 @@
+{
+  "id": "font-black-ops-one",
+  "version": "0.1.0",
+  "function": "local-fonts",
+  "functionVersion": "^0.1.0",
+  "name": "Black Ops One",
+  "params": {},
+  "themeOverrides": {},
+  "family": "fonts",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/brand/fonts/BlackOpsOne-Latin-400.woff2",
+  "legacyNote": "Licence UNVERIFIED, see docs/licence-headers.md."
+}

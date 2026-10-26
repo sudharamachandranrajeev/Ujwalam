@@ -1,0 +1,12 @@
+{
+  "id": "pl",
+  "version": "1.0.0",
+  "name": "Pl",
+  "presets": [
+    {
+      "preset": "ghost",
+      "weight": 1
+    }
+  ],
+  "noRepeatLastN": 1
+}

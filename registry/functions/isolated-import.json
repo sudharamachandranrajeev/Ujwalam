@@ -1,0 +1,24 @@
+{
+  "id": "isolated-import",
+  "version": "0.1.0",
+  "category": "scenes-packages",
+  "family": "packages",
+  "name": "Isolated import",
+  "description": "New namespaced scenes only; dry-run diff; one transaction with rollback. Planned; behaviour not yet specified.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.7"
+}

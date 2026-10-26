@@ -1,0 +1,24 @@
+{
+  "id": "engage-watch",
+  "version": "0.1.0",
+  "function": "service-supervisor",
+  "functionVersion": "^0.1.0",
+  "name": "engage-watch",
+  "params": {},
+  "themeOverrides": {},
+  "family": "control",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/engage-watch.ps1"
+}

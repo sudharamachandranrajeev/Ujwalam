@@ -1,0 +1,26 @@
+{
+  "id": "voice-callout-source",
+  "version": "0.1.0",
+  "function": "local-stt-keywords",
+  "functionVersion": "^0.1.0",
+  "name": "Voice callout speech source",
+  "params": {},
+  "themeOverrides": {},
+  "family": "audio",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/streamerbot/voice-triggers.json",
+  "legacySourceVerified": false,
+  "legacyNote": "Candidate; may instead be overlays/voice-callout/words.js plus kit/sources/streamerbot.js."
+}

@@ -1,0 +1,25 @@
+{
+  "id": "preview-bench",
+  "version": "0.1.0",
+  "function": "test-bench",
+  "functionVersion": "^0.1.0",
+  "name": "preview.html and check-overlays",
+  "params": {},
+  "themeOverrides": {},
+  "family": "tooling",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/preview.html",
+  "legacyNote": "Companion: legacy/tools/check-overlays.mjs."
+}

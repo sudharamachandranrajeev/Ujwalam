@@ -1,0 +1,26 @@
+{
+  "id": "device-fifine-sc3",
+  "version": "0.1.0",
+  "function": "capture-devices",
+  "functionVersion": "^0.1.0",
+  "name": "FIFINE SC3 binding",
+  "params": {},
+  "themeOverrides": {},
+  "family": "devices",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/mic-check.mjs",
+  "legacySourceVerified": false,
+  "legacyNote": "Mic read via WASAPI in mic-check; device name also in engage/engage.config.json."
+}

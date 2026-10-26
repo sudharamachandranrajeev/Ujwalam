@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/function.schema.json",
+  "title": "Core function manifest",
+  "type": "object",
+  "required": [
+    "id", "version", "category", "family", "name", "description", "params", "canvases",
+    "themeTokens", "durationMs", "maxConcurrent", "flashesPerSec", "budgetCost", "status"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "$ref": "common.schema.json#/$defs/id" },
+    "version": { "$ref": "common.schema.json#/$defs/semver" },
+    "category": { "$ref": "common.schema.json#/$defs/id" },
+    "family": { "$ref": "common.schema.json#/$defs/id" },
+    "name": { "type": "string", "minLength": 1 },
+    "description": { "type": "string" },
+    "params": {
+      "type": "object",
+      "required": ["schema", "defaults", "safeRanges"],
+      "additionalProperties": false,
+      "properties": {
+        "schema": { "type": "object", "description": "JSON Schema for preset params; {} while planned" },
+        "defaults": { "type": "object" },
+        "safeRanges": { "type": "object" }
+      }
+    },
+    "canvases": { "$ref": "common.schema.json#/$defs/canvases" },
+    "themeTokens": { "type": "array", "items": { "type": "string", "pattern": "^--[a-z0-9-]+$" }, "uniqueItems": true },
+    "durationMs": { "type": "integer", "minimum": 0 },
+    "maxConcurrent": { "type": "integer", "minimum": 0 },
+    "flashesPerSec": { "type": "number", "minimum": 0, "maximum": 3 },
+    "budgetCost": { "type": "number", "minimum": 0 },
+    "status": { "enum": ["planned", "in-progress", "done"] },
+    "format": { "enum": ["html", "native-shader", "plugin"] },
+    "planSection": { "type": "string" }
+  },
+  "if": { "properties": { "status": { "not": { "const": "planned" } } }, "required": ["status"] },
+  "then": { "required": ["format"], "properties": { "format": true } }
+}

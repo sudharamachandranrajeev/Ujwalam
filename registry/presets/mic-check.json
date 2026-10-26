@@ -1,0 +1,25 @@
+{
+  "id": "mic-check",
+  "version": "0.1.0",
+  "function": "mic-metering",
+  "functionVersion": "^0.1.0",
+  "name": "mic-check",
+  "params": {},
+  "themeOverrides": {},
+  "family": "audio",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/tools/mic-check.mjs",
+  "legacyNote": "Companion: legacy/tools/mic-level.ps1."
+}

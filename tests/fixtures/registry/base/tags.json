@@ -1,0 +1,20 @@
+{
+  "version": "1.0.0",
+  "tags": {
+    "motion": [
+      "pulse"
+    ],
+    "intensity": [
+      "low"
+    ],
+    "mood": [
+      "calm"
+    ],
+    "colourUse": [
+      "tokens"
+    ],
+    "flashes": [
+      "none"
+    ]
+  }
+}

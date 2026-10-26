@@ -1,0 +1,44 @@
+{
+  "version": "0.1.0",
+  "tags": {
+    "motion": [
+      "none",
+      "slide",
+      "scroll",
+      "pulse",
+      "burst",
+      "slam",
+      "flicker",
+      "drift",
+      "stepped",
+      "shake"
+    ],
+    "intensity": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "mood": [
+      "neutral",
+      "informational",
+      "calm",
+      "playful",
+      "party",
+      "electric",
+      "aggressive",
+      "horror"
+    ],
+    "colourUse": [
+      "none",
+      "tokens",
+      "brand-red",
+      "brand-blue",
+      "multi"
+    ],
+    "flashes": [
+      "none",
+      "low",
+      "medium"
+    ]
+  }
+}

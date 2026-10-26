@@ -1,0 +1,24 @@
+{
+  "id": "session-backups",
+  "version": "0.1.0",
+  "function": "importers",
+  "functionVersion": "^0.1.0",
+  "name": "session-backups",
+  "params": {},
+  "themeOverrides": {},
+  "family": "packages",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/meld/session-backups"
+}

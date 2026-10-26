@@ -1,0 +1,29 @@
+# Default: normalise text to LF in the repo and working tree.
+* text=auto eol=lf
+
+# Windows scripts keep CRLF.
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+
+# Media and fonts are binary.
+*.mp4 binary
+*.mkv binary
+*.mov binary
+*.flv binary
+*.ts binary
+*.webm binary
+*.wav binary
+*.m4a binary
+*.mp3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.otf binary

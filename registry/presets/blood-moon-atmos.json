@@ -1,0 +1,24 @@
+{
+  "id": "blood-moon-atmos",
+  "version": "0.1.0",
+  "function": "atmosphere-params",
+  "functionVersion": "^0.1.0",
+  "name": "Blood Moon atmosphere",
+  "params": {},
+  "themeOverrides": {},
+  "family": "themes",
+  "tags": {
+    "motion": "drift",
+    "intensity": "low",
+    "mood": "horror",
+    "colourUse": "tokens",
+    "flashes": "low"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/themes/bloodmoon/theme.json"
+}

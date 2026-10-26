@@ -1,0 +1,24 @@
+{
+  "id": "alert-box",
+  "version": "0.1.0",
+  "function": "alert-cards",
+  "functionVersion": "^0.1.0",
+  "name": "Alert Box (glass cards)",
+  "params": {},
+  "themeOverrides": {},
+  "family": "alerts",
+  "tags": {
+    "motion": "slide",
+    "intensity": "medium",
+    "mood": "informational",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/alert-box"
+}

@@ -1,0 +1,24 @@
+{
+  "id": "chat-list",
+  "version": "0.1.0",
+  "function": "chat-list-rail",
+  "functionVersion": "^0.1.0",
+  "name": "Chat List",
+  "params": {},
+  "themeOverrides": {},
+  "family": "chat-display",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "informational",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/overlays/chat-list"
+}
