@@ -12,6 +12,10 @@
 //   --encoder ID        video encoder id (default obs_nvenc_h264_tex); --bitrate KBPS; --keyint SEC
 //   --config DIR        module config dir (default <out>/module-config)
 //   --adapter N         DXGI adapter index (default 0)
+// two-canvas device options (need --allow-devices):
+//   --h-device ID [--h-device-audio ID] [--h-res WxH --h-fps N] --mic WASAPI_ID
+//   --v-device ID [--v-res WxH --v-fps N] [--v-filter ID --v-filter-settings JSON]
+//   --only h|v          record one canvas only
 #include "host.h"
 #include "scenes.h"
 

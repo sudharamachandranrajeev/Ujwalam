@@ -154,13 +154,25 @@ obs_source_t *make_browser(Bag &bag, const char *name, const std::string &url, S
 	return make_source(bag, "browser_source", name, s);
 }
 
-// dshow video device. The device id format is "<friendly name>:<device path>"; win-dshow also
-// accepts a bare "<friendly name>:" and resolves it by name (see win-dshow DecodeDeviceId).
-obs_source_t *make_dshow(Bag &bag, const char *name, const std::string &device, const std::string &audio_device)
+// dshow video device. The device id format is "<friendly name>:<device path>" with '#' encoded as
+// "#22" and ':' as "#3A" (win-dshow encode-dstr.hpp). Video devices need the exact name AND path:
+// a bare "<friendly name>:" fails with "data.GetDevice failed" (P1b session 1). List ids with
+// `probe --allow-devices --list-dshow`. Audio-only dshow devices have an empty path.
+// res empty = device default format; otherwise a custom "WxH" at fps with any pixel format.
+obs_source_t *make_dshow(Bag &bag, const char *name, const std::string &device, const std::string &audio_device,
+			 const std::string &res = "", double fps = 0)
 {
 	obs_data_t *s = obs_data_create();
 	obs_data_set_string(s, "video_device_id", device.c_str());
-	obs_data_set_int(s, "res_type", 0); // device default (no change to the device's configured mode)
+	if (res.empty()) {
+		obs_data_set_int(s, "res_type", 0); // device default (no change to the device's configured mode)
+	} else {
+		obs_data_set_int(s, "res_type", 1); // ResType_Custom
+		obs_data_set_string(s, "resolution", res.c_str());
+		obs_data_set_int(s, "frame_interval", (long long)(10000000.0 / (fps > 0 ? fps : 30) + 0.5));
+		obs_data_set_int(s, "video_format", 0); // VideoFormat::Any: first format the device offers at that size/rate
+		logf("dshow source %s custom format %s @ %.2f fps (format any)", name, res.c_str(), fps > 0 ? fps : 30);
+	}
 	obs_data_set_bool(s, "active", true);
 	obs_data_set_bool(s, "deactivate_when_not_showing", false);
 	if (!audio_device.empty()) {
@@ -328,20 +340,29 @@ int cmd_chat_charge(const Args &a)
 
 // c. Two canvases (H main + V via obs_canvas_create), each with its own video encoder; one
 // shared AAC encoder (audio encoded once). Optional devices with --allow-devices.
+// --only h records H alone (no V canvas is created); --only v records V alone (the main canvas
+// still renders H, but nothing encodes it).
 int cmd_two_canvas(const Args &a)
 {
 	host::adapter_name();
 	Bag bag;
 	Size H = {1920, 1080};
 	Size V = parse_size(a.get("v-size"), {1080, 1920});
-	obs_canvas_t *vc = make_v_canvas(bag, V, 60);
-	if (!vc)
-		return 2;
+	const std::string only = a.get("only", "");
+	const bool rec_h = only != "v", rec_v = only != "h";
+	logf("two-canvas: record H=%s V=%s", rec_h ? "yes" : "no", rec_v ? "yes" : "no");
+	obs_canvas_t *vc = nullptr;
+	if (rec_v) {
+		vc = make_v_canvas(bag, V, 60);
+		if (!vc)
+			return 2;
+	}
 
 	obs_scene_t *hs = obs_scene_create("H");
 	bag.scenes.push_back(hs);
 	if (a.has("h-device")) {
-		obs_source_t *cap = make_dshow(bag, "h-capture", a.get("h-device"), a.get("h-device-audio"));
+		obs_source_t *cap = make_dshow(bag, "h-capture", a.get("h-device"), a.get("h-device-audio"),
+					       a.get("h-res"), a.getd("h-fps", 0));
 		add_full(hs, cap, H);
 		bag.meter(cap, "h-capture");
 	} else {
@@ -357,23 +378,25 @@ int cmd_two_canvas(const Args &a)
 		add_full(hs, make_browser(bag, "h-overlay", a.get("url-h"), H, 60), H);
 	obs_set_output_source(0, obs_scene_get_source(hs));
 
-	obs_scene_t *vs = obs_canvas_scene_create(vc, "V");
-	if (!vs) {
-		logf("FAIL obs_canvas_scene_create V");
-		return 2;
+	if (rec_v) {
+		obs_scene_t *vs = obs_canvas_scene_create(vc, "V");
+		if (!vs) {
+			logf("FAIL obs_canvas_scene_create V");
+			return 2;
+		}
+		bag.scenes.push_back(vs);
+		obs_source_t *vsrc = nullptr;
+		if (a.has("v-device"))
+			vsrc = make_dshow(bag, "v-camera", a.get("v-device"), "", a.get("v-res"), a.getd("v-fps", 0));
+		else
+			vsrc = make_bg(bag, a, "v-bg", "v-bg", V);
+		if (vsrc && a.has("v-filter"))
+			add_filter(bag, vsrc, a.get("v-filter"), a.get("v-filter-settings"));
+		add_full(vs, vsrc, V);
+		if (a.has("url-v"))
+			add_full(vs, make_browser(bag, "v-overlay", a.get("url-v"), V, 60), V);
+		obs_canvas_set_channel(vc, 0, obs_scene_get_source(vs));
 	}
-	bag.scenes.push_back(vs);
-	obs_source_t *vsrc = nullptr;
-	if (a.has("v-device"))
-		vsrc = make_dshow(bag, "v-camera", a.get("v-device"), "");
-	else
-		vsrc = make_bg(bag, a, "v-bg", "v-bg", V);
-	if (vsrc && a.has("v-filter"))
-		add_filter(bag, vsrc, a.get("v-filter"), a.get("v-filter-settings"));
-	add_full(vs, vsrc, V);
-	if (a.has("url-v"))
-		add_full(vs, make_browser(bag, "v-overlay", a.get("url-v"), V, 60), V);
-	obs_canvas_set_channel(vc, 0, obs_scene_get_source(vs));
 
 	double preroll = a.getd("preroll", 4);
 	logf("preroll %.1fs", preroll);
@@ -381,29 +404,44 @@ int cmd_two_canvas(const Args &a)
 	if (!encode_allowed())
 		return 3;
 
-	obs_encoder_t *ench = host::make_video_encoder(a, "h-video", obs_get_video());
-	obs_encoder_t *encv = host::make_video_encoder(a, "v-video", obs_canvas_get_video(vc));
 	obs_encoder_t *aac = host::make_audio_encoder("aac");
-	if (!ench || !encv || !aac)
+	if (!aac)
 		return 2;
-	bag.encoders = {ench, encv, aac};
+	bag.encoders = {aac};
 	std::string prefix = a.get("name", "two-canvas");
-	obs_output_t *oh = host::make_file_output("rec-h", host::out_path(prefix + "-h.mkv"), ench, aac);
-	obs_output_t *ov = host::make_file_output("rec-v", host::out_path(prefix + "-v.mkv"), encv, aac);
-	bag.outputs = {oh, ov};
+	std::vector<obs_encoder_t *> venc;
+	if (rec_h) {
+		obs_encoder_t *ench = host::make_video_encoder(a, "h-video", obs_get_video());
+		if (!ench)
+			return 2;
+		bag.encoders.push_back(ench);
+		venc.push_back(ench);
+		bag.outputs.push_back(host::make_file_output("rec-h", host::out_path(prefix + "-h.mkv"), ench, aac));
+	}
+	if (rec_v) {
+		obs_encoder_t *encv = host::make_video_encoder(a, "v-video", obs_canvas_get_video(vc));
+		if (!encv)
+			return 2;
+		bag.encoders.push_back(encv);
+		venc.push_back(encv);
+		bag.outputs.push_back(host::make_file_output("rec-v", host::out_path(prefix + "-v.mkv"), encv, aac));
+	}
 	host::CpuSampler cpu;
 	cpu.begin();
-	if (!host::start_output(oh) || !host::start_output(ov))
-		return 2;
-	host::log_encoder(ench);
-	host::log_encoder(encv);
+	for (obs_output_t *o : bag.outputs)
+		if (!host::start_output(o))
+			return 2;
+	for (obs_encoder_t *e : venc)
+		host::log_encoder(e);
 	host::log_encoder(aac);
 	bool ok = host::run_for(a.getd("seconds", 20), bag.outputs, prefix.c_str());
 	logf("process CPU during recording: %.1f%%", cpu.query());
-	host::stop_output(oh);
-	host::stop_output(ov);
-	log_video_info("H", obs_get_video());
-	log_video_info("V", obs_canvas_get_video(vc));
+	for (obs_output_t *o : bag.outputs)
+		host::stop_output(o);
+	if (rec_h)
+		log_video_info("H", obs_get_video());
+	if (rec_v)
+		log_video_info("V", obs_canvas_get_video(vc));
 	return ok ? 0 : 2;
 }
 

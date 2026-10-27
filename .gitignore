@@ -40,6 +40,9 @@ out/
 # P1 spike build output (generated import lib, obsconfig.h, binaries).
 app/spike/build/
 
+# Evidence frames showing the user's face or other players' names. Local only, never committed.
+docs/evidence/private/
+
 # Meld session exports (user data: device ids, scene layout). Never committed.
 session file/
 

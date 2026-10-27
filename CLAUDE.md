@@ -21,6 +21,7 @@ Full plan: `docs/2026-10-26-build-plan.md` (§1–12, baseline). Amendments: `do
 - Platform limits live in data/platforms/*.json with source + checked date; never hardcode them.
 - Never test outputs against real platforms until loopback ffprobe assertions pass.
 - Never hardcode hardware encoder session limits; probe at runtime.
+- Never commit frames or crops showing the user's face, other players' names, or game account/device ids (e.g. the CODM bottom-right watermark). Never commit the user's IGN. Keep them in `docs/evidence/private/` (gitignored). Crop or blur if a committed image needs them.
 
 ## Settled design decisions
 
