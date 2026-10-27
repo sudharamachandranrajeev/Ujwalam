@@ -34,6 +34,12 @@ secrets/
 !data/labels/
 !data/labels/.gitkeep
 
+# Test recordings and spike output (media; kept until the phase gate passes, deleted only with user approval).
+out/
+
+# P1 spike build output (generated import lib, obsconfig.h, binaries).
+app/spike/build/
+
 # Meld session exports (user data: device ids, scene layout). Never committed.
 session file/
 
