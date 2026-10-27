@@ -17,7 +17,7 @@ The studio asks during onboarding, and the answers are editable later in setting
 | Field | Example | Notes |
 |---|---|---|
 | Streamer name | `<<streamer name>>` | Used for chat and titles |
-| In-game name(s) | `<<IGN>>` + variants | Variants cover clan tags, special characters and common OCR misreads |
+| In-game name(s) | `<<IGN>>` + variants | Variants cover clan tags (UNVERIFIED: CODM shows none), special characters and common OCR misreads |
 | Game | Call of Duty: Mobile | Picks the detector pack |
 | Default mode | Multiplayer / Battle Royale / Auto | Auto = detect mode from the HUD |
 | Capture canvas | H, V or both | Which canvas the watcher reads (clean H master preferred) |
@@ -95,6 +95,6 @@ Other games get their own detector packs later using the same schema.
 ---
 
 ## 7. Needed from me
-- My exact in-game name(s) for CODM, including clan tag and any variants: `<<IGN>>`
+- My exact in-game name(s) for CODM, including clan tag (UNVERIFIED: none shown in game) and any variants: `<<IGN>>`
 - Whether MP or BR is more common on stream (sets the default mode).
 - Confirm the medal weights and windows when G3 proposes them.

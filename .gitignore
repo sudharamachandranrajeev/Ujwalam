@@ -48,3 +48,6 @@ session file/
 
 # Private reference copy; never committed or distributed. Integrity: legacy.manifest.sha256
 legacy/
+
+# Local datasets (reference crops can show player names; never committed).
+data/datasets/

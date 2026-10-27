@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node tools/git-hooks/private-scan.mjs pre-push "$@"

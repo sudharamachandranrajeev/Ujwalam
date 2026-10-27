@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/sessions.schema.json",
+  "title": "Ujwalam clip-corpus session boundaries",
+  "description": "Written by services/clip/session_index.py --sessions-file. Entries with source 'rule' are regenerated on every run; entries with source 'manual' are kept exactly as written and win over the rule. File names and times only.",
+  "type": "object",
+  "required": ["version", "defaults", "sessions"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "about": { "type": "string" },
+    "defaults": {
+      "type": "object",
+      "required": ["gapThresholdSec"],
+      "additionalProperties": false,
+      "properties": {
+        "gapThresholdSec": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "Default for --gap-threshold: an end-to-start gap larger than this (seconds) starts a new session."
+        }
+      }
+    },
+    "rule": {
+      "type": "object",
+      "description": "Settings the rule entries were generated with on the last run.",
+      "required": ["gapThresholdSec", "nameTime"],
+      "additionalProperties": false,
+      "properties": {
+        "gapThresholdSec": { "type": "number", "exclusiveMinimum": 0 },
+        "nameTime": { "enum": ["start", "end"] }
+      }
+    },
+    "sessions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/session" }
+    }
+  },
+  "$defs": {
+    "clipName": { "type": "string", "pattern": "\\.[mM][pP]4$" },
+    "localTime": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?[+-]\\d{2}:\\d{2}$"
+    },
+    "utcTime": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$"
+    },
+    "session": {
+      "type": "object",
+      "required": ["id", "source", "firstClip", "lastClip"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^s-[0-9A-Za-z-]+$" },
+        "source": { "enum": ["rule", "manual"] },
+        "firstClip": { "$ref": "#/$defs/clipName" },
+        "lastClip": { "$ref": "#/$defs/clipName" },
+        "startLocal": { "$ref": "#/$defs/localTime" },
+        "startUtc": { "$ref": "#/$defs/utcTime" },
+        "endLocal": { "$ref": "#/$defs/localTime" },
+        "endUtc": { "$ref": "#/$defs/utcTime" },
+        "clipCount": { "type": "integer", "minimum": 1 },
+        "note": { "type": "string" }
+      },
+      "if": { "properties": { "source": { "const": "rule" } } },
+      "then": {
+        "properties": { "startLocal": true, "startUtc": true, "endLocal": true, "endUtc": true, "clipCount": true },
+        "required": ["startLocal", "startUtc", "endLocal", "endUtc", "clipCount"]
+      }
+    }
+  }
+}

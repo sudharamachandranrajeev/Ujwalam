@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/detection.schema.json",
+  "title": "Ujwalam game-event detection record",
+  "description": "One logged detection (one JSON object per line in the local log). Stored locally only: ocrText and crops can contain player names, so logs and crops stay in gitignored folders and are never committed. cropPath is relative and must sit under cache/ or docs/evidence/private/.",
+  "type": "object",
+  "required": ["version", "sessionId", "timeSec", "detectorId", "packVersion", "mode", "roiId", "roi", "ocrText", "confidence", "cropPath", "nameMatch", "suppressed", "createdAt"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "sessionId": { "type": "string", "pattern": "^s-[0-9A-Za-z-]+$", "description": "An id from data/sessions.json." },
+    "timeSec": { "type": "number", "minimum": 0, "description": "Seconds from the session start on the session timeline." },
+    "detectorId": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" },
+    "packVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "mode": { "enum": ["mp", "br", "dmz", "unknown"], "description": "dmz is a footage tag only; no detector runs for it." },
+    "roiId": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "roi": {
+      "type": "object",
+      "required": ["x0", "y0", "x1", "y1"],
+      "additionalProperties": false,
+      "properties": {
+        "x0": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y0": { "type": "number", "minimum": 0, "maximum": 1 },
+        "x1": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y1": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "gameArea": {
+      "type": "object",
+      "description": "Pixel crop of the game area in the source frame (cropdetect w:h:x:y).",
+      "required": ["w", "h", "x", "y"],
+      "additionalProperties": false,
+      "properties": {
+        "w": { "type": "integer", "minimum": 1 },
+        "h": { "type": "integer", "minimum": 1 },
+        "x": { "type": "integer", "minimum": 0 },
+        "y": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "ocrText": { "type": "string" },
+    "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+    "cropPath": {
+      "type": "string",
+      "pattern": "^(cache|docs/evidence/private)/(?!.*\\.\\.)[^:]+\\.(png|jpg)$"
+    },
+    "nameMatch": {
+      "type": "object",
+      "required": ["required", "matched"],
+      "additionalProperties": false,
+      "properties": {
+        "required": { "type": "boolean" },
+        "matched": { "type": ["boolean", "null"], "description": "null only when no name was required." },
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "side": { "enum": ["killer", "victim", "any"] }
+      },
+      "if": { "properties": { "required": { "const": true } } },
+      "then": { "properties": { "matched": { "type": "boolean" } } }
+    },
+    "signal": { "type": "boolean", "description": "Whether this detection counts as a clip signal. K1 (FINAL KILLCAM) without the streamer name is logged with signal false." },
+    "medal": {
+      "type": "object",
+      "description": "M3 only: the matched medal and its class at detection time.",
+      "required": ["text", "class"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "class": { "enum": ["positive", "reference"] }
+      }
+    },
+    "suppressed": { "type": "boolean" },
+    "suppressedBy": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Id of the suppression rule that fired." },
+    "createdAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+  },
+  "if": { "properties": { "suppressed": { "const": true } } },
+  "then": { "properties": { "suppressedBy": true }, "required": ["suppressedBy"] }
+}

@@ -1,0 +1,27 @@
+{
+  "$comment": "Template. Copy to data/profile.local.json (gitignored) and fill in. Every string value there is a private term for the git hooks (tools/git-hooks). Placeholders in <angle brackets> are never treated as private terms.",
+  "version": "0.1.0",
+  "streamer": {
+    "name": "<streamer-name>",
+    "brand": "<brand>",
+    "variants": ["<streamer-variant-1>", "<streamer-variant-2>"]
+  },
+  "channels": {
+    "twitch": "<twitch-channel>",
+    "youtube_handle": "<youtube-handle>",
+    "youtube_channel_id": "<youtube-channel-id>",
+    "kick": "<kick-channel>",
+    "discord_invite": "<discord-invite>"
+  },
+  "games": {
+    "codm": {
+      "ign": "<ign>",
+      "variants": ["<ign-variant-1>", "<ign-variant-2>"],
+      "clan_tag": null
+    }
+  },
+  "paths": {
+    "clips_corpus": "<clips-corpus>"
+  },
+  "private_terms": []
+}

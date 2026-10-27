@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/labels.schema.json",
+  "title": "Ujwalam clip labels (one file per session in data/labels/)",
+  "description": "Written by the A6 labelling page. Windows are on the session timeline (seconds from the session start in data/sessions.json). windowEndSec must be greater than windowStartSec; JSON Schema cannot compare fields, so tests and the writer enforce it.",
+  "type": "object",
+  "required": ["version", "sessionId", "labels"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "const": 1 },
+    "sessionId": { "type": "string", "pattern": "^s-[0-9A-Za-z-]+$", "description": "An id from data/sessions.json." },
+    "labels": { "type": "array", "items": { "$ref": "#/$defs/label" } }
+  },
+  "$defs": {
+    "label": {
+      "type": "object",
+      "required": ["id", "windowStartSec", "windowEndSec", "label", "reasonTags", "labeller", "createdAt"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^l-[0-9A-Za-z-]+$" },
+        "windowStartSec": { "type": "number", "minimum": 0 },
+        "windowEndSec": { "type": "number", "exclusiveMinimum": 0 },
+        "label": { "enum": ["keep", "reject"] },
+        "rating": { "type": "integer", "minimum": 1, "maximum": 5, "description": "Optional 1-5; only on keep labels." },
+        "reasonTags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" }
+        },
+        "labeller": { "type": "string", "pattern": "^<[a-z0-9-]+>$", "description": "Placeholder only, e.g. <user>. Real names are never committed (scan rule in tools/git-hooks/private-scan.mjs)." },
+        "note": { "type": "string", "pattern": "^<[a-z0-9-]+>$", "description": "Placeholder only, e.g. <nothing-happens>. No free text." },
+        "createdAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
+      },
+      "if": { "properties": { "label": { "const": "reject" } } },
+      "then": { "properties": { "rating": false } }
+    }
+  }
+}

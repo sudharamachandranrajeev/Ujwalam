@@ -1,7 +1,7 @@
 # Ujwalam
 
 Local-first streaming studio: Meld-style UX, embedded libobs, AI clipping, chat-driven scenes and effects.
-Full plan: `docs/2026-10-26-build-plan.md` (§1–12, baseline). Amendments: `docs/plan/YYYY-MM-DD-*.md`, newest wins. Reference setup: `C:\AI\Claude\Meld Schenanigans` (copied to `legacy/` in P0).
+Full plan: `docs/2026-10-26-build-plan.md` (§1–12, baseline). Amendments: `docs/plan/YYYY-MM-DD-*.md`, newest wins; index with phase placement: `docs/plan/INDEX.md`. Reference setup: `C:\AI\Claude\Meld Schenanigans` (copied to `legacy/` in P0).
 
 ## Rules
 
@@ -21,7 +21,17 @@ Full plan: `docs/2026-10-26-build-plan.md` (§1–12, baseline). Amendments: `do
 - Platform limits live in data/platforms/*.json with source + checked date; never hardcode them.
 - Never test outputs against real platforms until loopback ffprobe assertions pass.
 - Never hardcode hardware encoder session limits; probe at runtime.
-- Never commit frames or crops showing the user's face, other players' names, or game account/device ids (e.g. the CODM bottom-right watermark). Never commit the user's IGN. Keep them in `docs/evidence/private/` (gitignored). Crop or blur if a committed image needs them.
+- Public repo: never commit or push brand names, channel names or ids, IGN, clan tag, any of their variants, face images, other players' names, game account/device ids (e.g. the CODM bottom-right watermark) or personal details. Committed files use placeholders; real values live in the gitignored `data/profile.local.json` (template: `data/profile.example.json`). Images that need them go in `docs/evidence/private/` (gitignored), or are cropped or blurred.
+- Local build, tests and running use all of them freely: real brand, channel names, IGN and every variant, real footage and chat, real overlays and features. The scrub applies only to what is committed and pushed.
+- Git hooks (`core.hooksPath tools/git-hooks`) scan staged files, paths and commit messages for every term in `data/profile.local.json` (case-insensitive, separator variants) and block hits. Never bypass them (`--no-verify`).
+- Before any first push to a remote: run the pre-push scan over the full history, list every file to be pushed, and wait for the user's yes.
+- Game-specific logic is data in `data/games/<id>/`; never hardcode a game in engine code.
+- Every detector value needs evidence (frames, counts, date) and a status (unverified|verified).
+- Event names, weights and windows are proposed from footage and labels and approved by the user; never invented.
+- Pack changes are versioned with a changelog; a new version ships only if it beats the current one on held-out sessions.
+- Training footage, crops and profiles stay local and gitignored (`data/profile.local.json`; per-game `data/games/<id>/local/` from W0). Labels in `data/labels/` are committed with timestamps and placeholder names only, no images; the pre-commit hook enforces this.
+- `docs/inbox/` is where the user drops new plans or instructions. At the start of each session, check it; summarise each file and ask before applying. After applying, move it to `docs/plan/` (or `docs/backlog/` if deferred). Never delete an inbox file without asking.
+- Training data: if more data would improve a phase (labels, recordings, chat exports, footage of specific events, other games), ask at the start of that phase: what, how much, and why.
 
 ## Settled design decisions
 
@@ -48,8 +58,9 @@ Agreed during planning (2026-10-26). Treat as settled unless the user reopens th
 - **OBS plugin wrapping:** schema and safe ranges come from `obs_properties` limits. Untagged plugins are excluded from randomise, AI variants and "similar" until tagged.
 - **Remote control:** LAN web remote with token + QR pairing, obeys live-lock, never reachable from outside the LAN. Built in P15.
 - **Alert fixtures:** from P3, record every real platform event as an anonymised test fixture for P9.
+- **OCR (2026-10-27):** RapidOCR on Python 3.14 (PaddleOCR models through onnxruntime). Pin the version and record the model files and SHA-256s; note the licences. Accuracy gate on real corpus crops per detector. No paddlepaddle; a 3.12 env only with evidence and user approval. Conditions: `docs/evidence/2026-10-27-p2a-a1-python-wheels.md`.
 - **Phase splits:** P5 → P5a (scenes, layers, inspector, H/V) and P5b (mixer, transitions with audio routing, undo, autosave). P7 → P7a (engine, SDK, guards, Chat Charge, GG Burst) and P7b (other parity presets, similar picker, pools).
-- **P2 corpus:** `<clips-corpus>` is read-only (never modify, move or delete). Sessions are split by session, not clip; ≥ 2 sessions held out. The analysis cache goes in a folder the user picks, with its size estimated first. No invented labels or synthetic chat.
+- **P2 corpus:** `<clips-corpus>` (real path: `paths.clips_corpus` in `data/profile.local.json`) is read-only (never modify, move or delete). Sessions are split by session, not clip; ≥ 2 sessions held out. The analysis cache goes in a folder the user picks, with its size estimated first. No invented labels or synthetic chat.
 - **MELD MULTI** = one shared low-bitrate H rung feeding the `twitch` and `kick` sinks; settings migrated from the Meld session, never guessed. Superseded 2026-10-27: Meld's MELD MULTI was a 7.5 Mbps push to Meld's cloud relay (from a 2026-04-07 prefs backup); its values are kept only as a test fixture.
 - **Output topology (2026-10-27):** highest-quality H output goes directly to YouTube (presets for 1080p60 17 Mbps, 1440p60 34 Mbps, 2160p60 50 Mbps). A built-in re-encoder feeds Twitch and Kick: one shared 1080p60 H.264 CBR 6000 kbps rung, GPU-scaled from the same composited H canvas — never a decode of the YouTube stream. Platform limits from the user's reference table (2026-10-27) are recorded in `data/platforms/` as `source: user-reference-2026-10-27`.
 - **§8 "P0 priority"** for H+V multistream means top priority, delivered in P6; P1 proves H and V recording.

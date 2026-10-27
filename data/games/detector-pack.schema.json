@@ -1,0 +1,234 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/detector-pack.schema.json",
+  "title": "Ujwalam game detector pack",
+  "description": "Data-only detector pack for one game (data/games/<game-id>/detectors.json). Detectors are data; the engine in P2/P14 interprets them. ROIs are fractions of the detected game area, not the canvas. Weights, windows and cooldowns stay null until G3 proposes them from labelled data.",
+  "type": "object",
+  "required": ["version", "engineVersion", "game", "ocr", "nameMatch", "modes", "detectors", "suppressionRules"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": "string" },
+    "version": { "$ref": "#/$defs/semver" },
+    "engineVersion": { "$ref": "#/$defs/semver", "description": "Detector-engine function version this pack targets; packs are migrated on load." },
+    "game": {
+      "type": "object",
+      "required": ["id", "name"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "ocr": {
+      "type": "object",
+      "required": ["engine"],
+      "additionalProperties": false,
+      "properties": {
+        "engine": { "enum": ["rapidocr"] },
+        "minConfidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "gameArea": {
+      "type": "object",
+      "description": "How the game area is found. ROIs are relative to it.",
+      "required": ["method"],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "enum": ["cropdetect"] },
+        "referenceAspect": { "type": "number", "exclusiveMinimum": 0 },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "nameMatch": {
+      "type": "object",
+      "description": "How profile names (games.<id>.ign, variants, clan_tag) are matched against OCR text.",
+      "required": ["profileKey", "fuzzy", "minScore", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "profileKey": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "fuzzy": { "type": "boolean" },
+        "ignoreSeparators": { "type": "boolean" },
+        "minScore": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "modes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/mode" }
+    },
+    "taggingOnlyModes": {
+      "type": "array",
+      "description": "Modes used only to tag footage (e.g. dmz). No detectors run for them and they are excluded from tuning and test sets.",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/mode" }
+    },
+    "detectors": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/detector" }
+    },
+    "suppressionRules": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/suppressionRule" }
+    },
+    "endScreenRule": { "$ref": "#/$defs/endScreenRule" }
+  },
+  "$defs": {
+    "semver": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "mode": { "enum": ["mp", "br", "dmz"] },
+    "detectorMode": { "enum": ["mp", "br"], "description": "Modes a detector may run in; tag-only modes (dmz) are excluded." },
+    "status": { "enum": ["unverified", "verified"] },
+    "fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+    "roi": {
+      "type": "object",
+      "required": ["id", "x0", "y0", "x1", "y1", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "label": { "type": "string" },
+        "mode": { "$ref": "#/$defs/mode", "description": "Omit when the ROI applies to every mode of the detector." },
+        "x0": { "$ref": "#/$defs/fraction" },
+        "y0": { "$ref": "#/$defs/fraction" },
+        "x1": { "$ref": "#/$defs/fraction" },
+        "y1": { "$ref": "#/$defs/fraction" },
+        "status": { "$ref": "#/$defs/status" },
+        "minTextHeight": { "$ref": "#/$defs/fraction", "description": "Kill-feed ROIs: ignore OCR boxes shorter than this fraction of the game-area height (smaller HUD text that shares the band)." },
+        "note": { "type": "string" }
+      }
+    },
+    "medal": {
+      "type": "object",
+      "required": ["text", "class", "status", "weight", "clipReason"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "class": { "enum": ["positive", "reference"], "description": "positive = clip signal (weight from G3); reference = detected and logged to the reference dataset only (weight 0, never a clip reason). Promote by editing this data." },
+        "aliases": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "status": { "enum": ["seen_g1", "listed_not_seen", "spelling_unverified", "unverified"] },
+        "weight": { "type": ["number", "null"], "minimum": 0 },
+        "clipReason": { "type": "boolean", "description": "May appear as a clip reason. Always false for reference medals." }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "class": { "const": "reference" } }, "required": ["class"] },
+          "then": { "properties": { "weight": { "const": 0 }, "clipReason": { "const": false } } }
+        },
+        {
+          "if": { "properties": { "class": { "const": "positive" } }, "required": ["class"] },
+          "then": { "properties": { "weight": { "type": ["number", "null"] } } }
+        }
+      ]
+    },
+    "referenceDataset": {
+      "type": "object",
+      "required": ["path", "index", "gitignored"],
+      "additionalProperties": false,
+      "properties": {
+        "path": { "type": "string", "pattern": "^data/datasets/[a-z0-9-]+$", "description": "Repo-relative folder; must be gitignored." },
+        "index": { "type": "string", "pattern": "^[a-z0-9._-]+\\.jsonl$" },
+        "layout": { "type": "string" },
+        "gitignored": { "const": true }
+      }
+    },
+    "window": {
+      "type": "object",
+      "required": ["preSec", "postSec"],
+      "additionalProperties": false,
+      "properties": {
+        "preSec": { "type": ["number", "null"], "minimum": 0 },
+        "postSec": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "detector": {
+      "type": "object",
+      "required": ["id", "name", "role", "modes", "method", "rois", "nameRequired", "weight", "window", "cooldownSec", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "role": {
+          "enum": ["positive", "negative", "context"],
+          "description": "positive = clip signal; negative = the user died or lost (never raises a score); context = state that other detectors read."
+        },
+        "modes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/detectorMode" } },
+        "method": { "enum": ["ocr", "ocr_colour_mask", "ocr_line_parse"] },
+        "rois": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/roi" } },
+        "patterns": {
+          "type": "array",
+          "description": "Exact text matches (case-insensitive after normalisation).",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "regex": { "type": "string", "description": "Pattern for numeric text such as +N." },
+        "medals": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/medal" } },
+        "referenceDataset": { "$ref": "#/$defs/referenceDataset" },
+        "ignoreTexts": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "colour": {
+          "type": "object",
+          "required": ["name", "status"],
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "status": { "$ref": "#/$defs/status" }
+          }
+        },
+        "nameRequired": { "type": "boolean" },
+        "signalRule": { "enum": ["name_only"], "description": "name_only: a detection counts as a signal only when the profile name is matched on the stated side; otherwise no signal." },
+        "logUnmatched": { "type": "boolean", "description": "Also log detections without a name match (signal false) as evidence records for tuning." },
+        "nameSide": { "enum": ["killer", "victim", "any"], "description": "Which side of a kill-feed line the name must be on, or any for a screen." },
+        "weight": { "type": ["number", "null"], "minimum": 0 },
+        "window": { "$ref": "#/$defs/window" },
+        "cooldownSec": { "type": ["number", "null"], "minimum": 0 },
+        "status": { "$ref": "#/$defs/status" },
+        "note": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "nameRequired": { "const": true } } },
+          "then": { "properties": { "nameSide": true }, "required": ["nameSide"] }
+        },
+        {
+          "if": { "properties": { "role": { "const": "negative" } } },
+          "then": { "properties": { "weight": { "const": null } } }
+        },
+        {
+          "if": { "properties": { "signalRule": { "const": "name_only" } }, "required": ["signalRule"] },
+          "then": { "properties": { "nameRequired": { "const": true } } }
+        },
+        {
+          "if": { "properties": { "id": { "const": "M3" } } },
+          "then": { "properties": { "medals": true }, "required": ["medals"] }
+        }
+      ]
+    },
+    "suppressionRule": {
+      "type": "object",
+      "required": ["id", "suppress", "while", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "suppress": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" } },
+        "while": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$", "description": "Detector id whose overlay is on screen." },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "endScreenRule": {
+      "type": "object",
+      "description": "How end screens combine into one match-level signal. A match may show several end screens.",
+      "required": ["id", "detectors", "nameCheck", "matchScore", "reasons", "noneNamed", "screenRequired"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "detectors": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" }, "description": "End-screen detectors; each must have nameRequired true." },
+        "nameCheck": { "const": "each", "description": "The profile name is checked on each end screen separately." },
+        "matchScore": { "const": "once", "description": "Any number of named end screens count once per match for scoring." },
+        "reasons": { "const": "all_named", "description": "Every end screen with the name is listed as a clip reason." },
+        "noneNamed": { "const": "no_signal", "description": "End screens without the name give no signal (never negative)." },
+        "screenRequired": { "const": false, "description": "No end screen has to appear; a missing screen is not evidence of anything." },
+        "note": { "type": "string" }
+      }
+    }
+  }
+}

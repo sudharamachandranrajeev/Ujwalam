@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "sessionId": "s-2026-09-24-1830",
+  "timeSec": 1234.5,
+  "detectorId": "B1",
+  "packVersion": "0.2.2",
+  "mode": "br",
+  "roiId": "killfeed",
+  "roi": { "x0": 0.0, "y0": 0.17, "x1": 0.45, "y1": 0.29 },
+  "gameArea": { "w": 1566, "h": 1080, "x": 176, "y": 0 },
+  "ocrText": "<ign> > <victim-name>",
+  "confidence": 0.91,
+  "cropPath": "cache/crops/s-2026-09-24-1830/B1-001234500.png",
+  "nameMatch": { "required": true, "matched": true, "score": 0.95, "side": "killer" },
+  "suppressed": false,
+  "createdAt": "2026-10-27T12:00:00Z"
+}

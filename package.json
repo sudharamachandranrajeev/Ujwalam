@@ -12,7 +12,9 @@
     "validate:registry": "node tools/registry-validate.mjs registry",
     "legacy:verify": "node tools/legacy-verify.mjs",
     "test": "node --test \"tests/*.test.mjs\" \"tests/outputs/*.test.mjs\"",
-    "validate:outputs": "node tools/outputs-validate-presets.mjs"
+    "validate:outputs": "node tools/outputs-validate-presets.mjs",
+    "test:py": "python -I -m unittest discover -s tests/py -t tests/py -v",
+    "test:ocr": ".venv\\Scripts\\python.exe -I -m unittest discover -s tests/py -t tests/py -p \"test_g1*.py\" -v"
   },
   "devDependencies": {
     "ajv": "8.20.0"

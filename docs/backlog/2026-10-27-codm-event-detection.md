@@ -33,7 +33,7 @@ alongside chat, audio and hotkey.
 
 Evidence: `docs/evidence/2026-10-27-g1-live-reference.md`.
 
-- IGN and 3 variants: provided by the user. Kept out of git. At G0 they go into a gitignored `data/games/codm/profile.local.json`; the committed pack and tests use a placeholder IGN.
+- IGN and 3 variants: provided by the user. Kept out of git. They live in the gitignored `data/profile.local.json` (`games.codm`), with the brand and channel names; the committed pack and tests use placeholders (template `data/profile.example.json`).
 - Medal list, extended: the 10 above plus Revenge, Bloodthirsty, Saboteur, Berserker, Keep It Fresh (spelling UNVERIFIED). "Normal Kill" and First Blood are not added.
 - New detector: multi-kill / killstreak card ("4X MULTI-KILL", "On a 5 killstreak"). Name match required, because it also shows for other players.
 - Impact Play is a post-match replay. While it is on screen, medal detections are suppressed so they don't count twice. The replay marks the match's best sequence, which is matched back to the live timeline.

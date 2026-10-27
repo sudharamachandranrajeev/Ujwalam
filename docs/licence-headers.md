@@ -2,6 +2,8 @@
 
 Ujwalam is licensed GPL-2.0-or-later (`LICENSE`, `package.json`). The full licence text in `LICENSE` is still a placeholder (short form with SPDX id and FSF URL).
 
+Third-party packages and model files (OCR worker, from P2a A5) are listed with their licences in `docs/third-party-notices.md`.
+
 D3 (personal tool vs product) is settled as "personal first, product-ready architecture", but distribution (installer, GPL release) is deferred to P17, so licence work here is preparation only.
 
 ## Header rule

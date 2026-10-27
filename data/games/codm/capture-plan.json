@@ -1,0 +1,92 @@
+{
+  "$comment": "CODM capture plan (T1). Items still missing after G1 (P2a gate, 2026-10-27, docs/evidence/2026-10-27-p2a-gate.md §2). Not a blocker: the W1 coverage tracker collects each item whenever it happens in normal play or on stream and reports when it is captured. Ask the user for a dedicated capture only for items still missing at the W3 evaluation. The schema for this file arrives at W0. DMZ is out of scope (tag-only mode) and is not listed.",
+  "version": 1,
+  "game": "codm",
+  "dedicatedCaptureCheck": "W3",
+  "items": [
+    {
+      "id": "final_killcam_ign",
+      "mode": "mp",
+      "detector": "K1",
+      "what": "FINAL KILLCAM with the profile name shown as the killer",
+      "why": "K1 positive case and killer_name ROI position (UNVERIFIED)",
+      "status": "missing"
+    },
+    {
+      "id": "final_killcam_other",
+      "mode": "mp",
+      "detector": "K1",
+      "what": "FINAL KILLCAM with another player as the killer",
+      "why": "K1 negative case (logged, signal false)",
+      "status": "missing"
+    },
+    {
+      "id": "mp_final_scoreboard",
+      "mode": "mp",
+      "detector": "M1",
+      "what": "Final MP scoreboard frame",
+      "why": "Kill ground truth per match; M1 endscreen_row pairing",
+      "status": "missing"
+    },
+    {
+      "id": "br_revival",
+      "mode": "br",
+      "detector": "N2",
+      "what": "BR revival (Waiting for Revival Flight, then redeploy)",
+      "why": "N2 revival_top end-to-end, not only the waiting line",
+      "status": "missing"
+    },
+    {
+      "id": "br_multikill_banner",
+      "mode": "br",
+      "detector": "X1",
+      "what": "BR multi-kill banner",
+      "why": "X1 in BR: banner text and position (seen in MP only)",
+      "status": "missing"
+    },
+    {
+      "id": "br_win",
+      "mode": "br",
+      "detector": null,
+      "what": "BR win (#1 placement and end screen)",
+      "why": "BR winning end screen; only a non-win placement (#48/50) is covered. No BR end-screen detector yet (M1 runs in MP only)",
+      "status": "missing"
+    },
+    {
+      "id": "medal_relentless",
+      "mode": "mp",
+      "detector": "M3",
+      "medal": "Relentless",
+      "what": "Relentless medal banner",
+      "why": "Medal spelling and banner read (listed, not seen)",
+      "status": "missing"
+    },
+    {
+      "id": "medal_brutal",
+      "mode": "mp",
+      "detector": "M3",
+      "medal": "Brutal",
+      "what": "Brutal medal banner",
+      "why": "Medal spelling and banner read (listed, not seen)",
+      "status": "missing"
+    },
+    {
+      "id": "medal_nuclear",
+      "mode": "mp",
+      "detector": "M3",
+      "medal": "Nuclear",
+      "what": "Nuclear medal banner",
+      "why": "Medal spelling and banner read (listed, not seen)",
+      "status": "missing"
+    },
+    {
+      "id": "medal_ultimate_terminator",
+      "mode": "mp",
+      "detector": "M3",
+      "medal": "Ultimate Terminator",
+      "what": "Ultimate Terminator medal banner",
+      "why": "Medal spelling and banner read (listed, not seen)",
+      "status": "missing"
+    }
+  ]
+}

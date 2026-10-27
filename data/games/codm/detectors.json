@@ -1,0 +1,743 @@
+{
+  "$schema": "../detector-pack.schema.json",
+  "$comment": "CODM detector pack. All ROIs, texts and colours are UNVERIFIED until G1/G2 check them on corpus footage (source: docs/evidence/2026-10-27-g1-live-reference.md). Weights, windows and cooldowns are null: G3 proposes them from labelled data. No private names here; names come from data/profile.local.json at runtime. 0.2.0 (user decisions 2026-10-27): M3 medal classes, reference-medal dataset, K1 FINAL KILLCAM (name required), dmz tag-only mode. 0.2.1 (A5b, live full-screen capture 2, docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md): N1 labels and killer-name ROIs, M1 post-match screen, N2 revival line at the top, B1 minTextHeight, X1 5+ form, B2 N KILL(S) is the user count. 0.2.2 (user decision 2026-10-27, P2a gate): endScreenRule. A match can show several end screens (Domination shows MVP and Impact Play); each of M1, M2 and K1 is checked for the profile name separately, any with the name gives one match-level positive (all named screens listed as reasons), none named gives no signal, and no end screen is required.",
+  "version": "0.2.2",
+  "engineVersion": "0.1.0",
+  "game": {
+    "id": "codm",
+    "name": "Call of Duty: Mobile"
+  },
+  "ocr": {
+    "engine": "rapidocr",
+    "minConfidence": null
+  },
+  "gameArea": {
+    "method": "cropdetect",
+    "referenceAspect": 1.45,
+    "status": "verified"
+  },
+  "nameMatch": {
+    "profileKey": "codm",
+    "fuzzy": true,
+    "ignoreSeparators": true,
+    "minScore": null,
+    "status": "unverified"
+  },
+  "modes": [
+    "mp",
+    "br",
+    "dmz"
+  ],
+  "detectors": [
+    {
+      "id": "M1",
+      "name": "MVP + IGN",
+      "role": "positive",
+      "modes": [
+        "mp"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "postmatch_left",
+          "label": "Post-match MVP screen: MVP text and the name to its right",
+          "x0": 0.02,
+          "y0": 0.39,
+          "x1": 0.42,
+          "y1": 0.6,
+          "status": "verified",
+          "note": "Live capture 2: MVP at x 0.02-0.11, y 0.41-0.47; the name sits right of and below it (x 0.11-0.33, y 0.47-0.55) and slides in from the left."
+        },
+        {
+          "id": "endscreen_row",
+          "label": "End screen (MP scoreboard or top 3, BR squad cards): MVP badge on a player card, the name beside it",
+          "x0": 0.0,
+          "y0": 0.58,
+          "x1": 1.0,
+          "y1": 0.93,
+          "status": "verified",
+          "note": "Pair MVP with the name box on the same card (right of or below the badge). MP top-3 cards: badge at y 0.84-0.87 under the card. MP full scoreboard: one MVP badge per team (own team y 0.65, enemy y 0.84), so the badge must pair with the name on its own row. BR squad cards: badge at y 0.78-0.80 under the MVP's avatar, name at y 0.81-0.82. Lobby Like toasts also carry an MVP tag (y 0.28-0.38) and profile/history pages show MVP-like text; exclude lobby and profile frames."
+        }
+      ],
+      "patterns": [
+        "MVP"
+      ],
+      "nameRequired": true,
+      "nameSide": "any",
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Match-level boost. Post-match MVP screen (postmatch_left) verified on live capture 2. End screens carry MVP badges for every MVP (both teams, teammates), so the badge counts only when paired with the profile name on the same card. Lobby Like toasts and profile pages are excluded."
+    },
+    {
+      "id": "M2",
+      "name": "Impact Play + IGN",
+      "role": "positive",
+      "modes": [
+        "mp"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "header",
+          "label": "IMPACT PLAY header, top centre",
+          "x0": 0.42,
+          "y0": 0.04,
+          "x1": 0.58,
+          "y1": 0.12,
+          "status": "verified"
+        },
+        {
+          "id": "killed_by",
+          "label": "KILLED BY panel with name, top left",
+          "x0": 0.07,
+          "y0": 0.1,
+          "x1": 0.31,
+          "y1": 0.2,
+          "status": "verified"
+        }
+      ],
+      "patterns": [
+        "IMPACT PLAY"
+      ],
+      "nameRequired": true,
+      "nameSide": "any",
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Post-match replay of the best sequence (about 22 s) with a REC marker. While on screen it suppresses M3/M4 (rule suppress_medals_in_replay). Matched back to the live timeline later."
+    },
+    {
+      "id": "M3",
+      "name": "Medals",
+      "role": "positive",
+      "modes": [
+        "mp"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "banner",
+          "label": "Medal banner: badge and label, top centre (label text at y 0.21-0.30)",
+          "x0": 0.38,
+          "y0": 0.03,
+          "x1": 0.62,
+          "y1": 0.32,
+          "status": "verified"
+        },
+        {
+          "id": "text_stack",
+          "label": "Medal text stack with +N, right of centre",
+          "x0": 0.56,
+          "y0": 0.36,
+          "x1": 0.9,
+          "y1": 0.5,
+          "status": "verified"
+        }
+      ],
+      "medals": [
+        {
+          "text": "Double Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Triple Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Fury Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Frenzy Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Merciless",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Nuclear",
+          "class": "positive",
+          "status": "listed_not_seen",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Ultimate Terminator",
+          "class": "positive",
+          "status": "listed_not_seen",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Ultra Kill",
+          "class": "positive",
+          "status": "listed_not_seen",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Mega Kill",
+          "class": "positive",
+          "status": "listed_not_seen",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Super Kill",
+          "class": "positive",
+          "status": "listed_not_seen",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Ruthless",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Relentless",
+          "class": "positive",
+          "status": "unverified",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Brutal",
+          "class": "positive",
+          "status": "unverified",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Survivor",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Kingslayer",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Long Shot",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Headshot",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Major Assist",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Minor Assist",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "UAV Assist",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Hardpoint Kill",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Trophy System Destroy",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Revenge",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Bloodthirsty",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Saboteur",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Berserker",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Keep it Fresh",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        }
+      ],
+      "referenceDataset": {
+        "path": "data/datasets/codm-medals-reference",
+        "index": "index.jsonl",
+        "layout": "one subfolder per medal (slug of the medal text), crops inside, index.jsonl with one record per crop",
+        "gitignored": true
+      },
+      "ignoreTexts": [
+        "Normal Kill",
+        "First Blood"
+      ],
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Own HUD, no name match. Medals have a class: positive (clip signal, weight set by G3) or reference (weight 0, never a clip reason; detected and logged with crops into referenceDataset). Class and weight are data: promote a reference medal by changing its class to positive, clipReason to true and weight to a number. Relentless and Brutal are UNVERIFIED (not seen on footage). Bloodthirsty spelling seen on full-screen live capture 2. Normal Kill and First Blood are deliberately not medals. Suppressed while M2 is shown. User decisions 2026-10-27; the move of Revenge, Bloodthirsty, Saboteur, Berserker and Keep it Fresh to reference is an interpretation of the user's positive list (to confirm)."
+    },
+    {
+      "id": "M4",
+      "name": "Yellow +N points",
+      "role": "positive",
+      "modes": [
+        "mp"
+      ],
+      "method": "ocr_colour_mask",
+      "rois": [
+        {
+          "id": "text_stack",
+          "label": "Shares the M3 text stack ROI; +N sits at its left (x 0.58-0.66)",
+          "x0": 0.56,
+          "y0": 0.36,
+          "x1": 0.9,
+          "y1": 0.5,
+          "status": "verified"
+        }
+      ],
+      "regex": "^\\+\\d+$",
+      "colour": {
+        "name": "yellow",
+        "status": "unverified"
+      },
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Action-density signal: a burst of popups in a short window. Seen: +125, +127, +252, +254, +256, small +2/+4. Suppressed while M2 is shown. G1: post-match XP screens show +NNNN outside the stack; count +N only with a medal or kill text in the same stack."
+    },
+    {
+      "id": "M5",
+      "name": "MP kill feed",
+      "role": "positive",
+      "modes": [
+        "mp"
+      ],
+      "method": "ocr_line_parse",
+      "rois": [
+        {
+          "id": "killfeed",
+          "label": "Kill feed, bottom left, up to 3 lines",
+          "x0": 0.28,
+          "y0": 0.84,
+          "x1": 0.58,
+          "y1": 0.96,
+          "status": "verified"
+        }
+      ],
+      "nameRequired": true,
+      "nameSide": "killer",
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Killer, weapon icon, victim. Own lines: earlier corpus crops showed the user name in pale yellow; live capture 2 shows own lines on a red/pink background (colour not measured, UNVERIFIED). Lines reach x 0.62 (2% of lines past 0.58); the scan slack covers it."
+    },
+    {
+      "id": "B1",
+      "name": "BR kill feed",
+      "role": "positive",
+      "modes": [
+        "br"
+      ],
+      "method": "ocr_line_parse",
+      "rois": [
+        {
+          "id": "killfeed",
+          "label": "Kill feed, top left, above the squad list",
+          "x0": 0.0,
+          "y0": 0.17,
+          "x1": 0.45,
+          "y1": 0.29,
+          "status": "verified",
+          "note": "Killer names start at x 0.01; the vertical cutout shows x >= 0.111 only, so the killer side is cut there. Full screen: the squad list (with the user's own name) shares this band in smaller text (height 0.01-0.02); feed text is 0.025-0.04 high, so boxes under minTextHeight are ignored.",
+          "minTextHeight": 0.021
+        }
+      ],
+      "nameRequired": true,
+      "nameSide": "killer",
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Line: killer, weapon icon, knock-or-kill icon (falling figure = knock, skull = elimination), victim, count. Icon detection not specified yet. Own lines have an orange background on the corpus; on live capture 2 the lines of the user and squad mates have a purple bar (colour not measured, UNVERIFIED). G1: in the vertical cutout the killer side is cut off; own kills show only as an orange line with the victim name. Live capture 2: an own-event notification at top centre (x 0.28-0.46, y 0.17-0.21) shows 'attacker [knock|skull] You' when the user is downed or killed and '[knock] victim' when the user knocks someone."
+    },
+    {
+      "id": "X1",
+      "name": "Multi-kill / killstreak card",
+      "role": "positive",
+      "modes": [
+        "mp",
+        "br"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "card_mp",
+          "label": "Card, left of centre: score, name, nX MULTI-KILL / On a N killstreak",
+          "x0": 0.33,
+          "y0": 0.55,
+          "x1": 0.58,
+          "y1": 0.68,
+          "status": "verified",
+          "mode": "mp"
+        },
+        {
+          "id": "banner_br",
+          "label": "Squad banner, top centre: teammate or user name and nX MULTI-KILL / On a N killstreak",
+          "x0": 0.36,
+          "y0": 0.0,
+          "x1": 0.64,
+          "y1": 0.12,
+          "status": "verified",
+          "mode": "br"
+        }
+      ],
+      "regex": "^(\\d+X|\\d+\\+) ?MULTI-KILL$",
+      "patterns": [
+        "On a 5 killstreak",
+        "On a 10 killstreak",
+        "On a 20 killstreak",
+        "On a 25 killstreak"
+      ],
+      "nameRequired": true,
+      "nameSide": "any",
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Shows for other players too, so the name match is required. Text forms seen: nX MULTI-KILL, 5+ MULTI-KILL (BR), On a N killstreak! with N 5, 10, 20, 25 (other N values UNVERIFIED). In BR the squad list always shows the user's name, so the name must be inside the banner ROI, not anywhere on the frame."
+    },
+    {
+      "id": "B2",
+      "name": "Own-kill counter text",
+      "role": "positive",
+      "modes": [
+        "br"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "counter",
+          "label": "Yellow ELIMINATED / KNOCKED DOWN and N KILL(S), right of centre (animated zoom-in)",
+          "x0": 0.62,
+          "y0": 0.36,
+          "x1": 0.92,
+          "y1": 0.5,
+          "status": "verified"
+        }
+      ],
+      "patterns": [
+        "ELIMINATED",
+        "KNOCKED DOWN"
+      ],
+      "regex": "^\\d+ KILLS?$",
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Own HUD: no name match. ELIMINATED, SQUAD ELIMINATED, ASSIST ELIMINATED or KNOCKED DOWN, right of centre, animated zoom-in. KNOCKED DOWN sits at y 0.39-0.44, ELIMINATED at y 0.43-0.47 with N DAMAGE DEALT or N KILL(S) beneath (to y 0.50). Live capture 2: that N KILL(S) is the user's own count (the corpus case near the top was a player banner). OCR often garbles DOWN (DOON, DORN)."
+    },
+    {
+      "id": "K1",
+      "name": "FINAL KILLCAM + killer name",
+      "role": "positive",
+      "modes": [
+        "mp"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "label",
+          "label": "FINAL KILLCAM label, top centre",
+          "x0": 0.45,
+          "y0": 0.055,
+          "x1": 0.56,
+          "y1": 0.093,
+          "status": "unverified",
+          "note": "Seen in 1 corpus clip / 5 frames (G1); box is the measured text extent."
+        },
+        {
+          "id": "killer_name",
+          "label": "Killer name shown with the FINAL KILLCAM label",
+          "x0": 0.35,
+          "y0": 0.05,
+          "x1": 0.65,
+          "y1": 0.18,
+          "status": "unverified",
+          "note": "Position UNVERIFIED: wide band under and around the label until a capture shows where the killer name sits."
+        }
+      ],
+      "patterns": [
+        "FINAL KILLCAM"
+      ],
+      "nameRequired": true,
+      "nameSide": "killer",
+      "signalRule": "name_only",
+      "logUnmatched": true,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "User decision 2026-10-27: positive signal ONLY when the streamer name (IGN or any profile variant) is shown as the killer. Without the name there is no signal. Both cases are logged (matched true and false) as evidence records for tuning. Never an N1 event."
+    },
+    {
+      "id": "N1",
+      "name": "Killcam",
+      "role": "negative",
+      "modes": [
+        "mp",
+        "br"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "label_mp",
+          "label": "KILLCAM label, top left (MP)",
+          "x0": 0.02,
+          "y0": 0.02,
+          "x1": 0.2,
+          "y1": 0.09,
+          "status": "verified",
+          "mode": "mp",
+          "note": "Live capture 2: KILLCAM at x 0.04-0.13, y 0.03-0.08 in 11/11 killcam frames."
+        },
+        {
+          "id": "label_br",
+          "label": "KILL CAM label, top centre (BR)",
+          "x0": 0.44,
+          "y0": 0.0,
+          "x1": 0.56,
+          "y1": 0.07,
+          "status": "verified",
+          "mode": "br",
+          "note": "Live capture 2: KILL CAM at x 0.46-0.54, y 0.02-0.05 in 3/3 kill cams."
+        },
+        {
+          "id": "killer_header",
+          "label": "Attacker name in the header 'attacker N VS N victim', top centre (MP); the user name sits right of VS",
+          "mode": "mp",
+          "status": "verified",
+          "x0": 0.33,
+          "x1": 0.48,
+          "y0": 0.0,
+          "y1": 0.06,
+          "note": "Live capture 2: attacker name at x 0.35-0.46, y 0.01-0.05; victim (user) at x 0.55-0.64."
+        },
+        {
+          "id": "killer_card",
+          "label": "KILLED BY card with the attacker name, bottom left (MP)",
+          "mode": "mp",
+          "status": "verified",
+          "x0": 0.24,
+          "x1": 0.4,
+          "y0": 0.85,
+          "y1": 0.9,
+          "note": "Live capture 2: name at x 0.25-0.38, y 0.86-0.90. An attackers panel (x 0.01-0.26, y 0.36-0.45) also lists names with damage."
+        },
+        {
+          "id": "killer_br",
+          "label": "Killer:<name> line, bottom centre (BR kill cam)",
+          "mode": "br",
+          "status": "verified",
+          "x0": 0.36,
+          "x1": 0.54,
+          "y0": 0.83,
+          "y1": 0.88,
+          "note": "Live capture 2: x 0.38-0.51, y 0.84-0.87 in 3/3 kill cams; Weapon:<name> sits left of it on the same row. Other Killer: text in BR is an achievement title, not the kill cam."
+        }
+      ],
+      "patterns": [
+        "KILLCAM"
+      ],
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "The user died. Negative signal; never raises a score. MP KILLCAM label is top left (mostly outside the vertical cutout); BR shows KILL CAM top centre. FINAL KILLCAM (MP, top centre, x 0.45-0.56, y 0.055-0.093) is the match-ending kill, not a death of the user, so it is not an N1 event (see K1). Killer-name ROIs are read for logging; N1 never needs a name match."
+    },
+    {
+      "id": "N2",
+      "name": "Downed / redeploy",
+      "role": "negative",
+      "modes": [
+        "br"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "help_me",
+          "label": "HELP ME button, right",
+          "x0": 0.83,
+          "y0": 0.68,
+          "x1": 0.93,
+          "y1": 0.76,
+          "status": "verified"
+        },
+        {
+          "id": "revival",
+          "label": "Waiting for Revival Flight, bottom centre (spectating)",
+          "x0": 0.4,
+          "y0": 0.72,
+          "x1": 0.6,
+          "y1": 0.79,
+          "status": "verified",
+          "note": "Live capture 2: y 0.74 while spectating a teammate."
+        },
+        {
+          "id": "revival_top",
+          "label": "Waiting for Revival Flight, top centre (during the kill cam)",
+          "status": "verified",
+          "x0": 0.4,
+          "x1": 0.6,
+          "y0": 0.08,
+          "y1": 0.13,
+          "note": "Live capture 2: x 0.43-0.57, y 0.09-0.12 with a countdown below."
+        }
+      ],
+      "patterns": [
+        "HELP ME",
+        "Waiting for Revival Flight"
+      ],
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "The user is down or waiting to redeploy. Negative signal or end-of-life marker."
+    }
+  ],
+  "suppressionRules": [
+    {
+      "id": "suppress_medals_in_replay",
+      "suppress": [
+        "M3",
+        "M4"
+      ],
+      "while": "M2",
+      "reason": "The Impact Play replay (REC overlay) repeats the match medals; counting them again would double count."
+    }
+  ],
+  "endScreenRule": {
+    "id": "end_screens_per_match",
+    "detectors": [
+      "M1",
+      "M2",
+      "K1"
+    ],
+    "nameCheck": "each",
+    "matchScore": "once",
+    "reasons": "all_named",
+    "noneNamed": "no_signal",
+    "screenRequired": false,
+    "note": "User decision 2026-10-27. Detect every end screen that appears (MVP, Impact Play, FINAL KILLCAM); a match may show more than one. Check the profile name on each screen separately. Each screen with the name is positive, but it counts once per match for scoring, and every named screen is listed as a reason. No screen with the name means no signal. No end screen has to appear."
+  },
+  "taggingOnlyModes": [
+    "dmz"
+  ]
+}

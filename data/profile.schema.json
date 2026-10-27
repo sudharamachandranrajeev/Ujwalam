@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/profile.schema.json",
+  "title": "Ujwalam user profile (streamer + per-game names)",
+  "description": "Validates data/profile.example.json (placeholders) and the gitignored data/profile.local.json (real values). Supersedes the data/games/<game-id>/profile.json location in the game-event-detection amendment: user values live in one profile file, detector packs live in data/games/<game-id>/detectors.json. Every string in the local file is a private term for the git hooks.",
+  "type": "object",
+  "required": ["version", "streamer", "games"],
+  "additionalProperties": false,
+  "properties": {
+    "$comment": { "type": "string" },
+    "$schema": { "type": "string" },
+    "version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "streamer": {
+      "type": "object",
+      "required": ["name"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "brand": { "type": "string" },
+        "variants": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "channels": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "twitch": { "type": "string" },
+        "youtube_handle": { "type": "string" },
+        "youtube_channel_id": { "type": "string" },
+        "kick": { "type": "string" },
+        "discord_invite": { "type": "string" }
+      }
+    },
+    "games": {
+      "type": "object",
+      "description": "Keyed by game id; the id selects data/games/<id>/detectors.json.",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "$ref": "#/$defs/gameProfile" }
+    },
+    "paths": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "private_terms": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "gameProfile": {
+      "type": "object",
+      "required": ["ign"],
+      "additionalProperties": false,
+      "properties": {
+        "ign": { "type": "string", "minLength": 1 },
+        "variants": {
+          "type": "array",
+          "description": "Clan tags, separator-glyph variants and common OCR misreads of the IGN.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "clan_tag": { "type": ["string", "null"] },
+        "default_mode": { "enum": ["mp", "br", "auto"] },
+        "capture_canvas": { "enum": ["H", "V", "both"] }
+      }
+    }
+  }
+}
