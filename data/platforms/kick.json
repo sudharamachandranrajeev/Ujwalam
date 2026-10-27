@@ -1,0 +1,136 @@
+{
+  "id": "kick",
+  "name": "Kick",
+  "maxWidth": {
+    "value": 1920,
+    "severity": "error",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "1080p60 hard max. Official page agrees: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com Severity error because: Kick help: \"KICK currently supports a maximum resolution of 1920x1080.\"; user reference: 1080p60 hard max."
+  },
+  "maxHeight": {
+    "value": 1080,
+    "severity": "error",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "Official page agrees: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com Severity error because: Same as maxWidth."
+  },
+  "portrait": {
+    "value": true,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Not stated on the page. Long/short side rule applies, so 1080x1920 is judged against 1920x1080."
+  },
+  "maxFps": {
+    "value": 60,
+    "severity": "error",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "Official page agrees: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com Severity error because: Kick help lists max 60 fps; user reference: 1080p60 hard max."
+  },
+  "videoCodecs": {
+    "value": [
+      "h264"
+    ],
+    "severity": "error",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "H.264 only. Official page agrees: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com Severity error because: Kick help: \"KICK currently only supports X264 / H.264 encoding.\""
+  },
+  "videoBitrateKbps": {
+    "min": {
+      "value": 1000,
+      "severity": "error",
+      "source": "https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com",
+      "checked": "2026-10-26",
+      "note": "\"1,000 kbps to 8,000 kbps\" Severity error because: Kick help: settings range \"1,000 kbps to 8,000 kbps\"."
+    },
+    "max": {
+      "value": 8000,
+      "severity": "error",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "Official page agrees: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com Severity error because: Kick help: \"KICK supports a bitrate of up to 8,000 kbps.\"; user reference: 8000 max."
+    }
+  },
+  "keyframeIntervalSec": {
+    "max": {
+      "value": 2,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "2 s. Official presets show 2 s: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com"
+    },
+    "recommended": {
+      "value": 2,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "Official page agrees: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com"
+    }
+  },
+  "protocols": {
+    "value": [
+      "rtmps"
+    ],
+    "severity": "warning",
+    "source": "https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com",
+    "checked": "2026-10-26",
+    "note": "Page example server uses RTMPS on port 443. Plain RTMP not documented."
+  },
+  "multitrackVideo": {
+    "value": false,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Not found."
+  },
+  "audioCodecs": {
+    "value": [
+      "aac"
+    ],
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "AAC."
+  },
+  "audioBitrateKbps": {
+    "max": {
+      "value": null,
+      "severity": "warning",
+      "unverified": true,
+      "note": "Page: stereo at max 48 kHz; no audio bitrate stated."
+    },
+    "recommended": {
+      "value": 160,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "AAC 160 kbps, RECOMMENDED."
+    }
+  },
+  "audioTracksMax": {
+    "value": null,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Page says select \"Stereo\" only; track count not stated."
+  },
+  "notes": "Video ingest limits only. CBR required per the cited page.",
+  "rateControl": {
+    "value": [
+      "cbr"
+    ],
+    "severity": "error",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "CBR only; VBR not supported. Official page agrees: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com Severity error because: Kick help: \"You must set your streaming software to CBR.\"; user reference: VBR not supported."
+  },
+  "audioSampleRateHz": {
+    "recommended": {
+      "value": 48000,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "48 kHz. Official page agrees: stereo at max 48 kHz: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com"
+    }
+  }
+}

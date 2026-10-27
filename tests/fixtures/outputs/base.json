@@ -1,0 +1,7 @@
+{
+  "name": "base fixture",
+  "canvases": [{ "id": "H", "w": 1920, "h": 1080, "fps": 60 }],
+  "encoders": [{ "id": "r1", "canvas": "H", "w": 1920, "h": 1080, "codec": "h264", "bitrate": 6000, "rc": "cbr", "gop_sec": 2 }],
+  "audio": { "tracks": [{ "id": "master", "name": "Master Track", "codec": "aac", "bitrate": 160, "sampleRate": 48000 }] },
+  "sinks": [{ "id": "s1", "platform": "testplat", "encoder": "r1", "proto": "rtmps", "priority": 1 }]
+}

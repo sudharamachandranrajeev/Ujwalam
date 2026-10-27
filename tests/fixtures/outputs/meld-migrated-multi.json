@@ -1,0 +1,76 @@
+{
+  "name": "Multi — Twitch + Kick (shared low-bitrate rung)",
+  "superseded": {
+    "by": "data/outputs/presets/youtube-*.json",
+    "date": "2026-10-27",
+    "reason": "User decision 2026-10-27: highest quality direct to YouTube, shared 6000 kbps GPU-scaled re-encode for Twitch + Kick. MELD MULTI was a push to Meld cloud relay, which Ujwalam does not have; values came from a six-month-old backup. Kept only as a validator fixture."
+  },
+  "canvases": [
+    {
+      "id": "H",
+      "w": 1920,
+      "h": 1080,
+      "fps": 60
+    }
+  ],
+  "encoders": [
+    {
+      "id": "multi",
+      "canvas": "H",
+      "w": 1920,
+      "h": 1080,
+      "codec": "h264",
+      "bitrate": 7500,
+      "rc": "cbr",
+      "gop_sec": 2,
+      "encoder": "nvenc",
+      "encoderOptions": {
+        "preset": "P7",
+        "tuning": "ultra-low-latency",
+        "bframes": 1,
+        "container": "flv",
+        "nvencEncoderId": "NVENCHardwareEncoder",
+        "peakBitrate": 0
+      },
+      "migration": {
+        "from": "Meld prefs.bak.json outputs[MELD MULTI] (2026-04-07 backup)",
+        "status": "migrated",
+        "note": "Values from a 2026-04-07 Meld prefs backup; current Meld settings may differ (UNVERIFIED). rc is not stated in Meld; \"cbr\" is set here and is UNVERIFIED. In Meld this output pushed to Meld's cloud multistream relay, which fanned out to Twitch and Kick; Ujwalam has no relay, so it delivers to both directly. Meld scale -1x-1 = canvas 1920x1080; frame rate -1 = canvas 60."
+      }
+    }
+  ],
+  "audio": {
+    "tracks": [
+      {
+        "id": "master",
+        "name": "Master Track",
+        "codec": "aac",
+        "bitrate": 160,
+        "sampleRate": 48000
+      },
+      {
+        "id": "vod",
+        "name": "VOD Track",
+        "codec": "aac",
+        "bitrate": 160,
+        "sampleRate": 48000
+      }
+    ]
+  },
+  "sinks": [
+    {
+      "id": "twitch",
+      "platform": "twitch",
+      "encoder": "multi",
+      "proto": "rtmp",
+      "priority": 1
+    },
+    {
+      "id": "kick",
+      "platform": "kick",
+      "encoder": "multi",
+      "proto": "rtmps",
+      "priority": 2
+    }
+  ]
+}

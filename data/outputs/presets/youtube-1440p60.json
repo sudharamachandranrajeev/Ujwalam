@@ -1,0 +1,95 @@
+{
+  "name": "YouTube 1440p60 + Twitch/Kick re-encode",
+  "canvases": [
+    {
+      "id": "H",
+      "w": 2560,
+      "h": 1440,
+      "fps": 60
+    },
+    {
+      "id": "V",
+      "w": 1080,
+      "h": 1920,
+      "fps": 60
+    }
+  ],
+  "encoders": [
+    {
+      "id": "yt-h",
+      "canvas": "H",
+      "w": 2560,
+      "h": 1440,
+      "codec": "h264",
+      "bitrate": 34000,
+      "rc": "cbr",
+      "gop_sec": 2,
+      "encoder": "nvenc"
+    },
+    {
+      "id": "reencode-tk",
+      "canvas": "H",
+      "w": 1920,
+      "h": 1080,
+      "fps": 60,
+      "codec": "h264",
+      "bitrate": 6000,
+      "rc": "cbr",
+      "gop_sec": 2,
+      "encoder": "nvenc"
+    },
+    {
+      "id": "vert",
+      "canvas": "V",
+      "w": 1080,
+      "h": 1920,
+      "codec": "h264",
+      "bitrate": 7500,
+      "rc": "cbr",
+      "gop_sec": 2,
+      "encoder": "nvenc"
+    }
+  ],
+  "audio": {
+    "tracks": [
+      {
+        "id": "master",
+        "name": "Master Track",
+        "codec": "aac",
+        "bitrate": 160,
+        "sampleRate": 48000
+      }
+    ]
+  },
+  "sinks": [
+    {
+      "id": "youtube-h",
+      "platform": "youtube",
+      "encoder": "yt-h",
+      "proto": "rtmps",
+      "priority": 1
+    },
+    {
+      "id": "youtube-v",
+      "platform": "youtube",
+      "encoder": "vert",
+      "proto": "rtmps",
+      "priority": 2
+    },
+    {
+      "id": "twitch",
+      "platform": "twitch",
+      "encoder": "reencode-tk",
+      "proto": "rtmp",
+      "priority": 3
+    },
+    {
+      "id": "kick",
+      "platform": "kick",
+      "encoder": "reencode-tk",
+      "proto": "rtmps",
+      "priority": 4
+    }
+  ],
+  "note": "Encode cost: 3 NVENC sessions (yt-h, reencode-tk, vert). 1440p/2160p performance on RTX 4050 Laptop UNVERIFIED until O2. Total egress 54140 kbps (video 53500 + audio 160 x 4 sinks). reencode-tk is a second rung GPU-scaled from the same H canvas, not a decode of the YouTube stream."
+}

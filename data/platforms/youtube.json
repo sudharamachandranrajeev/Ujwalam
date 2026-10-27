@@ -1,0 +1,151 @@
+{
+  "id": "youtube",
+  "name": "YouTube Live",
+  "maxWidth": {
+    "value": 3840,
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "Best 1440p60 or 4K60. Official page agrees (landscape max): https://support.google.com/youtube/answer/2853702"
+  },
+  "maxHeight": {
+    "value": 2160,
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "Official page agrees: https://support.google.com/youtube/answer/2853702"
+  },
+  "portrait": {
+    "value": true,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Fetched page text does not mention vertical/portrait. Landscape max is applied by long/short side, so 1080x1920 is judged against 3840x2160."
+  },
+  "maxFps": {
+    "value": 60,
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "Official page agrees: https://support.google.com/youtube/answer/2853702"
+  },
+  "videoCodecs": {
+    "value": [
+      "h264",
+      "hevc",
+      "av1"
+    ],
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "H.264, HEVC, AV1 supported. Official page lists HEVC/AV1: https://support.google.com/youtube/answer/2853702"
+  },
+  "videoBitrateKbps": {
+    "min": {
+      "value": null,
+      "severity": "warning",
+      "unverified": true,
+      "note": "Table gives per-resolution minimums (e.g. 720p 3 Mbps, 1080p60 6 Mbps for the second column); global minimum not stated and column-to-codec mapping unconfirmed."
+    },
+    "max": {
+      "value": 50000,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "Highest recommended (2160p60 H.264). Official page agrees: https://support.google.com/youtube/answer/2853702"
+    },
+    "recommendedByResolution": {
+      "value": {
+        "1080p60": 17000,
+        "1440p60": 34000,
+        "2160p60": 50000
+      },
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "H.264 recommended kbps per resolution. Official table (second column) agrees: https://support.google.com/youtube/answer/2853702"
+    }
+  },
+  "keyframeIntervalSec": {
+    "max": {
+      "value": 4,
+      "severity": "error",
+      "source": "https://support.google.com/youtube/answer/2853702",
+      "checked": "2026-10-26",
+      "note": "Hard max 4 s. Severity error because: YouTube encoder settings page: \"Do not exceed 4 seconds\" (recommended 2 s is a separate warning rule)."
+    },
+    "recommended": {
+      "value": 2,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "Official page agrees: https://support.google.com/youtube/answer/2853702"
+    }
+  },
+  "protocols": {
+    "value": [
+      "rtmp",
+      "rtmps"
+    ],
+    "severity": "warning",
+    "source": "https://support.google.com/youtube/answer/2853702",
+    "checked": "2026-10-26",
+    "note": "RTMP/RTMPS; HLS also exists (not modelled)."
+  },
+  "multitrackVideo": {
+    "value": false,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Not found in the fetched page."
+  },
+  "audioCodecs": {
+    "value": [
+      "aac",
+      "mp3"
+    ],
+    "severity": "warning",
+    "source": "https://support.google.com/youtube/answer/2853702",
+    "checked": "2026-10-26",
+    "note": "\"AAC or MP3\""
+  },
+  "audioBitrateKbps": {
+    "max": {
+      "value": null,
+      "severity": "warning",
+      "unverified": true,
+      "note": "Page gives 128 kbps stereo / 384 kbps 5.1 as recommendations, not caps."
+    },
+    "recommended": {
+      "value": 128,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "AAC 128 kbps stereo is RECOMMENDED, not a max. Official page agrees: https://support.google.com/youtube/answer/2853702"
+    }
+  },
+  "audioTracksMax": {
+    "value": null,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Not found in the fetched page."
+  },
+  "notes": "Bitrates per resolution are recommendations; max is the 2160p60 recommendation. Audio values are recommended, not caps.",
+  "rateControl": {
+    "value": [
+      "cbr"
+    ],
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "CBR.",
+    "message": "YouTube lists CBR; VBR may cause buffering"
+  },
+  "audioSampleRateHz": {
+    "recommended": {
+      "value": 44100,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "AAC 44.1 kHz stereo, RECOMMENDED. Official page agrees: https://support.google.com/youtube/answer/2853702"
+    }
+  }
+}

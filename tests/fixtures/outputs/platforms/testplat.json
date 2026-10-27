@@ -1,0 +1,110 @@
+{
+  "id": "testplat",
+  "name": "Test platform (fixture)",
+  "maxWidth": {
+    "value": 1920,
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "maxHeight": {
+    "value": 1080,
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "maxFps": {
+    "value": 60,
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "videoCodecs": {
+    "value": [
+      "h264"
+    ],
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "videoBitrateKbps": {
+    "min": {
+      "value": 1000,
+      "severity": "error",
+      "source": "fixture",
+      "checked": "2026-10-26"
+    },
+    "max": {
+      "value": 8000,
+      "severity": "error",
+      "source": "fixture",
+      "checked": "2026-10-26"
+    }
+  },
+  "keyframeIntervalSec": {
+    "max": {
+      "value": 4,
+      "severity": "error",
+      "source": "fixture",
+      "checked": "2026-10-26"
+    }
+  },
+  "protocols": {
+    "value": [
+      "rtmps"
+    ],
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "multitrackVideo": {
+    "value": false,
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "audioCodecs": {
+    "value": [
+      "aac"
+    ],
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "audioBitrateKbps": {
+    "max": {
+      "value": 192,
+      "severity": "error",
+      "source": "fixture",
+      "checked": "2026-10-26"
+    },
+    "recommended": {
+      "value": 160,
+      "severity": "error",
+      "source": "fixture",
+      "checked": "2026-10-26"
+    }
+  },
+  "audioTracksMax": {
+    "value": 1,
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "rateControl": {
+    "value": [
+      "cbr"
+    ],
+    "severity": "error",
+    "source": "fixture",
+    "checked": "2026-10-26"
+  },
+  "audioSampleRateHz": {
+    "recommended": {
+      "value": 48000,
+      "severity": "error",
+      "source": "fixture",
+      "checked": "2026-10-26"
+    }
+  }
+}

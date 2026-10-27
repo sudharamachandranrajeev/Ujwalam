@@ -34,5 +34,8 @@ secrets/
 !data/labels/
 !data/labels/.gitkeep
 
+# Meld session exports (user data: device ids, scene layout). Never committed.
+session file/
+
 # Private reference copy; never committed or distributed. Integrity: legacy.manifest.sha256
 legacy/

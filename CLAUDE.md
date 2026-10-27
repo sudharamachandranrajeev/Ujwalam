@@ -49,7 +49,8 @@ Agreed during planning (2026-10-26). Treat as settled unless the user reopens th
 - **Alert fixtures:** from P3, record every real platform event as an anonymised test fixture for P9.
 - **Phase splits:** P5 → P5a (scenes, layers, inspector, H/V) and P5b (mixer, transitions with audio routing, undo, autosave). P7 → P7a (engine, SDK, guards, Chat Charge, GG Burst) and P7b (other parity presets, similar picker, pools).
 - **P2 corpus:** `<clips-corpus>` is read-only (never modify, move or delete). Sessions are split by session, not clip; ≥ 2 sessions held out. The analysis cache goes in a folder the user picks, with its size estimated first. No invented labels or synthetic chat.
-- **MELD MULTI** = one shared low-bitrate H rung feeding the `twitch` and `kick` sinks; settings migrated from the Meld session, never guessed.
+- **MELD MULTI** = one shared low-bitrate H rung feeding the `twitch` and `kick` sinks; settings migrated from the Meld session, never guessed. Superseded 2026-10-27: Meld's MELD MULTI was a 7.5 Mbps push to Meld's cloud relay (from a 2026-04-07 prefs backup); its values are kept only as a test fixture.
+- **Output topology (2026-10-27):** highest-quality H output goes directly to YouTube (presets for 1080p60 17 Mbps, 1440p60 34 Mbps, 2160p60 50 Mbps). A built-in re-encoder feeds Twitch and Kick: one shared 1080p60 H.264 CBR 6000 kbps rung, GPU-scaled from the same composited H canvas — never a decode of the YouTube stream. Platform limits from the user's reference table (2026-10-27) are recorded in `data/platforms/` as `source: user-reference-2026-10-27`.
 - **§8 "P0 priority"** for H+V multistream means top priority, delivered in P6; P1 proves H and V recording.
 
 ## Model routing

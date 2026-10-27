@@ -1,0 +1,304 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/output-config.schema.json",
+  "title": "Ujwalam output config",
+  "type": "object",
+  "required": [
+    "canvases",
+    "encoders",
+    "sinks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "canvases": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "w",
+          "h",
+          "fps"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "w": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "h": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fps": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          }
+        }
+      }
+    },
+    "encoders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "canvas": {
+            "type": "string",
+            "minLength": 1
+          },
+          "w": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "h": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "fps": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "codec": {
+            "enum": [
+              "h264",
+              "hevc",
+              "av1"
+            ]
+          },
+          "bitrate": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "kbps"
+          },
+          "rc": {
+            "enum": [
+              "cbr",
+              "vbr",
+              "cqp"
+            ]
+          },
+          "gop_sec": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "encoder": {
+            "type": "string",
+            "minLength": 1,
+            "description": "e.g. nvenc, x264"
+          },
+          "encoderOptions": {
+            "type": "object",
+            "description": "Encoder-specific settings (preset, tuning, b-frames, container). Part of the dedup key."
+          },
+          "migration": {
+            "type": "object",
+            "required": [
+              "from",
+              "status"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "migrated"
+                ]
+              },
+              "source": {
+                "type": "string"
+              },
+              "note": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "anyOf": [
+          {
+            "required": [
+              "id",
+              "canvas",
+              "w",
+              "h",
+              "codec",
+              "bitrate",
+              "rc",
+              "gop_sec"
+            ],
+            "properties": {
+              "id": true,
+              "canvas": true,
+              "w": true,
+              "h": true,
+              "codec": true,
+              "bitrate": true,
+              "rc": true,
+              "gop_sec": true
+            }
+          },
+          {
+            "required": [
+              "id",
+              "canvas",
+              "migration"
+            ],
+            "properties": {
+              "id": true,
+              "canvas": true,
+              "migration": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "const": "pending"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    "audio": {
+      "type": "object",
+      "required": [
+        "tracks"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tracks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "name",
+              "codec",
+              "bitrate",
+              "sampleRate"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "codec": {
+                "enum": [
+                  "aac"
+                ]
+              },
+              "bitrate": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "kbps"
+              },
+              "sampleRate": {
+                "type": "integer",
+                "minimum": 8000,
+                "description": "Hz"
+              }
+            }
+          }
+        }
+      }
+    },
+    "sinks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "platform",
+          "encoder",
+          "proto",
+          "priority"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "platform": {
+            "type": "string",
+            "minLength": 1
+          },
+          "encoder": {
+            "type": "string",
+            "minLength": 1
+          },
+          "proto": {
+            "enum": [
+              "rtmp",
+              "rtmps",
+              "srt",
+              "file"
+            ]
+          },
+          "priority": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1 = highest"
+          },
+          "audioTracks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Track ids; omitted = all tracks"
+          }
+        }
+      }
+    },
+    "note": {
+      "type": "string"
+    },
+    "superseded": {
+      "type": "object",
+      "required": [
+        "by",
+        "date",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "description": "Fixture-only marker for configs that were replaced; ignored by the validator."
+    }
+  }
+}

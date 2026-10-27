@@ -1,0 +1,79 @@
+{
+  "name": "Output graph example (docs/plan/2026-10-26-output-graph.md)",
+  "canvases": [
+    {
+      "id": "H",
+      "w": 3840,
+      "h": 2160,
+      "fps": 60
+    },
+    {
+      "id": "V",
+      "w": 1080,
+      "h": 1920,
+      "fps": 60
+    }
+  ],
+  "encoders": [
+    {
+      "id": "uhd",
+      "canvas": "H",
+      "w": 3840,
+      "h": 2160,
+      "codec": "hevc",
+      "bitrate": 20000,
+      "rc": "cbr",
+      "gop_sec": 2
+    },
+    {
+      "id": "multi",
+      "canvas": "H",
+      "w": 1920,
+      "h": 1080,
+      "codec": "h264",
+      "bitrate": 6000,
+      "rc": "cbr",
+      "gop_sec": 2
+    },
+    {
+      "id": "vert",
+      "canvas": "V",
+      "w": 1080,
+      "h": 1920,
+      "codec": "h264",
+      "bitrate": 6000,
+      "rc": "cbr",
+      "gop_sec": 2
+    }
+  ],
+  "sinks": [
+    {
+      "id": "youtube-h",
+      "platform": "youtube",
+      "encoder": "uhd",
+      "proto": "rtmps",
+      "priority": 1
+    },
+    {
+      "id": "youtube-v",
+      "platform": "youtube",
+      "encoder": "vert",
+      "proto": "rtmps",
+      "priority": 2
+    },
+    {
+      "id": "twitch",
+      "platform": "twitch",
+      "encoder": "multi",
+      "proto": "rtmp",
+      "priority": 3
+    },
+    {
+      "id": "kick",
+      "platform": "kick",
+      "encoder": "multi",
+      "proto": "rtmps",
+      "priority": 4
+    }
+  ]
+}

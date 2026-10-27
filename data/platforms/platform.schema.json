@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/platform.schema.json",
+  "title": "Ujwalam platform capability entry",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "maxWidth",
+    "maxHeight",
+    "maxFps",
+    "videoCodecs",
+    "videoBitrateKbps",
+    "keyframeIntervalSec",
+    "protocols",
+    "multitrackVideo",
+    "audioCodecs",
+    "audioBitrateKbps",
+    "audioTracksMax"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "maxWidth": {
+      "$ref": "#/$defs/sourced"
+    },
+    "maxHeight": {
+      "$ref": "#/$defs/sourced"
+    },
+    "portrait": {
+      "$ref": "#/$defs/sourced"
+    },
+    "maxFps": {
+      "$ref": "#/$defs/sourced"
+    },
+    "videoCodecs": {
+      "$ref": "#/$defs/sourced"
+    },
+    "videoBitrateKbps": {
+      "type": "object",
+      "required": [
+        "min",
+        "max"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "min": {
+          "$ref": "#/$defs/sourced"
+        },
+        "max": {
+          "$ref": "#/$defs/sourced"
+        },
+        "recommendedByResolution": {
+          "$ref": "#/$defs/sourced"
+        }
+      }
+    },
+    "keyframeIntervalSec": {
+      "type": "object",
+      "required": [
+        "max"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "$ref": "#/$defs/sourced"
+        },
+        "exact": {
+          "$ref": "#/$defs/sourced"
+        },
+        "recommended": {
+          "$ref": "#/$defs/sourced"
+        }
+      }
+    },
+    "protocols": {
+      "$ref": "#/$defs/sourced"
+    },
+    "multitrackVideo": {
+      "$ref": "#/$defs/sourced"
+    },
+    "audioCodecs": {
+      "$ref": "#/$defs/sourced"
+    },
+    "audioBitrateKbps": {
+      "type": "object",
+      "required": [
+        "max"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "max": {
+          "$ref": "#/$defs/sourced"
+        },
+        "recommended": {
+          "$ref": "#/$defs/sourced"
+        }
+      }
+    },
+    "audioTracksMax": {
+      "$ref": "#/$defs/sourced"
+    },
+    "notes": {
+      "type": "string"
+    },
+    "rateControl": {
+      "$ref": "#/$defs/sourced"
+    },
+    "enhancedBroadcasting": {
+      "$ref": "#/$defs/sourced"
+    },
+    "audioSampleRateHz": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "recommended": {
+          "$ref": "#/$defs/sourced"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sourced": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "value",
+            "severity",
+            "source",
+            "checked"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "value": {},
+            "source": {
+              "type": "string",
+              "minLength": 1
+            },
+            "checked": {
+              "type": "string",
+              "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+            },
+            "note": {
+              "type": "string"
+            },
+            "severity": {
+              "enum": [
+                "error",
+                "warning"
+              ]
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": [
+            "value",
+            "severity",
+            "unverified",
+            "note"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "value": {},
+            "unverified": {
+              "const": true
+            },
+            "note": {
+              "type": "string",
+              "minLength": 1
+            },
+            "severity": {
+              "const": "warning"
+            },
+            "message": {
+              "type": "string"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

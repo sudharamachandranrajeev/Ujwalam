@@ -1,0 +1,113 @@
+{
+  "id": "local",
+  "name": "Local (recording / replay buffer)",
+  "maxWidth": {
+    "value": 16384,
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26",
+    "note": "Not a real platform; permissive."
+  },
+  "maxHeight": {
+    "value": 16384,
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26"
+  },
+  "portrait": {
+    "value": true,
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26"
+  },
+  "maxFps": {
+    "value": 240,
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26"
+  },
+  "videoCodecs": {
+    "value": [
+      "h264",
+      "hevc",
+      "av1"
+    ],
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26"
+  },
+  "videoBitrateKbps": {
+    "min": {
+      "value": null,
+      "severity": "error",
+      "source": "ujwalam",
+      "checked": "2026-10-26",
+      "note": "No floor."
+    },
+    "max": {
+      "value": null,
+      "severity": "error",
+      "source": "ujwalam",
+      "checked": "2026-10-26",
+      "note": "No cap."
+    }
+  },
+  "keyframeIntervalSec": {
+    "max": {
+      "value": null,
+      "severity": "error",
+      "source": "ujwalam",
+      "checked": "2026-10-26",
+      "note": "No limit."
+    }
+  },
+  "protocols": {
+    "value": [
+      "file"
+    ],
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26"
+  },
+  "multitrackVideo": {
+    "value": true,
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26"
+  },
+  "audioCodecs": {
+    "value": [
+      "aac"
+    ],
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26"
+  },
+  "audioBitrateKbps": {
+    "max": {
+      "value": null,
+      "severity": "error",
+      "source": "ujwalam",
+      "checked": "2026-10-26",
+      "note": "No cap."
+    }
+  },
+  "audioTracksMax": {
+    "value": null,
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26",
+    "note": "No limit."
+  },
+  "notes": "Not a real platform. Permissive profile for recording and replay buffer sinks.",
+  "rateControl": {
+    "value": [
+      "cbr",
+      "vbr",
+      "cqp"
+    ],
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-26"
+  }
+}

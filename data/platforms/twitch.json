@@ -1,0 +1,143 @@
+{
+  "id": "twitch",
+  "name": "Twitch",
+  "maxWidth": {
+    "value": 1920,
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "1080p60 standard; 1440p60 only via Enhanced Broadcasting (see enhancedBroadcasting)."
+  },
+  "maxHeight": {
+    "value": 1080,
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "Same."
+  },
+  "portrait": {
+    "value": true,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Dual Format (vertical) via Enhanced Broadcasting is documented in the blog, but vertical resolution is not specified."
+  },
+  "maxFps": {
+    "value": 60,
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27"
+  },
+  "videoCodecs": {
+    "value": [
+      "h264"
+    ],
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "H.264 for standard RTMP; HEVC only via Enhanced Broadcasting."
+  },
+  "videoBitrateKbps": {
+    "min": {
+      "value": null,
+      "severity": "warning",
+      "unverified": true,
+      "note": "Not found in official pages reachable."
+    },
+    "max": {
+      "value": 6000,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "Standard RTMP cap. Enhanced Broadcasting is higher (see enhancedBroadcasting)."
+    }
+  },
+  "keyframeIntervalSec": {
+    "max": {
+      "value": 2,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "2 s."
+    },
+    "recommended": {
+      "value": 2,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27"
+    }
+  },
+  "protocols": {
+    "value": [
+      "rtmp"
+    ],
+    "severity": "warning",
+    "source": "https://dev.twitch.tv/docs/video-broadcast/",
+    "checked": "2026-10-26",
+    "note": "Page names RTMP only. RTMPS availability UNVERIFIED."
+  },
+  "multitrackVideo": {
+    "value": true,
+    "severity": "warning",
+    "source": "https://blog.twitch.tv/en/2026/06/17/introducing-dual-format-and-2k-streaming-on-twitch/",
+    "checked": "2026-10-26",
+    "note": "Enhanced Broadcasting: client encodes multiple variants (Dual Format)."
+  },
+  "audioCodecs": {
+    "value": [
+      "aac"
+    ],
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "AAC."
+  },
+  "audioBitrateKbps": {
+    "max": {
+      "value": null,
+      "severity": "warning",
+      "unverified": true,
+      "note": "Not confirmed from an official page."
+    },
+    "recommended": {
+      "value": 160,
+      "severity": "warning",
+      "source": "user-reference-2026-10-27",
+      "checked": "2026-10-27",
+      "note": "AAC 160 kbps, RECOMMENDED."
+    }
+  },
+  "audioTracksMax": {
+    "value": null,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Not confirmed from an official page."
+  },
+  "notes": "Standard RTMP limits only. enhancedBroadcasting holds the higher limits for O5. Several audio/keyframe-adjacent fields still UNVERIFIED.",
+  "rateControl": {
+    "value": [
+      "cbr"
+    ],
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "CBR."
+  },
+  "enhancedBroadcasting": {
+    "value": {
+      "maxBitrateKbps": {
+        "1080p": 7500,
+        "1440p": 9000
+      },
+      "maxWidth": 2560,
+      "maxHeight": 1440,
+      "videoCodecs": [
+        "h264",
+        "hevc"
+      ]
+    },
+    "severity": "warning",
+    "source": "user-reference-2026-10-27",
+    "checked": "2026-10-27",
+    "note": "Not used by Ujwalam until O5; never applied to the standard limits. Official blog agrees on 9 Mbps 1440p / 7.5 Mbps 1080p, HEVC for 2k: https://blog.twitch.tv/en/2026/06/17/introducing-dual-format-and-2k-streaming-on-twitch/"
+  }
+}
