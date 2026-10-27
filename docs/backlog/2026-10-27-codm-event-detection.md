@@ -29,7 +29,18 @@ alongside chat, audio and hotkey.
   screens are readable in the vertical recordings. Report per detector
   with crops; keep crops with faces or other players' names out of git.
 
+## Decisions (2026-10-27, after the live reference capture)
+
+Evidence: `docs/evidence/2026-10-27-g1-live-reference.md`.
+
+- IGN and 3 variants: provided by the user. Kept out of git. At G0 they go into a gitignored `data/games/codm/profile.local.json`; the committed pack and tests use a placeholder IGN.
+- Medal list, extended: the 10 above plus Revenge, Bloodthirsty, Saboteur, Berserker, Keep It Fresh (spelling UNVERIFIED). "Normal Kill" and First Blood are not added.
+- New detector: multi-kill / killstreak card ("4X MULTI-KILL", "On a 5 killstreak"). Name match required, because it also shows for other players.
+- Impact Play is a post-match replay. While it is on screen, medal detections are suppressed so they don't count twice. The replay marks the match's best sequence, which is matched back to the live timeline.
+- MP also has a kill feed; B1-style parsing can apply in MP.
+- ROIs are relative to the detected game area (pillarboxed, about 1.45:1 on the current phone), not to the canvas.
+
 ## Open
 
-- CODM IGN, clan tag and variants: still the placeholder `<<IGN + clan tag/variants>>`.
 - Whether MP or BR is more common on stream (sets the default mode).
+- BR reference capture: the user says when ready.
