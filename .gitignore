@@ -51,3 +51,6 @@ legacy/
 
 # Local datasets (reference crops can show player names; never committed).
 data/datasets/
+
+# Per-game local data (pack format W0): reference datasets, crops, labels work files, evaluations. Never committed.
+data/games/*/local/

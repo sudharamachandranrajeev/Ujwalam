@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/game.schema.json",
+  "title": "Ujwalam game definition",
+  "description": "data/games/<game-id>/game.json: id, name, modes, how the game area is found, how profile names are matched, and the OCR engine. The pack version is detectors.json `version`. Cross-file checks: tools/game-validate.mjs.",
+  "type": "object",
+  "required": ["id", "name", "modes", "taggingOnlyModes", "gameArea", "nameMatch", "ocr"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": "string" },
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Must equal the folder name." },
+    "name": { "type": "string", "minLength": 1 },
+    "modes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/mode" }
+    },
+    "taggingOnlyModes": {
+      "type": "array",
+      "description": "Modes used only to tag footage (e.g. dmz). No detector or screen gate runs for them and they are excluded from tuning and test sets.",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/mode" }
+    },
+    "gameArea": {
+      "type": "object",
+      "description": "How the game area is found. ROIs are relative to it.",
+      "required": ["method"],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "enum": ["cropdetect"] },
+        "referenceAspect": { "type": "number", "exclusiveMinimum": 0 },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "nameMatch": {
+      "type": "object",
+      "description": "How profile names (games.<id>.ign, variants, clan_tag) are matched against OCR text.",
+      "required": ["profileKey", "fuzzy", "minScore", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "profileKey": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "fuzzy": { "type": "boolean" },
+        "ignoreSeparators": { "type": "boolean" },
+        "minScore": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "status": { "$ref": "#/$defs/status" }
+      }
+    },
+    "ocr": {
+      "type": "object",
+      "required": ["engine"],
+      "additionalProperties": false,
+      "properties": {
+        "engine": { "enum": ["rapidocr"] },
+        "minConfidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    }
+  },
+  "$defs": {
+    "mode": { "enum": ["mp", "br", "dmz"] },
+    "status": { "enum": ["unverified", "verified"] }
+  }
+}

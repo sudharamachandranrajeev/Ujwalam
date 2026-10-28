@@ -1,0 +1,214 @@
+{
+  "$schema": "../events.schema.json",
+  "$comment": "CODM event catalogues. Moved from detectors.json M3.medals in 0.3.0 (order kept). class positive = clip signal (weight set by G3, null until then); class reference = weight 0, never a clip reason, logged with crops into the M3 referenceDataset. Promote a reference medal by changing its class to positive, clipReason to true and weight to a number. status: seen_g1 = read on footage in G1 (A5-A5c); listed_not_seen = on the user's list, not seen yet; unverified = spelling from the user's list only.",
+  "game": "codm",
+  "catalogues": [
+    {
+      "id": "medals",
+      "note": "M3 medal list. User decisions 2026-10-27 (A5 §12). Relentless and Brutal are UNVERIFIED (not seen on footage). Normal Kill and First Blood are deliberately not medals (M3 ignoreTexts). The move of Revenge, Bloodthirsty, Saboteur, Berserker and Keep it Fresh to reference is an interpretation of the user's positive list (to confirm).",
+      "events": [
+        {
+          "text": "Double Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Triple Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Fury Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Frenzy Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Merciless",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Nuclear",
+          "class": "positive",
+          "status": "listed_not_seen",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Ultimate Terminator",
+          "class": "positive",
+          "status": "listed_not_seen",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Ultra Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true,
+          "evidence": [
+            "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+          ],
+          "note": "Seen live in A5c (MP match m1: one each of Mega, Super and Ultra Kill); listed_not_seen until 0.3.0."
+        },
+        {
+          "text": "Mega Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true,
+          "evidence": [
+            "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+          ],
+          "note": "Seen live in A5c (MP match m1: one each of Mega, Super and Ultra Kill); listed_not_seen until 0.3.0."
+        },
+        {
+          "text": "Super Kill",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true,
+          "evidence": [
+            "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+          ],
+          "note": "Seen live in A5c (MP match m1: one each of Mega, Super and Ultra Kill); listed_not_seen until 0.3.0."
+        },
+        {
+          "text": "Ruthless",
+          "class": "positive",
+          "status": "seen_g1",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Relentless",
+          "class": "positive",
+          "status": "unverified",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Brutal",
+          "class": "positive",
+          "status": "unverified",
+          "weight": null,
+          "clipReason": true
+        },
+        {
+          "text": "Survivor",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Kingslayer",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Long Shot",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Headshot",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Major Assist",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Minor Assist",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "UAV Assist",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Hardpoint Kill",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Trophy System Destroy",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Revenge",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Bloodthirsty",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Saboteur",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Berserker",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        },
+        {
+          "text": "Keep it Fresh",
+          "class": "reference",
+          "status": "seen_g1",
+          "weight": 0,
+          "clipReason": false
+        }
+      ]
+    }
+  ]
+}

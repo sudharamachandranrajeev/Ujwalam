@@ -13,8 +13,11 @@
     "legacy:verify": "node tools/legacy-verify.mjs",
     "test": "node --test \"tests/*.test.mjs\" \"tests/outputs/*.test.mjs\"",
     "validate:outputs": "node tools/outputs-validate-presets.mjs",
+    "label": "node tools/label/server.mjs",
+    "validate:games": "node tools/game-validate.mjs data/games",
     "test:py": "python -I -m unittest discover -s tests/py -t tests/py -v",
-    "test:ocr": ".venv\\Scripts\\python.exe -I -m unittest discover -s tests/py -t tests/py -p \"test_g1*.py\" -v"
+    "test:ocr": ".venv\\Scripts\\python.exe -I -m unittest discover -s tests/py -t tests/py -p \"test_g1*.py\" -v",
+    "test:capture": "set UJWALAM_CAPTURE_TESTS=1&& python -I -m unittest discover -s tests/py -t tests/py -p \"test_record.py\" -v"
   },
   "devDependencies": {
     "ajv": "8.20.0"

@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "about": "Game id per session for the A6 labelling page (data/games/<id>/ pack). All sessions listed are CODM footage. Added 2026-10-28. Add a session here before labelling it.",
+  "sessions": {
+    "s-2026-10-18-1221": "codm",
+    "s-2026-10-20-1214": "codm",
+    "s-2026-10-21-1916": "codm"
+  }
+}

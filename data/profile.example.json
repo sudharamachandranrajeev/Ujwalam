@@ -21,7 +21,8 @@
     }
   },
   "paths": {
-    "clips_corpus": "<clips-corpus>"
+    "clips_corpus": "<clips-corpus>",
+    "analysis_cache": "<analysis-cache>"
   },
   "private_terms": []
 }

@@ -19,12 +19,16 @@ Subcommands
                      [--fps F] [--seed] [--diff-gate D]
              images: --images GLOB --layout L --out DIR
   analyse    per-detector instances, ROI fit, name match, mode share from scan output
-             --scan FILE.jsonl [...] --pack detectors.json --profile profile.json --out DIR
+             --scan FILE.jsonl [...] --pack PACK --profile profile.json --out DIR
   refmedals  cut crops of reference-class medals (M3) into the reference dataset
-             --hits hits.jsonl --layout L --pack [--corpus | --images-dir] [--dataset DIR] [--per-medal N]
+             --hits hits.jsonl --layout L --pack PACK [--corpus | --images-dir] [--dataset DIR] [--per-medal N]
   crops      cut ROI crops at the hit times, time per-crop OCR, compare with the proxy
              --hits hits.jsonl --corpus --layout L --pack --out DIR
              [--cache CACHE_ROOT --index INDEX] [--per-detector N]
+
+--pack is a game pack folder (data/games/<id>/) or its detectors.json; game_pack.load_pack merges
+the split pack files (0.3.0+). A single-file detectors.json from before 0.3.0 still loads as is.
+The refmedals dataset defaults to the pack's referenceDataset path (data/games/<id>/local/..., gitignored).
 
 Global option (before the subcommand): --threads N caps onnxruntime OCR threads (default 4,
 inter-op 1). ffmpeg decodes with 2 threads; the tool and its ffmpeg children run at
@@ -56,6 +60,7 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 import g1_geometry as geo  # noqa: E402
 import g1_text as gt  # noqa: E402
+import game_pack  # noqa: E402
 
 TOOL_VERSION = 1
 
@@ -394,6 +399,33 @@ def _frame_record(boxes, layout, origin):
     return out
 
 
+def visible_box(layout):
+    """Pixel crop (x0, y0, x1, y1) of the layout's visible area, rounded down to even values."""
+    v = [int(round(c)) for c in layout["visible"]]
+    return [v[0] - v[0] % 2, v[1] - v[1] % 2, v[2] - v[2] % 2, v[3] - v[3] % 2]
+
+
+def scan_frame(meta, t, img, origin, layout, last, diff_gate):
+    """One scan record for a sampled frame: diff gate against `last` (the last OCR'd frame at
+    1/4 scale), HUD-yellow share, OCR boxes as game-area fractions. Returns (record, last).
+    Shared by `scan` and the W1 coverage tracker (services/clip/coverage.py)."""
+    import cv2
+    import numpy as np
+    small = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), None, fx=0.25, fy=0.25,
+                       interpolation=cv2.INTER_AREA).astype(np.int16)
+    diff = None if last is None else float(np.abs(small - last).mean())
+    rec = dict(meta, t=round(t, 3), diff=None if diff is None else round(diff, 2),
+               yellow=round(yellow_fraction(img), 5))
+    if diff is not None and diff < diff_gate:
+        rec["skipped"] = "diff-gate"
+    else:
+        boxes, ms = ocr(img)
+        rec["ocrMs"] = ms
+        rec["boxes"] = _frame_record(boxes, layout, origin)
+        last = small
+    return rec, last
+
+
 def _thumb(img, path, width=270):
     import cv2
     s = width / img.shape[1]
@@ -423,19 +455,10 @@ def cmd_scan(a):
 
     def handle(meta, t, img, origin):
         nonlocal n_ocr, n_skip, last
-        small = cv2.resize(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), None, fx=0.25, fy=0.25,
-                           interpolation=cv2.INTER_AREA).astype(np.int16)
-        diff = None if last is None else float(np.abs(small - last).mean())
-        rec = dict(meta, t=round(t, 3), diff=None if diff is None else round(diff, 2),
-                   yellow=round(yellow_fraction(img), 5))
-        if diff is not None and diff < a.diff_gate:
-            rec["skipped"] = "diff-gate"
+        rec, last = scan_frame(meta, t, img, origin, layout, last, a.diff_gate)
+        if "skipped" in rec:
             n_skip += 1
         else:
-            boxes, ms = ocr(img)
-            rec["ocrMs"] = ms
-            rec["boxes"] = _frame_record(boxes, layout, origin)
-            last = small
             n_ocr += 1
         fo.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
@@ -455,8 +478,7 @@ def cmd_scan(a):
         idx = load_index(a.index)
         sessions = set(a.sessions.split(",")) if a.sessions else None
         picks = pick_clips(idx, sessions, a.clips_per_session, a.seed)
-        v = [int(round(c)) for c in layout["visible"]]
-        v = [v[0] - v[0] % 2, v[1] - v[1] % 2, v[2] - v[2] % 2, v[3] - v[3] % 2]
+        v = visible_box(layout)
         for i, (sid, clip) in enumerate(picks):
             last = None
             path = os.path.join(a.corpus, clip)
@@ -620,8 +642,7 @@ def tagged_mode(tags, session, key):
 
 
 def cmd_analyse(a):
-    with open(a.pack, encoding="utf-8") as f:
-        pack = json.load(f)
+    pack = game_pack.load_pack(a.pack)
     tags = None
     if a.mode_tags:
         with open(a.mode_tags, encoding="utf-8") as f:
@@ -754,8 +775,7 @@ def _cache_time(manifest, clip, t):
 
 def cmd_crops(a):
     import cv2
-    with open(a.pack, encoding="utf-8") as f:
-        pack = json.load(f)
+    pack = game_pack.load_pack(a.pack)
     check_private_out(a.out, a.corpus)
     os.makedirs(a.out, exist_ok=True)
     det = {d["id"]: d for d in pack["detectors"]}
@@ -832,8 +852,13 @@ def cmd_crops(a):
 
 # ---------------------------------------------------------------- reference medals
 
-DEFAULT_DATASET = os.path.join("data", "datasets", "codm-medals-reference")
 DATASET_INDEX = "index.jsonl"
+
+
+def default_dataset(pack):
+    """Absolute path of the pack's reference dataset (referenceDataset.path, repo-relative), or None."""
+    ref = game_pack.reference_dataset(pack)
+    return os.path.join(repo_root(), *ref[1].split("/")) if ref else None
 
 
 def slug(text):
@@ -906,8 +931,10 @@ def log_reference_medals(rows, get_frame, pack, layout, dataset, per_medal=0, no
 
 def cmd_refmedals(a):
     import cv2
-    with open(a.pack, encoding="utf-8") as f:
-        pack = json.load(f)
+    pack = game_pack.load_pack(a.pack)
+    a.dataset = a.dataset or default_dataset(pack)
+    if not a.dataset:
+        sys.exit("refmedals: the pack has no referenceDataset; pass --dataset")
     layout = load_layout(a.layout)
     layout = layout.get("layout", layout)
     refuse_inside(a.dataset, a.corpus, "corpus")
@@ -1006,7 +1033,7 @@ def main(argv=None):
 
     p = sub.add_parser("analyse")
     p.add_argument("--scan", nargs="+", required=True)
-    p.add_argument("--pack", required=True)
+    p.add_argument("--pack", required=True, help="game pack folder or its detectors.json")
     p.add_argument("--profile", required=True)
     p.add_argument("--name-min", type=float, default=0.8)
     p.add_argument("--mode-tags", help="JSON {session or session/clip: mp|br|dmz}; overrides the HUD classifier")
@@ -1035,8 +1062,8 @@ def main(argv=None):
     p.add_argument("--images-dir")
     p.add_argument("--layout", required=True)
     p.add_argument("--pack", required=True)
-    p.add_argument("--dataset", default=os.path.join(repo_root(), DEFAULT_DATASET),
-                   help="reference dataset folder (default data/datasets/codm-medals-reference, gitignored)")
+    p.add_argument("--dataset", help="reference dataset folder (default: the pack's referenceDataset path, "
+                   "data/games/<id>/local/..., gitignored)")
     p.add_argument("--per-medal", type=int, default=0, help="max hits per medal (0 = all)")
     p.set_defaults(fn=cmd_refmedals)
 

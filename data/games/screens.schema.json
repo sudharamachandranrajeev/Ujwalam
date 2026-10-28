@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/screens.schema.json",
+  "title": "Ujwalam game screen types",
+  "description": "data/games/<game-id>/screens.json: screen types (gameplay, menus, overlays, end screens) used to gate detectors, plus pairing rules for badges on end screens. A detector may run only on the screens in its `screens` list; each screen lists the same detectors. Cue ROIs are fractions of the detected game area. Cross-file checks: tools/game-validate.mjs.",
+  "type": "object",
+  "required": ["game", "screens", "pairingRules"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": "string" },
+    "game": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "screens": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/screen" } },
+    "pairingRules": { "type": "array", "items": { "$ref": "#/$defs/pairingRule" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "detectorId": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" },
+    "mode": { "enum": ["mp", "br", "dmz"] },
+    "status": { "enum": ["unverified", "verified"] },
+    "fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+    "evidencePath": { "type": "string", "pattern": "^docs/evidence/[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+\\.md$" },
+    "box": {
+      "type": "object",
+      "required": ["x0", "y0", "x1", "y1"],
+      "additionalProperties": false,
+      "properties": {
+        "x0": { "$ref": "#/$defs/fraction" },
+        "y0": { "$ref": "#/$defs/fraction" },
+        "x1": { "$ref": "#/$defs/fraction" },
+        "y1": { "$ref": "#/$defs/fraction" }
+      }
+    },
+    "cue": {
+      "type": "object",
+      "description": "Text that identifies the screen. Without `roi` the text may be anywhere on the frame.",
+      "required": ["texts", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "texts": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+        "roi": { "$ref": "#/$defs/box" },
+        "status": { "$ref": "#/$defs/status" },
+        "note": { "type": "string" }
+      }
+    },
+    "screen": {
+      "type": "object",
+      "required": ["id", "name", "kind", "modes", "cues", "detectors", "status", "note"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "minLength": 1 },
+        "kind": {
+          "enum": ["gameplay", "end_screen", "menu", "overlay", "summary", "signal_loss"],
+          "description": "menu, overlay, summary and signal_loss screens are excluded: no detector runs on them."
+        },
+        "modes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/mode" }, "description": "Match modes the screen belongs to; [] = not tied to a mode (lobby, profile, capture-card screens)." },
+        "cues": { "type": "array", "items": { "$ref": "#/$defs/cue" }, "description": "[] when no cue is measured yet (status unverified, see note)." },
+        "detectors": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/detectorId" }, "description": "Detectors that may run on this screen." },
+        "status": { "$ref": "#/$defs/status" },
+        "note": { "type": "string", "minLength": 1 },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidencePath" } }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "kind": { "enum": ["menu", "overlay", "summary", "signal_loss"] } }, "required": ["kind"] },
+          "then": { "properties": { "detectors": { "type": "array", "maxItems": 0 } } }
+        }
+      ]
+    },
+    "pairingRule": {
+      "type": "object",
+      "description": "A badge counts only when the profile name is on the same card as the badge, never anywhere on the frame.",
+      "required": ["id", "detector", "badge", "pairWith", "scope", "namePosition", "frameLevelName", "screens", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "detector": { "$ref": "#/$defs/detectorId" },
+        "badge": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "description": "Badge texts (e.g. MVP)." },
+        "pairWith": { "const": "profile_name" },
+        "scope": { "const": "same_card" },
+        "namePosition": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["right", "below", "left", "above"] }, "description": "Where the name sits relative to the badge on its card." },
+        "frameLevelName": { "const": false, "description": "A profile name elsewhere on the frame never pairs with the badge." },
+        "screens": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/id" } },
+        "status": { "$ref": "#/$defs/status" },
+        "note": { "type": "string" },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidencePath" } }
+      }
+    }
+  }
+}

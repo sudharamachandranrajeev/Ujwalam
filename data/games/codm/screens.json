@@ -1,0 +1,446 @@
+{
+  "$schema": "../screens.schema.json",
+  "$comment": "CODM screen types for gating (W0). Data only: g1_scan analyse does not apply the gate yet (the W2 screen classifier will). A detector may run only on the screens in its `screens` list, and each screen lists the same detectors (the validator checks both sides). Cue ROIs are fractions of the game area. Values come from the A5-A5c evidence only; anything not measured there is status unverified with a note. modes [] = not tied to a match mode. DMZ is tag-only: no screen runs a detector for it.",
+  "game": "codm",
+  "screens": [
+    {
+      "id": "mp_gameplay",
+      "name": "MP gameplay HUD",
+      "kind": "gameplay",
+      "modes": [
+        "mp"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "POINTS TO WIN",
+            "KILLS TO WIN",
+            "NORMAL KILL",
+            "WINNING",
+            "LOSING",
+            "ROUND",
+            "FIRST BLOOD",
+            "KILLCAM",
+            "HARDPOINT",
+            "DOMINATION",
+            "SEARCH AND DESTROY",
+            "TEAM DEATHMATCH",
+            "FREE FOR ALL",
+            "SCORESTREAK",
+            "UAV ONLINE"
+          ],
+          "status": "unverified",
+          "note": "HUD words of the g1_scan frame classifier (MODE_CUES mp), anywhere on the frame. The word set agreed with the visual mode label on 77/79 MP corpus clips (A5 §4); single words are not measured. KILLCAM is in this set, so BR KILL CAM frames classify as mp (A5c)."
+        }
+      ],
+      "detectors": [
+        "M3",
+        "M4",
+        "M5",
+        "X1",
+        "N1"
+      ],
+      "status": "unverified",
+      "note": "Includes MP killcams (N1 label_mp, killer_header, killer_card). Without a mode gate B1 fired 409 boxes on MP frames (A5c), so B1 is not allowed here.",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "br_gameplay",
+      "name": "BR gameplay HUD",
+      "kind": "gameplay",
+      "modes": [
+        "br"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "KILL(S)",
+            "SAFE ZONE",
+            "ELIMINATED",
+            "KNOCKED DOWN",
+            "ARMOR",
+            "REVIVAL",
+            "AIRDROP",
+            "ALIVE",
+            "HELP ME",
+            "DOWNED BY YOU",
+            "ZONE",
+            "SQUAD",
+            "BACKPACK",
+            "LOOT",
+            "PARACHUTE",
+            "REDEPLOY"
+          ],
+          "status": "unverified",
+          "note": "HUD words of the g1_scan frame classifier (MODE_CUES br), anywhere on the frame. The word set agreed with the visual mode label on 28/32 BR corpus clips (A5 §4); single words are not measured."
+        }
+      ],
+      "detectors": [
+        "B1",
+        "B2",
+        "X1",
+        "N1",
+        "N2"
+      ],
+      "status": "unverified",
+      "note": "Includes the BR death sequence (HELP ME, KILL CAM, Waiting for Revival Flight; A5b §3). Without a mode gate M5 fired 889 boxes on BR frames (A5c), so M5 is not allowed here. M3 is MP-only: on BR frames it matched the Nuclear Plant map label and a loading tip (A5c).",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "lobby",
+      "name": "Lobby and menus",
+      "kind": "menu",
+      "modes": [],
+      "cues": [],
+      "detectors": [],
+      "status": "unverified",
+      "note": "Between matches (A5c: MP lobby after the summary screen; BR lobby 00:00-00:13 with a Resurgence playlist). No cue text or position is measured. The IGN also appears in lobby toasts and room messages (A5 §5), so no detector runs here.",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "profile",
+      "name": "Player Profile pages",
+      "kind": "menu",
+      "modes": [],
+      "cues": [],
+      "detectors": [],
+      "status": "unverified",
+      "note": "End of BR capture 2, 13:00-15:15 (A5b §4): basic page, game card, MP/BR/DMZ/Zombies stats, achievements, medals, match history and match details. Cue text and positions are not recorded. The pages show the IGN, a clan line, a UID and MVP-like text: M1 misfired on profile/history pages (A5b §3) and the 12 BR reference-medal crops came from the medal pages (A5b §5).",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md"
+      ]
+    },
+    {
+      "id": "like_toast",
+      "name": "Like toast",
+      "kind": "overlay",
+      "modes": [],
+      "cues": [
+        {
+          "texts": [
+            "MVP"
+          ],
+          "roi": {
+            "x0": 0.0,
+            "y0": 0.28,
+            "x1": 1.0,
+            "y1": 0.38
+          },
+          "status": "unverified",
+          "note": "Toast with a player name and an MVP tag. y 0.28-0.31 in A5b and A5c (MP 00:14-00:15, BR 05:47-05:49), y 0.28-0.38 on the corpus (A5). x extent not measured, so the box is full width."
+        }
+      ],
+      "detectors": [],
+      "status": "unverified",
+      "note": "Shown over the lobby and end screens. Boxes inside it count for no detector: M1 misfired on its MVP tag and B1 on the name in it (A5c BR 05:47-05:49).",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "summary",
+      "name": "Match summary",
+      "kind": "summary",
+      "modes": [
+        "mp",
+        "br"
+      ],
+      "cues": [],
+      "detectors": [],
+      "status": "unverified",
+      "note": "Excluded. After the XP screen (A5c: MP 00:17, 06:34, 16:44-16:45; BR 05:55-05:58). It shows MVP badges for both teams while the IGN is elsewhere on the frame, so a frame-level name check would make the A5c m2 defeat positive. Cue text and positions not measured.",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "postmatch_mvp",
+      "name": "Post-match MVP screen",
+      "kind": "end_screen",
+      "modes": [
+        "mp"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "MVP"
+          ],
+          "roi": {
+            "x0": 0.02,
+            "y0": 0.41,
+            "x1": 0.11,
+            "y1": 0.47
+          },
+          "status": "verified",
+          "note": "A5b: MVP at x 0.02-0.11, y 0.41-0.47; the name sits right of and below it (x 0.11-0.33, y 0.47-0.55) and slides in from the left."
+        }
+      ],
+      "detectors": [
+        "M1"
+      ],
+      "status": "unverified",
+      "note": "One player per screen. Seen 2/2 in A5b; A5c m1 (IGN) and m2 (another player).",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "impact_play",
+      "name": "Impact Play replay",
+      "kind": "end_screen",
+      "modes": [
+        "mp"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "IMPACT PLAY"
+          ],
+          "roi": {
+            "x0": 0.42,
+            "y0": 0.04,
+            "x1": 0.58,
+            "y1": 0.12
+          },
+          "status": "verified",
+          "note": "Header top centre: 8/8 on the corpus (A5), 10/10 live (A5b)."
+        }
+      ],
+      "detectors": [
+        "M2",
+        "M3",
+        "M4"
+      ],
+      "status": "unverified",
+      "note": "Post-match replay of the best sequence (about 22 s) with a REC marker (position not measured). The replay repeats the match medals and +N popups: M3 and M4 run here and are suppressed (suppressionRules suppress_medals_in_replay). Whether kill-feed (M5) or multi-kill (X1) text repeats in the replay is not measured (UNVERIFIED), so they are left out.",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "final_killcam",
+      "name": "FINAL KILLCAM",
+      "kind": "end_screen",
+      "modes": [
+        "mp"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "FINAL KILLCAM"
+          ],
+          "roi": {
+            "x0": 0.45,
+            "y0": 0.055,
+            "x1": 0.56,
+            "y1": 0.093
+          },
+          "status": "unverified",
+          "note": "Seen in 1 corpus clip / 5 frames (A5); not in any live capture (A5b, A5c)."
+        }
+      ],
+      "detectors": [
+        "K1"
+      ],
+      "status": "unverified",
+      "note": "Match-ending kill replay; never an N1 death. Capture-plan items final_killcam_ign and final_killcam_other.",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "mp_scoreboard",
+      "name": "MP scoreboard",
+      "kind": "end_screen",
+      "modes": [
+        "mp"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "MVP"
+          ],
+          "roi": {
+            "x0": 0.0,
+            "y0": 0.58,
+            "x1": 1.0,
+            "y1": 0.93
+          },
+          "status": "verified",
+          "note": "One MVP badge per team: own team y 0.65, enemy y 0.84 (A5b); x not measured. The box is the M1 endscreen_row band, verified on corpus crops (A5)."
+        }
+      ],
+      "detectors": [
+        "M1"
+      ],
+      "status": "unverified",
+      "note": "A final MP scoreboard frame is still missing (capture-plan mp_final_scoreboard). Scoreboards were read during play in A5c (03:36, 12:49, 14:20, 14:43); whether those show MVP badges is not recorded (UNVERIFIED).",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "mp_top3",
+      "name": "MP top 3",
+      "kind": "end_screen",
+      "modes": [
+        "mp"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "MVP"
+          ],
+          "roi": {
+            "x0": 0.0,
+            "y0": 0.84,
+            "x1": 1.0,
+            "y1": 0.87
+          },
+          "status": "verified",
+          "note": "MVP badge at y 0.84-0.87 under the card (A5, A5b); x depends on the card, so the box is full width."
+        }
+      ],
+      "detectors": [
+        "M1"
+      ],
+      "status": "unverified",
+      "note": "After an ad of about 4 s that follows the end screens (A5c). A5b: IGN read 7/7, small MVP badge 1/7 with the crop profile (read by the full-frame pass).",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "br_squad_cards",
+      "name": "BR squad cards",
+      "kind": "end_screen",
+      "modes": [
+        "br"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "MVP"
+          ],
+          "roi": {
+            "x0": 0.0,
+            "y0": 0.78,
+            "x1": 1.0,
+            "y1": 0.8
+          },
+          "status": "verified",
+          "note": "Badge at y 0.78-0.80 under the MVP's avatar, name at y 0.81-0.82 (A5, A5b); x depends on the card."
+        },
+        {
+          "texts": [
+            "KILLS"
+          ],
+          "status": "unverified",
+          "note": "KILLS 0 / KILLS 1 and MVP read 6/6 on A5c crops; position not measured."
+        }
+      ],
+      "detectors": [],
+      "status": "unverified",
+      "note": "M1 runs in MP only (P2a gate §6 risk), so no detector runs here yet. Adding M1 needs br in M1 modes and this screen in its gate (user decision). A5b: badge on a teammate; A5c: badge on the user (duo).",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "br_placement",
+      "name": "BR placement / GAME OVER",
+      "kind": "end_screen",
+      "modes": [
+        "br"
+      ],
+      "cues": [
+        {
+          "texts": [
+            "GAME OVER"
+          ],
+          "status": "unverified",
+          "note": "A5c: GAME OVER #48/50 at ~05:37, squad cards #48/50 05:43-05:50. A5b: Resurgence win #1/10. Position not measured."
+        }
+      ],
+      "detectors": [],
+      "status": "unverified",
+      "note": "No BR end-screen detector yet; a BR win is still missing (capture-plan br_win). The GAME OVER screen also shows KILLCAM text (N1 misfire, A5c).",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    },
+    {
+      "id": "no_signal",
+      "name": "Capture-card No Signal",
+      "kind": "signal_loss",
+      "modes": [],
+      "cues": [
+        {
+          "texts": [
+            "No Signal"
+          ],
+          "status": "unverified",
+          "note": "Capture-card screen on 15/180 sampled corpus frames in 5 sessions (A5 §4, labelled by eye, not OCR). Position not measured."
+        }
+      ],
+      "detectors": [],
+      "status": "unverified",
+      "note": "Signal loss during recording, not a detector issue; the clipper skips it.",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md"
+      ]
+    }
+  ],
+  "pairingRules": [
+    {
+      "id": "mvp_badge_name_same_card",
+      "detector": "M1",
+      "badge": [
+        "MVP"
+      ],
+      "pairWith": "profile_name",
+      "scope": "same_card",
+      "namePosition": [
+        "right",
+        "below"
+      ],
+      "frameLevelName": false,
+      "screens": [
+        "postmatch_mvp",
+        "mp_scoreboard",
+        "mp_top3"
+      ],
+      "status": "unverified",
+      "note": "End screens carry MVP badges for every MVP (both teams, teammates), so a badge counts only with the profile name on the same card, right of or below the badge (post-match: name x 0.11-0.33, y 0.47-0.55; scoreboard: the badge's own row; top 3: the card above the badge). A name elsewhere on the frame never pairs (A5c summary screens). Described in A5b and A5c, not implemented in g1_scan (UNVERIFIED). BR squad cards use the same layout (name y 0.81-0.82 under the badge), but M1 does not run in BR yet.",
+      "evidence": [
+        "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+      ]
+    }
+  ]
+}

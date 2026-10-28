@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ujwalam labelling</title>
+<link rel="stylesheet" href="/label.css">
+</head>
+<body>
+<header id="bar">
+  <label class="field">Session <select id="sessionSelect"></select></label>
+  <nav id="passTabs" aria-label="Pass">
+    <button type="button" id="tab1" class="tab">1 Highlights (blind)</button>
+    <button type="button" id="tab2" class="tab">2 Events</button>
+  </nav>
+  <span id="timing" class="muted"></span>
+  <span id="saveState" class="muted"></span>
+  <span class="spacer"></span>
+  <button type="button" id="btnSave">Save (Ctrl+S)</button>
+  <button type="button" id="btnExport">Export</button>
+  <button type="button" id="btnHelp">? Help</button>
+</header>
+<div id="banner" hidden></div>
+<main id="main">
+  <section id="stage">
+    <video id="video" preload="metadata" playsinline></video>
+    <div id="transport">
+      <span id="clock">0:00:00.0</span>
+      <span id="rate" class="muted">1x</span>
+      <span id="pendingInfo" class="muted"></span>
+    </div>
+  </section>
+  <section id="side">
+    <div id="sideBody"></div>
+  </section>
+</main>
+<section id="timeline">
+  <div id="overview" title="Whole session"></div>
+  <div id="detail">
+    <div id="film"></div>
+    <div id="trackWin" class="track"></div>
+    <div id="trackSug" class="track" hidden></div>
+    <div id="playhead"></div>
+  </div>
+  <div id="zoomRow">
+    <button type="button" id="zoomOut">-</button>
+    <button type="button" id="zoomIn">+</button>
+    <span id="viewInfo" class="muted"></span>
+  </div>
+</section>
+<div id="toast" role="status"></div>
+<div id="modalRoot"></div>
+<script src="/label-core.js"></script>
+<script src="/label.js"></script>
+</body>
+</html>

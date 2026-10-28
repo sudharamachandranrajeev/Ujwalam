@@ -2,69 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ujwalam.local/schema/detector-pack.schema.json",
   "title": "Ujwalam game detector pack",
-  "description": "Data-only detector pack for one game (data/games/<game-id>/detectors.json). Detectors are data; the engine in P2/P14 interprets them. ROIs are fractions of the detected game area, not the canvas. Weights, windows and cooldowns stay null until G3 proposes them from labelled data.",
+  "description": "Data-only detector pack for one game (data/games/<game-id>/detectors.json). Detectors are data; the engine in P2/P14 interprets them. ROIs are fractions of the detected game area, not the canvas. Weights, windows and cooldowns stay null until G3 proposes them from labelled data. `version` is the pack version for every file in the pack folder; game id, modes, game area, name matching and OCR are in game.json (game.schema.json), event catalogues in events.json, screen gates in screens.json. Cross-file checks: tools/game-validate.mjs.",
   "type": "object",
-  "required": ["version", "engineVersion", "game", "ocr", "nameMatch", "modes", "detectors", "suppressionRules"],
+  "required": ["version", "engineVersion", "game", "detectors", "suppressionRules"],
   "additionalProperties": false,
   "properties": {
     "$schema": { "type": "string" },
     "$comment": { "type": "string" },
     "version": { "$ref": "#/$defs/semver" },
     "engineVersion": { "$ref": "#/$defs/semver", "description": "Detector-engine function version this pack targets; packs are migrated on load." },
-    "game": {
-      "type": "object",
-      "required": ["id", "name"],
-      "additionalProperties": false,
-      "properties": {
-        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-        "name": { "type": "string", "minLength": 1 }
-      }
-    },
-    "ocr": {
-      "type": "object",
-      "required": ["engine"],
-      "additionalProperties": false,
-      "properties": {
-        "engine": { "enum": ["rapidocr"] },
-        "minConfidence": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
-      }
-    },
-    "gameArea": {
-      "type": "object",
-      "description": "How the game area is found. ROIs are relative to it.",
-      "required": ["method"],
-      "additionalProperties": false,
-      "properties": {
-        "method": { "enum": ["cropdetect"] },
-        "referenceAspect": { "type": "number", "exclusiveMinimum": 0 },
-        "status": { "$ref": "#/$defs/status" }
-      }
-    },
-    "nameMatch": {
-      "type": "object",
-      "description": "How profile names (games.<id>.ign, variants, clan_tag) are matched against OCR text.",
-      "required": ["profileKey", "fuzzy", "minScore", "status"],
-      "additionalProperties": false,
-      "properties": {
-        "profileKey": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
-        "fuzzy": { "type": "boolean" },
-        "ignoreSeparators": { "type": "boolean" },
-        "minScore": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
-        "status": { "$ref": "#/$defs/status" }
-      }
-    },
-    "modes": {
-      "type": "array",
-      "minItems": 1,
-      "uniqueItems": true,
-      "items": { "$ref": "#/$defs/mode" }
-    },
-    "taggingOnlyModes": {
-      "type": "array",
-      "description": "Modes used only to tag footage (e.g. dmz). No detectors run for them and they are excluded from tuning and test sets.",
-      "uniqueItems": true,
-      "items": { "$ref": "#/$defs/mode" }
-    },
+    "game": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Game id; equals game.json id and the folder name." },
     "detectors": {
       "type": "array",
       "minItems": 1,
@@ -99,35 +46,12 @@
         "note": { "type": "string" }
       }
     },
-    "medal": {
-      "type": "object",
-      "required": ["text", "class", "status", "weight", "clipReason"],
-      "additionalProperties": false,
-      "properties": {
-        "text": { "type": "string", "minLength": 1 },
-        "class": { "enum": ["positive", "reference"], "description": "positive = clip signal (weight from G3); reference = detected and logged to the reference dataset only (weight 0, never a clip reason). Promote by editing this data." },
-        "aliases": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-        "status": { "enum": ["seen_g1", "listed_not_seen", "spelling_unverified", "unverified"] },
-        "weight": { "type": ["number", "null"], "minimum": 0 },
-        "clipReason": { "type": "boolean", "description": "May appear as a clip reason. Always false for reference medals." }
-      },
-      "allOf": [
-        {
-          "if": { "properties": { "class": { "const": "reference" } }, "required": ["class"] },
-          "then": { "properties": { "weight": { "const": 0 }, "clipReason": { "const": false } } }
-        },
-        {
-          "if": { "properties": { "class": { "const": "positive" } }, "required": ["class"] },
-          "then": { "properties": { "weight": { "type": ["number", "null"] } } }
-        }
-      ]
-    },
     "referenceDataset": {
       "type": "object",
       "required": ["path", "index", "gitignored"],
       "additionalProperties": false,
       "properties": {
-        "path": { "type": "string", "pattern": "^data/datasets/[a-z0-9-]+$", "description": "Repo-relative folder; must be gitignored." },
+        "path": { "type": "string", "pattern": "^data/games/[a-z][a-z0-9_]*/local/[a-z0-9-]+$", "description": "Repo-relative folder inside the pack's gitignored local/ folder (data/games/<game-id>/local/)." },
         "index": { "type": "string", "pattern": "^[a-z0-9._-]+\\.jsonl$" },
         "layout": { "type": "string" },
         "gitignored": { "const": true }
@@ -144,7 +68,7 @@
     },
     "detector": {
       "type": "object",
-      "required": ["id", "name", "role", "modes", "method", "rois", "nameRequired", "weight", "window", "cooldownSec", "status"],
+      "required": ["id", "name", "role", "modes", "screens", "method", "rois", "nameRequired", "weight", "window", "cooldownSec", "status"],
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" },
@@ -154,6 +78,7 @@
           "description": "positive = clip signal; negative = the user died or lost (never raises a score); context = state that other detectors read."
         },
         "modes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/detectorMode" } },
+        "screens": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }, "description": "Screen gate: ids from screens.json where this detector may run." },
         "method": { "enum": ["ocr", "ocr_colour_mask", "ocr_line_parse"] },
         "rois": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/roi" } },
         "patterns": {
@@ -162,7 +87,7 @@
           "items": { "type": "string", "minLength": 1 }
         },
         "regex": { "type": "string", "description": "Pattern for numeric text such as +N." },
-        "medals": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/medal" } },
+        "catalogue": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Id of the event catalogue in events.json that this detector matches (M3: medals)." },
         "referenceDataset": { "$ref": "#/$defs/referenceDataset" },
         "ignoreTexts": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "colour": {
@@ -199,7 +124,7 @@
         },
         {
           "if": { "properties": { "id": { "const": "M3" } } },
-          "then": { "properties": { "medals": true }, "required": ["medals"] }
+          "then": { "properties": { "catalogue": true }, "required": ["catalogue"] }
         }
       ]
     },

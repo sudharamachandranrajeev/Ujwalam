@@ -1,0 +1,30 @@
+{
+  "$schema": "../game.schema.json",
+  "$comment": "CODM game definition (pack format: docs/plan/2026-10-27-game-training-workflow.md §4, W0). The pack version is detectors.json `version`; history in CHANGELOG.md. No private names here; names come from data/profile.local.json at runtime (nameMatch.profileKey).",
+  "id": "codm",
+  "name": "Call of Duty: Mobile",
+  "modes": [
+    "mp",
+    "br",
+    "dmz"
+  ],
+  "taggingOnlyModes": [
+    "dmz"
+  ],
+  "gameArea": {
+    "method": "cropdetect",
+    "referenceAspect": 1.45,
+    "status": "verified"
+  },
+  "nameMatch": {
+    "profileKey": "codm",
+    "fuzzy": true,
+    "ignoreSeparators": true,
+    "minScore": null,
+    "status": "unverified"
+  },
+  "ocr": {
+    "engine": "rapidocr",
+    "minConfidence": null
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "status": "unverified",
+  "about": "Reason tags offered by the A6 labelling page (pass 1). Proposed 2026-10-28 from the tags in tests/fixtures/g0/labels.example.json (multi-kill, funny-reaction, quiet) and the event names in data/games/codm/events.json and detectors.json. UNVERIFIED: the user approves, edits or replaces this list. Ids match the label reasonTags pattern.",
+  "tags": [
+    { "id": "multi-kill", "name": "Multi-kill", "applies": "keep" },
+    { "id": "killstreak", "name": "Killstreak / scorestreak", "applies": "keep" },
+    { "id": "impact-play", "name": "Impact Play moment", "applies": "keep" },
+    { "id": "mvp", "name": "MVP moment", "applies": "keep" },
+    { "id": "killcam", "name": "Killcam moment", "applies": "keep" },
+    { "id": "clutch", "name": "Clutch / comeback", "applies": "keep" },
+    { "id": "funny-reaction", "name": "Funny reaction", "applies": "keep" },
+    { "id": "fail", "name": "Fail / funny death", "applies": "keep" },
+    { "id": "quiet", "name": "Quiet, nothing happens", "applies": "reject" },
+    { "id": "lobby-menu", "name": "Lobby or menu", "applies": "reject" }
+  ]
+}

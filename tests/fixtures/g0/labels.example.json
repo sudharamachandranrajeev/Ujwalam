@@ -19,8 +19,14 @@
       "label": "reject",
       "reasonTags": ["quiet"],
       "labeller": "<user>",
-      "note": "<nothing-happens>",
       "createdAt": "2026-10-27T12:01:00Z"
     }
-  ]
+  ],
+  "events": [
+    { "id": "e-0001", "detectorId": "M3", "timeSec": 112.5, "verdict": "accept", "medal": "Double Kill" },
+    { "id": "e-0002", "detectorId": "M1", "timeSec": 118, "verdict": "reject" },
+    { "id": "e-0003", "detectorId": "N1", "timeSec": 125.5, "verdict": "added" }
+  ],
+  "timing": { "highlightPassSec": 1820.5, "eventPassSec": 640 },
+  "highlightsEditedAfterSuggestions": false
 }

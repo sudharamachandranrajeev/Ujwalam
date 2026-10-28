@@ -7,7 +7,6 @@ OCR-dependent tests are in test_g1_ocr.py and skip without the OCR venv.
 """
 
 import importlib.util
-import json
 import os
 import unittest
 
@@ -24,6 +23,8 @@ def _load(name):
 
 gt = _load("g1_text")
 geo = _load("g1_geometry")
+gp = _load("game_pack")
+PACK_DIR = os.path.join(_HERE, "..", "..", "data", "games", "codm")
 
 NAMES = ["Zorbo~QX", "Zorbo-QX", "Zorbo"]  # invented
 MEDALS = ["Double Kill", "Triple Kill", "Fury Kill", "Merciless", "Revenge"]
@@ -153,8 +154,7 @@ class PackTests(unittest.TestCase):
     """The committed CODM pack stays usable by the G1 tools."""
 
     def test_pack_rois_are_ordered(self):
-        with open(os.path.join(_HERE, "..", "..", "data", "games", "codm", "detectors.json"), encoding="utf-8") as f:
-            pack = json.load(f)
+        pack = gp.load_pack(PACK_DIR)
         for d in pack["detectors"]:
             for r in d["rois"]:
                 self.assertLess(r["x0"], r["x1"], (d["id"], r["id"]))
@@ -162,8 +162,7 @@ class PackTests(unittest.TestCase):
 
 
 scan = _load("g1_scan")
-with open(os.path.join(_HERE, "..", "..", "data", "games", "codm", "detectors.json"), encoding="utf-8") as _f:
-    PACK = json.load(_f)
+PACK = gp.load_pack(PACK_DIR)  # split pack (W0), merged by the loader
 PLACEHOLDER_NAMES = ["Zorbo~QX", "Zorbo-QX"]  # invented
 
 
@@ -239,6 +238,21 @@ class DecisionTests(unittest.TestCase):
         self.assertEqual(PACK["taggingOnlyModes"], ["dmz"])
         for d in PACK["detectors"]:
             self.assertNotIn("dmz", d["modes"], d["id"])
+        for s in PACK["screens"]:
+            if s["detectors"]:
+                self.assertNotIn("dmz", s["modes"], s["id"])
+
+    def test_screens_gameplay_cues_match_the_frame_classifier(self):
+        # W0: screens.json holds the classifier's HUD words as data; keep the two in step until
+        # the W2 screen classifier reads them from the pack.
+        cues = {s["id"]: s["cues"][0]["texts"] for s in PACK["screens"] if s["kind"] == "gameplay"}
+        self.assertEqual(cues, {"mp_gameplay": scan.MODE_CUES["mp"], "br_gameplay": scan.MODE_CUES["br"]})
+
+    def test_refmedals_default_dataset_comes_from_the_pack(self):
+        path = scan.default_dataset(PACK)
+        self.assertEqual(os.path.normpath(path),
+                         os.path.normpath(os.path.join(scan.repo_root(), "data", "games", "codm", "local", "medals-reference")))
+        self.assertIsNone(scan.default_dataset({"detectors": [{"id": "M1"}]}))
 
 
 class ResourceTests(unittest.TestCase):

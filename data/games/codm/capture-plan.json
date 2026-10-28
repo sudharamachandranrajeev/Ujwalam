@@ -1,6 +1,7 @@
 {
-  "$comment": "CODM capture plan (T1). Items still missing after G1 (P2a gate, 2026-10-27, docs/evidence/2026-10-27-p2a-gate.md §2). Not a blocker: the W1 coverage tracker collects each item whenever it happens in normal play or on stream and reports when it is captured. Ask the user for a dedicated capture only for items still missing at the W3 evaluation. The schema for this file arrives at W0. DMZ is out of scope (tag-only mode) and is not listed.",
-  "version": 1,
+  "$schema": "../capture-plan.schema.json",
+  "$comment": "CODM capture plan (T1). Items still missing after G1 (P2a gate, 2026-10-27, docs/evidence/2026-10-27-p2a-gate.md §2). Not a blocker: the W1 coverage tracker (services/clip/coverage.py) collects each item whenever it happens in normal play or on stream and reports when it is captured; its state is local (data/games/codm/local/coverage.json, gitignored) and this file is never edited at runtime. `match` says how an item is recognised, using only existing detector, screen and medal definitions: auto items are captured by the first detection that meets a criterion; manual items have no measured cue for an automatic decision, so detections are only candidates and the user confirms with `coverage.py mark`. Ask the user for a dedicated capture only for items still missing at the W3 evaluation. Schema: ../capture-plan.schema.json; cross-file checks: tools/game-validate.mjs. DMZ is out of scope (tag-only mode) and is not listed.",
+  "version": 2,
   "game": "codm",
   "dedicatedCaptureCheck": "W3",
   "items": [
@@ -10,7 +11,17 @@
       "detector": "K1",
       "what": "FINAL KILLCAM with the profile name shown as the killer",
       "why": "K1 positive case and killer_name ROI position (UNVERIFIED)",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "manual",
+        "reason": "K1 killer_name ROI is a guessed band and the label ROI is unmeasured (both unverified, P2a gate §2), so the K1 name check behind nameMatched is not measured. FINAL KILLCAM detections are candidates for the user to confirm.",
+        "when": [
+          {
+            "detector": "K1",
+            "nameMatched": true
+          }
+        ]
+      }
     },
     {
       "id": "final_killcam_other",
@@ -18,7 +29,17 @@
       "detector": "K1",
       "what": "FINAL KILLCAM with another player as the killer",
       "why": "K1 negative case (logged, signal false)",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "manual",
+        "reason": "K1 killer_name ROI is a guessed band and the label ROI is unmeasured (both unverified, P2a gate §2), so the K1 name check behind nameMatched is not measured. FINAL KILLCAM detections are candidates for the user to confirm.",
+        "when": [
+          {
+            "detector": "K1",
+            "nameMatched": false
+          }
+        ]
+      }
     },
     {
       "id": "mp_final_scoreboard",
@@ -26,7 +47,20 @@
       "detector": "M1",
       "what": "Final MP scoreboard frame",
       "why": "Kill ground truth per match; M1 endscreen_row pairing",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "manual",
+        "reason": "No measured cue tells the final scoreboard from a mid-match one (mp_scoreboard may appear mid-match, W0 evidence §7), and the M1 badge-name pairing rule is not implemented. M1 detections inside the mp_scoreboard cue band on frames classified mp are candidates (BR squad cards share the band and classify br).",
+        "when": [
+          {
+            "detector": "M1",
+            "screen": "mp_scoreboard",
+            "frameModes": [
+              "mp"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "br_revival",
@@ -34,15 +68,44 @@
       "detector": "N2",
       "what": "BR revival (Waiting for Revival Flight, then redeploy)",
       "why": "N2 revival_top end-to-end, not only the waiting line",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "manual",
+        "reason": "Only the waiting line has measured positions (N2 revival_top, revival); no cue exists for the redeploy that completes a revival. Waiting-line detections are candidates.",
+        "when": [
+          {
+            "detector": "N2",
+            "pattern": "Waiting for Revival Flight",
+            "rois": [
+              "revival_top",
+              "revival"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "br_multikill_banner",
       "mode": "br",
       "detector": "X1",
       "what": "BR multi-kill banner",
-      "why": "X1 in BR: banner text and position (seen in MP only)",
-      "status": "missing"
+      "why": "X1 in BR: banner text and position (seen in BR too, corrected 2026-10-28: 32 A5b BR hits, 5 with the profile name)",
+      "status": "missing",
+      "match": {
+        "confirm": "auto",
+        "when": [
+          {
+            "detector": "X1",
+            "rois": [
+              "banner_br"
+            ],
+            "nameInRoi": true,
+            "frameModes": [
+              "br"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "br_win",
@@ -50,7 +113,11 @@
       "detector": null,
       "what": "BR win (#1 placement and end screen)",
       "why": "BR winning end screen; only a non-win placement (#48/50) is covered. No BR end-screen detector yet (M1 runs in MP only)",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "manual",
+        "reason": "No BR end-screen detector exists (M1 runs in MP only) and the br_placement cue (GAME OVER) is unverified with no position; the #1 placement is not read. The user marks it."
+      }
     },
     {
       "id": "medal_relentless",
@@ -59,7 +126,23 @@
       "medal": "Relentless",
       "what": "Relentless medal banner",
       "why": "Medal spelling and banner read (listed, not seen)",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "auto",
+        "when": [
+          {
+            "detector": "M3",
+            "medal": "Relentless",
+            "rois": [
+              "banner",
+              "text_stack"
+            ],
+            "frameModes": [
+              "mp"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "medal_brutal",
@@ -68,7 +151,23 @@
       "medal": "Brutal",
       "what": "Brutal medal banner",
       "why": "Medal spelling and banner read (listed, not seen)",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "auto",
+        "when": [
+          {
+            "detector": "M3",
+            "medal": "Brutal",
+            "rois": [
+              "banner",
+              "text_stack"
+            ],
+            "frameModes": [
+              "mp"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "medal_nuclear",
@@ -77,7 +176,23 @@
       "medal": "Nuclear",
       "what": "Nuclear medal banner",
       "why": "Medal spelling and banner read (listed, not seen)",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "auto",
+        "when": [
+          {
+            "detector": "M3",
+            "medal": "Nuclear",
+            "rois": [
+              "banner",
+              "text_stack"
+            ],
+            "frameModes": [
+              "mp"
+            ]
+          }
+        ]
+      }
     },
     {
       "id": "medal_ultimate_terminator",
@@ -86,7 +201,23 @@
       "medal": "Ultimate Terminator",
       "what": "Ultimate Terminator medal banner",
       "why": "Medal spelling and banner read (listed, not seen)",
-      "status": "missing"
+      "status": "missing",
+      "match": {
+        "confirm": "auto",
+        "when": [
+          {
+            "detector": "M3",
+            "medal": "Ultimate Terminator",
+            "rois": [
+              "banner",
+              "text_stack"
+            ],
+            "frameModes": [
+              "mp"
+            ]
+          }
+        ]
+      }
     }
   ]
 }

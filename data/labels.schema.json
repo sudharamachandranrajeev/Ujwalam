@@ -2,23 +2,46 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ujwalam.local/schema/labels.schema.json",
   "title": "Ujwalam clip labels (one file per session in data/labels/)",
-  "description": "Written by the A6 labelling page. Windows are on the session timeline (seconds from the session start in data/sessions.json). windowEndSec must be greater than windowStartSec; JSON Schema cannot compare fields, so tests and the writer enforce it.",
+  "description": "Written by the A6 labelling page. Windows are on the session timeline (seconds from the session start in data/sessions.json). windowEndSec must be greater than windowStartSec; JSON Schema cannot compare fields, so tests and the writer enforce it. Version 1 gained three optional parts on 2026-10-28 (events, timing, highlightsEditedAfterSuggestions); older files stay valid. No free-text field: every string is an enum, a const or a strict pattern (medal: a pattern plus the pack catalogue check). Notes are never part of a label file; the page keeps them in a gitignored local file (2026-10-28). That an event's detectorId and medal exist in the session's game pack is checked by the export writer (tools/label/labels-export.mjs), the pre-commit hook (tools/git-hooks/private-scan.mjs) and a test, not by this schema.",
   "type": "object",
   "required": ["version", "sessionId", "labels"],
   "additionalProperties": false,
   "properties": {
-    "$schema": { "type": "string" },
     "version": { "const": 1 },
     "sessionId": { "type": "string", "pattern": "^s-[0-9A-Za-z-]+$", "description": "An id from data/sessions.json." },
-    "labels": { "type": "array", "items": { "$ref": "#/$defs/label" } }
+    "labels": { "type": "array", "items": { "$ref": "#/$defs/label" } },
+    "events": { "type": "array", "items": { "$ref": "#/$defs/event" }, "description": "Pass 2: verdicts on detector suggestions and events the labeller added. Times only, no OCR text." },
+    "timing": { "$ref": "#/$defs/timing" },
+    "highlightsEditedAfterSuggestions": { "type": "boolean", "description": "true when the highlight labels changed after the labeller opened pass 2 (blind protocol broken for this session)." }
   },
   "$defs": {
+    "event": {
+      "type": "object",
+      "required": ["id", "detectorId", "timeSec", "verdict"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^e-\\d{4,}$", "description": "Sequence id (e-0001...); the export writer renumbers events in time order." },
+        "detectorId": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$", "description": "A detector id from the session's game pack (detectors.json)." },
+        "timeSec": { "type": "number", "minimum": 0, "description": "Session timeline, seconds. For an accepted suggestion this is the time after any adjustment." },
+        "verdict": { "enum": ["accept", "reject", "added"] },
+        "medal": { "type": "string", "pattern": "^[A-Za-z][A-Za-z0-9 '-]*$", "maxLength": 40, "description": "Medal text from the pack's events.json (a game term, not a name). Only for detectors with a catalogue. The export writer and the pre-commit hook accept only entries of the pack catalogue." }
+      }
+    },
+    "timing": {
+      "type": "object",
+      "required": ["highlightPassSec", "eventPassSec"],
+      "additionalProperties": false,
+      "properties": {
+        "highlightPassSec": { "type": "number", "minimum": 0, "description": "Active labelling seconds in pass 1 (idle over 60 s not counted)." },
+        "eventPassSec": { "type": "number", "minimum": 0, "description": "Active labelling seconds in pass 2." }
+      }
+    },
     "label": {
       "type": "object",
       "required": ["id", "windowStartSec", "windowEndSec", "label", "reasonTags", "labeller", "createdAt"],
       "additionalProperties": false,
       "properties": {
-        "id": { "type": "string", "pattern": "^l-[0-9A-Za-z-]+$" },
+        "id": { "type": "string", "pattern": "^l-\\d{4,}$", "description": "Sequence id (l-0001...); the export writer renumbers windows in time order." },
         "windowStartSec": { "type": "number", "minimum": 0 },
         "windowEndSec": { "type": "number", "exclusiveMinimum": 0 },
         "label": { "enum": ["keep", "reject"] },
@@ -26,10 +49,10 @@
         "reasonTags": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" }
+          "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+          "description": "Tag ids. The export writer and the pre-commit hook also require each to be an id in data/label-tags.json (JSON Schema cannot read that file)."
         },
-        "labeller": { "type": "string", "pattern": "^<[a-z0-9-]+>$", "description": "Placeholder only, e.g. <user>. Real names are never committed (scan rule in tools/git-hooks/private-scan.mjs)." },
-        "note": { "type": "string", "pattern": "^<[a-z0-9-]+>$", "description": "Placeholder only, e.g. <nothing-happens>. No free text." },
+        "labeller": { "const": "<user>", "description": "Always the placeholder <user>. Real names are never committed (pre-commit hook: tools/git-hooks/private-scan.mjs)." },
         "createdAt": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(\\.\\d+)?Z$" }
       },
       "if": { "properties": { "label": { "const": "reject" } } },

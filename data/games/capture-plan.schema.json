@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/capture-plan.schema.json",
+  "title": "Ujwalam game capture plan",
+  "description": "data/games/<game-id>/capture-plan.json: screens, events and outcomes still to be captured per mode. The W1 coverage tracker (services/clip/coverage.py) reads it and reports each item when it is captured; its state lives in the pack's gitignored local/ folder, never in this file. Cross-file checks (detector, mode, medal, match criteria): tools/game-validate.mjs.",
+  "type": "object",
+  "required": ["version", "game", "dedicatedCaptureCheck", "items"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": "string" },
+    "version": { "const": 2, "description": "File format version. 2 (W1): every item has `match`." },
+    "game": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "dedicatedCaptureCheck": { "type": "string", "pattern": "^W[0-9]+$", "description": "Build step at which items still missing get a dedicated capture request." },
+    "items": { "type": "array", "items": { "$ref": "#/$defs/item" } }
+  },
+  "$defs": {
+    "item": {
+      "type": "object",
+      "required": ["id", "mode", "detector", "what", "why", "status", "match"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "mode": { "enum": ["mp", "br", "dmz"] },
+        "detector": { "type": ["string", "null"], "pattern": "^[A-Z][A-Z0-9]*$", "description": "null when no detector exists yet." },
+        "medal": { "type": "string", "minLength": 1, "description": "Event text in the catalogue of `detector`." },
+        "what": { "type": "string", "minLength": 1 },
+        "why": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["missing", "captured"], "description": "Planning status. The tracker never edits this file; live coverage is in local/coverage.json." },
+        "match": { "$ref": "#/$defs/match" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "medal": true }, "required": ["medal"] },
+          "then": { "properties": { "detector": { "type": "string" } } }
+        }
+      ]
+    },
+    "match": {
+      "type": "object",
+      "description": "How the coverage tracker recognises the item. auto: the first detection that meets any `when` criterion captures the item. manual: detections that meet a criterion are only candidates; the user confirms the item with `coverage.py mark`. Criteria come only from existing detector, screen and medal definitions; the validator allows auto only when every position it relies on is a verified ROI or screen cue.",
+      "type": "object",
+      "required": ["confirm"],
+      "additionalProperties": false,
+      "properties": {
+        "confirm": { "enum": ["auto", "manual"] },
+        "reason": { "type": "string", "minLength": 1, "description": "manual only: why no measured cue can capture the item automatically." },
+        "when": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/criterion" }, "description": "Any criterion matching one detection is enough." }
+      },
+      "allOf": [
+        { "if": { "properties": { "confirm": { "const": "manual" } } }, "then": { "properties": { "reason": true }, "required": ["reason"] } },
+        { "if": { "properties": { "confirm": { "const": "auto" } } }, "then": { "properties": { "when": true }, "required": ["when"], "not": { "properties": { "reason": true }, "required": ["reason"] } } }
+      ]
+    },
+    "criterion": {
+      "type": "object",
+      "description": "All present fields must hold for one detection (one detector event in one sampled frame).",
+      "required": ["detector"],
+      "additionalProperties": false,
+      "properties": {
+        "detector": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$", "description": "Detector id; must be the item's detector." },
+        "medal": { "type": "string", "minLength": 1, "description": "Catalogue event the detection matched (M3-style medal list)." },
+        "pattern": { "type": "string", "minLength": 1, "description": "One of the detector's patterns: the detection text must match this pattern better than the detector's other patterns." },
+        "rois": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" }, "description": "Detector ROI ids; the detection box centre must lie inside one of them." },
+        "nameInRoi": { "type": "boolean", "description": "true: a profile-name box (score >= the name threshold) has its centre in the same ROI as the detection." },
+        "nameMatched": { "type": "boolean", "description": "The detector event's own nameMatched flag (end-screen name check, e.g. K1)." },
+        "screen": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$", "description": "Screen id in screens.json; the detection box centre must lie inside one of that screen's cue ROIs." },
+        "frameModes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["mp", "br", "dmz"] }, "description": "The frame's HUD mode (g1_scan classify_frame) must be one of these; an unclassified frame never matches." }
+      },
+      "dependentRequired": { "nameInRoi": ["rois"] }
+    }
+  }
+}

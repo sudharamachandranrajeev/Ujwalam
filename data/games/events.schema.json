@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/events.schema.json",
+  "title": "Ujwalam game event catalogues",
+  "description": "data/games/<game-id>/events.json: named catalogues of on-screen events (e.g. CODM medals). A detector points at a catalogue with `catalogue`. Class and weight are data: promoting a reference event is a data edit. Cross-file checks: tools/game-validate.mjs.",
+  "type": "object",
+  "required": ["game", "catalogues"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": "string" },
+    "game": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "catalogues": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/catalogue" }
+    }
+  },
+  "$defs": {
+    "catalogue": {
+      "type": "object",
+      "required": ["id", "events"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "note": { "type": "string" },
+        "events": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/event" } }
+      }
+    },
+    "event": {
+      "type": "object",
+      "required": ["text", "class", "status", "weight", "clipReason"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "class": { "enum": ["positive", "reference"], "description": "positive = clip signal (weight from G3); reference = detected and logged to the reference dataset only (weight 0, never a clip reason). Promote by editing this data." },
+        "aliases": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "status": { "enum": ["seen_g1", "listed_not_seen", "spelling_unverified", "unverified"] },
+        "weight": { "type": ["number", "null"], "minimum": 0 },
+        "clipReason": { "type": "boolean", "description": "May appear as a clip reason. Always false for reference events." },
+        "evidence": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/evidencePath" } },
+        "note": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "class": { "const": "reference" } }, "required": ["class"] },
+          "then": { "properties": { "weight": { "const": 0 }, "clipReason": { "const": false } } }
+        },
+        {
+          "if": { "properties": { "class": { "const": "positive" } }, "required": ["class"] },
+          "then": { "properties": { "weight": { "type": ["number", "null"] } } }
+        }
+      ]
+    },
+    "evidencePath": { "type": "string", "pattern": "^docs/evidence/[0-9]{4}-[0-9]{2}-[0-9]{2}-[a-z0-9-]+\\.md$" }
+  }
+}

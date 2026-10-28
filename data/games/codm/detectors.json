@@ -1,33 +1,9 @@
 {
   "$schema": "../detector-pack.schema.json",
-  "$comment": "CODM detector pack. All ROIs, texts and colours are UNVERIFIED until G1/G2 check them on corpus footage (source: docs/evidence/2026-10-27-g1-live-reference.md). Weights, windows and cooldowns are null: G3 proposes them from labelled data. No private names here; names come from data/profile.local.json at runtime. 0.2.0 (user decisions 2026-10-27): M3 medal classes, reference-medal dataset, K1 FINAL KILLCAM (name required), dmz tag-only mode. 0.2.1 (A5b, live full-screen capture 2, docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md): N1 labels and killer-name ROIs, M1 post-match screen, N2 revival line at the top, B1 minTextHeight, X1 5+ form, B2 N KILL(S) is the user count. 0.2.2 (user decision 2026-10-27, P2a gate): endScreenRule. A match can show several end screens (Domination shows MVP and Impact Play); each of M1, M2 and K1 is checked for the profile name separately, any with the name gives one match-level positive (all named screens listed as reasons), none named gives no signal, and no end screen is required.",
-  "version": "0.2.2",
+  "$comment": "CODM detector pack. All ROIs, texts and colours are UNVERIFIED until G1/G2 check them on corpus footage (source: docs/evidence/2026-10-27-g1-live-reference.md). Weights, windows and cooldowns are null: G3 proposes them from labelled data. No private names here; names come from data/profile.local.json at runtime. `version` is the pack version for every file in this folder; version history: CHANGELOG.md.",
+  "version": "0.3.0",
   "engineVersion": "0.1.0",
-  "game": {
-    "id": "codm",
-    "name": "Call of Duty: Mobile"
-  },
-  "ocr": {
-    "engine": "rapidocr",
-    "minConfidence": null
-  },
-  "gameArea": {
-    "method": "cropdetect",
-    "referenceAspect": 1.45,
-    "status": "verified"
-  },
-  "nameMatch": {
-    "profileKey": "codm",
-    "fuzzy": true,
-    "ignoreSeparators": true,
-    "minScore": null,
-    "status": "unverified"
-  },
-  "modes": [
-    "mp",
-    "br",
-    "dmz"
-  ],
+  "game": "codm",
   "detectors": [
     {
       "id": "M1",
@@ -35,6 +11,11 @@
       "role": "positive",
       "modes": [
         "mp"
+      ],
+      "screens": [
+        "postmatch_mvp",
+        "mp_scoreboard",
+        "mp_top3"
       ],
       "method": "ocr",
       "rois": [
@@ -80,6 +61,9 @@
       "modes": [
         "mp"
       ],
+      "screens": [
+        "impact_play"
+      ],
       "method": "ocr",
       "rois": [
         {
@@ -122,6 +106,10 @@
       "modes": [
         "mp"
       ],
+      "screens": [
+        "mp_gameplay",
+        "impact_play"
+      ],
       "method": "ocr",
       "rois": [
         {
@@ -143,199 +131,9 @@
           "status": "verified"
         }
       ],
-      "medals": [
-        {
-          "text": "Double Kill",
-          "class": "positive",
-          "status": "seen_g1",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Triple Kill",
-          "class": "positive",
-          "status": "seen_g1",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Fury Kill",
-          "class": "positive",
-          "status": "seen_g1",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Frenzy Kill",
-          "class": "positive",
-          "status": "seen_g1",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Merciless",
-          "class": "positive",
-          "status": "seen_g1",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Nuclear",
-          "class": "positive",
-          "status": "listed_not_seen",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Ultimate Terminator",
-          "class": "positive",
-          "status": "listed_not_seen",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Ultra Kill",
-          "class": "positive",
-          "status": "listed_not_seen",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Mega Kill",
-          "class": "positive",
-          "status": "listed_not_seen",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Super Kill",
-          "class": "positive",
-          "status": "listed_not_seen",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Ruthless",
-          "class": "positive",
-          "status": "seen_g1",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Relentless",
-          "class": "positive",
-          "status": "unverified",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Brutal",
-          "class": "positive",
-          "status": "unverified",
-          "weight": null,
-          "clipReason": true
-        },
-        {
-          "text": "Survivor",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Kingslayer",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Long Shot",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Headshot",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Major Assist",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Minor Assist",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "UAV Assist",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Hardpoint Kill",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Trophy System Destroy",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Revenge",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Bloodthirsty",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Saboteur",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Berserker",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        },
-        {
-          "text": "Keep it Fresh",
-          "class": "reference",
-          "status": "seen_g1",
-          "weight": 0,
-          "clipReason": false
-        }
-      ],
+      "catalogue": "medals",
       "referenceDataset": {
-        "path": "data/datasets/codm-medals-reference",
+        "path": "data/games/codm/local/medals-reference",
         "index": "index.jsonl",
         "layout": "one subfolder per medal (slug of the medal text), crops inside, index.jsonl with one record per crop",
         "gitignored": true
@@ -360,6 +158,10 @@
       "role": "positive",
       "modes": [
         "mp"
+      ],
+      "screens": [
+        "mp_gameplay",
+        "impact_play"
       ],
       "method": "ocr_colour_mask",
       "rois": [
@@ -395,6 +197,9 @@
       "modes": [
         "mp"
       ],
+      "screens": [
+        "mp_gameplay"
+      ],
       "method": "ocr_line_parse",
       "rois": [
         {
@@ -424,6 +229,9 @@
       "role": "positive",
       "modes": [
         "br"
+      ],
+      "screens": [
+        "br_gameplay"
       ],
       "method": "ocr_line_parse",
       "rois": [
@@ -457,6 +265,10 @@
       "modes": [
         "mp",
         "br"
+      ],
+      "screens": [
+        "mp_gameplay",
+        "br_gameplay"
       ],
       "method": "ocr",
       "rois": [
@@ -497,7 +309,7 @@
       },
       "cooldownSec": null,
       "status": "unverified",
-      "note": "Shows for other players too, so the name match is required. Text forms seen: nX MULTI-KILL, 5+ MULTI-KILL (BR), On a N killstreak! with N 5, 10, 20, 25 (other N values UNVERIFIED). In BR the squad list always shows the user's name, so the name must be inside the banner ROI, not anywhere on the frame."
+      "note": "Shows for other players too, so the name match is required. Text forms seen: nX MULTI-KILL, 5+ MULTI-KILL (BR), On a N killstreak! with N 5, 10, 20, 25 (other N values UNVERIFIED). In BR the squad list always shows the user's name, so the name must be inside the banner ROI, not anywhere on the frame. Correction 2026-10-28: X1 appears in BR as well as MP. A5b BR has 32 X1 banner_br hits, 5 with the profile name in the banner (docs/evidence/2026-10-27-p2b-w1-coverage-capture.md); the P2a gate note \"seen in MP only\" was wrong."
     },
     {
       "id": "B2",
@@ -505,6 +317,9 @@
       "role": "positive",
       "modes": [
         "br"
+      ],
+      "screens": [
+        "br_gameplay"
       ],
       "method": "ocr",
       "rois": [
@@ -539,6 +354,9 @@
       "role": "positive",
       "modes": [
         "mp"
+      ],
+      "screens": [
+        "final_killcam"
       ],
       "method": "ocr",
       "rois": [
@@ -586,6 +404,10 @@
       "modes": [
         "mp",
         "br"
+      ],
+      "screens": [
+        "mp_gameplay",
+        "br_gameplay"
       ],
       "method": "ocr",
       "rois": [
@@ -665,6 +487,9 @@
       "modes": [
         "br"
       ],
+      "screens": [
+        "br_gameplay"
+      ],
       "method": "ocr",
       "rois": [
         {
@@ -736,8 +561,5 @@
     "noneNamed": "no_signal",
     "screenRequired": false,
     "note": "User decision 2026-10-27. Detect every end screen that appears (MVP, Impact Play, FINAL KILLCAM); a match may show more than one. Check the profile name on each screen separately. Each screen with the name is positive, but it counts once per match for scoring, and every named screen is listed as a reason. No screen with the name means no signal. No end screen has to appear."
-  },
-  "taggingOnlyModes": [
-    "dmz"
-  ]
+  }
 }
