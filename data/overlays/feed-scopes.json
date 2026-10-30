@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "source": "D72, docs/plan/2026-10-29-v1-decisions.md (feed scopes)",
+  "checked": "2026-10-29",
+  "note": "Overlay folders (first segment of the overlay rel) whose pages draw chat or alerts and so get the /display feed scope. Every other overlay gets the effects scope (masked chat text). Widen only with the user's yes.",
+  "display": ["chat-list", "alert-box"]
+}

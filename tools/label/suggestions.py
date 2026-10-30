@@ -60,7 +60,7 @@ from datetime import datetime, timezone
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.normpath(os.path.join(_HERE, "..", ".."))
 sys.path.insert(0, os.path.join(_REPO, "services", "clip"))
-import game_pack  # noqa: E402
+import game_pack
 
 TOOL_VERSION = 1
 SKIP_DETECTORS = {"NAME"}

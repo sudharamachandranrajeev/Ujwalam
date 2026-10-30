@@ -52,9 +52,9 @@ import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-import g1_scan  # noqa: E402
-import g1_text as gt  # noqa: E402
-import game_pack  # noqa: E402
+import g1_scan
+import g1_text as gt
+import game_pack
 
 TOOL_VERSION = 1
 MAX_CANDIDATES = 5  # candidates kept per item with crops; later ones are only counted

@@ -52,24 +52,127 @@ test('case and separator variants hit; hits never echo the term', () => {
   assert.ok(lines.some((l) => /v\.txt:2: term #1/.test(l)));
   assert.ok(lines.some((l) => /v\.txt:3: term #1/.test(l)));
   assert.ok(lines.some((l) => /v\.txt:5: term #1/.test(l)));
-  assert.ok(lines.some((l) => /v\.txt:6: term #2/.test(l)));
+  assert.ok(lines.some((l) => /v\.txt:6: term #3/.test(l))); // term #2 is the short term 'a-b' (E8-07: no longer dropped)
   assert.ok(lines.some((l) => /v\.txt:4: term #1/.test(l)));
   noEcho(r);
   git('reset', '-q');
 });
 
-test('3-char gaps do not match, short terms and placeholders skipped', () => {
-  staged('s.txt', 'foo---bar---xy\na-b a b <placeholder-x> placeholderx versionversion9\n');
+test('placeholders, $-keys and version are not terms; term counts are printed (numbers only)', () => {
+  staged('s.txt', '<placeholder-x> placeholderx versionversion9 ZzCommentZz Ver-Sion-9\n');
   const r = scan(['pre-commit']);
   assert.equal(r.status, 0, r.stdout);
+  assert.match(r.stderr, /private-scan: 3 term\(s\) loaded \(1 short, whole-token\); profile values ignored: 1 placeholder, 0 without letters or digits, 0 duplicate, 0 non-string/);
+  assert.match(r.stderr, /1 content item\(s\) scanned \(0 UTF-16 decoded, 0 binary scanned as raw bytes\); 0 skipped/);
   git('reset', '-q');
 });
 
-test('binary files skipped', () => {
-  writeFileSync(path.join(work, 'b.bin'), Buffer.concat([Buffer.from('foobarxy'), Buffer.from([0, 1, 2])]));
-  git('add', 'b.bin');
-  const r = scan(['pre-commit']);
-  assert.equal(r.status, 0, r.stdout);
+// ---- review E8-07 (2026-10-29): normalisation before matching; short terms scanned, not dropped ----
+test('E8-07: separator runs of any length, line breaks, format characters and fullwidth forms all hit', () => {
+  const fw = (s) => [...s].map((c) => String.fromCodePoint(c.codePointAt(0) + 0xfee0)).join(''); // ASCII -> fullwidth
+  const cases = {
+    'sep3.txt': 'f - o - o - b - a - r - x - y\n',
+    'sep-run.txt': 'foo------bar~~~~~~~~xy\n',
+    'split.txt': 'intro\nfoo\nbar\nxy\n',
+    'split-crlf.txt': 'foob\r\n  arxy\r\n',
+    'zwsp3.txt': 'fo\u200B\u200B\u200Bobarxy\n',
+    'soft-hyphen.txt': 'foo\u00ADbar\u00ADxy\n',
+    'word-joiner.txt': 'foo\u2060bar\u2060xy\n',
+    'zwj-zwnj.txt': 'foo\u200Dbar\u200Cxy\n',
+    'bidi.txt': 'foo\u202Ebar\u2066xy\u2069\n',
+    'cgj.txt': 'foo\u034Fbarxy\n',
+    'fullwidth.txt': `${fw('FooBarXY')}\n`,
+    'fullwidth-mixed.txt': `foo${fw('bar')}＿${fw('xy')}\n`,
+  };
+  for (const [name, content] of Object.entries(cases)) {
+    staged(name, content);
+    const r = scan(['pre-commit']);
+    assert.equal(r.status, 1, `${name}: ${r.stdout}`);
+    assert.match(r.stdout, new RegExp(`${name.replace(/[.]/g, '\\.')}:\\d+: term #1`), name);
+    noEcho(r);
+    git('reset', '-q');
+  }
+  // the line of a split hit is the line where the term starts
+  staged('split2.txt', 'a\nb\nfoo\nbar\nxy\n');
+  assert.match(scan(['pre-commit']).stdout, /split2\.txt:3: term #1/);
+  git('reset', '-q');
+  // commit messages are normalised the same way
+  const f = path.join(dir, 'msg-e807.txt');
+  writeFileSync(f, 'feat: x\n\nf\u00ADo\u2060o b-a-r\nxy\n');
+  assert.equal(scan(['commit-msg', f]).status, 1);
+});
+
+test('E8-07: a 2-3 character term is scanned as a whole token; a 1-character term fails loudly at load', () => {
+  // 'a-b' in the profile: core "ab", term #2
+  for (const [content, hit] of [
+    ['x ab y\n', true], ['AB\n', true], ['a-b\n', true], ['a.b\n', true], ['a_b\n', true], ['a\u200Bb\n', true], ['ａｂ\n', true],
+    ['cab\n', false], ['abc\n', false], ['a b\n', false], ['(a, b)\n', false], ['a--b\n', false], ['xa-by\n', false],
+  ]) {
+    staged('short.txt', content);
+    const r = scan(['pre-commit']);
+    assert.equal(r.status, hit ? 1 : 0, `${JSON.stringify(content)}: ${r.stdout}`);
+    if (hit) assert.match(r.stdout, /short\.txt:1: term #2/);
+    git('reset', '-q');
+  }
+  // a single letter or digit cannot be matched safely: refused with a message that does not echo the value
+  const one = path.join(dir, 'profile-one.json');
+  writeFileSync(one, JSON.stringify({ a: TERM, b: 'Q', c: '<p>' }));
+  const r = run('node', [scanner, 'scan-worktree', '--profile', one]);
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /profile string value #2 has a single letter or digit/);
+  assert.ok(!/\bQ\b/.test(r.stdout + r.stderr.replace(/private-scan/g, '')), r.stderr);
+});
+
+// ---- review E8-01 (2026-10-29): NUL-containing files are decoded or scanned as bytes, never skipped ----
+const utf16le = (s, bom = true) => Buffer.concat([bom ? Buffer.from([0xff, 0xfe]) : Buffer.alloc(0), Buffer.from(s, 'utf16le')]);
+const utf16be = (s, bom = true) => { const b = Buffer.from(s, 'utf16le'); b.swap16(); return Buffer.concat([bom ? Buffer.from([0xfe, 0xff]) : Buffer.alloc(0), b]); };
+const noise = (n, seed) => { const b = Buffer.alloc(n); let x = seed; for (let i = 0; i < n; i++) { x = (x * 1103515245 + 12345) >>> 0; b[i] = x >>> 24; } return b; };
+
+test('E8-01: UTF-16LE (BOM and no BOM) and UTF-16BE staged files with a term are blocked, with line numbers', () => {
+  for (const [name, buf, line] of [
+    ['le-bom.txt', utf16le('hello\r\nfoo bar xy\r\n'), 2],
+    ['le-nobom.txt', utf16le('first line\nsecond line\nzz FooBarXY zz\n', false), 3],
+    ['be-bom.txt', utf16be('foo_bar_xy\n'), 1],
+    ['be-nobom.txt', utf16be('a\nb\nfoobarxy\n', false), 3],
+  ]) {
+    staged(name, buf);
+    const r = scan(['pre-commit']);
+    assert.equal(r.status, 1, `${name}: ${r.stdout}${r.stderr}`);
+    assert.match(r.stdout, new RegExp(`${name.replace(/[.]/g, '\\.')}:${line}: term #1$`, 'm'), name);
+    assert.match(r.stderr, /1 UTF-16 decoded/);
+    noEcho(r);
+    git('reset', '-q');
+  }
+});
+
+test('E8-01: binary files are scanned as raw bytes: a term in UTF-16 (either alignment) or UTF-8 inside binary data is blocked', () => {
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0x0d]);
+  for (const [name, buf] of [
+    ['u16le.bin', Buffer.concat([png, noise(301, 7), Buffer.from('FooBarXY', 'utf16le'), noise(200, 9)])],
+    ['u16le-odd.bin', Buffer.concat([png, noise(300, 7), Buffer.from('foobarxy', 'utf16le'), noise(200, 9)])],
+    ['u16be.bin', Buffer.concat([png, noise(300, 3), utf16be('foobarxy', false), noise(77, 5)])],
+    ['u8.bin', Buffer.concat([Buffer.from('foobarxy'), Buffer.from([0, 1, 2])])],
+    ['text-one-nul.txt', Buffer.from('hello foobarxy\n\0\n')],
+  ]) {
+    staged(name, buf);
+    const r = scan(['pre-commit']);
+    assert.equal(r.status, 1, `${name}: ${r.stdout}`);
+    assert.match(r.stdout, new RegExp(`${name.replace(/[.]/g, '\\.')}:1: term #1 \\(binary content, raw bytes\\)`), name);
+    assert.match(r.stderr, /1 binary scanned as raw bytes/);
+    noEcho(r);
+    git('reset', '-q');
+  }
+  // a short term written as text inside binary data hits (printable island); random bytes do not make short-term hits
+  staged('short.bin', Buffer.concat([png, noise(500, 13), Buffer.from(' tag a-b here '), noise(500, 17)]));
+  const sh = scan(['pre-commit']);
+  assert.equal(sh.status, 1, sh.stdout);
+  assert.match(sh.stdout, /short\.bin:1: term #2 \(binary content, raw bytes\)/);
+  git('reset', '-q');
+  // a binary file without a term passes (and is counted, not skipped)
+  staged('clean.bin', Buffer.concat([png, noise(4096, 11)]));
+  const ok = scan(['pre-commit']);
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.match(ok.stderr, /1 binary scanned as raw bytes\); 0 skipped/);
   git('reset', '-q');
 });
 
@@ -470,9 +573,11 @@ test('M4: an unreadable staged blob under data/labels/ is a hit', () => {
   f.g('update-index', '--add', '--cacheinfo', `100644,${'1'.repeat(40)},${LABEL}`);
   blocked(f.scan(['pre-commit']), new RegExp(`${LABEL.replace(/[.]/g, '\\.')}:1: labels rule: file cannot be read, failing closed`), 'missing blob');
   f.g('reset', '-q');
-  // outside data/labels/ an unreadable blob is skipped as before
+  // outside data/labels/ an unreadable blob is reported and fails closed too (review E8-01: never skipped silently)
   f.g('update-index', '--add', '--cacheinfo', `100644,${'2'.repeat(40)},other.txt`);
-  assert.equal(f.scan(['pre-commit']).status, 0);
+  const r = f.scan(['pre-commit']);
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /other\.txt:1: skipped: the staged blob cannot be read, failing closed/);
 });
 
 // ---- review fixes round 4 (2026-10-28) ----
@@ -529,4 +634,75 @@ test('R5: pre-push checks every path of a blob: a local/ path or a term path wit
   const r2 = g2.scan(['pre-push'], { input: `refs/heads/main ${t2} refs/heads/main ${'0'.repeat(40)}\n`, env: { ...process.env, UJWALAM_PUSH_APPROVED: '1' } });
   assert.equal(r2.status, 1, r2.stdout);
   assert.ok(hasRule(r2, /s-2026-10-17-0000\.json@[0-9a-f]{12}:1: labels rule/), r2.stdout);
+});
+
+// ---- review E8-01 (2026-10-29), continued: modes that need fresh repos ----
+test('E8-01: scan-files, scan-worktree and pre-push history also decode UTF-16 and scan binary blobs', () => {
+  const f = fresh({ ctx: 'none' });
+  f.add('base.txt', 'base\n');
+  f.g('commit', '-q', '-m', 'base');
+  f.add('notes-utf16.txt', utf16le('hello foobarxy\n'));
+  f.add('blob.bin', Buffer.concat([noise(64, 1), Buffer.from('foobarxy', 'utf16le'), noise(64, 2)]));
+  f.g('commit', '-q', '-m', 'add');
+  f.g('rm', '-q', 'notes-utf16.txt', 'blob.bin');
+  f.g('commit', '-q', '-m', 'remove');
+  const tip = f.g('rev-parse', 'HEAD').trim();
+  const p = f.scan(['pre-push'], { input: `refs/heads/main ${tip} refs/heads/main ${'0'.repeat(40)}\n`, env: { ...process.env, UJWALAM_PUSH_APPROVED: '1' } });
+  assert.equal(p.status, 1, p.stdout);
+  assert.ok(hasRule(p, /notes-utf16\.txt@[0-9a-f]{12}:1: term #1$/), p.stdout);
+  assert.ok(hasRule(p, /blob\.bin@[0-9a-f]{12}:1: term #1 \(binary content, raw bytes\)/), p.stdout);
+  f.put('wt-utf16.txt', utf16be('x\nfoobarxy\n'));
+  const w = f.scan(['scan-worktree']);
+  assert.equal(w.status, 1);
+  assert.match(w.stdout, /wt-utf16\.txt: 1 hit\(s\), terms #1/);
+  const s = f.scan(['scan-files', path.join(f.w, 'wt-utf16.txt')]);
+  assert.equal(s.status, 1);
+  assert.match(s.stdout, /file:2: term #1/);
+});
+
+test('E8-01: files that cannot be scanned are reported with a reason; an unreadable staged blob fails closed', () => {
+  const f = fresh({ ctx: 'none' });
+  f.g('update-index', '--add', '--cacheinfo', `100644,${'2'.repeat(40)},other.txt`);
+  const r = f.scan(['pre-commit']);
+  assert.equal(r.status, 1, r.stdout);
+  assert.match(r.stdout, /other\.txt:1: skipped: the staged blob cannot be read, failing closed/);
+  assert.match(r.stderr, /1 skipped \(each listed above\)/);
+  f.g('reset', '-q');
+  // a gitlink outside data/labels/ has no blob: reported, not a hit
+  f.add('a.txt', 'a\n');
+  f.g('commit', '-q', '-m', 'a');
+  const head = f.g('rev-parse', 'HEAD').trim();
+  f.g('update-index', '--add', '--cacheinfo', `160000,${head},vendor/sub`);
+  const g = f.scan(['pre-commit']);
+  assert.equal(g.status, 0, g.stdout);
+  assert.match(g.stdout, /vendor\/sub:1: skipped: gitlink \(submodule\), no blob in this repository$/m);
+  f.g('commit', '-q', '-m', 'sub');
+  const tip = f.g('rev-parse', 'HEAD').trim();
+  const p = f.scan(['pre-push'], { input: `refs/heads/main ${tip} refs/heads/main ${'0'.repeat(40)}\n`, env: { ...process.env, UJWALAM_PUSH_APPROVED: '1' } });
+  assert.equal(p.status, 0, p.stdout + p.stderr);
+  assert.match(p.stdout, /vendor\/sub@[0-9a-f]{12}:1: skipped: gitlink/);
+  // a tracked file deleted from the working tree is reported by scan-worktree, not silently passed over
+  rmSync(path.join(f.w, 'a.txt'));
+  const w = f.scan(['scan-worktree']);
+  assert.match(w.stdout, /a\.txt:1: skipped: not in the working tree \(deleted\)/);
+});
+
+// ---- review E8-13 (2026-10-29): pre-push never imports the label validator from the commits being pushed ----
+test('E8-13: pre-push and scan-history use the checked-out hook tooling validator, not a loosened one in the pushed commit', () => {
+  const f = fresh();
+  // the pushed commit carries a validator that accepts everything, plus a label file with free text
+  const lx = path.join(f.w, 'tools', 'label', 'labels-export.mjs');
+  writeFileSync(lx, readFileSync(lx, 'utf8').replace('export function validateLabelFile(doc, ctx) {', 'export function validateLabelFile(doc, ctx) {\n  return [];'));
+  f.g('add', 'tools/label/labels-export.mjs');
+  f.add(LABEL, goodDoc([goodRec({ note: 'free text' })]));
+  f.g('commit', '-q', '-m', 'loosen');
+  const tip = f.g('rev-parse', 'HEAD').trim();
+  const p = f.scan(['pre-push'], { input: `refs/heads/main ${tip} refs/heads/main ${'0'.repeat(40)}\n`, env: { ...process.env, UJWALAM_PUSH_APPROVED: '1' } });
+  assert.equal(p.status, 1, p.stdout + p.stderr);
+  assert.ok(hasRule(p, /schema violation at \/labels\/0 additionalProperties/), p.stdout);
+  assert.match(p.stderr, /label validator code from the checked-out hook tooling \(working tree at hook start\): tools\/label\/labels-export\.mjs [0-9a-f]{12}, tools\/label\/schema-lite\.mjs [0-9a-f]{12}, data\/labels\.schema\.json [0-9a-f]{12}; label data from the pushed tip/);
+  const h = f.scan(['scan-history']);
+  assert.equal(h.status, 1);
+  assert.ok(hasRule(h, /schema violation at \/labels\/0 additionalProperties/), h.stdout);
+  assert.match(h.stderr, /checked-out hook tooling/);
 });

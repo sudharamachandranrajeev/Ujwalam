@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ujwalam/actions/catalogue.schema.json",
+  "title": "Action catalogue",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "actions"],
+  "properties": {
+    "version": { "const": 1 },
+    "note": { "type": "string" },
+    "actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "class", "target", "description"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z][a-z0-9]*(\\.[a-z0-9]+)+$", "maxLength": 64 },
+          "class": { "enum": ["read", "write", "on-air-write"] },
+          "chatAllowed": { "type": "boolean", "default": false },
+          "chatMode": { "enum": ["off", "dry-run"], "default": "off", "description": "Chat rollout per action. off: refused. dry-run: the gate decides and the audit records what would have run; nothing executes. Deny-category actions must be off. Note: \"on\" is not in this enum until the lost-action blocker is closed (plan 2026-10-28-p3-plan.md, Blockers before C2/C3); it returns then. The loader also refuses \"on\" (defence in depth)." },
+          "target": { "enum": ["none", "scene", "layer", "effect", "preset", "camera", "replay", "marker", "chat", "stream", "record", "output", "settings", "device", "audio", "gate"] },
+          "description": { "type": "string", "minLength": 1, "maxLength": 200 }
+        }
+      }
+    }
+  }
+}

@@ -139,5 +139,12 @@
     "source": "user-reference-2026-10-27",
     "checked": "2026-10-27",
     "note": "Not used by Ujwalam until O5; never applied to the standard limits. Official blog agrees on 9 Mbps 1440p / 7.5 Mbps 1080p, HEVC for 2k: https://blog.twitch.tv/en/2026/06/17/introducing-dual-format-and-2k-streaming-on-twitch/"
+  },
+  "replyMaxChars": {
+    "value": 500,
+    "severity": "warning",
+    "source": "https://dev.twitch.tv/docs/api/reference/#send-chat-message",
+    "checked": "2026-10-28",
+    "note": "Send Chat Message: message limited to 500 characters (official reference)."
   }
 }

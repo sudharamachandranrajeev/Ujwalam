@@ -270,7 +270,7 @@ test('detection: name match required but null is rejected; not required may be n
 
 test('detection: negative cases rejected', () => {
   let d = clone(det); d.confidence = 1.2; bad(vDet, d, 'confidence');
-  d = clone(det); d.cropPath = 'C:/Users/x/crop.png'; bad(vDet, d, 'absolute path');
+  d = clone(det); d.cropPath = 'C:/Users/x/crop.png'; bad(vDet, d, 'absolute path'); // lint-allow: user-path
   d = clone(det); d.cropPath = 'docs/evidence/crop.png'; bad(vDet, d, 'committed folder');
   d = clone(det); d.cropPath = 'cache/../docs/a.png'; bad(vDet, d, 'dotdot');
   d = clone(det); d.cropPath = 'docs/evidence/private/g1/a.png'; ok(vDet, d);

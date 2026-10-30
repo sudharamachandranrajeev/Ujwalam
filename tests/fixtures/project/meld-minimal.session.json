@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "session": {
+    "currentScene": "H-SCENE-2",
+    "verticalCanvasEnabled": true,
+    "verticalScenes": [
+      {
+        "id": "V-SCENE-1", "name": "Scene One", "linkedSceneId": "H-SCENE-1",
+        "childItems": [
+          { "id": "V-L-DUP", "name": "Mirror", "x": 10, "y": 1500, "width": 300, "height": 200, "visible": true, "isLocked": false, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Duplicator" }, "sourceItemId": "V-L-CAM", "sourceSceneId": "V-SCENE-1" },
+          { "id": "V-L-TEXT", "name": "Caption", "x": 40, "y": 100, "width": 600, "height": 80, "visible": true, "isLocked": false, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Text" }, "text": "Hello", "fontFamily": "Sans", "pixelSize": 48, "foregroundColor": "#ff112233", "isTextFromFile": false },
+          { "id": "V-L-MEDIA", "name": "Intro", "x": 0, "y": 0, "width": 1080, "height": 1920, "visible": true, "isLocked": true, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Media source" }, "mediaSource": "file:///D:/media-root/clips/intro.mp4", "isLoopPlayback": false },
+          { "id": "V-L-CAM", "name": "Camera", "x": -420, "y": 656, "width": 1920, "height": 1080, "visible": true, "isLocked": false, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Video device" }, "deviceId": "DEVICE-CAMERA-1", "displayName": "Camera One" }
+        ]
+      },
+      { "id": "V-SCENE-2", "name": "Scene Two", "linkedSceneId": "H-SCENE-2", "childItems": [] }
+    ],
+    "scenes": [
+      {
+        "id": "H-SCENE-1", "name": "Scene One",
+        "childItems": [
+          { "id": "H-L-WIDGET", "name": "Cloud widget", "x": 0, "y": 0, "width": 100, "height": 100, "visible": true, "rotation": 0, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Widget" }, "widgetSource": "https://widgets.example.invalid/w" },
+          { "id": "H-L-DUP", "name": "Mirror", "x": 1000, "y": 20, "width": 300, "height": 200, "visible": true, "isLocked": false, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Duplicator" }, "sourceItemId": "H-L-CAM", "sourceSceneId": "H-SCENE-1" },
+          { "id": "H-L-GROUP", "name": "Group", "x": 0, "y": 0, "width": 100, "height": 100, "visible": true, "rotation": 0, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Group" },
+            "childItems": [ { "id": "H-L-GCHILD", "name": "Inner", "x": 0, "y": 0, "width": 10, "height": 10, "visible": true, "rotation": 0, "effects": [], "childItems": [], "meta": { "sceneObjectSourceName": "MeldStudio/Text" }, "text": "x" } ] },
+          { "id": "H-L-OVERLAY", "name": "Chat", "x": 20, "y": 460, "width": 400, "height": 600, "visible": true, "isLocked": false, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Browser" }, "url": "http://localhost:8787/overlays/chat-overlay/index.html?canvas=horizontal&theme=demo", "browserWidth": 400, "browserHeight": 600,
+            "audioTrack": { "id": "ATRACK-BROWSER", "enabled": true, "gain": 1, "muted": true, "monitoring": false, "outputTracks": 1, "type": 3 } },
+          { "id": "H-L-WEB", "name": "Web", "x": 0, "y": 0, "width": 640, "height": 360, "visible": false, "isLocked": false, "rotation": 0, "opacity": 0.5, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Browser" }, "url": "https://example.invalid/page", "browserWidth": 640, "browserHeight": 360 },
+          { "id": "H-L-CAM", "name": "Camera", "x": 1440, "y": 720, "width": 480, "height": 360, "visible": true, "isLocked": false, "rotation": 180, "opacity": 1, "scaleX": 1, "scaleY": -1, "effects": [ { "type": "chroma" } ], "meta": { "sceneObjectSourceName": "MeldStudio/Video device" }, "deviceId": "DEVICE-CAMERA-1", "displayName": "Camera One" },
+          { "id": "H-L-MEDIA", "name": "Intro", "x": 0, "y": 0, "width": 1920, "height": 1080, "visible": true, "isLocked": false, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Media source" }, "mediaSource": "file:///D:/media-root/clips/intro.mp4", "isLoopPlayback": true, "isPlaying": true,
+            "audioTrack": { "id": "ATRACK-MEDIA", "enabled": true, "gain": 0.5, "muted": false, "monitoring": true, "outputTracks": 3, "type": 3 } },
+          { "id": "H-L-IMAGE", "name": "Logo", "x": 24, "y": 24, "width": 160, "height": 160, "visible": true, "isLocked": false, "rotation": 0, "opacity": 1, "scaleX": 1, "scaleY": 1, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Media source" }, "mediaSource": "file:///D:/media-root/images/logo%20one.png", "isLoopPlayback": false },
+          { "id": "H-L-DUP2", "name": "Mirror of screen", "x": 0, "y": 0, "width": 100, "height": 100, "visible": true, "rotation": 0, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Duplicator" }, "sourceItemId": "H-L-DISPLAY", "sourceSceneId": "H-SCENE-1" },
+          { "id": "H-L-DUP3", "name": "Mirror of mirror", "x": 0, "y": 0, "width": 100, "height": 100, "visible": true, "rotation": 0, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Duplicator" }, "sourceItemId": "H-L-DUP", "sourceSceneId": "H-SCENE-1" },
+          { "id": "H-L-DISPLAY", "name": "Screen", "x": 0, "y": 0, "width": 100, "height": 100, "visible": true, "rotation": 0, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Display capture" } },
+          { "id": "H-L-FUTURE", "name": "Something new", "x": 0, "y": 0, "width": 100, "height": 100, "visible": true, "rotation": 0, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Hologram" } },
+          { "id": "H-L-BADGEO", "name": "Huge", "x": 99999, "y": 0, "width": 100, "height": 100, "visible": true, "rotation": 0, "effects": [], "meta": { "sceneObjectSourceName": "MeldStudio/Text" }, "text": "far" }
+        ]
+      },
+      { "id": "H-SCENE-2", "name": "Scene Two", "childItems": [] }
+    ],
+    "videoCaptureDevices": {
+      "devices": [
+        { "deviceId": "DEVICE-CAMERA-1", "directShowDeviceId": "DSHOW-CAMERA-1", "displayName": "Camera One", "forceDirectShow": false, "frameRate": 29.97, "frameSize": { "width": 1920, "height": 1080 } }
+      ]
+    },
+    "audioTracks": [
+      { "id": "A-MIC", "type": 1, "name": "Mic", "deviceName": "Microphone One", "uniqueId": "AUDIO-MIC-1", "isInputDevice": true, "gain": 0.5, "muted": false, "monitoring": false, "outputTracks": 3 },
+      { "id": "A-OUT", "type": 1, "name": "Headphones", "deviceName": "Headphones One", "uniqueId": "AUDIO-OUT-1", "isInputDevice": false, "gain": 0, "muted": true, "monitoring": true, "outputTracks": 0 },
+      { "id": "A-APP", "type": 2, "name": "Some App", "gain": 1, "muted": false, "monitoring": false, "outputTracks": 3 }
+    ]
+  }
+}

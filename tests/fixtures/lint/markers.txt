@@ -1,0 +1,4 @@
+one // lint-allow:
+two // lint-allow: nonsense
+three // lint-allow: spdx
+four // lint-allow: user-path

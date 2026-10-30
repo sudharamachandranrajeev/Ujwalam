@@ -12,7 +12,7 @@ import unittest
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.normpath(os.path.join(_HERE, "..", ".."))
 sys.path.insert(0, os.path.join(_REPO, "services", "clip"))
-import game_pack  # noqa: E402
+import game_pack
 
 _spec = importlib.util.spec_from_file_location("suggestions", os.path.join(_REPO, "tools", "label", "suggestions.py"))
 sg = importlib.util.module_from_spec(_spec)

@@ -58,9 +58,9 @@ import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-import g1_geometry as geo  # noqa: E402
-import g1_text as gt  # noqa: E402
-import game_pack  # noqa: E402
+import g1_geometry as geo
+import g1_text as gt
+import game_pack
 
 TOOL_VERSION = 1
 
@@ -143,8 +143,8 @@ def lower_own_priority():
 # ---------------------------------------------------------------- media
 
 def _need_cv():
-    import cv2  # noqa: F401
-    import numpy  # noqa: F401
+    import cv2
+    import numpy
 
 
 def probe_size(path):

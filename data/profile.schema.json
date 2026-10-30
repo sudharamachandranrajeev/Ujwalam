@@ -41,6 +41,33 @@
       "type": "object",
       "additionalProperties": { "type": "string" }
     },
+    "brand": {
+      "type": "object",
+      "description": "Local brand asset files used by scene presets ({brand.*} placeholders).",
+      "additionalProperties": false,
+      "properties": {
+        "wordmark": { "type": "string" },
+        "character": { "type": "string" }
+      }
+    },
+    "handles": {
+      "type": "object",
+      "description": "Display handles shown on stream by scene presets ({handles.*} placeholders).",
+      "additionalProperties": false,
+      "properties": {
+        "twitch": { "type": "string" },
+        "youtube": { "type": "string" },
+        "kick": { "type": "string" }
+      }
+    },
+    "links": {
+      "type": "object",
+      "description": "Display links shown on stream by scene presets ({links.*} placeholders).",
+      "additionalProperties": false,
+      "properties": {
+        "discord": { "type": "string" }
+      }
+    },
     "private_terms": { "type": "array", "items": { "type": "string", "minLength": 1 } }
   },
   "$defs": {

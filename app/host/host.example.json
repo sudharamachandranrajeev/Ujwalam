@@ -1,0 +1,7 @@
+{
+  "$comment": "Copy to host.local.json (gitignored) and fill in. Relative paths resolve against the repo root. Environment variables override these (see app/host/lib/config.mjs).",
+  "obsRuntime": "<path to the vendored OBS runtime dir, the one that contains bin/64bit/obs.dll>",
+  "obsSource": "<path to the obs-studio source checkout at the pinned tag (build only)>",
+  "exe": "out/host/build/ujwalam-host.exe",
+  "dataDir": "out/host/data"
+}

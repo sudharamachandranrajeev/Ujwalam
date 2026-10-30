@@ -1,0 +1,139 @@
+{
+  "$comment": "O1 loopback plan (app/host/lib/outputs-plan.mjs). config = O0 output config (rungs and sinks from data/outputs/presets/youtube-1080p60.json plus an H recording bound to the yt-h rung). targets = loopback delivery per sink; the host builds every URL on 127.0.0.1. No real platform, no stream keys.",
+  "config": {
+    "name": "O1 loopback: YouTube 1080p60 + Twitch/Kick re-encode + H recording",
+    "canvases": [
+      {
+        "id": "H",
+        "w": 1920,
+        "h": 1080,
+        "fps": 60
+      },
+      {
+        "id": "V",
+        "w": 1080,
+        "h": 1920,
+        "fps": 60
+      }
+    ],
+    "encoders": [
+      {
+        "id": "yt-h",
+        "canvas": "H",
+        "w": 1920,
+        "h": 1080,
+        "codec": "h264",
+        "bitrate": 17000,
+        "rc": "cbr",
+        "gop_sec": 2,
+        "encoder": "nvenc"
+      },
+      {
+        "id": "reencode-tk",
+        "canvas": "H",
+        "w": 1920,
+        "h": 1080,
+        "fps": 60,
+        "codec": "h264",
+        "bitrate": 6000,
+        "rc": "cbr",
+        "gop_sec": 2,
+        "encoder": "nvenc"
+      },
+      {
+        "id": "vert",
+        "canvas": "V",
+        "w": 1080,
+        "h": 1920,
+        "codec": "h264",
+        "bitrate": 7500,
+        "rc": "cbr",
+        "gop_sec": 2,
+        "encoder": "nvenc"
+      }
+    ],
+    "audio": {
+      "tracks": [
+        {
+          "id": "master",
+          "name": "Master Track",
+          "codec": "aac",
+          "bitrate": 160,
+          "sampleRate": 48000
+        }
+      ]
+    },
+    "sinks": [
+      {
+        "id": "youtube-h",
+        "platform": "youtube",
+        "encoder": "yt-h",
+        "proto": "rtmps",
+        "priority": 1
+      },
+      {
+        "id": "youtube-v",
+        "platform": "youtube",
+        "encoder": "vert",
+        "proto": "rtmps",
+        "priority": 2
+      },
+      {
+        "id": "twitch",
+        "platform": "twitch",
+        "encoder": "reencode-tk",
+        "proto": "rtmp",
+        "priority": 3
+      },
+      {
+        "id": "kick",
+        "platform": "kick",
+        "encoder": "reencode-tk",
+        "proto": "rtmps",
+        "priority": 4
+      },
+      {
+        "id": "rec-h",
+        "platform": "local",
+        "encoder": "yt-h",
+        "proto": "file",
+        "priority": 5
+      }
+    ]
+  },
+  "targets": {
+    "youtube-h": {
+      "transport": "rtmp",
+      "port": 19351,
+      "app": "live",
+      "stream": "youtube-h"
+    },
+    "youtube-v": {
+      "transport": "srt",
+      "port": 19360,
+      "latencyMs": 200
+    },
+    "twitch": {
+      "transport": "rtmp",
+      "port": 19352,
+      "app": "live",
+      "stream": "twitch"
+    },
+    "kick": {
+      "transport": "rtmp",
+      "port": 19353,
+      "app": "live",
+      "stream": "kick"
+    },
+    "rec-h": {
+      "transport": "file",
+      "name": "o1-rec-h.mkv"
+    }
+  },
+  "policy": {
+    "retryBaseMs": 1000,
+    "retryCapMs": 8000,
+    "retryMax": 0,
+    "retryResetLiveMs": 10000
+  }
+}

@@ -1,0 +1,108 @@
+{
+  "$comment": "Effect guards as data (v1 F4/F5). Read by services/overlay-server/guards.mjs. Every number carries a source and a status. status 'legacy' = copied from the legacy behaviour (file:line in legacy/, which is gitignored and never published); 'settled' = CLAUDE.md; 'unverified' = proposed 2026-10-30 because legacy has no such rule, for the user to confirm (docs/plan/2026-10-29-v1-decisions.md D76 to D82). Times in ms.",
+  "version": 1,
+  "seed": 20261030,
+  "canvases": { "h": { "width": 1920, "height": 1080 }, "v": { "width": 1080, "height": 1920 } },
+  "flash": {
+    "maxPerSecond": 3,
+    "windowMs": 1000,
+    "onLimit": "refuse",
+    "source": "CLAUDE.md, settled design decisions: flash safety, at most 3 flashes/s per canvas, enforced at runtime",
+    "status": "settled"
+  },
+  "budget": {
+    "maxPerMinute": 30,
+    "windowMs": 60000,
+    "source": "legacy has no shared budget: each page only drops while busy or cooling down. Proposed value, to confirm",
+    "status": "unverified"
+  },
+  "queue": {
+    "max": 8,
+    "ttlMs": 3000,
+    "source": "legacy never queues across effects (pages drop). Proposed bound for effects that ask to queue, to confirm",
+    "status": "unverified"
+  },
+  "regions": {
+    "full": { "rects": [[0, 0, 1, 1]], "source": "chat-storm crosses the whole canvas (legacy/overlays/chat-storm/index.html:30-37)", "status": "legacy" },
+    "edge": {
+      "rects": [[0, 0, 1, 0.204], [0, 0.796, 1, 0.204], [0, 0, 0.115, 1], [0.885, 0, 0.115, 1]],
+      "source": "chat-charge stays inside an edge strip, band default 220 px horizontal (legacy/overlays/chat-charge/index.html:41); normalised on the horizontal canvas, vertical (260 px) is wider",
+      "status": "unverified"
+    },
+    "center": {
+      "rects": [[0.2, 0.25, 0.6, 0.45]],
+      "source": "gg-burst word at left 50 percent, top 46 percent, letter size 220 px, sparks spread wider (legacy/overlays/gg-burst/index.html:30-31,68-70); extent approximated",
+      "status": "unverified"
+    },
+    "camera": {
+      "rects": [[0.0104, 0.5639, 0.2052, 0.3463]],
+      "source": "default camera rect 20,609,394,374 on 1920x1080 (legacy/overlays/cam-pop-frame/index.html:197), normalised",
+      "status": "legacy"
+    }
+  },
+  "effects": {
+    "gg": {
+      "kind": "effect",
+      "durationMs": 2400, "durationSource": "legacy/overlays/gg-burst/index.html:60",
+      "cooldownMs": 1500, "cooldownFrom": "end", "cooldownSource": "legacy/overlays/gg-burst/index.html:61,122-124",
+      "region": "center",
+      "priority": 70,
+      "onOverlap": "queue",
+      "interruptible": false,
+      "flashes": [],
+      "status": { "timing": "legacy", "region": "unverified", "priority": "unverified", "onOverlap": "unverified", "flashes": "unverified" }
+    },
+    "charge": {
+      "kind": "effect",
+      "durationMs": 620, "durationSource": "legacy/overlays/chat-charge/index.html:85",
+      "cooldownMs": 900, "cooldownFrom": "end", "cooldownSource": "legacy/overlays/chat-charge/index.html:84,294",
+      "region": "edge",
+      "priority": 20,
+      "onOverlap": "drop",
+      "interruptible": false,
+      "flashes": [0],
+      "status": { "timing": "legacy", "region": "unverified", "priority": "unverified", "onOverlap": "legacy", "flashes": "unverified" }
+    },
+    "storm": {
+      "kind": "effect",
+      "durationMs": 750, "durationSource": "legacy/overlays/chat-storm/index.html:129",
+      "cooldownMs": 250, "cooldownFrom": "end", "cooldownSource": "legacy/overlays/chat-storm/index.html:128,1149",
+      "region": "full",
+      "priority": 40,
+      "onOverlap": "drop",
+      "interruptible": false,
+      "flashes": [0],
+      "status": { "timing": "legacy", "region": "legacy", "priority": "unverified", "onOverlap": "legacy", "flashes": "unverified" }
+    },
+    "campop": {
+      "kind": "effect",
+      "durationMs": 5000, "durationSource": "legacy/tools/cam-pop.json:3",
+      "cooldownMs": 0, "cooldownFrom": "end", "cooldownSource": "legacy/tools/cam-pop.json:4",
+      "region": "camera",
+      "priority": 80,
+      "onOverlap": "drop",
+      "interruptible": false,
+      "flashes": [],
+      "status": { "timing": "legacy", "region": "legacy", "priority": "unverified", "onOverlap": "legacy", "flashes": "unverified" }
+    }
+  },
+  "pools": {
+    "hype": {
+      "items": [{ "id": "gg", "weight": 3 }, { "id": "storm", "weight": 2 }, { "id": "charge", "weight": 1 }],
+      "noRepeatLast": 1,
+      "source": "pool shape settled (weighted pick, seeded RNG, no-repeat-last-N: CLAUDE.md); members and weights are a proposal for tests and the user to set",
+      "status": "unverified"
+    }
+  },
+  "rules": {
+    "campop": {
+      "effect": "campop",
+      "chatMessage": { "enabled": true, "source": "legacy/tools/cam-pop.json:5-8, cam-pop.mjs:224", "status": "legacy" },
+      "chatBurst": { "messages": 5, "windowSec": 10, "source": "legacy/tools/cam-pop.json:9-12, cam-pop.mjs:225-231", "status": "legacy" },
+      "voice": { "enabled": true, "spikeLevel": 0.12, "holdMs": 150, "source": "legacy/tools/cam-pop.json:13-19, cam-pop.mjs:243-250 (level scale of the legacy mic reader; the host mic meter must use the same scale)", "status": "legacy" },
+      "random": { "enabled": true, "meanMin": 12, "checkEveryMs": 60000, "source": "legacy/tools/cam-pop.json:20-24, cam-pop.mjs:252-255", "status": "legacy" },
+      "minGapSec": 0, "minGapSource": "legacy/tools/cam-pop.json:4, cam-pop.mjs:186-189",
+      "dropWhileUp": true, "dropWhileUpSource": "legacy/tools/cam-pop.json:2 (note), cam-pop.mjs:153"
+    }
+  }
+}

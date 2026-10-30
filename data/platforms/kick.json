@@ -132,5 +132,12 @@
       "checked": "2026-10-27",
       "note": "48 kHz. Official page agrees: stereo at max 48 kHz: https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com"
     }
+  },
+  "replyMaxChars": {
+    "value": 500,
+    "severity": "warning",
+    "source": "https://docs.kick.com/apis/chat",
+    "checked": "2026-10-28",
+    "note": "Post chat message: content limit 500 characters, and at most 2048 bytes in UTF-8 (official docs)."
   }
 }

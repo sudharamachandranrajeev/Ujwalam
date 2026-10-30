@@ -26,9 +26,9 @@ HAVE_OCR = all(_have(m) for m in ("numpy", "cv2", "rapidocr"))
 
 if HAVE_OCR:
     sys.path.insert(0, _CLIP)
-    import cv2  # noqa: E402
-    import numpy as np  # noqa: E402
-    import g1_scan  # noqa: E402
+    import cv2
+    import numpy as np
+    import g1_scan
 
 
 def _card(text, colour=(255, 255, 255), bg=(40, 40, 40), w=520, h=90, scale=1.6):

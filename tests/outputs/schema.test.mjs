@@ -49,7 +49,7 @@ for (const f of platformFiles) {
     const srcs = [];
     JSON.stringify(readJson(f), (k, v) => { if (k === 'source') srcs.push(v); return v; });
     for (const s of srcs) {
-      assert.ok(s === 'ujwalam' || s === 'user-reference-2026-10-27' || /^https:\/\/(support\.google\.com|blog\.twitch\.tv|dev\.twitch\.tv|help\.twitch\.tv|help\.kick\.com)\//.test(s), s);
+      assert.ok(s === 'ujwalam' || s === 'user-reference-2026-10-27' || s === 'legacy-observed' || /^https:\/\/(support\.google\.com|blog\.twitch\.tv|dev\.twitch\.tv|help\.twitch\.tv|help\.kick\.com|docs\.kick\.com)\//.test(s), s);
     }
   });
 }

@@ -19,7 +19,7 @@ import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-import record  # noqa: E402
+import record
 
 CHUNKS = 20
 

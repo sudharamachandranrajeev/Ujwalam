@@ -22,7 +22,22 @@
   },
   "paths": {
     "clips_corpus": "<clips-corpus>",
-    "analysis_cache": "<analysis-cache>"
+    "analysis_cache": "<analysis-cache>",
+    "windows_user": "<windows-user>",
+    "event_core_data": "<event-core-data>",
+    "meld_session": "<meld-session-file>"
+  },
+  "brand": {
+    "wordmark": "<brand-wordmark-file>",
+    "character": "<brand-character-file>"
+  },
+  "handles": {
+    "twitch": "<twitch-handle>",
+    "youtube": "<youtube-handle>",
+    "kick": "<kick-handle>"
+  },
+  "links": {
+    "discord": "<discord-link>"
   },
   "private_terms": []
 }

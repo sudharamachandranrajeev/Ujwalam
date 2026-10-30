@@ -147,5 +147,13 @@
       "checked": "2026-10-27",
       "note": "AAC 44.1 kHz stereo, RECOMMENDED. Official page agrees: https://support.google.com/youtube/answer/2853702"
     }
+  },
+  "replyMaxChars": {
+    "value": 200,
+    "severity": "warning",
+    "unverified": true,
+    "source": "legacy-observed",
+    "checked": "2026-10-28",
+    "note": "UNVERIFIED. No official source: the liveChatMessages docs (checked 2026-10-28) state no messageText limit. 200 comes from the legacy Streamer.bot README (\"YouTube live chat cuts off at 200\"), an observation, not documentation."
   }
 }

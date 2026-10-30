@@ -1,0 +1,40 @@
+/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* Design tokens. Components use these variables only; no raw colours elsewhere. */
+:root {
+  --color-bg: #121316;
+  --color-surface: #1a1c21;
+  --color-surface-2: #22252c;
+  --color-border: #2c3039;
+  --color-text: #e6e8ec;
+  --color-text-dim: #9aa1ad;
+  --color-accent: #4f8cff;
+  --color-accent-text: #0b1220;
+  --color-live: #e5484d;
+  --color-live-text: #ffffff;
+  --color-ok: #3fb950;
+  --color-warn: #d9a441;
+  --color-blocked: #7a3fd1;
+  --color-meter-bg: #0e0f12;
+  --color-text-on-accent-dim: #101a30;
+  --color-tab-on-bg: #4f8cff;
+  --color-tab-on-text: #0b1220;
+  --color-scrim: rgba(0, 0, 0, 0.6);
+
+  --font-ui: "Segoe UI", system-ui, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", monospace;
+  --text-sm: 12px;
+  --text-md: 14px;
+  --text-lg: 16px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --radius: 6px;
+  --topbar-h: 48px;
+  --statusbar-h: 28px;
+  --left-w: 260px;
+  --right-w: 300px;
+  --anim-in: 200ms;
+  --anim-out: 150ms;
+}

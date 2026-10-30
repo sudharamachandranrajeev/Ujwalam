@@ -1,0 +1,31 @@
+{
+  "id": "scene-layout-preset",
+  "version": "0.1.0",
+  "category": "scenes-packages",
+  "family": "scene-presets",
+  "name": "Scene layout preset",
+  "description": "A built-in scene layout as data: layers back to front as fractions of the canvas, sources as overlays, device roles or brand placeholders, plus rule targets. services/project/scene-preset.mjs turns it into a NEW project scene and never edits existing scenes, layers, devices or settings.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "required": ["sceneName", "canvas", "layers"],
+      "properties": {
+        "sceneName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "canvas": { "enum": ["h", "v"] },
+        "layers": { "type": "array", "minItems": 1, "maxItems": 64 },
+        "rules": { "type": "array" }
+      }
+    },
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": ["H"],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "html",
+  "planSection": "4.7"
+}

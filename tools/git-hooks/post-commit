@@ -1,0 +1,4 @@
+#!/bin/sh
+# Record the latest benchmark run against the new commit. Must never fail a commit.
+node tools/bench/record-commit.mjs >/dev/null 2>&1 || true
+exit 0

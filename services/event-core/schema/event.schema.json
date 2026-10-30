@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.invalid/schema/event-v1.json",
+  "title": "Ujwalam event v1",
+  "description": "In-process event model (P3 E1). Mirrors services/event-core/validate.mjs; tests run both on the same cases. Strings count code points and may not contain control characters (U+0000-001F, U+007F-009F). No raw platform payload: unevaluatedProperties is false.",
+  "oneOf": [
+    { "$ref": "#/$defs/chatMessage" },
+    { "$ref": "#/$defs/alertFollow" },
+    { "$ref": "#/$defs/alertSub" },
+    { "$ref": "#/$defs/alertResub" },
+    { "$ref": "#/$defs/alertGiftsub" },
+    { "$ref": "#/$defs/alertRaid" },
+    { "$ref": "#/$defs/alertBits" },
+    { "$ref": "#/$defs/alertSuperchat" },
+    { "$ref": "#/$defs/alertMembership" },
+    { "$ref": "#/$defs/alertRedemption" },
+    { "$ref": "#/$defs/systemConnected" },
+    { "$ref": "#/$defs/systemDisconnected" },
+    { "$ref": "#/$defs/systemLivestate" },
+    { "$ref": "#/$defs/systemPanic" },
+    { "$ref": "#/$defs/systemRefused" }
+  ],
+  "$defs": {
+    "str": { "type": "string", "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*$" },
+    "tier": { "enum": ["prime", "1000", "2000", "3000"] },
+    "message": { "$ref": "#/$defs/str", "maxLength": 500 },
+    "envelope": {
+      "type": "object",
+      "required": ["v", "id", "kind", "platform", "source", "platformMessageId", "receivedAt", "mono"],
+      "properties": {
+        "v": { "const": 1 },
+        "kind": { "type": "string" },
+        "id": { "type": "string", "pattern": "^e[0-9a-f]{12}-[0-9a-f]{8}-[0-9a-f]{8}$" },
+        "platform": { "enum": ["twitch", "youtube", "kick", "local"] },
+        "source": { "enum": ["streamerbot", "mock", "api", "rule", "system"] },
+        "platformMessageId": {
+          "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 128 }]
+        },
+        "receivedAt": {
+          "type": "string",
+          "pattern": "^\\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\\d|3[01])T([01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}Z$"
+        },
+        "mono": { "type": "number", "minimum": 0 }
+      }
+    },
+    "withUser": {
+      "type": "object",
+      "required": ["user"],
+      "properties": {
+        "user": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["pseudoId", "platformUserId", "displayName", "roles"],
+          "properties": {
+            "pseudoId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+            "platformUserId": {
+              "oneOf": [{ "type": "null" }, { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 }]
+            },
+            "displayName": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 },
+            "roles": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "enum": ["broadcaster", "moderator", "vip", "subscriber", "member", "follower", "viewer"] }
+            }
+          }
+        }
+      }
+    },
+    "chatMessage": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "required": ["text"],
+          "properties": {
+            "kind": { "const": "chat.message" },
+            "text": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 500 },
+            "emotes": {
+              "type": "array",
+              "maxItems": 50,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "name"],
+                "properties": {
+                  "id": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 },
+                  "name": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 }
+                }
+              }
+            }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertFollow": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        { "properties": { "kind": { "const": "alert.follow" } } }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertSub": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "required": ["tier"],
+          "properties": {
+            "kind": { "const": "alert.sub" },
+            "tier": { "$ref": "#/$defs/tier" },
+            "message": { "$ref": "#/$defs/message" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertResub": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "required": ["tier", "months"],
+          "properties": {
+            "kind": { "const": "alert.resub" },
+            "tier": { "$ref": "#/$defs/tier" },
+            "months": { "type": "integer", "minimum": 1, "maximum": 1200 },
+            "message": { "$ref": "#/$defs/message" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertGiftsub": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "required": ["tier", "count"],
+          "properties": {
+            "kind": { "const": "alert.giftsub" },
+            "tier": { "$ref": "#/$defs/tier" },
+            "count": { "type": "integer", "minimum": 1, "maximum": 10000 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertRaid": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "required": ["viewers"],
+          "properties": {
+            "kind": { "const": "alert.raid" },
+            "viewers": { "type": "integer", "minimum": 0, "maximum": 10000000 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertBits": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "required": ["amount"],
+          "properties": {
+            "kind": { "const": "alert.bits" },
+            "amount": { "type": "integer", "minimum": 1, "maximum": 10000000 },
+            "message": { "$ref": "#/$defs/message" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertSuperchat": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "required": ["amount", "currency"],
+          "properties": {
+            "kind": { "const": "alert.superchat" },
+            "amount": { "type": "number", "exclusiveMinimum": 0, "maximum": 1000000000 },
+            "currency": { "type": "string", "pattern": "^[A-Z]{3}$" },
+            "message": { "$ref": "#/$defs/message" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertMembership": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "properties": {
+            "kind": { "const": "alert.membership" },
+            "tier": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 },
+            "months": { "type": "integer", "minimum": 1, "maximum": 1200 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "alertRedemption": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        { "$ref": "#/$defs/withUser" },
+        {
+          "required": ["reward"],
+          "properties": {
+            "kind": { "const": "alert.redemption" },
+            "reward": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 100 },
+            "cost": { "type": "integer", "minimum": 0, "maximum": 1000000000 },
+            "message": { "$ref": "#/$defs/message" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "systemConnected": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "required": ["target"],
+          "properties": {
+            "kind": { "const": "system.connected" },
+            "target": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "systemDisconnected": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "required": ["target"],
+          "properties": {
+            "kind": { "const": "system.disconnected" },
+            "target": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 },
+            "reason": { "$ref": "#/$defs/str", "maxLength": 200 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "systemLivestate": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "required": ["live"],
+          "properties": {
+            "kind": { "const": "system.livestate" },
+            "live": { "type": "boolean" }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "systemPanic": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "properties": {
+            "kind": { "const": "system.panic" },
+            "reason": { "$ref": "#/$defs/str", "maxLength": 200 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "systemRefused": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "required": ["action", "reason"],
+          "properties": {
+            "kind": { "const": "system.refused" },
+            "action": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 },
+            "reason": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 200 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    }
+  }
+}

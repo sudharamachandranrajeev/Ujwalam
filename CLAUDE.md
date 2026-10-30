@@ -25,6 +25,7 @@ Full plan: `docs/2026-10-26-build-plan.md` (§1–12, baseline). Amendments: `do
 - Public repo: never commit or push brand names, channel names or ids, IGN, clan tag, any of their variants, face images, other players' names, game account/device ids (e.g. the CODM bottom-right watermark) or personal details. Committed files use placeholders; real values live in the gitignored `data/profile.local.json` (template: `data/profile.example.json`). Images that need them go in `docs/evidence/private/` (gitignored), or are cropped or blurred.
 - Local build, tests and running use all of them freely: real brand, channel names, IGN and every variant, real footage and chat, real overlays and features. The scrub applies only to what is committed and pushed.
 - Git hooks (`core.hooksPath tools/git-hooks`) scan staged files, paths and commit messages for every term in `data/profile.local.json` (case-insensitive, separator variants) and block hits. Never bypass them (`--no-verify`).
+- Never work around a check (lint, private scan, hooks, tests): no splitting strings, renaming, encoding or restructuring code to get past it. If a check flags something wrongly, stop, report it, and fix the rule.
 - Before any first push to a remote: run the pre-push scan over the full history, list every file to be pushed, and wait for the user's yes.
 - Game-specific logic is data in `data/games/<id>/`; never hardcode a game in engine code.
 - Every detector value needs evidence (frames, counts, date) and a status (unverified|verified).
@@ -43,7 +44,7 @@ Agreed during planning (2026-10-26). Treat as settled unless the user reopens th
 - **Kick (D2):** via the Streamer.bot bridge only.
 - **Scope (D3):** personal tool, product-ready architecture. No hardcoded paths; licence headers; no installer work before P17. D3 stays open.
 - **Never publish:** `legacy/` (private reference, never distributed) and Microsoft fonts (Corbel, Consolas) — not redistributable. Full list in `docs/licence-headers.md`.
-- **Runtimes:** Node ≥22 (`"engines": {"node": ">=22"}`), developed on 26.12.1. Python 3.14.7; at P2 start check Windows wheels for onnxruntime, faster-whisper/whisper.cpp bindings, PaddleOCR — if missing, report and propose a project-local 3.12 venv. Runtime services are stdlib-first; `ajv` is a pinned dev dependency only.
+- **Runtimes:** Node ≥22.13 (`"engines": {"node": ">=22.13"}`, first unflagged `node:sqlite`; UNVERIFIED, tested on 26.12.1), developed on 26.12.1. Python 3.14.7; at P2 start check Windows wheels for onnxruntime, faster-whisper/whisper.cpp bindings, PaddleOCR — if missing, report and propose a project-local 3.12 venv. Runtime services are stdlib-first; `ajv` is a pinned dev dependency only.
 - **git:** commits use `Rajeev Sudharamachandran <mail@rajeevsudharamachandran.com>` only (repo-level config). Never put any other name or email in commits, files, logs or docs — no co-author or tool attribution trailers. Line endings via `.gitattributes`: LF default, CRLF for .cmd/.bat/.ps1, media and fonts binary.
 - **git:** commit at the end of each phase after the gate passes, with user approval each time. `data/labels/` is committed; media, analysis caches, node_modules, logs, `*.local.*` and secrets are ignored.
 - **P2 labelling sessions:** 20 Oct, 18 Oct, plus a third session that has an engage log (17 Oct has none).

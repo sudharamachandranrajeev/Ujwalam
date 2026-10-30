@@ -109,5 +109,12 @@
     "severity": "error",
     "source": "ujwalam",
     "checked": "2026-10-26"
+  },
+  "replyMaxChars": {
+    "value": null,
+    "severity": "error",
+    "source": "ujwalam",
+    "checked": "2026-10-28",
+    "note": "Mock/local sink: no platform limit."
   }
 }

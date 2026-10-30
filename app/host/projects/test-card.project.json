@@ -1,0 +1,38 @@
+{
+  "format": "ujwalam-host-test",
+  "version": 1,
+  "name": "Test card (H + V)",
+  "note": "Generated sources only: lavfi test patterns and a 440 Hz tone on H. No devices, no files, no network.",
+  "canvases": [
+    { "id": "H", "w": 1920, "h": 1080, "fps": 60, "mixAudio": true },
+    { "id": "V", "w": 1080, "h": 1920, "fps": 60, "mixAudio": false }
+  ],
+  "scenes": [
+    {
+      "id": "card-h", "canvas": "H", "name": "Test card H",
+      "layers": [
+        { "id": "bg", "type": "color", "name": "Background", "settings": { "color": "#FF202830" } },
+        { "id": "bars", "type": "test_pattern", "name": "HD bars + tone",
+          "settings": { "pattern": "smptehdbars", "toneHz": 440 },
+          "transform": { "fit": "inner", "x": 0, "y": 0, "w": 1920, "h": 1080 } },
+        { "id": "motion", "type": "test_pattern", "name": "Motion inset",
+          "settings": { "pattern": "testsrc2", "width": 640, "height": 360 },
+          "transform": { "fit": "stretch", "x": 1240, "y": 40, "w": 640, "h": 360 } }
+      ]
+    },
+    {
+      "id": "plain-h", "canvas": "H", "name": "Plain H",
+      "layers": [ { "id": "bg", "type": "color", "name": "Background", "settings": { "color": "#FF103050" } } ]
+    },
+    {
+      "id": "card-v", "canvas": "V", "name": "Test card V",
+      "layers": [
+        { "id": "bg", "type": "color", "name": "Background", "settings": { "color": "#FF302020" } },
+        { "id": "motion", "type": "test_pattern", "name": "Motion",
+          "settings": { "pattern": "testsrc2", "width": 1080, "height": 1920 },
+          "transform": { "fit": "inner", "x": 0, "y": 0, "w": 1080, "h": 1920 } }
+      ]
+    }
+  ],
+  "active": { "H": "card-h", "V": "card-v" }
+}

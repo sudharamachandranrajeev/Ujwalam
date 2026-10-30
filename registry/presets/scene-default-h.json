@@ -1,0 +1,267 @@
+{
+  "id": "scene-default-h",
+  "version": "0.1.0",
+  "function": "scene-layout-preset",
+  "functionVersion": "^0.1.0",
+  "name": "Default H (current stream layout)",
+  "params": {
+    "sceneName": "Default H",
+    "canvas": "h",
+    "reference": {
+      "width": 1920,
+      "height": 1080
+    },
+    "sources": "Positions are fractions of the canvas. 'meld' = geometry copied from the user's Meld H scene (2026-10-30 run, April 2026 session file); 'spec' = measured from the reference screenshot (about 1 percent accuracy) because the Meld box was more than 2 percentage points away or no Meld layer matched. Crops are in source pixels and UNVERIFIED against Meld (centred).",
+    "layers": [
+      {
+        "key": "background",
+        "z": 0,
+        "name": "Background",
+        "type": "browser",
+        "overlay": "atmos-frame/index.html",
+        "query": "brackets=0",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "geometry": "spec",
+        "note": "Theme backdrop; atmos-frame with the HUD brackets off (UNVERIFIED which legacy parts make up the stone backdrop)."
+      },
+      {
+        "key": "game",
+        "z": 1,
+        "name": "Game capture",
+        "type": "capture",
+        "role": "game-capture",
+        "rect": {
+          "x": 0.24373,
+          "y": 0.02887,
+          "w": 0.73844,
+          "h": 0.90541
+        },
+        "crop": {
+          "left": 177,
+          "right": 177
+        },
+        "geometry": "meld",
+        "note": "Rounded frame in Meld (corner radius not carried). Crop, not stretch: see the evidence file."
+      },
+      {
+        "key": "facecam",
+        "z": 2,
+        "name": "Facecam",
+        "type": "capture",
+        "role": "facecam",
+        "rect": {
+          "x": 0.01397,
+          "y": 0.5652,
+          "w": 0.20165,
+          "h": 0.34522
+        },
+        "crop": {
+          "left": 399,
+          "right": 399
+        },
+        "geometry": "meld",
+        "note": "Meld flips this source (rotation 180 plus a negative vertical scale, a horizontal mirror); the project placement cannot flip, so it is left unflipped."
+      },
+      {
+        "key": "events",
+        "z": 3,
+        "name": "Event / chat list",
+        "type": "browser",
+        "overlay": "chat-list/index.html",
+        "query": "",
+        "rect": {
+          "x": 0.00956,
+          "y": 0.20333,
+          "w": 0.17837,
+          "h": 0.33556
+        },
+        "geometry": "meld"
+      },
+      {
+        "key": "wordmark",
+        "z": 4,
+        "name": "Wordmark",
+        "type": "image",
+        "file": {
+          "base": "profile",
+          "rel": "{brand.wordmark}"
+        },
+        "rect": {
+          "x": 0.006,
+          "y": 0.106,
+          "w": 0.204,
+          "h": 0.096
+        },
+        "geometry": "spec",
+        "note": "Brand asset, local only."
+      },
+      {
+        "key": "goal",
+        "z": 5,
+        "name": "Goal bar",
+        "type": "browser",
+        "overlay": "blood-moon-hud/index.html",
+        "query": "goal=1&counters=0&cam=0",
+        "rect": {
+          "x": 0,
+          "y": 0.038,
+          "w": 0.235,
+          "h": 0.057
+        },
+        "geometry": "spec"
+      },
+      {
+        "key": "twitch-followers",
+        "z": 6,
+        "name": "Twitch follower counter",
+        "type": "browser",
+        "overlay": "blood-moon-hud/index.html",
+        "query": "goal=0&counters=1&cam=0",
+        "rect": {
+          "x": 0.259,
+          "y": 0,
+          "w": 0.234,
+          "h": 0.03
+        },
+        "geometry": "spec",
+        "note": "Legacy HUD draws both counters in one part and has no per-platform switch; a page option is needed (gap, see evidence)."
+      },
+      {
+        "key": "subscribe-cta",
+        "z": 7,
+        "name": "Subscribe call to action",
+        "type": "color",
+        "rect": {
+          "x": 0.52886,
+          "y": 0.02254,
+          "w": 0.1785,
+          "h": 0.08065
+        },
+        "geometry": "meld",
+        "note": "Source pending: the YouTube subscribe pill is a looping video in Meld and no legacy overlay draws it, so this is a transparent placeholder holding the geometry.",
+        "color": "#00000000"
+      },
+      {
+        "key": "youtube-subscribers",
+        "z": 8,
+        "name": "YouTube subscriber counter",
+        "type": "browser",
+        "overlay": "blood-moon-hud/index.html",
+        "query": "goal=0&counters=1&cam=0",
+        "rect": {
+          "x": 0.764,
+          "y": 0,
+          "w": 0.193,
+          "h": 0.026
+        },
+        "geometry": "spec",
+        "note": "Same gap as the Twitch counter."
+      },
+      {
+        "key": "social-ticker",
+        "z": 9,
+        "name": "Social ticker",
+        "type": "browser",
+        "overlay": "social-ticker/index.html",
+        "query": "discord={links.discord}&twitch={handles.twitch}&youtube={handles.youtube}&kick={handles.kick}",
+        "rect": {
+          "x": 0,
+          "y": 0.953,
+          "w": 1,
+          "h": 0.047
+        },
+        "geometry": "spec",
+        "note": "Legacy page reads its handles from the brand config, not from the URL; the bindings are carried for the host."
+      },
+      {
+        "key": "character",
+        "z": 10,
+        "name": "Character cutout",
+        "type": "image",
+        "file": {
+          "base": "profile",
+          "rel": "{brand.character}"
+        },
+        "rect": {
+          "x": 0.927,
+          "y": 0.777,
+          "w": 0.073,
+          "h": 0.223
+        },
+        "geometry": "spec",
+        "note": "Static asset or the Chat Engage caricature is still to be confirmed."
+      },
+      {
+        "key": "effects",
+        "z": 11,
+        "name": "Effects (full canvas)",
+        "type": "browser",
+        "overlay": "chat-charge/index.html",
+        "query": "",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "geometry": "spec",
+        "note": "One transparent full-canvas page; other effects join through the effect gate."
+      },
+      {
+        "key": "atmos-front",
+        "z": 12,
+        "name": "Atmos front",
+        "type": "browser",
+        "overlay": "atmos-frame/index.html",
+        "query": "rain=0&moon=0&heat=0&embers=0&flash=0",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "visible": false,
+        "geometry": "spec",
+        "note": "Hidden: no matching layer in the Meld session."
+      }
+    ],
+    "rules": [
+      {
+        "type": "campop",
+        "target": {
+          "layerKey": "facecam"
+        },
+        "config": "data/effects/guards.json#rules.campop",
+        "z": 13
+      }
+    ],
+    "placeholders": [
+      "brand.wordmark",
+      "brand.character",
+      "handles.twitch",
+      "handles.youtube",
+      "handles.kick",
+      "links.discord"
+    ]
+  },
+  "themeOverrides": {},
+  "family": "scene-presets",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": []
+}

@@ -1,0 +1,23 @@
+{
+  "$comment": "Cam-pop trigger behaviour captured from the legacy tool on 2026-10-30: a private copy of tools/cam-pop.mjs and its libraries (not legacy/ itself; legacy/ was not run or modified) was run in dry-run mode, voice and random off, against the legacy mock Meld and mock Streamer.bot (loopback, nothing real) with one sample every 1000 ms and the legacy settings (holdSec 5, minGapSec 0, chatBurst 5 in 10 s). The legacy log has one-second resolution, so times are whole seconds relative to the first chat message. Chat samples: 6 chat messages then 5 speech events, repeating every 11 s (the speech events are not chat).",
+  "capturedFrom": "legacy tools/cam-pop.mjs dry run against mock Meld and mock Streamer.bot",
+  "status": "captured-at-one-second-resolution",
+  "chatPattern": { "periodMs": 11000, "messageOffsetsMs": [0, 1000, 2000, 3000, 4000, 5000] },
+  "runs": [
+    {
+      "name": "chat message trigger on (legacy default)",
+      "config": { "chatMessageEnabled": true },
+      "legacyLog": ["pop at +0 s (chat message)", "pop at +11 s (chat message)", "pop at +22 s (chat message)"],
+      "expectedPopsMs": [0, 11000, 22000],
+      "chatMessagesMs": [0, 1000, 2000, 3000, 4000, 5000, 11000, 12000, 13000, 14000, 15000, 16000, 22000, 23000, 24000, 25000, 26000, 27000]
+    },
+    {
+      "name": "chat message trigger off, burst only (5 in 10 s)",
+      "config": { "chatMessageEnabled": false },
+      "legacyLog": ["pop at +4 s (chat burst)", "pop at +14 s (chat burst)", "pop at +24 s (chat burst)"],
+      "expectedPopsMs": [4000, 14000, 24000],
+      "chatMessagesMs": [0, 1000, 2000, 3000, 4000, 5000, 11000, 12000, 13000, 14000, 15000, 16000, 22000, 23000, 24000, 25000, 26000, 27000],
+      "note": "the legacy tool counted the whitespace-only sample as a chat message (4th position, offset 4000); the rule counts every chat.message event"
+    }
+  ]
+}

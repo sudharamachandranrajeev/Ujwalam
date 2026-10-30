@@ -1,0 +1,11 @@
+{
+  "$comment": "O2 loopback plan (app/host/lib/outputs-plan.mjs, run with app/host/tools/o1-loopback.mjs --plan). config = the O0 preset data/outputs/presets/youtube-1440p60.json unchanged: H 2560x1440@60 to YouTube direct (yt-h), V 1080x1920 (vert), and the Multi rung reencode-tk (1920x1080@60 H.264 CBR 6000 kbps, GPU-scaled from the same H canvas, never a decode of the YouTube stream) shared by the twitch and kick sinks. targets = loopback delivery per sink; the host builds every URL on 127.0.0.1. No real platform, no stream keys.",
+  "config": "data/outputs/presets/youtube-1440p60.json",
+  "targets": {
+    "youtube-h": { "transport": "rtmp", "port": 19451, "app": "live", "stream": "youtube-h" },
+    "youtube-v": { "transport": "srt", "port": 19460, "latencyMs": 200 },
+    "twitch": { "transport": "rtmp", "port": 19452, "app": "live", "stream": "twitch" },
+    "kick": { "transport": "rtmp", "port": 19453, "app": "live", "stream": "kick" }
+  },
+  "policy": { "retryBaseMs": 1000, "retryCapMs": 8000, "retryMax": 0, "retryResetLiveMs": 10000 }
+}

@@ -1,0 +1,19 @@
+{
+  "version": 0,
+  "id": "project-old",
+  "name": "Old shape",
+  "canvas": { "width": 1920, "height": 1080, "fps": 30 },
+  "devices": [
+    { "id": "dev-capture", "kind": "capture-card", "name": "<capture-card>", "match": { "deviceId": "<device-id-1>" } }
+  ],
+  "scenes": [
+    {
+      "id": "scene-a",
+      "name": "A",
+      "sources": [
+        { "id": "layer-a", "type": "capture", "name": "Game", "source": { "device": "dev-capture" }, "transform": { "x": 10, "y": 20, "width": 1280, "height": 720 }, "hidden": true },
+        { "id": "layer-b", "type": "color", "name": "Bg", "source": { "color": "#000000" } }
+      ]
+    }
+  ]
+}

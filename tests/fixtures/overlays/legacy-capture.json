@@ -1,0 +1,53 @@
+{
+  "$comment": "Message shapes the legacy overlays consume, written down from the legacy sources (data only, placeholder names). Sources: the Subscribe request and chat reading in the chat-charge page, the chat mapping in kit/sources/streamerbot.js (read 2026-10-30), the sample events in tools/test-events.js and the sample payloads in tools/mock-streamerbot.mjs. The legacy files are not copied; they stay in legacy/ (gitignored).",
+  "capturedFrom": "legacy sources read 2026-10-30",
+  "status": "unverified-against-live-stream",
+  "subscribe": {
+    "chatCharge": { "request": "Subscribe", "id": "rp-charge", "events": { "Twitch": ["ChatMessage"], "YouTube": ["Message"], "Kick": ["ChatMessage"] } },
+    "streamerbotSource": { "request": "Subscribe", "id": "rp-subscribe", "events": { "Twitch": ["ChatMessage"], "YouTube": ["Message"], "Kick": ["ChatMessage"], "SpeechToText": ["Command", "Dictation"] } },
+    "ack": { "id": "rp-charge", "status": "ok" }
+  },
+  "chat": [
+    {
+      "name": "twitch chat",
+      "input": { "platform": "twitch", "user": "ViewerOne", "text": "gg that was clean" },
+      "display": { "event": { "source": "Twitch", "type": "ChatMessage" }, "data": { "text": "gg that was clean", "user": { "name": "ViewerOne" } } },
+      "effects": { "event": { "source": "Twitch", "type": "ChatMessage" }, "data": { "text": ".", "user": { "name": "ViewerOne" } } },
+      "legacyReads": { "user": "ViewerOne", "text": "gg that was clean" }
+    },
+    {
+      "name": "youtube chat (data.message is the text)",
+      "input": { "platform": "youtube", "user": "ViewerTwo", "text": "W stream" },
+      "display": { "event": { "source": "YouTube", "type": "Message" }, "data": { "message": "W stream", "user": { "name": "ViewerTwo" } } },
+      "effects": { "event": { "source": "YouTube", "type": "Message" }, "data": { "message": ".", "user": { "name": "ViewerTwo" } } },
+      "legacyReads": { "user": "ViewerTwo", "text": "W stream" }
+    },
+    {
+      "name": "kick chat",
+      "input": { "platform": "kick", "user": "ViewerThree", "text": "lets go" },
+      "display": { "event": { "source": "Kick", "type": "ChatMessage" }, "data": { "text": "lets go", "user": { "name": "ViewerThree" } } },
+      "effects": { "event": { "source": "Kick", "type": "ChatMessage" }, "data": { "text": ".", "user": { "name": "ViewerThree" } } },
+      "legacyReads": { "user": "ViewerThree", "text": "lets go" }
+    },
+    {
+      "name": "command (skipCommands tests the first character)",
+      "input": { "platform": "twitch", "user": "ViewerFour", "text": "!clip" },
+      "display": { "event": { "source": "Twitch", "type": "ChatMessage" }, "data": { "text": "!clip", "user": { "name": "ViewerFour" } } },
+      "effects": { "event": { "source": "Twitch", "type": "ChatMessage" }, "data": { "text": "!", "user": { "name": "ViewerFour" } } },
+      "legacyReads": { "user": "ViewerFour", "text": "!clip", "firstChar": "!" }
+    }
+  ],
+  "bus": [
+    { "name": "gg effect (gg-burst: RP.on effect, name gg)", "kind": "effect", "frame": { "rp": "event", "type": "effect", "data": { "name": "gg" } } },
+    { "name": "charge effect (chat-charge: RP.on effect, name charge)", "kind": "effect", "frame": { "rp": "event", "type": "effect", "data": { "name": "charge" } } },
+    { "name": "storm effect (chat-storm)", "kind": "effect", "frame": { "rp": "event", "type": "effect", "data": { "name": "storm" } } }
+  ],
+  "alerts": [
+    { "input": { "kind": "alert.follow", "platform": "twitch", "user": "ViewerOne" }, "frame": { "rp": "event", "type": "follow", "data": { "platform": "twitch", "user": "ViewerOne" } } },
+    { "input": { "kind": "alert.sub", "platform": "twitch", "user": "ViewerTwo", "tier": "1000" }, "frame": { "rp": "event", "type": "sub", "data": { "platform": "twitch", "user": "ViewerTwo", "tier": 1 } } },
+    { "input": { "kind": "alert.resub", "platform": "twitch", "user": "ViewerThree", "tier": "2000", "months": 6 }, "frame": { "rp": "event", "type": "sub", "data": { "platform": "twitch", "user": "ViewerThree", "tier": 2, "months": 6 } } },
+    { "input": { "kind": "alert.giftsub", "platform": "twitch", "user": "ViewerOne", "tier": "1000", "count": 5 }, "frame": { "rp": "event", "type": "gift", "data": { "platform": "twitch", "user": "ViewerOne", "count": 5, "tier": 1 } } },
+    { "input": { "kind": "alert.raid", "platform": "twitch", "user": "ViewerTwo", "viewers": 42 }, "frame": { "rp": "event", "type": "raid", "data": { "platform": "twitch", "user": "ViewerTwo", "viewers": 42 } } },
+    { "input": { "kind": "alert.superchat", "platform": "youtube", "user": "ViewerThree", "amount": 5, "currency": "USD", "message": "Nice" }, "frame": { "rp": "event", "type": "donation", "data": { "platform": "youtube", "user": "ViewerThree", "amount": "$5.00", "message": "Nice" } } }
+  ]
+}

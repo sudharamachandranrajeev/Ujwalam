@@ -1,2 +1,4 @@
 #!/bin/sh
-exec node tools/git-hooks/private-scan.mjs pre-commit "$@"
+node tools/git-hooks/private-scan.mjs pre-commit "$@" || exit $?
+# P3 E0: the full local CI blocks the commit on any failing step.
+exec node tools/ci.mjs

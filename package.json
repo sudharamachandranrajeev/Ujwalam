@@ -6,12 +6,16 @@
   "license": "GPL-2.0-or-later",
   "type": "module",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.13"
   },
   "scripts": {
+    "lint": "node tools/lint.mjs",
+    "ci": "node tools/ci.mjs",
+    "studio": "node services/studio-ui/launch.mjs",
+    "bench": "node tools/bench/run.mjs",
     "validate:registry": "node tools/registry-validate.mjs registry",
     "legacy:verify": "node tools/legacy-verify.mjs",
-    "test": "node --test \"tests/*.test.mjs\" \"tests/outputs/*.test.mjs\"",
+    "test": "node --test --test-timeout=300000 \"tests/*.test.mjs\" \"tests/outputs/*.test.mjs\"",
     "validate:outputs": "node tools/outputs-validate-presets.mjs",
     "label": "node tools/label/server.mjs",
     "validate:games": "node tools/game-validate.mjs data/games",

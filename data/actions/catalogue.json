@@ -1,0 +1,230 @@
+{
+  "version": 1,
+  "note": "Action catalogue (P3 E4). Data may only restrict: deny categories fixed in services/event-core/livelock/catalogue.mjs (stream, record, outputs, settings, devices, main mic, panic, destructive verbs) can never be chat-allowed whatever this file says; chatAllowed:true on one of those ids fails validation at load. Owner default 2026-10-28: every entry chatAllowed false; chatMode is dry-run (decide and record, never execute) for entries that are not deny-category, off for the rest; chatMode on is refused at load until the lost-action gap is closed; the owner turns specific ones on in later phases.",
+  "actions": [
+    {
+      "id": "state.read",
+      "class": "read",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "none",
+      "description": "Read studio state (scenes, layers, live state)."
+    },
+    {
+      "id": "scene.list",
+      "class": "read",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "scene",
+      "description": "List scenes."
+    },
+    {
+      "id": "health.read",
+      "class": "read",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "none",
+      "description": "Read health and output stats."
+    },
+    {
+      "id": "scene.switch",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "scene",
+      "description": "Switch the active scene."
+    },
+    {
+      "id": "scene.create",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "scene",
+      "description": "Create a scene."
+    },
+    {
+      "id": "layer.show",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "layer",
+      "description": "Show a layer."
+    },
+    {
+      "id": "layer.hide",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "layer",
+      "description": "Hide a layer."
+    },
+    {
+      "id": "layer.create",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "layer",
+      "description": "Create a layer."
+    },
+    {
+      "id": "effect.fire",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "effect",
+      "description": "Fire an effect or preset on a canvas."
+    },
+    {
+      "id": "preset.apply",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "preset",
+      "description": "Apply a preset to a layer or scene."
+    },
+    {
+      "id": "camera.toggle",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "camera",
+      "description": "Show or hide the camera layer."
+    },
+    {
+      "id": "replay.save",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "replay",
+      "description": "Save the replay buffer."
+    },
+    {
+      "id": "marker.drop",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "marker",
+      "description": "Drop a timeline marker."
+    },
+    {
+      "id": "chat.reply",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "dry-run",
+      "target": "chat",
+      "description": "Post a reply to chat through the platform route."
+    },
+    {
+      "id": "stream.start",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "stream",
+      "description": "Start the stream."
+    },
+    {
+      "id": "stream.stop",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "stream",
+      "description": "Stop the stream."
+    },
+    {
+      "id": "record.start",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "record",
+      "description": "Start recording."
+    },
+    {
+      "id": "record.stop",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "record",
+      "description": "Stop recording."
+    },
+    {
+      "id": "output.change",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "output",
+      "description": "Change an output, rung or sink."
+    },
+    {
+      "id": "scene.delete",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "scene",
+      "description": "Delete a scene."
+    },
+    {
+      "id": "layer.delete",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "layer",
+      "description": "Delete a layer."
+    },
+    {
+      "id": "preset.delete",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "preset",
+      "description": "Delete a preset."
+    },
+    {
+      "id": "settings.change",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "settings",
+      "description": "Change app or studio settings."
+    },
+    {
+      "id": "device.change",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "device",
+      "description": "Change a capture or audio device."
+    },
+    {
+      "id": "mic.main.mute",
+      "class": "on-air-write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "audio",
+      "description": "Mute or unmute the main microphone."
+    },
+    {
+      "id": "chat.raw.purge",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "chat",
+      "description": "Delete stored raw chat text (all, or older than N days). Needs a confirmation from ui or api."
+    },
+    {
+      "id": "panic.set",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "gate",
+      "description": "Engage panic: refuse every chat-tainted and rule-sourced request."
+    },
+    {
+      "id": "panic.clear",
+      "class": "write",
+      "chatAllowed": false,
+      "chatMode": "off",
+      "target": "gate",
+      "description": "Clear panic. Needs a yes confirmation from ui or api."
+    }
+  ]
+}

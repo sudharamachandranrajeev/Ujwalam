@@ -1,0 +1,17 @@
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Overlay relay</title>
+<!--
+  Overlay relay. Load it as ONE extra browser source (any size, hidden) in the same browser session as the overlay
+  pages. It connects to the overlay bridge feed and re-posts each overlay-bus frame on the BroadcastChannel
+  'rp-events', which kit/rp-kit.js already listens to, so pages like gg-burst and alert-box fire unchanged.
+  URL: /_ujwalam/relay.html?feed=<feed port>&scope=effects|display
+  It draws nothing, holds no token, and only forwards frames of the shapes below.
+-->
+<script src="relay.js"></script>
+</head>
+<body></body>
+</html>

@@ -25,8 +25,8 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _CLIP = os.path.join(_HERE, "..", "..", "services", "clip")
 PACK = os.path.normpath(os.path.join(_HERE, "..", "..", "data", "games", "codm"))
 sys.path.insert(0, _CLIP)
-import coverage as cov  # noqa: E402
-import game_pack  # noqa: E402
+import coverage as cov
+import game_pack
 
 NAMES = ["Zorbo~QX", "Zorbo-QX", "Zorbo"]  # invented
 

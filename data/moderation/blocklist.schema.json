@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/moderation-blocklist.schema.json",
+  "title": "Ujwalam moderation blocklist",
+  "type": "object",
+  "required": ["version", "source", "ported", "policy", "dropMessage", "dropUser", "rejectReply"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "source": { "type": "string", "minLength": 1 },
+    "sourceFile": { "type": "string" },
+    "ported": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "note": { "type": "string" },
+    "policy": {
+      "type": "object",
+      "required": ["echoWindowSec", "replyMaxChars"],
+      "additionalProperties": false,
+      "properties": {
+        "echoWindowSec": { "type": "integer", "minimum": 1 },
+        "replyMaxChars": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "dropMessage": { "$ref": "#/$defs/patterns" },
+    "dropUser": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+    "rejectReply": { "$ref": "#/$defs/patterns" }
+  },
+  "$defs": {
+    "patterns": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+  }
+}

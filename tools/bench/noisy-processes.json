@@ -1,0 +1,12 @@
+{
+  "comment": "Known heavy background processes (data, not logic). The bench harness and the soak system probe flag a run as noisy when one of these uses more than its CPU limit (percent of the whole machine, all cores) before start or during the run. Match is by process name without .exe, case-insensitive, exact. 'flagOnPresence' flags the process whenever it is running (a Defender scan helper only exists during a scan). Edit this file to add or remove names; no code change is needed. Process CPU is read-only (Win32_PerfRawData_PerfProc_Process).",
+  "defaultMinCpuPct": 2,
+  "groups": [
+    { "group": "Windows Defender", "names": ["MsMpEng"], "minCpuPct": 1.5 },
+    { "group": "Windows Defender scan (running scan helper)", "names": ["MpCmdRun"], "flagOnPresence": true },
+    { "group": "NVIDIA services", "names": ["nvcontainer", "NVDisplay.Container", "NVIDIA Web Helper", "NVIDIA Overlay", "NVIDIA app", "nvidia-smi"], "minCpuPct": 2 },
+    { "group": "Discord", "names": ["Discord"], "minCpuPct": 2 },
+    { "group": "Telegram", "names": ["Telegram"], "minCpuPct": 2 },
+    { "group": "Browser", "names": ["chrome", "msedge", "firefox", "brave", "opera"], "minCpuPct": 3 }
+  ]
+}

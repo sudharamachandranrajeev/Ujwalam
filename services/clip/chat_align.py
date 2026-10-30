@@ -299,7 +299,7 @@ def clock_checks(events: list[dict], window: float, max_offset: float) -> dict:
     """
     res = {}
     eng_msg = [e for e in events if e["source"] == "engage" and e["type"] == "message" and e["role"] != "duplicate"]
-    k = lambda x: x[0]  # noqa: E731
+    k = lambda x: x[0]
     for plat in ("twitch", "youtube"):
         if plat == "twitch":
             raw = [(e["serverUtc"], e) for e in events if e["source"] == "twitch" and e.get("serverUtc") is not None]
@@ -361,12 +361,12 @@ def aggregate(sessions: list[Session], events: list[dict], vods: list[dict],
         def count(pred, in_clip=False):
             return sum(1 for e in evs if pred(e) and (not in_clip or e.get("clip")))
 
-        tw_v = lambda e: e["source"] == "twitch" and e["role"] == "viewer"  # noqa: E731
-        yt_v = lambda e: e["source"] == "youtube" and e["role"] == "viewer"  # noqa: E731
-        yt_m = lambda e: e["source"] == "youtube" and e["role"] in ("moderator", "owner")  # noqa: E731
-        en_v = lambda e: e["source"] == "engage" and e["type"] == "message" and e["role"] == "viewer"  # noqa: E731
-        en_r = lambda e: e["source"] == "engage" and e["type"] == "message" and e.get("action") == "reply"  # noqa: E731
-        en_s = lambda e: e["source"] == "engage" and e["type"] == "sent"  # noqa: E731
+        tw_v = lambda e: e["source"] == "twitch" and e["role"] == "viewer"
+        yt_v = lambda e: e["source"] == "youtube" and e["role"] == "viewer"
+        yt_m = lambda e: e["source"] == "youtube" and e["role"] in ("moderator", "owner")
+        en_v = lambda e: e["source"] == "engage" and e["type"] == "message" and e["role"] == "viewer"
+        en_r = lambda e: e["source"] == "engage" and e["type"] == "message" and e.get("action") == "reply"
+        en_s = lambda e: e["source"] == "engage" and e["type"] == "sent"
 
         vod_cov = {}
         for key, pred in (("twitch", lambda v: v["source"] == "twitch"),

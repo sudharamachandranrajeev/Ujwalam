@@ -1,0 +1,66 @@
+{
+  "version": 1,
+  "id": "project-sample",
+  "name": "Sample project",
+  "activeScene": "scene-main",
+  "canvases": [
+    { "id": "h", "width": 1920, "height": 1080, "fps": 60 },
+    { "id": "v", "width": 1080, "height": 1920, "fps": 60 }
+  ],
+  "devices": [
+    { "id": "dev-capture", "kind": "capture-card", "name": "<capture-card>", "match": { "deviceId": "<device-id-1>" }, "format": { "width": 1920, "height": 1080, "fps": 60 } },
+    { "id": "dev-cam", "kind": "camera", "name": "<camera>", "match": { "deviceId": "<device-id-2>", "name": "<camera>" } },
+    { "id": "dev-mic", "kind": "microphone", "name": "<microphone>", "match": { "deviceId": "<device-id-3>" } }
+  ],
+  "overlays": [
+    { "id": "ov-chat", "name": "Chat overlay", "file": { "base": "overlays", "rel": "chat/index.html" } }
+  ],
+  "scenes": [
+    {
+      "id": "scene-main",
+      "name": "Main",
+      "origin": { "importer": "meld", "id": "<scene-uuid-1>" },
+      "layers": [
+        {
+          "id": "layer-game", "type": "capture", "name": "Game", "source": { "device": "dev-capture" },
+          "placements": {
+            "h": { "visible": true, "x": 0, "y": 0, "width": 1920, "height": 1080 },
+            "v": { "visible": true, "x": -420, "y": 656, "width": 1920, "height": 1080, "crop": { "left": 0, "top": 0, "right": 0, "bottom": 0 } }
+          }
+        },
+        {
+          "id": "layer-cam", "type": "capture", "name": "Camera", "source": { "device": "dev-cam" },
+          "placements": {
+            "h": { "visible": true, "x": 1440, "y": 720, "width": 480, "height": 360, "opacity": 1 },
+            "v": { "visible": false, "x": 0, "y": 0, "width": 1080, "height": 656 }
+          }
+        },
+        {
+          "id": "layer-chat", "type": "browser", "name": "Chat", "source": { "overlay": "ov-chat", "width": 400, "height": 600 },
+          "placements": { "h": { "visible": true, "x": 20, "y": 460, "width": 400, "height": 600 } }
+        },
+        { "id": "layer-bg", "type": "color", "name": "Background", "source": { "color": "#101820" },
+          "placements": { "h": { "visible": true, "x": 0, "y": 0, "width": 1920, "height": 1080 }, "v": { "visible": true, "x": 0, "y": 0, "width": 1080, "height": 1920 } } },
+        { "id": "layer-logo", "type": "image", "name": "Logo", "source": { "file": { "base": "media", "rel": "logo.png" } },
+          "placements": { "h": { "visible": true, "x": 24, "y": 24, "width": 160, "height": 160, "rotation": 0 } } },
+        { "id": "layer-intro", "type": "media", "name": "Intro", "source": { "file": { "base": "media", "rel": "intro.mp4" }, "loop": false },
+          "placements": { "h": { "visible": false, "x": 0, "y": 0, "width": 1920, "height": 1080 } } },
+        { "id": "layer-title", "type": "text", "name": "Title", "source": { "text": "Starting soon", "font": "Sans", "size": 64, "color": "#ffffff" },
+          "locked": true, "placements": { "h": { "visible": true, "x": 600, "y": 80, "width": 720, "height": 100 } } }
+      ]
+    },
+    { "id": "scene-brb", "name": "Be right back", "layers": [] }
+  ],
+  "audio": {
+    "tracks": [{ "id": "track1", "name": "Track 1" }, { "id": "track2", "name": "Track 2" }],
+    "masterVolumeDb": 0,
+    "sources": [
+      { "id": "aud-mic", "name": "Microphone", "device": "dev-mic", "volumeDb": -3.5, "muted": false, "monitoring": "off", "tracks": ["track1", "track2"] },
+      { "id": "aud-game", "name": "Game audio", "device": "dev-capture", "volumeDb": -12, "muted": false, "monitoring": "monitor-only", "tracks": ["track1"] }
+    ]
+  },
+  "outputs": [
+    { "id": "out-h-main", "type": "rung", "ref": "youtube-1080p60", "canvas": "h" },
+    { "id": "out-h-yt", "type": "sink", "ref": "youtube", "canvas": "h" }
+  ]
+}

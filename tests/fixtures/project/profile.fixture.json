@@ -1,0 +1,5 @@
+{
+  "brand": { "wordmark": "fixture-wordmark.png", "character": "fixture-character.png" },
+  "handles": { "twitch": "fixture-twitch", "youtube": "fixture-youtube", "kick": "fixture-kick" },
+  "links": { "discord": "https://example.invalid/fixture-invite" }
+}

@@ -1,0 +1,109 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ujwalam Studio</title>
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+<div id="banner" class="banner" hidden></div>
+<div class="shell">
+  <header class="topbar">
+    <div class="brand">Ujwalam</div>
+    <div class="spacer"></div>
+    <button id="btn-import" class="btn" type="button" title="Create a new project from the Meld session and check it against the host">Import Meld session</button>
+    <button id="btn-record" class="btn" type="button" disabled>Record</button>
+    <button id="btn-stream" class="btn btn-live" type="button" disabled>Start stream</button>
+  </header>
+
+  <aside class="left">
+    <section class="panel">
+      <h2>Scenes</h2>
+      <ul id="scene-list" class="list" aria-label="Scenes"></ul>
+    </section>
+    <section class="panel grow">
+      <h2>Layers</h2>
+      <div id="canvas-tabs" class="tabs" hidden>
+        <button id="tab-h" class="btn btn-quiet" type="button">H</button>
+        <button id="tab-v" class="btn btn-quiet" type="button">V</button>
+      </div>
+      <ul id="layer-list" class="list" aria-label="Layers"></ul>
+    </section>
+  </aside>
+
+  <main class="center">
+    <div class="preview-card">
+      <h2>Previews</h2>
+      <p class="muted">Previews are native windows owned by the studio host, not shown in this page.</p>
+      <div class="preview-row">
+        <div class="preview-slot">
+          <div class="preview-title">Horizontal (H)</div>
+          <button id="btn-open-h" class="btn" type="button">Open preview</button>
+          <button id="btn-focus-h" class="btn btn-quiet" type="button">Focus</button>
+        </div>
+        <div class="preview-slot">
+          <div class="preview-title">Vertical (V)</div>
+          <button id="btn-open-v" class="btn" type="button">Open preview</button>
+          <button id="btn-focus-v" class="btn btn-quiet" type="button">Focus</button>
+        </div>
+      </div>
+      <p id="preview-note" class="muted" role="status"></p>
+    </div>
+  </main>
+
+  <aside class="right">
+    <section class="panel grow">
+      <h2>Audio mixer</h2>
+      <div id="mixer" class="mixer" aria-label="Audio mixer"></div>
+    </section>
+  </aside>
+
+  <footer class="statusbar" role="status">
+    <span id="st-live" class="pill">Offline</span>
+    <span id="st-rec" class="pill">Not recording</span>
+    <span class="sep"></span>
+    <span>Dropped <b id="st-drop">-</b></span>
+    <span>FPS <b id="st-fps">-</b></span>
+    <span>CPU <b id="st-cpu">-</b></span>
+    <span>GPU <b id="st-gpu">-</b></span>
+    <span class="spacer"></span>
+    <span id="st-core" class="pill">Event core</span>
+    <span id="st-host" class="pill">Host</span>
+  </footer>
+</div>
+
+<div id="import" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="import-title">
+  <div class="modal-card">
+    <h3 id="import-title">Import Meld session</h3>
+    <p id="import-text" class="muted" role="status">Working...</p>
+    <ul id="import-counts" class="counts"></ul>
+    <label id="import-skip-row" class="muted" hidden><input id="import-skip" type="checkbox"> Load anyway, skipping unavailable items</label>
+    <div class="modal-actions">
+      <button id="import-close" class="btn btn-quiet" type="button">Close</button>
+      <button id="import-load" class="btn" type="button" disabled>Load into studio</button>
+    </div>
+  </div>
+</div>
+
+<div id="confirm" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  <div class="modal-card">
+    <h3 id="confirm-title">Confirm</h3>
+    <p id="confirm-summary"></p>
+    <p>Type <code id="confirm-phrase"></code> to confirm.</p>
+    <input id="confirm-input" type="text" autocomplete="off" spellcheck="false" maxlength="40">
+    <p id="confirm-msg" class="muted" role="status"></p>
+    <div class="modal-actions">
+      <button id="confirm-cancel" class="btn btn-quiet" type="button">Cancel</button>
+      <button id="confirm-ok" class="btn btn-live" type="button">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/dom.js"></script>
+<script src="/js/api.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>
