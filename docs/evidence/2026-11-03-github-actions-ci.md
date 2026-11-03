@@ -78,3 +78,13 @@ Created: `.github/workflows/ci.yml`, `docs/evidence/2026-11-03-github-actions-ci
 ## Main-session review (2026-11-03)
 
 Merged into `claude/alpha0-d1`. The trigger is `workflow_dispatch` only until the cloud `test` step passes: two `tests/registry.test.mjs` cases fail without `legacy/`, other test files are unchecked. Push/PR triggers are switched on after one green manual run, so pushes do not spend runner minutes on a known red job.
+
+## Probe runs on GitHub (2026-11-03, branch ci/cloud-probe)
+
+| Run | Node | Result |
+|---|---|---|
+| 41726247415 | 22.x | `test` FAIL after 1109 s: 1086 tests, 960 pass, 75 fail, 45 cancelled, 6 skipped. The other 4 cloud steps passed; 10 laptop-only steps NOT RUN. The log showed only the summary, so `tools/ci.mjs` now lists the TAP `not ok` lines of a failed step. |
+| 41731910764 | 22.x | `test` FAIL, 119 failing names listed. Groups: event-core audit/SQLite, idempotency and restart tests (about 70); data-dir ACL and system pipe (7); registry validation needing `legacy/` (5, expected); CI-tool self-tests that assume laptop folders (3); launcher and replay (about 10). Causes UNVERIFIED: the log has names, not error messages. |
+| 41736001699 | 26.x | Cancelled at the 30 min job limit: the `test` step was still running (orphan node processes at cleanup). No failure list. |
+
+Status: parked (not on the first-stream path). Next steps when resumed: run the suite on the runner with `node --test --test-timeout` and a per-file reporter so errors are printed, starting with one event-core audit file and one ACL file; decide per group between a code fix, a cloud skip declared in `LAPTOP_ONLY`-style data, or a runner difference to document. The `engines` floor `>=22.13` stays UNVERIFIED.
