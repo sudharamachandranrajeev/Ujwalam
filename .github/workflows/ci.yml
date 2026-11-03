@@ -5,8 +5,12 @@ name: ci
 
 # Manual only for now: the cloud `test` step still fails on tests that need legacy/ (tests/registry.test.mjs and
 # possibly others, docs/evidence/2026-11-03-github-actions-ci.md). Switch to push/pull_request once a manual run passes.
+# workflow_dispatch works only once the file is on the default branch (master); until then a push to the probe
+# branch `ci/cloud-probe` runs it.
 on:
   workflow_dispatch:
+  push:
+    branches: ['ci/cloud-probe']
 
 permissions:
   contents: read
