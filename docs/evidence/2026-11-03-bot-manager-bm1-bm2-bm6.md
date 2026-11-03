@@ -47,7 +47,20 @@ second stop {"ok":false,"reason":"not-started-by-ujwalam"}
   Speaker.bot closes on the graceful request. Streamer.bot does not close on it within the grace time and is force-closed (`/F /T`). Its saved files were current (actions.json written before the stop), but a forced close can lose unsaved Streamer.bot changes. Follow-up (BM1b): find why the graceful close is ignored (close-to-tray or a confirm dialog, UNVERIFIED) and warn on the Bots card before a forced stop.
 - BM1b (done): the Stop confirmation now says the bot is force-closed after `GRACEFUL_MS` (10 s) and asks to save bot changes first; the confirm result carries `forced` and the Bots card says when a close was forced. `node --test tests/studio-ui-bots.test.mjs tests/bots.test.mjs`: 26/26 pass. Why Streamer.bot ignores the close request (tray or dialog) stays UNVERIFIED.
 - Clash check hotkeys: `data\hotkeys.json` in the Streamer.bot folder is found and read; its `hotKeys` list is empty on this laptop, so "0 combos read" means no Streamer.bot hotkeys, hence no clash.
-- Not yet checked: stop on studio stop.
+- BM6 stop on studio stop (same day, user approval): flag `bot-manager` on for the run (restored to off after), both bots started through `createBots().start()`, then the real studio `launch.mjs --alpha --allow-devices --mock --no-open --stop-on-stdin` was started and stopped by closing stdin:
+
+```
+streamerbot start {"ok":true,"pid":<pid>}
+speakerbot start {"ok":true,"pid":<pid>}
+studio exit 0 after 22 s
+[studio] bot streamerbot: stopped
+[studio] bot speakerbot: stopped
+streamerbot after {"installed":true,"running":false,"startedByUs":false}
+speakerbot after {"installed":true,"running":false,"startedByUs":false}
+bot-manager flag restored to false
+```
+
+  PASS. No Ujwalam, host, ffmpeg or bot process left afterwards. Not checked: a bot the user started by hand stays open on studio stop (covered by unit tests only).
 
 ## Files
 Created: `services/bots/index.mjs`, `tests/bots.test.mjs`, `tests/studio-ui-bots.test.mjs`, this file.
