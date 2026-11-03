@@ -157,7 +157,7 @@ function startChild({ dataDir, metricsDir, execLog, sbUrl, sampleMs, livePriorit
     });
     let err = '';
     p.stderr.on('data', (d) => { err += d; });
-    p.once('exit', (code) => { clearTimeout(readyTimer); if (!done) { done = true; reject(new Error(`core child exited early (code ${code}); stderr bytes ${err.length}, error names ${[...new Set(err.match(/(?:E[A-Z]{3,12}|[A-Z][A-Za-z]{2,24}Error)/g) ?? [])].slice(0, 4).join(',') || 'none'}`)); } });
+    p.once('exit', (code) => { clearTimeout(readyTimer); if (!done) { done = true; reject(new Error(`core child exited early (code ${code}); stderr bytes ${err.length}, error names ${[...new Set(err.match(/\b(?:E[A-Z]{3,12}|\b(?:[A-Z][A-Za-z]{2,24})?Error)\b/g) ?? [])].slice(0, 4).join(',') || 'none'}`)); } });
     const readyTimer = setTimeout(() => { if (!done) { done = true; killTree(p.pid); reject(new Error(`core child did not become ready in ${Math.round(READY_MS / 1000)} s`)); } }, READY_MS);
   });
 }

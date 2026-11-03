@@ -58,6 +58,15 @@ test('redactor: home dir in every spelling, user name, profile terms and separat
   assert.match(out, /"text":"<redacted>"/);
 });
 
+test('redactor: a base64 blob containing "/" is redacted whole; a long plain path is not', () => {
+  const s = secrets();
+  const red = makeRedactor({ home: s.home, userName: s.userName, profile: s.profile });
+  const blob = 'jXXNCZdV41Au/k9Qw+Zr7pLmN2bVcX/8YtHsGfDeA1Bc/Zx0Wq==';
+  const out = red(`blob ${blob} and obs/data/obs-plugins/obs-browser/locale/en-US.ini/extra/more`);
+  assert.ok(!out.includes('jXXNCZdV41Au') && !out.includes('8YtHsGfDeA1Bc'), out);
+  assert.match(out, /obs\/data\/obs-plugins\/obs-browser\/locale\/en-US\.ini\/extra\/more/);
+});
+
 test('outputs: presence flags and counters only, never a URL, key ref value or file path', () => {
   const o = outputsSafe({ allowLive: true, sinks: [
     { id: 'yt', kind: 'stream', platform: 'youtube', url: 'rtmps://x/live2', keyRef: 'Ujwalam/stream/youtube-h', keyPresent: true, state: 'live', droppedFrames: 2, lastError: 'boom rtmps://x' },

@@ -59,7 +59,8 @@ export function makeRedactor({ home, userName, profile } = {}) {
     [/\bsk_[A-Za-z0-9_]{8,}/g, '<redacted-key>'],
     [/\b[a-z0-9]{4}(?:-[a-z0-9]{4}){3,4}\b/gi, '<redacted-key>'],
     [/\b[0-9a-f]{32,}\b/gi, '<hex>'],
-    [/[A-Za-z0-9+_-]{40,}={0,2}/g, '<blob>'],
+    // Standard base64 includes '/'; a run with '/' is a blob only if it mixes digits and both cases (plain paths stay readable).
+    [/[A-Za-z0-9+/_-]{40,}={0,2}/g, (m) => (!m.includes('/') || (/\d/.test(m) && /[A-Z]/.test(m) && /[a-z]/.test(m)) ? '<blob>' : m)],
     [/("(?:text|message|msg|note|body|content|comment|user|userName|username|displayName|login|author|title)"\s*:\s*)"(?:[^"\\]|\\.)*"/g, '$1"<redacted>"'],
   );
   return (text) => {
