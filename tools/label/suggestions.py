@@ -57,6 +57,9 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.normpath(os.path.join(_HERE, "..", ".."))
 sys.path.insert(0, os.path.join(_REPO, "services", "clip"))
@@ -277,7 +280,7 @@ def check_out(path, manifest_path, game_id, repo=_REPO, corpus=None):
         if r == parent or _under(r, parent):
             sys.exit("refusing: the %s is inside the output folder: %s" % (name, path))
     # git gets the real path with its case kept (normcase lowercases it on Windows).
-    r = subprocess.run(["git", "-C", repo, "check-ignore", "-q", os.path.realpath(os.path.abspath(path))], capture_output=True)
+    r = subprocess.run(["git", "-C", repo, "check-ignore", "-q", os.path.realpath(os.path.abspath(path))], capture_output=True, **NO_WINDOW)
     if r.returncode != 0:
         sys.exit("refusing: %s is not gitignored (ocrText can hold names)" % path)
 

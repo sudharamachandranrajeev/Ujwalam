@@ -23,7 +23,7 @@ const mask = (arg('mask', '') || '').split(',').filter(Boolean).map(Number);
 function probe(file) {
   return new Promise((resolve, reject) => {
     const p = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries',
-      'stream=width,height,r_frame_rate', '-of', 'json', file]);
+      'stream=width,height,r_frame_rate', '-of', 'json', file], { windowsHide: true });
     let out = '';
     p.stdout.on('data', (d) => { out += d; });
     p.on('close', (c) => (c === 0 ? resolve(JSON.parse(out).streams[0]) : reject(new Error('ffprobe ' + c))));
@@ -47,7 +47,7 @@ const frameBytes = W * H * 3;
 const m = mask.length === 4 ? mask.map((v) => Math.round(v / SCALE)) : null;
 
 const ff = spawn('ffmpeg', ['-v', 'error', '-i', video, '-vf', `scale=${W}:${H}:flags=area`, '-f', 'rawvideo',
-  '-pix_fmt', 'rgb24', '-']);
+  '-pix_fmt', 'rgb24', '-'], { windowsHide: true });
 let buf = Buffer.alloc(0);
 let idx = 0;
 let bg = null;

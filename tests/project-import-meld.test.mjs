@@ -216,7 +216,7 @@ test('CLI as a real process: exit codes and no overwrite', () => {
   const dir = tmpDir();
   try {
     const out = path.join(dir, 'p.json');
-    const run = () => spawnSync(process.execPath, [path.join(repo, 'services', 'project', 'import-meld.mjs'), '--in', fixture, '--out', out], { encoding: 'utf8' });
+    const run = () => spawnSync(process.execPath, [path.join(repo, 'services', 'project', 'import-meld.mjs'), '--in', fixture, '--out', out], { encoding: 'utf8', windowsHide: true });
     const a = run();
     assert.equal(a.status, 0, a.stderr);
     assert.match(a.stdout, /skipped 1 x Widget/);

@@ -39,7 +39,7 @@ export async function launchHost({
   const child = spawn(cfg.exe, args, {
     env: { ...process.env, ...env, ...(envToken ? { UJWALAM_HOST_TOKEN: envToken } : {}) },
     stdio: stdio === 'inherit' ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'],
-    windowsHide: false
+    windowsHide: true // the host is a console program: no console window; previews are its own windows (D191)
   });
   const log = [];
   if (child.stdout) {

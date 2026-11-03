@@ -24,7 +24,7 @@ const KEEP = 50;
 const ZERO = /^0+$/;
 
 function git(root, args, env) {
-  const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', env: env ? { ...process.env, ...env } : process.env });
+  const r = spawnSync('git', args, { cwd: root, encoding: 'utf8', env: env ? { ...process.env, ...env } : process.env, windowsHide: true });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')}: ${(r.stderr || r.error?.message || '').trim()}`);
   return r.stdout.trim();
 }

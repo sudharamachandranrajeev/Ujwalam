@@ -56,6 +56,9 @@ import subprocess
 import sys
 import time
 
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 FPS = 60
 SEGMENT_S = 60
 # Restart limit (user decision 2026-10-28): at most 5 restarts in any 10-minute window.
@@ -231,7 +234,7 @@ def record(a):
         p = subprocess.Popen(
             ffmpeg_cmd(a.video, a.audio, a.size, out / f"{a.name}-%03d.mp4", dur, fps=a.fps,
                        segment_s=a.segment_s, source=a.source, vcodec=a.vcodec, start_number=start_number),
-            stdin=subprocess.PIPE, stdout=lf, stderr=lf)
+            stdin=subprocess.PIPE, stdout=lf, stderr=lf, **NO_WINDOW)
         lf.close()  # the child holds its own handle
         return p, off
 
@@ -399,7 +402,7 @@ def probe(path):
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-count_packets", "-select_streams", "v:0",
          "-show_entries", "stream=nb_read_packets:format=duration", "-of", "json", str(path)],
-        capture_output=True, text=True)
+        capture_output=True, text=True, **NO_WINDOW)
     info = json.loads(r.stdout or "{}")
     frames = int(info.get("streams", [{}])[0].get("nb_read_packets", 0))
     dur = float(info.get("format", {}).get("duration", 0) or 0)
@@ -410,7 +413,7 @@ def probe_streams(path):
     """{codec_type: codec_name} and the video frame rate (avg_frame_rate) of a file."""
     r = subprocess.run(
         ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,codec_name,avg_frame_rate",
-         "-of", "json", str(path)], capture_output=True, text=True)
+         "-of", "json", str(path)], capture_output=True, text=True, **NO_WINDOW)
     streams = json.loads(r.stdout or "{}").get("streams", [])
     kinds = {s.get("codec_type"): s.get("codec_name") for s in streams}
     fps = None
@@ -423,9 +426,8 @@ def probe_streams(path):
 
 def decode_errors(path):
     """Full decode of every stream to the null muxer; returns ffmpeg's error output ('' = decodable)."""
-    kw = {"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS} if os.name == "nt" else {}
     r = subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-threads", "2", "-i", str(path), "-f", "null", "-"],
-                       capture_output=True, text=True, **kw)
+                       capture_output=True, text=True, creationflags=(subprocess.BELOW_NORMAL_PRIORITY_CLASS | subprocess.CREATE_NO_WINDOW) if os.name == "nt" else 0)
     return (r.stderr.strip() or (f"ffmpeg exit {r.returncode}" if r.returncode else ""))
 
 
@@ -433,7 +435,7 @@ def decoded_frames(path):
     """Video frames that actually decode (ffprobe -count_frames); used for the segment in flight."""
     r = subprocess.run(["ffprobe", "-v", "quiet", "-count_frames", "-select_streams", "v:0",
                         "-show_entries", "stream=nb_read_frames", "-of", "json", str(path)],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, **NO_WINDOW)
     try:
         return int(json.loads(r.stdout or "{}").get("streams", [{}])[0].get("nb_read_frames", 0))
     except (ValueError, TypeError):

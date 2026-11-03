@@ -54,7 +54,7 @@ test('active sinks: starting, live and retrying count; idle, stopping, stopped, 
 
 function runLauncher(extra, env, until) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--alpha', '--mock', '--no-open', '--stop-on-stdin', ...extra], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--alpha', '--mock', '--no-open', '--stop-on-stdin', ...extra], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
     let ended = false;
     const t = setTimeout(() => { child.kill(); reject(new Error(`launcher timed out:\n${out}`)); }, 120_000);

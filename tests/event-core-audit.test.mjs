@@ -190,7 +190,7 @@ test('tamper: deleting a middle row is an id gap; truncating the tail is caught 
 test('cli verify: exit 0 on a good chain, exit 1 with the first bad row id on a bad one', () => {
   const { dir, file, s } = seeded(12);
   s.close();
-  const run = (d) => spawnSync(process.execPath, [path.join(repo, 'services', 'event-core', 'cli.mjs'), 'audit', 'verify', '--data-dir', d], { encoding: 'utf8' });
+  const run = (d) => spawnSync(process.execPath, [path.join(repo, 'services', 'event-core', 'cli.mjs'), 'audit', 'verify', '--data-dir', d], { encoding: 'utf8', windowsHide: true });
   const ok = run(dir);
   assert.equal(ok.status, 0, ok.stdout + ok.stderr);
   assert.match(ok.stdout, /audit verify: OK rows=12 integrity=ok/);
@@ -225,10 +225,10 @@ test('second writer in another process is refused, and the lock is free after th
   await a.ready;
   const url = pathToFileURL(path.join(repo, 'services', 'event-core', 'audit', 'index.mjs')).href;
   const code = `import(${JSON.stringify(url)}).then(m => { try { m.createAudit({ dataDir: process.argv[1], mode: 'inline' }); console.log('GOT'); } catch (e) { console.log(e.code); } process.exit(0); })`;
-  const r = spawnSync(process.execPath, ['-e', code, dir], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, ['-e', code, dir], { encoding: 'utf8', windowsHide: true });
   assert.equal(r.stdout.trim(), 'DB_LOCKED');
   await a.close();
-  const r2 = spawnSync(process.execPath, ['-e', code, dir], { encoding: 'utf8' });
+  const r2 = spawnSync(process.execPath, ['-e', code, dir], { encoding: 'utf8', windowsHide: true });
   assert.equal(r2.stdout.trim(), 'GOT');
 });
 

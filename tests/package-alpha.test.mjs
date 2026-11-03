@@ -117,7 +117,7 @@ test('installed spec: data dirs under the data root, OBS runtime and host exe fr
 test('installed run without a profile stops before anything starts and says where the example is', () => {
   const d = tmp('noprof');
   try {
-    const r = spawnSync(process.execPath, [path.join(REPO, 'tools', 'package', 'run-installed.mjs'), '--mock'], { encoding: 'utf8', env: { ...process.env, UJWALAM_DATA_ROOT: path.join(d, 'data') } });
+    const r = spawnSync(process.execPath, [path.join(REPO, 'tools', 'package', 'run-installed.mjs'), '--mock'], { encoding: 'utf8', env: { ...process.env, UJWALAM_DATA_ROOT: path.join(d, 'data') }, windowsHide: true });
     // In the repo there is no release.json at the root, so main() stops even earlier (exit 2); in a package it
     // reaches the profile check. Both exit 2 without starting the launcher.
     assert.equal(r.status, 2, r.stdout + r.stderr);
@@ -132,7 +132,7 @@ test('launcher scripts: CRLF line endings, SPDX header, Install-Ujwalam.ps1 pars
     assert.match(t, /SPDX-License-Identifier: GPL-2\.0-or-later/);
   }
   const ps = path.join(REPO, 'tools', 'package', 'Install-Ujwalam.ps1').replace(/'/g, "''");
-  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${ps}', [ref]$null, [ref]$e); $e.Count`], { encoding: 'utf8' });
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${ps}', [ref]$null, [ref]$e); $e.Count`], { encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), '0');
 });
@@ -151,7 +151,7 @@ function fakePackage(root, version) {
 
 function install(pkg, root, ...extra) {
   const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(pkg, 'Install-Ujwalam.ps1'),
-    '-InstallRoot', path.join(root, 'Ujwalam'), '-StartMenuDir', path.join(root, 'start'), '-DesktopDir', path.join(root, 'desk'), ...extra], { encoding: 'utf8' });
+    '-InstallRoot', path.join(root, 'Ujwalam'), '-StartMenuDir', path.join(root, 'start'), '-DesktopDir', path.join(root, 'desk'), ...extra], { encoding: 'utf8', windowsHide: true });
   return { code: r.status, out: `${r.stdout}${r.stderr}` };
 }
 
@@ -168,7 +168,7 @@ test('Install-Ujwalam.ps1 on a fake package: install, shortcuts, tamper refused,
     for (const f of ['0.1.0-alpha.1/release.json', 'Ujwalam.cmd', 'data']) assert.ok(existsSync(path.join(ir, f)), f);
     for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha).lnk')), d);
     // The root launcher follows current.txt to that version's launcher and on to its run-installed.mjs.
-    let run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8' });
+    let run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8', windowsHide: true });
     assert.equal(run.stdout.trim(), 'fake 0.1.0-alpha.1');
 
     r = install(p1, root, '-NoShortcuts');
@@ -190,14 +190,14 @@ test('Install-Ujwalam.ps1 on a fake package: install, shortcuts, tamper refused,
     assert.equal(r.code, 0, r.out);
     assert.equal(readFileSync(path.join(ir, 'current.txt'), 'utf8').trim(), '0.1.0-alpha.2');
     assert.equal(readFileSync(path.join(ir, 'previous.txt'), 'utf8').trim(), '0.1.0-alpha.1');
-    run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8' });
+    run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8', windowsHide: true });
     assert.equal(run.stdout.trim(), 'fake 0.1.0-alpha.2');
 
     r = install(p2, root, '-Rollback');
     assert.equal(r.code, 0, r.out);
     assert.equal(readFileSync(path.join(ir, 'current.txt'), 'utf8').trim(), '0.1.0-alpha.1');
     assert.equal(readFileSync(path.join(ir, 'previous.txt'), 'utf8').trim(), '0.1.0-alpha.2');
-    run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8' });
+    run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8', windowsHide: true });
     assert.equal(run.stdout.trim(), 'fake 0.1.0-alpha.1');
     assert.ok(existsSync(path.join(ir, '0.1.0-alpha.2', 'release.json')), 'nothing deleted');
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }

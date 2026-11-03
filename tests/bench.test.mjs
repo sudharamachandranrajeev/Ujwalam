@@ -145,7 +145,7 @@ test('minDelta keeps tiny absolute changes from flagging', () => {
 
 test('CLI: first run prints "no baseline (needs --accept)" and writes none; slowdown exits 1; --accept prints old/new and logs the reason', async () => {
   const f = fixture();
-  const cli = (...a) => spawnSync(process.execPath, [runMjs, '--benches', f.benches, '--out', f.out, '--runs', '3', '--warmup', '0', ...a], { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_NOW: '2026-11-06', UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(QUIET) } });
+  const cli = (...a) => spawnSync(process.execPath, [runMjs, '--benches', f.benches, '--out', f.out, '--runs', '3', '--warmup', '0', ...a], { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_NOW: '2026-11-06', UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(QUIET) }, windowsHide: true });
   const first = cli();
   assert.equal(first.status, 0, first.stdout + first.stderr);
   assert.match(first.stdout, /fx-slow: no baseline \(needs --accept\)/);
@@ -195,25 +195,25 @@ test('post-commit helper and hook exit 0 whatever the state of the output folder
   const f = fixture();
   const withOut = (out) => ({ ...process.env, UJWALAM_BENCH_OUT: out });
   // no output folder at all
-  assert.equal(spawnSync(process.execPath, [recordMjs], { env: withOut(path.join(f.root, 'nope')), cwd: repo }).status, 0);
+  assert.equal(spawnSync(process.execPath, [recordMjs], { env: withOut(path.join(f.root, 'nope')), cwd: repo, windowsHide: true }).status, 0);
   // runs/ holds garbage and commits/ is a file, so copying must fail
   mkdirSync(path.join(f.out, 'runs'), { recursive: true });
   writeFileSync(path.join(f.out, 'runs', 'x.json'), '{ not json');
   writeFileSync(path.join(f.out, 'commits'), 'a file, not a folder');
-  assert.equal(spawnSync(process.execPath, [recordMjs], { env: withOut(f.out), cwd: repo }).status, 0);
+  assert.equal(spawnSync(process.execPath, [recordMjs], { env: withOut(f.out), cwd: repo, windowsHide: true }).status, 0);
   // the shell hook itself, when a POSIX sh is available
   const hook = path.join(repo, 'tools', 'git-hooks', 'post-commit');
   const text = readFileSync(hook, 'utf8');
   assert.match(text, /\|\| true/);
   assert.match(text.trimEnd(), /exit 0$/);
-  const sh = spawnSync('sh', ['-c', 'exit 0']);
+  const sh = spawnSync('sh', ['-c', 'exit 0'], { windowsHide: true });
   if (!sh.error) {
     const good = fixture();
     await good.go();
-    const r = spawnSync('sh', [hook], { env: withOut(good.out), cwd: repo });
+    const r = spawnSync('sh', [hook], { env: withOut(good.out), cwd: repo, windowsHide: true });
     assert.equal(r.status, 0);
     assert.equal(readdirSync(path.join(good.out, 'commits')).length, 1);
-    const bad = spawnSync('sh', [hook], { env: withOut(f.out), cwd: repo });
+    const bad = spawnSync('sh', [hook], { env: withOut(f.out), cwd: repo, windowsHide: true });
     assert.equal(bad.status, 0);
   }
   assert.ok(existsSync(hook));
@@ -359,7 +359,7 @@ for (const [label, noise] of [
 test('CLI: a noisy slow run is ADVISORY (reasons and regression printed, exit 0), a quiet one fails; --accept on a noisy one exits 2', async () => {
   const f = fixture();
   const run = (noise, ...a) => spawnSync(process.execPath, [runMjs, '--benches', f.benches, '--out', f.out, '--runs', '3', '--warmup', '0', ...a],
-    { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_NOW: '2026-11-06', UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(noise) } });
+    { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_NOW: '2026-11-06', UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(noise) }, windowsHide: true });
   assert.equal(run(QUIET).status, 0);
   assert.equal(run(QUIET, '--accept', 'seed').status, 0);
   f.set({ ms: 80 });
@@ -380,7 +380,7 @@ test('CLI: a noisy slow run is ADVISORY (reasons and regression printed, exit 0)
 test('CLI --calibrate prints per-metric n, mean, stddev and minDelta', async () => {
   const f = fixture();
   const r = spawnSync(process.execPath, [runMjs, '--benches', f.benches, '--out', f.out, '--calibrate', '--runs', '4', '--warmup', '0'],
-    { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(QUIET) } });
+    { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(QUIET) }, windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /calibrated fx-slow\.wall_ms: n=4 mean=[\d.]+ stddev=[\d.]+ minDelta=[\d.]+ ms/);
   assert.match(r.stdout, /calibrated fx-rate\.per_s: n=4 mean=1000\.000 stddev=0\.000 minDelta=0\.000/);
@@ -480,10 +480,10 @@ test('bench rules: 0.1 ms absolute floor for ms metrics; v1 advisory window ends
   assert.equal(inAdvisoryWindow(new Date('2026-11-06T00:01:00')), false);
   const f = fixture();
   const run = (now) => spawnSync(process.execPath, [runMjs, '--benches', f.benches, '--out', f.out, '--runs', '3', '--warmup', '0'],
-    { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_NOW: now, UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(QUIET) } });
+    { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_NOW: now, UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(QUIET) }, windowsHide: true });
   assert.equal(run('2026-10-30').status, 0);
   assert.equal(spawnSync(process.execPath, [runMjs, '--benches', f.benches, '--out', f.out, '--runs', '3', '--warmup', '0', '--accept', 'seed'],
-    { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(QUIET) } }).status, 0);
+    { encoding: 'utf8', env: { ...process.env, UJWALAM_BENCH_FAKE_NOISE: JSON.stringify(QUIET) }, windowsHide: true }).status, 0);
   const lastPass = readFileSync(path.join(f.out, 'last-pass.json'), 'utf8');
   f.set({ ms: 80 });
   const inWindow = run('2026-10-30');

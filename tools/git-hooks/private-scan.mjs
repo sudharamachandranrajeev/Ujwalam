@@ -21,7 +21,7 @@ const out = (s) => process.stdout.write(s + '\n');
 const err = (s) => process.stderr.write(s + '\n');
 
 const git = (a, input) =>
-  execFileSync('git', a, { input, maxBuffer: 1 << 30, stdio: ['pipe', 'pipe', 'pipe'] });
+  execFileSync('git', a, { input, maxBuffer: 1 << 30, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
 
 function failClosed(msg, hint = 'Create data/profile.local.json from data/profile.example.json.') {
   err(`private-scan: ${msg}`);

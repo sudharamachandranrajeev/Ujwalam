@@ -73,7 +73,7 @@ for (const point of ['afterTemp', 'afterBackup']) {
       const next = sample(); next.name = 'Never committed';
       const src = path.join(dir, 'next.json');
       fs.writeFileSync(src, JSON.stringify(next));
-      const r = spawnSync(process.execPath, [path.join(here, 'project-child-save.mjs'), file, src, point], { encoding: 'utf8' });
+      const r = spawnSync(process.execPath, [path.join(here, 'project-child-save.mjs'), file, src, point], { encoding: 'utf8', windowsHide: true });
       assert.equal(r.status, 1, r.stderr);
       assert.equal(fs.readFileSync(file, 'utf8'), original, 'original changed');
       const leftovers = fs.readdirSync(path.dirname(file)).filter((n) => n.includes('.tmp-'));

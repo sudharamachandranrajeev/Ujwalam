@@ -25,7 +25,7 @@ const DL = 0.1, DARK = 0.8;
 
 function probe(file) {
   return new Promise((resolve, reject) => {
-    const p = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', file]);
+    const p = spawn('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height,r_frame_rate', '-of', 'json', file], { windowsHide: true });
     let out = '';
     p.stdout.on('data', (d) => { out += d; });
     p.on('close', (c) => (c === 0 ? resolve(JSON.parse(out).streams[0]) : reject(new Error('ffprobe ' + c))));
@@ -70,7 +70,7 @@ function analyse(f) {
   }
 }
 
-const ff = spawn('ffmpeg', ['-v', 'error', '-i', video, '-vf', `scale=${W}:${H}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']);
+const ff = spawn('ffmpeg', ['-v', 'error', '-i', video, '-vf', `scale=${W}:${H}:flags=area`, '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { windowsHide: true });
 ff.stdout.on('data', (d) => {
   buf = Buffer.concat([buf, d]);
   while (buf.length >= frameBytes) { analyse(buf.subarray(0, frameBytes)); buf = buf.subarray(frameBytes); idx++; }

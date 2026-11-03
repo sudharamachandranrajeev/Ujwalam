@@ -79,11 +79,17 @@ test('api.json: content, atomic write (no partial reads, no temp files), owner-o
     (async () => { while (!stop) { try { JSON.parse(fs.readFileSync(workerData.file, 'utf8')); ok++; } catch (e) { if (e.code === 'ENOENT') missing++; else if (e.code === 'EBUSY' || e.code === 'EPERM' || e.code === 'EACCES') missing++; else bad++; } await new Promise((r) => setTimeout(r, 2)); } parentPort.postMessage({ ok, bad, missing }); })();`;
   const w = new Worker(code, { eval: true, workerData: { file: f.file } });
   const result = new Promise((res) => w.once('message', res));
-  await sleep(50);
-  for (let i = 0; i < 60; i++) writeSecretFileAtomic(f.file, `${JSON.stringify({ port: i, pid: process.pid, startedAt: new Date().toISOString(), tokens })}\n`);
-  w.postMessage('stop');
-  const r = await result;
-  await w.terminate();
+  let r;
+  try {
+    await sleep(50);
+    for (let i = 0; i < 60; i++) writeSecretFileAtomic(f.file, `${JSON.stringify({ port: i, pid: process.pid, startedAt: new Date().toISOString(), tokens })}\n`);
+    w.postMessage('stop');
+    r = await result;
+  } finally {
+    // A failed write must not leave the reader thread running: it kept the test process alive for 24 min in a CI
+    // run (2026-11-03) and blocked the whole suite.
+    await w.terminate();
+  }
   assert.equal(r.bad, 0, JSON.stringify(r));
   assert.ok(r.ok > 0);
   assert.deepEqual(readdirSync(dir), [API_FILE]);

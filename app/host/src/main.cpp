@@ -7,13 +7,15 @@
 //   ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>] [--recordings <dir>]
 //                [--port <n>] [--project <file.json>] [--outputs <configure-params.json>] [--preview h,v]
 //                [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live] [--twitch-bandwidth-test]
-//                [--host-config <file.json>] [--test-hooks]
+//                [--host-config <file.json>] [--test-hooks] [--headless]
 //                [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]
 //                 [--overlay-feed-port <n>] [--overlay-events-url http://127.0.0.1:<p>/<path>]]
 // With --allow-browser and --overlay-root the host supervises the overlay server child (overlay.h): static pages
 // from the overlay root and the read-only bridge feed, both on 127.0.0.1, never on 8093 (the real Streamer.bot).
 // --host-config (host_config.h): replay buffer, global hotkeys, feedback and markers folders, event-core system file.
 // --test-hooks enables hotkeys.trigger (tests only).
+// --headless (or UJWALAM_HEADLESS=1; every test run sets it): no preview window is ever created; preview.open fails
+// with CONFLICT (D191).
 // --twitch-bandwidth-test: keyed twitch sinks connect with "?bandwidthtest=true" appended to the stored key at connect
 // time (outputs.h); the credential is never changed.
 // Environment (the launcher's channel; values are never logged):
@@ -21,6 +23,7 @@
 //   UJWALAM_HOST_TOKEN         api token (64 hex); generated when absent
 //   UJWALAM_HOST_SYSTEM_TOKEN  system token (64 hex); generated when absent
 //   UJWALAM_HOST_DISCOVERY     discovery file when --discovery is not given
+//   UJWALAM_HEADLESS           "1": same as --headless
 //   UJWALAM_EVENT_CORE_API_TOKEN  event-core token for the overlay server's event feed; passed only to that child
 //                              and only with --overlay-events-url
 //   UJWALAM_EVENT_CORE_SYSTEM_TOKEN  event-core system token, used only by panic to send actions.panic over the
@@ -128,7 +131,7 @@ void usage()
 	fprintf(stderr, "usage: ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>]\n"
 			"         [--recordings <dir>] [--port <n>] [--project <file.json>] [--outputs <file.json>]\n"
 			"         [--preview h,v] [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]\n"
-			"         [--twitch-bandwidth-test] [--host-config <file.json>] [--test-hooks]\n"
+			"         [--twitch-bandwidth-test] [--host-config <file.json>] [--test-hooks] [--headless]\n"
 			"         [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]\n"
 			"          [--overlay-feed-port <n>] [--overlay-events-url <url>]]\n");
 }
@@ -149,6 +152,7 @@ int wmain(int argc, wchar_t **wargv)
 	std::string project_path, outputs_path, preview, port_s = "0", adapter_s = "0";
 	Overlay::Config ov;
 	std::string ov_port_s = "0", ov_feed_s = "0";
+	bool headless = false;
 	for (size_t i = 0; i < args.size(); i++) {
 		const std::string &a = args[i];
 		auto next = [&](std::string &dst) {
@@ -188,6 +192,8 @@ int wmain(int argc, wchar_t **wargv)
 			next(app.config_path);
 		else if (a == "--test-hooks") // hotkeys.trigger; tests only
 			app.test_hooks = true;
+		else if (a == "--headless") // no preview windows (D191)
+			headless = true;
 		else if (a == "--overlay-root")
 			next(ov.root);
 		else if (a == "--overlay-script")
@@ -209,6 +215,8 @@ int wmain(int argc, wchar_t **wargv)
 			return 64;
 		}
 	}
+	if (env(L"UJWALAM_HEADLESS") == "1")
+		headless = true;
 	if (o.runtime.empty())
 		o.runtime = env(L"UJWALAM_OBS_RUNTIME");
 	if (o.runtime.empty()) {
@@ -391,7 +399,8 @@ int wmain(int argc, wchar_t **wargv)
 		hlog::info("real stream targets %s", app.allow_live ? "ALLOWED (--allow-live)" : "off (loopback only)");
 		hlog::info("twitch bandwidth test %s",
 			   app.twitch_bandwidth_test ? "ON (--twitch-bandwidth-test: twitch sinks are not broadcast)" : "off");
-		app.previews = std::make_unique<Previews>();
+		app.previews = std::make_unique<Previews>(headless);
+		hlog::info("previews: %s", headless ? "OFF (headless)" : "on (second display only, never take focus)");
 		pc.system_file = app.config.core_system_file;
 		bool core_ready = !pc.system_file.empty() && rpc::is_token(pc.token);
 		app.panic = std::make_unique<Panic>(*app.studio, std::move(pc));

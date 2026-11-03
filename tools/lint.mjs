@@ -4,7 +4,7 @@
 // out/) are never linted. Files that .gitattributes marks binary (or that hold a NUL byte) are skipped.
 // Finding format: "path:line: rule: message". Exit 1 if any finding.
 //
-// Rules: syntax-js, syntax-py, eol, trailing-ws, spdx, secret, user-path.
+// Rules: syntax-js, syntax-py, eol, trailing-ws, spdx, secret, user-path, hidden-window.
 // An allow marker (the word lint-allow, a colon, then a rule id) on a line silences that rule on that line.
 // Only secret and user-path honour markers. A bare marker, an unknown rule id, or a rule that does not
 // support markers is itself a finding (rule "lint-allow"). The secret marker is accepted only in test
@@ -23,7 +23,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const RULES = ['syntax-js', 'syntax-py', 'eol', 'trailing-ws', 'spdx', 'secret', 'user-path'];
+export const RULES = ['syntax-js', 'syntax-py', 'eol', 'trailing-ws', 'spdx', 'secret', 'user-path', 'hidden-window'];
 // Rules whose findings an allow marker can silence.
 const MARKER_RULES = new Set(['secret', 'user-path']);
 // SELF-EXEMPTION (the only one): the pattern definition below contains the marker text itself, so the
@@ -114,7 +114,7 @@ export function attributesFor(rules, rel) {
 
 // ---- file list ----
 function gitList(root, args) {
-  const r = spawnSync('git', ['-C', root, ...args, '-z'], { encoding: 'buffer', maxBuffer: 1 << 28 });
+  const r = spawnSync('git', ['-C', root, ...args, '-z'], { encoding: 'buffer', maxBuffer: 1 << 28, windowsHide: true });
   if (r.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${String(r.stderr).trim()}`);
   return r.stdout.toString('utf8').split('\0').filter(Boolean);
 }
@@ -255,10 +255,90 @@ function checkText(rel, text, lines, out, wanted, ctx) {
 }
 
 
+// ---- hidden-window: no child process may open a console window (user, 2026-11-03, D191) ----
+// A console program (cmd, powershell, python, ffmpeg, git, node) started from a process without a visible console
+// gets a NEW console window on Windows: it pops up and takes focus. Every call must ask for no window:
+//   JS: a child_process function (spawn, spawnSync, exec, execSync, execFile, execFileSync, fork) called with
+//       `windowsHide: true` inside the call's parentheses (options in a variable: spread them, then add it);
+//   Python: a subprocess function (run, Popen, call, check_call, check_output) called with `creationflags`
+//       (or the module's NO_WINDOW kwargs) inside the parentheses.
+// The only exception is a GUI program the user asked to see (e.g. explorer.exe for "Open folder"): JS
+// `windowsHide: false` followed on the same line by `// GUI window: <reason>`. Never for a console program.
+const CP_FUNCS = ['spawn', 'spawnSync', 'exec', 'execSync', 'execFile', 'execFileSync', 'fork'];
+const PY_FUNCS = ['run', 'Popen', 'call', 'check_call', 'check_output'];
+
+/** Text of the call starting at the '(' at index open, up to its matching ')'. Skips strings and comments. */
+export function callText(src, open, lang) {
+  let depth = 0;
+  let q = null;
+  for (let i = open; i < src.length; i++) {
+    const c = src[i];
+    if (q) { if (c === '\\') { i++; continue; } if (c === q) q = null; continue; }
+    if (c === '"' || c === "'" || (c === '`' && lang === 'js')) { q = c; continue; }
+    const lineComment = lang === 'js' ? c === '/' && src[i + 1] === '/' : c === '#';
+    if (lineComment) { const n = src.indexOf('\n', i); i = n < 0 ? src.length : n; continue; }
+    if (lang === 'js' && c === '/' && src[i + 1] === '*') { const n = src.indexOf('*/', i + 2); i = n < 0 ? src.length : n + 1; continue; }
+    if (c === '(') depth++;
+    else if (c === ')' && --depth === 0) return src.slice(open, i + 1);
+  }
+  return src.slice(open);
+}
+
+/** Call sites (index of the name, index of '(') of the child-process functions this file imports. */
+function childProcessCalls(text, lang) {
+  const sites = [];
+  const inComment = (idx) => {
+    const ls = text.lastIndexOf('\n', idx - 1) + 1;
+    const before = text.slice(ls, idx);
+    return lang === 'js' ? /\/\/|^\s*\*/.test(before) : before.includes('#');
+  };
+  const scan = (re) => {
+    for (const m of text.matchAll(re)) {
+      const open = m.index + m[0].length - 1;
+      if (!inComment(m.index)) sites.push({ at: m.index, open });
+    }
+  };
+  if (lang === 'js') {
+    const names = new Set();
+    const spaces = new Set();
+    const mod = String.raw`['"](?:node:)?child_process['"]`;
+    for (const m of text.matchAll(new RegExp(String.raw`(?:import\s*\{([^}]*)\}\s*from\s*${mod}|\{([^}]*)\}\s*=\s*(?:await\s+import\(\s*${mod}\s*\)|require\(\s*${mod}\s*\)))`, 'g'))) {
+      for (const part of (m[1] ?? m[2]).split(',')) {
+        const [orig, alias] = part.trim().split(/\s+as\s+|\s*:\s*/).map((s) => s.trim());
+        if (CP_FUNCS.includes(orig)) names.add(alias || orig);
+      }
+    }
+    for (const m of text.matchAll(new RegExp(String.raw`import\s+(?:\*\s+as\s+)?(\w+)\s+from\s*${mod}|(\w+)\s*=\s*(?:await\s+import|require)\(\s*${mod}\s*\)`, 'g'))) spaces.add(m[1] ?? m[2]);
+    if (names.size) scan(new RegExp(String.raw`(?<![\w.$])(?:${[...names].join('|')})\s*\(`, 'g'));
+    for (const s of spaces) scan(new RegExp(String.raw`(?<![\w.$])${s}\.(?:${CP_FUNCS.join('|')})\s*\(`, 'g'));
+  } else {
+    if (/^\s*import\s+subprocess\b/m.test(text)) scan(new RegExp(String.raw`(?<![\w.])subprocess\.(?:${PY_FUNCS.join('|')})\s*\(`, 'g'));
+    const from = /^\s*from\s+subprocess\s+import\s+\(?([^)\n]*)\)?/m.exec(text);
+    const names = from ? from[1].split(',').map((s) => s.trim().split(/\s+as\s+/)).filter(([o]) => PY_FUNCS.includes(o)).map(([o, a]) => a ?? o) : [];
+    if (names.length) scan(new RegExp(String.raw`(?<![\w.])(?:${names.join('|')})\s*\(`, 'g'));
+  }
+  return sites;
+}
+
+export function checkHiddenWindow(rel, text, out) {
+  const ext = path.extname(rel).toLowerCase();
+  const lang = ['.js', '.mjs', '.cjs'].includes(ext) ? 'js' : ext === '.py' ? 'py' : null;
+  if (!lang) return;
+  const want = lang === 'js' ? /\bwindowsHide\s*:\s*true\b/ : /\bcreationflags\s*=|\*\*NO_WINDOW\b/;
+  const gui = /\bwindowsHide\s*:\s*false\b[^\n]*\/\/\s*GUI window:\s*\S[^\n]{2,}/;
+  for (const { at, open } of childProcessCalls(text, lang)) {
+    const call = callText(text, open, lang);
+    if (want.test(call) || (lang === 'js' && gui.test(call))) continue;
+    out.push([rel, lineOf(text, at), 'hidden-window', lang === 'js'
+      ? 'child process without `windowsHide: true` (opens a console window on Windows)'
+      : 'subprocess call without `creationflags` / `**NO_WINDOW` (opens a console window on Windows)']);
+  }
+}
+
 // ---- syntax rules (subprocesses) ----
 function nodeCheck(root, rel) {
   return new Promise((resolve) => {
-    const p = spawn(process.execPath, ['--check', rel], { cwd: root, stdio: ['ignore', 'ignore', 'pipe'] });
+    const p = spawn(process.execPath, ['--check', rel], { cwd: root, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
     let err = '';
     p.stderr.on('data', (d) => (err += d));
     p.on('error', (e) => resolve([[rel, 1, 'syntax-js', `cannot run node: ${e.message}`]]));
@@ -300,6 +380,7 @@ function checkPySyntax(root, files, out) {
   if (!files.length) return;
   const r = spawnSync('python', ['-I', '-c', PY_SCRIPT], {
     cwd: root, input: JSON.stringify(files), encoding: 'utf8', maxBuffer: 1 << 26,
+    windowsHide: true,
   });
   if (r.error || r.status !== 0) {
     out.push([files[0], 1, 'syntax-py', `python parse failed to run: ${r.error?.message ?? r.stderr.trim()}`]);
@@ -337,6 +418,7 @@ export async function lintReport(root, opts = {}) {
     if (wanted('eol')) checkEol(rel, buf, attrs.eol, out);
     const text = buf.toString('utf8');
     checkText(rel, text, text.split(/\r?\n/), out, wanted, ctx);
+    if (wanted('hidden-window')) checkHiddenWindow(rel, text, out);
   }
   if (wanted('syntax-js')) await checkJsSyntax(root, jsFiles, out);
   if (wanted('syntax-py')) checkPySyntax(root, pyFiles, out);

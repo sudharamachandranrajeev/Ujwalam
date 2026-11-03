@@ -18,7 +18,7 @@ const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { retu
 const waitGone = async (pid, ms = 10000) => { const t0 = Date.now(); while (alive(pid) && Date.now() - t0 < ms) await new Promise((r) => setTimeout(r, 50)); return !alive(pid); };
 
 // A parent that starts a grandchild and prints its pid, then both sleep for a long time.
-const TREE = "const { spawn } = require('node:child_process'); const g = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore' }); console.log('G ' + g.pid); setInterval(()=>{},1000);";
+const TREE = "const { spawn } = require('node:child_process'); const g = spawn(process.execPath, ['-e', 'setInterval(()=>{},1000)'], { stdio: 'ignore', windowsHide: true }); console.log('G ' + g.pid); setInterval(()=>{},1000);";
 
 async function startTree() {
   const p = track(spawn(process.execPath, ['-e', TREE], { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }));

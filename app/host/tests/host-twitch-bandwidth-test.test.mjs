@@ -52,7 +52,7 @@ async function until(fn, ms = 15000, step = 200) {
 function listener(port, work, name) {
   const file = path.join(work, `${name}.mkv`);
   const ff = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'info', '-listen', '1', '-i', `rtmp://127.0.0.1:${port}/live/expected-name`,
-    '-c', 'copy', '-f', 'matroska', '-y', file], { stdio: ['pipe', 'ignore', 'pipe'] });
+    '-c', 'copy', '-f', 'matroska', '-y', file], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
   const chunks = [];
   ff.stderr.on('data', (d) => chunks.push(d));
   const exit = new Promise((r) => ff.on('exit', r));

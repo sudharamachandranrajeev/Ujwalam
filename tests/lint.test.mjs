@@ -175,7 +175,7 @@ test('exclusion list: the marker fixture is skipped, reported, and only that exa
   assert.deepEqual(LINT_EXCLUSIONS.map((x) => x.path), ['tests/fixtures/lint/markers.txt'], 'no other exclusion without a user yes');
   const other = await run({ 'tests/fixtures/lint/other.txt': MARKER_SAMPLES });
   assert.equal(other.filter((x) => x.rule === 'lint-allow').length, 3);
-  const spawn = spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'lint.mjs'), 'tests/fixtures/lint/markers.txt'], { encoding: 'utf8' });
+  const spawn = spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'lint.mjs'), 'tests/fixtures/lint/markers.txt'], { encoding: 'utf8', windowsHide: true });
   assert.equal(spawn.status, 0, spawn.stdout);
   assert.match(spawn.stdout, /^lint exclusion in use: tests\/fixtures\/lint\/markers\.txt: /m);
 });
@@ -187,6 +187,25 @@ test('lintReport lists every marker, valid or not, with path:line and rule, even
   const r = await lintReport(root, { files: ['tests/a.txt'], osUser: null });
   assert.deepEqual(r.findings, []);
   assert.deepEqual(r.markers, [{ path: 'tests/a.txt', line: 2, rule: 'user-path' }]);
+});
+
+// Samples live in .txt fixtures: written as code here, this file's own child-process import would make them calls.
+const fixture = (n) => readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'lint', n), 'utf8');
+
+test('hidden-window (JS): calls without windowsHide: true are flagged; GUI windows need a stated reason', async () => {
+  const f = await run({ 'a.mjs': fixture('hidden-window-js.txt') }, 'hidden-window');
+  // 4: no options; 10: namespace call; 12: options only in a variable; 17: windowsHide false without a reason
+  assert.deepEqual(f.map((x) => x.line), [4, 10, 12, 17]);
+  assert.ok(f.every((x) => x.rule === 'hidden-window'));
+});
+
+test('hidden-window (Python): calls without creationflags / **NO_WINDOW are flagged, aliases included', async () => {
+  const f = await run({ 'a.py': fixture('hidden-window-py.txt') }, 'hidden-window');
+  assert.deepEqual(f.map((x) => x.line), [6, 12]);
+});
+
+test('hidden-window: a file that never imports child_process / subprocess is not checked', async () => {
+  assert.deepEqual(await run({ 'a.mjs': `${HDR_JS}const spawn = (x) => x;\nspawn(1);\n` }, 'hidden-window'), []);
 });
 
 test('user-path: Windows, macOS and Linux home paths flagged', async () => {
@@ -212,7 +231,7 @@ test('user-path: placeholders, env vars and the allow marker pass', async () => 
 
 test('scope: git list covers tracked and untracked files but never ignored ones', async () => {
   const root = tmp();
-  spawnSync('git', ['init', '-q', root]);
+  spawnSync('git', ['init', '-q', root], { windowsHide: true });
   writeFileSync(path.join(root, '.gitignore'), 'legacy/\nout/\n');
   mkdirSync(path.join(root, 'legacy'));
   mkdirSync(path.join(root, 'out'));
@@ -309,7 +328,7 @@ test('self-exemption: only the marker pattern definition in tools/lint.mjs, and 
 });
 
 test('CLI output lists the self-exemption', () => {
-  const r = spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'lint.mjs'), 'tools/lint.mjs'], { encoding: 'utf8' });
+  const r = spawnSync(process.execPath, [path.join(repoRoot, 'tools', 'lint.mjs'), 'tools/lint.mjs'], { encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stdout);
   assert.match(r.stdout, /^lint self-exemption in use: tools\/lint\.mjs:\d+: marker pattern definition$/m);
 });

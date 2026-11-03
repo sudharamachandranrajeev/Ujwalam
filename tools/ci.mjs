@@ -25,7 +25,7 @@ export const CONFIGURE_HINT = [
 const npmRun = (name, script) => ({ name, cmd: 'npm', args: ['run', script, '--silent'], shell: true });
 
 function hasOnPath(exe) {
-  const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [exe], { encoding: 'utf8' });
+  const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [exe], { encoding: 'utf8', windowsHide: true });
   return r.status === 0;
 }
 
@@ -36,7 +36,7 @@ function findVcvars() {
   if (!pf) return null;
   const vswhere = path.join(pf, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
   if (!existsSync(vswhere)) return null;
-  const r = spawnSync(vswhere, ['-latest', '-products', '*', '-property', 'installationPath'], { encoding: 'utf8' });
+  const r = spawnSync(vswhere, ['-latest', '-products', '*', '-property', 'installationPath'], { encoding: 'utf8', windowsHide: true });
   const dir = r.stdout.trim().split(/\r?\n/)[0];
   if (!dir) return null;
   const bat = path.join(dir, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat');
@@ -50,7 +50,7 @@ export async function buildStep(root) {
   }
   let r;
   if (hasOnPath('cmake') && hasOnPath('cl')) {
-    r = spawnSync('cmake', ['--build', 'app/spike/build'], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 26 });
+    r = spawnSync('cmake', ['--build', 'app/spike/build'], { cwd: root, encoding: 'utf8', maxBuffer: 1 << 26, windowsHide: true });
   } else {
     const bat = findVcvars();
     if (!bat) return { ok: false, output: `cmake or the MSVC environment not found (no developer prompt, no vswhere).\n${CONFIGURE_HINT}\n` };
@@ -58,6 +58,7 @@ export async function buildStep(root) {
     const line = `"call "${bat}" >nul && cmake --build app/spike/build"`;
     r = spawnSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', line], {
       cwd: root, encoding: 'utf8', maxBuffer: 1 << 26, windowsVerbatimArguments: true,
+      windowsHide: true,
     });
   }
   const output = `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? String(r.error) : ''}`;
@@ -103,8 +104,8 @@ function runCommand(step, root) {
   return new Promise((resolve) => {
     // With a shell, pass one command line (fixed, repo-owned strings) instead of an args array.
     const p = step.shell
-      ? spawn([step.cmd, ...step.args].join(' '), { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'] })
-      : spawn(step.cmd, step.args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+      ? spawn([step.cmd, ...step.args].join(' '), { cwd: root, shell: true, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+      : spawn(step.cmd, step.args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let output = '';
     p.stdout.on('data', (d) => (output += d));
     p.stderr.on('data', (d) => (output += d));
@@ -165,6 +166,8 @@ async function main() {
   let steps;
   try { steps = selectSteps(STEPS, only); } catch (e) { console.error(e.message); process.exit(2); }
   const root = process.env.UJWALAM_CI_ROOT ? path.resolve(process.env.UJWALAM_CI_ROOT) : HERE;
+  // Every step and its children run headless: the host opens no preview window, the launcher no browser (D191).
+  process.env.UJWALAM_HEADLESS = '1';
   const full = steps === STEPS;
   const treeAtStart = full ? tryTree(root) : null;
   const results = await runSteps(steps, { root, log: (l) => console.log(l), tail });

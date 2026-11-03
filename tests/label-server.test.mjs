@@ -27,7 +27,7 @@ const REAL = 's-test-0003'; // real tiny mp4s for the ffmpeg endpoints
 const ZERO = 's-test-0004'; // zero-byte proxy and clip
 const LOCKS = 's-test-0005'; // lock tests
 const REV = 's-test-0006'; // revision, backups and empty-overwrite tests
-const ffmpegOk = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
+const ffmpegOk = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore', windowsHide: true }).status === 0;
 const TAB = 'a'.repeat(32); // this test "tab"
 const TAB2 = 'b'.repeat(32); // a second tab
 
@@ -121,7 +121,7 @@ before(async () => {
   writeSession(LOCKS, [seg('clipA.mp4', 0, 30, 0)], proxyBytes);
   writeSession(REV, [seg('clipA.mp4', 0, 30, 0)], proxyBytes);
   if (ffmpegOk) {
-    const mk = (f) => spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=64x96:rate=30', '-t', '3', '-pix_fmt', 'yuv420p', f]);
+    const mk = (f) => spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=64x96:rate=30', '-t', '3', '-pix_fmt', 'yuv420p', f], { windowsHide: true });
     mk(path.join(dirs.corpus, 'real.mp4'));
     writeSession(REAL, [seg('real.mp4', 0, 3, 0)], readFileSync(path.join(dirs.corpus, 'real.mp4')));
   }
@@ -332,7 +332,7 @@ test('export validates, writes only the label file, and carries no private data'
   const text = readFileSync(file, 'utf8');
   assert.ok(!/Zorblax|Quimby|Wibblefrotz|ocrText|suggestionId/.test(text));
   // private scan with a test profile of fake terms: exported file clean, a control file hits
-  const scan = (f) => spawnSync(process.execPath, [path.join(repo, 'tools', 'git-hooks', 'private-scan.mjs'), 'scan-files', f, '--profile', profileFile], { encoding: 'utf8' });
+  const scan = (f) => spawnSync(process.execPath, [path.join(repo, 'tools', 'git-hooks', 'private-scan.mjs'), 'scan-files', f, '--profile', profileFile], { encoding: 'utf8', windowsHide: true });
   const clean = scan(file);
   assert.equal(clean.status, 0, clean.stdout + clean.stderr);
   const ctl = path.join(tmp, 'control.json');
@@ -1023,7 +1023,7 @@ test('D3: every save writes atomically and keeps a backup; 25 saves leave the la
   assert.deepEqual(JSON.parse(readFileSync(path.join(backupsOf(sid), names[19]), 'utf8')), JSON.parse(readFileSync(draftFile(sid), 'utf8')), 'the newest backup is the stored draft');
   assert.ok(readdirSync(dirs.drafts).every((n) => !n.endsWith('.tmp')));
   // the backups folder is next to the drafts, so a drafts folder in the repository must be gitignored (finding 9)
-  const g = spawnSync('git', ['-C', repo, 'check-ignore', '-q', path.join(repo, 'data', 'games', 'codm', 'local', 'labels-draft', 'backups', 'x', 'r00000001.json')]);
+  const g = spawnSync('git', ['-C', repo, 'check-ignore', '-q', path.join(repo, 'data', 'games', 'codm', 'local', 'labels-draft', 'backups', 'x', 'r00000001.json')], { windowsHide: true });
   assert.equal(g.status, 0, 'default backups path is gitignored');
 });
 
@@ -1098,7 +1098,7 @@ test('N2: notes go only to the local notes file; never into the draft or the exp
   assert.ok(!/Zorblax|note/i.test(readFileSync(file, 'utf8')));
   assert.ok(!/Zorblax/.test(readFileSync(draftFile(sid), 'utf8')));
   // the default notes folder is gitignored
-  const g = spawnSync('git', ['-C', repo, 'check-ignore', '-q', path.join(repo, 'data', 'games', 'codm', 'local', 'label-notes', `${sid}.jsonl`)]);
+  const g = spawnSync('git', ['-C', repo, 'check-ignore', '-q', path.join(repo, 'data', 'games', 'codm', 'local', 'label-notes', `${sid}.jsonl`)], { windowsHide: true });
   assert.equal(g.status, 0);
   // the page sends notes to the notes route only, and the draft has no note field
   const js = labelJs();

@@ -16,7 +16,7 @@ export const metrics = { wall_ms: { unit: 'ms', lowerIsBetter: true, minDelta: 8
 
 /** Same list as the scanner: tracked plus untracked-not-ignored files. */
 export function scanInput() {
-  const r = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'buffer', maxBuffer: 1 << 26 });
+  const r = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: root, encoding: 'buffer', maxBuffer: 1 << 26, windowsHide: true });
   const names = r.stdout.toString().split('\0').filter(Boolean);
   let bytes = 0;
   let files = 0;
@@ -29,7 +29,7 @@ export function scanInput() {
 export function run() {
   const input = scanInput(); // measured before the timed section
   const t0 = performance.now();
-  const r = spawnSync(process.execPath, ['tools/git-hooks/private-scan.mjs', 'scan-worktree'], { cwd: root, encoding: 'utf8' });
+  const r = spawnSync(process.execPath, ['tools/git-hooks/private-scan.mjs', 'scan-worktree'], { cwd: root, encoding: 'utf8', windowsHide: true });
   const wall_ms = performance.now() - t0;
   if (r.status !== 0) throw new Error(`private-scan exited ${r.status}`);
   const reported = /scanned (\d+) files/.exec(r.stdout ?? '');

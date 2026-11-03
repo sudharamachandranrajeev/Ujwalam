@@ -84,7 +84,7 @@ export function outDirFor(opts = {}) {
 }
 
 function sh(cmd, args, cwd) {
-  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8' });
+  const r = spawnSync(cmd, args, { cwd, encoding: 'utf8', windowsHide: true });
   return r.status === 0 ? r.stdout.trim() : null;
 }
 
@@ -99,7 +99,7 @@ export function powerState() {
   if (process.platform !== 'win32') return 'unknown';
   const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
     '$b = Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue; if ($b) { ($b | Select-Object -First 1).BatteryStatus } else { "none" }'],
-  { encoding: 'utf8', timeout: 15000 });
+  { encoding: 'utf8', timeout: 15000, windowsHide: true });
   const v = (r.stdout ?? '').trim();
   if (v === 'none') return 'ac (no battery)';
   if (v === '1') return 'battery';
@@ -109,7 +109,7 @@ export function powerState() {
 
 // CPU model, logical cores, RAM, OS version, node/python version, AC/battery. No host or user name.
 export function machineInfo(power = powerState()) {
-  const py = spawnSync('python', ['-I', '-V'], { encoding: 'utf8' });
+  const py = spawnSync('python', ['-I', '-V'], { encoding: 'utf8', windowsHide: true });
   return {
     cpu: os.cpus()[0]?.model?.trim() ?? 'unknown',
     logicalCores: os.cpus().length,

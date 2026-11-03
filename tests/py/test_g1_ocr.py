@@ -14,6 +14,9 @@ import os
 import sys
 import unittest
 
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CLIP = os.path.join(_HERE, "..", "..", "services", "clip")
 
@@ -138,7 +141,7 @@ class DecodeTimingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "t.mp4")
             subprocess.run(["ffmpeg", "-v", "error", "-nostdin", "-f", "lavfi", "-i",
-                            "testsrc2=size=160x90:rate=60:duration=7", "-pix_fmt", "yuv420p", path], check=True)
+                            "testsrc2=size=160x90:rate=60:duration=7", "-pix_fmt", "yuv420p", path], check=True, **NO_WINDOW)
             frames = list(g1_scan.decode_frames(path, 0.5))
             self.assertEqual([t for t, _ in frames], [0.0, 2.0, 4.0, 6.0])
             for t, img in frames[1:]:

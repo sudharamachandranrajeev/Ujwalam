@@ -107,7 +107,13 @@ function defaultOpenFolder(dir) {
     if (!cmd || !existsSync(cmd)) return false;
   } else if (process.platform === 'darwin') cmd = '/usr/bin/open';
   else { cmd = 'xdg-open'; args = [dir]; }
-  try { spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: false }).on('error', () => {}).unref(); return true; } catch { return false; }
+  try {
+    spawn(cmd, args, {
+      detached: true, stdio: 'ignore',
+      windowsHide: false // GUI window: the folder window the user clicked "Open folder" for
+    }).on('error', () => {}).unref();
+    return true;
+  } catch { return false; }
 }
 
 const CORE_ACTION_ID =/^[a-z][a-z0-9]*(\.[a-z0-9]+)+$/;

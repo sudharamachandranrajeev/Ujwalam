@@ -122,7 +122,7 @@ test('loopback keyRef: the stored key reaches the RTMP stream path, ffprobe pass
   const ffLog = path.join(work, 'listener.log');
   // The listener expects a different stream name; ffmpeg reports the one it received ("Unexpected stream <name>").
   const ff = spawn(FFMPEG, ['-hide_banner', '-loglevel', 'info', '-listen', '1', '-i', `rtmp://127.0.0.1:${PORT}/live/expected-name`,
-    '-c', 'copy', '-f', 'matroska', '-y', file], { stdio: ['pipe', 'ignore', 'pipe'] });
+    '-c', 'copy', '-f', 'matroska', '-y', file], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
   const errChunks = [];
   ff.stderr.on('data', (d) => errChunks.push(d));
   const ffExit = new Promise((r) => ff.on('exit', r));

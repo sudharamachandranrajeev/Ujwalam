@@ -5,13 +5,13 @@ import { spawnSync } from 'node:child_process';
 const FFPROBE = process.env.FFPROBE || 'ffprobe';
 
 function run(args) {
-  const r = spawnSync(FFPROBE, ['-v', 'error', ...args], { encoding: 'utf8', maxBuffer: 1 << 28 });
+  const r = spawnSync(FFPROBE, ['-v', 'error', ...args], { encoding: 'utf8', maxBuffer: 1 << 28, windowsHide: true });
   if (r.status !== 0) throw new Error(`ffprobe failed (${r.status}): ${(r.stderr || '').trim().slice(0, 300)}`);
   return r.stdout;
 }
 
 export function ffprobeVersion() {
-  const r = spawnSync(FFPROBE, ['-version'], { encoding: 'utf8' });
+  const r = spawnSync(FFPROBE, ['-version'], { encoding: 'utf8', windowsHide: true });
   return r.status === 0 ? r.stdout.split('\n')[0].trim() : null;
 }
 

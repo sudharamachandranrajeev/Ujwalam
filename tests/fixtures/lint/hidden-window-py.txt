@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+import subprocess
+from subprocess import run as sh
+
+NO_WINDOW = {"creationflags": 0x08000000}
+subprocess.run(["ffmpeg", "-version"])
+subprocess.run(["ffmpeg", "-version"], creationflags=0x08000000)
+subprocess.Popen(
+    ["git", "status"],
+    **NO_WINDOW,
+)
+sh(["git", "log"])
+# subprocess.run(["in-a-comment"]) is not a call

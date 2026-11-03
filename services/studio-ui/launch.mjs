@@ -160,15 +160,19 @@ function parseArgs(argv) {
   return out;
 }
 
+// UJWALAM_HEADLESS=1 (every test run, D191): no preview windows (the host gets the same variable and refuses them)
+// and no browser window; the control page URL is printed only.
+export const isHeadless = () => process.env.UJWALAM_HEADLESS === '1';
+
 // UJWALAM_BROWSER (an executable) and UJWALAM_BROWSER_ARGS (space separated flags) pick the browser; used by the UI tests.
 function openBrowser(url) {
   const opts = { stdio: 'ignore', detached: true, windowsHide: true };
   if (process.env.UJWALAM_BROWSER) {
-    spawn(process.env.UJWALAM_BROWSER, [...(process.env.UJWALAM_BROWSER_ARGS ?? '').split(' ').filter(Boolean), url], opts).unref();
+    spawn(process.env.UJWALAM_BROWSER, [...(process.env.UJWALAM_BROWSER_ARGS ?? '').split(' ').filter(Boolean), url], { ...opts, windowsHide: true }).unref();
     return;
   }
-  if (process.platform === 'win32') spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'start', '""', url], opts).unref();
-  else spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], opts).unref();
+  if (process.platform === 'win32') spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'start', '""', url], { ...opts, windowsHide: true }).unref();
+  else spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { ...opts, windowsHide: true }).unref();
 }
 
 // Starts a child whose stdout is scanned for a "listening" line; resolves the port from the first capture group.
@@ -193,7 +197,7 @@ export function openHostLog(logsDir, { keep = HOST_LOGS_KEPT, now = new Date() }
 }
 
 /** Host argv and extra environment (pure; tested). Tokens only ever go into env, never argv. */
-export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, corePort, coreApiToken, hostConfigFile, coreSystemToken }) {
+export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, corePort, coreApiToken, hostConfigFile, coreSystemToken, headless = isHeadless() }) {
   const argv = ['--runtime', hostCfg.runtime, '--data-dir', hostCfg.dataDir, '--discovery', hostDiscovery, '--recordings', hostCfg.recordings];
   const env = {};
   const notes = [];
@@ -203,7 +207,8 @@ export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, co
   argv.push('--project', path.join(REPO, 'app', 'host', 'projects', 'test-card.project.json'));
   if (args['allow-devices'] === true) argv.push('--allow-devices');
   if (alpha) {
-    argv.push('--preview', 'h,v');
+    if (headless) notes.push('headless (UJWALAM_HEADLESS=1): no preview windows');
+    else argv.push('--preview', 'h,v');
     if (hostCfg.overlayRoot && existsSync(hostCfg.overlayRoot)) {
       argv.push('--allow-browser', '--overlay-root', hostCfg.overlayRoot, '--overlay-script', hostCfg.overlayScript, '--node', process.execPath);
       if (Number.isInteger(corePort) && corePort > 0 && /^[0-9a-f]{64}$/.test(coreApiToken ?? '')) {
@@ -334,10 +339,16 @@ async function alphaProject({ client, dataDir, args, hostCfg }) {
   const loaded = await loadFileIntoHost(client, r.file, { bases, skipUnavailable: true });
   console.log(`[studio] alpha project loaded into the host: ${JSON.stringify(loaded.built ?? {})}; not built: ${loaded.unavailable?.length ?? 0}`);
   for (const u of loaded.unavailable ?? []) console.log(`[studio]   not built: ${u.layer ?? u.audio}: ${u.code}: ${u.reason}`);
-  try { // a preview that did not open at start (e.g. closed by hand on a reused host) is opened now
-    const open = new Set(((await client.call('preview.list')).previews ?? []).filter((p) => p.open === true).map((p) => String(p.canvas).toUpperCase()));
-    for (const c of ['H', 'V']) if (!open.has(c)) { await client.call('preview.open', { canvas: c }); console.log(`[studio] preview ${c} opened after the load`); }
-  } catch (e) { console.log(`[studio] WARNING: preview open failed: ${e.message}`); }
+  // A preview that did not open at start (e.g. closed by hand on a reused host) is opened now. The host opens previews
+  // only on a second display and never takes focus (D191); with one display it refuses and this says why.
+  if (!isHeadless()) {
+    let open = new Set();
+    try { open = new Set(((await client.call('preview.list')).previews ?? []).filter((p) => p.open === true).map((p) => String(p.canvas).toUpperCase())); } catch { /* listed below per canvas */ }
+    for (const c of ['H', 'V']) {
+      if (open.has(c)) continue;
+      try { const w = await client.call('preview.open', { canvas: c }); console.log(`[studio] preview ${c} opened after the load on the ${w.display ?? 'second display'}`); } catch (e) { console.log(`[studio] preview ${c} not shown: ${e.message}`); }
+    }
+  }
   try {
     const st = await client.call('overlay.status');
     console.log(`[studio] overlay server: ${st.state ?? 'unknown'}; event feed: ${st.eventFeed === true ? 'on' : 'off'}; child has the event token: ${st.childHasEventToken === true ? 'yes' : 'no'}; browser layers ${st.browserAllowed ? 'allowed' : 'off'}`);
@@ -616,6 +627,7 @@ export async function main(argv = process.argv.slice(2)) {
       const child = spawn(script ? process.execPath : hostExe, script ? [hostExe, ...hostArgs] : hostArgs, {
         stdio: ['ignore', hostLog.fd, hostLog.fd],
         env: { ...process.env, ...spec.env, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
+        windowsHide: true,
       });
       closeSync(hostLog.fd); // the child holds its own handle
       const i = children.indexOf(hostChild);
@@ -679,7 +691,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (!uiPort) { console.log('[studio] UI server did not start; stopping'); await stopAll(); return 1; }
 
   console.log(`[studio] UI at http://127.0.0.1:${uiPort}/ (the login key is one-time and not printed). Ctrl-C stops everything.`);
-  if (args['no-open'] !== true) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);
+  if (args['no-open'] !== true && !isHeadless()) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);
   if (alphaClient) {
     // One line that answers "are the overlays fed?": bridge counters 10 s after start (counts only, never text).
     // UJWALAM_ALPHA_STATS_MS shortens the wait for tests.

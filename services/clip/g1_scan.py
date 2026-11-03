@@ -56,6 +56,9 @@ import subprocess
 import sys
 import time
 
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 import g1_geometry as geo
@@ -86,7 +89,7 @@ def check_private_out(path, corpus=None):
     root = repo_root()
     if (_real(path) + os.sep).startswith(_real(root) + os.sep):
         probe = os.path.join(path, "probe.txt")
-        r = subprocess.run(["git", "-C", root, "check-ignore", "-q", probe], capture_output=True)
+        r = subprocess.run(["git", "-C", root, "check-ignore", "-q", probe], capture_output=True, **NO_WINDOW)
         if r.returncode != 0:
             sys.exit(f"refusing: {path} is inside the repository and not gitignored (OCR text holds names)")
 
@@ -118,10 +121,10 @@ def ffmpeg_base():
     return ["ffmpeg", "-v", "error", "-nostdin", "-threads", str(FFMPEG_THREADS)]
 
 
-def child_kwargs():
+def child_kwargs(creationflags=0):
     """Popen kwargs: below-normal priority for ffmpeg children on Windows."""
     if os.name == "nt":
-        return {"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS}
+        return {"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS | creationflags}
     return {}
 
 
@@ -149,7 +152,7 @@ def _need_cv():
 
 def probe_size(path):
     out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                          "stream=width,height", "-of", "csv=p=0", path], capture_output=True, text=True, check=True)
+                          "stream=width,height", "-of", "csv=p=0", path], capture_output=True, text=True, check=True, **NO_WINDOW)
     w, h = out.stdout.strip().split(",")[:2]
     return int(w), int(h)
 
@@ -187,7 +190,7 @@ def decode_frames(path, fps, crop=None, start=None, dur=None, hwaccel=None, max_
     if max_frames is not None:
         cmd += ["-frames:v", str(max_frames)]
     cmd += ["-an", "-vf", ",".join(vf), "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, **child_kwargs())
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, **child_kwargs(**NO_WINDOW))
     n = w * h * 3
     i = 0
     try:

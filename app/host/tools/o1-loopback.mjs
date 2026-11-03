@@ -59,7 +59,7 @@ function startListener(sinkId) {
   const n = (prev?.n ?? 0) + 1;
   const file = path.join(outDir, `${sinkId}-${n}.${t.transport === 'srt' ? 'ts' : 'mkv'}`);
   const errLog = path.join(outDir, `${sinkId}-${n}.ffmpeg.log`);
-  const proc = spawn(FFMPEG, listenerArgs(t, file), { stdio: ['pipe', 'ignore', 'pipe'] });
+  const proc = spawn(FFMPEG, listenerArgs(t, file), { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
   const chunks = [];
   proc.stderr.on('data', (d) => chunks.push(d));
   const exited = new Promise((r) => proc.on('exit', (code) => { writeFileSync(errLog, Buffer.concat(chunks)); r(code); }));
@@ -79,7 +79,7 @@ async function stopListener(sinkId, how = 'q') {
 // ---- run ---------------------------------------------------------------------------------------------------
 const result = {
   startedAt: new Date().toISOString(), plan: path.relative(REPO_ROOT, planPath).replaceAll('\\', '/'), seconds, dropSink,
-  tools: { ffmpeg: spawnSync(FFMPEG, ['-version'], { encoding: 'utf8' }).stdout?.split('\n')[0]?.trim(), ffprobe: ffprobeVersion() },
+  tools: { ffmpeg: spawnSync(FFMPEG, ['-version'], { encoding: 'utf8', windowsHide: true }).stdout?.split('\n')[0]?.trim(), ffprobe: ffprobeVersion() },
   validatorWarnings: report.warnings.map((w) => `${w.code}: ${w.message}`), events: [], checks: []
 };
 const ev = (what, extra = {}) => { const e = { t: Date.now(), what, ...extra }; result.events.push(e); log(what, JSON.stringify(extra)); };

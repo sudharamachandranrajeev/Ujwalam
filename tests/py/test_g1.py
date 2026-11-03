@@ -8,7 +8,11 @@ OCR-dependent tests are in test_g1_ocr.py and skip without the OCR venv.
 
 import importlib.util
 import os
+import subprocess
 import unittest
+
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CLIP = os.path.join(_HERE, "..", "..", "services", "clip")
@@ -292,7 +296,7 @@ class BucketSelectTests(unittest.TestCase):
         out = subprocess.run(["ffmpeg", "-v", "info", "-nostdin", "-f", "lavfi", "-i",
                               "testsrc=size=32x24:rate=10:duration=3", "-vf", vf,
                               "-fps_mode", "passthrough", "-f", "null", "-"],
-                             capture_output=True, text=True, check=True)
+                             capture_output=True, text=True, check=True, **NO_WINDOW)
         return [ln for ln in out.stderr.splitlines() if "pts_time:" in ln]
 
     def test_one_frame_per_second_from_zero(self):

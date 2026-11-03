@@ -24,7 +24,7 @@ function stubRoot(scripts) {
   return d;
 }
 const cli = (args, root) =>
-  spawnSync(process.execPath, [ci, ...args], { encoding: 'utf8', env: { ...process.env, UJWALAM_CI_ROOT: root } });
+  spawnSync(process.execPath, [ci, ...args], { encoding: 'utf8', env: { ...process.env, UJWALAM_CI_ROOT: root }, windowsHide: true });
 
 test('step list has every required check in order', () => {
   assert.deepEqual(STEPS.map((s) => s.name), [
@@ -126,7 +126,7 @@ test('pre-push hook runs the private scan, then requires a full CI pass stamp, b
 test('ci-stamp: a pass on the working tree allows exactly that content; edits and other commits are refused', () => {
   const d = mkdtempSync(path.join(os.tmpdir(), 'ci-stamp-'));
   dirs.push(d);
-  const g = (...a) => { const r = spawnSync('git', a, { cwd: d, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  const g = (...a) => { const r = spawnSync('git', a, { cwd: d, encoding: 'utf8', windowsHide: true }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
   g('init', '-q'); g('config', 'user.name', 'ci-test'); g('config', 'user.email', 'ci-test@example.invalid'); g('config', 'commit.gpgsign', 'false');
   writeFileSync(path.join(d, '.gitignore'), 'ignored.txt\n');
   writeFileSync(path.join(d, 'a.txt'), 'one\n');
@@ -149,7 +149,7 @@ test('ci-stamp: a pass on the working tree allows exactly that content; edits an
   const res = checkPush(d, `refs/heads/a ${c1} refs/heads/a ${z}\nrefs/heads/b ${c2} refs/heads/b ${z}\n(delete) ${z} refs/heads/x ${c1}\n`);
   assert.deepEqual(res.map((r) => [r.ref, r.ok]), [['refs/heads/a', true], ['refs/heads/b', false]]);
   const tool = path.join(repo, 'tools', 'ci-stamp.mjs');
-  const run = (input) => spawnSync(process.execPath, [tool, 'check'], { cwd: d, input, encoding: 'utf8', env: { ...process.env, UJWALAM_CI_ROOT: d } });
+  const run = (input) => spawnSync(process.execPath, [tool, 'check'], { cwd: d, input, encoding: 'utf8', env: { ...process.env, UJWALAM_CI_ROOT: d }, windowsHide: true });
   assert.equal(run(`refs/heads/a ${c1} refs/heads/a ${z}\n`).status, 0);
   const bad = run(`refs/heads/b ${c2} refs/heads/b ${z}\n`);
   assert.equal(bad.status, 1);

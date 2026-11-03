@@ -27,7 +27,7 @@ export function listNodeProcesses() {
     const v = JSON.parse(r.stdout);
     return (Array.isArray(v) ? v : [v]).map((p) => ({ pid: p.pid, parentPid: p.parentPid, startedAt: p.startedAt, cmd: p.cmd ?? '' }));
   }
-  const r = spawnSync('ps', ['-eo', 'pid=,ppid=,lstart=,args='], { encoding: 'utf8' });
+  const r = spawnSync('ps', ['-eo', 'pid=,ppid=,lstart=,args='], { encoding: 'utf8', windowsHide: true });
   if (r.status !== 0) return [];
   return r.stdout.split('\n').map((l) => /^\s*(\d+)\s+(\d+)\s+(.{24})\s+(.*)$/.exec(l)).filter(Boolean)
     .filter((m) => /\bnode\b/.test(m[4])).map((m) => ({ pid: Number(m[1]), parentPid: Number(m[2]), startedAt: new Date(m[3]).toISOString(), cmd: m[4] }));

@@ -21,6 +21,9 @@ import tempfile
 import time
 import unittest
 
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _CLIP = os.path.join(_HERE, "..", "..", "services", "clip")
 PACK = os.path.normpath(os.path.join(_HERE, "..", "..", "data", "games", "codm"))
@@ -285,7 +288,7 @@ class EndToEndOcrTests(unittest.TestCase):
             cv2.imwrite(png, frame(lines))
             subprocess.run(["ffmpeg", "-v", "error", "-y", "-loop", "1", "-framerate", "10", "-i", png, "-t", "3",
                             "-c:v", "mpeg4", "-q:v", "2", "-pix_fmt", "yuv420p",
-                            os.path.join(cls.rec, f"rec-{i:03d}.mp4")], check=True)
+                            os.path.join(cls.rec, f"rec-{i:03d}.mp4")], check=True, **NO_WINDOW)
         cls.profile = os.path.join(cls.dir, "profile.json")
         with open(cls.profile, "w", encoding="utf-8") as f:
             json.dump({"games": {"codm": {"ign": "Zorbo~QX", "variants": ["Zorbo-QX"], "clan_tag": None}}}, f)

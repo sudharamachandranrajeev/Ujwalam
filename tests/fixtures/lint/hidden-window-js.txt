@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+import { spawn, execFileSync as efs } from 'node:child_process';
+import * as cp from 'node:child_process';
+spawn('ffmpeg', ['-version']);
+spawn('ffmpeg', ['-version'], { windowsHide: true });
+efs('git', ['status'], {
+  encoding: 'utf8',
+  windowsHide: true
+});
+cp.exec('dir');
+const opts = { windowsHide: true };
+cp.spawnSync('git', ['log'], opts);
+cp.spawnSync('git', ['log'], { ...opts, windowsHide: true });
+spawn('explorer.exe', ['C:/'], {
+  windowsHide: false // GUI window: the folder the user asked to open
+});
+spawn('cmd.exe', ['/c', 'echo'], { windowsHide: false });
+// spawn('in-a-comment') is not a call

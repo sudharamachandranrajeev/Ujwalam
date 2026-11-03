@@ -19,12 +19,12 @@ const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-post-')); t
 const writeTmp = (obj) => { const f = path.join(mk(), 'limits.json'); writeFileSync(f, JSON.stringify(obj)); return f; };
 after(() => { for (const d of tmp) rmSync(d, { recursive: true, force: true }); });
 const sha = (f) => createHash('sha256').update(readFileSync(f)).digest('hex');
-const haveFfmpeg = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore' }).status === 0;
+const haveFfmpeg = spawnSync('ffmpeg', ['-version'], { stdio: 'ignore', windowsHide: true }).status === 0;
 const skip = haveFfmpeg ? false : 'ffmpeg not on PATH';
 const PROFILE = { handles: { youtube: '@yt-handle-x', twitch: 'tw-handle-x' }, links: { discord: 'https://discord.example/invite-x' } };
 
 function makeVideo(file, size) {
-  const r = spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `testsrc=size=${size}:rate=10:duration=2`, '-pix_fmt', 'yuv420p', file]);
+  const r = spawnSync('ffmpeg', ['-v', 'error', '-y', '-f', 'lavfi', '-i', `testsrc=size=${size}:rate=10:duration=2`, '-pix_fmt', 'yuv420p', file], { windowsHide: true });
   assert.equal(r.status, 0, String(r.stderr));
 }
 const pass = (ok) => ({ 'youtube-shorts': { ok }, tiktok: { ok }, 'instagram-reels': { ok: false } });

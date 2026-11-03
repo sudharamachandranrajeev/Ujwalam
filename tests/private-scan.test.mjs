@@ -20,7 +20,7 @@ writeFileSync(profile, JSON.stringify({
   private_terms: ['Second_Term'],
 }));
 
-const run = (cmd, a, o = {}) => spawnSync(cmd, a, { cwd: work, encoding: 'utf8', ...o });
+const run = (cmd, a, o = {}) => spawnSync(cmd, a, { cwd: work, encoding: 'utf8', ...o, windowsHide: true });
 const git = (...a) => {
   const r = run('git', a);
   assert.equal(r.status, 0, r.stderr);
@@ -30,7 +30,7 @@ const scan = (a, o = {}) => run('node', [scanner, ...a, '--profile', profile], o
 const put = (name, content) => writeFileSync(path.join(work, name), content);
 
 test.before(() => {
-  spawnSync('git', ['init', '-q', work]);
+  spawnSync('git', ['init', '-q', work], { windowsHide: true });
   git('config', 'user.name', 'Test User');
   git('config', 'user.email', 'test@example.invalid');
   git('config', 'core.hooksPath', 'none');
@@ -430,8 +430,8 @@ test('labels rule: scan-worktree and history modes', () => {
 let freshN = 0;
 function fresh({ ctx = 'commit' } = {}) {
   const w = path.join(dir, `fresh-${++freshN}`);
-  spawnSync('git', ['init', '-q', w]);
-  const r = (cmd, a, o = {}) => spawnSync(cmd, a, { cwd: w, encoding: 'utf8', ...o });
+  spawnSync('git', ['init', '-q', w], { windowsHide: true });
+  const r = (cmd, a, o = {}) => spawnSync(cmd, a, { cwd: w, encoding: 'utf8', ...o, windowsHide: true });
   const g = (...a) => { const x = r('git', a); assert.equal(x.status, 0, x.stderr); return x.stdout; };
   g('config', 'user.name', 'Test User'); g('config', 'user.email', 'test@example.invalid');
   g('config', 'core.hooksPath', 'none'); g('config', 'commit.gpgsign', 'false');

@@ -197,8 +197,15 @@ test('launch spec: studio mode keeps the test card and adds nothing', () => {
   assert.deepEqual(s.env, {});
 });
 
+test('launch spec: headless (UJWALAM_HEADLESS=1) starts the alpha host without previews (D191)', () => {
+  const s = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: {}, alpha: true, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS, headless: true });
+  assert.ok(!s.argv.includes('--preview'));
+  assert.ok(s.argv.includes('--allow-browser'), 'everything else is as in a normal start');
+  assert.ok(s.notes.some((n) => /headless/.test(n)));
+});
+
 test('launch spec: alpha mode wires previews, browser layers, overlay child and the event feed; token by env only', () => {
-  const s = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: { 'allow-devices': true }, alpha: true, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS });
+  const s = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: { 'allow-devices': true }, alpha: true, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS, headless: false });
   const after = (f) => s.argv[s.argv.indexOf(f) + 1];
   assert.match(after('--project'), /test-card\.project\.json$/, 'the test card gives the V canvas the start-up preview needs');
   assert.equal(after('--preview'), 'h,v');
@@ -213,7 +220,7 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
   assert.deepEqual(s.env, { UJWALAM_EVENT_CORE_API_TOKEN: TOKEN, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: SYS });
   assert.ok(!s.argv.some((a) => a.includes(TOKEN) || a.includes(SYS)));
   assert.deepEqual(s.notes, []);
-  const noRoot = hostLaunchSpec({ hostCfg: { ...CFG, overlayRoot: path.join(REPO, 'no-such-dir') }, hostDiscovery: 'x', args: {}, alpha: true, corePort: 1234, coreApiToken: TOKEN });
+  const noRoot = hostLaunchSpec({ hostCfg: { ...CFG, overlayRoot: path.join(REPO, 'no-such-dir') }, hostDiscovery: 'x', args: {}, alpha: true, corePort: 1234, coreApiToken: TOKEN, headless: false });
   assert.ok(!noRoot.argv.includes('--allow-browser'));
   assert.ok(!noRoot.argv.includes('--host-config'));
   assert.deepEqual(noRoot.env, {});
@@ -296,7 +303,7 @@ test('host logs: one file per run, the newest 10 are kept', () => {
 // End to end with the fake host: event core (--mock), the fake host, the UI server; stopped through stdin.
 function runLauncher(extra, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--alpha', '--mock', '--no-open', '--stop-on-stdin', ...extra], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--alpha', '--mock', '--no-open', '--stop-on-stdin', ...extra], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
     const t = setTimeout(() => { child.kill(); reject(new Error(`launcher timed out:\n${out}`)); }, 90_000);
     // Stop after the overlay feed line (UJWALAM_ALPHA_STATS_MS makes it come right after the UI line) and, with the
@@ -320,6 +327,7 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     UJWALAM_OBS_RUNTIME: root, UJWALAM_HOST_DATA: path.join(root, 'host'), UJWALAM_OVERLAY_ROOT: ov,
     UJWALAM_FAKE_HOST_RECORD: rec, UJWALAM_FAKE_HOST_DEVICES: path.join(FIX, 'project', 'devices-list.fixture.json'),
     UJWALAM_ALPHA_STATS_MS: '300',
+    UJWALAM_HEADLESS: '0', // the fake host opens no window; this run checks the argv of a normal (non-headless) start
   };
   const fb = path.join(root, 'feedback');
   const base = ['--data-dir', dataDir, '--host-exe', path.join(FIX, 'studio-ui', 'fake-host.mjs'), '--profile', profile, '--feedback-dir', fb];

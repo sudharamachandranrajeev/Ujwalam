@@ -169,14 +169,14 @@ test('cli backup and export through the real command line, while the core is sti
   const { dir, core } = await populated(); // core keeps the lock: readers must still work
   const cli = path.join(repo, 'services', 'event-core', 'cli.mjs');
   const dest = path.join(tmp(), 'live-backup.db');
-  const b = spawnSync(process.execPath, [cli, 'audit', 'backup', dest, '--data-dir', dir], { encoding: 'utf8' });
+  const b = spawnSync(process.execPath, [cli, 'audit', 'backup', dest, '--data-dir', dir], { encoding: 'utf8', windowsHide: true });
   assert.equal(b.status, 0, b.stdout + b.stderr);
   assert.ok(!b.stdout.includes(MARK) && !b.stderr.includes(MARK));
   assert.deepEqual(filesWith(path.dirname(dest), MARK), []);
-  const e = spawnSync(process.execPath, [cli, 'audit', 'export', '--format', 'jsonl', '--data-dir', dir], { encoding: 'utf8' });
+  const e = spawnSync(process.execPath, [cli, 'audit', 'export', '--format', 'jsonl', '--data-dir', dir], { encoding: 'utf8', windowsHide: true });
   assert.equal(e.status, 0, e.stderr);
   assert.ok(!e.stdout.includes(MARK) && !e.stdout.includes(NAME));
-  const v = spawnSync(process.execPath, [cli, 'audit', 'verify', '--data-dir', dir], { encoding: 'utf8' });
+  const v = spawnSync(process.execPath, [cli, 'audit', 'verify', '--data-dir', dir], { encoding: 'utf8', windowsHide: true });
   assert.equal(v.status, 0, v.stdout + v.stderr);
   await core.audit.close();
 });

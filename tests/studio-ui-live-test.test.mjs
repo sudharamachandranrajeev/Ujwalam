@@ -100,7 +100,7 @@ test('launcher refuses the options without --alpha --live before anything is wri
 
 function runLauncher(extra, env) {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--alpha', '--mock', '--no-open', ...extra], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--alpha', '--mock', '--no-open', ...extra], { env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
     let out = '';
     const t = setTimeout(() => { child.kill(); reject(new Error(`launcher timed out:\n${out}`)); }, 150_000);
     child.stdout.on('data', (d) => { out += d; });

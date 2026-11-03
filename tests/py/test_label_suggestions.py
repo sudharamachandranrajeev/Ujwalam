@@ -9,6 +9,9 @@ import sys
 import tempfile
 import unittest
 
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO = os.path.normpath(os.path.join(_HERE, "..", ".."))
 sys.path.insert(0, os.path.join(_REPO, "services", "clip"))
@@ -199,7 +202,7 @@ class OutputGuardTests(unittest.TestCase):
             corpus = os.path.join(tmp, "corpus")
             os.makedirs(corpus)
             link = os.path.join(outdir, "link")
-            made = subprocess.run(["cmd", "/c", "mklink", "/J", link, corpus], capture_output=True).returncode == 0 \
+            made = subprocess.run(["cmd", "/c", "mklink", "/J", link, corpus], capture_output=True, **NO_WINDOW).returncode == 0 \
                 if os.name == "nt" else (os.symlink(corpus, link) or True)
             if made:
                 with self.assertRaises(SystemExit):
@@ -247,7 +250,7 @@ class OutputGuardTests(unittest.TestCase):
                                        "--session", SESSION, "--hits", hits, "--manifest", manifest,
                                        "--pack", os.path.join(_REPO, "data", "games", "codm"), "--out", out,
                                        "--corpus", os.path.join(tmp, "corpus")] + list(extra),
-                                      capture_output=True, text=True)
+                                      capture_output=True, text=True, **NO_WINDOW)
 
             out = os.path.join(outdir, SESSION + ".json")
             r = run(out)
@@ -272,7 +275,7 @@ class OutputGuardTests(unittest.TestCase):
             r = subprocess.run([sys.executable, "-I", os.path.join(_REPO, "tools", "label", "suggestions.py"),
                                 "--session", SESSION, "--hits", hits, "--manifest", manifest,
                                 "--pack", os.path.join(_REPO, "data", "games", "codm"), "--out", out, "--profile", prof],
-                               capture_output=True, text=True)
+                               capture_output=True, text=True, **NO_WINDOW)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn("corpus folder unknown", r.stderr)
 

@@ -19,6 +19,9 @@ import shutil
 import subprocess
 import sys
 
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.normpath(os.path.join(_HERE, "..", ".."))
 FLAGS_FILE = os.path.join(REPO_ROOT, "data", "flags.json")
@@ -135,7 +138,7 @@ def check_out_dir(path, corpus=None):
         raise ClipError("refusing to write inside the clips corpus")
     if is_inside(path, REPO_ROOT) or _real(path) == _real(REPO_ROOT):
         probe = os.path.join(path, "probe.mp4.txt")
-        r = subprocess.run(["git", "-C", REPO_ROOT, "check-ignore", "-q", probe], capture_output=True)
+        r = subprocess.run(["git", "-C", REPO_ROOT, "check-ignore", "-q", probe], capture_output=True, **NO_WINDOW)
         if r.returncode != 0:
             raise ClipError("refusing: the output folder is inside the repository and not gitignored")
 
@@ -154,10 +157,10 @@ def find_tool(name, explicit=None):
     return p
 
 
-def child_kwargs():
+def child_kwargs(creationflags=0):
     """subprocess kwargs: below-normal priority on Windows."""
     if os.name == "nt":
-        return {"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS}
+        return {"creationflags": subprocess.BELOW_NORMAL_PRIORITY_CLASS | creationflags}
     return {}
 
 
@@ -179,7 +182,7 @@ def lower_own_priority():
 def run_tool(argv, cwd=None, timeout=None):
     """Runs a child at below-normal priority; returns CompletedProcess (text, utf-8, errors replaced)."""
     return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout, stdin=subprocess.DEVNULL, **child_kwargs())
+                          timeout=timeout, stdin=subprocess.DEVNULL, **child_kwargs(**NO_WINDOW))
 
 
 def host_running(name="ujwalam-host.exe"):

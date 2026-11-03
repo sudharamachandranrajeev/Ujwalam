@@ -13,7 +13,7 @@ export const metrics = { wall_ms: { unit: 'ms', lowerIsBetter: true, minDelta: 3
 
 export function run() {
   const t0 = performance.now();
-  const r = spawnSync(process.execPath, ['tools/registry-validate.mjs', 'registry'], { cwd: root, stdio: 'ignore' });
+  const r = spawnSync(process.execPath, ['tools/registry-validate.mjs', 'registry'], { cwd: root, stdio: 'ignore', windowsHide: true });
   const wall_ms = performance.now() - t0;
   if (r.status !== 0) throw new Error(`registry-validate exited ${r.status}`);
   return { wall_ms };

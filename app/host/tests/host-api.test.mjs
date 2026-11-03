@@ -20,7 +20,8 @@ before(async () => {
   mkdirSync(OUT, { recursive: true });
   h = await launchHost({
     dataDir: mkdtempSync(path.join(OUT, 'data-')),
-    project: path.join(HOST_DIR, 'projects', 'test-card.project.json')
+    project: path.join(HOST_DIR, 'projects', 'test-card.project.json'),
+    extraArgs: ['--headless'] // also set by UJWALAM_HEADLESS=1 in CI; given here so the test below holds anywhere
   });
   c = h.client;
 });
@@ -67,13 +68,23 @@ test('discovery: env token is not written, pid matches, owner-only DACL', () => 
     `$a = Get-Acl -LiteralPath '${h.discovery.replaceAll("'", "''")}'; "$($a.AreAccessRulesProtected) $($a.Access.Count) $($a.Access[0].FileSystemRights)"`],
   // Windows PowerShell 5.1 cannot load its own modules with PowerShell 7's PSModulePath, which it inherits when the
   // tests run from pwsh ("Get-Acl ... the module could not be loaded"). Drop it so 5.1 uses its default path.
-  { encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PSMODULEPATH')) });
+  { encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PSMODULEPATH')), windowsHide: true });
   assert.equal(ps.stdout.trim(), 'True 1 FullControl', ps.stderr);
+});
+
+test('headless: preview.open refuses with CONFLICT and no window exists (D191)', async () => {
+  for (const canvas of ['H', 'V']) {
+    const e = await rpcErr('preview.open', { canvas });
+    assert.equal(e.code, -32009, canvas);
+    assert.match(e.message, /headless/);
+  }
+  const l = await c.call('preview.list');
+  assert.equal((l.previews ?? []).filter((p) => p.open === true).length, 0);
 });
 
 test('listens on 127.0.0.1 only', () => {
   const port = h.discoveryJson.port;
-  const ns = spawnSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8' }).stdout;
+  const ns = spawnSync('netstat', ['-ano', '-p', 'TCP'], { encoding: 'utf8', windowsHide: true }).stdout;
   const lines = ns.split(/\r?\n/).filter((l) => l.includes('LISTENING') && new RegExp(`:${port}\\s`).test(l) && l.trim().endsWith(String(h.child.pid)));
   assert.ok(lines.length >= 1, 'listening socket found');
   for (const l of lines) assert.match(l, new RegExp(`\\s127\\.0\\.0\\.1:${port}\\s`));

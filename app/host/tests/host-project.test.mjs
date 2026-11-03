@@ -19,7 +19,7 @@ let c;
 let media;
 
 function ffmpeg(args) {
-  const r = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { encoding: 'utf8' });
+  const r = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y', ...args], { encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
 }
 
@@ -55,7 +55,7 @@ function consentSnapshot() {
   const snap = {};
   for (const cap of ['webcam', 'microphone']) {
     const key = `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\${cap}\\NonPackaged`;
-    const r = spawnSync('reg', ['query', key, '/s'], { encoding: 'utf8' });
+    const r = spawnSync('reg', ['query', key, '/s'], { encoding: 'utf8', windowsHide: true });
     const blocks = {};
     let cur = null;
     for (const line of (r.stdout || '').split(/\r?\n/)) {
@@ -69,7 +69,7 @@ function consentSnapshot() {
 }
 
 function tasklistHas(pid, dll) {
-  const r = spawnSync('tasklist', ['/m', dll, '/fi', `PID eq ${pid}`, '/fo', 'csv', '/nh'], { encoding: 'utf8' });
+  const r = spawnSync('tasklist', ['/m', dll, '/fi', `PID eq ${pid}`, '/fo', 'csv', '/nh'], { encoding: 'utf8', windowsHide: true });
   assert.equal(r.status, 0, r.stderr);
   return r.stdout.includes(`"${pid}"`);
 }
@@ -228,7 +228,7 @@ const RENDER = {
 
 function frameRgb(file, w, h) {
   const r = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', '0.8', '-i', file, '-frames:v', '1',
-    '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 64 << 20 });
+    '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-'], { maxBuffer: 64 << 20, windowsHide: true });
   assert.equal(r.status, 0, String(r.stderr));
   assert.equal(r.stdout.length, w * h * 3);
   return (x, y) => { const i = (y * w + x) * 3; return [r.stdout[i], r.stdout[i + 1], r.stdout[i + 2]]; };

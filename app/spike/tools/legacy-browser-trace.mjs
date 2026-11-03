@@ -85,7 +85,7 @@ const chrome = spawn(CHROME, [
   '--disable-extensions', '--disable-component-update', '--disable-default-apps', '--mute-audio', '--hide-scrollbars',
   '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--disable-backgrounding-occluded-windows',
   'about:blank'
-], { stdio: 'ignore' });
+], { stdio: 'ignore', windowsHide: true });
 
 let target = null;
 for (let i = 0; i < 50 && !target; i++) {

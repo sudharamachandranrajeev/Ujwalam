@@ -87,7 +87,7 @@ async function waitFor(fn, ms, what) {
 const FW = 160, FH = 90;
 function changed(file, t0, dur) {
   const r = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-ss', String(t0), '-i', file, '-t', String(dur),
-    '-vf', `fps=30,scale=${FW}:${FH}`, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 64 << 20 });
+    '-vf', `fps=30,scale=${FW}:${FH}`, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { maxBuffer: 64 << 20, windowsHide: true });
   assert.equal(r.status, 0, String(r.stderr));
   const n = FW * FH, frames = Math.floor(r.stdout.length / n);
   const base = r.stdout.subarray(0, n);
@@ -210,7 +210,7 @@ test('overlay child restart: new pid, same ports, effect.fire UNAVAILABLE while 
   let sawDown = false;
   const rec = await record('browser-restart.mkv', async (now) => {
     await sleep(1000);
-    const k = spawnSync('taskkill', ['/PID', String(st0.pid), '/F'], { encoding: 'utf8' });
+    const k = spawnSync('taskkill', ['/PID', String(st0.pid), '/F'], { encoding: 'utf8', windowsHide: true });
     assert.equal(k.status, 0, k.stderr);
     const killed = now();
     const e = await rpcErr('effect.fire', { name: 'gg' }).catch(() => null);
@@ -227,7 +227,7 @@ test('overlay child restart: new pid, same ports, effect.fire UNAVAILABLE while 
     return { killed, back, fired };
   });
   assert.ok(sawDown, 'effect.fire answered -32004 while the child was down');
-  const p = spawnSync(process.env.FFPROBE || 'ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', rec.file], { encoding: 'utf8' });
+  const p = spawnSync(process.env.FFPROBE || 'ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', rec.file], { encoding: 'utf8', windowsHide: true });
   const dur = Number(p.stdout.trim());
   console.log(`# restart in ${((rec.marks.back - rec.marks.killed) * 1000).toFixed(0)} ms; recording ${dur.toFixed(2)} s`);
   assert.ok(dur >= rec.marks.back + 1.0, 'the recording ran through the restart');
@@ -243,9 +243,9 @@ test('overlay child restart: new pid, same ports, effect.fire UNAVAILABLE while 
 test('overlay ports: 8093 is refused before anything starts', { skip: !haveRoot && 'no overlay root' }, async () => {
   for (const flag of ['--overlay-port', '--overlay-feed-port']) {
     const r = spawnSync(h.cfg.exe, ['--runtime', h.cfg.runtime, '--data-dir', mkdtempSync(path.join(OUT, 'bad-')), '--allow-browser',
-      '--overlay-root', cfg.overlayRoot, '--overlay-script', cfg.overlayScript, '--node', process.execPath, flag, '8093'], { encoding: 'utf8', timeout: 20000 });
+      '--overlay-root', cfg.overlayRoot, '--overlay-script', cfg.overlayScript, '--node', process.execPath, flag, '8093'], { encoding: 'utf8', timeout: 20000, windowsHide: true });
     assert.equal(r.status, 64, `${flag} 8093 refused`);
   }
-  const r = spawnSync(process.execPath, [cfg.overlayScript, '--root', cfg.overlayRoot, '--feed-port', '8093'], { encoding: 'utf8', timeout: 20000 });
+  const r = spawnSync(process.execPath, [cfg.overlayScript, '--root', cfg.overlayRoot, '--feed-port', '8093'], { encoding: 'utf8', timeout: 20000, windowsHide: true });
   assert.equal(r.status, 64, 'the child refuses 8093 too');
 });

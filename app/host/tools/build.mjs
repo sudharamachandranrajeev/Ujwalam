@@ -14,13 +14,13 @@ if (!cfg.runtime || !cfg.obsSource) {
   console.error('set obsRuntime and obsSource in app/host/host.local.json (template host.example.json) or UJWALAM_OBS_RUNTIME / UJWALAM_OBS_SOURCE');
   process.exit(64);
 }
-const onPath = (exe) => spawnSync('where', [exe], { stdio: 'ignore', shell: true }).status === 0;
+const onPath = (exe) => spawnSync('where', [exe], { stdio: 'ignore', shell: true, windowsHide: true }).status === 0;
 
 function vcvars() {
   const pf86 = process.env['ProgramFiles(x86)'];
   const vswhere = pf86 && path.join(pf86, 'Microsoft Visual Studio', 'Installer', 'vswhere.exe');
   if (!vswhere || !existsSync(vswhere)) return null;
-  const r = spawnSync(vswhere, ['-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'], { encoding: 'utf8' });
+  const r = spawnSync(vswhere, ['-latest', '-products', '*', '-requires', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64', '-property', 'installationPath'], { encoding: 'utf8', windowsHide: true });
   const dir = r.stdout?.trim().split(/\r?\n/)[0];
   const bat = dir && path.join(dir, 'VC', 'Auxiliary', 'Build', 'vcvars64.bat');
   return bat && existsSync(bat) ? bat : null;
@@ -42,6 +42,6 @@ if (!(onPath('cmake') && onPath('cl'))) {
   }
   line = `call "${bat}" >nul && ${line}`;
 }
-const r = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${line}"`], { cwd: REPO_ROOT, stdio: 'inherit', windowsVerbatimArguments: true });
+const r = spawnSync('cmd.exe', ['/d', '/s', '/c', `"${line}"`], { cwd: REPO_ROOT, stdio: 'inherit', windowsVerbatimArguments: true, windowsHide: true });
 if (r.status === 0) console.log(`built ${cfg.exe}`);
 process.exit(r.status ?? 1);

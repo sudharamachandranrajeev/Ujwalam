@@ -305,7 +305,7 @@ test('second host: real RegisterHotKey, a taken combo and a bad combo are report
     ].join('; ');
     // Opt-in (UJWALAM_HOTKEY_INJECT=1): it types into the user's desktop session, so CI and normal runs skip it.
     const inject = process.env.UJWALAM_HOTKEY_INJECT === '1';
-    if (inject) spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', timeout: 30000 });
+    if (inject) spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf8', timeout: 30000, windowsHide: true });
     const pressed = inject && await until(async () => (await h2.client.call('hotkeys.status')).bindings.find((b) => b.name === 'feedback').presses > 0, 5000);
     if (!inject) {
       console.log('SKIP: key injection is opt-in (UJWALAM_HOTKEY_INJECT=1); WM_HOTKEY delivery not exercised in this run');

@@ -13,7 +13,7 @@ import { openChildren, stopTracked, track, waitExit } from '../tools/proc-regist
 
 // Every child is registered, every wait for a child's exit is bounded (a stuck child is killed with its tree), and the
 // teardown below kills and closes whatever a failed or timed-out test left behind, so the runner can always end.
-const spawnTracked = (...a) => track(spawn(...a));
+const spawnTracked = (...a) => track(spawn(a[0], a[1], { ...a[2], windowsHide: true }));
 const CHILD_WAIT_MS = 60000;
 
 // Every mock started by this file must be closed when it ends.

@@ -35,6 +35,9 @@ import tempfile
 import time
 import unittest
 
+# No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
+NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.normpath(os.path.join(_HERE, "..", ".."))
 RECORD = os.path.join(REPO, "tools", "capture", "record.py")
@@ -129,13 +132,13 @@ class RestartCommandTests(unittest.TestCase):
 
 def _pick_vcodec():
     r = subprocess.run(["ffmpeg", "-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
-                        "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], capture_output=True)
+                        "-frames:v", "1", "-c:v", "h264_nvenc", "-f", "null", "-"], capture_output=True, **NO_WINDOW)
     return "h264_nvenc" if r.returncode == 0 else "libopenh264"
 
 
 def _alive(pid):
     if os.name == "nt":
-        r = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True)
+        r = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True, **NO_WINDOW)
         return str(pid) in r.stdout
     try:
         os.kill(pid, 0)
@@ -146,7 +149,7 @@ def _alive(pid):
 
 def _kill(pid, tree):
     if os.name == "nt":
-        subprocess.run(["taskkill", "/F"] + (["/T"] if tree else []) + ["/PID", str(pid)], capture_output=True)
+        subprocess.run(["taskkill", "/F"] + (["/T"] if tree else []) + ["/PID", str(pid)], capture_output=True, **NO_WINDOW)
     else:
         import signal
         if tree:
@@ -169,13 +172,13 @@ class RecordingTests(unittest.TestCase):
     def start(self):
         kw = {}
         if os.name == "nt":
-            kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            kw["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
         else:
             kw["start_new_session"] = True
         p = subprocess.Popen([sys.executable, "-I", RECORD, "record", "--out", self.dir, "--name", "t",
                               "--source", "lavfi", "--size", SIZE, "--fps", str(FPS), "--segment-s", str(SEG_S),
                               "--max-s", "90", "--vcodec", self.vcodec],
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **kw)
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, **{**NO_WINDOW, **kw})
         self.addCleanup(p.stdout.close)
         self.addCleanup(lambda: p.poll() is None and _kill(p.pid, True))
         return p
@@ -196,7 +199,7 @@ class RecordingTests(unittest.TestCase):
 
     def verify(self):
         r = subprocess.run([sys.executable, "-I", RECORD, "verify", "--out", self.dir, "--name", "t", "--json"],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, **NO_WINDOW)
         return r.returncode, json.loads(r.stdout.strip().splitlines()[-1])
 
     def run_to_mid_segment(self):
@@ -338,7 +341,7 @@ class RestartLimitTests(unittest.TestCase):
             args += ["--max-s", "120"]
         r = subprocess.run([sys.executable, "-I", RECORD, "record", "--out", self.dir, "--name", "b",
                             "--video", "ujwalam-test-no-such-device", "--audio", "", *args],
-                           capture_output=True, text=True, timeout=timeout)
+                           capture_output=True, text=True, timeout=timeout, **NO_WINDOW)
         with open(os.path.join(self.dir, "b.log"), encoding="utf-8") as f:
             log = f.read()
         return r, rec.read_state(self.dir, "b"), rec.read_gaps(self.dir, "b"), log, time.monotonic() - t0

@@ -315,7 +315,7 @@
     $('btn-stream').addEventListener('click', function () { hostAction(state.status && state.status.host.live ? 'stream.stop' : 'stream.start'); });
     $('btn-record').addEventListener('click', function () { hostAction(state.status && state.status.host.recording ? 'record.stop' : 'record.start'); });
     ['h', 'v'].forEach(function (c) {
-      $('btn-open-' + c).addEventListener('click', function () { guard(Api.host('preview.open', { canvas: c }).then(function (r) { setText($('preview-note'), (r.result && r.result.note) || 'Preview ' + c.toUpperCase() + ' opened.'); })); });
+      $('btn-open-' + c).addEventListener('click', function () { guard(Api.host('preview.open', { canvas: c }).then(function (r) { setText($('preview-note'), (r.result && r.result.note) || 'Preview ' + c.toUpperCase() + ' opened' + (r.result && r.result.display ? ' on the ' + r.result.display : '') + '.'); })); });
       $('btn-focus-' + c).addEventListener('click', function () { guard(Api.host('preview.focus', { canvas: c })); });
     });
     $('btn-import').addEventListener('click', runImport);

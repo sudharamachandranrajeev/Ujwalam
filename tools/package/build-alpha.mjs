@@ -142,14 +142,14 @@ function readme({ version, nodeMin }) {
 }
 
 function git(args) {
-  try { return execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); } catch { return null; }
+  try { return execFileSync('git', args, { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim(); } catch { return null; }
 }
 
 function privateScan(files, profile) {
   const scanner = path.join(REPO, 'tools', 'git-hooks', 'private-scan.mjs');
   for (let i = 0; i < files.length; i += 40) {
     const chunk = files.slice(i, i + 40);
-    const r = spawnSync(process.execPath, [scanner, '--profile', profile, 'scan-files', ...chunk], { cwd: REPO, encoding: 'utf8' });
+    const r = spawnSync(process.execPath, [scanner, '--profile', profile, 'scan-files', ...chunk], { cwd: REPO, encoding: 'utf8', windowsHide: true });
     if (r.status !== 0) return { ok: false, out: `${r.stdout}${r.stderr}`.trim() };
   }
   return { ok: true };
