@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Cloud CI (D202). Runs the Node-only part of `npm run ci` on a GitHub-hosted Windows runner. Steps that need laptop-only
+# inputs (libobs host, GPU, .venv, legacy/, private profile) are reported NOT RUN by tools/ci.mjs and never stamp a push.
+name: ci
+
+# Manual only for now: the cloud `test` step still fails on tests that need legacy/ (tests/registry.test.mjs and
+# possibly others, docs/evidence/2026-11-03-github-actions-ci.md). Switch to push/pull_request once a manual run passes.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      UJWALAM_CI_ENV: cloud
+      UJWALAM_HEADLESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - run: npm ci
+      - run: npm run ci

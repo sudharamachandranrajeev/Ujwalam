@@ -96,6 +96,45 @@ export const STEPS = [
 ` }; } },
 ];
 
+// Cloud mode (GitHub Actions, D202): UJWALAM_CI_ENV=cloud or GITHUB_ACTIONS=true. A hosted runner has none of the
+// laptop-only inputs below, so those steps are reported NOT RUN (never PASS), counted apart, and the exit status depends
+// only on the steps that ran. Cloud mode never writes the push stamp (D190: only a full laptop pass may stamp a push).
+export const isCloud = (env = process.env) => env.UJWALAM_CI_ENV === 'cloud' || env.GITHUB_ACTIONS === 'true';
+
+export const LAPTOP_ONLY = {
+  build: 'needs the MSVC + libobs spike build dir (app/spike/build) and the OBS source tree',
+  'build-host': 'needs the OBS runtime and source paths from app/host/host.local.json (vendored OBS, not in the repo)',
+  'test-host': 'starts the libobs host with NVENC on the GPU; no GPU or OBS runtime on the runner',
+  'test-py': 'needs the OCR venv packages (numpy, opencv, rapidocr, onnxruntime); no .venv on the runner',
+  'test-ocr': 'needs .venv (RapidOCR and onnxruntime wheels)',
+  'test-capture': 'needs a capture device and the .venv',
+  'validate-registry': 'presets name legacySource files that must exist under legacy/ (gitignored, never pushed)',
+  'private-scan': 'needs data/profile.local.json (gitignored private terms); fails closed without it',
+  'legacy-verify': 'needs legacy/ (gitignored, never pushed)',
+  bench: 'timings on a shared runner are meaningless; baselines are laptop-only (out/bench)',
+};
+
+/** Split steps for cloud mode. Returns { run, skipped: [{name, reason}] }. Laptop mode (cloud false): everything runs. */
+export function planSteps(steps, cloud) {
+  if (!cloud) return { run: steps, skipped: [] };
+  return {
+    run: steps.filter((s) => !(s.name in LAPTOP_ONLY)),
+    skipped: steps.filter((s) => s.name in LAPTOP_ONLY).map((s) => ({ name: s.name, reason: LAPTOP_ONLY[s.name] })),
+  };
+}
+
+export const notRunLine = (s) => `${s.name.padEnd(18)} NOT RUN (laptop only: ${s.reason})`;
+
+/** Summary lines. Cloud adds the not-run count and states that the run is not stampable. */
+export function summaryLines({ results, skipped = [], cloud = false, seconds = 0 }) {
+  const failed = results.filter((r) => !r.ok);
+  const lines = [`ci: ${results.length - failed.length}/${results.length} passed in ${seconds.toFixed(1)}s`];
+  if (cloud) lines.push(`ci: cloud mode: ${skipped.length} step(s) NOT RUN (laptop only): ${skipped.map((s) => s.name).join(', ') || 'none'}`);
+  if (failed.length) lines.push(`ci: FAILED: ${failed.map((r) => r.name).join(', ')}`);
+  if (cloud) lines.push('ci: cloud run is not stampable (only a full laptop pass may stamp a push, D190)');
+  return lines;
+}
+
 // D190 batching: the pre-commit hook runs only these (about 30 s). The full list runs about once an hour and before a
 // push; a full pass on an unchanged tree writes the stamp that the pre-push hook requires (tools/ci-stamp.mjs).
 export const QUICK = ['build', 'lint', 'build-host', 'validate-registry', 'validate-outputs', 'validate-games', 'private-scan', 'legacy-verify'];
@@ -168,13 +207,16 @@ async function main() {
   const root = process.env.UJWALAM_CI_ROOT ? path.resolve(process.env.UJWALAM_CI_ROOT) : HERE;
   // Every step and its children run headless: the host opens no preview window, the launcher no browser (D191).
   process.env.UJWALAM_HEADLESS = '1';
-  const full = steps === STEPS;
+  const cloud = isCloud();
+  const plan = planSteps(steps, cloud);
+  const full = !cloud && steps === STEPS;
+  steps = plan.run;
+  for (const s of plan.skipped) console.log(notRunLine(s));
   const treeAtStart = full ? tryTree(root) : null;
   const results = await runSteps(steps, { root, log: (l) => console.log(l), tail });
   const failed = results.filter((r) => !r.ok);
   const total = results.reduce((a, r) => a + r.seconds, 0);
-  console.log(`\nci: ${results.length - failed.length}/${results.length} passed in ${total.toFixed(1)}s`);
-  if (failed.length) console.log(`ci: FAILED: ${failed.map((r) => r.name).join(', ')}`);
+  console.log(`\n${summaryLines({ results, skipped: plan.skipped, cloud, seconds: total }).join('\n')}`);
   if (full && !failed.length) {
     const treeAtEnd = tryTree(root);
     if (treeAtStart && treeAtStart === treeAtEnd) {

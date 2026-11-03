@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { QUICK, STEPS, runSteps, selectSteps } from '../tools/ci.mjs';
+import { LAPTOP_ONLY, QUICK, STEPS, isCloud, notRunLine, planSteps, runSteps, selectSteps, summaryLines } from '../tools/ci.mjs';
 import { checkPush, hasPass, recordPass, worktreeTree } from '../tools/ci-stamp.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -194,4 +194,54 @@ test('bench step: a noisy advisory run passes CI and shows "advisory (noisy: ...
   assert.ok(lines.some((l) => /advisory regression: x\.y/.test(l)), 'regressions are listed under the step');
   assert.ok(lines.some((l) => /^qfail +FAIL/.test(l)));
   assert.ok(lines.some((l) => /^qpass +PASS/.test(l)));
+});
+
+test('isCloud: only UJWALAM_CI_ENV=cloud or GITHUB_ACTIONS=true', () => {
+  assert.equal(isCloud({}), false);
+  assert.equal(isCloud({ UJWALAM_CI_ENV: 'cloud' }), true);
+  assert.equal(isCloud({ GITHUB_ACTIONS: 'true' }), true);
+  assert.equal(isCloud({ UJWALAM_CI_ENV: 'laptop', GITHUB_ACTIONS: 'false' }), false);
+});
+
+test('LAPTOP_ONLY names real steps; node-only steps stay in the cloud run', () => {
+  const names = STEPS.map((s) => s.name);
+  for (const k of Object.keys(LAPTOP_ONLY)) { assert.ok(names.includes(k), k); assert.ok(LAPTOP_ONLY[k].length > 10); }
+  for (const k of ['lint', 'test', 'validate-outputs', 'validate-games', 'stray-mocks']) assert.ok(!(k in LAPTOP_ONLY), k);
+});
+
+
+test('planSteps: laptop mode runs every step; cloud mode drops the laptop-only ones with reasons', () => {
+  const lap = planSteps(STEPS, false);
+  assert.equal(lap.run, STEPS);
+  assert.deepEqual(lap.skipped, []);
+  const cl = planSteps(STEPS, true);
+  assert.deepEqual(cl.run.map((s) => s.name), ['lint', 'test', 'validate-outputs', 'validate-games', 'stray-mocks']);
+  assert.equal(cl.run.length + cl.skipped.length, STEPS.length);
+  assert.match(notRunLine(cl.skipped[0]), /^build\s+NOT RUN \(laptop only: .+\)$/);
+});
+
+test('summaryLines: cloud counts not-run apart and is never stampable; laptop output is unchanged', () => {
+  const ok = [{ name: 'a', ok: true }, { name: 'b', ok: false }];
+  assert.deepEqual(summaryLines({ results: ok, seconds: 1 }), ['ci: 1/2 passed in 1.0s', 'ci: FAILED: b']);
+  const c = summaryLines({ results: [{ name: 'a', ok: true }], skipped: [{ name: 'x', reason: 'r' }], cloud: true });
+  assert.match(c[0], /^ci: 1\/1 passed/);
+  assert.ok(c.some((l) => /1 step\(s\) NOT RUN.*: x$/.test(l)));
+  assert.ok(c.some((l) => /not stampable/.test(l)));
+});
+
+test('CLI cloud mode: reports NOT RUN, exit depends on steps that ran, writes no stamp', () => {
+  const root = stubRoot({ lint: 'node -e "0"' });
+  const r = spawnSync(process.execPath, [ci, '--only', 'lint,build-host'], { encoding: 'utf8', windowsHide: true, env: { ...process.env, UJWALAM_CI_ROOT: root, UJWALAM_CI_ENV: 'cloud' } });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /build-host\s+NOT RUN \(laptop only: /);
+  assert.match(r.stdout, /1\/1 passed/);
+  assert.match(r.stdout, /not stampable/);
+  assert.doesNotMatch(r.stdout, /stamped/);
+});
+
+test('CLI cloud mode: a failing step that ran still exits 1', () => {
+  const root = stubRoot({ lint: 'node -e "process.exit(1)"' });
+  const r = spawnSync(process.execPath, [ci, '--only', 'lint'], { encoding: 'utf8', windowsHide: true, env: { ...process.env, UJWALAM_CI_ROOT: root, GITHUB_ACTIONS: 'true' } });
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /FAILED: lint/);
 });
