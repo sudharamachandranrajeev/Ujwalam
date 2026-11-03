@@ -10,6 +10,8 @@
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BOT_LABELS, BOTS, createBots } from '../services/bots/index.mjs';
+import { resolveDataDir } from '../services/event-core/config.mjs';
 
 export const STRAY_SCRIPT = /tools[\\/](mock|soak)[\\/]([\w.-]+\.mjs)/;
 // Other test-only children: the idempotency kill-test child, and listen-CLI children started by tests (they carry the
@@ -66,8 +68,31 @@ export function scanStrays(opts) {
   return findStrays(listNodeProcesses(), opts);
 }
 
+/**
+ * BM6: Streamer.bot / Speaker.bot that Ujwalam started (pid + start time in <dataDir>/bots/state.json) and that are still
+ * running. REPORT ONLY: the stray-mocks CI step does not use it and no exit code depends on it, because a bot left
+ * running after a studio stop is the user's call (the studio stop closes them when the `bot-manager` flag is on). A copy
+ * the user started is never listed. Returns [] when the data dir or the profile paths are not set.
+ */
+export function scanBotStrays({ dataDir, bots } = {}) {
+  try {
+    const b = bots ?? createBots({ dataDir: dataDir ?? resolveDataDir() });
+    return BOTS.filter((bot) => b.startedRecords()[bot]).map((bot) => ({ bot, ...b.detect(bot) }))
+      .filter((d) => d.running && d.startedByUs).map((d) => ({ bot: d.bot, label: BOT_LABELS[d.bot], pid: d.pid }));
+  } catch { return []; }
+}
+
+export function botStrayReport(list) {
+  if (!list.length) return null;
+  return [`bots: ${list.length} bot(s) started by Ujwalam still running (report only)`,
+    ...list.map((x) => `  ${x.label}  pid ${x.pid}`),
+    '  stop from the control page (Bots card) or by closing the studio with the bot-manager flag on'].join('\n');
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const s = scanStrays();
   console.log(strayReport(s));
+  const bs = botStrayReport(scanBotStrays());
+  if (bs) console.log(bs);
   process.exit(s.length ? 1 : 0);
 }

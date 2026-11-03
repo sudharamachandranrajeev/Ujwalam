@@ -25,7 +25,13 @@
     "analysis_cache": "<analysis-cache>",
     "windows_user": "<windows-user>",
     "event_core_data": "<event-core-data>",
-    "meld_session": "<meld-session-file>"
+    "meld_session": "<meld-session-file>",
+    "streamerbot_exe": "<streamerbot-exe>",
+    "speakerbot_exe": "<speakerbot-exe>"
+  },
+  "bots": {
+    "streamerbot_ws": "<streamerbot-ws-or-remove-for-default>",
+    "speakerbot_ws": "<speakerbot-ws-or-remove-for-default>"
   },
   "brand": {
     "wordmark": "<brand-wordmark-file>",

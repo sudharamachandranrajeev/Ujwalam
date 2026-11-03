@@ -71,7 +71,9 @@ import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
 import { loadFileIntoHost } from '../../app/host/lib/project.mjs';
 import { SYSTEM_FILE, writeSecretFileAtomic } from '../event-core/api/discovery.mjs';
+import { createBots } from '../bots/index.mjs';
 import { resolveDataDir } from '../event-core/config.mjs';
+import { createFlags } from '../flags/index.mjs';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../project/device-roles.mjs';
 import { loadProject } from '../project/store.mjs';
 import { alphaBases, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
@@ -561,6 +563,13 @@ export async function main(argv = process.argv.slice(2)) {
       } catch { /* fall through to kill */ }
     }
     for (const c of children) { try { c.kill(); } catch { /* already gone */ } }
+    // BM6: with the `bot-manager` flag on, close the bots Ujwalam started. A copy the user started is never touched.
+    try {
+      if (createFlags({ dataDir }).isOn('bot-manager')) {
+        const r = await createBots({ dataDir }).stopStarted();
+        for (const [bot, v] of Object.entries(r)) console.log(`[studio] bot ${bot}: ${v.ok ? 'stopped' : `not stopped (${v.reason})`}`);
+      }
+    } catch (e) { console.log(`[studio] bots: could not stop the ones Ujwalam started (${String(e?.message ?? e).slice(0, 80)})`); }
   };
   process.once('SIGINT', () => { stopAll().then(() => process.exit(0)); });
   process.once('SIGTERM', () => { stopAll().then(() => process.exit(0)); });

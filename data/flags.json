@@ -2,6 +2,7 @@
   "flags": [
     { "id": "clip-pipeline", "description": "Post-stream clipper (services/clip/clipper.py): ranked candidates, 3 vertical variants, captions, validation. Off until used on a real stream.", "default": false, "since": "2026-11-04" },
     { "id": "chat-effects", "description": "Chat-driven effects and event-driven animated layers (example; off until used on a real stream).", "default": false, "since": "2026-11-04" },
-    { "id": "posting", "description": "Export-only posting (P16a): review packages of validated clips (video, cover, text) on the Posts view. Nothing is uploaded.", "default": false, "since": "2026-11-03" }
+    { "id": "posting", "description": "Export-only posting (P16a): review packages of validated clips (video, cover, text) on the Posts view. Nothing is uploaded.", "default": false, "since": "2026-11-03" },
+    { "id": "bot-manager", "description": "Bot manager (BM1, D193): the Bots card starts, shows and stops the user's installed Streamer.bot and Speaker.bot; only bots Ujwalam started are stopped, also when the studio stops.", "default": false, "since": "2026-11-03" }
   ]
 }

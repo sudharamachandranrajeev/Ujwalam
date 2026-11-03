@@ -143,7 +143,7 @@
       if (r.verdict === 'wrong-phrase') { setText($('confirm-msg'), 'That is not the phrase. Type it exactly.'); return; }
       closeConfirm();
       if (r.verdict === 'confirm' && r.pending) openConfirm(r.pending);
-      else if (r.verdict === 'allow') { if (r.flags) renderFlags(r.flags); setText($('preview-note'), 'Done.'); loadScenes().then(loadMixer).catch(function () {}); } else setText($('preview-note'), r.verdict === 'allow' ? 'Done.' : 'Result: ' + r.verdict + (r.reason ? ' (' + r.reason + ')' : ''));
+      else if (r.verdict === 'allow') { if (r.flags) renderFlags(r.flags); if (r.bots) renderBots(r.bots); setText($('preview-note'), 'Done.'); loadScenes().then(loadMixer).catch(function () {}); } else setText($('preview-note'), r.verdict === 'allow' ? 'Done.' : 'Result: ' + r.verdict + (r.reason ? ' (' + r.reason + ')' : ''));
     }).catch(function (e) { closeConfirm(); showError('Confirmation failed: ' + (e.message || 'error')); });
   }
   function cancelConfirm() { var p = state.pending; closeConfirm(); if (p) Api.cancel(p.pendingId).catch(function () {}); }
@@ -190,6 +190,9 @@
     var postingOn = (list || []).some(function (f) { return f.id === 'posting' && f.on; });
     $('btn-posts').hidden = !postingOn;
     if (!postingOn) $('posts').hidden = true;
+    var botsOn = (list || []).some(function (f) { return f.id === 'bot-manager' && f.on; });
+    $('bots').hidden = !botsOn;
+    if (botsOn) loadBots(); else clear($('bot-list'));
     (list || []).forEach(function (f) {
       var cb = el('input', { type: 'checkbox', id: 'flag-' + f.id, 'aria-label': f.id });
       cb.checked = !!f.on;
@@ -207,6 +210,26 @@
     else setText($('flag-note'), 'Turning a flag off is instant. Turning it on asks you to type yes.');
   }
   function loadFlags() { return Api.flags().then(function (r) { renderFlags(r.flags); }); }
+
+  // ---- Bots card (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot; Start and Stop are typed-confirmation writes ----
+  function yesNo(v) { return v ? 'yes' : 'no'; }
+  function renderBots(rows) {
+    var ul = $('bot-list'); clear(ul);
+    (rows || []).forEach(function (b) {
+      var facts = [el('div', { class: 'muted', text: 'installed: ' + yesNo(b.installed) + '  running: ' + yesNo(b.running) + '  port ' + (b.port || '-') + ' answering: ' + yesNo(b.portAnswering) + '  started by Ujwalam: ' + yesNo(b.startedByUs) })];
+      if (b.error) facts.push(el('div', { class: 'warn-text', text: 'Check failed: ' + b.error }));
+      if (b.wsError) facts.push(el('div', { class: 'warn-text', text: 'Port setting refused: ' + b.wsError }));
+      var start = el('button', { class: 'btn btn-quiet', type: 'button', id: 'bot-start-' + b.bot, text: 'Start' });
+      var stop = el('button', { class: 'btn btn-quiet', type: 'button', id: 'bot-stop-' + b.bot, text: 'Stop' });
+      start.disabled = !b.installed || b.running || !!b.error;
+      stop.disabled = !b.startedByUs; // a copy the user started is never stopped from here
+      start.addEventListener('click', function () { guard(Api.botStart(b.bot).then(function (r) { if (r.verdict === 'confirm') openConfirm(r.pending); })); });
+      stop.addEventListener('click', function () { guard(Api.botStop(b.bot).then(function (r) { if (r.verdict === 'confirm') openConfirm(r.pending); })); });
+      ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: b.label || b.bot }), el('span', { class: 'muted', text: b.ok ? 'up' : (b.running ? 'running, port not answering' : (b.installed ? 'stopped' : 'not installed')) }), start, stop, facts[0]].concat(facts.slice(1))));
+    });
+    setText($('bot-note'), 'Start and Stop ask you to type yes. Stop only ends a bot that Ujwalam started.');
+  }
+  function loadBots() { return Api.bots().then(function (r) { renderBots(r.bots); }).catch(function (e) { setText($('bot-note'), 'Bots: ' + (e.message || 'error')); }); }
 
   // ---- post-stream feedback form ----
   var fb = { moments: [], sel: null };
@@ -329,6 +352,7 @@
 
   function start() {
     wire();
+    setInterval(function () { if (!$('bots').hidden) loadBots(); }, 15000); // each check lists processes: slow on purpose
     Api.session()
       .then(function () { return Promise.all([loadScenes(), loadMixer(), loadFlags(), Api.status().then(applyStatus)]); })
       .then(function () { Api.events(applyStatus, function (ok) { if (!ok) pill($('st-core'), 'Reconnecting...', 'warn'); }, function (d) { renderFlags(d.flags); }); })

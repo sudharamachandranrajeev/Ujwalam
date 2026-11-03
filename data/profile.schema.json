@@ -60,6 +60,15 @@
         "kick": { "type": "string" }
       }
     },
+    "bots": {
+      "type": "object",
+      "description": "Optional WebSocket address of Streamer.bot and Speaker.bot, on this machine only (services/bots). Leave out for the defaults: a value in this file becomes a private term for the git hooks, so a default address written here would block commits of the code that holds the same default.",
+      "additionalProperties": false,
+      "properties": {
+        "streamerbot_ws": { "type": "string" },
+        "speakerbot_ws": { "type": "string" }
+      }
+    },
     "links": {
       "type": "object",
       "description": "Display links shown on stream by scene presets ({links.*} placeholders).",

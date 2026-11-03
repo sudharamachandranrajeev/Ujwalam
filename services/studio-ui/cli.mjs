@@ -8,7 +8,7 @@ import { randomBytes } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveDataDir } from '../event-core/config.mjs';
-import { createCoreClient, createHostRouter } from './backends.mjs';
+import { createCoreClient, createFakeBots, createHostRouter } from './backends.mjs';
 import { createStudioServer } from './server.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -31,7 +31,7 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   const launchKey = env.UJWALAM_UI_LAUNCH_KEY && env.UJWALAM_UI_LAUNCH_KEY.length >= 32 ? env.UJWALAM_UI_LAUNCH_KEY : randomBytes(32).toString('hex');
   // --feedback-dir: the folder the host's feedback hotkey writes (launch.mjs passes the same one); default <repo>/feedback.
   const feedbackDir = typeof args['feedback-dir'] === 'string' ? path.resolve(args['feedback-dir']) : undefined;
-  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, port: args.port === undefined ? 0 : Number(args.port) });
+  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
   const { port } = await srv.listen();
   out(`[studio-ui] listening on http://127.0.0.1:${port}/ (no token printed)`);
   if (host.describe().kind === 'fake') out('[studio-ui] BLOCKED-ON-HOST: no libobs host found, using the in-memory fake backend');

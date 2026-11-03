@@ -27,6 +27,7 @@ import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { BOTS, BOT_LABELS, createBots } from '../bots/index.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createFeedback } from './feedback.mjs';
@@ -95,6 +96,8 @@ export const DEFAULT_FEEDBACK_DIR = path.resolve(path.dirname(fileURLToPath(impo
 const FLAG_SET_SCHEMA = { id: { type: 'string', pattern: /^[a-z][a-z0-9-]{0,47}$/, required: true }, on: { type: 'bool', required: true } };
 const NOTE_KEYS = ['id', 'text', 'tag', 'severity'];
 
+export const BOT_FLAG = 'bot-manager';
+const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409 };
 const POST_EDIT_KEYS = ['id', 'title', 'description', 'tags', 'hashtags'];
 
@@ -153,6 +156,9 @@ export function createStudioServer(opts) {
   // Export-only posting (P16a, flag `posting`): packages are listed from <dataDir>/posting/ledger.json. Nothing is uploaded.
   const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME) }) : null);
   const openFolder = opts.openFolder ?? defaultOpenFolder;
+  // Bot manager (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot. opts.bots is a test seam (see createFakeBots).
+  const bots = opts.bots ?? (typeof opts.dataDir === 'string' ? createBots({ dataDir: opts.dataDir }) : null);
+  const botsOn = () => !!bots && !!flags && flags.isOn(BOT_FLAG);
   const postingOn = () => !!posting && !!flags && flags.isOn(POSTING_FLAG);
   if (typeof opts.launchKey !== 'string' || opts.launchKey.length < 32) throw new Error('launchKey must be at least 32 characters');
   let launchKey = opts.launchKey;
@@ -289,6 +295,10 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/feedback') return json(res, 200, { moments: feedback.list() });
     if (route.startsWith('/ui/api/posts') && !postingOn()) return json(res, 404, { error: 'posting-off' });
+    if (route.startsWith('/ui/api/bots') && !botsOn()) return json(res, 404, { error: 'bot-manager-off' });
+    if (req.method === 'GET' && route === '/ui/api/bots') {
+      try { return json(res, 200, { bots: await bots.statusAll() }); } catch { return json(res, 502, { error: 'bots-error' }); }
+    }
     if (req.method === 'GET' && route === '/ui/api/posts') return json(res, 200, { posts: posting.list() });
     if (req.method === 'GET' && route === '/ui/api/posts/media') return postMedia(req, res, url);
     if (req.method !== 'POST') return text(res, 405, 'method-not-allowed');
@@ -313,6 +323,15 @@ export function createStudioServer(opts) {
         return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
       }
       try { return json(res, 200, { result: await host.call(body.method, params) ?? null }); } catch (e) { return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+    }
+    if (route === '/ui/api/bots/start' || route === '/ui/api/bots/stop') {
+      // Studio write: typed "yes", or "yes, on air" while live. Stop only ever ends a copy Ujwalam started (checked in the module).
+      const bad = validate(BOT_SCHEMA, body);
+      if (bad) return json(res, 400, { error: bad });
+      const verb = route.endsWith('/start') ? 'start' : 'stop';
+      const id = addPending({ kind: 'bot', summary: `${verb === 'start' ? 'Start' : 'Stop'} ${BOT_LABELS[body.bot]}`, phrase: live ? 'yes, on air' : 'yes', bot: body.bot, verb });
+      if (!id) return json(res, 429, { error: 'too-many-pending' });
+      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
     }
     if (route === '/ui/api/flags/set') {
       if (!flags) return json(res, 503, { error: 'flags-unavailable' });
@@ -376,7 +395,7 @@ export function createStudioServer(opts) {
       if (typeof body.text !== 'string' || body.text.length > 40) return json(res, 400, { error: 'bad-text' });
       // The phrase was chosen when the request was made. If the stream went live since, plain "yes" no longer counts:
       // the record upgrades to the on-air phrase and the page shows it again (D151).
-      if ((p.kind === 'host' || p.kind === 'flag') && live && p.phrase === 'yes') {
+      if ((p.kind === 'host' || p.kind === 'flag' || p.kind === 'bot') && live && p.phrase === 'yes') {
         p.phrase = 'yes, on air';
         return json(res, 200, { verdict: 'wrong-phrase', pending: publicPending(body.pendingId, p) });
       }
@@ -384,6 +403,11 @@ export function createStudioServer(opts) {
       pending.delete(body.pendingId);
       try {
         if (p.kind === 'flag') return json(res, 200, { verdict: 'allow', flags: applyFlag(p.flagId, true) });
+        if (p.kind === 'bot') {
+          if (!botsOn()) return json(res, 404, { error: 'bot-manager-off' }); // the flag may have been switched off meanwhile
+          const r = p.verb === 'start' ? await bots.start(p.bot) : await bots.stop(p.bot);
+          return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, bots: await bots.statusAll() });
+        }
         if (p.kind === 'host') {
           const out = await callHost(p.method, p.params);
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null) });

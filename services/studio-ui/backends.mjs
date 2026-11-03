@@ -138,6 +138,33 @@ export function createFakeHost({ outputsReady = false } = {}) {
   };
 }
 
+/** In-memory stand-in for services/bots (UI tests and --fake-host): no process is ever started. Same method names.
+ *  state: { streamerbot: { installed, running, startedByUs, portAnswering }, ... } overrides the defaults. */
+export function createFakeBots(state = {}) {
+  const labels = { streamerbot: 'Streamer.bot', speakerbot: 'Speaker.bot' };
+  const ports = { streamerbot: 8093, speakerbot: 8083 };
+  const st = Object.fromEntries(Object.keys(labels).map((b) => [b, { installed: true, running: false, startedByUs: false, portAnswering: false, ...(state[b] ?? {}) }]));
+  const row = (b) => ({ bot: b, label: labels[b], ...st[b], port: ports[b], ok: st[b].running && st[b].portAnswering });
+  return {
+    calls: [],
+    async statusAll() { return Object.keys(st).map(row); },
+    async start(b) {
+      this.calls.push(['start', b]);
+      if (!st[b].installed) return { ok: false, reason: 'not-installed' };
+      if (st[b].running) return { ok: false, reason: 'already-running' };
+      Object.assign(st[b], { running: true, startedByUs: true, portAnswering: true });
+      return { ok: true, pid: 4242 };
+    },
+    async stop(b) {
+      this.calls.push(['stop', b]);
+      if (!st[b].startedByUs) return { ok: false, reason: 'not-started-by-ujwalam' };
+      Object.assign(st[b], { running: false, startedByUs: false, portAnswering: false });
+      return { ok: true, forced: false };
+    },
+    async stopStarted() { return {}; },
+  };
+}
+
 /** Real host when its discovery file exists, otherwise the flagged fake (re-checked on each call, so the host can
  *  appear after the UI started). */
 export function createHostRouter({ dataDir, env = process.env, fake = createFakeHost({ outputsReady: env.UJWALAM_FAKE_OUTPUTS_READY === '1' }), forceFake = false } = {}) {
