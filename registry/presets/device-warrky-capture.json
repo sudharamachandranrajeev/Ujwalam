@@ -1,10 +1,19 @@
 {
   "id": "device-warrky-capture",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "function": "capture-devices",
   "functionVersion": "^0.1.0",
   "name": "WARRKY capture binding",
-  "params": {},
+  "params": {
+    "match": {
+      "roles": [],
+      "projectKind": "camera",
+      "listKind": "video",
+      "nameContains": "warrky usb 3.0",
+      "status": "unverified",
+      "evidence": "legacy/tools/cam-pop.json _note: the WARRKY USB device is not connected; no default role, bind it with devices.roles in data/profile.local.json"
+    }
+  },
   "themeOverrides": {},
   "family": "devices",
   "tags": {

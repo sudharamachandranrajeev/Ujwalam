@@ -19,7 +19,7 @@
     "defaults": {},
     "safeRanges": {}
   },
-  "canvases": ["H"],
+  "canvases": ["H", "V"],
   "themeTokens": [],
   "durationMs": 0,
   "maxConcurrent": 0,

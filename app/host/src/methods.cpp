@@ -216,6 +216,22 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		r.set("shuttingDown", true);
 		return r;
 	});
+	// log.tail {lines?: 1..1000 (default 200)}: the newest host log lines from the in-memory ring (log.h), oldest
+	// first; token-shaped hex runs are already redacted there. For the feedback hotkey (alpha plan Part B).
+	add("log.tail", [](const json::Value &p) {
+		Params q(p, {"lines"});
+		size_t n = (size_t)q.int_or("lines", 200, 1, (int64_t)hlog::kRingLines);
+		unsigned long long total = 0;
+		std::vector<std::string> lines = hlog::tail(n, &total);
+		json::Value a = json::Value::array();
+		for (auto &l : lines)
+			a.push(l);
+		json::Value r = json::Value::object();
+		r.set("lines", std::move(a));
+		r.set("total", (uint64_t)total);
+		r.set("capacity", (uint64_t)hlog::kRingLines);
+		return r;
+	});
 
 	// ---- project
 	add("project.load", [&a](const json::Value &p) {
@@ -264,6 +280,14 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 			r.set("state", "off");
 		r.set("browserAllowed", a.allow_browser);
 		return r;
+	});
+	// overlay.stats: the overlay bridge counters (bridge.stats(): feed clients, chat/bus frames, effects; counts
+	// only, no text). -32004 while the overlay server is not running.
+	add("overlay.stats", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		if (!a.overlay)
+			throw Error(rpc::UNAVAILABLE, "the overlay server is off (start the host with --overlay-root)");
+		return a.overlay->stats();
 	});
 	// effect.fire {name, meta?}: bridge.publishEffect(name, meta) in the overlay server (its guards decide; the
 	// result says {ok:false, reason} when they refuse). One feed serves both canvases, so there is no canvas param.

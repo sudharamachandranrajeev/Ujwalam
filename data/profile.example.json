@@ -39,5 +39,10 @@
   "links": {
     "discord": "<discord-link>"
   },
+  "devices": {
+    "roles": {
+      "facecam": { "path": "<facecam-device-path>" }
+    }
+  },
   "private_terms": []
 }

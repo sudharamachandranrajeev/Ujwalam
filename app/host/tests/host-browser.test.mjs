@@ -130,6 +130,11 @@ test('overlay server runs under the host: 127.0.0.1, not 8093, obs-browser loade
   assert.ok(st.childEnvKeys.length > 0);
   for (const k of st.childEnvKeys) assert.doesNotMatch(k, /UJWALAM|TOKEN|NODE_OPTIONS|STREAM|KEY/i, `child env has only system names (${k})`);
   assert.deepEqual(info.overlay.staticPort, st.staticPort);
+  // overlay.stats: the bridge counters (numbers only); no event feed here, so no chat frames.
+  const stats = await c.call('overlay.stats');
+  for (const k of ['clients', 'chatFrames', 'busFrames', 'effects']) assert.equal(typeof stats[k], 'number', k);
+  assert.equal(stats.chatFrames, 0);
+  assert.equal((await rpcErr('overlay.stats', { extra: 1 })).code, -32602);
   // Pages and the relay: served from 127.0.0.1, and neither the host's api token nor any token value appears.
   for (const p of ['/overlays/gg-burst/index.html', '/_ujwalam/relay.html', '/_ujwalam/relay.js']) {
     const r = await get(st.staticPort, p);

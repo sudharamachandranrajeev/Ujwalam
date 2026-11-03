@@ -1,10 +1,21 @@
 {
   "id": "device-live-gamer-ultra-21",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "function": "capture-devices",
   "functionVersion": "^0.1.0",
   "name": "Live Gamer Ultra 2.1 binding",
-  "params": {},
+  "params": {
+    "match": {
+      "roles": [
+        "game-capture"
+      ],
+      "projectKind": "capture-card",
+      "listKind": "video",
+      "nameContains": "live gamer ultra 2.1",
+      "status": "unverified",
+      "evidence": "legacy/meld/session.json video device layer \"Live Gamer Ultra 2.1-Video\"; not yet seen in a devices.list run"
+    }
+  },
   "themeOverrides": {},
   "family": "devices",
   "tags": {

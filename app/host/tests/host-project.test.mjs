@@ -80,6 +80,7 @@ test('browser off: no overlay server, effect.fire refused, overlay layers forbid
   assert.equal(st.browserAllowed, false);
   assert.equal((await c.call('host.info')).overlay, null);
   assert.equal((await rpcErr('effect.fire', { name: 'gg' })).code, -32001);
+  assert.equal((await rpcErr('overlay.stats', {})).code, -32004, 'overlay.stats: unavailable while the server is off');
   const plan = await planInHost(c, SAMPLE, { bases: { media, overlays: media } });
   const chat = plan.unavailable.find((u) => u.layer === 'layer-chat');
   assert.equal(chat.code, 'forbidden');

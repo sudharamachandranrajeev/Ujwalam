@@ -419,10 +419,12 @@ describe('the event-core token never reaches an overlay', () => {
   let fakePort;
   let seenAuth;
   let seenUrl;
+  let seenSecFetch;
   let sse;
   before(async () => {
     fake = http.createServer((req, res) => {
       seenAuth = req.headers.authorization;
+      seenSecFetch = Object.keys(req.headers).filter((k) => k.startsWith('sec-fetch-'));
       seenUrl = req.url;
       res.writeHead(200, { 'Content-Type': 'text/event-stream' });
       sse = res;
@@ -444,6 +446,7 @@ describe('the event-core token never reaches an overlay', () => {
     for (let i = 0; i < 50 && !sse; i++) await new Promise((r) => setTimeout(r, 20));
     assert.equal(seenAuth, `Bearer ${TOKEN}`, 'the token is used for the one request to the event core');
     assert.ok(!seenUrl.includes(TOKEN), 'and never put in a URL');
+    assert.deepEqual(seenSecFetch, [], 'no Sec-Fetch-* headers: the event core refuses those as browser requests (D62)');
 
     // A hostile or leaky event that carries the token in extra fields: only whitelisted fields are copied.
     const ev = { v: 1, id: 'e000000000000-00000000-aaaaaaaa', kind: 'chat.message', platform: 'twitch', source: 'streamerbot', user: { displayName: 'ViewerOne', roles: ['viewer'], pseudoId: 'a'.repeat(32), platformUserId: 'x' }, text: 'hi', token: TOKEN, authorization: `Bearer ${TOKEN}` };

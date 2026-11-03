@@ -12,6 +12,7 @@
     "lint": "node tools/lint.mjs",
     "ci": "node tools/ci.mjs",
     "studio": "node services/studio-ui/launch.mjs",
+    "alpha": "node services/studio-ui/launch.mjs --alpha",
     "build:host": "node app/host/tools/build.mjs",
     "test:host": "node --test --test-timeout=300000 --test-concurrency=1 \"app/host/tests/*.test.mjs\"",
     "bench": "node tools/bench/run.mjs",

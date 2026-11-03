@@ -1,0 +1,16 @@
+{
+  "$comment": "Anonymised devices.list shape (app/host/src/devices.cpp to_json). Product names only; paths are made up.",
+  "devices": [
+    { "kind": "video", "name": "Live Gamer Ultra 2.1-Video", "path": "\\\\?\\usb#vid_0000&pid_0001&mi_00#fixture-1&0&0000#{00000000-0000-0000-0000-000000000001}\\global", "obsId": "Live Gamer Ultra 2.1-Video#3A\\\\?\\usb#22vid_0000&pid_0001&mi_00#22fixture-1&0&0000#22{00000000-0000-0000-0000-000000000001}\\global" },
+    { "kind": "video", "name": "Insta360 Link 2C", "path": "\\\\?\\usb#vid_0000&pid_0002&mi_00#fixture-2&0&0000#{00000000-0000-0000-0000-000000000001}\\global", "obsId": "Insta360 Link 2C#3A\\\\?\\usb#22vid_0000&pid_0002&mi_00#22fixture-2&0&0000#22{00000000-0000-0000-0000-000000000001}\\global" },
+    { "kind": "video", "name": "Insta360 Virtual Camera", "path": "\\\\?\\root#image#fixture-3#{00000000-0000-0000-0000-000000000001}\\global", "obsId": "Insta360 Virtual Camera#3A\\\\?\\root#22image#22fixture-3#22{00000000-0000-0000-0000-000000000001}\\global" },
+    { "kind": "video", "name": "Integrated Camera", "path": "\\\\?\\usb#vid_0000&pid_0004&mi_00#fixture-4&0&0000#{00000000-0000-0000-0000-000000000001}\\global", "obsId": "Integrated Camera#3A\\\\?\\usb#22vid_0000&pid_0004&mi_00#22fixture-4&0&0000#22{00000000-0000-0000-0000-000000000001}\\global" },
+    { "kind": "dshow-audio", "name": "Microphone (fifine SC3)", "path": "", "obsId": "Microphone (fifine SC3)#3A" },
+    { "kind": "audio-input", "name": "Microphone (fifine SC3)", "path": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a1}", "obsId": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a1}" },
+    { "kind": "audio-input", "name": "Microphone Array (Fixture Audio)", "path": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a2}", "obsId": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a2}" },
+    { "kind": "audio-output", "name": "Speakers (Fixture Audio)", "path": "{0.0.0.00000000}.{00000000-0000-0000-0000-0000000000b1}", "obsId": "{0.0.0.00000000}.{00000000-0000-0000-0000-0000000000b1}" }
+  ],
+  "errors": [],
+  "opened": false,
+  "devicesEnabled": true
+}

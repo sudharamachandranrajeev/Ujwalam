@@ -1,10 +1,21 @@
 {
   "id": "device-insta360-link-2c",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "function": "capture-devices",
   "functionVersion": "^0.1.0",
   "name": "Insta360 Link 2C binding",
-  "params": {},
+  "params": {
+    "match": {
+      "roles": [
+        "facecam"
+      ],
+      "projectKind": "camera",
+      "listKind": "video",
+      "nameContains": "insta360 link 2c",
+      "status": "unverified",
+      "evidence": "legacy/tools/cam-pop.json layer \"camera/Insta360 Link 2C\" (the Insta360 Virtual Camera is a different device and does not match); not yet seen in a devices.list run"
+    }
+  },
   "themeOverrides": {},
   "family": "devices",
   "tags": {

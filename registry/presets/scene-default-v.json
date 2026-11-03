@@ -1,0 +1,269 @@
+{
+  "id": "scene-default-v",
+  "version": "0.1.0",
+  "function": "scene-layout-preset",
+  "functionVersion": "^0.1.0",
+  "name": "Default V (current vertical stream layout)",
+  "params": {
+    "sceneName": "Default V",
+    "canvas": "v",
+    "reference": {
+      "width": 1080,
+      "height": 1920
+    },
+    "sources": "Positions are fractions of the canvas. 'meld' = geometry copied from the user's Meld vertical scene that is linked to the current scene (session file of 2026-10-26). 'meld-clamped' = the Meld box runs past the canvas edge and is clamped to it (every difference is under 2 percentage points except where a layer note says otherwise). 'spec' = mirrored from Default H because the Meld vertical scene has no matching layer. Crops are in source pixels and UNVERIFIED against Meld (centred).",
+    "layers": [
+      {
+        "key": "background",
+        "z": 0,
+        "name": "Background",
+        "type": "browser",
+        "overlay": "atmos-frame/index.html",
+        "query": "brackets=0&canvas=vertical",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "geometry": "spec",
+        "note": "Theme backdrop, mirrored from Default H. Meld draws a blurred, enlarged duplicate of the game capture here; the preset loader has no duplicate layer type, so that backdrop is a gap (see evidence). The atmos-frame canvas option is UNVERIFIED."
+      },
+      {
+        "key": "game",
+        "z": 1,
+        "name": "Game capture",
+        "type": "capture",
+        "role": "game-capture",
+        "rect": {
+          "x": 0,
+          "y": 0.23866,
+          "w": 1,
+          "h": 0.4872
+        },
+        "crop": {
+          "left": 336,
+          "right": 336
+        },
+        "geometry": "meld-clamped",
+        "note": "Meld box is x -1.5 percent, width 101.6 percent (past both edges); clamped to the canvas, crop recomputed from the same uniform scale (0.866). Crop, not stretch: visible source region 1248x1080. Rounded frame in Meld (corner radius not carried). Centred crop UNVERIFIED."
+      },
+      {
+        "key": "facecam",
+        "z": 2,
+        "name": "Facecam",
+        "type": "capture",
+        "role": "facecam",
+        "rect": {
+          "x": 0.41759,
+          "y": 0.0099,
+          "w": 0.48241,
+          "h": 0.23177
+        },
+        "crop": {
+          "top": 21,
+          "bottom": 21
+        },
+        "visible": false,
+        "geometry": "meld",
+        "note": "Hidden in the Meld vertical scene (a duplicate of the camera). Meld rotates it 180.65 degrees (camera mounted upside down); the project placement cannot rotate, so a shown facecam would be upside down until rotation exists. Vertical crop of 42 source pixels is centred, UNVERIFIED."
+      },
+      {
+        "key": "subscribe-cta",
+        "z": 3,
+        "name": "Subscribe call to action",
+        "type": "color",
+        "rect": {
+          "x": 0.01471,
+          "y": 0.00823,
+          "w": 0.43854,
+          "h": 0.06269
+        },
+        "geometry": "meld",
+        "note": "Source pending: the YouTube subscribe pill is a looping video in Meld and no legacy overlay draws it, so this is a transparent placeholder holding the geometry.",
+        "color": "#00000000"
+      },
+      {
+        "key": "wordmark",
+        "z": 4,
+        "name": "Wordmark",
+        "type": "image",
+        "file": {
+          "base": "profile",
+          "rel": "{brand.wordmark}"
+        },
+        "rect": {
+          "x": 0.62539,
+          "y": 0.7356,
+          "w": 0.37452,
+          "h": 0.15365
+        },
+        "geometry": "meld",
+        "note": "Meld has a duplicate layer here named after the brand colour wordmark; its target is not resolved (UNVERIFIED that it is the wordmark). Brand asset, local only."
+      },
+      {
+        "key": "youtube-subscribers",
+        "z": 5,
+        "name": "YouTube subscriber counter",
+        "type": "browser",
+        "overlay": "blood-moon-hud/index.html",
+        "query": "goal=0&counters=1&cam=0",
+        "rect": {
+          "x": 0.56285,
+          "y": 0.72375,
+          "w": 0.43715,
+          "h": 0.16885
+        },
+        "geometry": "meld-clamped",
+        "note": "Meld duplicate named for the YouTube subscriber widget; its box is a container and ran 4.3 percentage points past the right edge (clamped). Legacy HUD draws both counters in one part and has no per-platform switch; a page option is needed (gap)."
+      },
+      {
+        "key": "twitch-followers",
+        "z": 6,
+        "name": "Twitch follower counter",
+        "type": "browser",
+        "overlay": "blood-moon-hud/index.html",
+        "query": "goal=0&counters=1&cam=0",
+        "rect": {
+          "x": 0,
+          "y": 0.72311,
+          "w": 0.50494,
+          "h": 0.15625
+        },
+        "geometry": "meld-clamped",
+        "note": "Meld duplicate named for the Twitch widget; its box ran 3.5 percentage points past the left edge (clamped). Same per-platform gap as the YouTube counter. Overlaps the YouTube counter by about 6 percentage points."
+      },
+      {
+        "key": "support-cta",
+        "z": 7,
+        "name": "Subscribe and support call to action",
+        "type": "color",
+        "rect": {
+          "x": 0.0139,
+          "y": 0.7876,
+          "w": 0.48733,
+          "h": 0.1542
+        },
+        "geometry": "meld",
+        "note": "Source pending: a looping video in Meld, no legacy overlay draws it. Transparent placeholder holding the geometry. It covers the lower left of the counter area (layout issue, see evidence).",
+        "color": "#00000000"
+      },
+      {
+        "key": "social-ticker",
+        "z": 8,
+        "name": "Social ticker",
+        "type": "browser",
+        "overlay": "social-ticker/index.html",
+        "query": "discord={links.discord}&twitch={handles.twitch}&youtube={handles.youtube}&kick={handles.kick}",
+        "rect": {
+          "x": 0,
+          "y": 0.93241,
+          "w": 1,
+          "h": 0.06759
+        },
+        "geometry": "meld-clamped",
+        "note": "Meld duplicate of a wide social-handles strip (width 284 percent, 23 percent tall, mostly below the canvas); clamped to the bottom strip. Which part of that duplicate shows in Meld is UNVERIFIED. Legacy page reads its handles from the brand config, not from the URL; the bindings are carried for the host."
+      },
+      {
+        "key": "effects",
+        "z": 9,
+        "name": "Effects (full canvas)",
+        "type": "browser",
+        "overlay": "chat-charge/index.html",
+        "query": "canvas=vertical",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "geometry": "meld",
+        "note": "Chat Charge, full canvas, same URL option as the Meld layer."
+      },
+      {
+        "key": "voice-callout",
+        "z": 10,
+        "name": "Voice callout",
+        "type": "browser",
+        "overlay": "voice-callout/index.html",
+        "query": "streamerbot=1",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "geometry": "meld",
+        "note": "Full canvas in Meld. Not in Default H."
+      },
+      {
+        "key": "chat-engage",
+        "z": 11,
+        "name": "Chat Engage",
+        "type": "browser",
+        "overlay": "chat-engage/index.html",
+        "query": "",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "geometry": "meld",
+        "note": "Full canvas in Meld. Not in Default H."
+      },
+      {
+        "key": "chat-storm",
+        "z": 12,
+        "name": "Chat Storm",
+        "type": "browser",
+        "overlay": "chat-storm/index.html",
+        "query": "canvas=vertical&color=red,blue,bloodlust,claw,ghost,roar,horde,party",
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "geometry": "meld",
+        "note": "Top of the Meld stack, full canvas. Shares the effect budget with Chat Charge (both are full-canvas effect pages)."
+      }
+    ],
+    "rules": [
+      {
+        "type": "campop",
+        "target": {
+          "layerKey": "facecam"
+        },
+        "config": "data/effects/guards.json#rules.campop",
+        "z": 13
+      }
+    ],
+    "placeholders": [
+      "brand.wordmark",
+      "handles.twitch",
+      "handles.youtube",
+      "handles.kick",
+      "links.discord"
+    ]
+  },
+  "themeOverrides": {},
+  "family": "scene-presets",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "pending",
+  "legacySource": "legacy/meld/layer-map.md",
+  "legacyNote": "Vertical overlay URLs and options come from the legacy layer map; geometry comes from the user's Meld session (see docs/evidence/2026-11-03-a0-preset-default-v.md).",
+  "similar": [
+    "scene-default-h"
+  ]
+}

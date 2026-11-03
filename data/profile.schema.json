@@ -68,9 +68,36 @@
         "discord": { "type": "string" }
       }
     },
+    "devices": {
+      "type": "object",
+      "description": "Optional device role overrides for the alpha scene build (services/project/device-roles.mjs). Without an override a role is matched to the registry device presets (registry/presets/device-*.json params.match). Every string here becomes a private term for the git hooks, so prefer the device path from devices.list over the name.",
+      "additionalProperties": false,
+      "properties": {
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "game-capture": { "$ref": "#/$defs/deviceBinding" },
+            "facecam": { "$ref": "#/$defs/deviceBinding" },
+            "mic": { "$ref": "#/$defs/deviceBinding" }
+          }
+        }
+      }
+    },
     "private_terms": { "type": "array", "items": { "type": "string", "minLength": 1 } }
   },
   "$defs": {
+    "deviceBinding": {
+      "type": "object",
+      "description": "Exactly one of: path (the devices.list path, matched case-insensitively) or name (the exact devices.list name).",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "name": { "type": "string", "minLength": 1, "maxLength": 256 }
+      }
+    },
     "gameProfile": {
       "type": "object",
       "required": ["ign"],
