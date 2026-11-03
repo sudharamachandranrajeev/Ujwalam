@@ -105,8 +105,10 @@ test('devices.list is refused without --allow-devices; nothing is listed or open
   assert.equal((await rpcErr('devices.list')).code, -32001);
   const after0 = consentSnapshot();
   for (const cap of ['webcam', 'microphone']) {
+    // The invariant is "this call adds or touches nothing". An entry may already exist: Windows writes one
+    // (with LastUsedTimeStart/Stop) the first time an approved --allow-devices run opens a device, and the
+    // test must not edit the registry to clear it. Any open here would change LastUsedTime*, so equality catches it.
     assert.ok(before0[cap].mine === after0[cap].mine, `${cap}: no new or changed entry for this host exe`);
-    assert.equal(after0[cap].mine, '[]', `${cap}: this host exe has no entry at all`);
     assert.ok(before0[cap].hostAny === after0[cap].hostAny, `${cap}: no ujwalam-host entry changed`);
   }
   const info = await c.call('host.info');

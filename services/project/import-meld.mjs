@@ -14,13 +14,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createProject, relPathProblem, saveProject, validateProject } from './index.mjs';
+import { createProject, IMAGE_EXT, relPathProblem, saveProject, validateProject } from './index.mjs';
 
 export class ImportError extends Error {
   constructor(message, details = []) { super(message); this.name = 'ImportError'; this.details = details; }
 }
 
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
 const KIND_PREFIX = 'MeldStudio/';
 
 // Field mapping status. VERIFIED = checked against the real session file or a legacy reference this session

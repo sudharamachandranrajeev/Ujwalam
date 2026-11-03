@@ -1,6 +1,6 @@
 {
   "flags": [
-    { "id": "clip-pipeline", "description": "Automatic clip detection and the clip worker (example; off until used on a real stream).", "default": false, "since": "2026-11-04" },
+    { "id": "clip-pipeline", "description": "Post-stream clipper (services/clip/clipper.py): ranked candidates, 3 vertical variants, captions, validation. Off until used on a real stream.", "default": false, "since": "2026-11-04" },
     { "id": "chat-effects", "description": "Chat-driven effects and event-driven animated layers (example; off until used on a real stream).", "default": false, "since": "2026-11-04" }
   ]
 }

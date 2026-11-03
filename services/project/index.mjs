@@ -8,6 +8,9 @@ export { MIGRATIONS, migrate } from './migrate.mjs';
 export { ProjectError, projectFile, parseProject, loadProject, saveProject, cleanTemps, resolvePathRef } from './store.mjs';
 
 // Stable id: <prefix>-<8 hex>. The prefix must start with a lowercase letter.
+/** File extensions loaded as still images; any other local file is a media (video) layer. */
+export const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.svg']);
+
 export function newId(prefix) {
   const p = String(prefix).toLowerCase().replace(/[^a-z0-9_-]/g, '').slice(0, 40);
   if (!/^[a-z]/.test(p)) throw new TypeError('prefix must start with a lowercase letter');

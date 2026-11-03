@@ -140,8 +140,14 @@ test('alpha build with bound roles and a V preset: one scene, V capture layers d
 test('alpha build: a missing profile placeholder fails by key name before anything is saved', () => {
   const dataDir = tmp('missing');
   const build = async () => buildAlphaProject({ presetsDir: presetsDir(), profile: {} }).project;
-  return assert.rejects(prepareAlphaProject({ dataDir, build }), /profile is missing placeholder key\(s\): brand\.character/)
+  return assert.rejects(prepareAlphaProject({ dataDir, build }), /profile is missing placeholder key\(s\): handles\.kick, handles\.twitch, handles\.youtube, links\.discord$/)
     .then(() => assert.equal(existsSync(alphaFile(dataDir)), false));
+});
+
+test('alpha build: brand asset files missing from the profile are placeholders and a warning, not a failure (D166)', () => {
+  const noAssets = { ...PROFILE, brand: {} };
+  const r = buildAlphaProject({ presetsDir: presetsDir(), profile: noAssets });
+  assert.ok(r.report.warnings.some((w) => /brand\.character, brand\.wordmark: those layers are transparent placeholders/.test(w)));
 });
 
 test('alpha project: an existing file is loaded unchanged; --rebuild-alpha moves it to _old first', async () => {

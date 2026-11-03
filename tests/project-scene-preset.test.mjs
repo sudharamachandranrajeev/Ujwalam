@@ -97,6 +97,24 @@ test('placeholders resolve from the fixture profile; query values are URL-encode
   assert.deepEqual(placeholderKeys(preset), preset.params.placeholders.slice().sort());
 });
 
+test('a brand asset that is a video becomes a looping media layer; a still stays an image', () => {
+  const vid = { ...profile, brand: { ...profile.brand, wordmark: 'fixture-wordmark.mp4' } };
+  const sc = loadScenePreset(base(), preset, { profile: vid }).project.scenes.at(-1);
+  const wm = sc.layers.find((l) => l.name === 'Wordmark');
+  assert.equal(wm.type, 'media');
+  assert.deepEqual(wm.source, { file: { base: 'profile', rel: 'fixture-wordmark.mp4' }, loop: true });
+  assert.equal(sc.layers.find((l) => l.name === 'Character cutout').type, 'image');
+});
+
+test('a brand asset missing from the profile becomes a transparent placeholder and is reported, not a failure', () => {
+  const noChar = { ...profile, brand: { wordmark: profile.brand.wordmark } };
+  const r = loadScenePreset(base(), preset, { profile: noChar });
+  assert.deepEqual(r.missingAssets, ['brand.character']);
+  const ch = r.project.scenes.at(-1).layers.find((l) => l.name === 'Character cutout');
+  assert.deepEqual([ch.type, ch.source], ['color', { color: '#00000000' }]);
+  assert.equal(r.project.scenes.at(-1).layers.find((l) => l.name === 'Wordmark').type, 'image');
+});
+
 test('a missing profile key fails by key name, before anything is built', () => {
   const p = base();
   const before = JSON.stringify(p);

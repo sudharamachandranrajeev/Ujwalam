@@ -81,6 +81,7 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
   const h = loadScenePreset(base, hPreset, { profile, roles, idFn });
   let project = h.project;
   const unbound = h.unbound.map((r) => `h:${r}`);
+  const missingAssets = new Set(h.missingAssets);
   let vScene = null;
   let duplicated = [];
   const vFile = path.join(presetsDir, V_PRESET);
@@ -91,6 +92,7 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
     } else {
       const v = loadScenePreset(project, vPreset, { profile, roles, idFn });
       unbound.push(...v.unbound.map((r) => `v:${r}`));
+      v.missingAssets.forEach((k) => missingAssets.add(k));
       vScene = v.sceneId;
       ({ project, duplicated } = mergeInto(v.project, h.sceneId, v.sceneId));
     }
@@ -108,6 +110,7 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
   const game = roles['game-capture'] && h.layerIds.game;
   if (game) project.audio.sources.push({ id: 'aud-game', name: 'Game', layer: game, volumeDb: 0, muted: false, monitoring: 'off', tracks: ['track1'] });
 
+  if (missingAssets.size) warnings.push(`profile has no file for ${[...missingAssets].sort().join(', ')}: those layers are transparent placeholders until it is set`);
   const v = validateProject(project);
   if (!v.ok) throw new ScenePresetError('alpha project does not validate', v.errors.slice(0, 10));
   return {

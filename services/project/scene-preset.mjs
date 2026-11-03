@@ -10,7 +10,8 @@
 // transparent colour layer that keeps the geometry and is listed in `unbound`; no device is created or guessed.
 // Rule targets (cam-pop) are returned as layer ids in `rules`; the project model has no rule storage.
 
-import { newId, validateProject } from './index.mjs';
+import path from 'node:path';
+import { IMAGE_EXT, newId, validateProject } from './index.mjs';
 
 const ROLE_KIND = { 'game-capture': ['capture-card', 'camera'], facecam: ['camera'] }; // the Meld importer files every video device as 'camera'
 const PLACEHOLDER = /\{([a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+)\}/g;
@@ -59,9 +60,17 @@ export function loadScenePreset(project, preset, opts = {}) {
   const missing = new Set();
   const resolvedQuery = new Map();
   const resolvedFile = new Map();
+  // A brand asset file that is not in the profile yet does not block the scene (D166): the layer becomes a transparent
+  // placeholder holding its geometry, like an unbound role, and its key is reported in `missingAssets`.
+  const missingAssets = new Set();
   for (const l of P.layers) {
     if (typeof l.query === 'string') resolvedQuery.set(l.key, resolveString(l.query, profile, missing, true));
-    if (l.file) resolvedFile.set(l.key, { base: l.file.base, rel: resolveString(l.file.rel, profile, missing, false) });
+    if (l.file) {
+      const own = new Set();
+      const rel = resolveString(l.file.rel, profile, own, false);
+      if (own.size) own.forEach((k) => missingAssets.add(k));
+      else resolvedFile.set(l.key, { base: l.file.base, rel });
+    }
   }
   if (missing.size) throw new ScenePresetError(`profile is missing placeholder key(s): ${[...missing].sort().join(', ')}`);
 
@@ -118,7 +127,11 @@ export function loadScenePreset(project, preset, opts = {}) {
       const q = resolvedQuery.get(l.key);
       if (q) source.query = q;
     } else if (l.type === 'image') {
-      type = 'image'; source = { file: resolvedFile.get(l.key) };
+      // A brand asset may be a still or an animation (the Meld wordmark is a looping mp4): the profile file decides.
+      const file = resolvedFile.get(l.key);
+      if (!file) { type = 'color'; source = { color: '#00000000' }; }
+      else if (IMAGE_EXT.has(path.extname(file.rel).toLowerCase())) { type = 'image'; source = { file }; }
+      else { type = 'media'; source = { file, loop: true }; }
     } else if (l.type === 'color') {
       type = 'color'; source = { color: l.color };
     } else throw new ScenePresetError(`layer "${l.key}": unknown type "${l.type}"`);
@@ -136,5 +149,5 @@ export function loadScenePreset(project, preset, opts = {}) {
 
   const v = validateProject(out);
   if (!v.ok) throw new ScenePresetError('result does not validate', v.errors.slice(0, 10));
-  return { project: out, sceneId, layerIds, rules, unbound, addedOverlays };
+  return { project: out, sceneId, layerIds, rules, unbound, missingAssets: [...missingAssets].sort(), addedOverlays };
 }

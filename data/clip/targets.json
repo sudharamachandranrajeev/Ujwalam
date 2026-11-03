@@ -1,0 +1,49 @@
+{
+  "$comment": "Short-form upload targets for F6 clip validation. Values come from agent knowledge (source 'agent-knowledge-2026-11-03'), every entry is unverified until checked against the platform's official page. Safe zones are pixels on a 1080x1920 frame kept clear of platform UI (captions go inside the intersection of all targets). Never hardcode these in code.",
+  "version": "0.1.0",
+  "frame": { "width": 1080, "height": 1920 },
+  "targets": [
+    {
+      "id": "youtube-shorts",
+      "name": "YouTube Shorts",
+      "videoCodecs": ["h264"],
+      "audioCodecs": ["aac"],
+      "maxFps": 60,
+      "minDurationSec": 1,
+      "maxDurationSec": 180,
+      "maxFileBytes": null,
+      "safe": { "top": 160, "bottom": 400, "left": 60, "right": 140 },
+      "source": "agent-knowledge-2026-11-03",
+      "checked": "2026-11-03",
+      "unverified": true
+    },
+    {
+      "id": "tiktok",
+      "name": "TikTok",
+      "videoCodecs": ["h264"],
+      "audioCodecs": ["aac"],
+      "maxFps": 60,
+      "minDurationSec": 3,
+      "maxDurationSec": 600,
+      "maxFileBytes": null,
+      "safe": { "top": 160, "bottom": 480, "left": 60, "right": 140 },
+      "source": "agent-knowledge-2026-11-03",
+      "checked": "2026-11-03",
+      "unverified": true
+    },
+    {
+      "id": "instagram-reels",
+      "name": "Instagram Reels",
+      "videoCodecs": ["h264"],
+      "audioCodecs": ["aac"],
+      "maxFps": 60,
+      "minDurationSec": 3,
+      "maxDurationSec": 180,
+      "maxFileBytes": null,
+      "safe": { "top": 270, "bottom": 670, "left": 65, "right": 65 },
+      "source": "agent-knowledge-2026-11-03",
+      "checked": "2026-11-03",
+      "unverified": true
+    }
+  ]
+}
