@@ -33,7 +33,7 @@ What is different from the 3 Nov tests (`docs/evidence/2026-11-03-a0-first-real-
 5. Flags on the control page: leave everything but what you want off. `clip-pipeline` and `posting` stay off. `test-broadcast` goes on at go-live (it can be switched while live).
 6. Dry run with no platform contact: `npm run alpha -- --allow-devices --mock --rebuild-alpha`. `--rebuild-alpha` is needed once so the project gets the new "Test broadcast" layer (the old project moves to `projects/_old/`). Check the H and V previews (game, facecam, overlays). Turn the `test-broadcast` flag on: the banner appears within 5 s on H and V, nothing cut off on V; turn it off again: it leaves within 5 s. Then Ctrl-C.
 7. Bots: with Streamer.bot and Speaker.bot running, `node tools/bot-clash-check.mjs` prints `CLASHES: none` and exits 0. Then go through the manual items in `docs/tests/2026-11-04-A0-S1-bot-clash-checklist.md` (hotkeys, Speaker.bot audio not captured twice, one alert per event). Optional: the `bot-manager` flag shows the Bots card (start and stop the bots from the control page).
-8. Streamer.bot test action set up and tried once by hand (`docs/tests/2026-11-04-A0-S1-streamerbot-test-action.md`), timer still off.
+8. Streamer.bot test action set up (chat steps and timer; the Speaker.bot step is skipped for this stream, user 2026-11-03) and tried once by hand (`docs/tests/2026-11-04-A0-S1-streamerbot-test-action.md`), timer still off.
 9. Chat reaches Ujwalam: during the dry run, a chat message shows in the chat list overlay (the event core now connects to Streamer.bot on 8093, D198).
 
 ## Start (the day, about 10 minutes before going live)

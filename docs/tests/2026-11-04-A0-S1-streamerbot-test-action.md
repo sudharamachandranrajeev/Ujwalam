@@ -17,7 +17,8 @@ usual layout and are UNVERIFIED on your version: if a name differs, pick the clo
    1. Twitch: **Chat > Send Message to Channel**, text = the chat question. Leave "send as bot" as you normally use it.
    2. YouTube: **Send Message to Broadcast** (all broadcasts), text = the chat question.
    3. Kick: **Kick > Send Message** (or the Kick chat sub-action your version has), text = the chat question.
-   4. Speaker.bot speak step. On Streamer.bot 0.2.8 there is no "Integrations > Speaker.bot > Speak" entry (user,
+   4. SKIPPED for the first real stream (user, 2026-11-03): no spoken announcement; the on-screen banner and the chat
+      question carry the test notice. For later streams: Speaker.bot speak step. On Streamer.bot 0.2.8 there is no "Integrations > Speaker.bot > Speak" entry (user,
       2026-11-03). Copy the Speaker.bot step from an action that already speaks (the user's TTS action has one:
       right-click it, **Copy**; in this action, right-click the Sub-Actions list, **Paste**), then change its message to
       the spoken announcement.
