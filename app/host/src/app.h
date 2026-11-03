@@ -20,6 +20,7 @@ struct App {
 	std::string data_dir, recordings_dir, discovery_path, log_path;
 	std::wstring exe_path;
 	bool allow_devices = false, allow_browser = false;
+	bool allow_live = false; // --allow-live: real (non-loopback) stream targets (A0)
 	uint32_t adapter = 0;
 
 	std::unique_ptr<Studio> studio;

@@ -146,5 +146,16 @@
     "source": "https://dev.twitch.tv/docs/api/reference/#send-chat-message",
     "checked": "2026-10-28",
     "note": "Send Chat Message: message limited to 500 characters (official reference)."
+  },
+  "ingest": {
+    "value": {
+      "serverFrom": "keychain",
+      "servers": [],
+      "urlFormat": "rtmp://<ingest-server>/app"
+    },
+    "severity": "warning",
+    "source": "https://dev.twitch.tv/docs/video-broadcast/",
+    "checked": "2026-11-03",
+    "note": "Page: URL format \"rtmp://<ingest-server>/app/<stream-key>\"; the server list comes from the Get Ingest Server API. The user picks the server and stores its URL in Credential Manager (serverRef), so no server is hardcoded here."
   }
 }

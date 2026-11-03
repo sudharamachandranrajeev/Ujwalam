@@ -155,5 +155,29 @@
     "source": "legacy-observed",
     "checked": "2026-10-28",
     "note": "UNVERIFIED. No official source: the liveChatMessages docs (checked 2026-10-28) state no messageText limit. 200 comes from the legacy Streamer.bot README (\"YouTube live chat cuts off at 200\"), an observation, not documentation."
+  },
+  "ingest": {
+    "value": {
+      "serverFrom": "data",
+      "servers": [
+        {
+          "id": "primary-rtmps",
+          "url": "rtmps://a.rtmps.youtube.com:443/live2",
+          "proto": "rtmps",
+          "note": "Primary ingest, RTMPS on 443."
+        },
+        {
+          "id": "primary-rtmp",
+          "url": "rtmp://a.rtmp.youtube.com/live2",
+          "proto": "rtmp",
+          "note": "Legacy plain RTMP."
+        }
+      ]
+    },
+    "severity": "warning",
+    "unverified": true,
+    "source": "obs-studio 32.1.2 rtmp-services services.json (package version 285), service \"YouTube - RTMPS\"",
+    "checked": "2026-11-03",
+    "note": "UNVERIFIED against an official page: https://developers.google.com/youtube/v3/live/guides/rtmps-ingestion (checked 2026-11-03) says the RTMPS URL comes from the API (cdn.ingestionInfo.rtmpsIngestionAddress) and prints no literal URL. Compare with YouTube Studio > Go live > Stream settings > Stream URL before the first private test. The backup ingest (b.rtmps.youtube.com, with ?backup=1) is not modelled: the host refuses URLs with a query."
   }
 }

@@ -156,6 +156,7 @@ json::Value host_info(App &a)
 	json::Value flags = json::Value::object();
 	flags.set("allowDevices", a.allow_devices);
 	flags.set("allowBrowser", a.allow_browser);
+	flags.set("allowLive", a.allow_live);
 	r.set("flags", std::move(flags));
 	json::Value dis = json::Value::array();
 	for (auto &m : obsrt::disabled_modules())

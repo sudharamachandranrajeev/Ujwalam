@@ -231,9 +231,14 @@ check('audio encoded once (host log: one AAC encoder, no per-sink AAC)', aacInit
 const MAX_LAG_PCT = 1.0;
 const encLag = [...hostLogText.matchAll(/Video stopped, number of skipped frames due to encoding lag: (\d+)\/(\d+) \(([\d.]+)%\)/g)].map((m) => ({ skipped: +m[1], total: +m[2], pct: +m[3] }));
 const renderLag = [...hostLogText.matchAll(/Output 'ujw:out:([^']+)': Number of lagged frames due to rendering lag\/stalls: (\d+) \(([\d.]+)%\)/g)].map((m) => ({ sink: m[1], frames: +m[2], pct: +m[3] }));
-result.lag = { maxPct: MAX_LAG_PCT, encode: encLag, render: renderLag };
-check(`encoding keeps up: skipped frames due to encoding lag <= ${MAX_LAG_PCT}% on every video mix`, encLag.length > 0 && encLag.every((x) => x.pct <= MAX_LAG_PCT), encLag.map((x) => `${x.skipped}/${x.total} (${x.pct}%)`).join(', ') || 'no summary line in the host log');
-check(`rendering keeps up: lagged frames <= ${MAX_LAG_PCT}% on every output`, renderLag.length > 0 && renderLag.every((x) => x.pct <= MAX_LAG_PCT), renderLag.map((x) => `${x.sink} ${x.frames} (${x.pct}%)`).join(', ') || 'no summary line in the host log');
+// libobs prints these two lines only when the count is non-zero (obs 32.1.2 media-io/video-io.c `if (skipped)`,
+// obs-output.c `if (drawn && lagged)`), so a missing line means 0. To tell "0" from "never stopped", every sink must
+// have logged its stop counters ("Total frames output"), which libobs prints unconditionally.
+const stopped = new Set([...hostLogText.matchAll(/Output 'ujw:out:([^']+)': Total frames output: \d+/g)].map((m) => m[1]));
+const notStopped = params.sinks.map((s) => s.id).filter((id) => !stopped.has(id));
+result.lag = { maxPct: MAX_LAG_PCT, encode: encLag, render: renderLag, stopCounters: [...stopped] };
+check(`encoding keeps up: skipped frames due to encoding lag <= ${MAX_LAG_PCT}% on every video mix`, notStopped.length === 0 && encLag.every((x) => x.pct <= MAX_LAG_PCT), notStopped.length ? `no stop counters for ${notStopped.join(', ')}` : encLag.map((x) => `${x.skipped}/${x.total} (${x.pct}%)`).join(', ') || '0 (libobs logs no line when nothing was skipped)');
+check(`rendering keeps up: lagged frames <= ${MAX_LAG_PCT}% on every output`, notStopped.length === 0 && renderLag.every((x) => x.pct <= MAX_LAG_PCT), notStopped.length ? `no stop counters for ${notStopped.join(', ')}` : renderLag.map((x) => `${x.sink} ${x.frames} (${x.pct}%)`).join(', ') || '0 on every output (libobs logs no line when nothing lagged)');
 
 // ---- ffprobe assertions -------------------------------------------------------------------------------------
 const rungById = new Map(params.rungs.map((r) => [r.id, r]));

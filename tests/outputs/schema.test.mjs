@@ -45,12 +45,18 @@ for (const f of platformFiles) {
     assert.deepEqual(bad, []);
   });
 
-  test(`platform ${name}: sources are official https URLs or "ujwalam"`, () => {
-    const srcs = [];
-    JSON.stringify(readJson(f), (k, v) => { if (k === 'source') srcs.push(v); return v; });
-    for (const s of srcs) {
-      assert.ok(s === 'ujwalam' || s === 'user-reference-2026-10-27' || s === 'legacy-observed' || /^https:\/\/(support\.google\.com|blog\.twitch\.tv|dev\.twitch\.tv|help\.twitch\.tv|help\.kick\.com|docs\.kick\.com)\//.test(s), s);
-    }
+  // A0 (2026-11-03): a source that is not an official page is allowed only on a value marked unverified:true
+  // (e.g. the YouTube ingest URL, taken from OBS services.json because the official page prints none).
+  test(`platform ${name}: sources are official https URLs or "ujwalam" (others only on unverified values)`, () => {
+    const official = (s) => s === 'ujwalam' || s === 'user-reference-2026-10-27' || s === 'legacy-observed' || /^https:\/\/(support\.google\.com|blog\.twitch\.tv|dev\.twitch\.tv|help\.twitch\.tv|help\.kick\.com|docs\.kick\.com)\//.test(s);
+    const bad = [];
+    const walk = (o, p) => {
+      if (!o || typeof o !== 'object') return;
+      if (typeof o.source === 'string' && !official(o.source) && o.unverified !== true) bad.push(`${p}: ${o.source}`);
+      for (const [k, v] of Object.entries(o)) walk(v, `${p}.${k}`);
+    };
+    walk(readJson(f), name);
+    assert.deepEqual(bad, []);
   });
 }
 
@@ -88,11 +94,28 @@ test('schema: rejects unknown codec and bad proto', () => {
   assert.equal(configSchema(b), false);
 });
 
-test('presets and platform files contain no stream keys or ingest URLs', () => {
+// A0 (2026-11-03): platform files may carry public ingest URLs, but only as ingest.value.servers[].url and
+// ingest.value.urlFormat (no query, no credentials). Presets and every other part of a platform file stay URL-free.
+const URL_RE = /(rtmps?|srt):\/\//i;
+test('presets and platform files contain no stream keys; ingest URLs only under platform ingest', () => {
   for (const f of [...presetFiles, ...platformFiles]) {
     const t = readFileSync(f, 'utf8');
-    assert.ok(!/(rtmps?|srt):\/\//i.test(t), f);
     assert.ok(!/stream[_-]?key"\s*:/i.test(t), f);
+    const j = JSON.parse(t);
+    const ingest = j.ingest;
+    delete j.ingest;
+    assert.ok(!URL_RE.test(JSON.stringify(j)), `${f}: URL outside ingest`);
+    if (!ingest) continue;
+    assert.ok(platformFiles.includes(f), `${f}: ingest only in platform files`);
+    const { servers = [], urlFormat, ...rest } = ingest.value;
+    assert.ok(!URL_RE.test(JSON.stringify(rest)), `${f}: ingest URL outside servers/urlFormat`);
+    for (const u of [...servers.map((s) => s.url), ...(urlFormat ? [urlFormat] : [])]) {
+      assert.ok(!/[?@]/.test(u), `${f}: ingest URL with query or credentials: ${u}`);
+    }
+    for (const s of servers) {
+      const { url, ...meta } = s;
+      assert.ok(!URL_RE.test(JSON.stringify(meta)), `${f}: URL in server ${s.id} outside url`);
+    }
   }
 });
 

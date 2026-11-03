@@ -1,0 +1,15 @@
+{
+  "$comment": "Alpha 0 live plan (app/host/lib/outputs-plan.mjs planFile with allowLive; the host must run with --allow-live). config = the O0 preset data/outputs/presets/youtube-1440p60.json unchanged: YouTube H 2560x1440@60 direct (yt-h), YouTube V 1080x1920 (vert), and the Multi rung reencode-tk (1920x1080@60 H.264 CBR 6000 kbps, GPU-scaled from the H canvas) shared by twitch and kick. extraSinks adds the local recording on the yt-h rung (no extra encoder), .mkv (crash-safe). Targets carry Credential Manager target names only (keyRef, serverRef), never a key or a per-account URL. YouTube's ingest URL comes from data/platforms/youtube.json (ingest, UNVERIFIED until compared with YouTube Studio); Twitch and Kick servers are the user's choice / per account and live in Credential Manager. Key setup: docs/evidence/2026-11-03-a0-real-outputs.md.",
+  "config": "data/outputs/presets/youtube-1440p60.json",
+  "extraSinks": [
+    { "id": "record", "platform": "local", "encoder": "yt-h", "proto": "file", "priority": 5 }
+  ],
+  "targets": {
+    "youtube-h": { "transport": "rtmps", "server": "primary-rtmps", "keyRef": "Ujwalam/stream/youtube-h" },
+    "youtube-v": { "transport": "rtmps", "server": "primary-rtmps", "keyRef": "Ujwalam/stream/youtube-v" },
+    "twitch": { "transport": "rtmp", "serverRef": "Ujwalam/stream/twitch-server", "keyRef": "Ujwalam/stream/twitch" },
+    "kick": { "transport": "rtmps", "serverRef": "Ujwalam/stream/kick-server", "keyRef": "Ujwalam/stream/kick" },
+    "record": { "transport": "file", "name": "alpha.mkv" }
+  },
+  "policy": { "retryBaseMs": 2000, "retryCapMs": 30000, "retryMax": 0, "retryResetLiveMs": 30000 }
+}

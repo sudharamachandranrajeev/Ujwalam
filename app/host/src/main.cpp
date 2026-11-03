@@ -6,7 +6,7 @@
 // Usage:
 //   ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>] [--recordings <dir>]
 //                [--port <n>] [--project <file.json>] [--outputs <configure-params.json>] [--preview h,v]
-//                [--adapter <n>] [--allow-devices] [--allow-browser]
+//                [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]
 //                [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]
 //                 [--overlay-feed-port <n>] [--overlay-events-url http://127.0.0.1:<p>/<path>]]
 // With --allow-browser and --overlay-root the host supervises the overlay server child (overlay.h): static pages
@@ -120,7 +120,7 @@ void usage()
 {
 	fprintf(stderr, "usage: ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>]\n"
 			"         [--recordings <dir>] [--port <n>] [--project <file.json>] [--outputs <file.json>]\n"
-			"         [--preview h,v] [--adapter <n>] [--allow-devices] [--allow-browser]\n"
+			"         [--preview h,v] [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]\n"
 			"         [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]\n"
 			"          [--overlay-feed-port <n>] [--overlay-events-url <url>]]\n");
 }
@@ -172,6 +172,8 @@ int wmain(int argc, wchar_t **wargv)
 			app.allow_devices = true;
 		else if (a == "--allow-browser")
 			app.allow_browser = true;
+		else if (a == "--allow-live") // A0: real stream targets (outputs.h); never used by CI
+			app.allow_live = true;
 		else if (a == "--overlay-root")
 			next(ov.root);
 		else if (a == "--overlay-script")
@@ -343,7 +345,8 @@ int wmain(int argc, wchar_t **wargv)
 		f.allow_devices = app.allow_devices;
 		f.allow_browser = app.allow_browser;
 		app.studio = std::make_unique<Studio>(f);
-		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir);
+		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir, app.allow_live);
+		hlog::info("real stream targets %s", app.allow_live ? "ALLOWED (--allow-live)" : "off (loopback only)");
 		app.previews = std::make_unique<Previews>();
 
 		json::Value project;

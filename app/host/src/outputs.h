@@ -7,9 +7,14 @@
 // encoder. The graph arrives already resolved and validated against data/platforms/*.json by the caller
 // (app/host/lib/outputs-plan.mjs uses services/outputs/validate.mjs); the host holds no platform limits.
 //
-// Delivery targets are LOOPBACK ONLY in this build: the host builds every URL itself from a port number, always
-// 127.0.0.1 (rtmp://127.0.0.1:<port>/<app>/<stream>, srt://127.0.0.1:<port>?mode=caller), and file sinks write
-// only inside the recordings dir. There is no field that takes a remote URL or a stream key.
+// Delivery targets:
+//   loopback (default): the host builds every URL itself from a port number, always 127.0.0.1
+//     (rtmp://127.0.0.1:<port>/<app>/<stream | key from keyRef>, srt://127.0.0.1:<port>?mode=caller).
+//   real (A0): { transport: rtmp|rtmps, url | urlRef, keyRef }. Refused (rpc FORBIDDEN) unless the host was started
+//     with --allow-live. The url comes from data/platforms ingest data via the plan; urlRef/keyRef name Windows
+//     Credential Manager targets (^Ujwalam/stream/[a-z0-9-]{1,32}$) the host reads in-process (stream_keys.h).
+//     No field ever takes a stream key; outputs.status shows keyRef and keyPresent only.
+//   file: only inside the recordings dir; .mkv unless the target sets unsafeContainer: true (crash safety).
 //
 // Per sink: libobs keeps a per-output packet buffer; the drop policy is explicit (rtmp drop_threshold_ms /
 // pframe_drop_threshold_ms). Reconnect is owned by the host supervisor (libobs reconnect is off): exponential
@@ -32,7 +37,7 @@ class Studio;
 
 class Outputs {
 public:
-	Outputs(Studio &studio, std::string recordings_dir);
+	Outputs(Studio &studio, std::string recordings_dir, bool allow_live = false);
 	~Outputs();
 
 	json::Value configure(const json::Value &params); // refused while any sink is active
@@ -54,7 +59,9 @@ public:
 	bool recording() const; // any file sink live
 	void totals(uint64_t &frames, uint64_t &dropped) const;
 
-	static void register_loopback_service(); // call once after module load
+	static void register_loopback_service(); // call once after module load (registers ujwalam_loopback + ujwalam_live)
+	static bool valid_live_url(const std::string &url, const std::string &transport);
+	bool allow_live() const { return allow_live_; }
 
 	struct Sink; // internal
 
@@ -78,6 +85,7 @@ private:
 
 	Studio &studio_;
 	std::string rec_dir_;
+	bool allow_live_ = false; // --allow-live: real targets may be configured and started
 	Policy policy_;
 	std::mutex op_m_;  // serialises libobs output start/stop/configure; never taken in signal handlers
 	mutable std::mutex m_; // sink state; taken in signal handlers; never held across obs_output_start/stop/release

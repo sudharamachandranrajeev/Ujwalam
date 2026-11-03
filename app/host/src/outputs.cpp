@@ -8,9 +8,10 @@
 //                  "options": { "preset", "tune", "profile", "bf", "multipass", "lookahead" } } ],
 //     "audio": { "bitrate" (kbps), "sampleRate": 48000 },
 //     "sinks": [ { "id", "rung", "platform", "proto", "priority",
-//                  "target": { "transport": "rtmp", "port", "app", "stream" }
+//                  "target": { "transport": "rtmp", "port", "app", "stream" | "keyRef" }          (loopback)
+//                          | { "transport": "rtmp"|"rtmps", "url" | "urlRef", "keyRef" }      (real; --allow-live)
 //                          | { "transport": "srt", "port", "latencyMs" }
-//                          | { "transport": "file", "name": "<base>.mkv|.mp4|.flv|.ts" } } ],
+//                          | { "transport": "file", "name": "<base>.mkv", "unsafeContainer"?: true for .mp4|.flv|.ts } } ],
 //     "policy": { "dropThresholdMs", "pframeDropThresholdMs", "retryBaseMs", "retryCapMs", "retryMax",
 //                 "retryResetLiveMs" } }
 //
@@ -22,6 +23,7 @@
 #include "obs_runtime.h"
 #include "rpc_server.h"
 #include "stats.h"
+#include "stream_keys.h"
 #include "studio.h"
 
 #include <util/platform.h>
@@ -29,8 +31,10 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <ctime>
 #include <filesystem>
 #include <random>
@@ -67,8 +71,12 @@ struct Outputs::Sink {
 	Outputs *owner = nullptr;
 	std::string id, kind, platform, proto, rung_id, transport;
 	int priority = 0;
-	std::string url;          // network sinks: always 127.0.0.1, built here
+	std::string url;          // loopback: 127.0.0.1, built here; live: the validated ingest URL (public data)
 	std::string stream_name;  // rtmp stream path segment (loopback only; not a secret)
+	bool live_target = false; // a real ingest (--allow-live only)
+	std::string key_ref;      // Credential Manager target holding the stream key (never the key)
+	std::string url_ref;      // Credential Manager target holding a per-account ingest URL (live only)
+	bool key_present = false, url_present = false; // last presence check (configure, each start attempt)
 	std::string file_base, file_ext, path;
 	Rung *rung = nullptr;
 	obs_output_t *out = nullptr;
@@ -178,68 +186,135 @@ std::string stamp()
 	return b;
 }
 
-// ---- loopback service ------------------------------------------------------------------------------------
-// A private libobs service that only ever hands out the URL the host built (127.0.0.1). rtmp-services (which
-// fetches from obsproject.com) stays disabled.
-struct LoopSvc {
-	std::string protocol, url, key;
+// ---- delivery services -----------------------------------------------------------------------------------
+// Private libobs services; rtmp-services (which fetches from obsproject.com) stays disabled.
+//   ujwalam_loopback: only ever hands out the URL the host built (127.0.0.1).
+//   ujwalam_live:     a real ingest (rtmp:// or rtmps://), only when the host runs with --allow-live (A0).
+// A stream key never enters obs_data settings: the service holds only the Credential Manager target name (keyRef,
+// and urlRef for a per-account ingest URL). rtmp_output asks for the connect info on its connect thread
+// (rtmp-stream.c init_connect); the service reads the credential into its own fixed buffer then, rtmp_output copies
+// it, and the host wipes the buffer when the attempt ends (start or stop signal) or fails to start (svc_wipe).
+std::atomic<bool> g_allow_live{false};
+
+struct Svc {
+	bool live = false;
+	std::string protocol, url, stream, key_ref, url_ref;
+	std::mutex m;
+	char key[streamkeys::kCap] = {};
+	char rurl[streamkeys::kCap] = {};
 };
 
-const char *svc_name(void *)
+void svc_wipe(Svc *s)
+{
+	if (!s)
+		return;
+	std::lock_guard<std::mutex> l(s->m);
+	streamkeys::wipe(s->key, sizeof(s->key));
+	streamkeys::wipe(s->rurl, sizeof(s->rurl));
+}
+
+const char *svc_name_loop(void *)
 {
 	return "Ujwalam loopback";
 }
 
-void *svc_create(obs_data_t *settings, obs_service_t *)
+const char *svc_name_live(void *)
 {
-	auto *s = new LoopSvc;
+	return "Ujwalam live";
+}
+
+void svc_apply(Svc *s, obs_data_t *settings)
+{
 	s->protocol = obs_data_get_string(settings, "protocol");
 	s->url = obs_data_get_string(settings, "server");
-	s->key = obs_data_get_string(settings, "key");
+	s->stream = obs_data_get_string(settings, "stream");
+	s->key_ref = obs_data_get_string(settings, "key_ref");
+	s->url_ref = obs_data_get_string(settings, "url_ref");
+}
+
+void *svc_create_loop(obs_data_t *settings, obs_service_t *)
+{
+	auto *s = new Svc;
+	svc_apply(s, settings);
+	return s;
+}
+
+void *svc_create_live(obs_data_t *settings, obs_service_t *)
+{
+	auto *s = new Svc;
+	s->live = true;
+	svc_apply(s, settings);
 	return s;
 }
 
 void svc_destroy(void *d)
 {
-	delete static_cast<LoopSvc *>(d);
+	auto *s = static_cast<Svc *>(d);
+	svc_wipe(s);
+	delete s;
 }
 
 void svc_update(void *d, obs_data_t *settings)
 {
-	auto *s = static_cast<LoopSvc *>(d);
-	s->protocol = obs_data_get_string(settings, "protocol");
-	s->url = obs_data_get_string(settings, "server");
-	s->key = obs_data_get_string(settings, "key");
+	auto *s = static_cast<Svc *>(d);
+	std::lock_guard<std::mutex> l(s->m);
+	svc_apply(s, settings);
 }
 
 const char *svc_protocol(void *d)
 {
-	return static_cast<LoopSvc *>(d)->protocol.c_str();
+	return static_cast<Svc *>(d)->protocol.c_str();
 }
 
 const char *svc_output_type(void *d)
 {
-	return static_cast<LoopSvc *>(d)->protocol == "SRT" ? "ffmpeg_mpegts_muxer" : "rtmp_output";
+	return static_cast<Svc *>(d)->protocol == "SRT" ? "ffmpeg_mpegts_muxer" : "rtmp_output";
 }
 
 const char *svc_connect_info(void *d, uint32_t type)
 {
-	auto *s = static_cast<LoopSvc *>(d);
+	auto *s = static_cast<Svc *>(d);
+	std::lock_guard<std::mutex> l(s->m);
+	size_t len = 0;
 	switch ((enum obs_service_connect_info)type) {
 	case OBS_SERVICE_CONNECT_INFO_SERVER_URL:
-		return s->url.c_str();
+		if (s->url_ref.empty())
+			return s->url.c_str();
+		// Per-account ingest URL (Kick): read now, checked again here (it is user data).
+		if (streamkeys::read(s->url_ref, s->rurl, sizeof(s->rurl), len) != streamkeys::Read::Ok ||
+		    !Outputs::valid_live_url(s->rurl, s->protocol == "RTMPS" ? "rtmps" : "rtmp")) {
+			streamkeys::wipe(s->rurl, sizeof(s->rurl));
+			return ""; // rtmp_output: "URL is empty", OBS_OUTPUT_BAD_PATH
+		}
+		return s->rurl;
 	case OBS_SERVICE_CONNECT_INFO_STREAM_KEY: // rtmp stream path; for SRT this is the stream id (empty)
-		return s->protocol == "SRT" ? "" : s->key.c_str();
+		if (s->protocol == "SRT")
+			return "";
+		if (s->key_ref.empty())
+			return s->stream.c_str(); // loopback stream name (not a secret)
+		if (streamkeys::read(s->key_ref, s->key, sizeof(s->key), len) != streamkeys::Read::Ok)
+			streamkeys::wipe(s->key, sizeof(s->key));
+		return s->key;
 	default:
 		return nullptr;
 	}
 }
 
-bool svc_can_connect(void *d)
+bool svc_can_connect_loop(void *d)
 {
-	auto *s = static_cast<LoopSvc *>(d);
+	auto *s = static_cast<Svc *>(d);
 	// Belt and braces: whatever the settings say, only 127.0.0.1 URLs connect.
 	return s->url.rfind("rtmp://127.0.0.1:", 0) == 0 || s->url.rfind("srt://127.0.0.1:", 0) == 0;
+}
+
+bool svc_can_connect_live(void *d)
+{
+	auto *s = static_cast<Svc *>(d);
+	if (!g_allow_live.load() || s->key_ref.empty())
+		return false;
+	if (!s->url_ref.empty())
+		return true; // read and checked on the connect thread
+	return Outputs::valid_live_url(s->url, s->protocol == "RTMPS" ? "rtmps" : "rtmp");
 }
 
 const char *video_codecs[] = {"h264", "hevc", "av1", nullptr};
@@ -261,17 +336,60 @@ void Outputs::register_loopback_service()
 {
 	struct obs_service_info si = {};
 	si.id = "ujwalam_loopback";
-	si.get_name = svc_name;
-	si.create = svc_create;
+	si.get_name = svc_name_loop;
+	si.create = svc_create_loop;
 	si.destroy = svc_destroy;
 	si.update = svc_update;
 	si.get_protocol = svc_protocol;
 	si.get_output_type = svc_output_type;
 	si.get_connect_info = svc_connect_info;
-	si.can_try_to_connect = svc_can_connect;
+	si.can_try_to_connect = svc_can_connect_loop;
 	si.get_supported_video_codecs = svc_video_codecs;
 	si.get_supported_audio_codecs = svc_audio_codecs;
 	obs_register_service(&si);
+
+	struct obs_service_info li = si;
+	li.id = "ujwalam_live";
+	li.get_name = svc_name_live;
+	li.create = svc_create_live;
+	li.can_try_to_connect = svc_can_connect_live;
+	obs_register_service(&li);
+}
+
+// rtmp[s]://<dns name with a dot, not an IP literal, not localhost>[:port][/path] -- no userinfo, query or fragment,
+// so a key can never ride in the URL. The scheme must equal the target's transport.
+bool Outputs::valid_live_url(const std::string &url, const std::string &transport)
+{
+	if (url.size() > 256)
+		return false;
+	static const std::regex re("^(rtmps?)://(([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\\.)+([a-z][a-z0-9-]{0,61}[a-z0-9]))"
+				   "(:([0-9]{1,5}))?((/[A-Za-z0-9._~-]+)*/?)$",
+				   std::regex::icase);
+	std::smatch m;
+	if (!std::regex_match(url, m, re))
+		return false;
+	std::string scheme = m[1];
+	for (char &c : scheme)
+		c = (char)tolower((unsigned char)c);
+	if (scheme != transport)
+		return false;
+	if (m[7].matched) {
+		long p = std::stol(m[7].str());
+		if (p < 1 || p > 65535)
+			return false;
+	}
+	return true;
+}
+
+// A per-account ingest URL stored in Credential Manager: present and well-formed (read into a scratch buffer, wiped).
+static bool check_url_ref(const std::string &ref, const std::string &transport)
+{
+	char buf[streamkeys::kCap];
+	size_t len = 0;
+	bool ok = streamkeys::read(ref, buf, sizeof(buf), len) == streamkeys::Read::Ok &&
+		  Outputs::valid_live_url(std::string(buf, len), transport);
+	streamkeys::wipe(buf, sizeof(buf));
+	return ok;
 }
 
 // ---- signals ---------------------------------------------------------------------------------------------
@@ -290,8 +408,16 @@ void on_sink_stop(void *data, calldata_t *cd)
 	s->owner->on_stop(*s, code, err);
 }
 
+// The connect attempt is over (rtmp_output copied the connect info before connecting): wipe the service's buffers.
+static void wipe_sink_secrets(Outputs::Sink &s)
+{
+	if (s.svc)
+		svc_wipe(static_cast<Svc *>(obs_obj_get_data(s.svc)));
+}
+
 void Outputs::on_start(Sink &s)
 {
+	wipe_sink_secrets(s);
 	std::lock_guard<std::mutex> l(m_);
 	int64_t now = now_ms();
 	s.state = SinkState::Live;
@@ -306,8 +432,25 @@ void Outputs::on_start(Sink &s)
 	sup_cv_.notify_all();
 }
 
+// libobs's last_error can carry text a server sent back. If it ever contains the stream key, it is withheld from
+// outputs.status (the key is read into a scratch buffer for the comparison and wiped).
+static bool error_has_key(const Outputs::Sink &s, const char *err)
+{
+	if (!err || !*err || s.key_ref.empty())
+		return false;
+	char buf[streamkeys::kCap];
+	size_t len = 0;
+	bool hit = streamkeys::read(s.key_ref, buf, sizeof(buf), len) == streamkeys::Read::Ok && len >= 4 &&
+		   strstr(err, buf) != nullptr;
+	streamkeys::wipe(buf, sizeof(buf));
+	return hit;
+}
+
 void Outputs::on_stop(Sink &s, int code, const char *err)
 {
+	wipe_sink_secrets(s);
+	if (error_has_key(s, err))
+		err = "output error text withheld (it contained the stream key)";
 	std::lock_guard<std::mutex> l(m_);
 	int64_t now = now_ms();
 	int64_t live_for = s.state == SinkState::Live && s.live_since_ms ? now - s.live_since_ms : 0;
@@ -358,8 +501,10 @@ void Outputs::schedule_retry_locked(Sink &s, int64_t now)
 
 // ---- lifecycle -------------------------------------------------------------------------------------------
 
-Outputs::Outputs(Studio &studio, std::string recordings_dir) : studio_(studio), rec_dir_(std::move(recordings_dir))
+Outputs::Outputs(Studio &studio, std::string recordings_dir, bool allow_live)
+	: studio_(studio), rec_dir_(std::move(recordings_dir)), allow_live_(allow_live)
 {
+	g_allow_live = allow_live;
 	sup_ = std::thread([this] { supervise(); });
 }
 
@@ -744,14 +889,55 @@ json::Value Outputs::build(const json::Value &params)
 		const json::Value *t = sv.find("target");
 		if (!t || !t->is_object())
 			throw Error(rpc::INVALID_PARAMS, what + ": target is required");
-		s.transport = one_of(req_str(*t, "transport", what), {"rtmp", "srt", "file"}, what + " transport");
-		if (s.transport == "rtmp") {
-			only_keys(*t, {"transport", "port", "app", "stream"}, what + " target");
+		s.transport = one_of(req_str(*t, "transport", what), {"rtmp", "rtmps", "srt", "file"}, what + " transport");
+		auto ref_field = [&](const char *k) {
+			std::string v = req_str(*t, k, what, 64);
+			if (!streamkeys::valid_ref(v))
+				throw Error(rpc::INVALID_PARAMS, what + ": " + k + " must match ^Ujwalam/stream/[a-z0-9-]{1,32}$");
+			return v;
+		};
+		bool live_form = t->find("url") || t->find("urlRef");
+		if ((s.transport == "rtmp" || s.transport == "rtmps") && live_form) {
+			// A0 real target: { transport, url | urlRef, keyRef }. The key itself is never a field.
+			only_keys(*t, {"transport", "url", "urlRef", "keyRef"}, what + " target");
+			if (t->find("url") && t->find("urlRef"))
+				throw Error(rpc::INVALID_PARAMS, what + ": give url or urlRef, not both");
+			if (!t->find("keyRef"))
+				throw Error(rpc::INVALID_PARAMS, what + ": a real target needs keyRef (the key is read from the "
+								 "Windows Credential Manager, never passed)");
+			s.key_ref = ref_field("keyRef");
+			if (t->find("url")) {
+				s.url = req_str(*t, "url", what, 256);
+				if (!valid_live_url(s.url, s.transport))
+					throw Error(rpc::INVALID_PARAMS,
+						    what + ": url must be " + s.transport +
+							    "://<dns name>[:port][/path] (no IP, no localhost, no user, query or key)");
+			} else {
+				s.url_ref = ref_field("urlRef");
+			}
+			if (s.proto != s.transport)
+				throw Error(rpc::INVALID_PARAMS, what + ": proto must equal the real target's transport");
+			std::string dedupe = (s.url.empty() ? "ref:" + s.url_ref : s.url) + "#" + s.key_ref;
+			if (!rtmp_paths.insert(dedupe).second)
+				throw Error(rpc::INVALID_PARAMS, what + ": another sink uses the same ingest and key");
+			s.live_target = true;
+			s.kind = "stream";
+		} else if (s.transport == "rtmps") {
+			throw Error(rpc::INVALID_PARAMS, what + ": an rtmps target is a real target (url or urlRef, and keyRef)");
+		} else if (s.transport == "rtmp") {
+			// Loopback: { transport, port, app, stream | keyRef }. keyRef puts the stored key in the stream path
+			// (tests the key path end to end without a real platform).
+			only_keys(*t, {"transport", "port", "app", "stream", "keyRef"}, what + " target");
 			d.port = (int)req_int(*t, "port", 1024, 65535, what);
 			d.app = req_id(*t, "app", what);
-			s.stream_name = req_id(*t, "stream", what);
+			if (t->find("stream") && t->find("keyRef"))
+				throw Error(rpc::INVALID_PARAMS, what + ": give stream or keyRef, not both");
+			if (t->find("keyRef"))
+				s.key_ref = ref_field("keyRef");
+			else
+				s.stream_name = req_id(*t, "stream", what);
 			s.url = "rtmp://127.0.0.1:" + std::to_string(d.port) + "/" + d.app;
-			if (!rtmp_paths.insert(s.url + "/" + s.stream_name).second)
+			if (!rtmp_paths.insert(s.url + "/" + (s.key_ref.empty() ? s.stream_name : "ref:" + s.key_ref)).second)
 				throw Error(rpc::INVALID_PARAMS, what + ": another sink uses the same rtmp target");
 			s.kind = "stream";
 		} else if (s.transport == "srt") {
@@ -762,7 +948,7 @@ json::Value Outputs::build(const json::Value &params)
 				std::to_string((int64_t)d.latency_ms * 1000) + "&pkt_size=1316";
 			s.kind = "stream";
 		} else {
-			only_keys(*t, {"transport", "name"}, what + " target");
+			only_keys(*t, {"transport", "name", "unsafeContainer"}, what + " target");
 			std::string name = req_str(*t, "name", what, 80);
 			static const std::regex fre("^([A-Za-z0-9][A-Za-z0-9_-]{0,63})\\.(mkv|mp4|flv|ts)$");
 			std::smatch m;
@@ -770,6 +956,16 @@ json::Value Outputs::build(const json::Value &params)
 				throw Error(rpc::INVALID_PARAMS, what + ": file name must be <base>.mkv|.mp4|.flv|.ts (no paths)");
 			s.file_base = m[1];
 			s.file_ext = m[2];
+			// A0: recordings are crash-safe by default. An .mp4 cut off by a crash or power loss has no index (moov)
+			// and does not play; .mkv stays playable up to the last written cluster.
+			const json::Value *unsafe = t->find("unsafeContainer");
+			if (unsafe && !unsafe->is_bool())
+				throw Error(rpc::INVALID_PARAMS, what + ": unsafeContainer must be true or false");
+			if (s.file_ext != "mkv" && !(unsafe && unsafe->as_bool()))
+				throw Error(rpc::INVALID_PARAMS,
+					    what + ": ." + s.file_ext +
+						    " is refused for recordings because it is not crash-safe (a file cut off by a crash or "
+						    "power loss may not play); use .mkv, or set target.unsafeContainer: true to accept that");
 			if (!files.insert(s.file_base).second)
 				throw Error(rpc::INVALID_PARAMS, what + ": another sink uses the same file name");
 			s.kind = "record";
@@ -778,10 +974,30 @@ json::Value Outputs::build(const json::Value &params)
 			throw Error(rpc::INVALID_PARAMS, what + ": a file target needs proto \"file\"");
 		if (s.kind == "stream" && s.proto == "file")
 			throw Error(rpc::INVALID_PARAMS, what + ": proto \"file\" needs a file target");
-		if (s.kind == "stream" && s.rung->codec != "h264" && s.transport == "rtmp")
-			throw Error(rpc::INVALID_PARAMS, what + ": loopback rtmp carries h264 only (enhanced RTMP not wired in O1)");
+		if (s.kind == "stream" && s.rung->codec != "h264" && (s.transport == "rtmp" || s.transport == "rtmps"))
+			throw Error(rpc::INVALID_PARAMS, what + ": rtmp/rtmps carries h264 only (enhanced RTMP is not wired)");
 		s.rung->sinks.push_back(s.id);
 		defs.push_back(std::move(d));
+	}
+	// -- A0 gate: real targets only when the host was started with --allow-live (checked after the shape checks).
+	for (auto &d : defs)
+		if (d.s->live_target && !allow_live_)
+			throw Error(rpc::FORBIDDEN, "sink " + d.s->id +
+							    ": real (non-loopback) targets are refused; the host must be started with "
+							    "--allow-live (after the user's \"yes, on air\")");
+	for (auto &d : defs) {
+		Sink &s = *d.s;
+		if (!s.key_ref.empty()) {
+			s.key_present = streamkeys::check(s.key_ref) == streamkeys::Read::Ok;
+			if (!s.key_present)
+				warnings.push_back("sink " + s.id + ": no usable stream key in Credential Manager target " + s.key_ref);
+		}
+		if (!s.url_ref.empty()) {
+			s.url_present = check_url_ref(s.url_ref, s.transport);
+			if (!s.url_present)
+				warnings.push_back("sink " + s.id + ": no usable " + s.transport + " ingest URL in Credential Manager target " +
+						   s.url_ref);
+		}
 	}
 	for (auto &r : new_rungs)
 		if (r->sinks.empty())
@@ -874,7 +1090,7 @@ json::Value Outputs::build(const json::Value &params)
 			Sink &s = *d.s;
 			obs_data_t *os = obs_data_create();
 			const char *type = nullptr;
-			if (s.transport == "rtmp") {
+			if (s.transport == "rtmp" || s.transport == "rtmps") {
 				type = "rtmp_output";
 				obs_data_set_int(os, "drop_threshold_ms", pol.drop_threshold_ms);
 				obs_data_set_int(os, "pframe_drop_threshold_ms", pol.pframe_drop_threshold_ms);
@@ -891,15 +1107,20 @@ json::Value Outputs::build(const json::Value &params)
 			if (!s.out)
 				throw Error(rpc::INTERNAL, "sink " + s.id + ": could not create " + type);
 			if (s.kind == "stream") {
+				// Settings hold target names only (key_ref/url_ref), never a key: see the service comment above.
 				obs_data_t *ss = obs_data_create();
-				obs_data_set_string(ss, "protocol", s.transport == "srt" ? "SRT" : "RTMP");
+				obs_data_set_string(ss, "protocol",
+						    s.transport == "srt" ? "SRT" : s.transport == "rtmps" ? "RTMPS" : "RTMP");
 				obs_data_set_string(ss, "server", s.url.c_str());
-				obs_data_set_string(ss, "key", s.stream_name.c_str());
+				obs_data_set_string(ss, "stream", s.stream_name.c_str());
+				obs_data_set_string(ss, "key_ref", s.key_ref.c_str());
+				obs_data_set_string(ss, "url_ref", s.url_ref.c_str());
 				std::string sname = "ujw:svc:" + s.id;
-				s.svc = obs_service_create_private("ujwalam_loopback", sname.c_str(), ss);
+				s.svc = obs_service_create_private(s.live_target ? "ujwalam_live" : "ujwalam_loopback",
+								   sname.c_str(), ss);
 				obs_data_release(ss);
 				if (!s.svc)
-					throw Error(rpc::INTERNAL, "sink " + s.id + ": could not create the loopback service");
+					throw Error(rpc::INTERNAL, "sink " + s.id + ": could not create the delivery service");
 				obs_output_set_service(s.out, s.svc);
 				obs_output_set_reconnect_settings(s.out, 0, 0); // the host supervisor owns retries
 			}
@@ -982,9 +1203,38 @@ void Outputs::start_sink(Sink &s)
 		obs_output_update(s.out, os);
 		obs_data_release(os);
 	}
+	// Keyed sinks: the key (and a per-account URL) must be in Credential Manager now. Missing is not retried: the
+	// user has to store it (the message names the target and the command, never a value).
+	std::string missing;
+	if (s.live_target && !allow_live_)
+		missing = "real targets need the host started with --allow-live";
+	bool kp = s.key_ref.empty() || streamkeys::check(s.key_ref) == streamkeys::Read::Ok;
+	bool up = s.url_ref.empty() || check_url_ref(s.url_ref, s.transport);
+	if (missing.empty() && !kp)
+		missing = "no usable stream key in Windows Credential Manager target " + s.key_ref +
+			  " (store it: node services/event-core/cli.mjs credential set --target " + s.key_ref + ")";
+	if (missing.empty() && !up)
+		missing = "no usable " + s.transport + " ingest URL in Windows Credential Manager target " + s.url_ref +
+			  " (store it: node services/event-core/cli.mjs credential set --target " + s.url_ref + ")";
+	{
+		std::lock_guard<std::mutex> l(m_);
+		if (!s.key_ref.empty())
+			s.key_present = kp;
+		if (!s.url_ref.empty())
+			s.url_present = up;
+		if (!missing.empty()) {
+			s.want = false;
+			s.state = SinkState::Failed;
+			s.last_error = missing;
+			s.last_change_ms = now_ms();
+			hlog::warn("sink %s not started: %s", s.id.c_str(), missing.c_str());
+			return;
+		}
+	}
 	bool ok = obs_output_start(s.out);
 	if (ok)
 		return;
+	wipe_sink_secrets(s); // no connect thread was started
 	const char *e = obs_output_get_last_error(s.out);
 	std::lock_guard<std::mutex> l(m_);
 	if (s.state != SinkState::Starting)
@@ -1106,10 +1356,25 @@ json::Value Outputs::sink_json(const Sink &s) const
 	o.set("transport", s.transport);
 	o.set("rung", s.rung_id);
 	o.set("priority", s.priority);
-	if (s.kind == "stream")
-		o.set("url", s.transport == "rtmp" ? s.url + "/" + s.stream_name : s.url);
-	else
+	if (s.kind == "stream") {
+		// Never a key: a keyed loopback path shows the app only; a per-account URL (urlRef) is not shown.
+		if (s.live_target)
+			o.set("url", s.url_ref.empty() ? json::Value(s.url) : json::Value());
+		else if (s.transport == "rtmp")
+			o.set("url", s.key_ref.empty() ? s.url + "/" + s.stream_name : s.url + "/");
+		else
+			o.set("url", s.url);
+		o.set("target", s.live_target ? "live" : "loopback");
+		o.set("keyRef", s.key_ref.empty() ? json::Value() : json::Value(s.key_ref));
+		o.set("keyPresent", s.key_ref.empty() ? json::Value() : json::Value(s.key_present));
+		if (!s.url_ref.empty()) {
+			o.set("urlRef", s.url_ref);
+			o.set("urlPresent", s.url_present);
+		}
+	} else {
 		o.set("path", s.path.empty() ? json::Value() : json::Value(s.path));
+		o.set("container", s.file_ext);
+	}
 	o.set("state", state_name(s.state));
 	o.set("attempts", s.attempts);
 	o.set("retries", s.retries);
@@ -1150,6 +1415,7 @@ json::Value Outputs::status() const
 	std::lock_guard<std::mutex> l(m_);
 	json::Value r = json::Value::object();
 	r.set("configured", !sinks_.empty());
+	r.set("allowLive", allow_live_);
 	r.set("configuredAt", configured_at_.empty() ? json::Value() : json::Value(configured_at_));
 	json::Value rungs = json::Value::array();
 	for (auto &rp : rungs_) {

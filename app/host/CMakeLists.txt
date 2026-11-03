@@ -73,6 +73,7 @@ add_executable(ujwalam-host
   src/devices.cpp
   src/preview.cpp
   src/outputs.cpp
+  src/stream_keys.cpp
   src/stats.cpp
   src/overlay.cpp)
 set_target_properties(ujwalam-host PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)

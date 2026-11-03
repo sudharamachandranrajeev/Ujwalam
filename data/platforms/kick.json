@@ -139,5 +139,16 @@
     "source": "https://docs.kick.com/apis/chat",
     "checked": "2026-10-28",
     "note": "Post chat message: content limit 500 characters, and at most 2048 bytes in UTF-8 (official docs)."
+  },
+  "ingest": {
+    "value": {
+      "serverFrom": "keychain",
+      "servers": [],
+      "urlFormat": "rtmps://<account ingest host>:443/app"
+    },
+    "severity": "warning",
+    "source": "https://help.kick.com/en/articles/7066931-how-to-stream-on-kick-com",
+    "checked": "2026-11-03",
+    "note": "Page: \"Paste the Server URL from your KICK Settings Page\" (dashboard.kick.com > Channel > Stream URL and Key); its example host is account-specific. Stored in Credential Manager (serverRef) like the key; never in git, evidence or RPC."
   }
 }

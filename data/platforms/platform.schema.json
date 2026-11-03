@@ -127,6 +127,9 @@
     },
     "replyMaxChars": {
       "$ref": "#/$defs/sourced"
+    },
+    "ingest": {
+      "$ref": "#/$defs/sourced"
     }
   },
   "$defs": {
