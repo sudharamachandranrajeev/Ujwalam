@@ -35,6 +35,11 @@
     setFlag: function (id, on) { return request('POST', '/ui/api/flags/set', { id: id, on: on }); },
     feedback: function () { return request('GET', '/ui/api/feedback'); },
     saveNote: function (id, text, tag, severity) { return request('POST', '/ui/api/feedback/note', { id: id, text: text, tag: tag, severity: severity }); },
+    posts: function () { return request('GET', '/ui/api/posts'); },
+    postMediaUrl: function (id, kind) { return '/ui/api/posts/media?id=' + encodeURIComponent(id) + '&kind=' + encodeURIComponent(kind); },
+    postEdit: function (id, fields) { var b = { id: id }; Object.keys(fields).forEach(function (k) { b[k] = fields[k]; }); return request('POST', '/ui/api/posts/edit', b); },
+    postStatus: function (id, status) { return request('POST', '/ui/api/posts/status', { id: id, status: status }); },
+    postOpen: function (id) { return request('POST', '/ui/api/posts/open', { id: id }); },
     events: function (onStatus, onState, onFlags) {
       var es = new EventSource('/ui/api/events');
       if (onFlags) es.addEventListener('flags', function (e) { try { onFlags(JSON.parse(e.data)); } catch (x) { /* ignore a bad frame */ } });

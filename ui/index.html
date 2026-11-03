@@ -16,6 +16,7 @@
     <div class="spacer"></div>
     <button id="btn-import" class="btn" type="button" title="Create a new project from the Meld session and check it against the host">Import Meld session</button>
     <button id="btn-feedback" class="btn" type="button" title="Review feedback moments saved during streams">Feedback</button>
+    <button id="btn-posts" class="btn" type="button" title="Review export-only post packages (nothing is uploaded)" hidden>Posts</button>
     <button id="btn-record"class="btn" type="button" disabled>Record</button>
     <button id="btn-stream" class="btn btn-live" type="button" disabled>Start stream</button>
   </header>
@@ -122,6 +123,38 @@
     </div>
     <div class="modal-actions">
       <button id="feedback-close" class="btn btn-quiet" type="button">Close</button>
+    </div>
+  </div>
+</div>
+
+<div id="posts" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="posts-title">
+  <div class="modal-card wide">
+    <h3 id="posts-title">Posts (export only)</h3>
+    <p id="posts-text" class="muted" role="status"></p>
+    <div class="fb-body">
+      <ul id="post-list" class="list fb-list" aria-label="Post packages"></ul>
+      <form id="post-form" class="fb-form" hidden>
+        <div id="post-meta" class="muted"></div>
+        <div id="post-media" class="post-media"></div>
+        <label for="post-title">Title</label>
+        <input id="post-title" type="text" maxlength="300" autocomplete="off">
+        <label for="post-desc">Description</label>
+        <textarea id="post-desc" rows="5" maxlength="8000"></textarea>
+        <label for="post-tags">Tags (comma separated)</label>
+        <input id="post-tags" type="text" autocomplete="off">
+        <label for="post-hash">Hashtags (comma separated)</label>
+        <input id="post-hash" type="text" autocomplete="off">
+        <div id="post-limits" class="muted"></div>
+        <div class="modal-actions">
+          <button id="post-open" class="btn btn-quiet" type="button">Open folder</button>
+          <button id="post-reject" class="btn btn-quiet" type="button">Reject</button>
+          <button id="post-save" class="btn btn-quiet" type="submit">Save text</button>
+          <button id="post-approve" class="btn" type="button">Approve</button>
+        </div>
+      </form>
+    </div>
+    <div class="modal-actions">
+      <button id="posts-close" class="btn btn-quiet" type="button">Close</button>
     </div>
   </div>
 </div>

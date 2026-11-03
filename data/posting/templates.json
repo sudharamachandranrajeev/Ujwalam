@@ -1,0 +1,25 @@
+{
+  "$comment": "P16a post text templates. Placeholders only: {handles.x}, {links.x} come from the local profile (data/profile.local.json) at export time; {date} is the stream date (UTC, from candidates.json recordStartUtc); {n} is the clip's rank in the run. Never put names, brands or channel ids here. Chat text, viewer names, marker notes and candidate reasons are never used in post text.",
+  "version": "0.1.0",
+  "layoutPreference": ["full-crop", "blurred-fill", "game-facecam"],
+  "targets": {
+    "youtube-shorts": {
+      "title": "Stream highlight {n} ({date})",
+      "description": "Highlight {n} from the stream on {date}.\n\nLive on {handles.youtube}\nCommunity: {links.discord}",
+      "tags": ["gaming", "highlights", "stream"],
+      "hashtags": ["#Shorts", "#gaming"]
+    },
+    "tiktok": {
+      "title": "Stream highlight {n}",
+      "description": "Stream highlight {n} ({date}). Live on {handles.twitch} and {handles.youtube}.",
+      "tags": ["gaming", "highlights"],
+      "hashtags": ["#gaming", "#streamer", "#highlights"]
+    },
+    "instagram-reels": {
+      "title": "Stream highlight {n}",
+      "description": "Stream highlight {n} ({date}).\nLive on {handles.twitch}\nCommunity: {links.discord}",
+      "tags": ["gaming", "highlights"],
+      "hashtags": ["#gaming", "#streamer", "#reels"]
+    }
+  }
+}

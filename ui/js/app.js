@@ -187,6 +187,9 @@
   // ---- feature flags: OFF applies at once; ON goes through the typed confirmation ----
   function renderFlags(list) {
     var ul = $('flag-list'); clear(ul);
+    var postingOn = (list || []).some(function (f) { return f.id === 'posting' && f.on; });
+    $('btn-posts').hidden = !postingOn;
+    if (!postingOn) $('posts').hidden = true;
     (list || []).forEach(function (f) {
       var cb = el('input', { type: 'checkbox', id: 'flag-' + f.id, 'aria-label': f.id });
       cb.checked = !!f.on;
@@ -243,8 +246,69 @@
     }).catch(function (x) { setText($('feedback-text'), 'Save failed: ' + (x.message || 'error')); });
   }
 
+  // ---- Posts view (P16a, flag `posting`): review packages; nothing is uploaded ----
+  var ps = { posts: [], sel: null };
+  function csv(s) { return String(s).split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
+  function selPost() { return ps.posts.filter(function (p) { return p.id === ps.sel; })[0] || null; }
+  function replacePost(p) {
+    ps.posts = ps.posts.map(function (x) { return x.id === p.id ? p : x; });
+    renderPosts(); fillPost(p);
+  }
+  function renderPosts() {
+    var ul = $('post-list'); clear(ul);
+    ps.posts.forEach(function (p) {
+      var flagged = (p.limits && p.limits.ok === false) || (p.unresolved && p.unresolved.length);
+      var li = el('li', { class: 'row' + (p.id === ps.sel ? ' active' : ''), tabindex: 0, role: 'button', 'aria-pressed': p.id === ps.sel ? 'true' : 'false' }, [
+        el('span', { class: 'name', text: p.clipId + '  ' + p.target }),
+        el('span', { class: flagged ? 'warn-text' : 'muted', text: p.status + (flagged ? ' / check' : '') })]);
+      var pick = function () { ps.sel = p.id; renderPosts(); fillPost(p); };
+      li.addEventListener('click', pick);
+      li.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      ul.appendChild(li);
+    });
+    setText($('posts-text'), ps.posts.length ? ps.posts.length + ' package(s). Private drafts only; approving marks a package, nothing is uploaded.' : 'No packages yet. Run: node services/posting/cli.mjs package --run <clip run folder>');
+    $('post-form').hidden = !ps.sel;
+  }
+  function fillPost(p) {
+    setText($('post-meta'), p.target + '  ' + p.layout + '  ' + p.startSec + '-' + p.endSec + ' s  privacy ' + p.privacy + '  status ' + p.status);
+    var m = $('post-media'); clear(m);
+    m.appendChild(el('video', { controls: true, preload: 'metadata', src: Api.postMediaUrl(p.id, 'video') }));
+    if (p.hasCover) m.appendChild(el('img', { alt: 'Cover', src: Api.postMediaUrl(p.id, 'cover') }));
+    $('post-title').value = p.title; $('post-desc').value = p.description;
+    $('post-tags').value = p.tags.join(', '); $('post-hash').value = p.hashtags.join(', ');
+    var lim = p.limits || { checks: [] }, bits = [];
+    lim.checks.forEach(function (c) { bits.push(c.field + ' ' + c.value + '/' + c.max + (c.unit ? ' ' + c.unit : '') + (c.ok ? '' : ' OVER')); });
+    if (p.unresolved && p.unresolved.length) bits.push('unresolved: ' + p.unresolved.join(', '));
+    setText($('post-limits'), (bits.join('  ') || 'no limits checked') + (lim.status === 'unverified' ? '  (limits UNVERIFIED)' : ''));
+    $('post-form').hidden = false;
+  }
+  function openPosts() {
+    $('posts').hidden = false; ps.sel = null; $('post-form').hidden = true;
+    guard(Api.posts().then(function (r) { ps.posts = r.posts || []; renderPosts(); }));
+  }
+  function postAction(call) {
+    var p = selPost(); if (!p) return;
+    call(p).then(function (r) { replacePost(r.post); setText($('posts-text'), 'Saved.'); })
+      .catch(function (x) { setText($('posts-text'), 'Not done: ' + (x.message || 'error')); });
+  }
+  function wirePosts() {
+    $('btn-posts').addEventListener('click', openPosts);
+    $('posts-close').addEventListener('click', function () { $('posts').hidden = true; clear($('post-media')); });
+    $('post-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      postAction(function (p) { return Api.postEdit(p.id, { title: $('post-title').value, description: $('post-desc').value, tags: csv($('post-tags').value), hashtags: csv($('post-hash').value) }); });
+    });
+    $('post-approve').addEventListener('click', function () { postAction(function (p) { return Api.postStatus(p.id, 'approved'); }); });
+    $('post-reject').addEventListener('click', function () { postAction(function (p) { return Api.postStatus(p.id, 'rejected'); }); });
+    $('post-open').addEventListener('click', function () {
+      var p = selPost(); if (!p) return;
+      Api.postOpen(p.id).catch(function (x) { setText($('posts-text'), 'Could not open the folder: ' + (x.message || 'error')); });
+    });
+  }
+
   // ---- wiring ----
   function wire() {
+    wirePosts();
     $('btn-feedback').addEventListener('click', openFeedback);
     $('feedback-close').addEventListener('click', function () { $('feedback').hidden = true; });
     $('fb-form').addEventListener('submit', saveFeedback);

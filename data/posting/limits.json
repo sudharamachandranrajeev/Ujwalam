@@ -1,0 +1,34 @@
+{
+  "$comment": "P16a per-target limits, checked against official pages 2026-11-03 (D186). Each target lists the fields the platform receives. A field's text is composed from post.json parts ('from', joined by composeField in services/posting/index.mjs: parts separated by a blank line, hashtags joined by spaces) so the check sees exactly what an uploader will send. unit: chars = Unicode code points; utf16 = UTF-16 code units; utf8-bytes = UTF-8 bytes (Malayalam letters are 3 bytes each); youtube-tags = total tag characters plus a comma between tags plus 2 quotes per tag that contains a space. forbid = characters the field must not contain. hashtagMax / mentionMax count #tags / @mentions inside the composed field. Over a limit = flagged and approval refused, never truncated. A field without max is not length-checked.",
+  "version": "0.2.0",
+  "targets": {
+    "youtube-shorts": {
+      "fields": {
+        "title": { "from": ["title"], "max": 100, "unit": "chars", "forbid": "<>" },
+        "description": { "from": ["description", "hashtags"], "max": 5000, "unit": "utf8-bytes", "forbid": "<>", "hashtagMax": 60 },
+        "tags": { "from": ["tags"], "max": 500, "unit": "youtube-tags" }
+      },
+      "source": "https://developers.google.com/youtube/v3/docs/videos (snippet.title max 100 characters, no < or >; snippet.description max 5000 bytes, no < or >; snippet.tags max 500 characters with commas and added quotes); https://support.google.com/youtube/answer/6390658 (more than 60 hashtags: all hashtags on the video are ignored)",
+      "checked": "2026-11-03",
+      "status": "verified"
+    },
+    "tiktok": {
+      "fields": {
+        "caption": { "from": ["description", "hashtags"], "max": 2200, "unit": "utf16" }
+      },
+      "source": "https://developers.tiktok.com/docs/en/content-posting-api-reference-direct-post (post_info.title is the video caption, max 2200 UTF-16 runes; hashtags and mentions are parsed from it; no hashtag count limit stated)",
+      "checked": "2026-11-03",
+      "status": "verified",
+      "note": "The template title is shown in review only; a TikTok video post has no separate title field."
+    },
+    "instagram-reels": {
+      "fields": {
+        "caption": { "from": ["description", "hashtags"], "max": 2200, "unit": "utf16", "hashtagMax": 30, "mentionMax": 20 }
+      },
+      "source": "https://developers.facebook.com/docs/instagram-platform/instagram-graph-api/reference/ig-user/media (caption: maximum 2200 characters, 30 hashtags, 20 @ tags; applies to video, so to Reels)",
+      "checked": "2026-11-03",
+      "status": "verified",
+      "note": "The page says 'characters' without a unit; UTF-16 code units are used because they are never fewer than code points (stricter). The template title is shown in review only."
+    }
+  }
+}

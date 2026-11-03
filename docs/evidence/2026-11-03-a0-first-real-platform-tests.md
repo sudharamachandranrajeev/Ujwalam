@@ -37,7 +37,7 @@ Both runs ended on the guard time limit (exit 0). Kick was stopped by its own 2-
 ## Platform-side checks (by the user)
 
 - Twitch Inspector lists both sessions (10:36, 15 min; 11:35) with 0 unstable events. As expected, bandwidth-test mode was not visible on the channel page or dashboard.
-- YouTube Studio: the user reported "YouTube looked fine" and "1080p60". Whether V showed as vertical was not stated explicitly (UNVERIFIED).
+- YouTube Studio: the user reported "YouTube looked fine" and "1080p60", and confirmed V showed as vertical.
 - Kick: the user confirmed the stream showed ("did stream").
 
 ## Notes

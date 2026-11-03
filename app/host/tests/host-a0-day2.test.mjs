@@ -23,8 +23,17 @@ const OUT = path.join(REPO_ROOT, 'out', 'host', 'tests');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let h, c, DATA, CORE_DIR, FEEDBACK;
 const coreTokens = { api: randomBytes(32).toString('hex'), system: randomBytes(32).toString('hex') };
+// NVML counts every NVENC session on the GPU, including other apps on this machine (D188). The count taken before
+// the host starts is subtracted; null when nvidia-smi is unavailable (then the session asserts are skipped).
+let OTHER_SESSIONS = null;
+function gpuSessions() {
+  const r = spawnSync('nvidia-smi', ['--query-gpu=encoder.stats.sessionCount', '--format=csv,noheader'], { encoding: 'utf8', windowsHide: true });
+  const n = r.status === 0 ? Number.parseInt(r.stdout.trim().split(/\r?\n/)[0], 10) : NaN;
+  return Number.isFinite(n) ? n : null;
+}
 
 before(async () => {
+  OTHER_SESSIONS = gpuSessions();
   mkdirSync(OUT, { recursive: true });
   DATA = mkdtempSync(path.join(OUT, 'a0d2-'));
   CORE_DIR = path.join(DATA, 'core');
@@ -120,7 +129,11 @@ test('replay: refused before start, then H and V on fallback rungs, replay.save 
 });
 
 test('replay: binds to the configured rungs (no extra encoder), shares the encoder with a recording, follows clear', async () => {
-  const sessions = async () => (await c.call('host.status')).gpu.encoderSessions;
+  // This host's sessions = GPU-wide count minus the other apps' sessions counted before the host started (D188).
+  const sessions = async () => {
+    const n = (await c.call('host.status')).gpu.encoderSessions;
+    return n === null || n === undefined || OTHER_SESSIONS === null ? null : n - OTHER_SESSIONS;
+  };
   const params = {
     rungs: [
       { id: 'h1', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1920, h: 1080, fps: 60, bitrate: 8000, gopSec: 2 },
@@ -146,7 +159,8 @@ test('replay: binds to the configured rungs (no extra encoder), shares the encod
   }
   await c.call('record.start', { sinks: ['rec-h'] });
   await sleep(3500);
-  assert.equal(await sessions(), 2, 'a recording on h1 adds no session');
+  const n2 = await sessions();
+  if (n2 !== null) assert.equal(n2, 2, 'a recording on h1 adds no session');
   const r = await c.call('replay.save', { canvas: 'H' });
   assert.equal(r.saved.length, 1);
   assert.equal(r.saved[0].rung, 'h1');

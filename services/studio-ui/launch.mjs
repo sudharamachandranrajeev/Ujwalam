@@ -440,11 +440,14 @@ function superviseHost(o) {
   const crashLog = (rec) => {
     try { mkdirSync(logsDir, { recursive: true }); appendFileSync(path.join(logsDir, CRASH_LOG_FILE), `${JSON.stringify(rec)}\n`); } catch { /* best effort */ }
   };
-  const poll = setInterval(async () => {
+  const readOutputs = async () => {
     if (busy || isStopping()) return;
     try { lastOutputs = await client.call('outputs.status'); } catch { /* host gone or busy: keep the last answer */ }
-  }, watchMs);
+  };
+  const poll = setInterval(readOutputs, watchMs);
   poll.unref();
+  // Read once now: a host that exits before the first interval must still restart its recording / report its streams.
+  void readOutputs();
   writeSnapshot(client, logsDir);
 
   const arm = (child) => child.once('exit', (code, signal) => { onExit(child, code, signal).catch((e) => console.log(`[studio] crash recovery failed: ${e.message}`)); });

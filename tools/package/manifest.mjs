@@ -23,7 +23,7 @@ export const HELPER_EXES = Object.freeze(['obs-ffmpeg-mux.exe', 'obs-nvenc-test.
 // Repo -> package (same relative paths, so the code's own REPO-relative lookups keep working in the install dir).
 export const REPO_DIRS = Object.freeze([
   'app/host/lib', 'app/host/overlay',
-  'services/event-core', 'services/flags', 'services/outputs', 'services/overlay-server', 'services/project', 'services/studio-ui',
+  'services/event-core', 'services/flags', 'services/outputs', 'services/overlay-server', 'services/posting', 'services/project', 'services/studio-ui',
   'ui', 'registry', 'tools/diag',
 ]);
 export const REPO_FILES = Object.freeze([
@@ -35,6 +35,7 @@ export const REPO_FILES = Object.freeze([
   'data/moderation/blocklist.json', 'data/moderation/blocklist.schema.json',
   'data/overlays/feed-scopes.json',
   'data/outputs/alpha-live.json', 'data/outputs/guard/live-test-budget.json',
+  'data/posting/templates.json', 'data/posting/limits.json',
   'data/schemas/project.schema.json',
   'data/profile.example.json', 'data/profile.schema.json',
   'data/release/alpha.json',

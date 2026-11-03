@@ -22,11 +22,13 @@
 // backends.mjs core.confirm(). The api token is used for it today, as the ADR's interim statement says.
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { createReadStream, realpathSync, statSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFlags } from '../flags/index.mjs';
+import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createFeedback } from './feedback.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 
@@ -55,7 +57,7 @@ const MIME = Object.freeze({
   '.woff2': 'font/woff2',
 });
 
-const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self'; font-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 
 const digest = (s) => createHash('sha256').update(String(s), 'utf8').digest();
 const sameSecret = (a, b) => timingSafeEqual(digest(a), digest(b));
@@ -93,6 +95,21 @@ export const DEFAULT_FEEDBACK_DIR = path.resolve(path.dirname(fileURLToPath(impo
 const FLAG_SET_SCHEMA = { id: { type: 'string', pattern: /^[a-z][a-z0-9-]{0,47}$/, required: true }, on: { type: 'bool', required: true } };
 const NOTE_KEYS = ['id', 'text', 'tag', 'severity'];
 
+const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409 };
+const POST_EDIT_KEYS = ['id', 'title', 'description', 'tags', 'hashtags'];
+
+// "Open folder" for a package (local only, no shell). explorer.exe comes from SystemRoot, never from PATH.
+function defaultOpenFolder(dir) {
+  let cmd; let args = [dir];
+  if (process.platform === 'win32') {
+    const root = process.env.SystemRoot;
+    cmd = typeof root === 'string' && path.isAbsolute(root) ? path.join(root, 'explorer.exe') : null;
+    if (!cmd || !existsSync(cmd)) return false;
+  } else if (process.platform === 'darwin') cmd = '/usr/bin/open';
+  else { cmd = 'xdg-open'; args = [dir]; }
+  try { spawn(cmd, args, { detached: true, stdio: 'ignore', windowsHide: false }).on('error', () => {}).unref(); return true; } catch { return false; }
+}
+
 const CORE_ACTION_ID =/^[a-z][a-z0-9]*(\.[a-z0-9]+)+$/;
 
 /** Returns an error string or null. */
@@ -127,6 +144,10 @@ export function createStudioServer(opts) {
   // Feature flags (D149) and the post-stream feedback form (D150). opts.flags / opts.feedback are test seams.
   const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir }) : null);
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
+  // Export-only posting (P16a, flag `posting`): packages are listed from <dataDir>/posting/ledger.json. Nothing is uploaded.
+  const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME) }) : null);
+  const openFolder = opts.openFolder ?? defaultOpenFolder;
+  const postingOn = () => !!posting && !!flags && flags.isOn(POSTING_FLAG);
   if (typeof opts.launchKey !== 'string' || opts.launchKey.length < 32) throw new Error('launchKey must be at least 32 characters');
   let launchKey = opts.launchKey;
   const launchBorn = now();
@@ -261,6 +282,9 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/feedback') return json(res, 200, { moments: feedback.list() });
+    if (route.startsWith('/ui/api/posts') && !postingOn()) return json(res, 404, { error: 'posting-off' });
+    if (req.method === 'GET' && route === '/ui/api/posts') return json(res, 200, { posts: posting.list() });
+    if (req.method === 'GET' && route === '/ui/api/posts/media') return postMedia(req, res, url);
     if (req.method !== 'POST') return text(res, 405, 'method-not-allowed');
     // Mutating: Origin == our origin, CSRF header (timing-safe), JSON body.
     if (req.headers.origin !== origin) return text(res, 403, 'bad-origin');
@@ -300,6 +324,20 @@ export function createStudioServer(opts) {
       const err = feedback.saveNote(body.id, { text: body.text, tag: body.tag, severity: body.severity });
       if (err) return json(res, err === 'unknown-moment' ? 404 : (err === 'write-failed' ? 500 : 400), { error: err });
       return json(res, 200, { ok: true, moments: feedback.list() });
+    }
+    if (route === '/ui/api/posts/edit' || route === '/ui/api/posts/status' || route === '/ui/api/posts/open') {
+      // Local files only: post.json and the ledger. Nothing is uploaded; approving only marks the package.
+      const keys = route.endsWith('/edit') ? POST_EDIT_KEYS : (route.endsWith('/status') ? ['id', 'status'] : ['id']);
+      if (typeof body.id !== 'string' || body.id.length > 64 || Object.keys(body).some((k) => !keys.includes(k))) return json(res, 400, { error: 'bad-params' });
+      let r;
+      if (route.endsWith('/open')) {
+        const dir = posting.dir(body.id);
+        if (!dir) return json(res, 404, { error: 'unknown-post' });
+        return openFolder(dir) ? json(res, 200, { ok: true }) : json(res, 502, { error: 'open-failed' });
+      }
+      if (route.endsWith('/edit')) { const { id, ...fields } = body; r = posting.edit(id, fields); } else r = await posting.setStatus(body.id, body.status);
+      if (typeof r === 'string') return json(res, POST_ERR[r] ?? 400, { error: r });
+      return json(res, 200, { post: r });
     }
     if (route === '/ui/api/core/request') {
       if (typeof body.id !== 'string' || body.id.length > 64 || !CORE_ACTION_ID.test(body.id)) return json(res, 400, { error: 'bad-action-id' });
@@ -349,6 +387,29 @@ export function createStudioServer(opts) {
       } catch (e) { return json(res, 502, { error: 'backend-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
     }
     return text(res, 404, 'not-found');
+  }
+
+  // GET /ui/api/posts/media?id=<post id>&kind=video|cover. The file name never comes from the request: the store maps
+  // id + kind to a plain file with an allowlisted extension inside the package folder (see createPostStore.media).
+  function postMedia(req, res, url) {
+    const m = posting.media(url.searchParams.get('id'), url.searchParams.get('kind'));
+    if (!m) return text(res, 404, 'not-found');
+    let start = 0; let end = m.size - 1; let code = 200;
+    const range = req.headers.range;
+    if (typeof range === 'string') {
+      const r = /^bytes=(\d*)-(\d*)$/.exec(range);
+      if (!r || (r[1] === '' && r[2] === '')) { sec(res); res.writeHead(416, { 'Content-Range': `bytes */${m.size}` }); return res.end(); }
+      if (r[1] === '') { start = Math.max(0, m.size - Number(r[2])); } else { start = Number(r[1]); if (r[2] !== '') end = Math.min(end, Number(r[2])); }
+      if (start > end || start >= m.size) { sec(res); res.writeHead(416, { 'Content-Range': `bytes */${m.size}` }); return res.end(); }
+      code = 206;
+    }
+    sec(res);
+    const h = { 'Content-Type': m.type, 'Content-Length': end - start + 1, 'Accept-Ranges': 'bytes' };
+    if (code === 206) h['Content-Range'] = `bytes ${start}-${end}/${m.size}`;
+    res.writeHead(code, h);
+    if (m.size === 0) return res.end();
+    createReadStream(m.file, { start, end }).on('error', () => res.destroy()).pipe(res);
+    return undefined;
   }
 
   function sse(req, res) {
