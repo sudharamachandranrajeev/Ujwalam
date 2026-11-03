@@ -17,10 +17,16 @@ usual layout and are UNVERIFIED on your version: if a name differs, pick the clo
    1. Twitch: **Chat > Send Message to Channel**, text = the chat question. Leave "send as bot" as you normally use it.
    2. YouTube: **Send Message to Broadcast** (all broadcasts), text = the chat question.
    3. Kick: **Kick > Send Message** (or the Kick chat sub-action your version has), text = the chat question.
-   4. Speaker.bot: **Integrations > Speaker.bot > Speak**, text = the spoken announcement, your usual voice alias.
-3. **Settings > Timed Actions**: **Add**. Name `Ujwalam test stream`, interval `900` seconds, **Repeat** on,
-   **Enabled OFF** (you turn it on at go-live).
-4. Back in the action: **Triggers**, right-click, **Core > Timed Actions > Timed Action**, pick `Ujwalam test stream`.
+   4. Speaker.bot speak step. On Streamer.bot 0.2.8 there is no "Integrations > Speaker.bot > Speak" entry (user,
+      2026-11-03). Copy the Speaker.bot step from an action that already speaks (the user's TTS action has one:
+      right-click it, **Copy**; in this action, right-click the Sub-Actions list, **Paste**), then change its message to
+      the spoken announcement.
+3. Timer. "Settings > Timed Actions" does not exist on 0.2.8 (user, 2026-11-03). Timers do exist (the saved settings
+   hold a timed-actions list, and other actions use timer triggers): create the timer where the existing ones were
+   made (location UNVERIFIED). Name `Ujwalam test stream`, interval `900` seconds, **Repeat** on, **Enabled OFF** (you
+   turn it on at go-live). Do not reuse an existing 900 s timer: switching it on would also fire its own action.
+4. Back in the action: add a timer trigger the same way the existing timer-driven actions have one, and pick
+   `Ujwalam test stream`.
 5. Private check before the day: run the action once by hand (right-click the action, **Test Trigger**) while signed in,
    ideally during a private or unlisted test. Check: the question shows on Twitch, YouTube and Kick chat; Speaker.bot
    says the announcement once (not twice). Tell the agent "BM4 works" or what failed.
