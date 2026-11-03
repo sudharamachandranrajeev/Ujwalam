@@ -179,7 +179,13 @@ async function readStdinLine(input = process.stdin) {
 export async function credentialCommand(args, io = { out: (t) => console.log(t) }) {
   const sub = args._[1];
   const store = createCredentialStore(args.target ?? DEFAULT_TARGET);
-  if (sub === 'status') { io.out((await store.get()) == null ? 'credential: not set' : 'credential: set'); return 0; }
+  if (sub === 'status') {
+    // Only presence and one shape fact are printed, never the value: a stored "?query" (e.g. Twitch's
+    // ?bandwidthtest=true) must be removed before a public stream; the host adds that suffix at connect time itself.
+    const v = await store.get();
+    io.out(v == null ? 'credential: not set' : String(v).includes('?') ? 'credential: set (WARNING: it contains a "?" query suffix; set it again without it for a public stream)' : 'credential: set');
+    return 0;
+  }
   if (sub === 'delete') { io.out((await store.delete()) ? 'credential: deleted' : 'credential: not set (nothing to delete)'); return 0; }
   if (sub !== 'set') { io.out('usage: credential set|delete|status [--target NAME] [--stdin]'); return 1; }
   let secret;

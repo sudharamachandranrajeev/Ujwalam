@@ -334,7 +334,14 @@ test('credential CLI: stdin path, status never prints the secret, delete (Window
     assert.equal(await store.get(), SECRET);
     r = await run(['status', '--target', name]);
     assert.match(r.out, /credential: set/);
+    assert.doesNotMatch(r.out, /WARNING/);
     assert.ok(!r.out.includes('cli-secret'));
+    // a stored "?query" suffix (e.g. Twitch's bandwidth test) is reported, never the value
+    await store.set('cli-secret-q?bandwidthtest=true');
+    r = await run(['status', '--target', name]);
+    assert.match(r.out, /credential: set \(WARNING: it contains a "\?" query suffix/);
+    assert.ok(!r.out.includes('cli-secret') && !r.out.includes('bandwidthtest'));
+    await store.set(SECRET);
     r = await run(['set', '--stdin', '--target', name], '\n');
     assert.equal(r.code, 1);
     assert.equal(await store.get(), SECRET); // empty input does not overwrite
