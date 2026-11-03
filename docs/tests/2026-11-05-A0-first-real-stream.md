@@ -2,7 +2,7 @@
 
 Status: PLAN. Nothing here runs until you say "devices ready". The stream starts only after you type "start stream test" in the agent chat and then "yes, on air" on the control page (AGENTS.md, D192).
 
-Test-stream extras (D192, bot manager plan `docs/plan/2026-11-03-bot-manager-plan.md`, BM1-BM7): the "Test broadcast" message on H and V, the Streamer.bot action that asks chat for feedback every 15 min and has Speaker.bot read the announcement, and the replies collected into `feedback/2026-11-05-stream-feedback.md`. Enable the Streamer.bot timer at go-live, disable it at stop. About one hour; you stop it, or say "stop".
+Test-stream extras (D192, bot manager plan `docs/plan/2026-11-03-bot-manager-plan.md`, BM1-BM7): the "Test broadcast" message on H and V, the Streamer.bot action that asks chat for feedback every 15 min and has Speaker.bot read the announcement, and the replies collected into `feedback/2026-11-05-stream-feedback.md`. Enable the Streamer.bot timer at go-live, disable it at stop (setup steps: `docs/tests/2026-11-04-A0-S1-streamerbot-test-action.md`). About one hour; you stop it, or say "stop".
 
 What is different from the 3 Nov tests (`docs/evidence/2026-11-03-a0-first-real-platform-tests.md`): Twitch is public (no bandwidth-test flag), all four destinations run at once, recording is on, and the live-test guard is off, so nothing stops the stream for you. You stop it.
 
