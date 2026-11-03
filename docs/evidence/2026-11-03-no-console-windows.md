@@ -79,7 +79,23 @@ window. The foreground changed once, at 15:50:49, from the taskbar to the Claude
 The last 10 s of the task (15:51:06 to 15:51:16) were outside the watch window. `--headless` is an undocumented
 conhost flag (UNVERIFIED across Windows updates). If a window appears at 03:00 again, it shows here first.
 
-Still to test: the same hidden launch with Windows Terminal as the default terminal (needs the setting switched back for a few minutes).
+## Windows Terminal as the default terminal
+
+2026-11-03 15:53:54–15:54:54. The user switched the default terminal back to Windows Terminal for this test. Same
+watcher, same probes:
+
+| Time | Action | Watcher |
+|---|---|---|
+| 15:54:00.8 – 15:54:02.6 | Ujwalam's way: a parent node with no console starts `powershell` and `cmd` with `windowsHide: true` | nothing: no window, no focus change |
+| 15:54:06.7 – 15:54:08.7 | control, `windowsHide: false` | two new Windows Terminal windows that took focus (15:54:06.955, 15:54:07.299), focus back at 15:54:08.768 |
+| 15:53:54.664, 15:54:12.520, 15:54:14.051, 15:54:17.143, 15:54:17.617 | agent shell tool calls | each a new Windows Terminal window that TOOK FOCUS for 0.25–0.35 s, then focus returned to the user's terminal |
+
+Result:
+
+- Ujwalam's hidden launch is covered under both default terminals: no window and no focus change with either.
+- Under Windows Terminal, the agent's shell tool opens a short-lived window that takes focus on every call. These were the random terminal windows the user saw.
+- Under Windows Console Host the same tool calls flash for under 40 ms and do not take focus.
+- Recommended setting while agents run: Windows Console Host. The user switched back after this test.
 
 ## Not done
 
