@@ -36,10 +36,22 @@
 // UJWALAM_ALPHA_FEEDBACK_PROBE=1 (tests and evidence; only with --no-open): after start the launcher calls
 // feedback.capture once, waits for its replay saves, logs in to its own UI server with the unused one-time key and
 // prints whether the feedback form lists the moment.
+//
+// Crash recovery (Alpha 0 day 3): after the host has started, an exit the launcher did not ask for (a non-zero exit
+// code; code 0 means the host shut itself down and ends the session) restarts it with the same argv and environment
+// after a bounded backoff (2 s, 5 s, 10 s), at most HOST_RESTART_MAX times in HOST_RESTART_WINDOW_MS; one more exit
+// in that window stops everything (exit code 3), writes a diagnostics bundle to <data dir>/diag/ and reports it.
+// After a restart: the alpha project is loaded again (unchanged file), a recording that was running (record sinks
+// seen starting/live/retrying by the outputs.status poll, every UJWALAM_HOST_WATCH_MS, default 2000) is started again
+// (a new .mkv file; the old one stays playable, mkv is crash-safe), streams are NOT restarted (they need "yes, on
+// air" on the control page) and a marker (source api) records the restart. Every exit is a line in
+// <data dir>/logs/host-crashes.jsonl; <data dir>/logs/host-snapshot.json holds host.info / host.status / outputs
+// presence flags for the diagnostics bundle (tools/diag/bundle.mjs). UJWALAM_HOST_RESTART_BACKOFF_MS overrides the
+// backoff (tests).
 
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -53,6 +65,8 @@ import { loadDevicePresets, matchRoles, overrideProblems } from '../project/devi
 import { loadProject } from '../project/store.mjs';
 import { alphaBases, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
 import { rpc } from './backends.mjs';
+import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
+import { writeZip } from '../../tools/package/zip.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const hex = (n) => randomBytes(n).toString('hex');
@@ -62,6 +76,31 @@ export const ALPHA_LIVE_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-live.js
 export const DEFAULT_FEEDBACK_DIR = path.join(REPO, 'feedback');
 export const ALPHA_REPLAY_SECONDS = 30;
 const HEX64 = /^[0-9a-f]{64}$/;
+
+export const HOST_RESTART_MAX = 3;
+export const HOST_RESTART_WINDOW_MS = 5 * 60_000;
+export const HOST_RESTART_BACKOFF_MS = Object.freeze([2000, 5000, 10_000]);
+const ACTIVE_STATES = new Set(['starting', 'live', 'retrying']);
+
+/** Restart decisions for unexpected host exits (pure; tested with a fake clock). */
+export function restartPolicy({ max = HOST_RESTART_MAX, windowMs = HOST_RESTART_WINDOW_MS, backoffMs = HOST_RESTART_BACKOFF_MS } = {}) {
+  const exits = [];
+  return {
+    onExit(now) {
+      exits.push(now);
+      while (exits.length && now - exits[0] > windowMs) exits.shift();
+      if (exits.length > max) return { restart: false, exits: exits.length, max, windowMs };
+      return { restart: true, attempt: exits.length, max, delayMs: backoffMs[Math.min(exits.length - 1, backoffMs.length - 1)] };
+    },
+  };
+}
+
+/** Sink ids of one kind ('record' | 'stream') that were running in an outputs.status result (pure; tested). */
+export function activeSinks(outputs, kind) {
+  return (Array.isArray(outputs?.sinks) ? outputs.sinks : []).filter((s) => s.kind === kind && ACTIVE_STATES.has(s.state)).map((s) => s.id).filter((id) => typeof id === 'string');
+}
+
+const exitText = (code, signal) => (signal ? `signal ${signal}` : `code ${code}${code > 255 ? ` (0x${(code >>> 0).toString(16).toUpperCase()})` : ''}`);
 
 export const HOTKEY_NAMES = Object.freeze(['panic', 'feedback', 'marker']);
 // "Ctrl+Alt+Shift+M", "Ctrl+Alt+F9" or "off". The host checks the combo itself when it registers it (a bad one is
@@ -308,6 +347,109 @@ async function feedbackProbe({ client, uiPort, launchKey }) {
   console.log(`[studio] feedback probe: moment ${id} ${m ? 'listed' : 'NOT listed'} by the UI server (${moments.length} moment(s), HTTP ${list.status}); replay files: ${replay}; scene: ${m?.scene ?? '-'}; at: ${m?.timestamp ?? '-'}`);
 }
 
+/** <logsDir>/host-snapshot.json: host.info, host.status and outputs presence flags (no secrets; for diagnostics). */
+async function writeSnapshot(client, logsDir) {
+  const snap = { v: 1, at: new Date().toISOString() };
+  for (const [k, m] of [['info', 'host.info'], ['status', 'host.status'], ['outputs', 'outputs.status']]) {
+    try { snap[k] = await client.call(m); } catch (e) { snap[k] = { error: e.message }; }
+  }
+  if (snap.outputs && !snap.outputs.error) snap.outputs = outputsSafe(snap.outputs);
+  try {
+    mkdirSync(logsDir, { recursive: true });
+    const f = path.join(logsDir, SNAPSHOT_FILE);
+    writeFileSync(`${f}.partial`, `${JSON.stringify(snap, null, 2)}\n`);
+    renameSync(`${f}.partial`, f);
+  } catch { /* diagnostics only */ }
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Crash recovery (see the header). Arms an exit handler on the running host child and on every restarted one.
+function superviseHost(o) {
+  const { logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost, getChild, isStopping, onClient, endSession } = o;
+  const backoffEnv = Number(process.env.UJWALAM_HOST_RESTART_BACKOFF_MS);
+  const policy = restartPolicy(Number.isFinite(backoffEnv) && backoffEnv >= 0 ? { backoffMs: [backoffEnv] } : {});
+  const watchMs = Math.max(100, Number(process.env.UJWALAM_HOST_WATCH_MS ?? 2000) || 2000);
+  let client = o.initialClient;
+  let lastOutputs = null;
+  let busy = false;
+  const crashLog = (rec) => {
+    try { mkdirSync(logsDir, { recursive: true }); appendFileSync(path.join(logsDir, CRASH_LOG_FILE), `${JSON.stringify(rec)}\n`); } catch { /* best effort */ }
+  };
+  const poll = setInterval(async () => {
+    if (busy || isStopping()) return;
+    try { lastOutputs = await client.call('outputs.status'); } catch { /* host gone or busy: keep the last answer */ }
+  }, watchMs);
+  poll.unref();
+  writeSnapshot(client, logsDir);
+
+  const arm = (child) => child.once('exit', (code, signal) => { onExit(child, code, signal).catch((e) => console.log(`[studio] crash recovery failed: ${e.message}`)); });
+  async function onExit(child, code, signal) {
+    if (isStopping() || child !== getChild()) return;
+    busy = true;
+    const at = new Date();
+    const recording = activeSinks(lastOutputs, 'record');
+    const streams = activeSinks(lastOutputs, 'stream');
+    const base = { at: at.toISOString(), exit: exitText(code, signal), recording, streams };
+    if (code === 0 && !signal) {
+      console.log('[studio] the host shut itself down (code 0): ending the session');
+      crashLog({ ...base, action: 'session-ended' });
+      clearInterval(poll);
+      endSession(0);
+      return;
+    }
+    const d = policy.onExit(at.getTime());
+    if (!d.restart) {
+      crashLog({ ...base, action: 'gave-up', exits: d.exits });
+      clearInterval(poll);
+      let diag = null;
+      try {
+        const files = await collectDiag({ dataDir, hostData: hostCfg.dataDir, profile: typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'), release: path.join(REPO, 'release.json') });
+        mkdirSync(path.join(dataDir, 'diag'), { recursive: true });
+        diag = path.join(dataDir, 'diag', `ujwalam-diag-${at.toISOString().replace(/[:.]/g, '-')}.zip`);
+        writeZip(diag, files.map((f) => ({ name: f.name, data: f.data })), { mtime: at });
+      } catch (e) { console.log(`[studio] diagnostics bundle failed: ${e.message}`); }
+      console.log(`[studio] HOST CRASHED ${d.exits} times in ${Math.round(d.windowMs / 60000)} min (last exit ${base.exit}); not restarting again. Stopping. Crash log: ${path.join(logsDir, CRASH_LOG_FILE)}${diag ? `; diagnostics: ${diag}` : ''}`);
+      endSession(3);
+      return;
+    }
+    crashLog({ ...base, action: 'restart', attempt: d.attempt, delayMs: d.delayMs });
+    console.log(`[studio] HOST EXITED UNEXPECTEDLY (${base.exit}); restart ${d.attempt} of ${d.max} in ${d.delayMs} ms${recording.length ? `; recording was on (${recording.join(', ')})` : ''}${streams.length ? `; streams were on (${streams.join(', ')})` : ''}`);
+    await sleep(d.delayMs);
+    if (isStopping()) return;
+    const next = spawnHost();
+    arm(next);
+    const disc = await waitForDiscovery(hostDiscovery, next);
+    if (!disc) {
+      console.log('[studio] restarted host is not ready (see its log)');
+      if (next.exitCode === null) { try { next.kill(); } catch { /* gone */ } } // its exit counts against the limit
+      return;
+    }
+    client = new HostClient({ port: disc.port, token: hostToken });
+    onClient(client);
+    console.log(`[studio] host restarted (attempt ${d.attempt})`);
+    try {
+      if (alpha) await alphaProject({ client, dataDir, args, hostCfg });
+    } catch (e) { console.log(`[studio] WARNING: project reload after the restart failed: ${e.message}`); }
+    let resumed = [];
+    if (recording.length) {
+      try {
+        await client.call('record.start', { sinks: recording });
+        resumed = recording;
+        console.log(`[studio] recording started again in a new file (${recording.join(', ')}); the file before the crash stays playable (mkv)`);
+      } catch (e) { console.log(`[studio] WARNING: recording could not be started again: ${e.message}`); }
+    }
+    if (streams.length) console.log(`[studio] WARNING: streams ${streams.join(', ')} are NOT restarted automatically: start them from the control page ("yes, on air")`);
+    const note = `host restarted after an unexpected exit (${base.exit}); restart ${d.attempt} of ${d.max}; recording resumed: ${resumed.join(', ') || 'none'}; streams to restart by hand: ${streams.join(', ') || 'none'}`;
+    try { await client.call('marker.add', { source: 'api', note: note.slice(0, 500) }); } catch (e) { console.log(`[studio] WARNING: restart marker not written: ${e.message}`); }
+    crashLog({ at: new Date().toISOString(), action: 'restarted', attempt: d.attempt, resumed, streams });
+    if (alpha) await alphaStatus(client);
+    await writeSnapshot(client, logsDir);
+    busy = false;
+  }
+  arm(getChild());
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   const alpha = args.alpha === true;
@@ -325,8 +467,12 @@ export async function main(argv = process.argv.slice(2)) {
   let hostChild = null;
   let hostDiscoveryFile = null;
   let alphaClient = null;
+  let stopping = false;
+  let endSession = () => {};
+  const sessionEnded = new Promise((resolve) => { endSession = resolve; });
   // Ask the host to exit cleanly first (it closes previews and removes its discovery file), then kill what is left.
   const stopAll = async () => {
+    stopping = true;
     if (hostChild && hostChild.exitCode === null && hostDiscoveryFile) {
       try {
         const d = JSON.parse(readFileSync(hostDiscoveryFile, 'utf8'));
@@ -390,17 +536,25 @@ export async function main(argv = process.argv.slice(2)) {
       writeFileSync(f, JSON.stringify(params, null, 2));
       hostArgs.push('--outputs', f);
     }
-    removeStaleDiscovery(hostDiscovery);
-    const hostLog = openHostLog(path.join(dataDir, 'logs'));
+    const logsDir = path.join(dataDir, 'logs');
     const script = /\.m?js$/i.test(hostExe);
-    hostChild = spawn(script ? process.execPath : hostExe, script ? [hostExe, ...hostArgs] : hostArgs, {
-      stdio: ['ignore', hostLog.fd, hostLog.fd],
-      env: { ...process.env, ...spec.env, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
-    });
-    closeSync(hostLog.fd); // the child holds its own handle
-    children.push(hostChild);
+    const spawnHost = () => {
+      removeStaleDiscovery(hostDiscovery);
+      const hostLog = openHostLog(logsDir);
+      const child = spawn(script ? process.execPath : hostExe, script ? [hostExe, ...hostArgs] : hostArgs, {
+        stdio: ['ignore', hostLog.fd, hostLog.fd],
+        env: { ...process.env, ...spec.env, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
+      });
+      closeSync(hostLog.fd); // the child holds its own handle
+      const i = children.indexOf(hostChild);
+      if (i >= 0) children.splice(i, 1);
+      children.push(child);
+      hostChild = child;
+      console.log(`[studio] host log: ${hostLog.file}`);
+      return child;
+    };
+    spawnHost();
     hostDiscoveryFile = hostDiscovery;
-    console.log(`[studio] host log: ${hostLog.file}`);
     // The UI server and the browser start only after the host has written its discovery file (up to 60 s), so the page never meets the fake backend first.
     const disc = await waitForDiscovery(hostDiscovery, hostChild);
     console.log(`[studio] libobs host ${disc ? 'started' : 'NOT ready (see the host log)'}${args['allow-devices'] === true ? ' (devices ALLOWED)' : ' (devices off)'}${alpha ? ', previews H and V' : ''}`);
@@ -416,6 +570,15 @@ export async function main(argv = process.argv.slice(2)) {
         await stopAll();
         return 1;
       }
+    }
+    if (disc) {
+      superviseHost({
+        logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost,
+        getChild: () => hostChild, isStopping: () => stopping,
+        initialClient: alphaClient ?? new HostClient({ port: disc.port, token: hostToken }),
+        onClient: (c) => { if (alpha) alphaClient = c; },
+        endSession,
+      });
     }
   } else {
     console.log('[studio] BLOCKED-ON-HOST: no libobs host executable (build it with node app/host/tools/build.mjs, or set UJWALAM_HOST_EXE / --host-exe); the UI uses its fake backend');
@@ -456,9 +619,9 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdin.once('data', () => { stopAll().then(() => process.exit(0)); });
     process.stdin.once('end', () => { stopAll().then(() => process.exit(0)); });
   }
-  await new Promise((resolve) => { core.once('exit', resolve); ui.once('exit', resolve); });
+  const code = await new Promise((resolve) => { core.once('exit', () => resolve(0)); ui.once('exit', () => resolve(0)); sessionEnded.then(resolve); });
   await stopAll();
-  return 0;
+  return code;
 }
 
 if (process.argv[1] && process.argv[1].endsWith('launch.mjs') && process.argv[1].includes('studio-ui')) process.exit(await main());

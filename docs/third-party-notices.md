@@ -2,7 +2,25 @@
 
 Third-party software and model files that Ujwalam uses or would ship. Each entry gives the licence and where it was checked. Publishing rules (what must never be distributed) are in `docs/licence-headers.md`.
 
-Nothing here is bundled yet: these packages live in the project-local, gitignored `.venv` (OCR worker, P2) and are pinned in `services/clip/requirements-ocr.lock.txt`. Before any distribution (P17), ship each licence text beside the component and re-check every entry.
+The OCR packages below are not bundled: they live in the project-local, gitignored `.venv` (OCR worker, P2) and are pinned in `services/clip/requirements-ocr.lock.txt`. Before any distribution (P17), ship each licence text beside the component and re-check every entry. The Alpha 0 zip (D133) bundles a subset of the OBS runtime; see the next section.
+
+## Alpha 0 package: OBS runtime subset (2026-11-05)
+
+`tools/package/build-alpha.mjs` copies only the OBS runtime files that the host exe and the 14 loaded plugins import (PE import closure). The zip then lists every copied file with its reason in `notices/OBS-RUNTIME-FILES.txt`. Per-file licence mapping goes in `notices/THIRD-PARTY.txt`. The zip also carries the GPL-2.0 text (`notices/GPL-2.0.txt`, from the runtime's `data/obs-studio/license/gplv2.txt`) and a written source offer (`notices/SOURCE-OFFER.txt`). Node.js is not bundled: the user installs it.
+
+| Component | Shipped files | Licence | Status |
+|---|---|---|---|
+| OBS Studio 32.1.2 (libobs, plugins, helper exes) | `obs.dll`, `libobs-*.dll`, `obs-frontend-api.dll`, 14 plugins, `obs-ffmpeg-mux.exe` and the encoder test exes | GPL-2.0-or-later | The runtime was built from the 32.1.2 tag: UNVERIFIED |
+| w32-pthreads | `w32-pthreads.dll` | LGPL-2.1-or-later (OBS fork of pthreads-win32) | UNVERIFIED |
+| FFmpeg (OBS build) | `avcodec`, `avformat`, `avutil`, `avfilter`, `avdevice`, `swresample`, `swscale` | LGPL-2.1-or-later, or GPL-2.0-or-later if built with GPL parts | UNVERIFIED which |
+| x264 | `libx264-*.dll` | GPL-2.0-or-later | from obs-deps |
+| Qt 6 | `Qt6Core`, `Qt6Gui`, `Qt6Widgets` (obs-browser and obs-frontend-api import them; no Qt plugins ship) | LGPL-3.0-only | UNVERIFIED; LGPL-3.0 text and the relinking note are not in the zip yet |
+| CEF / Chromium (obs-browser) | `libcef.dll`, `chrome_elf.dll`, `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `libEGL`, `libGLESv2`, `locales/en-US.pak` only | BSD-3-Clause (CEF) plus the Chromium third-party licences | UNVERIFIED: the runtime has no CEF credits file, so the zip carries none |
+| zlib, curl, SRT, librist, libdatachannel, LuaJIT | as imported | Zlib; curl (MIT-style); MPL-2.0; BSD-2-Clause; MPL-2.0; MIT | from obs-deps; not re-checked |
+
+Not shipped: Microsoft fonts, `legacy/`, any font file, `.pdb` symbols, disabled modules (obs-websocket, win-capture, rtmp-services, VST and others), Qt plugins, the frontend's data and scripting files, and CEF locales other than en-US. The Visual C++ runtime and `d3dcompiler_47.dll` are not bundled either: they are system prerequisites, and the installer checks the VC++ runtime.
+
+Before a build goes to anyone other than the user: check each UNVERIFIED row, add the LGPL-3.0 and CEF credit texts, and confirm the source offer (`docs/plan/2026-10-29-v1-decisions.md`, D133).
 
 ## OCR worker (P2a A5, installed 2026-10-27)
 

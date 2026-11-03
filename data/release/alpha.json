@@ -1,0 +1,17 @@
+{
+  "$comment": "Alpha builds (D133). tools/package/build-alpha.mjs reads this: version = <base>-alpha.<n>, n = --n or `current`. Each build needs a matching '## <version>' section in data/release/CHANGELOG-alpha.md. nodeMin mirrors package.json engines. obsRuntime names the vendored OBS runtime the zip copies from (configured runtime dir, app/host/lib/config.mjs).",
+  "product": "ujwalam",
+  "base": "0.1.0",
+  "channel": "alpha",
+  "current": 1,
+  "nodeMin": "22.13.0",
+  "obsRuntime": {
+    "version": "32.1.2",
+    "source": "https://github.com/obsproject/obs-studio/tree/32.1.2",
+    "status": "unverified",
+    "note": "The vendored runtime folder is named for 32.1.2 and the host build links against the obs-studio checkout at that tag; the runtime binaries were not rebuilt from source here."
+  },
+  "builds": [
+    { "n": 1, "date": "2026-11-05", "title": "Alpha 0 first build" }
+  ]
+}
