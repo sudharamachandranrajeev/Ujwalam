@@ -20,6 +20,24 @@
 - A bot that relaunches itself under a new pid (single-instance handoff) would report `exited-early`.
 - Ports 8093 / 8083 answering on the real bots.
 
+## Runtime check with the real bots (2026-11-03, user yes)
+
+Paths set in the local profile (`paths.streamerbot_exe`, `paths.speakerbot_exe`). Started through `createBots().start()` from a script, bots not running before:
+
+```
+streamerbot before {"installed":true,"running":false,"startedByUs":false}
+streamerbot start {"ok":true,"pid":<pid>}
+speakerbot before {"installed":true,"running":false,"startedByUs":false}
+speakerbot start {"ok":true,"pid":<pid>}
+t+5s  streamerbot running=true ours=true port=8093 answering=false | speakerbot running=true ours=true port=8083 answering=true
+t+10s streamerbot running=true ours=true port=8093 answering=true  | speakerbot running=true ours=true port=8083 answering=true
+```
+
+- Start, detection, "started by Ujwalam" records and both ports: PASS (no single-instance relaunch, no `exited-early`).
+- Windows: `windowsHide` does not hide them. Both main windows are visible (Streamer.bot opens its "Chat" window; Speaker.bot reports version 0.1.7 in its title). The foreground window after start was still the terminal: no focus taken at the time of the check. A brief focus grab during start is UNVERIFIED (not watched frame by frame). These are the user's own apps, so a visible window is accepted; D191 covers Ujwalam's own windows.
+- `node tools/bot-clash-check.mjs` with both bots running: exit 0, no clashes; 0 Streamer.bot hotkeys read (hotkey file not found, stays manual).
+- Not yet checked: Stop through the bot manager, and stop on studio stop.
+
 ## Files
 Created: `services/bots/index.mjs`, `tests/bots.test.mjs`, `tests/studio-ui-bots.test.mjs`, this file.
 Changed: `data/flags.json`, `data/profile.example.json`, `data/profile.schema.json`, `docs/plan/2026-10-29-v1-decisions.md` (D194), `services/studio-ui/backends.mjs`, `services/studio-ui/cli.mjs`, `services/studio-ui/launch.mjs`, `services/studio-ui/server.mjs`, `tools/package/manifest.mjs`, `tools/stray-procs.mjs`, `ui/index.html`, `ui/js/api.js`, `ui/js/app.js`.
