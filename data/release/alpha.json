@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 1,
+  "current": 2,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -12,6 +12,7 @@
     "note": "The vendored runtime folder is named for 32.1.2 and the host build links against the obs-studio checkout at that tag; the runtime binaries were not rebuilt from source here."
   },
   "builds": [
-    { "n": 1, "date": "2026-11-05", "title": "Alpha 0 first build" }
+    { "n": 1, "date": "2026-11-05", "title": "Alpha 0 first build" },
+    { "n": 2, "date": "2026-11-03", "title": "Live-test guard, Twitch bandwidth test, 1080p60 live plan" }
   ]
 }

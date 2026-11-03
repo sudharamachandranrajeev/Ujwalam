@@ -2,6 +2,12 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.2 — 2026-11-03
+
+- Live plan: YouTube H 1080p60 at 17 Mbps; YouTube V direct; one shared 1080p60 6000 kbps rung for Twitch and Kick.
+- Live-test mode: `--sinks` picks destinations; `--twitch-bandwidth-test` sends Twitch a bandwidth test (received, not broadcast); `--test-stream-minutes N` and `--test-sink-minutes kick=2` arm a guard that stops every output on a failure, a destination not live for more than 10 s, or lost frames above 1 % (after 30 s) or 3 % in any 10 s window. A report is written to `logs/live-test-*.txt`.
+- Scene presets: a brand file that is a video plays as a looping layer; a brand file missing from the profile becomes a transparent placeholder instead of failing the scene.
+- Post-stream clip pipeline (flag `clip-pipeline`, off): not part of the live path.
 ## 0.1.0-alpha.1 — 2026-11-05
 
 First Alpha 0 build: a portable zip with `Install-Ujwalam.ps1` (no admin).

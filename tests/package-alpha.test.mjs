@@ -74,15 +74,17 @@ test('forbidden paths: legacy, local files, Microsoft fonts, any font, private e
   assert.equal(allowProblems(['tests/x.test.mjs', 'random.txt', 'bin/other.exe', 'obs/cef/x.dll']).length, 4);
 });
 
-test('release info and changelog excerpt for 0.1.0-alpha.1; node version check', () => {
+test('release info and changelog excerpt for the current alpha and alpha.1; node version check', () => {
+  const cur = JSON.parse(readFileSync(path.join(REPO, 'data', 'release', 'alpha.json'), 'utf8')).current;
   const r = releaseInfo(REPO);
-  assert.equal(r.version, '0.1.0-alpha.1');
+  assert.equal(r.version, `0.1.0-alpha.${cur}`);
+  assert.equal(releaseInfo(REPO, 1).version, '0.1.0-alpha.1', 'an older listed build can still be packaged');
   assert.throws(() => releaseInfo(REPO, 99));
   assert.throws(() => releaseInfo(REPO, 0));
-  const ex = changelogExcerpt(readFileSync(path.join(REPO, 'data', 'release', 'CHANGELOG-alpha.md'), 'utf8'), r.version);
-  assert.match(ex, /^# Ujwalam 0\.1\.0-alpha\.1\n/);
-  assert.throws(() => changelogExcerpt('## 0.1.0-alpha.2\nx', r.version));
-  assert.equal(changelogExcerpt('## 0.1.0-alpha.1 — d\na\n## 0.1.0-alpha.0\nb\n', r.version), '# Ujwalam 0.1.0-alpha.1\n\na\n');
+  const log = readFileSync(path.join(REPO, 'data', 'release', 'CHANGELOG-alpha.md'), 'utf8');
+  for (const n of [1, cur]) assert.match(changelogExcerpt(log, `0.1.0-alpha.${n}`), new RegExp(`^# Ujwalam 0\\.1\\.0-alpha\\.${n}\\n`));
+  assert.throws(() => changelogExcerpt('## 0.1.0-alpha.2\nx', '0.1.0-alpha.1'));
+  assert.equal(changelogExcerpt('## 0.1.0-alpha.1 — d\na\n## 0.1.0-alpha.0\nb\n', '0.1.0-alpha.1'), '# Ujwalam 0.1.0-alpha.1\n\na\n');
   assert.equal(nodeOk('v22.13.0', '22.13.0'), true);
   assert.equal(nodeOk('v22.12.9', '22.13.0'), false);
   assert.equal(nodeOk('26.12.1', '22.13.0'), true);
