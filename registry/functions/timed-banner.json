@@ -1,0 +1,102 @@
+{
+  "id": "timed-banner",
+  "version": "0.1.0",
+  "category": "layers-graphics",
+  "family": "text-effects",
+  "name": "Timed banner",
+  "description": "A text banner on a browser layer: shown when its feature flag turns on (read live from the overlay server; without a flag, at layer load), then every interval seconds; hidden at once when the flag turns off, visible for the hold time. Entrance and exit are opacity plus a short slide (no flashes). Text, label and timing come from the preset params, passed in the layer query; the page is services/overlay-server/pages/ujwalam-test-broadcast. Timer driven: it does not go through the effect gate or budget.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "required": [
+        "text",
+        "interval",
+        "hold",
+        "enter",
+        "exit"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "maxLength": 60
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "interval": {
+          "type": "integer",
+          "minimum": 60,
+          "maximum": 3600
+        },
+        "hold": {
+          "type": "integer",
+          "minimum": 5,
+          "maximum": 60
+        },
+        "enter": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 550
+        },
+        "exit": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 350
+        },
+        "flag": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]{0,47}$"
+        }
+      }
+    },
+    "defaults": {
+      "label": "",
+      "interval": 900,
+      "hold": 18,
+      "enter": 450,
+      "exit": 300,
+      "flag": ""
+    },
+    "safeRanges": {
+      "interval": [
+        60,
+        3600
+      ],
+      "hold": [
+        5,
+        60
+      ],
+      "enter": [
+        100,
+        550
+      ],
+      "exit": [
+        100,
+        350
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [
+    "--glass",
+    "--ink",
+    "--ember",
+    "--flare",
+    "--text-outline",
+    "--font-body",
+    "--font-display"
+  ],
+  "durationMs": 18000,
+  "maxConcurrent": 1,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "html",
+  "planSection": "4.1"
+}

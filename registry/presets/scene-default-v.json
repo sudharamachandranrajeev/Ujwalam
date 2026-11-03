@@ -227,6 +227,22 @@
         },
         "geometry": "meld",
         "note": "Top of the Meld stack, full canvas. Shares the effect budget with Chat Charge (both are full-canvas effect pages)."
+      },
+      {
+        "key": "test-broadcast",
+        "z": 13,
+        "name": "Test broadcast",
+        "type": "browser",
+        "overlay": "ujwalam-test-broadcast/index.html",
+        "query": "label=Test%20broadcast&text=We%20are%20trying%20new%20streaming%20software.%20Tell%20us%20in%20chat%20how%20the%20video%2C%20sound%20and%20scenes%20look.&interval=900&hold=18&enter=450&exit=300&flag=test-broadcast",
+        "rect": {
+          "x": 0.06,
+          "y": 0.08,
+          "w": 0.88,
+          "h": 0.14
+        },
+        "geometry": "spec",
+        "note": "Test-stream announcement (preset test-broadcast, BM3). V safe area used here: 6 percent side margins, top 8 percent, bottom edge at 22 percent of the height (above the game box at 23.9 percent, clear of the platform buttons on the lower part). Always in the scene; the page shows the banner only while the test-broadcast flag is on (polled live, D196). Rect is a proposal, UNVERIFIED on a real capture."
       }
     ],
     "rules": [
@@ -236,7 +252,7 @@
           "layerKey": "facecam"
         },
         "config": "data/effects/guards.json#rules.campop",
-        "z": 13
+        "z": 14
       }
     ],
     "placeholders": [

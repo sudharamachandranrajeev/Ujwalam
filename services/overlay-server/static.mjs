@@ -5,6 +5,9 @@
 //   <root>/overlays/<name>/index.html?<query>   the overlays
 //   <root>/brand/..., <root>/kit/...            what the overlays load with ../../brand and ../../kit
 //   /_ujwalam/<file>                            the relay page, from this service (never from the legacy folder)
+//   /overlays/ujwalam-<name>/...                pages authored in this repo (opts.ownOverlays), looked up before <root>/overlays;
+//                                               only folders named ujwalam-* are taken from there, so they never shadow a legacy page
+//   /_ujwalam/flags.json                        live state of the overlay feature flags (opts.flagsJson), read-only
 // Only the top-level folders in `allowDirs` are served; nothing else under <root> is reachable.
 //
 // Refused: any method but GET and HEAD (405), a Host that is not 127.0.0.1:<port> or localhost:<port> (421),
@@ -13,7 +16,7 @@
 // A directory is never listed: "/overlays/name/" serves its index.html, any other directory is 404.
 // No CORS headers (a page on another origin cannot read these files in a script).
 
-import { createReadStream, realpathSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 
@@ -40,12 +43,16 @@ function safeSegments(decoded) {
   return parts;
 }
 
-/** opts: { root, allowDirs?: string[], extraMounts?: { '/_ujwalam': absDir }, port, csp?: string|false }.
- *  root is the folder that holds overlays/, brand/ and kit/. Returns { server, port, listen(), close() }. */
+/** Live feature-flag state for overlay pages (D196): GET returns { <id>: true|false } for the overlay flags only. */
+export const FLAGS_PATH = '/_ujwalam/flags.json';
+
+/** opts: { root, allowDirs?: string[], extraMounts?: { '/_ujwalam': absDir }, ownOverlays?: absDir, flagsJson?: () => object,
+ *  port, csp?: string|false }. root is the folder that holds overlays/, brand/ and kit/. Returns { server, port, listen(), close() }. */
 export function createStaticServer(opts) {
   const root = realpathSync(opts.root);
   const allowDirs = opts.allowDirs ?? ['overlays', 'brand', 'kit'];
   const mounts = new Map(Object.entries(opts.extraMounts ?? {}).map(([k, v]) => [k.replace(/^\/|\/$/g, ''), realpathSync(v)]));
+  const own = opts.ownOverlays ? realpathSync(opts.ownOverlays) : null;
   const csp = opts.csp === undefined ? OVERLAY_CSP : opts.csp;
   let boundPort = opts.port ?? 0;
 
@@ -58,6 +65,9 @@ export function createStaticServer(opts) {
 
   function scopeOf(parts) {
     if (parts.length && mounts.has(parts[0])) return { base: mounts.get(parts[0]), rest: parts.slice(1), scope: mounts.get(parts[0]) };
+    if (own && parts[0] === 'overlays' && /^ujwalam-[a-z0-9-]+$/.test(parts[1] ?? '') && existsSync(path.join(own, parts[1]))) {
+      return { base: own, rest: parts.slice(1), scope: path.join(own, parts[1]) };
+    }
     if (parts.length && allowDirs.includes(parts[0])) return { base: root, rest: parts, scope: path.join(root, parts[0]) };
     return null;
   }
@@ -72,6 +82,12 @@ export function createStaticServer(opts) {
     if (!decoded.startsWith('/')) return send(res, 400);
     const parts = safeSegments(decoded);
     if (!parts) return send(res, 400);
+    if (decoded === FLAGS_PATH && typeof opts.flagsJson === 'function') {
+      let body;
+      try { body = JSON.stringify(opts.flagsJson()); } catch { body = '{}'; } // a failed read reads as "all off"
+      res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
+      return res.end(req.method === 'HEAD' ? undefined : body);
+    }
     const s = scopeOf(parts);
     if (!s) return send(res, 404);
     try {

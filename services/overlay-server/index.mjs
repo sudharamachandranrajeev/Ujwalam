@@ -23,6 +23,14 @@ export { createCamPopRule } from './campop-rule.mjs';
 export const DEFAULT_GUARDS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'effects', 'guards.json');
 
 const RELAY_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'relay');
+export const OWN_OVERLAYS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pages');
+/** Feature flags an overlay page may read live at /_ujwalam/flags.json (D196). Nothing else about flags reaches a page. */
+export const OVERLAY_FLAGS = Object.freeze(['test-broadcast']);
+
+/** { <id>: bool } for OVERLAY_FLAGS. flags: { isOn(id) } (services/flags) or nothing (then every flag is off). */
+export function overlayFlagState(flags) {
+  return Object.fromEntries(OVERLAY_FLAGS.map((id) => { try { return [id, flags?.isOn(id) === true]; } catch { return [id, false]; } }));
+}
 
 /** Query parameters that point a legacy overlay at the bridge feed: the ones the pages already have
  *  (sbHost, sbPort, sbPath), plus streamerbot=1 for the pages that load kit/sources/streamerbot.js. */
@@ -33,7 +41,8 @@ export function feedQuery(feedPort, scope = 'effects', effect = '') {
   return `streamerbot=1&sbHost=127.0.0.1&sbPort=${feedPort}&sbPath=${p}`;
 }
 
-/** opts: { root, bus?, staticPort?, feedPort?, guards?, audit?, now?, effectGate?, extraOrigins?, csp?, log? }.
+/** opts: { root, bus?, staticPort?, feedPort?, guards?, audit?, now?, effectGate?, extraOrigins?, csp?, log?, flags? }.
+ *  flags: { isOn(id) } read on every /_ujwalam/flags.json request, so a flip on the control page reaches the pages live.
  *  guards: true (data/effects/guards.json), a file path, or a parsed config object; it builds the effect guards and
  *  the cam-pop rule and plugs them in. Without guards the gate allows everything (tests only). */
 export function createOverlayServer(opts) {
@@ -48,7 +57,7 @@ export function createOverlayServer(opts) {
     guards.setDeliver((e) => bridge.deliverEffect(e.name));
     if (guards.config.rules?.campop) rule = createCamPopRule({ config: guards.config.rules.campop, fire: (e) => bridge.publishEffect(e.name, { source: e.source }), now: opts.now });
   }
-  const stat = createStaticServer({ root: opts.root, port: opts.staticPort ?? 0, csp: opts.csp, extraMounts: { '/_ujwalam': RELAY_DIR } });
+  const stat = createStaticServer({ root: opts.root, port: opts.staticPort ?? 0, csp: opts.csp, extraMounts: { '/_ujwalam': RELAY_DIR }, ownOverlays: OWN_OVERLAYS_DIR, flagsJson: () => overlayFlagState(opts.flags) });
   const feed = createFeedServer({ bridge, port: opts.feedPort ?? 0, allowedOrigins: opts.extraOrigins ?? [] });
   let detach = null;
   let detachRule = null;

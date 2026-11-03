@@ -1,0 +1,55 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-2.0-or-later -->
+<!-- Ujwalam test-broadcast announcement (BM3, D196). Authored here, not part of the legacy overlays.
+     Query (all data, none hardcoded in the page; the registry preset test-broadcast holds the values):
+       label=     small heading                       text=      the announcement (required; no text = nothing shown)
+       interval=  seconds between showings (60-3600)  hold=      seconds visible (5-60)
+       enter=     entrance ms (100-550)               exit=      exit ms (100-350)
+       flag=      feature flag id; the banner runs only while it is on (polled live from /_ujwalam/flags.json)
+     Shown when the flag turns on (or at page load without a flag), then every interval seconds; hidden at once when it
+     turns off. Opacity and a short slide only: no flashes. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Test broadcast</title>
+<link rel="stylesheet" href="../../brand/fonts.css">
+<link rel="stylesheet" href="../../brand/tokens.css">
+<link rel="stylesheet" href="../../kit/overlay-base.css">
+<style>
+  .banner {
+    position: absolute; inset: 0; box-sizing: border-box;
+    display: flex; flex-direction: column; justify-content: center; gap: 0.2em;
+    padding: 0.5em 0.9em;
+    background: var(--glass);
+    border-top: var(--stroke-hud, 3px) solid var(--ember);
+    border-bottom: var(--stroke-hud, 3px) solid var(--ember);
+    color: var(--ink);
+    font-family: var(--font-body);
+    text-shadow: var(--text-outline);
+    opacity: 0; transform: translateY(-14px);
+    transition: opacity var(--enter, 450ms) ease-out, transform var(--enter, 450ms) cubic-bezier(.16, 1, .3, 1);
+    will-change: opacity, transform;
+  }
+  .banner.is-on { opacity: 1; transform: none; }
+  .banner.is-leaving { opacity: 0; transform: translateY(-8px); transition-duration: var(--exit, 300ms); transition-timing-function: ease-in; }
+  .label { font-family: var(--font-display); letter-spacing: 0.08em; text-transform: uppercase; color: var(--flare); line-height: 1.1; }
+  .text { line-height: 1.2; overflow-wrap: anywhere; }
+</style>
+</head>
+<body>
+<div class="banner" id="banner" aria-live="polite"><div class="label" id="label"></div><div class="text" id="text"></div></div>
+<script src="banner.js"></script>
+<script>
+  (function () {
+    'use strict';
+    var p = TestBroadcast.parseParams(location.search);
+    if (!p) return; // no text: show nothing
+    var ctl = TestBroadcast.run(p, document, window);
+    if (!ctl) return;
+    var flag = TestBroadcast.parseFlag(location.search);
+    if (flag) TestBroadcast.watchFlag(flag, ctl, window, 5000); // live: shown only while the flag is on
+    else ctl.setOn(true); // no flag named (a manual preview): shown at load, then every interval
+  })();
+</script>
+</body>
+</html>

@@ -26,10 +26,10 @@ test('V preset: registry validates, targets the v canvas, similar to Default H',
   assert.equal(presetV.parity, 'pending');
 });
 
-test('V preset: z unique 0..12 plus cam-pop rule z13, rects inside the canvas, crop not stretch', () => {
+test('V preset: z unique 0..13 (z13 = test-broadcast banner) plus cam-pop rule z14, rects inside the canvas, crop not stretch', () => {
   const zs = presetV.params.layers.map((l) => l.z).sort((a, b) => a - b);
-  assert.deepEqual(zs, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-  assert.equal(presetV.params.rules[0].z, 13);
+  assert.deepEqual(zs, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  assert.equal(presetV.params.rules[0].z, 14);
   for (const l of presetV.params.layers) {
     for (const k of ['x', 'y', 'w', 'h']) assert.ok(l.rect[k] >= 0 && l.rect[k] <= 1, `${l.key}.${k}`);
     assert.ok(l.rect.x + l.rect.w <= 1.0001 && l.rect.y + l.rect.h <= 1.0001, `${l.key} inside canvas`);
@@ -45,7 +45,7 @@ test('V preset loads into the v canvas with roles bound and validates', () => {
   assert.equal(validateProject(r.project).ok, true);
   const sc = r.project.scenes.at(-1);
   assert.equal(sc.name, 'Default V');
-  assert.equal(sc.layers.length, 13);
+  assert.equal(sc.layers.length, 14);
   assert.ok(sc.layers.every((l) => Object.keys(l.placements).join() === 'v'));
   assert.deepEqual(sc.layers[1].source, { device: 'dev-cap' });
   assert.deepEqual(sc.layers[2].source, { device: 'dev-cam' });

@@ -14,6 +14,8 @@
 // --events-url) and goes only into the one SSE request header (services/overlay-server/event-source.mjs).
 import path from 'node:path';
 import { createInterface } from 'node:readline';
+import { resolveDataDir } from '../../../services/event-core/config.mjs';
+import { createFlags } from '../../../services/flags/index.mjs';
 import { createOverlayServer, createRemoteBus } from '../../../services/overlay-server/index.mjs';
 
 const STREAMERBOT_PORT = 8093; // the real Streamer.bot keeps this port; the feed must never take it
@@ -37,7 +39,11 @@ if (eventsUrl && !/^[0-9a-f]{64}$/.test(token)) { warn('--events-url needs UJWAL
 
 const bus = eventsUrl ? createRemoteBus({ url: eventsUrl, token, kinds: ['chat.', 'alert.'], log: warn }) : undefined;
 // Effects pass Agent A's guards (data/effects/guards.json: budget, cooldowns, regions, flash limit; D76-D83).
-const server = createOverlayServer({ root: path.resolve(root), bus, staticPort: port, feedPort, guards: true, log: warn });
+// Overlay feature flags (D196): read from the data dir the profile names, the same one the studio writes. No data dir
+// (no profile, or a studio run with an explicit --data-dir): every overlay flag reads as off.
+let flags;
+try { flags = createFlags({ dataDir: resolveDataDir() }); } catch (e) { warn(`overlay flags off (${e.message})`); }
+const server = createOverlayServer({ root: path.resolve(root), bus, staticPort: port, feedPort, guards: true, log: warn, flags });
 const ports = await server.start();
 if (ports.feedPort === STREAMERBOT_PORT || ports.staticPort === STREAMERBOT_PORT) { warn('bound to 8093; stopping'); await server.stop(); process.exit(70); }
 // envKeys: the NAMES of the variables this process got (never values), so the host can show that no token came in.

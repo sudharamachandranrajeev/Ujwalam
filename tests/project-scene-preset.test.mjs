@@ -22,10 +22,10 @@ test('registry (function + preset) validates', () => {
   assert.deepEqual(validateRegistry('registry', process.cwd()), []);
 });
 
-test('preset has 13 layers z0..z12 plus cam-pop rule as z13, rects inside the canvas', () => {
+test('preset has 14 layers z0..z13 (z13 = test-broadcast banner, flag-gated) plus cam-pop rule as z14, rects inside the canvas', () => {
   const zs = preset.params.layers.map((l) => l.z).sort((a, b) => a - b);
-  assert.deepEqual(zs, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
-  assert.equal(preset.params.rules[0].z, 13);
+  assert.deepEqual(zs, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  assert.equal(preset.params.rules[0].z, 14);
   for (const l of preset.params.layers) {
     for (const k of ['x', 'y', 'w', 'h']) assert.ok(l.rect[k] >= 0 && l.rect[k] <= 1, `${l.key}.${k}`);
     assert.ok(l.rect.x + l.rect.w <= 1.0001 && l.rect.y + l.rect.h <= 1.0001, `${l.key} inside canvas`);
@@ -53,7 +53,7 @@ test('load appends a NEW scene and leaves everything existing byte-identical', (
 test('layers are back to front, H only, geometry in pixels of the H canvas', () => {
   const r = loadScenePreset(base(), preset, { profile });
   const sc = r.project.scenes.at(-1);
-  assert.equal(sc.layers.length, 13);
+  assert.equal(sc.layers.length, 14);
   assert.equal(sc.layers[0].name, 'Background');
   assert.equal(sc.layers[12].name, 'Atmos front');
   const game = sc.layers[1].placements.h;

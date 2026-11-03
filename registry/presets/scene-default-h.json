@@ -228,6 +228,22 @@
         "visible": false,
         "geometry": "spec",
         "note": "Hidden: no matching layer in the Meld session."
+      },
+      {
+        "key": "test-broadcast",
+        "z": 13,
+        "name": "Test broadcast",
+        "type": "browser",
+        "overlay": "ujwalam-test-broadcast/index.html",
+        "query": "label=Test%20broadcast&text=We%20are%20trying%20new%20streaming%20software.%20Tell%20us%20in%20chat%20how%20the%20video%2C%20sound%20and%20scenes%20look.&interval=900&hold=18&enter=450&exit=300&flag=test-broadcast",
+        "rect": {
+          "x": 0.25,
+          "y": 0.04,
+          "w": 0.72,
+          "h": 0.12
+        },
+        "geometry": "spec",
+        "note": "Test-stream announcement (preset test-broadcast, BM3). Top of the game area, above everything. Always in the scene; the page shows the banner only while the test-broadcast flag is on (polled live, D196). Own page, not a legacy overlay. Rect is a proposal, UNVERIFIED on a real capture."
       }
     ],
     "rules": [
@@ -237,7 +253,7 @@
           "layerKey": "facecam"
         },
         "config": "data/effects/guards.json#rules.campop",
-        "z": 13
+        "z": 14
       }
     ],
     "placeholders": [
