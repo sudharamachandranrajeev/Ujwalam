@@ -49,6 +49,15 @@ session file/
 # Private reference copy; never committed or distributed. Integrity: legacy.manifest.sha256
 legacy/
 
+# Live-stream feedback captures (replay clips, logs, voice notes). Local only; triage goes to docs/feedback/.
+feedback/
+
+# Agent session lock (docs/procedures/session-protocol.md).
+.agent-lock
+
+# Agent git worktrees (separate checkouts of this repo).
+.claude/worktrees/
+
 # Local datasets (reference crops can show player names; never committed).
 data/datasets/
 

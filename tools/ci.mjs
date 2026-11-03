@@ -71,7 +71,10 @@ async function testOcrStep(root) {
 export const STEPS = [
   { name: 'build', run: buildStep },
   { name: 'lint', cmd: 'npm', args: ['run', 'lint', '--silent'], shell: true },
+  npmRun('build-host', 'build:host'),
   npmRun('test', 'test'),
+  // Host suite after the main tests, never in parallel with them: it starts libobs and NVENC (one heavy GPU job, D100).
+  npmRun('test-host', 'test:host'),
   npmRun('test-py', 'test:py'),
   { name: 'test-ocr', run: testOcrStep },
   npmRun('test-capture', 'test:capture'),

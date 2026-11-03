@@ -59,7 +59,9 @@ test('a replay run that fails after starting its mock leaves no mock and no chil
   mkdirSync(path.join(root, 'chat', 'twitch'), { recursive: true });
   writeFileSync(path.join(root, 'chat', 'twitch', 'x.json'), JSON.stringify({ video: { length: 9000 }, comments: [{ _id: 's1', content_offset_seconds: 50, commenter: { _id: 'c-t', name: 'tester', display_name: 'tester' }, message: { body: 'synthetic message alpha' } }] }));
   // The core child is killed as soon as it is registered (a crash during start-up), after the mock is already listening.
-  const run = main(['--data-root', root, '--speed', '10', '--duration-s', '2', '--sample-s', '1', '--run-id', 'unit-fail', '--quiet', '--no-system-probe']);
+  // The run lasts 60 s so it cannot finish on its own before the kill lands: with 2 s, a loaded machine (2026-11-03,
+  // system CPU 56 %) let the run complete first and the expected rejection never came. The kill ends it in seconds.
+  const run = main(['--data-root', root, '--speed', '10', '--duration-s', '60', '--sample-s', '1', '--run-id', 'unit-fail', '--quiet', '--no-system-probe']);
   const failed = assert.rejects(run);
   const t0 = Date.now();
   while (openChildren() === 0 && Date.now() - t0 < 20000) await new Promise((r) => setTimeout(r, 5));

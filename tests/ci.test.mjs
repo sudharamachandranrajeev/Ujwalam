@@ -27,7 +27,7 @@ const cli = (args, root) =>
 
 test('step list has every required check in order', () => {
   assert.deepEqual(STEPS.map((s) => s.name), [
-    'build', 'lint', 'test', 'test-py', 'test-ocr', 'test-capture',
+    'build', 'lint', 'build-host', 'test', 'test-host', 'test-py', 'test-ocr', 'test-capture',
     'validate-registry', 'validate-outputs', 'validate-games', 'private-scan', 'legacy-verify', 'bench', 'stray-mocks',
   ]);
 });

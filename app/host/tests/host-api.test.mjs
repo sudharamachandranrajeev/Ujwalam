@@ -65,7 +65,9 @@ test('discovery: env token is not written, pid matches, owner-only DACL', () => 
   assert.equal(d.path, '/rpc');
   const ps = spawnSync('powershell', ['-NoProfile', '-Command',
     `$a = Get-Acl -LiteralPath '${h.discovery.replaceAll("'", "''")}'; "$($a.AreAccessRulesProtected) $($a.Access.Count) $($a.Access[0].FileSystemRights)"`],
-  { encoding: 'utf8' });
+  // Windows PowerShell 5.1 cannot load its own modules with PowerShell 7's PSModulePath, which it inherits when the
+  // tests run from pwsh ("Get-Acl ... the module could not be loaded"). Drop it so 5.1 uses its default path.
+  { encoding: 'utf8', env: Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toUpperCase() !== 'PSMODULEPATH')) });
   assert.equal(ps.stdout.trim(), 'True 1 FullControl', ps.stderr);
 });
 

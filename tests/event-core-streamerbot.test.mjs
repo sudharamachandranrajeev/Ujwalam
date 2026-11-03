@@ -434,7 +434,9 @@ test('source scan: no repository code sets the real-send flag', (t) => {
   // name and the mock-send flag name as plain text on purpose) and generated or private folders.
   const SKIP_ANYWHERE = ['node_modules', '.git', 'legacy', 'out', '.venv', 'docs'];
   const SKIP_TOP = ['tests'];
-  const SKIP_PATHS = ['app/spike/build']; // generated build output (28 MB), accepted exclusion; listed in the output below
+  // app/spike/build: generated build output (28 MB). .claude/worktrees: other git checkouts of this repo made for agents
+  // (each is scanned by its own run, not this one's). Both listed in the output below.
+  const SKIP_PATHS = ['app/spike/build', '.claude/worktrees'];
   const walk = (dir, out = []) => {
     for (const n of readdirSync(dir)) {
       const p = path.join(dir, n);
