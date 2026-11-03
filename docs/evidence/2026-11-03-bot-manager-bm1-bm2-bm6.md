@@ -36,7 +36,16 @@ t+10s streamerbot running=true ours=true port=8093 answering=true  | speakerbot 
 - Start, detection, "started by Ujwalam" records and both ports: PASS (no single-instance relaunch, no `exited-early`).
 - Windows: `windowsHide` does not hide them. Both main windows are visible (Streamer.bot opens its "Chat" window; Speaker.bot reports version 0.1.7 in its title). The foreground window after start was still the terminal: no focus taken at the time of the check. A brief focus grab during start is UNVERIFIED (not watched frame by frame). These are the user's own apps, so a visible window is accepted; D191 covers Ujwalam's own windows.
 - `node tools/bot-clash-check.mjs` with both bots running: exit 0, no clashes; 0 Streamer.bot hotkeys read (hotkey file not found, stays manual).
-- Not yet checked: Stop through the bot manager, and stop on studio stop.
+- Stop through `createBots().stop()` (same day, user yes):
+
+```
+streamerbot stop {"ok":true,"forced":true} 10944 ms after {"installed":true,"running":false,"startedByUs":false}
+speakerbot stop {"ok":true,"forced":false} 2220 ms after {"installed":true,"running":false,"startedByUs":false}
+second stop {"ok":false,"reason":"not-started-by-ujwalam"}
+```
+
+  Speaker.bot closes on the graceful request. Streamer.bot does not close on it within the grace time and is force-closed (`/F /T`). Its saved files were current (actions.json written before the stop), but a forced close can lose unsaved Streamer.bot changes. Follow-up (BM1b): find why the graceful close is ignored (close-to-tray or a confirm dialog, UNVERIFIED) and warn on the Bots card before a forced stop.
+- Not yet checked: stop on studio stop.
 
 ## Files
 Created: `services/bots/index.mjs`, `tests/bots.test.mjs`, `tests/studio-ui-bots.test.mjs`, this file.
