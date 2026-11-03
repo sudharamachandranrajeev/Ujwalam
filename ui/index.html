@@ -15,7 +15,8 @@
     <div class="brand">Ujwalam</div>
     <div class="spacer"></div>
     <button id="btn-import" class="btn" type="button" title="Create a new project from the Meld session and check it against the host">Import Meld session</button>
-    <button id="btn-record" class="btn" type="button" disabled>Record</button>
+    <button id="btn-feedback" class="btn" type="button" title="Review feedback moments saved during streams">Feedback</button>
+    <button id="btn-record"class="btn" type="button" disabled>Record</button>
     <button id="btn-stream" class="btn btn-live" type="button" disabled>Start stream</button>
   </header>
 
@@ -59,6 +60,11 @@
       <h2>Audio mixer</h2>
       <div id="mixer" class="mixer" aria-label="Audio mixer"></div>
     </section>
+    <section class="panel">
+      <h2>Feature flags</h2>
+      <ul id="flag-list" class="list" aria-label="Feature flags"></ul>
+      <p id="flag-note" class="muted" role="status"></p>
+    </section>
   </aside>
 
   <footer class="statusbar" role="status">
@@ -84,6 +90,38 @@
     <div class="modal-actions">
       <button id="import-close" class="btn btn-quiet" type="button">Close</button>
       <button id="import-load" class="btn" type="button" disabled>Load into studio</button>
+    </div>
+  </div>
+</div>
+
+<div id="feedback" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+  <div class="modal-card wide">
+    <h3 id="feedback-title">Stream feedback</h3>
+    <p id="feedback-text" class="muted" role="status"></p>
+    <div class="fb-body">
+      <ul id="fb-list" class="list fb-list" aria-label="Feedback moments"></ul>
+      <form id="fb-form" class="fb-form" hidden>
+        <div id="fb-meta" class="muted"></div>
+        <label for="fb-note">Note</label>
+        <textarea id="fb-note" rows="5" maxlength="2000"></textarea>
+        <label for="fb-tag">Tag</label>
+        <select id="fb-tag">
+          <option value="bug">bug</option>
+          <option value="annoying">annoying</option>
+          <option value="wish">wish</option>
+          <option value="works-well">works-well</option>
+        </select>
+        <label for="fb-sev">Severity</label>
+        <select id="fb-sev">
+          <option value="high">high</option>
+          <option value="medium" selected>medium</option>
+          <option value="low">low</option>
+        </select>
+        <button id="fb-save" class="btn" type="submit">Save note</button>
+      </form>
+    </div>
+    <div class="modal-actions">
+      <button id="feedback-close" class="btn btn-quiet" type="button">Close</button>
     </div>
   </div>
 </div>

@@ -143,7 +143,7 @@
       if (r.verdict === 'wrong-phrase') { setText($('confirm-msg'), 'That is not the phrase. Type it exactly.'); return; }
       closeConfirm();
       if (r.verdict === 'confirm' && r.pending) openConfirm(r.pending);
-      else if (r.verdict === 'allow') { setText($('preview-note'), 'Done.'); loadScenes().then(loadMixer).catch(function () {}); } else setText($('preview-note'), r.verdict === 'allow' ? 'Done.' : 'Result: ' + r.verdict + (r.reason ? ' (' + r.reason + ')' : ''));
+      else if (r.verdict === 'allow') { if (r.flags) renderFlags(r.flags); setText($('preview-note'), 'Done.'); loadScenes().then(loadMixer).catch(function () {}); } else setText($('preview-note'), r.verdict === 'allow' ? 'Done.' : 'Result: ' + r.verdict + (r.reason ? ' (' + r.reason + ')' : ''));
     }).catch(function (e) { closeConfirm(); showError('Confirmation failed: ' + (e.message || 'error')); });
   }
   function cancelConfirm() { var p = state.pending; closeConfirm(); if (p) Api.cancel(p.pendingId).catch(function () {}); }
@@ -184,8 +184,70 @@
     guard(Api.projectLoad(skip).then(function (r) { $('import').hidden = true; if (r.verdict === 'confirm') openConfirm(r.pending); }));
   }
 
+  // ---- feature flags: OFF applies at once; ON goes through the typed confirmation ----
+  function renderFlags(list) {
+    var ul = $('flag-list'); clear(ul);
+    (list || []).forEach(function (f) {
+      var cb = el('input', { type: 'checkbox', id: 'flag-' + f.id, 'aria-label': f.id });
+      cb.checked = !!f.on;
+      cb.addEventListener('change', function () {
+        var want = cb.checked;
+        cb.checked = !want; // the box follows the server, not the click
+        guard(Api.setFlag(f.id, want).then(function (r) {
+          if (r.verdict === 'confirm') openConfirm(r.pending);
+          else if (r.flags) renderFlags(r.flags);
+        }));
+      });
+      ul.appendChild(el('li', { class: 'row flag-row', title: f.description }, [el('span', { class: 'name', text: f.id }), el('label', null, [cb])]));
+    });
+    if (!list || !list.length) setText($('flag-note'), 'No feature flags defined.');
+    else setText($('flag-note'), 'Turning a flag off is instant. Turning it on asks you to type yes.');
+  }
+  function loadFlags() { return Api.flags().then(function (r) { renderFlags(r.flags); }); }
+
+  // ---- post-stream feedback form ----
+  var fb = { moments: [], sel: null };
+  function fmtStats(s) {
+    return Object.keys(s || {}).map(function (k) { return k + '=' + s[k]; }).join(' ');
+  }
+  function renderFeedback() {
+    var ul = $('fb-list'); clear(ul);
+    fb.moments.forEach(function (m) {
+      var tagText = m.note && m.note.tag ? m.note.tag + '/' + (m.note.severity || '-') : 'no note';
+      var li = el('li', { class: 'row' + (m.id === fb.sel ? ' active' : ''), tabindex: 0, role: 'button', 'aria-pressed': m.id === fb.sel ? 'true' : 'false' }, [el('span', { class: 'name', text: m.id + (m.scene ? '  ' + m.scene : '') }), el('span', { class: 'muted', text: tagText })]);
+      var pick = function () { fb.sel = m.id; renderFeedback(); fillForm(m); };
+      li.addEventListener('click', pick);
+      li.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      ul.appendChild(li);
+    });
+    setText($('feedback-text'), fb.moments.length ? fb.moments.length + ' moment(s). Pick one to add a note.' : 'No feedback moments yet. Press the feedback hotkey while streaming.');
+    $('fb-form').hidden = !fb.sel;
+  }
+  function fillForm(m) {
+    setText($('fb-meta'), (m.timestamp !== null ? m.timestamp + '  ' : '') + (m.scene || '') + '  ' + fmtStats(m.stats));
+    $('fb-note').value = (m.note && m.note.text) || '';
+    $('fb-tag').value = (m.note && m.note.tag) || 'bug';
+    $('fb-sev').value = (m.note && m.note.severity) || 'medium';
+    $('fb-form').hidden = false;
+  }
+  function openFeedback() {
+    $('feedback').hidden = false; fb.sel = null; $('fb-form').hidden = true;
+    guard(Api.feedback().then(function (r) { fb.moments = r.moments || []; renderFeedback(); }));
+  }
+  function saveFeedback(e) {
+    e.preventDefault();
+    if (!fb.sel) return;
+    Api.saveNote(fb.sel, $('fb-note').value, $('fb-tag').value, $('fb-sev').value).then(function (r) {
+      fb.moments = r.moments || fb.moments; renderFeedback();
+      setText($('feedback-text'), 'Saved.');
+    }).catch(function (x) { setText($('feedback-text'), 'Save failed: ' + (x.message || 'error')); });
+  }
+
   // ---- wiring ----
   function wire() {
+    $('btn-feedback').addEventListener('click', openFeedback);
+    $('feedback-close').addEventListener('click', function () { $('feedback').hidden = true; });
+    $('fb-form').addEventListener('submit', saveFeedback);
     $('btn-stream').addEventListener('click', function () { hostAction(state.status && state.status.host.live ? 'stream.stop' : 'stream.start'); });
     $('btn-record').addEventListener('click', function () { hostAction(state.status && state.status.host.recording ? 'record.stop' : 'record.start'); });
     ['h', 'v'].forEach(function (c) {
@@ -204,8 +266,8 @@
   function start() {
     wire();
     Api.session()
-      .then(function () { return Promise.all([loadScenes(), loadMixer(), Api.status().then(applyStatus)]); })
-      .then(function () { Api.events(applyStatus, function (ok) { if (!ok) pill($('st-core'), 'Reconnecting...', 'warn'); }); })
+      .then(function () { return Promise.all([loadScenes(), loadMixer(), loadFlags(), Api.status().then(applyStatus)]); })
+      .then(function () { Api.events(applyStatus, function (ok) { if (!ok) pill($('st-core'), 'Reconnecting...', 'warn'); }, function (d) { renderFlags(d.flags); }); })
       .catch(function (e) { showError(e.status === 401 ? 'Session missing. Start the studio with npm run studio.' : 'Start-up failed: ' + (e && e.message ? e.message : 'could not reach the studio server')); });
   }
   start();

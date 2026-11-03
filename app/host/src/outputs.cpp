@@ -36,6 +36,7 @@
 #include <cmath>
 #include <cstring>
 #include <ctime>
+#include <functional>
 #include <filesystem>
 #include <random>
 #include <regex>
@@ -428,6 +429,7 @@ void Outputs::on_start(Sink &s)
 	s.kbps = 0;
 	if (!s.want) // stop was requested while it was still connecting
 		s.stop_pending = true;
+	update_clocks_locked(now);
 	hlog::info("sink %s live (attempt %d)", s.id.c_str(), s.attempts);
 	sup_cv_.notify_all();
 }
@@ -476,7 +478,42 @@ void Outputs::on_stop(Sink &s, int code, const char *err)
 		hlog::warn("sink %s dropped (code %d, live %lld ms)", s.id.c_str(), code, (long long)live_for);
 		schedule_retry_locked(s, now);
 	}
+	update_clocks_locked(now);
 	sup_cv_.notify_all();
+}
+
+// Marker clocks. Streaming period: from the first stream sink going live while any stream sink is wanted or
+// running (a reconnect keeps the clock), until none is. Recording: from a record sink going live until none runs.
+void Outputs::update_clocks_locked(int64_t now)
+{
+	bool s_live = false, s_on = false, r_live = false, r_on = false;
+	for (auto &x : sinks_) {
+		bool live = x->state == SinkState::Live;
+		bool on = x->want || live || x->state == SinkState::Starting || x->state == SinkState::Retrying;
+		if (x->kind == "stream") {
+			s_live = s_live || live;
+			s_on = s_on || on;
+		} else {
+			r_live = r_live || live;
+			r_on = r_on || on;
+		}
+	}
+	if (s_live && !stream_since_ms_)
+		stream_since_ms_ = now;
+	if (!s_on)
+		stream_since_ms_ = 0;
+	if (r_live && !record_since_ms_)
+		record_since_ms_ = now;
+	if (!r_on)
+		record_since_ms_ = 0;
+}
+
+void Outputs::clocks(int64_t &stream_ms, int64_t &record_ms) const
+{
+	std::lock_guard<std::mutex> l(m_);
+	int64_t now = now_ms();
+	stream_ms = stream_since_ms_ ? now - stream_since_ms_ : -1;
+	record_ms = record_since_ms_ ? now - record_since_ms_ : -1;
 }
 
 void Outputs::schedule_retry_locked(Sink &s, int64_t now)
@@ -584,6 +621,7 @@ Outputs::Sink *Outputs::find(const std::string &id)
 
 void Outputs::release_graph()
 {
+	replay_detach_locked(); // replays bind to the rungs and the AAC encoder released below
 	std::vector<std::unique_ptr<Sink>> old;
 	std::vector<std::unique_ptr<Rung>> old_rungs;
 	obs_encoder_t *aac = nullptr;
@@ -688,11 +726,26 @@ void Outputs::totals(uint64_t &frames, uint64_t &dropped) const
 
 // ---- configure -------------------------------------------------------------------------------------------
 
+namespace {
+// Re-attaches the replay buffers (if wanted) when a graph change ends, whether it succeeded or threw.
+struct ReplayReattach {
+	std::function<void()> fn;
+	~ReplayReattach()
+	{
+		try {
+			fn();
+		} catch (...) {
+		}
+	}
+};
+} // namespace
+
 json::Value Outputs::configure(const json::Value &params)
 {
 	std::lock_guard<std::mutex> op(op_m_);
 	if (!idle_soon(3000))
 		throw Error(rpc::CONFLICT, "outputs are active; stop them before configuring");
+	ReplayReattach g{[this] { replay_attach_locked(); }};
 	json::Value r = build(params);
 	return r;
 }
@@ -705,6 +758,7 @@ json::Value Outputs::clear()
 	release_graph();
 	config_ = json::Value();
 	configured_at_.clear();
+	replay_attach_locked(); // fallback rungs now
 	json::Value r = json::Value::object();
 	r.set("configured", false);
 	return r;
@@ -722,6 +776,7 @@ bool Outputs::release_for_reload()
 json::Value Outputs::reconfigure()
 {
 	std::lock_guard<std::mutex> op(op_m_);
+	ReplayReattach g{[this] { replay_attach_locked(); }}; // after a project load: the new canvases
 	if (config_.is_null())
 		return json::Value();
 	json::Value p = config_;
@@ -1299,6 +1354,7 @@ json::Value Outputs::stop(const std::vector<std::string> &ids, const std::string
 			// Starting: still connecting. It ends in a stop signal (connect failed) or a start signal, after which
 			// the supervisor stops it (stop_pending).
 			s->last_change_ms = now_ms();
+			update_clocks_locked(s->last_change_ms);
 		}
 		if (call_stop)
 			obs_output_stop(s->out);

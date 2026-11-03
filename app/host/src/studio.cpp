@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <regex>
 #include <set>
@@ -1116,6 +1117,44 @@ json::Value Studio::layer_set_visible(const std::string &sid, const std::string 
 	r.set("visible", visible);
 	r.set("canvases", std::move(done));
 	return r;
+}
+
+std::vector<Studio::LayerRef> Studio::hide_browser_layers()
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	std::vector<LayerRef> hid;
+	for (auto &s : scenes_)
+		for (auto &l : s.layers) {
+			if (!l.item || !l.visible || !l.src || !l.src->src)
+				continue;
+			const char *id = obs_source_get_id(l.src->src);
+			if (!id || strcmp(id, "browser_source") != 0)
+				continue;
+			obs_sceneitem_set_visible(l.item, false);
+			l.visible = false;
+			hid.push_back({s.canvas, s.id, l.id});
+		}
+	if (!hid.empty())
+		dirty_ = true;
+	return hid;
+}
+
+size_t Studio::restore_layers(const std::vector<LayerRef> &refs)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	size_t n = 0;
+	for (auto &r : refs)
+		for (auto &s : scenes_)
+			if (s.id == r.scene && s.canvas == r.canvas)
+				for (auto &l : s.layers)
+					if (l.id == r.layer && l.item && !l.visible) {
+						obs_sceneitem_set_visible(l.item, true);
+						l.visible = true;
+						n++;
+					}
+	if (n)
+		dirty_ = true;
+	return n;
 }
 
 json::Value Studio::layer_move(const std::string &sid, const std::string &cv, const std::string &lid, int64_t index,

@@ -7,10 +7,13 @@
 //   ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>] [--recordings <dir>]
 //                [--port <n>] [--project <file.json>] [--outputs <configure-params.json>] [--preview h,v]
 //                [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]
+//                [--host-config <file.json>] [--test-hooks]
 //                [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]
 //                 [--overlay-feed-port <n>] [--overlay-events-url http://127.0.0.1:<p>/<path>]]
 // With --allow-browser and --overlay-root the host supervises the overlay server child (overlay.h): static pages
 // from the overlay root and the read-only bridge feed, both on 127.0.0.1, never on 8093 (the real Streamer.bot).
+// --host-config (host_config.h): replay buffer, global hotkeys, feedback and markers folders, event-core system file.
+// --test-hooks enables hotkeys.trigger (tests only).
 // Environment (the launcher's channel; values are never logged):
 //   UJWALAM_OBS_RUNTIME        runtime dir when --runtime is not given
 //   UJWALAM_HOST_TOKEN         api token (64 hex); generated when absent
@@ -18,6 +21,8 @@
 //   UJWALAM_HOST_DISCOVERY     discovery file when --discovery is not given
 //   UJWALAM_EVENT_CORE_API_TOKEN  event-core token for the overlay server's event feed; passed only to that child
 //                              and only with --overlay-events-url
+//   UJWALAM_EVENT_CORE_SYSTEM_TOKEN  event-core system token, used only by panic to send actions.panic over the
+//                              event-core system pipe (panic.h); never passed to any child
 // Token variables are removed from the process environment once read, so helper processes never inherit them.
 // The discovery file carries a token only when the host generated it (null when it came by environment).
 #include "app.h"
@@ -121,6 +126,7 @@ void usage()
 	fprintf(stderr, "usage: ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>]\n"
 			"         [--recordings <dir>] [--port <n>] [--project <file.json>] [--outputs <file.json>]\n"
 			"         [--preview h,v] [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]\n"
+			"         [--host-config <file.json>] [--test-hooks]\n"
 			"         [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]\n"
 			"          [--overlay-feed-port <n>] [--overlay-events-url <url>]]\n");
 }
@@ -174,6 +180,10 @@ int wmain(int argc, wchar_t **wargv)
 			app.allow_browser = true;
 		else if (a == "--allow-live") // A0: real stream targets (outputs.h); never used by CI
 			app.allow_live = true;
+		else if (a == "--host-config")
+			next(app.config_path);
+		else if (a == "--test-hooks") // hotkeys.trigger; tests only
+			app.test_hooks = true;
 		else if (a == "--overlay-root")
 			next(ov.root);
 		else if (a == "--overlay-script")
@@ -221,9 +231,24 @@ int wmain(int argc, wchar_t **wargv)
 		}
 		*dst = (uint16_t)v;
 	}
-	// The event-core token: read and removed from the environment, so neither CEF nor any child inherits it.
+	// The event-core tokens: read and removed from the environment, so neither CEF nor any child inherits them.
 	ov.events_token = env(L"UJWALAM_EVENT_CORE_API_TOKEN");
 	SetEnvironmentVariableW(L"UJWALAM_EVENT_CORE_API_TOKEN", nullptr);
+	Panic::Config pc;
+	pc.token = env(L"UJWALAM_EVENT_CORE_SYSTEM_TOKEN");
+	SetEnvironmentVariableW(L"UJWALAM_EVENT_CORE_SYSTEM_TOKEN", nullptr);
+	if (!pc.token.empty() && !rpc::is_token(pc.token)) {
+		fprintf(stderr, "UJWALAM_EVENT_CORE_SYSTEM_TOKEN must be 64 lowercase hex characters\n");
+		return 64;
+	}
+	if (!app.config_path.empty()) {
+		json::Value hc;
+		std::string herr;
+		if (!read_json_file(app.config_path, hc, herr) || !parse_host_config(hc, app.config, herr)) {
+			fprintf(stderr, "--host-config: %s\n", herr.c_str());
+			return 64;
+		}
+	}
 	if (!ov.root.empty()) {
 		std::error_code ec;
 		if (!app.allow_browser) {
@@ -300,6 +325,17 @@ int wmain(int argc, wchar_t **wargv)
 	}
 	app.started_at = hlog::utc_now();
 	{
+		SYSTEMTIME t;
+		GetLocalTime(&t);
+		char b[32];
+		snprintf(b, sizeof(b), "%04u%02u%02u-%02u%02u%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+		app.session = b;
+	}
+	if (app.config.feedback_dir.empty())
+		app.config.feedback_dir = (fs::u8path(app.data_dir) / "feedback").generic_u8string();
+	if (app.config.markers_dir.empty())
+		app.config.markers_dir = (fs::u8path(app.data_dir) / "markers").generic_u8string();
+	{
 		std::string st = app.started_at.substr(0, 19);
 		for (char &c : st)
 			if (c == ':')
@@ -346,8 +382,20 @@ int wmain(int argc, wchar_t **wargv)
 		f.allow_browser = app.allow_browser;
 		app.studio = std::make_unique<Studio>(f);
 		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir, app.allow_live);
+		app.outputs->set_replay_config(app.config.replay);
 		hlog::info("real stream targets %s", app.allow_live ? "ALLOWED (--allow-live)" : "off (loopback only)");
 		app.previews = std::make_unique<Previews>();
+		pc.system_file = app.config.core_system_file;
+		bool core_ready = !pc.system_file.empty() && rpc::is_token(pc.token);
+		app.panic = std::make_unique<Panic>(*app.studio, std::move(pc));
+		pc.token.assign(pc.token.size(), '0');
+		hlog::info("panic: event-core notification %s", core_ready ? "configured" : "OFF (no system file or system token)");
+		Moments::Config mc;
+		mc.feedback_dir = app.config.feedback_dir;
+		mc.markers_dir = app.config.markers_dir;
+		mc.session = app.session;
+		app.moments = std::make_unique<Moments>(app, mc);
+		app.hotkeys = std::make_unique<Hotkeys>();
 
 		json::Value project;
 		if (project_path.empty()) {
@@ -400,6 +448,14 @@ int wmain(int argc, wchar_t **wargv)
 			}
 		}
 
+		if (!rc && app.config.replay_autostart) {
+			try {
+				app.outputs->replay_start(0);
+			} catch (const std::exception &e) {
+				hlog::warn("replay buffer: %s", e.what());
+			}
+		}
+
 		std::unique_ptr<rpc::Server> server;
 		if (!rc) {
 			server = std::make_unique<rpc::Server>(rpc::Limits{}, api_token, sys_token, make_methods(app));
@@ -426,6 +482,10 @@ int wmain(int argc, wchar_t **wargv)
 		api_token.assign(api_token.size(), '0');
 		sys_token.assign(sys_token.size(), '0');
 		if (!rc) {
+			// Global hotkeys last: every handler's target exists. A binding that fails is reported, never fatal.
+			app.hotkeys->start(app.config.hotkeys,
+					   [&app](const std::string &name, const char *via) { on_hotkey(app, name, via); },
+					   app.config.hotkeys_enabled);
 			hlog::info("ready: rpc on 127.0.0.1:%u, discovery %s, log %s", (unsigned)server->port(),
 				   app.discovery_path.c_str(), app.log_path.c_str());
 			WaitForSingleObject(g_shutdown, INFINITE);
@@ -433,12 +493,19 @@ int wmain(int argc, wchar_t **wargv)
 			Sleep(150); // let the host.shutdown response reach the caller
 		}
 
-		// Order: API off, outputs stopped and released, previews closed, scenes removed, discovery removed.
+		// Order: hotkeys off, API off, feedback worker and panic sender done, outputs stopped and released, previews
+		// closed, scenes removed, discovery removed.
+		app.hotkeys->stop();
 		if (server)
 			server->stop();
+		app.moments->stop();
+		app.panic->stop();
 		app.outputs->stop_all(5000);
 		app.outputs.reset();
 		app.previews.reset();
+		app.hotkeys.reset();
+		app.moments.reset();
+		app.panic.reset();
 		app.studio->teardown();
 		app.studio.reset();
 		if (app.overlay)

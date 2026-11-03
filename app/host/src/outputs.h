@@ -19,6 +19,14 @@
 // Per sink: libobs keeps a per-output packet buffer; the drop policy is explicit (rtmp drop_threshold_ms /
 // pframe_drop_threshold_ms). Reconnect is owned by the host supervisor (libobs reconnect is off): exponential
 // backoff with jitter, for both connect failures and disconnects, and one sink's failure never stops another.
+//
+// Replay buffer (A0 day 2, replay.cpp): one libobs replay_buffer output per canvas (H, V), memory only until saved.
+// It binds to an existing rung of that canvas like a sink (no extra encoder; the largest created rung, then the
+// highest bitrate) and to the shared AAC encoder. When a canvas has no created rung (outputs not configured, or no
+// rung on that canvas) the replay gets its own record-less fallback rung: one NVENC (x264 if NVENC is missing) H.264
+// CBR encoder at the canvas size, plus one fallback AAC shared by the fallback replays. Every graph change
+// (configure, clear, project load) detaches the replays first and re-attaches them after, so a replay always
+// follows the current graph; the memory buffer restarts empty then. Saves write .mkv (crash-safe container).
 #pragma once
 
 #include "json.h"
@@ -59,11 +67,36 @@ public:
 	bool recording() const; // any file sink live
 	void totals(uint64_t &frames, uint64_t &dropped) const;
 
+	// Clocks for markers: ms since the first stream sink went live in the current streaming period (any stream sink
+	// wanted or running), and since the current recording started; -1 when not streaming / not recording.
+	void clocks(int64_t &stream_ms, int64_t &record_ms) const;
+
+	// ---- replay buffer (replay.cpp)
+	struct ReplayConfig {
+		int seconds = 30;                // 5..600
+		uint32_t fallback_kbps_h = 12000; // fallback rung bitrate per canvas (local memory clip, not a platform limit)
+		uint32_t fallback_kbps_v = 8000;
+	};
+	void set_replay_config(const ReplayConfig &c); // before replay_start; seconds can also come with replay_start
+	json::Value replay_start(int seconds);          // 0 = keep the configured length
+	json::Value replay_stop();
+	void replay_resume(); // re-attaches after a failed project load (no-op unless wanted)
+	json::Value replay_status() const;
+	bool replay_running(const std::string &canvas) const;
+	// Saves the buffered seconds of each running replay (canvas "" = every running one) into dir as
+	// <name_fmt>.mkv (libobs os_generate_formatted_filename specifiers allowed; {canvas} is replaced by H or V).
+	// Waits up to timeout_ms per save for libobs's "saved" signal. Never holds the graph lock while waiting.
+	// {saved: [{canvas, path, bytes, rung, fallback}], errors: [{canvas, error}]}
+	json::Value replay_save(const std::string &canvas, const std::string &dir, const std::string &name_fmt,
+				int timeout_ms);
+	std::string replay_dir() const;
+
 	static void register_loopback_service(); // call once after module load (registers ujwalam_loopback + ujwalam_live)
 	static bool valid_live_url(const std::string &url, const std::string &transport);
 	bool allow_live() const { return allow_live_; }
 
-	struct Sink; // internal
+	struct Sink;   // internal
+	struct Replay; // internal (replay.cpp)
 
 private:
 	struct Rung {
@@ -99,7 +132,18 @@ private:
 	std::thread sup_;
 	std::atomic<bool> sup_stop_{false};
 	std::condition_variable sup_cv_;
+	int64_t stream_since_ms_ = 0, record_since_ms_ = 0; // guarded by m_ (clocks())
 
+	// replay buffer. op_m_ held for attach/detach; rp_m_ guards replays_ for status and save lookups.
+	mutable std::mutex rp_m_;
+	std::vector<std::shared_ptr<Replay>> replays_;
+	std::atomic<bool> replay_want_{false};
+	ReplayConfig rcfg_;
+	obs_encoder_t *replay_aac_ = nullptr; // fallback AAC, only while a fallback replay needs it
+	void replay_attach_locked();          // op_m_ held: one replay per existing canvas, if wanted
+	void replay_detach_locked();          // op_m_ held: stops and releases every replay (and fallback encoders)
+
+	void update_clocks_locked(int64_t now); // m_ held
 	void supervise();
 	void release_graph(); // op_m_ held, nothing active
 	json::Value build(const json::Value &params); // op_m_ held

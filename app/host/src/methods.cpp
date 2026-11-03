@@ -104,7 +104,9 @@ json::Value ready(App &a)
 	return r;
 }
 
-json::Value host_status(App &a)
+} // namespace
+
+json::Value host_status_json(App &a)
 {
 	uint64_t frames = 0, dropped = 0;
 	a.outputs->totals(frames, dropped);
@@ -139,8 +141,33 @@ json::Value host_status(App &a)
 		}
 	r.set("sinks", std::move(sinks));
 	r.set("uptimeMs", (int64_t)(GetTickCount64() - a.start_tick));
+	json::Value rp = json::Value::object();
+	rp.set("H", a.outputs->replay_running("H"));
+	rp.set("V", a.outputs->replay_running("V"));
+	r.set("replayRunning", std::move(rp));
+	r.set("panic", a.panic ? a.panic->engaged() : false);
 	return r;
 }
+
+void on_hotkey(App &a, const std::string &name, const char *via)
+{
+	if (a.shutting_down)
+		return;
+	if (name == "panic") {
+		if (a.panic)
+			a.panic->engage("hotkey");
+	} else if (name == "marker") {
+		if (a.moments)
+			a.moments->marker_add("hotkey", "");
+	} else if (name == "feedback") {
+		if (a.moments)
+			a.moments->feedback_capture("hotkey", "");
+	} else {
+		hlog::warn("hotkey %s (%s): no action", name.c_str(), via);
+	}
+}
+
+namespace {
 
 json::Value host_info(App &a)
 {
@@ -157,6 +184,7 @@ json::Value host_info(App &a)
 	flags.set("allowDevices", a.allow_devices);
 	flags.set("allowBrowser", a.allow_browser);
 	flags.set("allowLive", a.allow_live);
+	flags.set("testHooks", a.test_hooks);
 	r.set("flags", std::move(flags));
 	json::Value dis = json::Value::array();
 	for (auto &m : obsrt::disabled_modules())
@@ -179,6 +207,10 @@ json::Value host_info(App &a)
 	dm.set("win-wasapi.dll", devices::module_mapped(L"win-wasapi.dll"));
 	r.set("deviceModules", std::move(dm));
 	r.set("overlay", a.overlay ? a.overlay->status() : json::Value());
+	r.set("hotkeys", a.hotkeys ? a.hotkeys->status() : json::Value());
+	r.set("hostConfig", a.config_path.empty() ? json::Value() : json::Value(a.config_path));
+	r.set("session", a.session);
+	r.set("moments", a.moments ? a.moments->status() : json::Value());
 	json::Value types = json::Value::array();
 	const char *t = nullptr;
 	for (size_t i = 0; obs_enum_input_types(i, &t); i++)
@@ -205,7 +237,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 	});
 	add("host.status", [&a](const json::Value &p) {
 		(void)Params(p, {});
-		return host_status(a);
+		return host_status_json(a);
 	});
 	add("host.shutdown", [&a](const json::Value &p) {
 		(void)Params(p, {});
@@ -241,7 +273,16 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Studio::LoadOptions lo = load_options(a, q);
 		if (!a.outputs->release_for_reload())
 			throw Error(rpc::CONFLICT, "outputs are active: stop them before loading a project");
-		json::Value r = a.studio->load(proj, false, lo);
+		json::Value r;
+		try {
+			r = a.studio->load(proj, false, lo);
+		} catch (...) {
+			try {
+				a.outputs->replay_resume(); // the replay buffers follow whatever canvases are left
+			} catch (...) {
+			}
+			throw;
+		}
 		json::Value o = json::Value::object();
 		try {
 			json::Value re = a.outputs->reconfigure();
@@ -296,12 +337,19 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Params q(p, {"name", "meta"});
 		if (!a.allow_browser)
 			throw Error(rpc::FORBIDDEN, "browser layers are disabled (start the host with --allow-browser)");
-		if (!a.overlay)
-			throw Error(rpc::UNAVAILABLE, "the overlay server is off (start the host with --overlay-root)");
 		std::string name = q.str("name", 32);
 		static const std::regex name_re("^[a-z0-9][a-z0-9_-]{0,31}$");
 		if (!std::regex_match(name, name_re))
 			throw Error(rpc::INVALID_PARAMS, "name must match [a-z0-9][a-z0-9_-]{0,31}");
+		if (a.panic && a.panic->engaged()) { // panic step 1 holds until panic.clear
+			hlog::info("effect.fire %s: refused (panic)", name.c_str());
+			json::Value r = json::Value::object();
+			r.set("ok", false);
+			r.set("reason", "panic");
+			return r;
+		}
+		if (!a.overlay)
+			throw Error(rpc::UNAVAILABLE, "the overlay server is off (start the host with --overlay-root)");
 		json::Value meta = json::Value::object();
 		if (const json::Value *m = q.obj_opt("meta")) {
 			if (m->size() > 8)
@@ -444,6 +492,74 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Params q(p, {"sinks"});
 		return a.outputs->stop(sink_ids(q), "record");
 	});
+	// ---- replay buffer (outputs.h replay section; replay.cpp)
+	add("replay.start", [&a](const json::Value &p) {
+		Params q(p, {"seconds"});
+		return a.outputs->replay_start((int)q.int_or("seconds", 0, 5, 600));
+	});
+	add("replay.stop", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		return a.outputs->replay_stop();
+	});
+	add("replay.status", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		return a.outputs->replay_status();
+	});
+	// replay.save {canvas?}: <recordings>/replay/replay-<canvas>-<stamp>.mkv for each running replay (or the one
+	// canvas). The folder is fixed; feedback captures save into their own folder in-process.
+	add("replay.save", [&a](const json::Value &p) {
+		Params q(p, {"canvas"});
+		return a.outputs->replay_save(canvas_opt(q), a.outputs->replay_dir(), "replay-{canvas}-%CCYY%MM%DD-%hh%mm%ss",
+					      10000);
+	});
+
+	// ---- panic (panic.h). panic.now acts in-process at once and queues the event-core notification; the result is in
+	// panic.status (core). panic.clear restores the hidden layers (the UI gates it); event-core's panic is cleared there.
+	add("panic.now", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		return a.panic->engage("rpc");
+	});
+	add("panic.status", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		return a.panic->status();
+	});
+	add("panic.clear", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		return a.panic->clear();
+	});
+
+	// ---- markers and feedback (moments.h)
+	add("marker.add", [&a](const json::Value &p) {
+		Params q(p, {"source", "note"});
+		return a.moments->marker_add(q.str("source", 16), q.str_or("note", "", 500));
+	});
+	add("feedback.capture", [&a](const json::Value &p) {
+		Params q(p, {"note"});
+		return a.moments->feedback_capture("api", q.str_or("note", "", 2000));
+	});
+	add("feedback.status", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		return a.moments->status();
+	});
+
+	// ---- hotkeys (hotkeys.h). hotkeys.trigger runs a binding's handler exactly as the key press does; it exists
+	// only with --test-hooks (tests), never in a launcher-started host.
+	add("hotkeys.status", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		return a.hotkeys->status();
+	});
+	add("hotkeys.trigger", [&a](const json::Value &p) {
+		Params q(p, {"name"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "hotkeys.trigger needs a host started with --test-hooks");
+		std::string name = q.str("name", 32);
+		if (!a.hotkeys->trigger(name))
+			throw Error(rpc::INVALID_PARAMS, "no hotkey binding with that name");
+		json::Value r = json::Value::object();
+		r.set("triggered", name);
+		return r;
+	});
+
 	add("encoders.probe", [&a](const json::Value &p) {
 		Params q(p, {"codec", "max"});
 		return a.outputs->probe_sessions(q.str_or("codec", "h264", 8), (int)q.int_or("max", 12, 1, 32));

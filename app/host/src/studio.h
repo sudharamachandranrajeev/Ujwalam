@@ -72,6 +72,15 @@ public:
 	json::Value layer_move(const std::string &scene, const std::string &canvas, const std::string &layer, int64_t index,
 			       const std::string &dir);
 
+	// Panic (panic.h): hides every visible browser layer (overlays and effect pages) on every scene of every canvas
+	// and returns what it hid; restore_layers shows those again (skipping layers that no longer exist or were shown
+	// meanwhile). The overlay relay is not a scene item and is left alone.
+	struct LayerRef {
+		std::string canvas, scene, layer;
+	};
+	std::vector<LayerRef> hide_browser_layers();
+	size_t restore_layers(const std::vector<LayerRef> &refs);
+
 	json::Value mixer_list() const;
 	json::Value mixer_set_volume(const std::string &id, const double *mul, const double *db);
 	json::Value mixer_set_mute(const std::string &id, bool muted);

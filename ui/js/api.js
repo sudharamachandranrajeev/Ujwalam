@@ -31,8 +31,13 @@
     coreRequest: function (id, params) { return request('POST', '/ui/api/core/request', { id: id, params: params || {} }); },
     confirm: function (pendingId, text) { return request('POST', '/ui/api/confirm', { pendingId: pendingId, text: text }); },
     cancel: function (pendingId) { return request('POST', '/ui/api/cancel', { pendingId: pendingId }); },
-    events: function (onStatus, onState) {
+    flags: function () { return request('GET', '/ui/api/flags'); },
+    setFlag: function (id, on) { return request('POST', '/ui/api/flags/set', { id: id, on: on }); },
+    feedback: function () { return request('GET', '/ui/api/feedback'); },
+    saveNote: function (id, text, tag, severity) { return request('POST', '/ui/api/feedback/note', { id: id, text: text, tag: tag, severity: severity }); },
+    events: function (onStatus, onState, onFlags) {
       var es = new EventSource('/ui/api/events');
+      if (onFlags) es.addEventListener('flags', function (e) { try { onFlags(JSON.parse(e.data)); } catch (x) { /* ignore a bad frame */ } });
       es.addEventListener('status', function (e) { try { onStatus(JSON.parse(e.data)); } catch (x) { /* ignore a bad frame */ } });
       es.onopen = function () { onState(true); };
       es.onerror = function () { onState(false); };

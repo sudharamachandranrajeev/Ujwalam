@@ -75,7 +75,12 @@ add_executable(ujwalam-host
   src/outputs.cpp
   src/stream_keys.cpp
   src/stats.cpp
-  src/overlay.cpp)
+  src/overlay.cpp
+  src/replay.cpp
+  src/host_config.cpp
+  src/hotkeys.cpp
+  src/panic.cpp
+  src/moments.cpp)
 set_target_properties(ujwalam-host PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_compile_definitions(ujwalam-host PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 target_compile_options(ujwalam-host PRIVATE /W3 /utf-8 /wd4244 /wd4267 /EHsc)
