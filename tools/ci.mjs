@@ -174,6 +174,9 @@ export async function runSteps(steps, { root = HERE, log = () => {}, tail = 30 }
     }
     if (!res.ok) {
       const lines = res.output.trimEnd().split(/\r?\n/);
+      // TAP "not ok" lines name the failing tests; the tail alone often shows only the summary.
+      const notOk = lines.filter((l) => /^\s*not ok \d+ /.test(l));
+      if (notOk.length) log([`    | failing (${notOk.length}):`, ...notOk.slice(0, 200).map((l) => `    | ${l.trim()}`)].join('\n'));
       log(lines.slice(-tail).map((l) => `    | ${l}`).join('\n'));
     }
   }
