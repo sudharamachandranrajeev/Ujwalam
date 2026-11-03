@@ -45,6 +45,8 @@ second stop {"ok":false,"reason":"not-started-by-ujwalam"}
 ```
 
   Speaker.bot closes on the graceful request. Streamer.bot does not close on it within the grace time and is force-closed (`/F /T`). Its saved files were current (actions.json written before the stop), but a forced close can lose unsaved Streamer.bot changes. Follow-up (BM1b): find why the graceful close is ignored (close-to-tray or a confirm dialog, UNVERIFIED) and warn on the Bots card before a forced stop.
+- BM1b (done): the Stop confirmation now says the bot is force-closed after `GRACEFUL_MS` (10 s) and asks to save bot changes first; the confirm result carries `forced` and the Bots card says when a close was forced. `node --test tests/studio-ui-bots.test.mjs tests/bots.test.mjs`: 26/26 pass. Why Streamer.bot ignores the close request (tray or dialog) stays UNVERIFIED.
+- Clash check hotkeys: `data\hotkeys.json` in the Streamer.bot folder is found and read; its `hotKeys` list is empty on this laptop, so "0 combos read" means no Streamer.bot hotkeys, hence no clash.
 - Not yet checked: stop on studio stop.
 
 ## Files

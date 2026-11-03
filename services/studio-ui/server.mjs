@@ -27,7 +27,7 @@ import { createReadStream, existsSync, readFileSync, realpathSync, statSync } fr
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { BOTS, BOT_LABELS, createBots } from '../bots/index.mjs';
+import { BOTS, BOT_LABELS, GRACEFUL_MS, createBots } from '../bots/index.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createFeedback } from './feedback.mjs';
@@ -349,7 +349,11 @@ export function createStudioServer(opts) {
       const bad = validate(BOT_SCHEMA, body);
       if (bad) return json(res, 400, { error: bad });
       const verb = route.endsWith('/start') ? 'start' : 'stop';
-      const id = addPending({ kind: 'bot', summary: `${verb === 'start' ? 'Start' : 'Stop'} ${BOT_LABELS[body.bot]}`, phrase: live ? 'yes, on air' : 'yes', bot: body.bot, verb });
+      // Stop asks the bot to close, then force-closes it after the grace time (Streamer.bot 0.2.8 ignores the request,
+      // BM1 runtime evidence): a forced close can lose unsaved bot changes, so the confirm says so first.
+      const summary = verb === 'start' ? `Start ${BOT_LABELS[body.bot]}`
+        : `Stop ${BOT_LABELS[body.bot]}. If it does not close within ${GRACEFUL_MS / 1000} s it is force-closed: save your ${BOT_LABELS[body.bot]} changes first.`;
+      const id = addPending({ kind: 'bot', summary, phrase: live ? 'yes, on air' : 'yes', bot: body.bot, verb });
       if (!id) return json(res, 429, { error: 'too-many-pending' });
       return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
     }
@@ -426,7 +430,7 @@ export function createStudioServer(opts) {
         if (p.kind === 'bot') {
           if (!botsOn()) return json(res, 404, { error: 'bot-manager-off' }); // the flag may have been switched off meanwhile
           const r = p.verb === 'start' ? await bots.start(p.bot) : await bots.stop(p.bot);
-          return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, bots: await bots.statusAll() });
+          return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, forced: r.forced === true, bots: await bots.statusAll() });
         }
         if (p.kind === 'host') {
           const out = await callHost(p.method, p.params);

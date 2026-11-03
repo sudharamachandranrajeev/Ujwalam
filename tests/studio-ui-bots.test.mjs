@@ -117,8 +117,10 @@ describe('Bots API with fake bots', () => {
     // Stop
     const s = (await post(c, '/ui/api/bots/stop', { bot: 'streamerbot' })).json();
     assert.match(s.pending.summary, /Stop Streamer\.bot/);
+    assert.match(s.pending.summary, /force-closed: save your Streamer\.bot changes first/); // warned before a forced close
     const done = (await post(c, '/ui/api/confirm', { pendingId: s.pending.pendingId, text: 'yes' })).json();
     assert.equal(done.verdict, 'allow');
+    assert.equal(done.forced, false);
     assert.equal(done.bots[0].running, false);
   });
 
