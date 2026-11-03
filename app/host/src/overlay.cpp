@@ -6,10 +6,14 @@
 #include "rpc_server.h"
 
 #include <windows.h>
+#include <winternl.h>
 
 #include <chrono>
+#include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <random>
+#include <regex>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -19,6 +23,37 @@ namespace {
 constexpr uint16_t kStreamerbotPort = 8093; // the real Streamer.bot keeps it
 constexpr int kBackoffBaseMs = 500, kBackoffCapMs = 15000, kStableMs = 30000, kReplyMs = 2000;
 constexpr DWORD kExitBadArgs = 64;
+constexpr int kMicPeriodMs = 50;       // legacy polled the mic every 50 ms (legacy/tools/cam-pop.mjs)
+constexpr size_t kWriteReserve = 1024; // stdin pipe bytes the mic feed leaves free for effect/stats calls
+
+// Free bytes in the child's stdin pipe buffer (FILE_PIPE_LOCAL_INFORMATION.WriteQuotaAvailable on our write end;
+// the same query libuv uses). false when it cannot be read: the caller then drops its line rather than risk a
+// blocking WriteFile.
+struct PipeLocalInfo {
+	ULONG NamedPipeType, NamedPipeConfiguration, MaximumInstances, CurrentInstances, InboundQuota, ReadDataAvailable,
+		OutboundQuota, WriteQuotaAvailable, NamedPipeState, NamedPipeEnd;
+};
+using NtQueryInformationFileFn = LONG(NTAPI *)(HANDLE, PIO_STATUS_BLOCK, PVOID, ULONG, ULONG);
+constexpr ULONG kFilePipeLocalInformation = 24;
+
+bool pipe_room(HANDLE h, size_t need)
+{
+	static const auto fn = reinterpret_cast<NtQueryInformationFileFn>(
+		reinterpret_cast<void *>(GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationFile")));
+	if (!fn)
+		return false;
+	IO_STATUS_BLOCK io = {};
+	PipeLocalInfo info = {};
+	if (fn(h, &io, &info, sizeof(info), kFilePipeLocalInformation) < 0)
+		return false;
+	return info.WriteQuotaAvailable >= need;
+}
+
+bool valid_audio_id(const std::string &s)
+{
+	static const std::regex re("^[a-z][a-z0-9_-]{0,63}$"); // project audio source id (project.schema.json $defs.id)
+	return std::regex_match(s, re);
+}
 
 std::wstring widen(const std::string &s)
 {
@@ -136,6 +171,7 @@ void Overlay::start()
 	}
 	state_ = "starting";
 	sup_ = std::thread([this] { run(); });
+	mic_ = std::thread([this] { mic_pump(); });
 }
 
 void Overlay::stop(int timeout_ms)
@@ -150,6 +186,8 @@ void Overlay::stop(int timeout_ms)
 	cv_.notify_all();
 	if (sup_.joinable())
 		sup_.join();
+	if (mic_.joinable())
+		mic_.join();
 	std::lock_guard<std::mutex> lk(m_);
 	close_h(job_);
 	if (state_ != "failed")
@@ -187,7 +225,88 @@ json::Value Overlay::status() const
 	s.set("eventFeed", !cfg_.events_url.empty());
 	s.set("childEnvKeys", child_env_);
 	s.set("childHasEventToken", child_token_);
+	json::Value mic = json::Value::object();
+	mic.set("source", mic_source_.empty() ? json::Value() : json::Value(mic_source_));
+	mic.set("found", mic_found_.load());
+	mic.set("sent", (int64_t)mic_sent_.load());
+	mic.set("skipped", (int64_t)mic_skipped_.load());
+	s.set("mic", std::move(mic));
 	return s;
+}
+
+void Overlay::set_mic_level(MicLevelFn fn)
+{
+	std::lock_guard<std::mutex> lk(mic_m_);
+	mic_fn_ = std::move(fn);
+}
+
+bool Overlay::post_line_locked(const std::string &line)
+{
+	if (state_ != "running" || !in_w_)
+		return false;
+	std::lock_guard<std::mutex> wl(write_m_);
+	if (!in_w_ || !pipe_room((HANDLE)in_w_, line.size() + kWriteReserve))
+		return false;
+	DWORD w = 0;
+	return WriteFile((HANDLE)in_w_, line.data(), (DWORD)line.size(), &w, nullptr) && w == line.size();
+}
+
+// Mic feed pump (see overlay.h). Its own thread: libobs's audio thread only stores the meter atomics (Studio::Meter),
+// and the RPC thread is never involved. Cost per tick: one map-free scan of the project sources and one ~30-byte write.
+void Overlay::mic_pump()
+{
+	using clock = std::chrono::steady_clock;
+	auto next = clock::now();
+	for (;;) {
+		next += std::chrono::milliseconds(kMicPeriodMs);
+		std::string id;
+		{
+			std::unique_lock<std::mutex> lk(m_);
+			if (cv_.wait_until(lk, next, [&] { return stopping_; }))
+				break;
+			if (state_ == "running" && in_w_)
+				id = mic_source_;
+		}
+		if (clock::now() - next > std::chrono::seconds(1))
+			next = clock::now(); // stalled (machine asleep, long lock): do not burst to catch up
+		if (id.empty()) {
+			mic_found_ = false;
+			continue;
+		}
+		float db = -INFINITY;
+		int r = 0;
+		{
+			std::lock_guard<std::mutex> lk(mic_m_);
+			if (mic_fn_)
+				r = mic_fn_(id, db);
+		}
+		if (r <= 0) {
+			if (r < 0)
+				mic_skipped_++;
+			else
+				mic_found_ = false;
+			continue;
+		}
+		mic_found_ = true;
+		double level = std::isfinite(db) ? std::pow(10.0, (double)db / 20.0) : 0.0;
+		if (!std::isfinite(level) || level < 0)
+			level = 0;
+		if (level > 1)
+			level = 1;
+		// Fixed-point by hand: %f follows the C locale's decimal point, which a library may change.
+		long micro = std::lround(level * 1e6);
+		char line[64];
+		int n = std::snprintf(line, sizeof(line), "{\"op\":\"mic\",\"level\":%ld.%06ld}\n", micro / 1000000, micro % 1000000);
+		bool ok;
+		{
+			std::lock_guard<std::mutex> lk(m_);
+			ok = n > 0 && post_line_locked(std::string(line, (size_t)n));
+		}
+		if (ok)
+			mic_sent_++;
+		else
+			mic_skipped_++;
+	}
 }
 
 json::Value Overlay::effect(const std::string &name, const json::Value &meta)
@@ -457,11 +576,14 @@ void Overlay::read_stdout(void *h, uint64_t gen)
 							child_env_.push(clean_line(k.as_string().substr(0, 64)));
 				const json::Value *et = pr.value.find("eventToken");
 				child_token_ = et && et->is_bool() && et->as_bool();
+				const json::Value *ms = pr.value.find("micSource");
+				mic_source_ = ms && ms->is_string() && valid_audio_id(ms->as_string()) ? ms->as_string() : "";
 				cfg_.port = s; // pinned: browser layer URLs stay valid across restarts
 				cfg_.feed_port = f;
 				state_ = "running";
 				last_error_.clear();
-				hlog::info("overlay: ready (static 127.0.0.1:%u, feed 127.0.0.1:%u)", s, f);
+				hlog::info("overlay: ready (static 127.0.0.1:%u, feed 127.0.0.1:%u, mic feed %s)", s, f,
+					   mic_source_.empty() ? "off" : ("audio:" + mic_source_).c_str());
 				cv_.notify_all();
 			} else if (t->as_string() == "reply") {
 				const json::Value *id = pr.value.find("id");

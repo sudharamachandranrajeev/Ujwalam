@@ -112,8 +112,32 @@ export function validateGuardConfig(c) {
     else for (const i of p.items) if (!isObj(c.effects) || !c.effects[i?.id] || !(i.weight > 0)) bad(`pool ${id}: item ${i?.id} is not a known effect with weight > 0`);
     if (!Number.isInteger(p?.noRepeatLast) || p.noRepeatLast < 0) bad(`pool ${id}: noRepeatLast`);
   }
+  if (c.rules !== undefined && !isObj(c.rules)) bad('rules must be an object');
+  else if (c.rules?.campop !== undefined) validateCamPopVoice(c.rules.campop, bad);
   if (errs.length) throw new RangeError(`invalid guards config: ${errs.join('; ')}`);
   return c;
+}
+
+// Project audio source ids (data/schemas/project.schema.json $defs.id).
+const AUDIO_ID = /^[a-z][a-z0-9_-]{0,63}$/;
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+// rules.campop.voice: the mic spike trigger. audioSource names the project audio source whose meter the host feeds to
+// the rule (op "mic" on the overlay child); null or absent = no mic feed. Data, never a device name in engine code.
+function validateCamPopVoice(r, bad) {
+  if (!isObj(r)) { bad('rules.campop must be an object'); return; }
+  const v = r.voice;
+  if (!isObj(v)) { bad('rules.campop.voice must be an object'); return; }
+  if (typeof v.enabled !== 'boolean') bad('rules.campop.voice.enabled must be boolean');
+  if (!num(v.spikeLevel, 0, 1) || v.spikeLevel === 0) bad('rules.campop.voice.spikeLevel must be a linear level above 0, at most 1');
+  if (!num(v.holdMs, 0, 60_000)) bad('rules.campop.voice.holdMs must be 0..60000');
+  const a = v.audioSource;
+  if (a === undefined || a === null) return;
+  if (!isObj(a)) { bad('rules.campop.voice.audioSource must be an object or null'); return; }
+  if (typeof a.id !== 'string' || !AUDIO_ID.test(a.id)) bad('rules.campop.voice.audioSource.id must be a project audio source id');
+  if (a.status !== 'unverified' && a.status !== 'verified') bad('rules.campop.voice.audioSource.status must be unverified or verified');
+  if (typeof a.source !== 'string' || !a.source.trim()) bad('rules.campop.voice.audioSource.source is required');
+  if (typeof a.checked !== 'string' || !DATE.test(a.checked) || Number.isNaN(Date.parse(a.checked))) bad('rules.campop.voice.audioSource.checked must be a YYYY-MM-DD date');
 }
 
 export function loadGuardConfig(file) {

@@ -99,7 +99,16 @@
       "effect": "campop",
       "chatMessage": { "enabled": true, "source": "legacy/tools/cam-pop.json:5-8, cam-pop.mjs:224", "status": "legacy" },
       "chatBurst": { "messages": 5, "windowSec": 10, "source": "legacy/tools/cam-pop.json:9-12, cam-pop.mjs:225-231", "status": "legacy" },
-      "voice": { "enabled": true, "spikeLevel": 0.12, "holdMs": 150, "source": "legacy/tools/cam-pop.json:13-19, cam-pop.mjs:243-250 (level scale of the legacy mic reader; the host mic meter must use the same scale)", "status": "legacy" },
+      "voice": {
+        "enabled": true, "spikeLevel": 0.12, "holdMs": 150, "source": "legacy/tools/cam-pop.json:13-19, cam-pop.mjs:243-250 (level scale of the legacy mic reader; the host mic meter must use the same scale)", "status": "legacy",
+        "audioSource": {
+          "id": "aud-mic",
+          "source": "project audio source id of the mic in the Alpha project (services/studio-ui/alpha.mjs, audio sources: aud-mic is the mic device, aud-game the game capture). The host sends this source's meter peak to the rule every 50 ms",
+          "levelNote": "the host level is the libobs volmeter peak (post-fader, post-filter) as 10^(dB/20); legacy read the raw WASAPI device peak (legacy/tools/mic-level.ps1). spikeLevel 0.12 may not mean the same loudness until measured live with the real mic",
+          "status": "unverified",
+          "checked": "2026-11-03"
+        }
+      },
       "random": { "enabled": true, "meanMin": 12, "checkEveryMs": 60000, "source": "legacy/tools/cam-pop.json:20-24, cam-pop.mjs:252-255", "status": "legacy" },
       "minGapSec": 0, "minGapSource": "legacy/tools/cam-pop.json:4, cam-pop.mjs:186-189",
       "dropWhileUp": true, "dropWhileUpSource": "legacy/tools/cam-pop.json:2 (note), cam-pop.mjs:153"

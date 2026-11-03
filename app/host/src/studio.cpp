@@ -1224,6 +1224,27 @@ std::shared_ptr<Studio::Src> Studio::find_audio(const std::string &id)
 	throw Error(rpc::INVALID_PARAMS, "no such layer");
 }
 
+int Studio::audio_peak_db(const std::string &audio_id, float &peak_db) const
+{
+	std::unique_lock<std::recursive_mutex> lk(m_, std::try_to_lock);
+	if (!lk.owns_lock())
+		return -1;
+	if (audio_id.empty())
+		return 0;
+	for (auto &g : globals_)
+		if (g.src && g.src->meter && g.src->audio_id == audio_id) {
+			peak_db = g.src->meter->peak;
+			return 1;
+		}
+	for (auto &s : scenes_)
+		for (auto &l : s.layers)
+			if (l.src && l.src->meter && l.src->audio_id == audio_id) {
+				peak_db = l.src->meter->peak;
+				return 1;
+			}
+	return 0;
+}
+
 json::Value Studio::mixer_list() const
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);

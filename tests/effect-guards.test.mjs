@@ -61,6 +61,29 @@ describe('config as data', () => {
       assert.throws(() => validateGuardConfig(c), RangeError);
     }
   });
+
+  test('mic source: a project audio source id with source, status and checked date; null turns the feed off', () => {
+    const a = real().rules.campop.voice.audioSource;
+    assert.equal(a.id, 'aud-mic', 'the Alpha project mic (services/studio-ui/alpha.mjs)');
+    assert.equal(a.status, 'unverified');
+    assert.match(a.checked, /^\d{4}-\d{2}-\d{2}$/);
+    assert.ok(a.source && a.levelNote);
+    for (const ok of [(c) => { c.rules.campop.voice.audioSource = null; }, (c) => { delete c.rules.campop.voice.audioSource; },
+      (c) => { c.rules.campop.voice.audioSource.status = 'verified'; }]) {
+      const c = clone(real());
+      ok(c);
+      assert.doesNotThrow(() => validateGuardConfig(c));
+    }
+    for (const mutate of [(c) => { c.rules.campop.voice.audioSource = 'aud-mic'; }, (c) => { c.rules.campop.voice.audioSource.id = 'Microphone (USB)'; },
+      (c) => { c.rules.campop.voice.audioSource.id = ''; }, (c) => { c.rules.campop.voice.audioSource.status = 'legacy'; },
+      (c) => { delete c.rules.campop.voice.audioSource.source; }, (c) => { c.rules.campop.voice.audioSource.checked = '3 Nov'; },
+      (c) => { c.rules.campop.voice.spikeLevel = 1.2; }, (c) => { c.rules.campop.voice.spikeLevel = 0; }, (c) => { c.rules.campop.voice.holdMs = -1; },
+      (c) => { c.rules.campop.voice.enabled = 'yes'; }, (c) => { delete c.rules.campop.voice; }, (c) => { c.rules = []; }]) {
+      const c = clone(real());
+      mutate(c);
+      assert.throws(() => validateGuardConfig(c), RangeError, mutate.toString());
+    }
+  });
 });
 
 describe('cooldown, busy, unknown', () => {

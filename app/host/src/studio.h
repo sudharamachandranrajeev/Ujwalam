@@ -81,6 +81,10 @@ public:
 	std::vector<LayerRef> hide_browser_layers();
 	size_t restore_layers(const std::vector<LayerRef> &refs);
 
+	// Latest meter peak (dBFS; -inf when silent or muted) of the source bound to project audio source `audio_id`
+	// (a device global or a layer's audio). Never blocks: 1 found, 0 no such source, -1 the model is busy (another
+	// thread holds it, e.g. project.load). For the cam-pop mic feed (overlay.h); any thread.
+	int audio_peak_db(const std::string &audio_id, float &peak_db) const;
 	json::Value mixer_list() const;
 	json::Value mixer_set_volume(const std::string &id, const double *mul, const double *db);
 	json::Value mixer_set_mute(const std::string &id, bool muted);

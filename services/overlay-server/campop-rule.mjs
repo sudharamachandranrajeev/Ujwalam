@@ -12,8 +12,10 @@
 //     (the gate returns 'busy' for that, because the campop effect lasts holdSec)
 // The rule never reads chat text: it counts messages only.
 //
-// TODO(host/P8): the mic level comes from the host's meter (same 0..1 scale as the legacy mic reader, the legacy
-// spikeLevel 0.12 was measured on it). Until a source calls onMicLevel() the voice trigger never fires.
+// Mic level: the host feeds onMicLevel() every 50 ms with the libobs meter peak (10^(dB/20), 0..1) of the project audio
+// source named in rules.campop.voice.audioSource (app/host/src/overlay.h, op "mic" in app/host/overlay/child.mjs).
+// UNVERIFIED: that meter is post-fader and post-filter, while the legacy spikeLevel 0.12 was measured on the raw
+// device peak; confirm with a live measurement on the real mic. Without a host feed the voice trigger never fires.
 
 export function createCamPopRule({ config, fire, now = Date.now, rng = Math.random, setInterval: si = setInterval, clearInterval: ci = clearInterval }) {
   if (typeof fire !== 'function') throw new TypeError('fire must be a function');

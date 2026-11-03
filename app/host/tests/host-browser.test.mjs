@@ -249,3 +249,41 @@ test('overlay ports: 8093 is refused before anything starts', { skip: !haveRoot 
   const r = spawnSync(process.execPath, [cfg.overlayScript, '--root', cfg.overlayRoot, '--feed-port', '8093'], { encoding: 'utf8', timeout: 20000, windowsHide: true });
   assert.equal(r.status, 64, 'the child refuses 8093 too');
 });
+
+// Cam-pop mic feed (overlay.h): the child names the mic source (guards.json rules.campop.voice.audioSource), the host
+// pumps that source's meter peak into the child as op "mic" every 50 ms, and the rule counts a voice trigger. A media
+// layer with a loud tone stands in for the mic (no devices); its project audio source gets the configured id.
+test('cam-pop mic feed: the named audio source reaches the rule as op mic (about 20 lines/s), loud tone triggers', { skip: !haveRoot && 'no overlay root' }, async () => {
+  const { readFileSync } = await import('node:fs');
+  const voice = JSON.parse(readFileSync(path.join(REPO_ROOT, 'data', 'effects', 'guards.json'), 'utf8')).rules.campop.voice;
+  const micId = voice.audioSource.id;
+  const media = mkdtempSync(path.join(OUT, 'mic-'));
+  const ff = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x120:rate=30',
+    '-f', 'lavfi', '-i', 'aevalsrc=0.5*sin(2*PI*440*t):s=48000', '-t', '4', '-c:v', 'mpeg4', '-q:v', '5', '-c:a', 'aac', '-shortest',
+    path.join(media, 'tone.mp4')], { windowsHide: true });
+  assert.equal(ff.status, 0, String(ff.stderr));
+  const MIC = {
+    version: 1, id: 'mic-feed', name: 'Mic feed', activeScene: 'main',
+    canvases: [{ id: 'h', width: W, height: H, fps: 30 }], devices: [], overlays: [], outputs: [],
+    scenes: [{ id: 'main', name: 'Main', layers: [
+      { id: 'tone', type: 'media', name: 'Tone', source: { file: { base: 'media', rel: 'tone.mp4' }, loop: true },
+        placements: { h: { visible: true, x: 0, y: 0, width: W, height: H } } }] }],
+    audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [
+      { id: micId, name: 'Mic stand-in', layer: 'tone', volumeDb: 0, muted: false, monitoring: 'off', tracks: ['t1'] }] }
+  };
+  const st0 = await c.call('overlay.status');
+  assert.equal(st0.mic.source, micId, 'the child named the mic source in its ready line');
+  const stats0 = await c.call('overlay.stats');
+  assert.equal(typeof stats0.campop?.triggers, 'number', 'stats carry the cam-pop rule counters');
+  await loadIntoHost(c, MIC, { bases: { media } });
+  const a = await waitFor(async () => { const s = await c.call('overlay.status'); return s.mic.found && s.mic.sent > st0.mic.sent && s; }, 5000, 'mic feed found');
+  const t0 = Date.now();
+  await sleep(2000);
+  const b = await c.call('overlay.status');
+  const rate = (b.mic.sent - a.mic.sent) / ((Date.now() - t0) / 1000);
+  console.log(`# mic feed: ${rate.toFixed(1)} lines/s, skipped ${b.mic.skipped - a.mic.skipped}`);
+  assert.ok(rate >= 14 && rate <= 22, `about 20 lines/s (got ${rate.toFixed(1)})`);
+  const stats1 = await c.call('overlay.stats');
+  assert.ok(stats1.campop.triggers > stats0.campop.triggers, 'the loud tone held over holdMs counted as a voice trigger');
+  assert.equal(b.state, 'running');
+});

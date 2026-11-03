@@ -412,6 +412,11 @@ int wmain(int argc, wchar_t **wargv)
 		mc.session = app.session;
 		app.moments = std::make_unique<Moments>(app, mc);
 		app.hotkeys = std::make_unique<Hotkeys>();
+		if (app.overlay) { // cam-pop mic feed (overlay.h): the overlay pump reads the named source's meter
+			Studio *st = app.studio.get();
+			app.overlay->set_mic_level(
+				[st](const std::string &id, float &db) { return st->audio_peak_db(id, db); });
+		}
 
 		json::Value project;
 		if (project_path.empty()) {
@@ -522,6 +527,8 @@ int wmain(int argc, wchar_t **wargv)
 		app.hotkeys.reset();
 		app.moments.reset();
 		app.panic.reset();
+		if (app.overlay)
+			app.overlay->set_mic_level(nullptr); // the mic pump stops reading the studio before it goes
 		app.studio->teardown();
 		app.studio.reset();
 		if (app.overlay)
