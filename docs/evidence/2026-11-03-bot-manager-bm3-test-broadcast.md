@@ -27,7 +27,19 @@ The first version applied the flag only when the alpha project was built (layer 
 - `node tools/lint.mjs`: 0 findings. `npm run validate:registry`: OK.
 - The full suite (`npm run ci`) was not run here.
 
-## PENDING (needs the host, the laptop and the user's yes)
+## H/V capture on the laptop (2026-11-03, user yes)
+
+Studio `npm run alpha -- --allow-devices --mock` (project rebuilt once with `--rebuild-alpha`), real devices, mock chat, nothing live. Flag `test-broadcast` set on, 20 s later off; 7 s later Ctrl+Alt+F saved the 30 s replay of H (1920x1080) and V (1080x1920). Frames at 1 fps; stills and contact sheets in `docs/evidence/private/2026-11-03-bm3b/` (gitignored: camera and channel names).
+
+- First try FAILED: no banner in any frame. Cause: the local `app/host/host.local.json` set `overlayRoot` to `legacy/overlays`, one level too deep; every legacy page and `brand/`/`kit/` style returned 404 (9 "Refused to apply style ... MIME type ('')" lines in the host log), so all browser layers rendered empty. Fixed the setting (user yes) and added the check `overlayRootProblem()` (D200).
+- Second try PASS:
+  - The banner appears after the switch-on (fade in visible on the first frame) and is on screen for about 19 of the 20 s it was on; it is gone on the first frame after the switch-off. So the live switch works inside the libobs browser source: `fetch` to `/_ujwalam/flags.json` under the CSP works in CEF.
+  - H: one line ("TEST BROADCAST" label plus the text) at the top, right of the logo, inside its box.
+  - V: the text wraps to three lines inside the box; nothing is clipped; the box sits above the game area and does not cover the logo or counters.
+  - Brand fonts and tokens load (host log: 0 MIME errors). The other legacy overlays (ticker, goal bar, mock effects) now render too.
+- Still open: the 15-minute repeat (not waited for), and the look on a real stream.
+
+## PENDING (closed by the capture above, kept for the record)
 H and V frame captures. No headless render path exists in the repo (earlier evidence made no screenshots; `program-screenshot` is still planned), and a render needs the libobs host or a browser window, which this task must not start.
 1. Run the studio in alpha mode with `--rebuild-alpha` once (same command as `docs/tests/2026-11-03-A0-D1.md`), with the user's yes.
 2. Turn `test-broadcast` on in the control page (Flags card); the banner should appear within 5 s.
