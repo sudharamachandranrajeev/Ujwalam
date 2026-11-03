@@ -17,6 +17,27 @@ Full steps: `docs/procedures/session-protocol.md`. In short:
 - **High-stakes work stays on the strongest available model:** security reviews, the live path, the encoder graph. A lower-tier model never marks those done.
 - Procedures (tool-neutral): `docs/procedures/` — evidence, phase gate, registry add, session protocol, feedback triage.
 
+## "wind up" (user command, 2026-11-03, D192)
+
+When the user types "wind up", in order:
+
+1. Save all progress (code, notes, decisions) in the project: commit, update the handover.
+2. Write a plain-English summary of what was done, with no jargon.
+3. Write "how to continue": what is finished, what is half-done, the exact next step.
+4. Email both to the user's own address through the connected Gmail account. Subject: "Ujwalam wind-up, YYYY-MM-DD". It must contain no keys, tokens, chat text, viewer names or private brand/channel names. If sending fails, save it as `YYYY-MM-DD-wind-up.md` in the project folder and say so.
+5. Stop everything the project started: background processes, file watchers, dev servers, the libobs host, any test stream and any open connections. A running nightly backup task (`\Ujwalam\Backup`) is ended, but its schedule stays enabled.
+6. Confirm that everything is closed (list what was stopped; check for stray node, python, ffmpeg and host processes), then release the lock and exit.
+
+## Live stream testing (user, 2026-11-03, D192)
+
+- Platforms: YouTube H, YouTube V (separate 9:16 output), Twitch, Kick. Frame the V scene so nothing important is cut off.
+- Stream keys stay in Windows Credential Manager only (not environment variables; user's choice 2026-11-03). Never write a key into any file, log, commit, email or chat message.
+- Never go live on your own. When the build is ready, tell the user it is ready for a test and wait for the exact words "start stream test" (plus the "yes, on air" confirmation on the control page).
+- A test stream runs about one hour. During it, show viewers a short message that this is a test of new streaming software; Speaker.bot reads that announcement aloud.
+- Chat feedback: a Streamer.bot action posts the question (video, audio, scenes, lag, anything broken) on YouTube, Twitch and Kick. Ujwalam's Streamer.bot connection stays read-only: it only collects the replies into `feedback/YYYY-MM-DD-stream-feedback.md` (gitignored; viewer names only in that local file, placeholders anywhere committed).
+- Check that Ujwalam, Streamer.bot and Speaker.bot work together without clashing (ports, hotkeys, audio devices, duplicate alerts).
+- After the hour, or when the user says "stop": end every stream (both YouTube outputs, Twitch, Kick) and close all connections. Then summarise in plain language: what worked, what failed, what to fix.
+
 ## Rules
 
 - Don't assume; ask one short question. Mark unverified items UNVERIFIED.
