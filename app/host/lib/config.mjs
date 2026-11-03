@@ -16,7 +16,15 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export const HOST_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+/** null when dir is a usable overlay root (it holds overlays/), else a short reason. A root one level too deep
+ *  (…/legacy/overlays) serves every legacy page and its brand/kit styles as 404, so overlays render blank. */
+export function overlayRootProblem(dir) {
+  if (!dir || !existsSync(dir)) return 'overlay root not found (UJWALAM_OVERLAY_ROOT or "overlayRoot" in app/host/host.local.json)';
+  if (!existsSync(path.join(dir, 'overlays'))) return `overlay root ${dir} has no overlays/ folder: point it at the folder that holds overlays/, brand/ and kit/ (default <repo>/legacy)`;
+  return null;
+}
+
+export const HOST_DIR =path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const REPO_ROOT = path.resolve(HOST_DIR, '..', '..');
 
 function local() {

@@ -185,7 +185,11 @@ test('alpha bases: profile assets dir from paths.profile_assets, else the overla
 
 // ---- launcher wiring
 
-const CFG = { runtime: 'C:/rt', dataDir: 'C:/hd', recordings: 'C:/hd/rec', overlayRoot: REPO, overlayScript: path.join(REPO, 'app', 'host', 'overlay', 'child.mjs') };
+// An overlay root holds overlays/ (overlayRootProblem); a root without it turns overlays off.
+const OV_ROOT = mkdtempSync(path.join(os.tmpdir(), 'ujw-alpha-ov-'));
+mkdirSync(path.join(OV_ROOT, 'overlays'), { recursive: true });
+test.after(() => rmSync(OV_ROOT, { recursive: true, force: true }));
+const CFG = { runtime: 'C:/rt', dataDir: 'C:/hd', recordings: 'C:/hd/rec', overlayRoot: OV_ROOT, overlayScript: path.join(REPO, 'app', 'host', 'overlay', 'child.mjs') };
 const TOKEN = 'a'.repeat(64);
 const SYS = 'b'.repeat(64);
 const HCF = path.join(REPO, 'x', 'host-config.json');
@@ -211,7 +215,7 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
   assert.equal(after('--preview'), 'h,v');
   assert.ok(s.argv.includes('--allow-browser'));
   assert.ok(s.argv.includes('--allow-devices'));
-  assert.equal(after('--overlay-root'), REPO);
+  assert.equal(after('--overlay-root'), OV_ROOT);
   assert.match(after('--overlay-script'), /app[\\/]host[\\/]overlay[\\/]child\.mjs$/);
   assert.equal(after('--node'), process.execPath);
   assert.equal(after('--overlay-events-url'), 'http://127.0.0.1:1234/events');
@@ -319,7 +323,7 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
   const root = tmp('e2e');
   const dataDir = path.join(root, 'core');
   const ov = path.join(root, 'overlays-root');
-  mkdirSync(ov, { recursive: true });
+  mkdirSync(path.join(ov, 'overlays'), { recursive: true });
   const rec = path.join(root, 'record.json');
   const profile = path.join(root, 'profile.json');
   writeFileSync(profile, JSON.stringify(PROFILE));

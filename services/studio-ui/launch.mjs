@@ -68,7 +68,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { HostClient } from '../../app/host/lib/client.mjs';
-import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
+import { overlayRootProblem, resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
 import { loadFileIntoHost } from '../../app/host/lib/project.mjs';
 import { SYSTEM_FILE, writeSecretFileAtomic } from '../event-core/api/discovery.mjs';
 import { createBots, loadBotConfig } from '../bots/index.mjs';
@@ -221,14 +221,15 @@ export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, co
   if (alpha) {
     if (headless) notes.push('headless (UJWALAM_HEADLESS=1): no preview windows');
     else argv.push('--preview', 'h,v');
-    if (hostCfg.overlayRoot && existsSync(hostCfg.overlayRoot)) {
+    const overlayProblem = overlayRootProblem(hostCfg.overlayRoot);
+    if (!overlayProblem) {
       argv.push('--allow-browser', '--overlay-root', hostCfg.overlayRoot, '--overlay-script', hostCfg.overlayScript, '--node', process.execPath);
       if (Number.isInteger(corePort) && corePort > 0 && /^[0-9a-f]{64}$/.test(coreApiToken ?? '')) {
         argv.push('--overlay-events-url', `http://127.0.0.1:${corePort}/events`);
         env.UJWALAM_EVENT_CORE_API_TOKEN = coreApiToken;
       } else notes.push('no event core port or token: overlays get no Streamer.bot events');
     } else {
-      notes.push('overlay root not found (UJWALAM_OVERLAY_ROOT or "overlayRoot" in app/host/host.local.json): overlays are off');
+      notes.push(`${overlayProblem}: overlays are off`);
     }
     // Day 2: hotkeys, replay, feedback folder and event-core system file come from the host config; the system
     // token (panic's actions.panic) goes by environment only.

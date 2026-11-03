@@ -11,7 +11,7 @@ import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { HostClient } from './client.mjs';
-import { resolveConfig } from './config.mjs';
+import { overlayRootProblem, resolveConfig } from './config.mjs';
 
 export async function launchHost({
   dataDir, project, outputs, preview, port = 0, extraArgs = [], env = {}, stdio = 'pipe', timeoutMs = 30000, cfg: cfgIn, tokenByEnv = true,
@@ -30,7 +30,8 @@ export async function launchHost({
   if (outputs) args.push('--outputs', outputs);
   if (preview) args.push('--preview', preview);
   if (overlay) {
-    if (!cfg.overlayRoot || !existsSync(cfg.overlayRoot)) throw new Error('overlay root not found: UJWALAM_OVERLAY_ROOT or host.local.json "overlayRoot"');
+    const bad = overlayRootProblem(cfg.overlayRoot);
+    if (bad) throw new Error(bad);
     args.push('--allow-browser', '--overlay-root', cfg.overlayRoot, '--overlay-script', cfg.overlayScript, '--node', process.execPath);
     if (overlay.port) args.push('--overlay-port', String(overlay.port));
     if (overlay.feedPort) args.push('--overlay-feed-port', String(overlay.feedPort));
