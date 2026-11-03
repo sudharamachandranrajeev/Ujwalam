@@ -1,7 +1,9 @@
 {
-  "version": 1,
-  "source": "D72, docs/plan/2026-10-29-v1-decisions.md (feed scopes)",
-  "checked": "2026-10-29",
+  "version": 2,
+  "source": "D72, docs/plan/2026-10-29-v1-decisions.md (feed scopes); effectPages D204",
+  "checked": "2026-11-03",
   "note": "Overlay folders (first segment of the overlay rel) whose pages draw chat or alerts and so get the /display feed scope. Every other overlay gets the effects scope (masked chat text). Widen only with the user's yes.",
-  "display": ["chat-list", "alert-box"]
+  "display": ["chat-list", "alert-box"],
+  "effectPagesNote": "Effects-scope folders whose page fires one named effect itself on chat (legacy/overlays/chat-charge, chat-storm). They connect at /effects/<name>, so every chat-fired play passes the effect guards (budget, cooldown, region, flash; data/effects/guards.json) and the chat-effects flag. Names must exist in data/effects/guards.json effects.",
+  "effectPages": { "chat-charge": "charge", "chat-storm": "storm" }
 }

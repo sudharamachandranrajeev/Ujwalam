@@ -406,7 +406,9 @@ describe('guards wired into the bridge', () => {
     const { createEventCore } = await import('../services/event-core/index.mjs');
     const core = createEventCore({ key: Buffer.alloc(32, 7), moderation: false, actions: false });
     const cfg = clone(real());
-    const s = createOverlayServer({ root: path.join(HERE, '..', 'services', 'overlay-server', 'relay'), bus: core.bus, guards: cfg, audit });
+    const flagState = { 'chat-effects': true };
+    const flags = { isOn: (id) => flagState[id] === true };
+    const s = createOverlayServer({ root: path.join(HERE, '..', 'services', 'overlay-server', 'relay'), bus: core.bus, guards: cfg, audit, flags });
     // the static root only has to exist for this test
     await s.start();
     try {
@@ -434,7 +436,40 @@ describe('guards wired into the bridge', () => {
       assert.ok(reasons.includes('busy') && reasons.includes('unknown-effect'));
       assert.ok(s.bridge.stats().chatGated >= 1);
       assert.ok(!JSON.stringify(audit.rows).includes('ViewerOne') && !JSON.stringify(audit.rows).includes('two'));
+      // Flag chat-effects off (D204): chat-fired plays stop at once, other sources are unaffected, the plain feed still gets chat.
+      flagState['chat-effects'] = false;
+      await wait(1600);                                    // charge and gg busy/cooldown over
+      const before = envelopes(charge).length;
+      chat('three');
+      await wait(60);
+      assert.equal(envelopes(charge).length, before, 'flag off: the /effects/charge page gets no chat envelope');
+      assert.equal(envelopes(plain).length, 3);
+      assert.deepEqual(s.bridge.publishEffect('charge', { source: 'chat' }), { ok: false, reason: 'flag-off' });
+      assert.notEqual(s.bridge.publishEffect('gg', { source: 'api' }).reason, 'flag-off', 'non-chat sources skip the flag; the guards decide');
+      flagState['chat-effects'] = true;                    // back on: chat fires again without a restart
+      await wait(1000);
+      chat('four');
+      await wait(60);
+      assert.equal(envelopes(charge).length, before + 1);
       charge.sock.destroy(); plain.sock.destroy();
     } finally { await s.stop(); }
+  });
+
+  test('the cam-pop rule fires only while chat-effects is on; no flags object means off (D204)', () => {
+    let t = 1_000_000;
+    const on = { v: false };
+    const root = path.join(HERE, '..', 'services', 'overlay-server', 'relay');
+    const s = createOverlayServer({ root, guards: true, now: () => t, flags: { isOn: (id) => id === 'chat-effects' && on.v } });
+    const spike = () => { s.rule.onMicLevel(1); t += 200; s.rule.onMicLevel(1); };
+    spike();
+    assert.equal(s.guards.stats().byEffect.campop?.allowed ?? 0, 0, 'flag off: no pop reaches the guards');
+    on.v = true;
+    t += 60_000;
+    spike();
+    assert.equal(s.guards.stats().byEffect.campop.allowed, 1, 'flag on: the guards admit the pop');
+    s.guards.stop();
+    const bare = createOverlayServer({ root, guards: true, now: () => t });
+    assert.deepEqual(bare.bridge.publishEffect('charge', { source: 'chat' }), { ok: false, reason: 'flag-off' });
+    bare.guards.stop();
   });
 });

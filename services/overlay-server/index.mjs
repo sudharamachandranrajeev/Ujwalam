@@ -26,6 +26,8 @@ const RELAY_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'relay
 export const OWN_OVERLAYS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pages');
 /** Feature flags an overlay page may read live at /_ujwalam/flags.json (D196). Nothing else about flags reaches a page. */
 export const OVERLAY_FLAGS = Object.freeze(['test-broadcast']);
+/** Gates chat-fired effects (pages at /effects/<name>) and the cam-pop rule; read by the server, never sent to a page. */
+export const CHAT_EFFECTS_FLAG = 'chat-effects';
 
 /** { <id>: bool } for OVERLAY_FLAGS. flags: { isOn(id) } (services/flags) or nothing (then every flag is off). */
 export function overlayFlagState(flags) {
@@ -52,10 +54,15 @@ export function createOverlayServer(opts) {
     const config = typeof opts.guards === 'object' ? opts.guards : loadGuardConfig(opts.guards === true ? DEFAULT_GUARDS_FILE : opts.guards);
     guards = createEffectGuards({ config, now: opts.now, audit: opts.audit });
   }
-  const bridge = createOverlayBridge({ effectGate: guards ? guards.gate : opts.effectGate, log: opts.log });
+  // Flag `chat-effects` (D149, D204): chat-fired effects and the cam-pop rule run only while it is on; it is read on
+  // every decision, so a flip on the control page acts at once, also while live. No flags object: off.
+  const chatFx = () => { try { return opts.flags?.isOn(CHAT_EFFECTS_FLAG) === true; } catch { return false; } };
+  const baseGate = guards ? guards.gate : opts.effectGate;
+  const effectGate = (e) => (e?.source === 'chat' && !chatFx() ? { allow: false, reason: 'flag-off' } : (baseGate ? baseGate(e) : { allow: true }));
+  const bridge = createOverlayBridge({ effectGate, log: opts.log });
   if (guards) {
     guards.setDeliver((e) => bridge.deliverEffect(e.name));
-    if (guards.config.rules?.campop) rule = createCamPopRule({ config: guards.config.rules.campop, fire: (e) => bridge.publishEffect(e.name, { source: e.source }), now: opts.now });
+    if (guards.config.rules?.campop) rule = createCamPopRule({ config: guards.config.rules.campop, fire: (e) => (chatFx() ? bridge.publishEffect(e.name, { source: e.source }) : { ok: false, reason: 'flag-off' }), now: opts.now });
   }
   const stat = createStaticServer({ root: opts.root, port: opts.staticPort ?? 0, csp: opts.csp, extraMounts: { '/_ujwalam': RELAY_DIR }, ownOverlays: OWN_OVERLAYS_DIR, flagsJson: () => overlayFlagState(opts.flags) });
   const feed = createFeedServer({ bridge, port: opts.feedPort ?? 0, allowedOrigins: opts.extraOrigins ?? [] });

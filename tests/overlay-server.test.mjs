@@ -404,6 +404,29 @@ describe('bridge: unit', () => {
     assert.equal(feedQuery(8788, 'display'), 'streamerbot=1&sbHost=127.0.0.1&sbPort=8788&sbPath=/display');
     assert.throws(() => feedQuery(0));
     assert.throws(() => feedQuery('8788'));
+    assert.equal(feedQuery(8788, 'effects', 'charge'), 'streamerbot=1&sbHost=127.0.0.1&sbPort=8788&sbPath=/effects/charge');
+    assert.throws(() => feedQuery(8788, 'effects', '../x'));
+  });
+
+  test('effect pages in feed-scopes.json connect at /effects/<name> and name a guarded effect (D204)', async () => {
+    const { overlayUrls, FEED_SCOPES_FILE } = await import('../app/host/lib/project.mjs');
+    const scopes = JSON.parse(readFileSync(FEED_SCOPES_FILE, 'utf8'));
+    const guards = JSON.parse(readFileSync(path.join(HERE, '..', 'data', 'effects', 'guards.json'), 'utf8'));
+    for (const [folder, name] of Object.entries(scopes.effectPages)) {
+      assert.ok(Object.hasOwn(guards.effects, name), `${folder} -> ${name} is in guards.json effects`);
+      assert.ok(!scopes.display.includes(folder), `${folder} is not a display folder`);
+    }
+    const ov = (id, rel) => ({ id, file: { base: 'overlays', rel } });
+    const layer = (id, overlay, query) => ({ id, type: 'browser', source: { overlay, query } });
+    const project = {
+      overlays: [ov('o1', 'chat-charge/index.html'), ov('o2', 'chat-list/index.html'), ov('o3', 'gg-burst/index.html')],
+      scenes: [{ layers: [layer('l1', 'o1', 'h=1'), layer('l2', 'o2'), layer('l3', 'o3')] }],
+    };
+    const { browserUrls, relayScope } = overlayUrls(project, { staticPort: 50101, feedPort: 50102 });
+    assert.equal(browserUrls.l1, 'http://127.0.0.1:50101/overlays/chat-charge/index.html?h=1&streamerbot=1&sbHost=127.0.0.1&sbPort=50102&sbPath=/effects/charge');
+    assert.ok(browserUrls.l2.endsWith('sbPath=/display'));
+    assert.ok(browserUrls.l3.endsWith('sbPath=/'));
+    assert.equal(relayScope, 'display');
   });
 
   test('the frame parser demands masked client frames and bounds the payload', () => {

@@ -60,7 +60,9 @@ function overlayLayers(project) {
 export function overlayUrls(project, ports, { scopesFile = FEED_SCOPES_FILE } = {}) {
   const { staticPort, feedPort } = ports ?? {};
   if (!Number.isInteger(staticPort) || staticPort < 1 || staticPort > 65535) throw new RangeError('bad overlay static port');
-  const display = new Set(JSON.parse(readFileSync(scopesFile, 'utf8')).display ?? []);
+  const scopes = JSON.parse(readFileSync(scopesFile, 'utf8'));
+  const display = new Set(scopes.display ?? []);
+  const effectPages = scopes.effectPages ?? {}; // folder -> effect name: chat-fired plays pass the guards (D204)
   const byId = new Map((project.overlays ?? []).map((o) => [o.id, o]));
   const browserUrls = {};
   let relayScope = '';
@@ -71,7 +73,7 @@ export function overlayUrls(project, ports, { scopesFile = FEED_SCOPES_FILE } = 
     const scope = display.has(segs[0]) ? 'display' : 'effects';
     if (scope === 'display' || !relayScope) relayScope = scope;
     const q = typeof l.source.query === 'string' && l.source.query ? l.source.query + '&' : '';
-    browserUrls[l.id] = `http://127.0.0.1:${staticPort}/overlays/${segs.map(encodeURIComponent).join('/')}?${q}${feedQuery(feedPort, scope)}`;
+    browserUrls[l.id] = `http://127.0.0.1:${staticPort}/overlays/${segs.map(encodeURIComponent).join('/')}?${q}${feedQuery(feedPort, scope, scope === 'effects' && Object.hasOwn(effectPages, segs[0]) ? effectPages[segs[0]] : '')}`;
   }
   return { browserUrls, relayScope };
 }

@@ -4,6 +4,8 @@
 // root defaults to ./legacy (the legacy overlay folder, read-only). The event-core API token comes from the
 // environment (UJWALAM_EVENT_CORE_API_TOKEN) and is used only for the one request to --events-url. Without
 // --events-url the server runs with no event source (static files and the feed only).
+// No feature flags here: chat-fired effects and the cam-pop rule stay off (flag chat-effects, D204). The studio's
+// overlay child (app/host/overlay/child.mjs) reads the flags live.
 import path from 'node:path';
 import { createOverlayServer, createRemoteBus } from './index.mjs';
 
