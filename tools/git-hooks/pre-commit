@@ -1,4 +1,5 @@
 #!/bin/sh
 node tools/git-hooks/private-scan.mjs pre-commit "$@" || exit $?
-# P3 E0: the full local CI blocks the commit on any failing step.
-exec node tools/ci.mjs
+# D190 batching: commits run the quick CI steps; the full CI (`npm run ci`) runs about hourly and the pre-push hook
+# requires a full pass on the pushed content (tools/ci-stamp.mjs).
+exec node tools/ci.mjs --quick

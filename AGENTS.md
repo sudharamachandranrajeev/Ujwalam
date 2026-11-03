@@ -11,7 +11,7 @@ Full plan: `docs/2026-10-26-build-plan.md` (§1–12, baseline). Amendments: `do
 Full steps: `docs/procedures/session-protocol.md`. In short:
 
 - **Start:** check `.agent-lock` (`node tools/agent-lock.mjs status`); take the lock; read this file, `docs/plan/` handover (newest `*-handover.md`), `docs/plan/INDEX.md`, the newest `docs/feedback/*-triage.md`, and `docs/inbox/`; triage new `feedback/` items; run `npm run ci`.
-- **End:** update the handover, commit after CI passes, push to the private remote (once it exists and the first push is approved), release the lock.
+- **End:** update the handover, commit (the hook runs the quick checks), run the full CI (it runs about hourly anyway; a push needs a full pass on the pushed content, D190), push to the private remote (once it exists and the first push is approved), release the lock.
 - **Priority:** live-stream breakage > the user's bug reports > annoyances > wishes > planned features (`docs/procedures/feedback-triage.md`).
 - **One writer at a time.** Each agent works on its own branch; merges go through pull requests with CI passing.
 - **High-stakes work stays on the strongest available model:** security reviews, the live path, the encoder graph. A lower-tier model never marks those done.

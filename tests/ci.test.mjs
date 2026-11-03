@@ -8,7 +8,8 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STEPS, runSteps, selectSteps } from '../tools/ci.mjs';
+import { QUICK, STEPS, runSteps, selectSteps } from '../tools/ci.mjs';
+import { checkPush, hasPass, recordPass, worktreeTree } from '../tools/ci-stamp.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ci = path.join(repo, 'tools', 'ci.mjs');
@@ -101,13 +102,58 @@ test('test-ocr step fails when .venv is missing', () => {
   assert.match(r.stdout, /\.venv missing/);
 });
 
-test('pre-commit hook runs the private scan first, then ci, and blocks on failure', () => {
+test('pre-commit hook runs the private scan first, then the quick ci steps, and blocks on failure (D190)', () => {
   const hook = readFileSync(path.join(repo, 'tools', 'git-hooks', 'pre-commit'), 'utf8');
   const scan = hook.indexOf('private-scan.mjs pre-commit "$@"');
   const run = hook.indexOf('tools/ci.mjs');
   assert.ok(scan >= 0 && run > scan);
   assert.match(hook, /private-scan\.mjs pre-commit "\$@" \|\| exit \$\?/);
-  assert.match(hook, /exec node tools\/ci\.mjs/);
+  assert.match(hook, /exec node tools\/ci\.mjs --quick/);
+  // Quick = no test suites; they run in the full CI that the push requires.
+  assert.deepEqual(QUICK.filter((n) => /^test|bench|stray/.test(n)), []);
+  for (const n of QUICK) assert.ok(STEPS.some((s) => s.name === n), n);
+});
+
+test('pre-push hook runs the private scan, then requires a full CI pass stamp, both fed the same stdin', () => {
+  const hook = readFileSync(path.join(repo, 'tools', 'git-hooks', 'pre-push'), 'utf8');
+  const scan = hook.indexOf('private-scan.mjs pre-push "$@" || exit $?');
+  const stamp = hook.indexOf('tools/ci-stamp.mjs check');
+  assert.ok(scan >= 0 && stamp > scan);
+  assert.match(hook, /input=\$\(cat\)/);
+  assert.equal((hook.match(/printf '%s\\n' "\$input" \|/g) ?? []).length, 2);
+});
+
+test('ci-stamp: a pass on the working tree allows exactly that content; edits and other commits are refused', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'ci-stamp-'));
+  dirs.push(d);
+  const g = (...a) => { const r = spawnSync('git', a, { cwd: d, encoding: 'utf8' }); assert.equal(r.status, 0, r.stderr); return r.stdout.trim(); };
+  g('init', '-q'); g('config', 'user.name', 'ci-test'); g('config', 'user.email', 'ci-test@example.invalid'); g('config', 'commit.gpgsign', 'false');
+  writeFileSync(path.join(d, '.gitignore'), 'ignored.txt\n');
+  writeFileSync(path.join(d, 'a.txt'), 'one\n');
+  writeFileSync(path.join(d, 'new.txt'), 'untracked\n');
+  writeFileSync(path.join(d, 'ignored.txt'), 'x\n');
+  const tree = worktreeTree(d);
+  assert.equal(g('status', '--porcelain').includes('?? a.txt'), true, 'the real index is untouched');
+  recordPass(d, tree);
+  assert.equal(hasPass(d, tree), true);
+  g('add', '-A'); g('commit', '-q', '-m', 'c1');
+  const c1 = g('rev-parse', 'HEAD');
+  assert.equal(g('rev-parse', 'HEAD^{tree}'), tree, 'committing the tested content gives the stamped tree');
+  writeFileSync(path.join(d, 'ignored.txt'), 'changed\n');
+  assert.equal(worktreeTree(d), tree, 'ignored files do not change the tree');
+  writeFileSync(path.join(d, 'a.txt'), 'two\n');
+  assert.notEqual(worktreeTree(d), tree, 'an edit changes the tree');
+  g('commit', '-q', '-a', '-m', 'c2');
+  const c2 = g('rev-parse', 'HEAD');
+  const z = '0'.repeat(40);
+  const res = checkPush(d, `refs/heads/a ${c1} refs/heads/a ${z}\nrefs/heads/b ${c2} refs/heads/b ${z}\n(delete) ${z} refs/heads/x ${c1}\n`);
+  assert.deepEqual(res.map((r) => [r.ref, r.ok]), [['refs/heads/a', true], ['refs/heads/b', false]]);
+  const tool = path.join(repo, 'tools', 'ci-stamp.mjs');
+  const run = (input) => spawnSync(process.execPath, [tool, 'check'], { cwd: d, input, encoding: 'utf8', env: { ...process.env, UJWALAM_CI_ROOT: d } });
+  assert.equal(run(`refs/heads/a ${c1} refs/heads/a ${z}\n`).status, 0);
+  const bad = run(`refs/heads/b ${c2} refs/heads/b ${z}\n`);
+  assert.equal(bad.status, 1);
+  assert.match(bad.stderr, /no full CI pass for tree/);
 });
 
 // Real incremental build: touch one source's mtime (content unchanged), the build step must recompile

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Local CI (P3 E0). Runs every standing check in order, continues after a failure so the summary is
 // complete, exits 1 if any step failed. Stdlib only.
-// Usage: node tools/ci.mjs [--only step,step] [--list] [--tail N]
+// Usage: node tools/ci.mjs [--only step,step | --quick] [--list] [--tail N]
 //   UJWALAM_CI_ROOT overrides the repo root (tests use it with stub projects).
 
 import { spawn, spawnSync } from 'node:child_process';
@@ -9,6 +9,9 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { scanStrays, strayReport } from './stray-procs.mjs';
+import { recordPass, worktreeTree } from './ci-stamp.mjs';
+
+const tryTree = (root) => { try { return worktreeTree(root); } catch { return null; } };
 
 const HERE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -92,6 +95,10 @@ export const STEPS = [
 ` }; } },
 ];
 
+// D190 batching: the pre-commit hook runs only these (about 30 s). The full list runs about once an hour and before a
+// push; a full pass on an unchanged tree writes the stamp that the pre-push hook requires (tools/ci-stamp.mjs).
+export const QUICK = ['build', 'lint', 'build-host', 'validate-registry', 'validate-outputs', 'validate-games', 'private-scan', 'legacy-verify'];
+
 function runCommand(step, root) {
   return new Promise((resolve) => {
     // With a shell, pass one command line (fixed, repo-owned strings) instead of an args array.
@@ -149,6 +156,7 @@ async function main() {
   let list = false;
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--only') only = argv[++i];
+    else if (argv[i] === '--quick') only = QUICK.join(',');
     else if (argv[i] === '--list') list = true;
     else if (argv[i] === '--tail') tail = Number(argv[++i]);
     else { console.error(`unknown argument: ${argv[i]}`); process.exit(2); }
@@ -157,11 +165,22 @@ async function main() {
   let steps;
   try { steps = selectSteps(STEPS, only); } catch (e) { console.error(e.message); process.exit(2); }
   const root = process.env.UJWALAM_CI_ROOT ? path.resolve(process.env.UJWALAM_CI_ROOT) : HERE;
+  const full = steps === STEPS;
+  const treeAtStart = full ? tryTree(root) : null;
   const results = await runSteps(steps, { root, log: (l) => console.log(l), tail });
   const failed = results.filter((r) => !r.ok);
   const total = results.reduce((a, r) => a + r.seconds, 0);
   console.log(`\nci: ${results.length - failed.length}/${results.length} passed in ${total.toFixed(1)}s`);
   if (failed.length) console.log(`ci: FAILED: ${failed.map((r) => r.name).join(', ')}`);
+  if (full && !failed.length) {
+    const treeAtEnd = tryTree(root);
+    if (treeAtStart && treeAtStart === treeAtEnd) {
+      recordPass(root, treeAtStart);
+      console.log(`ci: full pass stamped for tree ${treeAtStart.slice(0, 12)} (a push of a commit with this content is allowed)`);
+    } else {
+      console.log('ci: no pass stamp: files changed during the run (or not a git work tree); run again on an unchanged tree before pushing');
+    }
+  }
   process.exit(failed.length ? 1 : 0);
 }
 

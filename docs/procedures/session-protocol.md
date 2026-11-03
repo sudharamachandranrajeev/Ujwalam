@@ -13,6 +13,7 @@ Project state lives in the repo, not in any one tool. Any agent (Claude Code, Co
 ## While working
 
 - Work on your own branch: `<tool>/<topic>` (for example `claude/alpha0-d1`, `codex/feedback-form`). Merge to `master` only with CI passing; once the private remote exists, merges go through pull requests.
+- CI batching (D190): commit small changes separately (quick checks only); run the full `npm run ci` about once an hour and before every push. Run no other tests while a full CI runs; edits during a run only in another worktree (an edit in this tree voids the stamp).
 - Decisions go into the current decisions file (`docs/plan/2026-10-29-v1-decisions.md` during v1), one line each: decision, reason, how to undo.
 - Items that need the user go to the end-list (`docs/plan/2026-10-29-v1-end-list.md`), except the immediate asks listed in `AGENTS.md`.
 - High-stakes work (security review, live path, encoder graph) stays on the strongest available model; a lower-tier model never marks it done.
@@ -20,8 +21,8 @@ Project state lives in the repo, not in any one tool. Any agent (Claude Code, Co
 ## End
 
 1. Update the handover (`docs/plan/YYYY-MM-DD-handover.md`, new file per day): where we are, done with evidence, in progress, next tasks, open questions, blocked-on-user, known failures, resume commands.
-2. `npm run ci`; commit when it passes (hooks run; never `--no-verify`).
-3. Push to the private remote (only after the first push has been approved).
+2. Commit (the pre-commit hook runs the private scan and `node tools/ci.mjs --quick`; never `--no-verify`).
+3. `npm run ci` on the committed tree with no edits during the run; a full pass writes the stamp the pre-push hook requires (D190). Push to the private remote (only after the first push has been approved).
 4. `node tools/agent-lock.mjs release --tool <name>`.
 
 ## Agents and subscriptions

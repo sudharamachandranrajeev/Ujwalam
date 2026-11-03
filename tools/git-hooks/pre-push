@@ -1,2 +1,6 @@
 #!/bin/sh
-exec node tools/git-hooks/private-scan.mjs pre-push "$@"
+# Both checks read git's pre-push lines from stdin, so keep a copy for each.
+input=$(cat)
+printf '%s\n' "$input" | node tools/git-hooks/private-scan.mjs pre-push "$@" || exit $?
+# D190: every pushed commit's content must have a full CI pass stamp (`npm run ci` on that tree).
+printf '%s\n' "$input" | node tools/ci-stamp.mjs check
