@@ -193,8 +193,8 @@ describe('feedback form API', () => {
     assert.equal((await post(c.port, c.a, '/ui/api/feedback/note', { ...ok, text: 5 })).status, 400);
     assert.equal((await post(c.port, c.a, '/ui/api/feedback/note', { ...ok, path: '/etc' })).status, 400);
   });
-  test('path traversal impossible: only ^\\d{4}-\\d{2}-\\d{2}/\\d{6}$ ids', async () => {
-    const bads = ['../x', '2026-11-03/201500/..', '2026-11-03/../201500', '..\\..\\x', '2026-11-03\\201500', '/2026-11-03/201500', '2026-11-03/201500/', '2026-11-03/2015000', '2026-11-03/201500\n', '2026-11-03/20150', 'C:/x', '%2e%2e/%2e%2e', '2026-11-03/201500%00', '', 5, null];
+  test('path traversal impossible: only ^\\d{4}-\\d{2}-\\d{2}/\\d{6}(-[1-9]\\d?)?$ ids', async () => {
+    const bads = ['../x', '2026-11-03/201500/..', '2026-11-03/../201500', '..\\..\\x', '2026-11-03\\201500', '/2026-11-03/201500', '2026-11-03/201500/', '2026-11-03/2015000', '2026-11-03/201500\n', '2026-11-03/20150', 'C:/x', '%2e%2e/%2e%2e', '2026-11-03/201500%00', '2026-11-03/201500-', '2026-11-03/201500-0', '2026-11-03/201500-100', '2026-11-03/201500-2/..', '2026-11-03/201500-x', '', 5, null];
     for (const id of bads) {
       const r = await post(c.port, c.a, '/ui/api/feedback/note', { id, text: 'x', tag: 'bug', severity: 'low' });
       assert.ok(r.status === 404 || r.status === 400, `${JSON.stringify(id)} -> ${r.status}`);
@@ -214,6 +214,24 @@ describe('feedback form API', () => {
     assert.equal(existsSync(path.join(target, 'note.json')), false);
     const ids = (await get(c.port, c.a, '/ui/api/feedback')).json().moments.map((x) => x.id);
     assert.ok(!ids.includes('2026-11-06/101010'));
+  });
+  test('host-shaped moments (app/host/src/moments.cpp): "at", "scenes" per canvas, same-second folder <HHMMSS>-2', async () => {
+    const dir = mk();
+    const host = { v: 1, kind: 'feedback', at: '2026-11-04T19:31:00.123Z', local: '2026-11-04 193100', trigger: 'hotkey', scenes: { H: 'scene-default', V: null }, stats: { fps: 60, droppedFrames: 0, streamMs: null }, status: { live: false }, replay: { state: 'done', saved: [] } };
+    makeMoment(dir, '2026-11-04', '193100', host);
+    makeMoment(dir, '2026-11-04', '193100-2', { ...host, scenes: { H: 'a', V: 'b' } });
+    const e = await boot({ feedbackDir: dir });
+    try {
+      const m = (await get(e.port, e.a, '/ui/api/feedback')).json().moments;
+      assert.deepEqual(m.map((x) => x.id), ['2026-11-04/193100-2', '2026-11-04/193100']);
+      assert.equal(m[1].timestamp, '2026-11-04T19:31:00.123Z');
+      assert.equal(m[1].scene, 'H: scene-default');
+      assert.equal(m[0].scene, 'H: a, V: b');
+      assert.deepEqual(m[1].stats, { fps: 60, droppedFrames: 0 });
+      const r = await post(e.port, e.a, '/ui/api/feedback/note', { id: '2026-11-04/193100-2', text: 'second press', tag: 'wish', severity: 'low' });
+      assert.equal(r.status, 200);
+      assert.equal(JSON.parse(readFileSync(path.join(dir, '2026-11-04', '193100-2', 'note.json'), 'utf8')).text, 'second press');
+    } finally { await e.srv.close(); }
   });
   test('needs session and CSRF', async () => {
     assert.equal((await raw(c.port, { url: '/ui/api/feedback' })).status, 401);

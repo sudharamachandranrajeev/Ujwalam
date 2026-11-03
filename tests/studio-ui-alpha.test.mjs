@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Alpha 0 shell: device role matching, the alpha project build and its never-modify rule, the launcher's host flag
-// wiring (fake host, no libobs, no devices, mock Streamer.bot), host log rotation.
+// wiring (fake host, no libobs, no devices, mock Streamer.bot), host log rotation, the day-2 host config (hotkeys,
+// replay, feedback folder, event-core system file and token) and the --live plan (fake host: nothing is contacted).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -12,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { hostLaunchSpec, openHostLog } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, DEFAULT_FEEDBACK_DIR, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -180,16 +181,18 @@ test('alpha bases: profile assets dir from paths.profile_assets, else the overla
 
 const CFG = { runtime: 'C:/rt', dataDir: 'C:/hd', recordings: 'C:/hd/rec', overlayRoot: REPO, overlayScript: path.join(REPO, 'app', 'host', 'overlay', 'child.mjs') };
 const TOKEN = 'a'.repeat(64);
+const SYS = 'b'.repeat(64);
+const HCF = path.join(REPO, 'x', 'host-config.json');
 
 test('launch spec: studio mode keeps the test card and adds nothing', () => {
-  const s = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: {}, alpha: false, corePort: 1234, coreApiToken: TOKEN });
+  const s = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: { live: true }, alpha: false, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS });
   assert.ok(s.argv.includes('--project'));
-  for (const f of ['--preview', '--allow-browser', '--overlay-root', '--overlay-events-url', '--allow-devices']) assert.ok(!s.argv.includes(f), f);
+  for (const f of ['--preview', '--allow-browser', '--overlay-root', '--overlay-events-url', '--allow-devices', '--host-config', '--allow-live']) assert.ok(!s.argv.includes(f), f);
   assert.deepEqual(s.env, {});
 });
 
 test('launch spec: alpha mode wires previews, browser layers, overlay child and the event feed; token by env only', () => {
-  const s = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: { 'allow-devices': true }, alpha: true, corePort: 1234, coreApiToken: TOKEN });
+  const s = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: { 'allow-devices': true }, alpha: true, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS });
   const after = (f) => s.argv[s.argv.indexOf(f) + 1];
   assert.match(after('--project'), /test-card\.project\.json$/, 'the test card gives the V canvas the start-up preview needs');
   assert.equal(after('--preview'), 'h,v');
@@ -199,12 +202,77 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
   assert.match(after('--overlay-script'), /app[\\/]host[\\/]overlay[\\/]child\.mjs$/);
   assert.equal(after('--node'), process.execPath);
   assert.equal(after('--overlay-events-url'), 'http://127.0.0.1:1234/events');
-  assert.deepEqual(s.env, { UJWALAM_EVENT_CORE_API_TOKEN: TOKEN });
-  assert.ok(!s.argv.some((a) => a.includes(TOKEN)));
+  assert.equal(after('--host-config'), HCF);
+  assert.ok(!s.argv.includes('--allow-live'), 'no real targets without --live');
+  assert.deepEqual(s.env, { UJWALAM_EVENT_CORE_API_TOKEN: TOKEN, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: SYS });
+  assert.ok(!s.argv.some((a) => a.includes(TOKEN) || a.includes(SYS)));
+  assert.deepEqual(s.notes, []);
   const noRoot = hostLaunchSpec({ hostCfg: { ...CFG, overlayRoot: path.join(REPO, 'no-such-dir') }, hostDiscovery: 'x', args: {}, alpha: true, corePort: 1234, coreApiToken: TOKEN });
   assert.ok(!noRoot.argv.includes('--allow-browser'));
+  assert.ok(!noRoot.argv.includes('--host-config'));
   assert.deepEqual(noRoot.env, {});
   assert.match(noRoot.notes[0], /overlay root not found/);
+  assert.ok(noRoot.notes.some((n) => /no host config: hotkeys and the replay buffer stay off/.test(n)));
+  assert.ok(noRoot.notes.some((n) => /no event-core system token/.test(n)));
+  const bad = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'x', args: {}, alpha: true, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: 'relative.json', coreSystemToken: 'not-hex' });
+  assert.ok(!bad.argv.includes('--host-config'), 'a relative host config path is not passed (the host wants absolute paths)');
+  assert.ok(!Object.hasOwn(bad.env, 'UJWALAM_EVENT_CORE_SYSTEM_TOKEN'));
+  const live = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'x', args: { live: true }, alpha: true, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS });
+  assert.ok(live.argv.includes('--allow-live'));
+});
+
+test('host config: day-2 keys only (hotkeys on, replay 30 s autostart, feedback folder, event-core system file); written owner-only', () => {
+  const d = tmp('hcfg');
+  const c = alphaHostConfig({ dataDir: d });
+  assert.deepEqual(Object.keys(c).sort(), ['$comment', 'eventCore', 'feedbackDir', 'hotkeys', 'replay']);
+  assert.deepEqual(c.replay, { seconds: 30, autoStart: true });
+  assert.deepEqual(c.hotkeys, { enabled: true });
+  assert.equal(c.feedbackDir, DEFAULT_FEEDBACK_DIR);
+  assert.equal(DEFAULT_FEEDBACK_DIR, path.join(REPO, 'feedback'), 'repo-root feedback/ (gitignored), the UI form default');
+  assert.equal(c.eventCore.systemFile, path.join(d, 'system.json'));
+  assert.equal(alphaHostConfig({ dataDir: d, feedbackDir: path.join(d, 'fb') }).feedbackDir, path.join(d, 'fb'));
+  for (const p of [c.feedbackDir, c.eventCore.systemFile]) assert.ok(path.isAbsolute(p));
+  const f = writeHostConfig(d, c);
+  assert.equal(f, path.join(d, 'host-config.json'));
+  assert.deepEqual(JSON.parse(readFileSync(f, 'utf8')), c);
+  assert.ok(!/[0-9a-f]{32}/.test(readFileSync(f, 'utf8')), 'no token-shaped value in the host config');
+  writeHostConfig(d, { ...c, replay: { seconds: 30, autoStart: false } });
+  assert.equal(JSON.parse(readFileSync(f, 'utf8')).replay.autoStart, false, 'rewritten at every start');
+  assert.equal(readdirSync(d).filter((n) => n.endsWith('.tmp')).length, 0);
+  rmSync(d, { recursive: true, force: true });
+});
+
+test('hotkey overrides: --hotkey-<name> COMBO or off; anything else refused', () => {
+  assert.deepEqual(hotkeyOverrides({}), { overrides: {}, problems: [] });
+  const ok = hotkeyOverrides({ 'hotkey-marker': 'Ctrl+Alt+Shift+M', 'hotkey-panic': 'off', 'hotkey-other': 'x' });
+  assert.deepEqual(ok, { overrides: { marker: 'Ctrl+Alt+Shift+M', panic: null }, problems: [] });
+  assert.deepEqual(alphaHostConfig({ dataDir: REPO, hotkeys: ok.overrides }).hotkeys, { enabled: true, marker: 'Ctrl+Alt+Shift+M', panic: null });
+  for (const v of [true, '', 'Ctrl+Alt+', '../x', 'Ctrl Alt M', 'a+b+c+d+e+f', 'C'.repeat(41)]) {
+    assert.equal(hotkeyOverrides({ 'hotkey-feedback': v }).problems.length, 1, JSON.stringify(v));
+  }
+});
+
+test('launcher flags: --live is alpha only and excludes --outputs; the probe needs --no-open (nothing is started)', async () => {
+  const d = tmp('flags');
+  const logs = [];
+  const orig = console.log;
+  console.log = (s) => logs.push(String(s));
+  try {
+    assert.equal(await launchMain(['--data-dir', d, '--live']), 2);
+    assert.equal(await launchMain(['--data-dir', d, '--alpha', '--live', '--outputs', 'x.json']), 2);
+    assert.equal(await launchMain(['--data-dir', d, '--alpha', '--feedback-dir']), 2);
+    process.env.UJWALAM_ALPHA_FEEDBACK_PROBE = '1';
+    assert.equal(await launchMain(['--data-dir', d, '--alpha']), 2);
+  } finally {
+    delete process.env.UJWALAM_ALPHA_FEEDBACK_PROBE;
+    console.log = orig;
+  }
+  assert.match(logs.join('\n'), /--live is for the alpha session only/);
+  assert.match(logs.join('\n'), /do not also give --outputs/);
+  assert.match(logs.join('\n'), /needs --alpha and --no-open/);
+  assert.ok(existsSync(ALPHA_LIVE_PLAN));
+  assert.deepEqual(readdirSync(d), [], 'refused before anything was written');
+  rmSync(d, { recursive: true, force: true });
 });
 
 test('host logs: one file per run, the newest 10 are kept', () => {
@@ -225,14 +293,16 @@ function runLauncher(extra, env) {
     const child = spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--alpha', '--mock', '--no-open', '--stop-on-stdin', ...extra], { env: { ...process.env, ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
     const t = setTimeout(() => { child.kill(); reject(new Error(`launcher timed out:\n${out}`)); }, 90_000);
-    // Stop after the overlay feed line (UJWALAM_ALPHA_STATS_MS makes it come right after the UI line).
-    child.stdout.on('data', (d) => { out += d; if (/\[studio\] overlay feed /.test(out)) child.stdin.end(); });
+    // Stop after the overlay feed line (UJWALAM_ALPHA_STATS_MS makes it come right after the UI line) and, with the
+    // feedback probe, after its line.
+    const done = () => /\[studio\] overlay feed /.test(out) && (env.UJWALAM_ALPHA_FEEDBACK_PROBE !== '1' || /\[studio\] feedback probe/.test(out));
+    child.stdout.on('data', (d) => { out += d; if (done()) child.stdin.end(); });
     child.stderr.on('data', (d) => { out += d; });
     child.on('exit', (code) => { clearTimeout(t); resolve({ code, out }); });
   });
 }
 
-test('launcher --alpha with a fake host: flags, token by env, project built then kept, devices only on rebuild', { timeout: 300_000 }, async () => {
+test('launcher --alpha with a fake host: flags, tokens by env, host config, feedback probe, project built then kept, devices only on rebuild, --live plan', { timeout: 300_000 }, async () => {
   const root = tmp('e2e');
   const dataDir = path.join(root, 'core');
   const ov = path.join(root, 'overlays-root');
@@ -245,13 +315,30 @@ test('launcher --alpha with a fake host: flags, token by env, project built then
     UJWALAM_FAKE_HOST_RECORD: rec, UJWALAM_FAKE_HOST_DEVICES: path.join(FIX, 'project', 'devices-list.fixture.json'),
     UJWALAM_ALPHA_STATS_MS: '300',
   };
-  const base = ['--data-dir', dataDir, '--host-exe', path.join(FIX, 'studio-ui', 'fake-host.mjs'), '--profile', profile];
+  const fb = path.join(root, 'feedback');
+  const base = ['--data-dir', dataDir, '--host-exe', path.join(FIX, 'studio-ui', 'fake-host.mjs'), '--profile', profile, '--feedback-dir', fb];
   try {
-    // 1. first run, no devices: builds alpha.project.json
-    let r = await runLauncher(base, env);
+    // 1. first run, no devices: builds alpha.project.json; day-2 host config; one feedback probe through the UI server
+    let r = await runLauncher(base, { ...env, UJWALAM_ALPHA_FEEDBACK_PROBE: '1', UJWALAM_ALPHA_FEEDBACK_PROBE_WAIT_MS: '0' });
     assert.equal(r.code, 0, r.out);
     let h = JSON.parse(readFileSync(rec, 'utf8'));
     const after = (f) => h.argv[h.argv.indexOf(f) + 1];
+    assert.equal(after('--host-config'), path.join(dataDir, 'host-config.json'));
+    assert.deepEqual(h.hostConfig.hotkeys, { enabled: true });
+    assert.deepEqual(h.hostConfig.replay, { seconds: 30, autoStart: true });
+    assert.equal(h.hostConfig.feedbackDir, fb);
+    assert.equal(h.hostConfig.eventCore.systemFile, path.join(dataDir, 'system.json'));
+    assert.equal(h.systemTokenOk, true, 'the event-core system token reached the host by environment');
+    assert.equal(h.systemTokenInArgv, false);
+    assert.equal(h.systemTokenIsApiToken, false);
+    assert.ok(!h.argv.includes('--allow-live') && !h.argv.includes('--outputs'), 'no real targets and no plan without --live');
+    assert.equal(h.outputsParams, null);
+    assert.match(r.out, /\[studio\] outputs: real targets off; 0 sink\(s\) \(no plan; real targets need --live\)/);
+    assert.match(r.out, /\[studio\] hotkeys: on; panic Ctrl\+Alt\+P registered; feedback Ctrl\+Alt\+F registered; marker Ctrl\+Alt\+M registered/);
+    assert.match(r.out, /\[studio\] replay buffer: on, 30 s; H running \(fallback rung\); V running \(fallback rung\)/);
+    assert.match(r.out, /\[studio\] feedback probe: moment \d{4}-\d{2}-\d{2}\/\d{6} listed by the UI server \(1 moment\(s\), HTTP 200\); replay files: replay-H\.mkv, replay-V\.mkv; scene: H: scene-default, V: scene-default; at: \d{4}-/);
+    assert.ok(h.calls.includes('feedback.capture') && h.calls.includes('feedback.status'));
+    assert.ok(!/[0-9a-f]{64}/.test(r.out), 'no token-shaped value printed');
     assert.equal(after('--preview'), 'h,v');
     assert.ok(h.argv.includes('--allow-browser'));
     assert.equal(after('--overlay-root'), ov);
@@ -296,6 +383,23 @@ test('launcher --alpha with a fake host: flags, token by env, project built then
     assert.equal(readdirSync(path.join(dataDir, 'projects', '_old')).filter((n) => n.endsWith('.project.json')).length, 1);
     assert.ok(!/Live Gamer Ultra 2\.1-Video|fixture-1/.test(r.out), 'device names and paths are not printed');
     assert.equal(readdirSync(path.join(dataDir, 'logs')).filter((n) => /^host-.*\.log$/.test(n)).length, 3);
+
+    // 4. --live: the alpha-live plan (Credential Manager target names only) and --allow-live; per sink presence
+    //    printed, never a key or a per-account URL. The fake host contacts nothing.
+    r = await runLauncher([...base, '--live'], env);
+    assert.equal(r.code, 0, r.out);
+    h = JSON.parse(readFileSync(rec, 'utf8'));
+    assert.ok(h.argv.includes('--allow-live'));
+    assert.equal(h.argv[h.argv.indexOf('--outputs') + 1], path.join(root, 'host', 'outputs-params.json'));
+    assert.deepEqual(h.outputsParams.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record']);
+    for (const s of h.outputsParams.sinks) assert.ok(!Object.hasOwn(s.target, 'key'), `${s.id}: no key field`);
+    assert.match(r.out, /LIVE plan: data[\\/]outputs[\\/]alpha-live\.json/);
+    assert.match(r.out, /\[studio\] outputs: real targets ALLOWED \(--live\); 5 sink\(s\)/);
+    assert.match(r.out, /sink youtube-h: youtube live, keyPresent no, idle/);
+    assert.match(r.out, /sink twitch: twitch live, keyPresent no, urlPresent no, idle/);
+    assert.match(r.out, /sink kick: kick live, keyPresent no, urlPresent no, idle/);
+    assert.match(r.out, /sink record: record mkv, idle/);
+    assert.ok(!/rtmps?:\/\//.test(r.out), 'no ingest URL printed');
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 5 });
   }

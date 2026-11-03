@@ -3,23 +3,38 @@
 // devices, no GPU. It records its argv, the NAMES of its UJWALAM_* environment variables and whether an event-core
 // token came in (never the value), and the RPC calls it got, into the file named by UJWALAM_FAKE_HOST_RECORD.
 // devices.list answers from UJWALAM_FAKE_HOST_DEVICES (a devices.list fixture), only with --allow-devices.
+// --host-config is read and recorded (it holds no secret); outputs.status answers from the --outputs params file with
+// keyPresent/urlPresent false (the fake reads no keychain); feedback.capture writes a host-shaped moment.json into the
+// host config's feedbackDir. The event-core system token is checked for shape only and never recorded.
 import http from 'node:http';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
 const argv = process.argv.slice(2);
 const arg = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
 const token = process.env.UJWALAM_HOST_TOKEN ?? '';
 const eventToken = process.env.UJWALAM_EVENT_CORE_API_TOKEN ?? '';
+const systemToken = process.env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN ?? '';
+const readJson = (f) => (f ? JSON.parse(readFileSync(f, 'utf8')) : null);
+const hostConfig = readJson(arg('--host-config'));
+const outputs = readJson(arg('--outputs'));
 const record = {
   argv,
   envNames: Object.keys(process.env).filter((k) => k.startsWith('UJWALAM_')).sort(),
   eventTokenOk: /^[0-9a-f]{64}$/.test(eventToken),
   eventTokenInArgv: eventToken !== '' && argv.some((a) => a.includes(eventToken)),
   hostTokenInArgv: token !== '' && argv.some((a) => a.includes(token)),
+  systemTokenOk: /^[0-9a-f]{64}$/.test(systemToken),
+  systemTokenInArgv: systemToken !== '' && argv.some((a) => a.includes(systemToken)),
+  systemTokenIsApiToken: systemToken !== '' && systemToken === eventToken,
+  hostConfig,
+  outputsParams: outputs,
   calls: [],
 };
 delete process.env.UJWALAM_HOST_TOKEN;
 delete process.env.UJWALAM_EVENT_CORE_API_TOKEN;
+delete process.env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN;
+let captures = 0;
 const save = () => writeFileSync(process.env.UJWALAM_FAKE_HOST_RECORD, JSON.stringify(record, null, 2));
 save();
 
@@ -48,6 +63,40 @@ const methods = {
   },
   'preview.list': () => ({ previews: (arg('--preview') ?? '').split(',').filter(Boolean).map((c) => ({ canvas: c.toUpperCase(), open: true })) }),
   'log.tail': () => ({ lines: [], total: 0, capacity: 1000 }),
+  'outputs.status': () => ({
+    allowLive: argv.includes('--allow-live'),
+    sinks: (outputs?.sinks ?? []).map((s) => {
+      const t = s.target ?? {};
+      if (s.proto === 'file') return { id: s.id, kind: 'record', platform: s.platform, container: 'mkv', state: 'idle' };
+      const o = { id: s.id, kind: 'stream', platform: s.platform, target: t.keyRef || t.urlRef ? 'live' : 'loopback', keyRef: t.keyRef ?? null, keyPresent: t.keyRef ? false : null, state: 'idle' };
+      if (t.urlRef) Object.assign(o, { urlRef: t.urlRef, urlPresent: false });
+      return o;
+    }),
+  }),
+  'hotkeys.status': () => ({
+    enabled: hostConfig?.hotkeys?.enabled === true,
+    bindings: [['panic', 'Ctrl+Alt+P'], ['feedback', 'Ctrl+Alt+F'], ['marker', 'Ctrl+Alt+M']].map(([name, combo]) => ({ name, combo, registered: hostConfig?.hotkeys?.enabled === true, error: null, presses: 0 })),
+  }),
+  'replay.status': () => {
+    const on = hostConfig?.replay?.autoStart === true;
+    return { wanted: on, seconds: hostConfig?.replay?.seconds ?? 30, canvases: ['H', 'V'].map((canvas) => ({ canvas, state: on ? 'running' : 'stopped', fallback: true })) };
+  },
+  'feedback.capture': (p) => {
+    const d = new Date();
+    const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const tod = [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join('');
+    captures++;
+    const dir = path.join(hostConfig.feedbackDir, day, captures === 1 ? tod : `${tod}-${captures}`);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'log.txt'), 'fake host log\n');
+    writeFileSync(path.join(dir, 'moment.json'), JSON.stringify({
+      v: 1, kind: 'feedback', at: d.toISOString(), local: `${day} ${tod}`, trigger: 'api', note: p.note,
+      scenes: { H: 'scene-default', V: 'scene-default' }, stats: { fps: 60, droppedFrames: 0, live: false },
+      replay: { state: 'done', saved: [{ canvas: 'H', file: 'replay-H.mkv' }, { canvas: 'V', file: 'replay-V.mkv' }], errors: [], seconds: 30 },
+    }));
+    return { dir: dir.replaceAll('\\', '/'), replay: 'pending' };
+  },
+  'feedback.status': () => ({ feedbackDir: hostConfig?.feedbackDir ?? null, captures, queued: 0, busy: 0 }),
 };
 
 const server = http.createServer((req, res) => {

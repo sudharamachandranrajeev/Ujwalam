@@ -8,13 +8,14 @@
 import { lstatSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-export const MOMENT_ID = /^\d{4}-\d{2}-\d{2}\/\d{6}$/;
+// The host (app/host/src/moments.cpp) names a second capture in the same second <HHMMSS>-2 .. -99.
+export const MOMENT_ID = /^\d{4}-\d{2}-\d{2}\/\d{6}(?:-[1-9]\d?)?$/;
 export const TAGS = Object.freeze(['bug', 'annoying', 'wish', 'works-well']);
 export const SEVERITIES = Object.freeze(['high', 'medium', 'low']);
 export const MAX_NOTE_CHARS = 2000;
 export const MAX_MOMENTS = 200;
 const DATE_DIR = /^\d{4}-\d{2}-\d{2}$/;
-const TIME_DIR = /^\d{6}$/;
+const TIME_DIR = /^\d{6}(?:-[1-9]\d?)?$/;
 
 const readJson = (file) => { try { return JSON.parse(readFileSync(file, 'utf8')); } catch { return null; } };
 const isDir = (p) => { try { const s = lstatSync(p); return s.isDirectory() && !s.isSymbolicLink(); } catch { return false; } };
@@ -33,6 +34,21 @@ function cleanStats(v) {
   }
   return out;
 }
+// The host's moment.json has "at" (UTC ISO) and "scenes": { H: id|null, V: id|null }; older/test moments have
+// "timestamp" and "scene". Either way only short strings reach the page.
+function momentTime(m) {
+  const t = m?.timestamp ?? m?.at;
+  if (typeof t === 'string') return t.slice(0, 40);
+  return typeof t === 'number' && Number.isFinite(t) ? t : null;
+}
+function momentScene(m) {
+  if (typeof m?.scene === 'string') return m.scene.slice(0, 64);
+  const s = m?.scenes;
+  if (!s || typeof s !== 'object' || Array.isArray(s)) return null;
+  const parts = ['H', 'V'].filter((c) => typeof s[c] === 'string').map((c) => `${c}: ${s[c].slice(0, 28)}`);
+  return parts.length ? parts.join(', ').slice(0, 64) : null;
+}
+
 export function cleanNote(n) {
   if (!n || typeof n !== 'object' || Array.isArray(n)) return null;
   return {
@@ -76,8 +92,8 @@ export function createFeedback(opts) {
         const note = isFile(path.join(dir, 'note.json')) ? cleanNote(readJson(path.join(dir, 'note.json'))) : null;
         out.push({
           id,
-          timestamp: typeof m?.timestamp === 'string' ? m.timestamp.slice(0, 40) : (typeof m?.timestamp === 'number' && Number.isFinite(m.timestamp) ? m.timestamp : null),
-          scene: typeof m?.scene === 'string' ? m.scene.slice(0, 64) : null,
+          timestamp: momentTime(m),
+          scene: momentScene(m),
           stats: cleanStats(m?.stats),
           note,
         });

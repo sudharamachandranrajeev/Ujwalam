@@ -84,7 +84,7 @@ test('host.info: config, session, hotkeys off but listed, test hooks on', async 
   assert.equal(i.hostConfig, path.join(DATA, 'host-config.json'));
   assert.equal(i.hotkeys.enabled, false);
   assert.deepEqual(i.hotkeys.bindings.map((b) => [b.name, b.combo, b.registered]),
-    [['panic', 'Ctrl+Alt+P', false], ['feedback', 'Ctrl+Alt+F', false], ['marker', 'Ctrl+Alt+M', false]]);
+    [['panic', 'Ctrl+Alt+P', false], ['feedback', 'Ctrl+Alt+F', false], ['marker', 'Ctrl+Alt+Shift+M', false]]);
   assert.equal(i.moments.feedbackDir.replaceAll('\\', '/'), FEEDBACK.replaceAll('\\', '/'));
 });
 

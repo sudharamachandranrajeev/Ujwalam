@@ -2,7 +2,7 @@
 // ujwalam-host: the host config file (--host-config <file.json>; A0 day 2). Strict: unknown keys are refused.
 //
 //   { "replay":   { "seconds": 30, "autoStart": false, "fallbackKbps": { "H": 12000, "V": 8000 } },
-//     "hotkeys":  { "enabled": false, "panic": "Ctrl+Alt+P", "feedback": "Ctrl+Alt+F", "marker": "Ctrl+Alt+M" },
+//     "hotkeys":  { "enabled": false, "panic": "Ctrl+Alt+P", "feedback": "Ctrl+Alt+F", "marker": "Ctrl+Alt+Shift+M" },
 //     "feedbackDir": "<absolute dir>",                 default <dataDir>/feedback
 //     "markersDir":  "<absolute dir>",                 default <dataDir>/markers
 //     "eventCore": { "systemFile": "<absolute path to event-core system.json>" } }
@@ -24,7 +24,7 @@ struct HostConfig {
 	bool replay_autostart = false;
 	bool hotkeys_enabled = false;
 	std::vector<std::pair<std::string, std::string>> hotkeys = {
-		{"panic", "Ctrl+Alt+P"}, {"feedback", "Ctrl+Alt+F"}, {"marker", "Ctrl+Alt+M"}};
+		{"panic", "Ctrl+Alt+P"}, {"feedback", "Ctrl+Alt+F"}, {"marker", "Ctrl+Alt+Shift+M"}};
 	std::string feedback_dir, markers_dir, core_system_file;
 };
 

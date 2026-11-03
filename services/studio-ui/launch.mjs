@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // One-command launcher: event core, libobs host (when present) and the studio UI server, then the browser.
 // Usage: node services/studio-ui/launch.mjs [--data-dir DIR] [--mock] [--no-open] [--host-exe PATH] [--fake-host] [--allow-devices] [--outputs PLAN.json] [--stop-on-stdin] [--ui-port N]
-//                                           [--alpha [--rebuild-alpha] [--profile FILE]]
+//                                           [--alpha [--rebuild-alpha] [--profile FILE] [--live] [--feedback-dir DIR]
+//                                                    [--hotkey-panic C] [--hotkey-feedback C] [--hotkey-marker C]]
 //
 // Tokens: the launcher makes the event-core api/system tokens and a host token, passes them to the children by
 // environment (never argv, never printed). The UI server gets only the api token, never the system token. The browser
@@ -20,16 +21,33 @@
 // from the Default H (+ Default V) presets; --rebuild-alpha moves the old one to projects/_old/ and builds again.
 // With --allow-devices the roles (game capture, facecam, mic) are matched from devices.list (never guessed); without
 // it the device layers are placeholders. --profile names the profile (default data/profile.local.json).
+//
+// Alpha 0 day 2 wiring (D152 host config): at every alpha start the launcher writes <data dir>/host-config.json
+// (owner-only, atomic; edits are overwritten) with hotkeys on (Ctrl+Alt+P/F/M), replay autostart 30 s, feedbackDir
+// = --feedback-dir (default <repo>/feedback, the same folder the UI server's feedback form reads) and
+// eventCore.systemFile = <data dir>/system.json (written by the event core), and passes --host-config. The event-core
+// system token goes to the host by environment only (UJWALAM_EVENT_CORE_SYSTEM_TOKEN; the host reads it, removes it
+// from its environment and uses it only for panic's actions.panic). --hotkey-panic / --hotkey-feedback /
+// --hotkey-marker COMBO|off replace a default combo (e.g. when another program already holds Ctrl+Alt+M).
+// --live (alpha only): configure the real-output plan data/outputs/alpha-live.json and start the host with
+// --allow-live. Without it no real target is configured (an --outputs plan with real targets is refused). Nothing
+// starts streaming at launch: the control page's typed "yes, on air" stays the start gate. At start the launcher
+// prints per sink keyPresent / urlPresent from outputs.status (never a key or URL), the hotkeys and the replay state.
+// UJWALAM_ALPHA_FEEDBACK_PROBE=1 (tests and evidence; only with --no-open): after start the launcher calls
+// feedback.capture once, waits for its replay saves, logs in to its own UI server with the unused one-time key and
+// prints whether the feedback form lists the moment.
 
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
 import { loadFileIntoHost } from '../../app/host/lib/project.mjs';
+import { SYSTEM_FILE, writeSecretFileAtomic } from '../event-core/api/discovery.mjs';
 import { resolveDataDir } from '../event-core/config.mjs';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../project/device-roles.mjs';
 import { loadProject } from '../project/store.mjs';
@@ -39,6 +57,48 @@ import { rpc } from './backends.mjs';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const hex = (n) => randomBytes(n).toString('hex');
 export const HOST_LOGS_KEPT = 10;
+export const HOST_CONFIG_FILE = 'host-config.json';
+export const ALPHA_LIVE_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-live.json');
+export const DEFAULT_FEEDBACK_DIR = path.join(REPO, 'feedback');
+export const ALPHA_REPLAY_SECONDS = 30;
+const HEX64 = /^[0-9a-f]{64}$/;
+
+export const HOTKEY_NAMES = Object.freeze(['panic', 'feedback', 'marker']);
+// "Ctrl+Alt+Shift+M", "Ctrl+Alt+F9" or "off". The host checks the combo itself when it registers it (a bad one is
+// reported, not fatal); this only keeps argv text out of the file that is not a combo.
+const COMBO = /^(?:off|[A-Za-z0-9]{1,8}(?:\+[A-Za-z0-9]{1,8}){0,4})$/;
+
+/** --hotkey-<name> COMBO|off from launcher args -> { overrides, problems } (pure; tested). */
+export function hotkeyOverrides(args) {
+  const overrides = {};
+  const problems = [];
+  for (const n of HOTKEY_NAMES) {
+    const v = args[`hotkey-${n}`];
+    if (v === undefined) continue;
+    if (typeof v !== 'string' || v.length > 40 || !COMBO.test(v)) { problems.push(`--hotkey-${n} needs a combo like Ctrl+Alt+Shift+M, or off`); continue; }
+    overrides[n] = v === 'off' ? null : v;
+  }
+  return { overrides, problems };
+}
+
+/** The alpha host config (keys of app/host/src/host_config.cpp; pure; tested). Combos: host defaults unless overridden. */
+export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, hotkeys = {} }) {
+  return {
+    $comment: 'Written by services/studio-ui/launch.mjs --alpha at every start (edits are overwritten; use --hotkey-panic/--hotkey-feedback/--hotkey-marker). Host defaults: panic Ctrl+Alt+P, feedback Ctrl+Alt+F, marker Ctrl+Alt+Shift+M.',
+    replay: { seconds: ALPHA_REPLAY_SECONDS, autoStart: true },
+    hotkeys: { enabled: true, ...hotkeys },
+    feedbackDir: path.resolve(feedbackDir),
+    eventCore: { systemFile: path.join(path.resolve(dataDir), SYSTEM_FILE) },
+  };
+}
+
+/** Writes <dataDir>/host-config.json atomically and owner-only (fails closed when it cannot protect it). */
+export function writeHostConfig(dataDir, cfg) {
+  mkdirSync(dataDir, { recursive: true });
+  const file = path.join(dataDir, HOST_CONFIG_FILE);
+  writeSecretFileAtomic(file, `${JSON.stringify(cfg, null, 2)}\n`);
+  return file;
+}
 
 function parseArgs(argv) {
   const out = {};
@@ -82,7 +142,7 @@ export function openHostLog(logsDir, { keep = HOST_LOGS_KEPT, now = new Date() }
 }
 
 /** Host argv and extra environment (pure; tested). Tokens only ever go into env, never argv. */
-export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, corePort, coreApiToken }) {
+export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, corePort, coreApiToken, hostConfigFile, coreSystemToken }) {
   const argv = ['--runtime', hostCfg.runtime, '--data-dir', hostCfg.dataDir, '--discovery', hostDiscovery, '--recordings', hostCfg.recordings];
   const env = {};
   const notes = [];
@@ -102,6 +162,13 @@ export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, co
     } else {
       notes.push('overlay root not found (UJWALAM_OVERLAY_ROOT or "overlayRoot" in app/host/host.local.json): overlays are off');
     }
+    // Day 2: hotkeys, replay, feedback folder and event-core system file come from the host config; the system
+    // token (panic's actions.panic) goes by environment only.
+    if (typeof hostConfigFile === 'string' && path.isAbsolute(hostConfigFile)) argv.push('--host-config', hostConfigFile);
+    else notes.push('no host config: hotkeys and the replay buffer stay off');
+    if (HEX64.test(coreSystemToken ?? '')) env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN = coreSystemToken;
+    else notes.push('no event-core system token: panic cannot tell the event core');
+    if (args.live === true) argv.push('--allow-live');
   }
   return { argv, env, notes };
 }
@@ -175,11 +242,85 @@ async function alphaProject({ client, dataDir, args, hostCfg }) {
   return r;
 }
 
+const yn = (v) => (v === true ? 'yes' : v === false ? 'no' : '-');
+
+// One block at start: outputs (per sink keyPresent / urlPresent, never a key or URL), hotkeys, replay buffer.
+async function alphaStatus(client) {
+  try {
+    const o = await client.call('outputs.status');
+    const sinks = Array.isArray(o.sinks) ? o.sinks : [];
+    console.log(`[studio] outputs: real targets ${o.allowLive === true ? 'ALLOWED (--live)' : 'off'}; ${sinks.length} sink(s)${sinks.length ? '' : ' (no plan; real targets need --live)'}`);
+    for (const s of sinks) {
+      if (s.kind === 'stream') {
+        console.log(`[studio]   sink ${s.id}: ${s.platform} ${s.target ?? ''}, keyPresent ${yn(s.keyPresent)}${Object.hasOwn(s, 'urlPresent') ? `, urlPresent ${yn(s.urlPresent)}` : ''}, ${s.state}`);
+      } else console.log(`[studio]   sink ${s.id}: ${s.kind} ${s.container ?? ''}, ${s.state}`);
+    }
+  } catch (e) { console.log(`[studio] outputs status unavailable: ${e.message}`); }
+  try {
+    const h = await client.call('hotkeys.status');
+    const b = (h.bindings ?? []).map((x) => `${x.name} ${x.combo ?? '(unbound)'} ${x.registered ? 'registered' : `NOT registered${x.error ? ` (${x.error})` : ''}`}`);
+    console.log(`[studio] hotkeys: ${h.enabled === true ? 'on' : 'off'}; ${b.join('; ')}`);
+  } catch (e) { console.log(`[studio] hotkeys status unavailable: ${e.message}`); }
+  try {
+    const r = await client.call('replay.status');
+    const c = (r.canvases ?? []).map((x) => `${x.canvas} ${x.state}${x.fallback ? ' (fallback rung)' : x.rung ? ` (rung ${x.rung})` : ''}`);
+    console.log(`[studio] replay buffer: ${r.wanted === true ? 'on' : 'off'}, ${r.seconds ?? '?'} s; ${c.join('; ')}`);
+  } catch (e) { console.log(`[studio] replay status unavailable: ${e.message}`); }
+}
+
+function httpGet(port, url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    const req = http.get({ host: '127.0.0.1', port, path: url, headers }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.setTimeout(5000, () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+  });
+}
+
+// UJWALAM_ALPHA_FEEDBACK_PROBE=1: one feedback.capture (the same handler as the Ctrl+Alt+F hotkey, trigger "api"),
+// then the UI server's feedback list. The one-time launch key is used here, so this runs only with --no-open.
+// UJWALAM_ALPHA_FEEDBACK_PROBE_WAIT_MS (default 5000) lets the replay buffer (restarted empty by the project load) fill first.
+async function feedbackProbe({ client, uiPort, launchKey }) {
+  const waitMs = Number(process.env.UJWALAM_ALPHA_FEEDBACK_PROBE_WAIT_MS ?? 5000);
+  if (waitMs > 0) await new Promise((r) => setTimeout(r, Math.min(waitMs, 60_000)));
+  const cap = await client.call('feedback.capture', { note: 'launcher feedback probe' });
+  const t0 = Date.now();
+  for (;;) {
+    const st = await client.call('feedback.status');
+    if ((st.queued ?? 0) === 0 && (st.busy ?? 0) === 0) break;
+    if (Date.now() - t0 > 30_000) { console.log('[studio] feedback probe: replay saves still running after 30 s'); break; }
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  const id = String(cap.dir).split(/[\\/]/).slice(-2).join('/');
+  let replay = 'unknown';
+  try {
+    const m = JSON.parse(readFileSync(path.join(cap.dir, 'moment.json'), 'utf8'));
+    replay = m.replay?.state === 'done' ? `${(m.replay.saved ?? []).map((s) => s.file).join(', ') || 'none'}${m.replay.errors?.length ? `; ${m.replay.errors.length} error(s)` : ''}` : String(m.replay?.state);
+  } catch { /* reported as unknown */ }
+  const login = await httpGet(uiPort, `/login?k=${launchKey}`);
+  const cookie = String(login.headers['set-cookie']?.[0] ?? '').split(';')[0];
+  const list = await httpGet(uiPort, '/ui/api/feedback', { cookie });
+  const moments = list.status === 200 ? (JSON.parse(list.body).moments ?? []) : [];
+  const m = moments.find((x) => x.id === id);
+  console.log(`[studio] feedback probe: moment ${id} ${m ? 'listed' : 'NOT listed'} by the UI server (${moments.length} moment(s), HTTP ${list.status}); replay files: ${replay}; scene: ${m?.scene ?? '-'}; at: ${m?.timestamp ?? '-'}`);
+}
+
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   const alpha = args.alpha === true;
   let dataDir;
   try { dataDir = resolveDataDir({ dataDir: typeof args['data-dir'] === 'string' ? args['data-dir'] : undefined }); } catch (e) { console.log(`[studio] ${e.message}`); return 1; }
+  if (args.live === true && !alpha) { console.log('[studio] --live is for the alpha session only (npm run alpha -- --live)'); return 2; }
+  if (args.live === true && typeof args.outputs === 'string') { console.log('[studio] --live uses data/outputs/alpha-live.json; do not also give --outputs'); return 2; }
+  if (args['feedback-dir'] !== undefined && typeof args['feedback-dir'] !== 'string') { console.log('[studio] --feedback-dir needs a folder'); return 2; }
+  const feedbackDir = typeof args['feedback-dir'] === 'string' ? path.resolve(args['feedback-dir']) : DEFAULT_FEEDBACK_DIR;
+  const hk = hotkeyOverrides(args);
+  if (hk.problems.length) { for (const p of hk.problems) console.log(`[studio] ${p}`); return 2; }
+  const probe = process.env.UJWALAM_ALPHA_FEEDBACK_PROBE === '1';
+  if (probe && (!alpha || args['no-open'] !== true)) { console.log('[studio] UJWALAM_ALPHA_FEEDBACK_PROBE needs --alpha and --no-open'); return 2; }
   const children = [];
   let hostChild = null;
   let hostDiscoveryFile = null;
@@ -224,13 +365,25 @@ export async function main(argv = process.argv.slice(2)) {
   const hostExe = hostCfg?.exe;
   const hostDiscovery = path.join(dataDir, 'host.json');
   if (args['fake-host'] !== true && hostExe && existsSync(hostExe) && hostCfg.runtime) {
-    const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api });
+    let hostConfigFile;
+    if (alpha) {
+      try {
+        hostConfigFile = writeHostConfig(dataDir, alphaHostConfig({ dataDir, feedbackDir, hotkeys: hk.overrides }));
+        console.log(`[studio] host config: ${hostConfigFile} (hotkeys on, replay ${ALPHA_REPLAY_SECONDS} s autostart, feedback folder ${feedbackDir})`);
+      } catch (e) { console.log(`[studio] host config could not be written owner-only (${e.message}); stopping`); await stopAll(); return 1; }
+    }
+    const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system });
     for (const n of spec.notes) console.log(`[studio] WARNING: ${n}`);
     const hostArgs = spec.argv;
-    if (typeof args.outputs === 'string') {
-      // An O1 plan file (app/host/outputs/*.json): validated against data/platforms, configured at host start, nothing started.
+    const planPath = args.live === true ? ALPHA_LIVE_PLAN : typeof args.outputs === 'string' ? path.resolve(args.outputs) : null;
+    if (planPath) {
+      // An O1 plan file (app/host/outputs/*.json): validated against data/platforms, configured at host start, nothing
+      // started. Real targets only with --live (alpha-live.json; the host then runs with --allow-live).
       const { planFile } = await import('../../app/host/lib/outputs-plan.mjs');
-      const { params, report } = planFile(path.resolve(args.outputs));
+      let planned;
+      try { planned = planFile(planPath, { allowLive: args.live === true }); } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
+      const { params, report } = planned;
+      if (args.live === true) console.log(`[studio] LIVE plan: ${path.relative(REPO, planPath)} (real targets configured, nothing started; start from the control page with "yes, on air")`);
       for (const w of report.warnings) console.log(`[studio] outputs plan warning: ${w.code}`);
       const f = path.join(hostCfg.dataDir, 'outputs-params.json');
       mkdirSync(hostCfg.dataDir, { recursive: true });
@@ -256,6 +409,7 @@ export async function main(argv = process.argv.slice(2)) {
       try {
         alphaClient = new HostClient({ port: disc.port, token: hostToken });
         await alphaProject({ client: alphaClient, dataDir, args, hostCfg });
+        await alphaStatus(alphaClient);
       } catch (e) {
         console.log(`[studio] alpha project failed: ${e.message}`);
         for (const x of (e.errors ?? e.details ?? []).slice(0, 10)) console.log(`[studio]   ${x.path ?? ''} ${x.message ?? x}`);
@@ -269,7 +423,7 @@ export async function main(argv = process.argv.slice(2)) {
   }
 
   // 3. UI server
-  const uiArgs = [path.join(REPO, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--data-dir', dataDir];
+  const uiArgs = [path.join(REPO, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--data-dir', dataDir, '--feedback-dir', feedbackDir];
   if (typeof args['ui-port'] === 'string') uiArgs.push('--port', args['ui-port']);
   if (args['fake-host'] === true) uiArgs.push('--fake-host');
   const ui = spawn(process.execPath, uiArgs, {
@@ -292,6 +446,9 @@ export async function main(argv = process.argv.slice(2)) {
         console.log(`[studio] overlay feed after ${Math.round(statsMs / 1000)} s: ${s.clients ?? 0} overlay page(s) connected, ${s.chatFrames ?? 0} chat and ${s.busFrames ?? 0} event frame(s) delivered, ${s.effects ?? 0} effect(s)`);
       } catch (e) { console.log(`[studio] overlay feed stats unavailable: ${e.message}`); }
     }, statsMs).unref();
+    if (probe) {
+      try { await feedbackProbe({ client: alphaClient, uiPort, launchKey }); } catch (e) { console.log(`[studio] feedback probe failed: ${e.message}`); }
+    }
   }
   if (args['stop-on-stdin'] === true) {
     // Clean stop for scripts and tests: closing stdin (or any input) ends the session; Ctrl-C does not reach a child on Windows.
