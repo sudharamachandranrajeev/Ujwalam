@@ -30,8 +30,11 @@ What is different from the 3 Nov tests (`docs/evidence/2026-11-03-a0-first-real-
    Check with a speed test to a nearby server. The 3 Nov runs sent 17 + 7.5 + 6 Mbps for 15 min with 0 lost frames, but Kick ran only 2 minutes and never with Twitch public. Four outputs at once is untested (UNVERIFIED).
 3. Keys: `node services/event-core/cli.mjs credential status --target Ujwalam/stream/<name>` for `youtube-h`, `youtube-v`, `twitch`, `twitch-server`, `kick`, `kick-server`. Each prints `credential: set`. If the Twitch key still ends in `?bandwidthtest=true`, set it again without that suffix (`credential set --target Ujwalam/stream/twitch`). Twitch must not be in bandwidth-test mode for a public stream.
 4. Build: `node app/host/tools/build.mjs`; installed build: Ujwalam alpha.2 (`%LOCALAPPDATA%\Ujwalam\Ujwalam.cmd`).
-5. Flags on the control page: leave everything but what you want off. `clip-pipeline` and `posting` stay off.
-6. Dry run with no platform contact: `npm run alpha -- --allow-devices --mock`. Check the H and V previews (game, facecam, overlays), then Ctrl-C.
+5. Flags on the control page: leave everything but what you want off. `clip-pipeline` and `posting` stay off. `test-broadcast` goes on at go-live (it can be switched while live).
+6. Dry run with no platform contact: `npm run alpha -- --allow-devices --mock --rebuild-alpha`. `--rebuild-alpha` is needed once so the project gets the new "Test broadcast" layer (the old project moves to `projects/_old/`). Check the H and V previews (game, facecam, overlays). Turn the `test-broadcast` flag on: the banner appears within 5 s on H and V, nothing cut off on V; turn it off again: it leaves within 5 s. Then Ctrl-C.
+7. Bots: with Streamer.bot and Speaker.bot running, `node tools/bot-clash-check.mjs` prints `CLASHES: none` and exits 0. Then go through the manual items in `docs/tests/2026-11-04-A0-S1-bot-clash-checklist.md` (hotkeys, Speaker.bot audio not captured twice, one alert per event). Optional: the `bot-manager` flag shows the Bots card (start and stop the bots from the control page).
+8. Streamer.bot test action set up and tried once by hand (`docs/tests/2026-11-04-A0-S1-streamerbot-test-action.md`), timer still off.
+9. Chat reaches Ujwalam: during the dry run, a chat message shows in the chat list overlay (the event core now connects to Streamer.bot on 8093, D198).
 
 ## Start (the day, about 10 minutes before going live)
 
@@ -51,7 +54,7 @@ Read the terminal. Expected:
 ## Go live
 
 1. YouTube Studio: both streams show "waiting for data" (so you see the moment video arrives).
-2. Control page: click Record first, then Start the stream. Type `yes, on air`. Recording first means the first minutes are on disk.
+2. Control page: click Record first, then Start the stream. Type `yes, on air`. Recording first means the first minutes are on disk. Then turn on the `test-broadcast` flag and enable the Streamer.bot timed action (run it once by hand for a question at the start).
 3. Within 30 seconds check each destination:
    - YouTube H and V: receiving video, health "Good";
    - Twitch dashboard: live, not offline, no bandwidth-test banner;
@@ -68,7 +71,7 @@ Read the terminal. Expected:
 
 ## Stop
 
-1. Control page: Stop the stream, then Stop recording. Confirm each.
+1. Disable the Streamer.bot timed action. Control page: Stop the stream, then Stop recording. Confirm each.
 2. Check YouTube, Twitch and Kick show the stream ended.
 3. Ctrl-C in the terminal. Expected: the host log ends with `exit 0`.
 4. Recording: the .mkv is in the host's recordings folder. Check it plays, has sound, and note its length.
@@ -79,6 +82,7 @@ Read the terminal. Expected:
 |---|---|
 | Per-sink report | the host log line for each sink (sent, lost frames, retries); I will write it up as evidence |
 | Feedback items | `feedback/` folder; I triage them into `docs/feedback/2026-11-0X-triage.md` (placeholder names only) |
+| Viewer feedback | `node tools/collect-stream-feedback.mjs --date 2026-11-05 --question-prefix "Test stream feedback:"` writes `feedback/2026-11-05-stream-feedback.md` (local only); I summarise it with placeholder names |
 | Facecam crop check (D177) | a rendered game-facecam clip frame from the recording; the image stays in `docs/evidence/private/` |
 | "Live feature done" | a live feature is done only after use on a real stream with no high-severity feedback (AGENTS.md) |
 

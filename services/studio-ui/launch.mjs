@@ -71,7 +71,7 @@ import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
 import { loadFileIntoHost } from '../../app/host/lib/project.mjs';
 import { SYSTEM_FILE, writeSecretFileAtomic } from '../event-core/api/discovery.mjs';
-import { createBots } from '../bots/index.mjs';
+import { createBots, loadBotConfig } from '../bots/index.mjs';
 import { resolveDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../project/device-roles.mjs';
@@ -167,6 +167,16 @@ function parseArgs(argv) {
 export const isHeadless = () => process.env.UJWALAM_HEADLESS === '1';
 
 // UJWALAM_BROWSER (an executable) and UJWALAM_BROWSER_ARGS (space separated flags) pick the browser; used by the UI tests.
+/** Event-core `serve` arguments. sbWs: loadBotConfig().streamerbot ({ ws, wsError }). With --mock no Streamer.bot is
+ *  contacted, so no --url. A refused address (not ws://127.0.0.1) is never passed: the core keeps its default and a
+ *  note says so. Returns { argv, note|null }. */
+export function coreServeArgs({ dataDir, mock = false, sbWs = {} }) {
+  const argv = ['serve', '--data-dir', dataDir];
+  if (mock) return { argv: [...argv, '--mock'], note: null };
+  if (typeof sbWs.ws !== 'string' || sbWs.wsError) return { argv, note: `Streamer.bot address refused (${sbWs.wsError ?? 'unset'}); the event core uses its default` };
+  return { argv: [...argv, '--url', sbWs.ws], note: null };
+}
+
 function openBrowser(url) {
   const opts = { stdio: 'ignore', detached: true, windowsHide: true };
   if (process.env.UJWALAM_BROWSER) {
@@ -578,8 +588,12 @@ export async function main(argv = process.argv.slice(2)) {
   const coreTokens = { api: hex(32), system: hex(32) };
   const launchKey = hex(32);
 
-  // 1. event core (port 0; its own log line reports the port)
-  const core = spawn(process.execPath, [path.join(REPO, 'services', 'event-core', 'cli.mjs'), 'serve', '--data-dir', dataDir, ...(args.mock === true ? ['--mock'] : [])], {
+  // 1. event core (port 0; its own log line reports the port). Its read-only Streamer.bot connection uses the same
+  //    address as the bot manager (profile bots.streamerbot_ws, else 8093, D194); the connector's own default is
+  //    Streamer.bot's documented 8080, which the user's Streamer.bot does not use (D198).
+  const coreArgs = coreServeArgs({ dataDir, mock: args.mock === true, sbWs: loadBotConfig().streamerbot });
+  if (coreArgs.note) console.log(`[studio] ${coreArgs.note}`);
+  const core = spawn(process.execPath, [path.join(REPO, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], {
     stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true,
     env: { ...process.env, UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: coreTokens.system },
   });
