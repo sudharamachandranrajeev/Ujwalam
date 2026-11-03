@@ -180,7 +180,8 @@ function sample(final = false) {
     eldMs: { p50: eld.percentile(50) / 1e6, p99: eld.percentile(99) / 1e6, max: eld.max / 1e6 },
     audit: { queuedAudit: a.queuedAudit, queuedRaw: a.queuedRaw, queuedDedupe: a.queuedDedupe, droppedA: a.droppedA, droppedR: a.droppedR, droppedD: a.droppedD, lostA: a.lostA, lostR: a.lostR, lostD: a.lostD, writeErrors: a.writeErrors, batches: a.batches, writtenD: a.writtenD, blockMsP95: a.blockMs.p95 },
     sse: { clients: sseC.length, dropped: sseDropped, received: sseEvents },
-    busDropped, ingested: core.stats().published, stub: n, dispatched: counts.dispatched,
+    busDropped, received: svc.streamerbot()?.stats().received ?? null, ingested: core.stats().published, stub: n, dispatched: counts.dispatched,
+    auditInflight: a.inflightAudit + a.inflightRaw + a.inflightDedupe,
     syncWriteMsMax: +syncWriteMsMax.toFixed(3), stalls: tracer.summary().stalls,
   };
   eld.reset();

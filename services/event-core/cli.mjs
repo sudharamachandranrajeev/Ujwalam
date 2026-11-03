@@ -115,6 +115,7 @@ export async function listen(args, io = { out: (s) => console.log(s), signal: nu
     if (args.duration) setTimeout(done, Number(args.duration) * 1000);
     process.once('SIGINT', done);
     io.signal?.addEventListener('abort', done);
+    if (io.signal?.aborted) done();
   });
   clearInterval(timer);
   report();
@@ -202,7 +203,14 @@ if (process.argv[1] && process.argv[1].endsWith('cli.mjs')) {
   if (args._[0] === 'serve') {
     try { process.exit(await serve(args)); } catch (e) { console.log(`serve: failed (${e.message})`); process.exit(1); }
   } else if (args._[0] === 'listen') {
-    const r = await listen(args);
+    // A parent that spawned listen with an IPC channel (tests, a supervisor) stops it cleanly with 'stop' or by
+    // disconnecting: on Windows a kill is TerminateProcess, so SIGINT never arrives and the final report would be lost.
+    const ac = new AbortController();
+    if (process.channel) {
+      process.on('message', (m) => { if (m === 'stop') ac.abort(); });
+      process.once('disconnect', () => ac.abort());
+    }
+    const r = await listen(args, { out: (s) => console.log(s), signal: ac.signal });
     process.exit(r.state === 'auth-failed' ? 2 : r.state === 'refused' ? 1 : 0);
   } else if (args._[0] === 'audit') {
     process.exit(await auditCommand(args));

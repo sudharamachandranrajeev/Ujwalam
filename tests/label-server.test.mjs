@@ -532,9 +532,11 @@ test('page files follow the overlay rules: plain script, no CDN, no innerHTML, t
 });
 
 // ================================================================ review fixes (2026-10-28)
-const waitFor = async (cond, ms = 5000) => {
+// Condition waits; the cap only ends a hung test. 30 s, not 5 s: spawning node children under a loaded CI machine
+// (parallel test files, other apps) took longer than 5 s and failed a correct run.
+const waitFor = async (cond, ms = 30000) => {
   const end = Date.now() + ms;
-  while (!cond()) { if (Date.now() > end) throw new Error('timeout'); await new Promise((r) => setTimeout(r, 20)); }
+  while (!cond()) { if (Date.now() > end) throw new Error(`timeout waiting for: ${String(cond).slice(0, 120)}`); await new Promise((r) => setTimeout(r, 20)); }
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch { return false; } };

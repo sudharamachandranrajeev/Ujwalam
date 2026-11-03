@@ -22,6 +22,11 @@ const testName = () => `Ujwalam-TEST-ONLY-${process.pid}-${randomBytes(4).toStri
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = async (fn, ms = 15000) => { const t0 = Date.now(); while (!fn() && Date.now() - t0 < ms) await sleep(10); return fn(); };
 const LOOP_LIMIT_MS = 100;
+/** A blocking (synchronous) read would stall the loop for the whole read, so the limit scales with the measured read
+ *  time: half of it, never below LOOP_LIMIT_MS. A fixed 100 ms failed a correct run on a loaded machine (145 ms of
+ *  scheduler noise during a ~1 s PowerShell read); a sync read is still caught because its stall is ~the full read. */
+const loopLimit = (readMs) => Math.max(LOOP_LIMIT_MS, readMs / 2);
+const FAKE_READ_MS = 500;
 
 /** Max event-loop delay (ms) while fn runs: the larger of perf_hooks monitorEventLoopDelay (10 ms resolution) and a
  *  5 ms interval gap probe. Under the test runner on Windows the histogram missed a 300 ms block (max 10.9 ms, 5
@@ -135,7 +140,7 @@ test('credential: the real async read keeps the event loop free (Windows, nothin
   const took = performance.now() - t0;
   clearInterval(iv);
   assert.equal(v, null);
-  assert.ok(max < LOOP_LIMIT_MS, `max loop delay ${max.toFixed(1)} ms`);
+  assert.ok(max < loopLimit(took), `max loop delay ${max.toFixed(1)} ms (limit ${loopLimit(took).toFixed(0)} ms, read ${took.toFixed(0)} ms)`);
   assert.ok(ticks >= 3, `timers kept firing during the read (${ticks} ticks in ${took.toFixed(0)} ms)`);
   t.diagnostic(`real read: ${took.toFixed(0)} ms, max loop delay ${max.toFixed(1)} ms, ${ticks} timer ticks`);
 });
@@ -172,17 +177,17 @@ test('provider: caches a secret, shares one read, never caches null or errors, i
   assert.equal(reads - before, 2);
 });
 
-test('connector: reconnect with a slow (500 ms) password read keeps max loop delay < 100 ms; cache skips re-reads', async (t) => {
+test('connector: reconnect with a slow (500 ms) password read keeps the loop free (max delay < half the read); cache skips re-reads', async (t) => {
   const mock = await startMockStreamerbot({ password: 'slow-secret' });
   const core = createEventCore({ key: randomBytes(32) });
   let reads = 0;
-  const store = { get: () => { reads++; return new Promise((r) => setTimeout(() => r('slow-secret'), 500)); } };
+  const store = { get: () => { reads++; return new Promise((r) => setTimeout(() => r('slow-secret'), FAKE_READ_MS)); } };
   const getPassword = credentialProvider('Ujwalam-TEST-ONLY', { store });
   const sb = createStreamerbotConnector({ core, url: mock.url, getPassword, backoff: { baseMs: 20, capMs: 40 } });
   try {
     const first = await maxLoopDelay(async () => { sb.start(); assert.ok(await until(() => sb.state() === 'connected')); });
     assert.equal(reads, 1);
-    assert.ok(first < LOOP_LIMIT_MS, `first connect: max loop delay ${first.toFixed(1)} ms`);
+    assert.ok(first < loopLimit(FAKE_READ_MS), `first connect: max loop delay ${first.toFixed(1)} ms`);
     // drop the connection: the connector reconnects and authenticates from the cache
     const again = await maxLoopDelay(async () => {
       mock.kill();
@@ -190,7 +195,7 @@ test('connector: reconnect with a slow (500 ms) password read keeps max loop del
       assert.ok(await until(() => sb.state() === 'connected'));
     });
     assert.equal(reads, 1, 'reconnect used the cached secret');
-    assert.ok(again < LOOP_LIMIT_MS, `reconnect: max loop delay ${again.toFixed(1)} ms`);
+    assert.ok(again < loopLimit(FAKE_READ_MS), `reconnect: max loop delay ${again.toFixed(1)} ms`);
     assert.deepEqual(mock.authLog, ['ok', 'ok']);
     t.diagnostic(`fake 500 ms read: first connect max delay ${first.toFixed(1)} ms, reconnect ${again.toFixed(1)} ms, reads ${reads}`);
   } finally {
@@ -199,11 +204,11 @@ test('connector: reconnect with a slow (500 ms) password read keeps max loop del
   }
 });
 
-test('connector: an uncached reconnect with a slow read (cache off) also stays < 100 ms and reads each time', async () => {
+test('connector: an uncached reconnect with a slow read (cache off) also keeps the loop free and reads each time', async () => {
   const mock = await startMockStreamerbot({ password: 'slow-secret' });
   const core = createEventCore({ key: randomBytes(32) });
   let reads = 0;
-  const store = { get: () => { reads++; return new Promise((r) => setTimeout(() => r('slow-secret'), 500)); } };
+  const store = { get: () => { reads++; return new Promise((r) => setTimeout(() => r('slow-secret'), FAKE_READ_MS)); } };
   const getPassword = credentialProvider('Ujwalam-TEST-ONLY', { store, cache: false });
   const sb = createStreamerbotConnector({ core, url: mock.url, getPassword, backoff: { baseMs: 20, capMs: 40 } });
   try {
@@ -215,7 +220,7 @@ test('connector: an uncached reconnect with a slow read (cache off) also stays <
       assert.ok(await until(() => sb.state() === 'connected'));
     });
     assert.equal(reads, 2);
-    assert.ok(max < LOOP_LIMIT_MS, `max loop delay ${max.toFixed(1)} ms`);
+    assert.ok(max < loopLimit(FAKE_READ_MS), `max loop delay ${max.toFixed(1)} ms`);
   } finally {
     sb.stop();
     await mock.close();
@@ -274,9 +279,11 @@ test('credential: provider feeds the auth handshake (Windows)', { skip: !win && 
   const core = createEventCore({ key: randomBytes(32) });
   const sb = createStreamerbotConnector({ core, url: mock.url, getPassword: credentialProvider(name), backoff: { baseMs: 20, capMs: 80 } });
   try {
-    // 1: nothing stored -> stop, no loop
+    // 1: nothing stored -> stop, no loop (its duration is one real read: the scale for the loop limit below)
+    const r0 = performance.now();
     sb.start();
     assert.ok(await until(() => sb.state() === 'auth-failed'));
+    const readMs = performance.now() - r0;
     sb.stop();
     // 2: stored -> connects; a reconnect over the real async path keeps the loop free
     await store.set('stored-secret');
@@ -288,7 +295,7 @@ test('credential: provider feeds the auth handshake (Windows)', { skip: !win && 
       assert.ok(await until(() => sb.state() === 'connected'));
     });
     assert.deepEqual(mock.authLog, ['ok', 'ok']);
-    assert.ok(max < LOOP_LIMIT_MS, `real read + reconnect: max loop delay ${max.toFixed(1)} ms`);
+    assert.ok(max < loopLimit(readMs), `real read + reconnect: max loop delay ${max.toFixed(1)} ms (limit ${loopLimit(readMs).toFixed(0)} ms, read ${readMs.toFixed(0)} ms)`);
     t.diagnostic(`real credential connect + reconnect: max loop delay ${max.toFixed(1)} ms`);
   } finally {
     sb.stop();

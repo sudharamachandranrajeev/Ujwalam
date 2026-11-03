@@ -30,21 +30,46 @@ test.after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })
 // A credential target that never exists, so the test does not depend on (or touch) a real stored password.
 const NO_CREDENTIAL = `Ujwalam-TEST-ONLY-absent-${process.pid}`;
 
-async function runListen(extraArgs, emits = ['twitchChat', 'youtubeChat', 'kickChat', 'twitchChatOld', 'twitchFollow', 'twitchRaid', 'chatEmpty']) {
-  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'evcli-')); dirs.push(dataDir);
+const COND_WAIT_MS = 30000;
+const lastStat = (out, k) => { const m = [...out.matchAll(new RegExp(`${k}=(\\d+)`, 'g'))].at(-1); return m ? Number(m[1]) : -1; };
+async function until(pred, what, out) {
+  const t0 = Date.now();
+  while (!pred()) {
+    if (Date.now() - t0 > COND_WAIT_MS) throw new Error(`timed out waiting for ${what}; output tail:\n${out().slice(-600)}`);
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}
+
+// Waits on conditions, never on a fixed time, so a loaded machine only makes it slower: the Subscribe (the Hello is
+// followed by a credential-store read, E8-04), then every emit received and every alert fixture written (from the
+// 100 ms reports), then asks the child to stop over IPC so it prints its final report and exits 0. --duration 50 is
+// only a cap for a hung child.
+async function listenUntilDone(dataDir, extraArgs, emits, fixturesWanted) {
   const mock = await startMockStreamerbot();
-  const child = spawnTracked(process.execPath, [CLI, 'listen', '--url', mock.url, '--interval', '300', '--duration', '4', '--data-dir', dataDir, '--credential', NO_CREDENTIAL, ...extraArgs],
-    { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const child = spawnTracked(process.execPath, [CLI, 'listen', '--url', mock.url, '--interval', '100', '--duration', '50', '--data-dir', dataDir, '--credential', NO_CREDENTIAL, ...extraArgs],
+    { stdio: ['ignore', 'pipe', 'pipe', 'ipc'], windowsHide: true });
   let out = '';
   child.stdout.on('data', (d) => { out += d; });
   child.stderr.on('data', (d) => { out += d; });
-  const t0 = Date.now();
-  // the Hello is followed by a credential-store read (E8-04), so wait for the Subscribe itself, not a fixed delay
-  while (!mock.subscriptions().some((x) => x.length) && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 20));
-  for (const k of emits) mock.emit(k);
+  try {
+    await until(() => mock.subscriptions().some((x) => x.length), 'the Subscribe', () => out);
+    for (const k of emits) mock.emit(k);
+    await until(() => lastStat(out, 'received') >= emits.length, `${emits.length} events received`, () => out);
+    await until(() => lastStat(out, 'fixtures') >= fixturesWanted, `${fixturesWanted} fixtures written`, () => out);
+  } finally {
+    if (child.connected) child.send('stop');
+  }
   const { code } = await waitExit(child, CHILD_WAIT_MS);
   await mock.close();
-  return { out, code, dataDir, doActions: mock.doActions };
+  return { out, code, doActions: mock.doActions };
+}
+
+const ALERT_SAMPLES = new Set(['twitchFollow', 'twitchRaid']);
+async function runListen(extraArgs, emits = ['twitchChat', 'youtubeChat', 'kickChat', 'twitchChatOld', 'twitchFollow', 'twitchRaid', 'chatEmpty']) {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'evcli-')); dirs.push(dataDir);
+  const fixtures = extraArgs.includes('--no-fixtures') ? 0 : emits.filter((k) => ALERT_SAMPLES.has(k)).length;
+  const r = await listenUntilDone(dataDir, extraArgs, emits, fixtures);
+  return { ...r, dataDir };
 }
 
 const NAMES_AND_TEXT = ['Alpha9', 'alpha9', 'gg that was clean', 'Charlie77', 'W stream', 'DeltaX', 'lets go', 'EchoRider', 'IndiaM', 'BravoK', 'bravok', 'behind you!'];
@@ -160,15 +185,6 @@ test('E8-15 listen: an existing data dir is restricted before fixtures are writt
 async function runListenIn(seed) {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'evcli-')); dirs.push(dataDir);
   await seed(dataDir);
-  const mock = await startMockStreamerbot();
-  const child = spawnTracked(process.execPath, [CLI, 'listen', '--url', mock.url, '--interval', '300', '--duration', '4', '--data-dir', dataDir, '--credential', NO_CREDENTIAL],
-    { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  let out = '';
-  child.stdout.on('data', (d) => { out += d; });
-  const t0 = Date.now();
-  while (!mock.subscriptions().some((x) => x.length) && Date.now() - t0 < 5000) await new Promise((r) => setTimeout(r, 20));
-  mock.emit('twitchFollow'); mock.emit('twitchRaid');
-  await waitExit(child, CHILD_WAIT_MS);
-  await mock.close();
+  const { out } = await listenUntilDone(dataDir, [], ['twitchFollow', 'twitchRaid'], 2);
   return { out, dataDir };
 }

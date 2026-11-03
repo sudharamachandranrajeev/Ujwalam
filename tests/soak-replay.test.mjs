@@ -66,6 +66,7 @@ test('end-to-end: replay a synthetic export through the real connector, core, ga
   ]);
   const r = await main(['--data-root', root, '--speed', '10', '--max-gap-s', '0.5', '--duration-s', '4', '--sample-s', '1', '--run-id', 'unit', '--quiet']);
   assert.ok(r.harness.sent >= 20, `sent ${r.harness.sent}`);
+  assert.equal(r.drain.drained, true, JSON.stringify(r.drain));
   assert.equal(r.connector.published, r.harness.sent);
   assert.equal(r.ingestToDispatchMs.n, r.harness.sent);
   assert.equal(r.busToSseMs.n, r.harness.sent);

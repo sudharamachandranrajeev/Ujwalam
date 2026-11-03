@@ -164,7 +164,11 @@ function startChild({ dataDir, metricsDir, execLog, sbUrl, sampleMs, livePriorit
 
 async function stopChild(child, timeoutMs = 120000) {
   try { child.proc.stdin.write('stop\n'); } catch { /* already gone */ }
-  const code = await Promise.race([child.exited, sleep(timeoutMs).then(() => 'timeout')]);
+  // The cap timer is cleared on exit: an uncleared one kept every caller's process alive for the full 120 s.
+  let timer;
+  const cap = new Promise((r) => { timer = setTimeout(() => r('timeout'), timeoutMs); });
+  const code = await Promise.race([child.exited, cap]);
+  clearTimeout(timer);
   if (code === 'timeout') { killTree(child.pid); return 'timeout'; }
   return code;
 }
@@ -176,6 +180,39 @@ async function waitSubscribed(mock, ms = READY_MS) {
     await sleep(25);
   }
   throw new Error('core child did not subscribe to the mock Streamer.bot');
+}
+
+/** Polls pred every 50 ms until true (-> true) or capMs passes (-> false). */
+async function waitFor(pred, capMs) {
+  const t0 = performance.now();
+  for (;;) {
+    if (await pred()) return true;
+    if (performance.now() - t0 > capMs) return false;
+    await sleep(50);
+  }
+}
+
+/** Drain on conditions, not a fixed sleep (a loaded machine only makes it slower): the connector has received every
+ *  sent message, the audit queues are empty and nothing is in flight, and the delivery counters (published, SSE, gate
+ *  probes, dispatches) did not move between two child samples. Capped so a stuck child still ends the run; the
+ *  result's drain block says which, and the run's own checks then fail. */
+async function waitDrained(metricsDir, sent, sampleMs) {
+  const file = path.join(metricsDir, 'timeseries.jsonl');
+  const capMs = Math.max(60000, sampleMs * 6);
+  const t0 = performance.now();
+  let seen = 0; let prev = null;
+  const drained = await waitFor(() => {
+    const rows = existsSync(file) ? readJsonl(file) : [];
+    if (rows.length <= seen) return false;
+    seen = rows.length;
+    const r = rows[rows.length - 1];
+    const key = JSON.stringify([r.received, r.ingested, r.sse.received, r.stub, r.dispatched]);
+    const idle = r.audit.queuedAudit + r.audit.queuedRaw + r.audit.queuedDedupe + (r.auditInflight ?? 0) === 0;
+    const ok = (r.received ?? 0) >= sent && idle && key === prev;
+    prev = key;
+    return ok;
+  }, capMs);
+  return { drained, waitedMs: Math.round(performance.now() - t0) };
 }
 
 const readApiFile = (dataDir) => JSON.parse(readFileSync(path.join(dataDir, 'api.json'), 'utf8'));
@@ -316,11 +353,11 @@ async function runReplay(args, ctx) {
   const played = await play(items, { mock, speed, durationS, sent, mark: ctx.mark });
   // A duration run lasts the whole duration even when the last message comes earlier (idle time is part of a soak).
   if (durationS != null) { const rest = durationS * 1000 - (Date.now() - t0); if (rest > 0) await sleep(rest); }
-  await sleep(3000); // let the last events drain through the audit worker and SSE
+  const drain = await waitDrained(ctx.paths.metricsDir, played.sent - played.noClient, Number(args['sample-s'] ?? 10) * 1000);
   const code = await stopChild(child);
   await mock.close();
   const summary = JSON.parse(readFileSync(path.join(ctx.paths.metricsDir, 'summary.json'), 'utf8'));
-  return { mode: 'replay', speed, durationS, maxGapS, looped: loopWanted, wallSeconds: Math.round((Date.now() - t0) / 1000), harness: played, childExit: code, ...analyse(ctx.runDir, summary) };
+  return { mode: 'replay', speed, durationS, maxGapS, looped: loopWanted, wallSeconds: Math.round((Date.now() - t0) / 1000), harness: played, drain, childExit: code, ...analyse(ctx.runDir, summary) };
 }
 
 function readExecLog(file) {
@@ -429,12 +466,17 @@ async function runCrash(args, ctx) {
       const seeded = (await rpc(api2.port, api2.tokens.api, 'core.status', {})).body?.result?.events?.dedupe?.seeded ?? null;
 
       // --- Streamer.bot reconnect overlap: resend the last N events from before the kill ---
+      // Waits are conditions on the restarted core, not fixed times: every resent event handled (published or
+      // deduped), then the probe seen on SSE. Capped at 30 s each; a miss shows up in the row's checks.
+      const handled = async () => { const e = (await rpc(api2.port, api2.tokens.api, 'core.status', {})).body?.result?.events; return (e?.published ?? 0) + (e?.deduped ?? 0); };
+      const handledBase = await handled();
       for (let i = 0; i < ring.length; i++) { mock.emit(ring[i]); if (i % 20 === 19) await sleep(0); }
-      await sleep(2000);
+      row.resendHandled = await waitFor(async () => (await handled()) - handledBase >= ring.length, 30000);
       // one fresh message after the resend proves SSE delivery from the restarted core
       const probe = structuredClone(ring[ring.length - 1]); probe.data.messageId = `crash-probe-${k}`;
+      const sseBase = sse.st.events;
       mock.emit(probe);
-      await sleep(400);
+      await waitFor(() => sse.st.events > sseBase, 30000);
       const st = (await rpc(api2.port, api2.tokens.api, 'core.status', {})).body?.result;
       row.resend = { sent: ring.length, seededKeys: seeded, dedupedByCore: st?.events?.deduped ?? null, publishedAfterResend: st?.events?.published ?? null };
       const execAfter = readExecLog(ctx.paths.execLog);
@@ -466,14 +508,14 @@ async function runCrash(args, ctx) {
   };
   const t0 = Date.now();
   const played = await play(items, { mock, speed, hooks, sent, mark: ctx.mark });
-  await sleep(2000);
+  const drain = await waitDrained(ctx.paths.metricsDir, 0, Number(args['sample-s'] ?? 10) * 1000);
   const code = await stopChild(child);
   await mock.close();
   const execFinal = readExecLog(ctx.paths.execLog);
   const dupFinal = [...execFinal].filter(([, ts]) => ts.length > 1).length;
   const summary = JSON.parse(readFileSync(path.join(ctx.paths.metricsDir, 'summary.json'), 'utf8'));
   return {
-    mode: 'crash', speed, maxGapS, killAtSeq: killAt, resendN, wallSeconds: Math.round((Date.now() - t0) / 1000), harness: played, childExit: code,
+    mode: 'crash', speed, maxGapS, killAtSeq: killAt, resendN, wallSeconds: Math.round((Date.now() - t0) / 1000), harness: played, drain, childExit: code,
     kills: rows, totals: {
       executedKeys: execFinal.size, duplicateKeysFinal: dupFinal,
       gapEventsTotal: rows.reduce((a, r) => a + (r.dedupeGap?.executedNotPersisted ?? 0), 0),
