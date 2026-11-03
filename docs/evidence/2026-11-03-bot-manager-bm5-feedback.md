@@ -16,7 +16,7 @@ Example: `node tools/collect-stream-feedback.mjs --date 2026-11-03 --question-pr
 ## Tests
 Recorded mock chat built inside the test (placeholder names viewer-1 etc.), headless.
 
-- `node --test tests/stream-feedback.test.mjs` : 5 passed, 0 failed (about 0.15 s). Covers window match, marker match, non-matching excluded, three platforms counted, escaping (Markdown, newlines, control characters, injected comment and fake line), explicit question time, duplicate-safe re-run, empty result.
+- `node --test tests/stream-feedback.test.mjs` : 6 passed, 0 failed (about 0.15 s). Covers window match, marker match, non-matching excluded, three platforms counted, escaping (Markdown, newlines, control characters, injected comment and fake line), explicit question time, duplicate-safe re-run, empty result, and a missing database (an error, never an empty report; added in review).
 - `node tools/lint.mjs` : 0 findings.
 
 ## UNVERIFIED
