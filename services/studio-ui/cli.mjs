@@ -31,7 +31,10 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   const launchKey = env.UJWALAM_UI_LAUNCH_KEY && env.UJWALAM_UI_LAUNCH_KEY.length >= 32 ? env.UJWALAM_UI_LAUNCH_KEY : randomBytes(32).toString('hex');
   // --feedback-dir: the folder the host's feedback hotkey writes (launch.mjs passes the same one); default <repo>/feedback.
   const feedbackDir = typeof args['feedback-dir'] === 'string' ? path.resolve(args['feedback-dir']) : undefined;
-  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
+  // --profile / --release: for the Report button only (links.issues_url, version). launch.mjs passes the same files as the diag bundle.
+  const profileFile = typeof args.profile === 'string' ? path.resolve(args.profile) : undefined;
+  const releaseFile = typeof args.release === 'string' ? path.resolve(args.release) : undefined;
+  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
   const { port } = await srv.listen();
   out(`[studio-ui] listening on http://127.0.0.1:${port}/ (no token printed)`);
   if (host.describe().kind === 'fake') out('[studio-ui] BLOCKED-ON-HOST: no libobs host found, using the in-memory fake backend');
@@ -43,5 +46,5 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
 if (process.argv[1] && process.argv[1].endsWith('cli.mjs') && process.argv[1].includes('studio-ui')) {
   const args = parseArgs(process.argv.slice(2));
   if (args._[0] === 'serve') process.exit(await serve(args));
-  else { console.log('usage: node services/studio-ui/cli.mjs serve [--port N] [--data-dir DIR] [--fake-host] [--feedback-dir DIR]'); process.exit(2); }
+  else { console.log('usage: node services/studio-ui/cli.mjs serve [--port N] [--data-dir DIR] [--fake-host] [--feedback-dir DIR] [--profile FILE] [--release FILE]'); process.exit(2); }
 }

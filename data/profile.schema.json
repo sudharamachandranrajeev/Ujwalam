@@ -74,7 +74,8 @@
       "description": "Display links shown on stream by scene presets ({links.*} placeholders).",
       "additionalProperties": false,
       "properties": {
-        "discord": { "type": "string" }
+        "discord": { "type": "string" },
+        "issues_url": { "type": "string", "description": "Private repo for the Report button (services/studio-ui/report.mjs): exactly https://github.com/<owner>/<repo>, no trailing slash, path, query or fragment. Local profile only: it names the account." }
       }
     },
     "devices": {

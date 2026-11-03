@@ -193,6 +193,8 @@
     var botsOn = (list || []).some(function (f) { return f.id === 'bot-manager' && f.on; });
     $('bots').hidden = !botsOn;
     if (botsOn) loadBots(); else clear($('bot-list'));
+    var reportOn = (list || []).some(function (f) { return f.id === 'report-button' && f.on; });
+    $('report').hidden = !reportOn;
     (list || []).forEach(function (f) {
       var cb = el('input', { type: 'checkbox', id: 'flag-' + f.id, 'aria-label': f.id });
       cb.checked = !!f.on;
@@ -230,6 +232,23 @@
     setText($('bot-note'), 'Start and Stop ask you to type yes. Stop only ends a bot that Ujwalam started.');
   }
   function loadBots() { return Api.bots().then(function (r) { renderBots(r.bots); }).catch(function (e) { setText($('bot-note'), 'Bots: ' + (e.message || 'error')); }); }
+
+  // ---- Report button (flag `report-button`, D199) ----
+  // The server builds a prefilled GitHub new-issue link; the click opens it in the user's browser (a user-requested tab,
+  // not a window the app opens on its own). A real link is also shown, in case the browser blocks the pop-up.
+  function reportClick() {
+    var out = $('report-note-out'); clear(out);
+    setText(out, 'Building the report...');
+    guard(Api.reportUrl($('report-title').value, $('report-note').value).then(function (r) {
+      clear(out);
+      if (!r.configured) { setText(out, r.message || 'Report: set links.issues_url in the profile'); return; }
+      var u = null; try { u = new URL(String(r.url)); } catch (x) { u = null; }
+      if (!u || u.protocol !== 'https:' || u.hostname !== 'github.com') { setText(out, 'Report: the link was refused'); return; }
+      window.open(r.url, '_blank', 'noopener');
+      out.appendChild(document.createTextNode((r.truncated ? 'Shortened to fit: attach the diag bundle. ' : '') + 'Review it in your browser, then submit. If no tab opened: '));
+      out.appendChild(el('a', { href: r.url, target: '_blank', rel: 'noopener', text: 'open the issue page' }));
+    }));
+  }
 
   // ---- post-stream feedback form ----
   var fb = { moments: [], sel: null };
@@ -316,6 +335,7 @@
   }
   function wirePosts() {
     $('btn-posts').addEventListener('click', openPosts);
+    $('btn-report').addEventListener('click', reportClick);
     $('posts-close').addEventListener('click', function () { $('posts').hidden = true; clear($('post-media')); });
     $('post-form').addEventListener('submit', function (e) {
       e.preventDefault();

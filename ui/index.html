@@ -66,6 +66,15 @@
       <ul id="bot-list" class="list" aria-label="Bots"></ul>
       <p id="bot-note" class="muted" role="status"></p>
     </section>
+    <section id="report" class="panel" hidden>
+      <h2>Report</h2>
+      <label class="muted" for="report-title">Title</label>
+      <input id="report-title" type="text" maxlength="120" autocomplete="off">
+      <label class="muted" for="report-note">What happened</label>
+      <textarea id="report-note" rows="4" maxlength="1500"></textarea>
+      <button id="btn-report" class="btn" type="button">Report</button>
+      <p id="report-note-out" class="muted" role="status"></p>
+    </section>
     <section class="panel">
       <h2>Feature flags</h2>
       <ul id="flag-list" class="list" aria-label="Feature flags"></ul>

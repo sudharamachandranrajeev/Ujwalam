@@ -23,7 +23,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { createReadStream, existsSync, realpathSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,6 +31,7 @@ import { BOTS, BOT_LABELS, createBots } from '../bots/index.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createFeedback } from './feedback.mjs';
+import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 
 export const LOOPBACK = '127.0.0.1';
@@ -160,6 +161,18 @@ export function createStudioServer(opts) {
   const bots = opts.bots ?? (typeof opts.dataDir === 'string' ? createBots({ dataDir: opts.dataDir }) : null);
   const botsOn = () => !!bots && !!flags && flags.isOn(BOT_FLAG);
   const postingOn = () => !!posting && !!flags && flags.isOn(POSTING_FLAG);
+  // Report button (flag `report-button`, D199): builds a prefilled GitHub new-issue link; the page opens it. No network here.
+  const reporter = opts.reporter ?? createReporter({ profileFile: opts.profileFile, releaseFile: opts.releaseFile });
+  const reportOn = () => !!flags && flags.isOn(REPORT_FLAG);
+  async function reportContext(q) {
+    const h = lastSnapshot ?? await snapshot();
+    let outputs = null; let crashes = null;
+    try { outputs = await host.call('outputs.status', {}); } catch { outputs = null; }
+    try {
+      if (typeof opts.dataDir === 'string') crashes = readFileSync(path.join(opts.dataDir, 'logs', 'host-crashes.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean).length;
+    } catch { crashes = 0; }
+    return { title: q.get('title') ?? '', note: q.get('note') ?? '', flags: flags ? flags.list() : [], host: h.host, outputs, crashes };
+  }
   if (typeof opts.launchKey !== 'string' || opts.launchKey.length < 32) throw new Error('launchKey must be at least 32 characters');
   let launchKey = opts.launchKey;
   const launchBorn = now();
@@ -294,6 +307,13 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/feedback') return json(res, 200, { moments: feedback.list() });
+    if (route === '/ui/api/report-url') {
+      if (!reportOn()) return json(res, 404, { error: 'report-button-off' });
+      if (req.method !== 'GET') return text(res, 405, 'method-not-allowed');
+      if ([...url.searchParams.keys()].some((k) => k !== 'title' && k !== 'note')
+        || (url.searchParams.get('title') ?? '').length > MAX_TITLE * 4 || (url.searchParams.get('note') ?? '').length > MAX_NOTE * 4) return json(res, 400, { error: 'bad-params' });
+      try { return json(res, 200, reporter.build(await reportContext(url.searchParams))); } catch { return json(res, 500, { error: 'report-failed' }); }
+    }
     if (route.startsWith('/ui/api/posts') && !postingOn()) return json(res, 404, { error: 'posting-off' });
     if (route.startsWith('/ui/api/bots') && !botsOn()) return json(res, 404, { error: 'bot-manager-off' });
     if (req.method === 'GET' && route === '/ui/api/bots') {

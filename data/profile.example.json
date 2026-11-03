@@ -43,7 +43,8 @@
     "kick": "<kick-handle>"
   },
   "links": {
-    "discord": "<discord-link>"
+    "discord": "<discord-link>",
+    "issues_url": "<private-repo-issues-url>"
   },
   "devices": {
     "roles": {

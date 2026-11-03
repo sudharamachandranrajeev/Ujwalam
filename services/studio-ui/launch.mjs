@@ -703,6 +703,7 @@ export async function main(argv = process.argv.slice(2)) {
 
   // 3. UI server
   const uiArgs = [path.join(REPO, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--data-dir', dataDir, '--feedback-dir', feedbackDir];
+  uiArgs.push('--profile', typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'), '--release', path.join(REPO, 'release.json'));
   if (typeof args['ui-port'] === 'string') uiArgs.push('--port', args['ui-port']);
   if (args['fake-host'] === true) uiArgs.push('--fake-host');
   const ui = spawn(process.execPath, uiArgs, {

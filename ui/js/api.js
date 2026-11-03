@@ -38,6 +38,7 @@
     bots: function () { return request('GET', '/ui/api/bots'); },
     botStart: function (bot) { return request('POST', '/ui/api/bots/start', { bot: bot }); },
     botStop: function (bot) { return request('POST', '/ui/api/bots/stop', { bot: bot }); },
+    reportUrl: function (title, note) { return request('GET', '/ui/api/report-url?title=' + encodeURIComponent(title || '') + '&note=' + encodeURIComponent(note || '')); },
     posts: function () { return request('GET', '/ui/api/posts'); },
     postMediaUrl: function (id, kind) { return '/ui/api/posts/media?id=' + encodeURIComponent(id) + '&kind=' + encodeURIComponent(kind); },
     postEdit: function (id, fields) { var b = { id: id }; Object.keys(fields).forEach(function (k) { b[k] = fields[k]; }); return request('POST', '/ui/api/posts/edit', b); },
