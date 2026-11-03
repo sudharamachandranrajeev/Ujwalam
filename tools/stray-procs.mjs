@@ -17,15 +17,25 @@ export const STRAY_SCRIPT = /tools[\\/](mock|soak)[\\/]([\w.-]+\.mjs)/;
 export const TEST_CHILD = /tools[\\/]idem-crash-child\.mjs|Ujwalam-TEST-ONLY-absent/;
 const labelOf = (cmd) => { const m = STRAY_SCRIPT.exec(cmd); if (m) return `tools/${m[1]}/${m[2]}`; return TEST_CHILD.test(cmd) ? 'test child' : null; };
 
-/** [{ pid, parentPid, startedAt (ISO or null), cmd }] for every node process. Windows: CIM; elsewhere: ps. */
+/**
+ * [{ pid, parentPid, startedAt (ISO or null), cmd }] for every node process. Windows: CIM; elsewhere: ps.
+ * The caller is always a node process, so an empty list means the query failed: it is retried, then thrown, never
+ * returned as "no strays" (a CI run under load once reported a running mock as absent, 2026-11-03).
+ */
 export function listNodeProcesses() {
   if (process.platform === 'win32') {
-    const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
-      "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; parentPid = $_.ParentProcessId; startedAt = $_.CreationDate.ToUniversalTime().ToString('o'); cmd = $_.CommandLine } } | ConvertTo-Json -Compress"],
-    { encoding: 'utf8', timeout: 20000, windowsHide: true });
-    if (r.status !== 0 || !r.stdout.trim()) return [];
-    const v = JSON.parse(r.stdout);
-    return (Array.isArray(v) ? v : [v]).map((p) => ({ pid: p.pid, parentPid: p.parentPid, startedAt: p.startedAt, cmd: p.cmd ?? '' }));
+    let why = '';
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const r = spawnSync('powershell', ['-NoProfile', '-NonInteractive', '-Command',
+        "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | ForEach-Object { [pscustomobject]@{ pid = $_.ProcessId; parentPid = $_.ParentProcessId; startedAt = $_.CreationDate.ToUniversalTime().ToString('o'); cmd = $_.CommandLine } } | ConvertTo-Json -Compress"],
+      { encoding: 'utf8', timeout: 20000, windowsHide: true });
+      if (r.status === 0 && r.stdout.trim()) {
+        const v = JSON.parse(r.stdout);
+        return (Array.isArray(v) ? v : [v]).map((p) => ({ pid: p.pid, parentPid: p.parentPid, startedAt: p.startedAt, cmd: p.cmd ?? '' }));
+      }
+      why = r.error ? r.error.code ?? r.error.message : `exit ${r.status}, ${String(r.stderr ?? '').trim().split(/\r?\n/)[0] ?? ''}`;
+    }
+    throw new Error(`process list failed 3 times (${why})`);
   }
   const r = spawnSync('ps', ['-eo', 'pid=,ppid=,lstart=,args='], { encoding: 'utf8', windowsHide: true });
   if (r.status !== 0) return [];

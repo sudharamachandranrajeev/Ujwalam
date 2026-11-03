@@ -58,7 +58,8 @@ const SECRET_PATTERNS = [
   ['PEM private key', /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----/],
   ['AWS access key id', /AKIA[0-9A-Z]{16}/],
   ['GitHub token', /gh[pousr]_[A-Za-z0-9]{36,}/],
-  ['API key (sk-)', /sk-[A-Za-z0-9_-]{20,}/],
+  // Not inside a word: 'task-Ujwalam-Backup-before.xml' was flagged (2026-11-03). Keys start after a quote, space, '=' etc.
+  ['API key (sk-)', /(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{20,}/],
   ['Slack token', /xox[abpr]-[A-Za-z0-9-]{10,}/],
   ['Twitch oauth token', /oauth:[a-z0-9]{30}/],
   ['Bearer token', /Bearer\s+[A-Za-z0-9._~+/=-]{20,}/],

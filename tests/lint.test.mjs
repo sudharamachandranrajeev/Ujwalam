@@ -140,6 +140,12 @@ test('secret: each pattern is flagged', async () => {
 // The invalid-marker samples are plain text in a fixture file that the linter excludes explicitly.
 const MARKER_SAMPLES = readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'fixtures', 'lint', 'markers.txt'), 'utf8');
 
+test('secret: sk- inside a word (a file name like task-...-before.xml) is not an API key; a key after = still is', async () => {
+  assert.deepEqual(await run({ 'a.md': 'exported to 2026-11-03-task-Ujwalam-Backup-before.xml\n' }, 'secret'), []);
+  const f = await run({ 'a.txt': 'key=sk-abcdefghij0123456789xyz\n' }, 'secret'); // lint-allow: secret
+  assert.equal(f.length, 1);
+});
+
 test('secret: the marker suppresses on the same line in a test file; other lines still flagged; short values pass', async () => {
   const f = await run({ 'tests/a.txt': `${SECRETS.aws} // lint-allow: secret\n${SECRETS.aws}\n` }, 'secret');
   assert.deepEqual(f.map((x) => x.line), [2]);

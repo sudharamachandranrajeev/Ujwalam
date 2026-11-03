@@ -43,6 +43,44 @@ stop 0
 
 Both previews opened on the laptop panel, visible, and never became the foreground window. The foreground hwnd differed between samples only because of the transient terminal windows described above.
 
+## After switching to Windows Console Host
+
+2026-11-03 15:38:56–15:40:26. The user set the default terminal to "Windows Console Host". A hidden watcher
+(`fg-watch.ps1`, session scratchpad, not committed) sampled the foreground window and every new visible
+`ConsoleWindowClass` / `CASCADIA_HOSTING_WINDOW_CLASS` / `PseudoConsoleWindow` window every 40 ms for 90 s while these
+ran:
+
+| Time | Action | Watcher |
+|---|---|---|
+| 15:39:01 – 15:39:09 | four ordinary agent shell commands (bash: git, node; PowerShell: python; bash: node starting `cmd /c ver` hidden) | two console windows at 15:38:59.976 and 15:39:00.595, gone before the next 40 ms sample (class no longer readable). No focus change |
+| 15:39:23 – 15:39:25 | a parent node with NO console (detached, hidden) starts `powershell` and `cmd` with `windowsHide: true`, the way Ujwalam does | nothing |
+| 15:39:27 – 15:39:30 | control: the same, with `windowsHide: false` | two visible console windows (`cmd`, `powershell`) at 15:39:28.2; not foreground |
+| 15:39:33.460 | an agent PowerShell call (reading the scheduled tasks) | one console window, gone within 40 ms; no focus change |
+
+The foreground window was the same for the whole 90 s (the user's Claude app window): nothing took focus.
+
+Result:
+
+- Ujwalam's hidden launch (`windowsHide: true` from a parent with no console) shows no window under Windows Console Host.
+- The control proves the watcher catches real console windows.
+- The agent's own shell tool still makes console windows that flash for under 40 ms, at the start of some calls, without taking focus. That comes from the agent tool, not Ujwalam.
+
+## Nightly backup task without a window
+
+User's OK on 2026-11-03. Before (exported to `%LOCALAPPDATA%\Ujwalam\backups\2026-11-03-task-Ujwalam-Backup-before.xml`):
+action `"C:\Program Files\nodejs\node.exe" C:\AI\Claude\Ujwalam\tools\backup-local.mjs --keep 14`, Interactive, daily
+03:00. After: action `C:\Windows\System32\conhost.exe --headless "C:\Program Files\nodejs\node.exe"
+C:\AI\Claude\Ujwalam\tools\backup-local.mjs --keep 14`; user, logon type, trigger and settings unchanged. Interactive is
+kept because the backup password is read from Credential Manager in the user's session.
+
+Test run (`Start-ScheduledTask`, watcher on from 15:49:06.686 to 15:51:06.679): task 15:49:09 to 15:51:16, last
+result 0, archive `ujwalam-local-2026-11-03.7z` 1324.7 MB written 15:51:09. The watcher saw no new console or terminal
+window. The foreground changed once, at 15:50:49, from the taskbar to the Claude app: a user click, not the task.
+The last 10 s of the task (15:51:06 to 15:51:16) were outside the watch window. `--headless` is an undocumented
+conhost flag (UNVERIFIED across Windows updates). If a window appears at 03:00 again, it shows here first.
+
+Still to test: the same hidden launch with Windows Terminal as the default terminal (needs the setting switched back for a few minutes).
+
 ## Not done
 
 - Previews are not click-through: they are operator windows (move, resize, close). Layered + transparent styles on a D3D swapchain window are untested.
