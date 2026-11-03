@@ -184,6 +184,7 @@ json::Value host_info(App &a)
 	flags.set("allowDevices", a.allow_devices);
 	flags.set("allowBrowser", a.allow_browser);
 	flags.set("allowLive", a.allow_live);
+	flags.set("twitchBandwidthTest", a.twitch_bandwidth_test);
 	flags.set("testHooks", a.test_hooks);
 	r.set("flags", std::move(flags));
 	json::Value dis = json::Value::array();

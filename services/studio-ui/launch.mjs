@@ -33,6 +33,17 @@
 // --allow-live. Without it no real target is configured (an --outputs plan with real targets is refused). Nothing
 // starts streaming at launch: the control page's typed "yes, on air" stays the start gate. At start the launcher
 // prints per sink keyPresent / urlPresent from outputs.status (never a key or URL), the hotkeys and the replay state.
+// Private test stream options (all need --alpha --live):
+//   --sinks youtube-h,youtube-v,twitch[,kick]  which REAL sinks of the plan are configured (default: all of them);
+//       the recording always stays. A rung left without sinks is not created.
+//   --twitch-bandwidth-test  the host runs with --twitch-bandwidth-test: twitch sinks connect with
+//       "?bandwidthtest=true" appended to the stored key at connect time (never stored, never printed). The launcher
+//       stops (exit 1) unless outputs.status shows bandwidthTest true on every twitch sink.
+//   --test-stream-minutes N [--test-sink-minutes id=M,...]  arms the live-test guard (live-guard.mjs, budget
+//       data/outputs/guard/live-test-budget.json). The guard never starts anything: it waits for the first stream started
+//       from the control page ("yes, on air"), then stops ALL outputs after N minutes (exit 0) or at once when a
+//       destination fails or drops frames past the budget (exit 4), writes <data dir>/logs/live-test-<stamp>.json
+//       and .txt (no keys, URLs or error text) and ends the session. id=M stops only that sink after M minutes.
 // UJWALAM_ALPHA_FEEDBACK_PROBE=1 (tests and evidence; only with --no-open): after start the launcher calls
 // feedback.capture once, waits for its replay saves, logs in to its own UI server with the unused one-time key and
 // prints whether the feedback form lists the moment.
@@ -67,6 +78,7 @@ import { alphaBases, buildAlphaProject, prepareAlphaProject, readProfile, stampO
 import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
 import { writeZip } from '../../tools/package/zip.mjs';
+import { GUARD_ABORT_EXIT, LIVE_TEST_BUDGET, loadBudget, MAX_TEST_MINUTES, parseMinutes, parseSinkMinutes, runGuard } from './live-guard.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const hex = (n) => randomBytes(n).toString('hex');
@@ -208,8 +220,60 @@ export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, co
     if (HEX64.test(coreSystemToken ?? '')) env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN = coreSystemToken;
     else notes.push('no event-core system token: panic cannot tell the event core');
     if (args.live === true) argv.push('--allow-live');
+    if (args.live === true && args['twitch-bandwidth-test'] === true) argv.push('--twitch-bandwidth-test');
   }
   return { argv, env, notes };
+}
+
+/**
+ * Private test stream options (pure apart from reading the budget file; tested): --sinks, --twitch-bandwidth-test,
+ * --test-stream-minutes, --test-sink-minutes. Returns { problems, select, bandwidthTest, minutes, sinkMinutes, budget }.
+ */
+export function liveTestOptions(args, { alpha = args.alpha === true, budgetFile = LIVE_TEST_BUDGET } = {}) {
+  const problems = [];
+  const out = { problems, select: undefined, bandwidthTest: args['twitch-bandwidth-test'] === true, minutes: null, sinkMinutes: {}, budget: null };
+  const given = ['sinks', 'twitch-bandwidth-test', 'test-stream-minutes', 'test-sink-minutes'].filter((k) => args[k] !== undefined);
+  if (!given.length) return out;
+  if (!alpha || args.live !== true) { problems.push(`--${given.join(', --')} need --alpha --live`); return out; }
+  if (args.sinks !== undefined) {
+    const ids = typeof args.sinks === 'string' ? args.sinks.split(',').map((x) => x.trim()) : [];
+    if (!ids.length || ids.some((x) => !/^[a-z0-9-]{1,32}$/.test(x))) problems.push('--sinks needs a comma-separated list of sink ids (e.g. youtube-h,youtube-v,twitch)');
+    else out.select = ids;
+  }
+  if (args['twitch-bandwidth-test'] !== undefined && args['twitch-bandwidth-test'] !== true) problems.push('--twitch-bandwidth-test takes no value');
+  if (args['test-stream-minutes'] !== undefined) {
+    out.minutes = parseMinutes(args['test-stream-minutes']);
+    if (out.minutes === null) problems.push(`--test-stream-minutes needs minutes (0 < N <= ${MAX_TEST_MINUTES})`);
+  }
+  if (args['test-sink-minutes'] !== undefined) {
+    if (args['test-stream-minutes'] === undefined) problems.push('--test-sink-minutes needs --test-stream-minutes');
+    try { out.sinkMinutes = parseSinkMinutes(args['test-sink-minutes']); } catch (e) { problems.push(e.message); }
+  }
+  if (out.minutes !== null) {
+    try { out.budget = loadBudget(budgetFile); } catch (e) { problems.push(`live-test budget ${budgetFile}: ${e.message}`); }
+  }
+  return out;
+}
+
+/** Checks a configured plan against the live-test options (twitch present for the bandwidth test, sink limits name sinks). */
+export function liveTestPlanProblems(opts, sinks) {
+  const problems = [];
+  const streams = sinks.filter((s) => s.target?.transport !== 'file');
+  if (opts.bandwidthTest && !streams.some((s) => s.platform === 'twitch')) problems.push('--twitch-bandwidth-test: no twitch sink is configured (check --sinks)');
+  for (const id of Object.keys(opts.sinkMinutes)) {
+    if (!sinks.some((s) => s.id === id)) problems.push(`--test-sink-minutes: "${id}" is not a configured sink`);
+  }
+  return problems;
+}
+
+/** After the host configured the plan: every twitch stream sink must report bandwidthTest true (fail closed). */
+export function bandwidthTestProblems(outputs) {
+  const problems = [];
+  if (outputs?.twitchBandwidthTest !== true) problems.push('the host does not report twitchBandwidthTest (old host build?)');
+  const tw = (Array.isArray(outputs?.sinks) ? outputs.sinks : []).filter((s) => s.kind === 'stream' && s.platform === 'twitch');
+  if (!tw.length) problems.push('no twitch sink in outputs.status');
+  for (const s of tw) if (s.bandwidthTest !== true) problems.push(`twitch sink ${s.id} is not in bandwidth-test mode`);
+  return problems;
 }
 
 // A discovery file left by a killed host (its pid is gone) is removed; one whose pid still runs is kept.
@@ -291,7 +355,7 @@ async function alphaStatus(client) {
     console.log(`[studio] outputs: real targets ${o.allowLive === true ? 'ALLOWED (--live)' : 'off'}; ${sinks.length} sink(s)${sinks.length ? '' : ' (no plan; real targets need --live)'}`);
     for (const s of sinks) {
       if (s.kind === 'stream') {
-        console.log(`[studio]   sink ${s.id}: ${s.platform} ${s.target ?? ''}, keyPresent ${yn(s.keyPresent)}${Object.hasOwn(s, 'urlPresent') ? `, urlPresent ${yn(s.urlPresent)}` : ''}, ${s.state}`);
+        console.log(`[studio]   sink ${s.id}: ${s.platform} ${s.target ?? ''}, keyPresent ${yn(s.keyPresent)}${Object.hasOwn(s, 'urlPresent') ? `, urlPresent ${yn(s.urlPresent)}` : ''}${s.bandwidthTest === true ? ', TWITCH BANDWIDTH TEST (not broadcast)' : ''}, ${s.state}`);
       } else console.log(`[studio]   sink ${s.id}: ${s.kind} ${s.container ?? ''}, ${s.state}`);
     }
   } catch (e) { console.log(`[studio] outputs status unavailable: ${e.message}`); }
@@ -461,6 +525,8 @@ export async function main(argv = process.argv.slice(2)) {
   const feedbackDir = typeof args['feedback-dir'] === 'string' ? path.resolve(args['feedback-dir']) : DEFAULT_FEEDBACK_DIR;
   const hk = hotkeyOverrides(args);
   if (hk.problems.length) { for (const p of hk.problems) console.log(`[studio] ${p}`); return 2; }
+  const lt = liveTestOptions(args, { alpha });
+  if (lt.problems.length) { for (const p of lt.problems) console.log(`[studio] ${p}`); return 2; }
   const probe = process.env.UJWALAM_ALPHA_FEEDBACK_PROBE === '1';
   if (probe && (!alpha || args['no-open'] !== true)) { console.log('[studio] UJWALAM_ALPHA_FEEDBACK_PROBE needs --alpha and --no-open'); return 2; }
   const children = [];
@@ -527,8 +593,11 @@ export async function main(argv = process.argv.slice(2)) {
       // started. Real targets only with --live (alpha-live.json; the host then runs with --allow-live).
       const { planFile } = await import('../../app/host/lib/outputs-plan.mjs');
       let planned;
-      try { planned = planFile(planPath, { allowLive: args.live === true }); } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
+      try { planned = planFile(planPath, { allowLive: args.live === true, ...(lt.select ? { select: lt.select } : {}) }); } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
       const { params, report } = planned;
+      const ltp = liveTestPlanProblems(lt, params.sinks);
+      if (ltp.length) { for (const p of ltp) console.log(`[studio] ${p}`); await stopAll(); return 2; }
+      if (lt.select) console.log(`[studio] LIVE sinks: ${params.sinks.map((s) => s.id).join(', ')} (--sinks)`);
       if (args.live === true) console.log(`[studio] LIVE plan: ${path.relative(REPO, planPath)} (real targets configured, nothing started; start from the control page with "yes, on air")`);
       for (const w of report.warnings) console.log(`[studio] outputs plan warning: ${w.code}`);
       const f = path.join(hostCfg.dataDir, 'outputs-params.json');
@@ -564,6 +633,15 @@ export async function main(argv = process.argv.slice(2)) {
         alphaClient = new HostClient({ port: disc.port, token: hostToken });
         await alphaProject({ client: alphaClient, dataDir, args, hostCfg });
         await alphaStatus(alphaClient);
+        if (lt.bandwidthTest) {
+          const bp = bandwidthTestProblems(await alphaClient.call('outputs.status'));
+          if (bp.length) {
+            for (const p of bp) console.log(`[studio] TWITCH BANDWIDTH TEST NOT ACTIVE: ${p}; stopping (nothing was started)`);
+            await stopAll();
+            return 1;
+          }
+          console.log('[studio] twitch bandwidth test: ON for every twitch sink (the stream is received by Twitch, not broadcast)');
+        }
       } catch (e) {
         console.log(`[studio] alpha project failed: ${e.message}`);
         for (const x of (e.errors ?? e.details ?? []).slice(0, 10)) console.log(`[studio]   ${x.path ?? ''} ${x.message ?? x}`);
@@ -611,6 +689,24 @@ export async function main(argv = process.argv.slice(2)) {
     }, statsMs).unref();
     if (probe) {
       try { await feedbackProbe({ client: alphaClient, uiPort, launchKey }); } catch (e) { console.log(`[studio] feedback probe failed: ${e.message}`); }
+    }
+    if (lt.minutes !== null) {
+      // Live-test guard: never starts outputs; arms on the first stream started from the control page.
+      runGuard({ getClient: () => alphaClient, budget: lt.budget, minutes: lt.minutes, sinkMinutes: lt.sinkMinutes, isCancelled: () => stopping, log: (l) => console.log(`[studio] ${l}`) })
+        .then((r) => {
+          if (!r) return;
+          const stamp = stampOf(new Date());
+          const logsDir = path.join(dataDir, 'logs');
+          try {
+            mkdirSync(logsDir, { recursive: true });
+            writeFileSync(path.join(logsDir, `live-test-${stamp}.json`), `${JSON.stringify(r.report, null, 2)}\n`);
+            writeFileSync(path.join(logsDir, `live-test-${stamp}.txt`), r.text);
+            console.log(`[studio] live-test report: ${path.join(logsDir, `live-test-${stamp}.json`)} (and .txt)`);
+          } catch (e) { console.log(`[studio] WARNING: live-test report not written: ${e.message}`); }
+          for (const l of r.text.trimEnd().split('\n')) console.log(`[studio] ${l}`);
+          endSession(r.code);
+        })
+        .catch((e) => { console.log(`[studio] live-test guard failed: ${e.message}; stopping all outputs`); alphaClient.call('outputs.stop', {}).catch(() => {}).finally(() => endSession(GUARD_ABORT_EXIT)); });
     }
   }
   if (args['stop-on-stdin'] === true) {

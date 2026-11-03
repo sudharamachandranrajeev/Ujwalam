@@ -61,10 +61,10 @@ test('o2-loopback plan: YouTube 1440p60 H direct, one Multi rung 1920x1080@60 CB
 const ALPHA = path.join(REPO_ROOT, 'data', 'outputs', 'alpha-live.json');
 const alpha = () => planFile(ALPHA, { allowLive: true });
 
-test('alpha-live plan: YouTube H 1440p60 + V direct, Multi rung -> twitch + kick, mkv recording on yt-h; keyRefs only', () => {
+test('alpha-live plan: YouTube H 1080p60 17 Mbps (D182) + V direct, Multi rung -> twitch + kick, mkv recording on yt-h; keyRefs only', () => {
   const { params, live } = alpha();
   assert.deepEqual(params.rungs.map((r) => `${r.id}:${r.canvas}:${r.w}x${r.h}@${r.fps}:${r.rc}:${r.bitrate}`),
-    ['yt-h:H:2560x1440@60:cbr:34000', 'reencode-tk:H:1920x1080@60:cbr:6000', 'vert:V:1080x1920@60:cbr:7500']);
+    ['yt-h:H:1920x1080@60:cbr:17000', 'reencode-tk:H:1920x1080@60:cbr:6000', 'vert:V:1080x1920@60:cbr:7500']);
   const rungOf = Object.fromEntries(params.sinks.map((s) => [s.id, s.rung]));
   assert.deepEqual(rungOf, { 'youtube-h': 'yt-h', 'youtube-v': 'vert', twitch: 'reencode-tk', kick: 'reencode-tk', record: 'yt-h' });
   assert.deepEqual(live, ['youtube-h', 'youtube-v', 'twitch', 'kick']);
@@ -123,7 +123,7 @@ test('recording: .mkv by default; another container only when the target says un
 test('recording binds to an existing stream rung (no extra encoder) unless ownRung', () => {
   const { config, wrapper } = alpha();
   const c = structuredClone(config);
-  c.encoders.push({ id: 'rec-only', canvas: 'H', w: 2560, h: 1440, codec: 'h264', bitrate: 40000, rc: 'cbr', gop_sec: 2, encoder: 'nvenc' });
+  c.encoders.push({ id: 'rec-only', canvas: 'H', w: 1920, h: 1080, codec: 'h264', bitrate: 40000, rc: 'cbr', gop_sec: 2, encoder: 'nvenc' });
   c.sinks.find((s) => s.id === 'record').encoder = 'rec-only';
   assert.throws(() => plan(c, wrapper.targets, { allowLive: true }), /feeds no stream sink, so it would add an encoder/);
   const ok = plan(c, { ...wrapper.targets, record: { transport: 'file', name: 'alpha.mkv', ownRung: true } }, { allowLive: true });

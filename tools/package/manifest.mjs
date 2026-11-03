@@ -34,7 +34,7 @@ export const REPO_FILES = Object.freeze([
   'data/effects/guards.json',
   'data/moderation/blocklist.json', 'data/moderation/blocklist.schema.json',
   'data/overlays/feed-scopes.json',
-  'data/outputs/alpha-live.json',
+  'data/outputs/alpha-live.json', 'data/outputs/guard/live-test-budget.json',
   'data/schemas/project.schema.json',
   'data/profile.example.json', 'data/profile.schema.json',
   'data/release/alpha.json',

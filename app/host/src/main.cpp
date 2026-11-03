@@ -6,7 +6,7 @@
 // Usage:
 //   ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>] [--recordings <dir>]
 //                [--port <n>] [--project <file.json>] [--outputs <configure-params.json>] [--preview h,v]
-//                [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]
+//                [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live] [--twitch-bandwidth-test]
 //                [--host-config <file.json>] [--test-hooks]
 //                [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]
 //                 [--overlay-feed-port <n>] [--overlay-events-url http://127.0.0.1:<p>/<path>]]
@@ -14,6 +14,8 @@
 // from the overlay root and the read-only bridge feed, both on 127.0.0.1, never on 8093 (the real Streamer.bot).
 // --host-config (host_config.h): replay buffer, global hotkeys, feedback and markers folders, event-core system file.
 // --test-hooks enables hotkeys.trigger (tests only).
+// --twitch-bandwidth-test: keyed twitch sinks connect with "?bandwidthtest=true" appended to the stored key at connect
+// time (outputs.h); the credential is never changed.
 // Environment (the launcher's channel; values are never logged):
 //   UJWALAM_OBS_RUNTIME        runtime dir when --runtime is not given
 //   UJWALAM_HOST_TOKEN         api token (64 hex); generated when absent
@@ -126,7 +128,7 @@ void usage()
 	fprintf(stderr, "usage: ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>]\n"
 			"         [--recordings <dir>] [--port <n>] [--project <file.json>] [--outputs <file.json>]\n"
 			"         [--preview h,v] [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]\n"
-			"         [--host-config <file.json>] [--test-hooks]\n"
+			"         [--twitch-bandwidth-test] [--host-config <file.json>] [--test-hooks]\n"
 			"         [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]\n"
 			"          [--overlay-feed-port <n>] [--overlay-events-url <url>]]\n");
 }
@@ -180,6 +182,8 @@ int wmain(int argc, wchar_t **wargv)
 			app.allow_browser = true;
 		else if (a == "--allow-live") // A0: real stream targets (outputs.h); never used by CI
 			app.allow_live = true;
+		else if (a == "--twitch-bandwidth-test") // runtime-only Twitch bandwidth-test suffix (outputs.h)
+			app.twitch_bandwidth_test = true;
 		else if (a == "--host-config")
 			next(app.config_path);
 		else if (a == "--test-hooks") // hotkeys.trigger; tests only
@@ -381,9 +385,12 @@ int wmain(int argc, wchar_t **wargv)
 		f.allow_devices = app.allow_devices;
 		f.allow_browser = app.allow_browser;
 		app.studio = std::make_unique<Studio>(f);
-		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir, app.allow_live);
+		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir, app.allow_live,
+							app.twitch_bandwidth_test);
 		app.outputs->set_replay_config(app.config.replay);
 		hlog::info("real stream targets %s", app.allow_live ? "ALLOWED (--allow-live)" : "off (loopback only)");
+		hlog::info("twitch bandwidth test %s",
+			   app.twitch_bandwidth_test ? "ON (--twitch-bandwidth-test: twitch sinks are not broadcast)" : "off");
 		app.previews = std::make_unique<Previews>();
 		pc.system_file = app.config.core_system_file;
 		bool core_ready = !pc.system_file.empty() && rpc::is_token(pc.token);

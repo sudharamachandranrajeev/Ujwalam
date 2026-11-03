@@ -136,11 +136,34 @@ export function plan(config, targets, { platformsDir = PLATFORMS_DIR, policy, al
 
 // Reads a plan file: { "config": <O0 config> | "<path to O0 config>", "extraSinks": [<O0 sinks>], "targets": {...},
 // "policy": {...} }. extraSinks are appended to the config's sinks (e.g. a recording sink on a preset).
+// opts.select (launcher --sinks): ids of the plan's REAL sinks to keep; the other real sinks and their targets are
+// dropped before validation (a rung left without sinks is then not created). Loopback and file sinks always stay.
 export function planFile(file, opts = {}) {
+  const { select, ...rest } = opts;
   const w = JSON.parse(readFileSync(file, 'utf8'));
   const base = typeof w.config === 'string'
     ? JSON.parse(readFileSync(path.resolve(REPO_ROOT, w.config), 'utf8'))
     : w.config;
-  const config = w.extraSinks ? { ...base, sinks: [...base.sinks, ...w.extraSinks] } : base;
-  return { ...plan(config, w.targets ?? {}, { ...opts, policy: w.policy }), wrapper: w, config };
+  let config = w.extraSinks ? { ...base, sinks: [...base.sinks, ...w.extraSinks] } : base;
+  let targets = w.targets ?? {};
+  if (select !== undefined) {
+    const real = realSinkIds(config, targets);
+    if (!Array.isArray(select) || select.length === 0) throw new Error('select: give at least one real sink id');
+    for (const id of select) {
+      if (!real.includes(id)) throw new Error(`select: "${id}" is not a real sink of this plan (real sinks: ${real.join(', ') || 'none'})`);
+    }
+    if (new Set(select).size !== select.length) throw new Error('select: a sink id is given twice');
+    const drop = new Set(real.filter((id) => !select.includes(id)));
+    config = { ...config, sinks: config.sinks.filter((s) => !drop.has(s.id)) };
+    targets = Object.fromEntries(Object.entries(targets).filter(([id]) => !drop.has(id)));
+  }
+  return { ...plan(config, targets, { ...rest, policy: w.policy }), wrapper: w, config };
+}
+
+/** Ids of the sinks whose target is real (rtmp/rtmps with server or serverRef), in config order. */
+export function realSinkIds(config, targets) {
+  return (config.sinks ?? []).map((s) => s.id).filter((id) => {
+    const t = targets[id];
+    return t && (t.transport === 'rtmp' || t.transport === 'rtmps') && (t.server !== undefined || t.serverRef !== undefined);
+  });
 }

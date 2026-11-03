@@ -140,6 +140,7 @@ test('loopback keyRef: the stored key reaches the RTMP stream path, ffprobe pass
     assert.equal(keyed.target, 'loopback');
     assert.equal(keyed.keyRef, REF);
     assert.equal(keyed.keyPresent, true);
+    assert.equal(keyed.bandwidthTest, false, 'a twitch sink without --twitch-bandwidth-test gets the key unchanged');
     assert.equal(keyed.url, `rtmp://127.0.0.1:${PORT}/live/`);
     assert.equal(conf.sinks.find((s) => s.id === 'nokey').keyPresent, false);
     assert.ok(conf.warnings.some((w) => w.includes(MISSING)), 'configure warns about the missing key by target name');

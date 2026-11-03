@@ -14,6 +14,12 @@
 //     with --allow-live. The url comes from data/platforms ingest data via the plan; urlRef/keyRef name Windows
 //     Credential Manager targets (^Ujwalam/stream/[a-z0-9-]{1,32}$) the host reads in-process (stream_keys.h).
 //     No field ever takes a stream key; outputs.status shows keyRef and keyPresent only.
+//   Twitch bandwidth test (--twitch-bandwidth-test, runtime only): every keyed stream sink whose platform is "twitch"
+//     connects with "?bandwidthtest=true" appended to the key read from Credential Manager (Twitch: the stream is
+//     received but not broadcast). The suffix is added on the connect thread in the service's own key buffer; the
+//     stored credential is never changed and the suffix is never in obs_data, a log or a status (outputs.status shows
+//     bandwidthTest: true on those sinks). It is a process flag, not a configure field, so no later configure (UI,
+//     reload after a project load, a crash restart with the same argv) can drop it while the host runs.
 //   file: only inside the recordings dir; .mkv unless the target sets unsafeContainer: true (crash safety).
 //
 // Per sink: libobs keeps a per-output packet buffer; the drop policy is explicit (rtmp drop_threshold_ms /
@@ -45,7 +51,7 @@ class Studio;
 
 class Outputs {
 public:
-	Outputs(Studio &studio, std::string recordings_dir, bool allow_live = false);
+	Outputs(Studio &studio, std::string recordings_dir, bool allow_live = false, bool twitch_bandwidth_test = false);
 	~Outputs();
 
 	json::Value configure(const json::Value &params); // refused while any sink is active
@@ -94,6 +100,7 @@ public:
 	static void register_loopback_service(); // call once after module load (registers ujwalam_loopback + ujwalam_live)
 	static bool valid_live_url(const std::string &url, const std::string &transport);
 	bool allow_live() const { return allow_live_; }
+	bool twitch_bandwidth_test() const { return twitch_bw_test_; }
 
 	struct Sink;   // internal
 	struct Replay; // internal (replay.cpp)
@@ -119,6 +126,7 @@ private:
 	Studio &studio_;
 	std::string rec_dir_;
 	bool allow_live_ = false; // --allow-live: real targets may be configured and started
+	bool twitch_bw_test_ = false; // --twitch-bandwidth-test: twitch sinks connect with the bandwidth-test suffix
 	Policy policy_;
 	std::mutex op_m_;  // serialises libobs output start/stop/configure; never taken in signal handlers
 	mutable std::mutex m_; // sink state; taken in signal handlers; never held across obs_output_start/stop/release

@@ -11,6 +11,11 @@
 // 1500) after the discovery file is written. UJWALAM_FAKE_HOST_RECORDING=1 adds a record sink "record" that is live in
 // run 1 (idle in later runs until record.start). Each run's start and crash, and record.start / marker.add with their
 // params, are appended to <UJWALAM_FAKE_HOST_RECORD>.calls.jsonl.
+// Live-test guard simulation: UJWALAM_FAKE_HOST_STREAM_AFTER_MS=N makes every planned sink (streams and recordings) go
+// live N ms after start (as if the user started them with "yes, on air"), with 60 fps frame counters, 6000 kbps and
+// UJWALAM_FAKE_HOST_DROP_PCT % network-dropped and UJWALAM_FAKE_HOST_SKIP_PCT % encoder-skipped frames (default 0;
+// the skipped and render-lagged counters start above 0, as host-wide counters do); outputs.stop (logged with its params) stops them.
+// --twitch-bandwidth-test is reflected as bandwidthTest on twitch stream sinks, like the real host.
 import http from 'node:http';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -54,6 +59,22 @@ callLog({ event: 'start' });
 const save = () => writeFileSync(process.env.UJWALAM_FAKE_HOST_RECORD, JSON.stringify(record, null, 2));
 save();
 
+const streamAfter = process.env.UJWALAM_FAKE_HOST_STREAM_AFTER_MS === undefined ? null : Number(process.env.UJWALAM_FAKE_HOST_STREAM_AFTER_MS);
+const dropPct = Number(process.env.UJWALAM_FAKE_HOST_DROP_PCT ?? 0);
+const skipPct = Number(process.env.UJWALAM_FAKE_HOST_SKIP_PCT ?? 0);
+const t0 = Date.now();
+const stoppedAt = new Map(); // sink id -> ms since t0
+const sim = (s, base) => {
+  if (streamAfter === null) return base;
+  const now = Date.now() - t0;
+  const end = stoppedAt.get(s.id) ?? now;
+  const liveMs = Math.max(0, end - streamAfter);
+  if (now < streamAfter) return base;
+  const frames = Math.floor(liveMs * 0.06);
+  return { ...base, state: stoppedAt.has(s.id) ? 'stopped' : 'live', totalFrames: frames, droppedFrames: base.kind === 'stream' ? Math.floor((frames * dropPct) / 100) : 0, bytes: Math.floor(liveMs * 750), retries: 0, lastCode: 0,
+    encoderSkippedFrames: 100 + Math.floor((frames * skipPct) / 100), renderLaggedFrames: 7 };
+};
+
 const methods = {
   'host.shutdown': () => { setTimeout(() => { save(); process.exit(0); }, 50); return { shuttingDown: true }; },
   'overlay.status': () => ({ state: 'ready', staticPort: 50101, feedPort: 50102, eventFeed: argv.includes('--overlay-events-url'), childHasEventToken: record.eventTokenOk, browserAllowed: argv.includes('--allow-browser') }),
@@ -81,16 +102,24 @@ const methods = {
   'log.tail': () => ({ lines: [], total: 0, capacity: 1000 }),
   'record.start': (p) => { callLog({ method: 'record.start', params: p }); recordState = 'live'; return { started: p.sinks ?? [] }; },
   'marker.add': (p) => { callLog({ method: 'marker.add', params: p }); return { marker: { v: 1, source: p.source, note: p.note }, file: 'fake.jsonl' }; },
+  'outputs.stop': (p) => {
+    callLog({ method: 'outputs.stop', params: p });
+    const ids = Array.isArray(p.sinks) && p.sinks.length ? p.sinks : (outputs?.sinks ?? []).map((s) => s.id);
+    for (const id of ids) if (!stoppedAt.has(id)) stoppedAt.set(id, Date.now() - t0);
+    return { stopped: ids };
+  },
   'host.info': () => ({ name: 'ujwalam-host', version: 'fake', obsVersion: '0.0.0', adapter: 'fake adapter', encoders: ['fake_enc'], run }),
   'host.status': () => ({ run, uptimeMs: 1 }),
   'outputs.status': () => ({
     allowLive: argv.includes('--allow-live'),
+    twitchBandwidthTest: argv.includes('--twitch-bandwidth-test'),
     sinks: [...(withRecordSink ? [{ id: 'record', kind: 'record', platform: 'local', container: 'mkv', path: 'C:/fake/rec.mkv', state: recordState }] : []), ...(outputs?.sinks ?? []).map((s) => {
       const t = s.target ?? {};
-      if (s.proto === 'file') return { id: s.id, kind: 'record', platform: s.platform, container: 'mkv', state: 'idle' };
+      if (s.proto === 'file') return sim(s, { id: s.id, kind: 'record', platform: s.platform, container: 'mkv', state: 'idle' });
       const o = { id: s.id, kind: 'stream', platform: s.platform, target: t.keyRef || t.urlRef ? 'live' : 'loopback', keyRef: t.keyRef ?? null, keyPresent: t.keyRef ? false : null, state: 'idle' };
       if (t.urlRef) Object.assign(o, { urlRef: t.urlRef, urlPresent: false });
-      return o;
+      o.bandwidthTest = argv.includes('--twitch-bandwidth-test') && s.platform === 'twitch' && Boolean(t.keyRef);
+      return sim(s, o);
     })],
   }),
   'hotkeys.status': () => ({

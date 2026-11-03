@@ -1,0 +1,23 @@
+{
+  "$comment": "Stop budget for a guarded private test stream (services/studio-ui/live-guard.mjs; launcher --test-stream-minutes). The guard stops ALL outputs (streams and recording) and ends with a non-zero exit when a started sink fails, stays not-live (starting or reconnecting) longer than notLiveMaxSec, or a stream sink's lost frames pass either limit. Lost frames = network-dropped (libobs output, per sink) + encoder-skipped (the sink's root video) + render-lagged (the compositor), each also reported separately; loss % = lost / (sent + skipped + lagged). These are stop-the-test thresholds approved by the user, not quality targets and not platform limits: no platform publishes a dropped-frame limit (data/platforms/*.json have none), and the 2 h quality budget PB-04 (<= 0.5 %, docs/architecture/performance-budgets.md) is stricter and UNVERIFIED. Values change here, never in code.",
+  "v": 1,
+  "status": "user-approved",
+  "source": "user decision 2026-11-03 (relayed by the main session) for the first 15-minute private test stream: stop above 1 % over the run after the first 30 s, or 3 % in any 10 s window, counting encoder-skipped and render-lagged frames as well as network drops; pollMs, notLiveMaxSec (10 s reconnecting), windowMinFrames and stopWaitSec from the agent brief of the same day; not from platform documentation",
+  "checked": "2026-11-03",
+  "pollMs": 2000,
+  "notLiveMaxSec": 10,
+  "dropped": {
+    "cumulativePct": 1.0,
+    "graceSec": 30,
+    "windowPct": 3.0,
+    "windowSec": 10,
+    "windowMinFrames": 60
+  },
+  "stopWaitSec": 20,
+  "notes": {
+    "cumulativePct": "per stream sink: lost/(sent+skipped+lagged) over the frames after the first graceSec of being live (connect-time losses excluded) above this stops the test",
+    "windowPct": "per stream sink: lost/(sent+skipped+lagged) over any windowSec span (from the first live second) above this stops the test; spans with fewer than windowMinFrames frames are not judged",
+    "notLiveMaxSec": "a started sink in starting or retrying (disconnected, reconnecting) for longer than this stops the test; failed, or stopped outside the guard, stops it at once",
+    "stopWaitSec": "after outputs.stop the guard waits this long for every sink to report stopped before it reports"
+  }
+}

@@ -77,6 +77,7 @@ struct Outputs::Sink {
 	bool live_target = false; // a real ingest (--allow-live only)
 	std::string key_ref;      // Credential Manager target holding the stream key (never the key)
 	std::string url_ref;      // Credential Manager target holding a per-account ingest URL (live only)
+	bool bandwidth_test = false; // twitch + keyRef + --twitch-bandwidth-test: key gets ?bandwidthtest=true at connect
 	bool key_present = false, url_present = false; // last presence check (configure, each start attempt)
 	std::string file_base, file_ext, path;
 	Rung *rung = nullptr;
@@ -199,6 +200,7 @@ std::atomic<bool> g_allow_live{false};
 
 struct Svc {
 	bool live = false;
+	bool bw_test = false; // append kBwSuffix to the key on the connect thread (Twitch bandwidth test)
 	std::string protocol, url, stream, key_ref, url_ref;
 	std::mutex m;
 	char key[streamkeys::kCap] = {};
@@ -224,6 +226,20 @@ const char *svc_name_live(void *)
 	return "Ujwalam live";
 }
 
+// Twitch bandwidth-test mode: appended to the stream key at connect time only (runtime, never stored).
+constexpr char kBwSuffix[] = "?bandwidthtest=true";
+
+// Appends kBwSuffix to key[0..len) in place. False (the caller wipes the key) when the key already carries a query or
+// the result would not fit: never guess how to merge, never truncate.
+bool append_bw_suffix(char *key, size_t cap, size_t len)
+{
+	constexpr size_t n = sizeof(kBwSuffix) - 1;
+	if (len == 0 || memchr(key, '?', len) || len + n >= cap)
+		return false;
+	memcpy(key + len, kBwSuffix, n + 1);
+	return true;
+}
+
 void svc_apply(Svc *s, obs_data_t *settings)
 {
 	s->protocol = obs_data_get_string(settings, "protocol");
@@ -231,6 +247,7 @@ void svc_apply(Svc *s, obs_data_t *settings)
 	s->stream = obs_data_get_string(settings, "stream");
 	s->key_ref = obs_data_get_string(settings, "key_ref");
 	s->url_ref = obs_data_get_string(settings, "url_ref");
+	s->bw_test = obs_data_get_bool(settings, "bandwidth_test");
 }
 
 void *svc_create_loop(obs_data_t *settings, obs_service_t *)
@@ -293,8 +310,9 @@ const char *svc_connect_info(void *d, uint32_t type)
 			return "";
 		if (s->key_ref.empty())
 			return s->stream.c_str(); // loopback stream name (not a secret)
-		if (streamkeys::read(s->key_ref, s->key, sizeof(s->key), len) != streamkeys::Read::Ok)
-			streamkeys::wipe(s->key, sizeof(s->key));
+		if (streamkeys::read(s->key_ref, s->key, sizeof(s->key), len) != streamkeys::Read::Ok ||
+		    (s->bw_test && !append_bw_suffix(s->key, sizeof(s->key), len)))
+			streamkeys::wipe(s->key, sizeof(s->key)); // empty key: the connect fails (never a key without the suffix)
 		return s->key;
 	default:
 		return nullptr;
@@ -538,8 +556,9 @@ void Outputs::schedule_retry_locked(Sink &s, int64_t now)
 
 // ---- lifecycle -------------------------------------------------------------------------------------------
 
-Outputs::Outputs(Studio &studio, std::string recordings_dir, bool allow_live)
-	: studio_(studio), rec_dir_(std::move(recordings_dir)), allow_live_(allow_live)
+Outputs::Outputs(Studio &studio, std::string recordings_dir, bool allow_live, bool twitch_bandwidth_test)
+	: studio_(studio), rec_dir_(std::move(recordings_dir)), allow_live_(allow_live),
+	  twitch_bw_test_(twitch_bandwidth_test)
 {
 	g_allow_live = allow_live;
 	sup_ = std::thread([this] { supervise(); });
@@ -1027,6 +1046,7 @@ json::Value Outputs::build(const json::Value &params)
 		}
 		if (s.kind == "record" && s.proto != "file")
 			throw Error(rpc::INVALID_PARAMS, what + ": a file target needs proto \"file\"");
+		s.bandwidth_test = twitch_bw_test_ && s.kind == "stream" && s.platform == "twitch" && !s.key_ref.empty();
 		if (s.kind == "stream" && s.proto == "file")
 			throw Error(rpc::INVALID_PARAMS, what + ": proto \"file\" needs a file target");
 		if (s.kind == "stream" && s.rung->codec != "h264" && (s.transport == "rtmp" || s.transport == "rtmps"))
@@ -1170,6 +1190,7 @@ json::Value Outputs::build(const json::Value &params)
 				obs_data_set_string(ss, "stream", s.stream_name.c_str());
 				obs_data_set_string(ss, "key_ref", s.key_ref.c_str());
 				obs_data_set_string(ss, "url_ref", s.url_ref.c_str());
+				obs_data_set_bool(ss, "bandwidth_test", s.bandwidth_test); // a flag only, never the suffixed key
 				std::string sname = "ujw:svc:" + s.id;
 				s.svc = obs_service_create_private(s.live_target ? "ujwalam_live" : "ujwalam_loopback",
 								   sname.c_str(), ss);
@@ -1423,6 +1444,7 @@ json::Value Outputs::sink_json(const Sink &s) const
 		o.set("target", s.live_target ? "live" : "loopback");
 		o.set("keyRef", s.key_ref.empty() ? json::Value() : json::Value(s.key_ref));
 		o.set("keyPresent", s.key_ref.empty() ? json::Value() : json::Value(s.key_present));
+		o.set("bandwidthTest", s.bandwidth_test);
 		if (!s.url_ref.empty()) {
 			o.set("urlRef", s.url_ref);
 			o.set("urlPresent", s.url_present);
@@ -1446,6 +1468,15 @@ json::Value Outputs::sink_json(const Sink &s) const
 		o.set("totalFrames", obs_output_get_total_frames(s.out));
 		o.set("droppedFrames", obs_output_get_frames_dropped(s.out));
 		o.set("bytes", bytes);
+		// Lost frames that never reach this output (live-test guard; cumulative, not reset per sink start):
+		// encoder-skipped = the skipped-frame counter of the root video the sink's rung encodes from (libobs counts
+		// frames the encoder could not take, including NVENC texture-encode skips, on the canvas root video); render-
+		// lagged = compositor frames that missed their slot (host-wide).
+		video_t *ev = s.rung && s.rung->enc ? obs_encoder_video(s.rung->enc) : nullptr;
+		o.set("encoderSkippedFrames", ev ? json::Value((uint64_t)video_output_get_skipped_frames(ev)) : json::Value());
+		o.set("encoderTotalFrames", ev ? json::Value((uint64_t)video_output_get_total_frames(ev)) : json::Value());
+		o.set("renderLaggedFrames", (uint64_t)obs_get_lagged_frames());
+		o.set("renderTotalFrames", (uint64_t)obs_get_total_frames());
 		if (s.kind == "stream") {
 			o.set("congestion", (double)obs_output_get_congestion(s.out));
 			o.set("connectTimeMs", obs_output_get_connect_time_ms(s.out));
@@ -1472,6 +1503,7 @@ json::Value Outputs::status() const
 	json::Value r = json::Value::object();
 	r.set("configured", !sinks_.empty());
 	r.set("allowLive", allow_live_);
+	r.set("twitchBandwidthTest", twitch_bw_test_);
 	r.set("configuredAt", configured_at_.empty() ? json::Value() : json::Value(configured_at_));
 	json::Value rungs = json::Value::array();
 	for (auto &rp : rungs_) {
