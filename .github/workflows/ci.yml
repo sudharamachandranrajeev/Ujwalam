@@ -30,6 +30,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
+          # The laptop runs 26.x. A 22.x run (2026-11-03, run 41731910764) failed 75 tests and cancelled 45 more, mostly
+          # in the event-core audit/SQLite and data-dir ACL tests; the engines floor (>=22.13) stays UNVERIFIED.
+          node-version: '26.x'
       - run: npm ci
       - run: npm run ci
