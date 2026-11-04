@@ -15,18 +15,18 @@ The OCR packages below are not bundled: they live in the project-local, gitignor
 | FFmpeg (OBS build) | `avcodec`, `avformat`, `avutil`, `avfilter`, `avdevice`, `swresample`, `swscale` | **GPL-3.0-or-later** (verified 2026-11-05: `avcodec-61.dll`'s own build-config string has `--enable-gpl --enable-version3`, no `--enable-nonfree`; see `docs/evidence/2026-11-05-licence-verification.md`) | Verified |
 | x264 | `libx264-*.dll` | GPL-2.0-or-later | from obs-deps; build 164 confirmed |
 | Qt 6 | `Qt6Core`, `Qt6Gui`, `Qt6Widgets` (obs-browser and obs-frontend-api import them; no Qt plugins ship) | LGPL-3.0-only, version **6.8.3 confirmed** (2026-11-05) | Relinking compliance note: `docs/notices-qt-relinking.md`. LGPL-3.0 + GPL-3.0 texts now checked in at `docs/licenses/`; `tools/package/build-alpha.mjs` still needs to copy them into the zip's `notices/` |
-| CEF / Chromium (obs-browser) | `libcef.dll`, `chrome_elf.dll`, `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `libEGL`, `libGLESv2`, `locales/en-US.pak` only | BSD-3-Clause (CEF) plus the Chromium third-party licences | UNVERIFIED: the runtime has no CEF credits file, so the zip carries none |
+| CEF / Chromium (obs-browser) | `libcef.dll`, `chrome_elf.dll`, `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `libEGL`, `libGLESv2`, `locales/en-US.pak` only | BSD-3-Clause (CEF, verified verbatim) plus Chromium's bundled third-party licences (best-available source, 2026-11-05) | `docs/licenses/CEF-LICENSE.txt` + `CEF-CHROMIUM-CREDITS-source.md`; platform/version caveat and recommended exact-match steps: `docs/evidence/2026-11-05-cef-credits-sourcing.md` |
 | zlib, curl, SRT, librist, libdatachannel, LuaJIT | as imported | Zlib; curl (MIT-style); MPL-2.0; BSD-2-Clause; MPL-2.0; MIT | from obs-deps; not re-checked |
 
 Not shipped: Microsoft fonts, `legacy/`, any font file, `.pdb` symbols, disabled modules (obs-websocket, win-capture, rtmp-services, VST and others), Qt plugins, the frontend's data and scripting files, and CEF locales other than en-US. The Visual C++ runtime and `d3dcompiler_47.dll` are not bundled either: they are system prerequisites, and the installer checks the VC++ runtime.
 
 Before a build goes to anyone other than the user: check each remaining
 UNVERIFIED row, confirm the source offer (`docs/plan/2026-10-29-v1-decisions.md`,
-D133). **Open since 2026-11-05 (see `docs/evidence/2026-11-05-licence-verification.md`):**
-the FFmpeg GPL-3.0-or-later finding conflicts with the top-level `LICENSE`
-file (currently GPL-2.0 text, set by D212) — needs review before
-distribution, not yet resolved. CEF/Chromium credits text also still
-missing; no source found in the shipped runtime.
+D133). **Resolved 2026-11-05:** the LICENSE vs FFmpeg conflict (now
+GPL-3.0-or-later project-wide) and CEF/Chromium credits (best-available
+source checked in, platform/version caveat documented) — see
+`docs/evidence/2026-11-05-licence-verification.md` and
+`docs/evidence/2026-11-05-cef-credits-sourcing.md`.
 
 ## OCR worker (P2a A5, installed 2026-10-27)
 

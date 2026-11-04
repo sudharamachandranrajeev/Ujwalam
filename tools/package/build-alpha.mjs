@@ -229,6 +229,12 @@ export async function buildAlpha(opts = {}) {
     put('notices/LGPL-3.0.txt', 'generated', { src: path.join(REPO, 'docs', 'licenses', 'LGPL-3.0.txt') });
     const gplv2 = [path.join(runtime, 'data', 'obs-studio', 'license', 'gplv2.txt'), cfg.obsSource && path.join(cfg.obsSource, 'COPYING')].find((f) => f && existsSync(f));
     if (gplv2) put('notices/GPL-2.0.txt', 'generated', { src: gplv2 }); // informational: OBS's own bundled text, OBS itself is "-or-later" so GPL-3.0 governs the combined package
+    // CEF/Chromium: no equivalent text ships in the OBS runtime either. Checked in at docs/licenses/
+    // (sourcing + platform/version caveat: docs/evidence/2026-11-05-cef-credits-sourcing.md).
+    if (obs.files.some((f) => /libcef\.dll$/i.test(f.dest))) {
+      put('notices/CEF-LICENSE.txt', 'generated', { src: path.join(REPO, 'docs', 'licenses', 'CEF-LICENSE.txt') });
+      put('notices/CEF-CHROMIUM-CREDITS-source.md', 'generated', { src: path.join(REPO, 'docs', 'licenses', 'CEF-CHROMIUM-CREDITS-source.md') });
+    }
     put('notices/SOURCE-OFFER.txt', 'generated', { text: sourceOffer({ version, commit, obs: rel.obsRuntime }) });
     const tp = ['Third-party components in this package (OBS runtime subset). Licence status as recorded; UNVERIFIED items need checking before any distribution.', ''];
     const byComp = new Map();
