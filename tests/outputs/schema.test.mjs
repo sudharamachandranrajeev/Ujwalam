@@ -48,7 +48,7 @@ for (const f of platformFiles) {
   // A0 (2026-11-03): a source that is not an official page is allowed only on a value marked unverified:true
   // (e.g. the YouTube ingest URL, taken from OBS services.json because the official page prints none).
   test(`platform ${name}: sources are official https URLs or "ujwalam" (others only on unverified values)`, () => {
-    const official = (s) => s === 'ujwalam' || s === 'user-reference-2026-10-27' || s === 'legacy-observed' || /^https:\/\/(support\.google\.com|blog\.twitch\.tv|dev\.twitch\.tv|help\.twitch\.tv|help\.kick\.com|docs\.kick\.com)\//.test(s);
+    const official = (s) => s === 'ujwalam' || s === 'user-reference-2026-10-27' || s === 'legacy-observed' || /^https:\/\/(support\.google\.com|blog\.twitch\.tv|dev\.twitch\.tv|help\.twitch\.tv|ingest\.twitch\.tv|help\.kick\.com|docs\.kick\.com)\//.test(s);
     const bad = [];
     const walk = (o, p) => {
       if (!o || typeof o !== 'object') return;
@@ -94,8 +94,9 @@ test('schema: rejects unknown codec and bad proto', () => {
   assert.equal(configSchema(b), false);
 });
 
-// A0 (2026-11-03): platform files may carry public ingest URLs, but only as ingest.value.servers[].url and
-// ingest.value.urlFormat (no query, no credentials). Presets and every other part of a platform file stay URL-free.
+// A0 (2026-11-03): platform files may carry public ingest URLs, but only as ingest.value.servers[].url,
+// ingest.value.urlFormat and ingest.value.urlFormatSecure (no query, no credentials). Presets and every other part
+// of a platform file stay URL-free.
 const URL_RE = /(rtmps?|srt):\/\//i;
 test('presets and platform files contain no stream keys; ingest URLs only under platform ingest', () => {
   for (const f of [...presetFiles, ...platformFiles]) {
@@ -107,9 +108,9 @@ test('presets and platform files contain no stream keys; ingest URLs only under 
     assert.ok(!URL_RE.test(JSON.stringify(j)), `${f}: URL outside ingest`);
     if (!ingest) continue;
     assert.ok(platformFiles.includes(f), `${f}: ingest only in platform files`);
-    const { servers = [], urlFormat, ...rest } = ingest.value;
-    assert.ok(!URL_RE.test(JSON.stringify(rest)), `${f}: ingest URL outside servers/urlFormat`);
-    for (const u of [...servers.map((s) => s.url), ...(urlFormat ? [urlFormat] : [])]) {
+    const { servers = [], urlFormat, urlFormatSecure, ...rest } = ingest.value;
+    assert.ok(!URL_RE.test(JSON.stringify(rest)), `${f}: ingest URL outside servers/urlFormat/urlFormatSecure`);
+    for (const u of [...servers.map((s) => s.url), ...(urlFormat ? [urlFormat] : []), ...(urlFormatSecure ? [urlFormatSecure] : [])]) {
       assert.ok(!/[?@]/.test(u), `${f}: ingest URL with query or credentials: ${u}`);
     }
     for (const s of servers) {

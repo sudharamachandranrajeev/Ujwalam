@@ -80,7 +80,7 @@
       "id": "twitch",
       "platform": "twitch",
       "encoder": "reencode-tk",
-      "proto": "rtmp",
+      "proto": "rtmps",
       "priority": 3
     },
     {

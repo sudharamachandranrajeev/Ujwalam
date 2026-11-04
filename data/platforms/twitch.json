@@ -68,12 +68,13 @@
   },
   "protocols": {
     "value": [
-      "rtmp"
+      "rtmp",
+      "rtmps"
     ],
     "severity": "warning",
-    "source": "https://dev.twitch.tv/docs/video-broadcast/",
-    "checked": "2026-10-26",
-    "note": "Page names RTMP only. RTMPS availability UNVERIFIED."
+    "source": "https://ingest.twitch.tv/ingests",
+    "checked": "2026-11-04",
+    "note": "RTMPS confirmed live: every ingest entry's live API response carries both a plain template and a 'secure' template (same host, scheme swapped, no port — default 1935 plain / 443 secure). Resolves D148's open item (key previously went unencrypted in transit). The literal template strings live only under ingest.value (urlFormat / urlFormatSecure), per the URL-placement rule below."
   },
   "multitrackVideo": {
     "value": true,
@@ -151,11 +152,12 @@
     "value": {
       "serverFrom": "keychain",
       "servers": [],
-      "urlFormat": "rtmp://<ingest-server>/app"
+      "urlFormat": "rtmp://<ingest-server>/app",
+      "urlFormatSecure": "rtmps://<ingest-server>/app"
     },
     "severity": "warning",
-    "source": "https://dev.twitch.tv/docs/video-broadcast/",
-    "checked": "2026-11-03",
-    "note": "Page: URL format \"rtmp://<ingest-server>/app/<stream-key>\"; the server list comes from the Get Ingest Server API. The user picks the server and stores its URL in Credential Manager (serverRef), so no server is hardcoded here."
+    "source": "https://dev.twitch.tv/docs/video-broadcast/ and https://ingest.twitch.tv/ingests",
+    "checked": "2026-11-04",
+    "note": "Page: URL format \"rtmp://<ingest-server>/app/<stream-key>\"; the live ingests endpoint additionally gives url_template_secure (\"rtmps://<ingest-server>/app/<stream-key>\") for every server, same host. The user picks the server and stores its URL (now rtmps, same host as before) in Credential Manager (serverRef), so no server is hardcoded here."
   }
 }

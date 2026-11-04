@@ -71,7 +71,7 @@ test('alpha-live plan: YouTube H 1080p60 17 Mbps (D182) + V direct, Multi rung -
   const t = Object.fromEntries(params.sinks.map((s) => [s.id, s.target]));
   assert.deepEqual(t['youtube-h'], { transport: 'rtmps', url: 'rtmps://a.rtmps.youtube.com:443/live2', keyRef: 'Ujwalam/stream/youtube-h' });
   assert.deepEqual(t.kick, { transport: 'rtmps', urlRef: 'Ujwalam/stream/kick-server', keyRef: 'Ujwalam/stream/kick' });
-  assert.deepEqual(t.twitch, { transport: 'rtmp', urlRef: 'Ujwalam/stream/twitch-server', keyRef: 'Ujwalam/stream/twitch' });
+  assert.deepEqual(t.twitch, { transport: 'rtmps', urlRef: 'Ujwalam/stream/twitch-server', keyRef: 'Ujwalam/stream/twitch' });
   assert.deepEqual(t.record, { transport: 'file', name: 'alpha.mkv' });
   const text = readFileSync(ALPHA, 'utf8');
   assert.equal(/"(key|streamKey|stream_key|password|secret)"\s*:/i.test(text), false, 'no key fields in the committed plan');
@@ -93,10 +93,10 @@ test('real target rules: keyRef name, server from data or serverRef, transport =
   assert.throws(() => go({ kick: { transport: 'rtmps', server: 'x', keyRef: 'Ujwalam/stream/kick' } }), /kick ingest servers are chosen per user\/account .* use serverRef/);
   assert.throws(() => go({ 'youtube-v': { transport: 'rtmps', server: 'primary-rtmps', keyRef: 'Ujwalam/stream/youtube-h' } }), /already used by sink "youtube-h"/);
   assert.throws(() => go({ kick: { transport: 'rtmps', serverRef: 'Ujwalam/stream/kick', keyRef: 'Ujwalam/stream/kick' } }), /must be different credentials/);
-  // a platform whose protocols do not include the transport (twitch: rtmp only per data/platforms/twitch.json)
+  // a platform whose protocols do not include the transport (kick: rtmps only per data/platforms/kick.json)
   const c2 = structuredClone(config);
-  c2.sinks.find((s) => s.id === 'twitch').proto = 'rtmps';
-  assert.throws(() => plan(c2, { ...wrapper.targets, twitch: { transport: 'rtmps', serverRef: 'Ujwalam/stream/twitch-server', keyRef: 'Ujwalam/stream/twitch' } }, { allowLive: true }), /twitch does not take rtmps/);
+  c2.sinks.find((s) => s.id === 'kick').proto = 'rtmp';
+  assert.throws(() => plan(c2, { ...wrapper.targets, kick: { transport: 'rtmp', serverRef: 'Ujwalam/stream/kick-server', keyRef: 'Ujwalam/stream/kick' } }, { allowLive: true }), /kick does not take rtmp/);
   assert.throws(() => go({ kick: { transport: 'rtmps', port: 19453, app: 'live', stream: 'kick' } }), /an rtmps target is a real target/);
 });
 

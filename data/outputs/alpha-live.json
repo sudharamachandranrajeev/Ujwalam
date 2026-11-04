@@ -7,7 +7,7 @@
   "targets": {
     "youtube-h": { "transport": "rtmps", "server": "primary-rtmps", "keyRef": "Ujwalam/stream/youtube-h" },
     "youtube-v": { "transport": "rtmps", "server": "primary-rtmps", "keyRef": "Ujwalam/stream/youtube-v" },
-    "twitch": { "transport": "rtmp", "serverRef": "Ujwalam/stream/twitch-server", "keyRef": "Ujwalam/stream/twitch" },
+    "twitch": { "transport": "rtmps", "serverRef": "Ujwalam/stream/twitch-server", "keyRef": "Ujwalam/stream/twitch" },
     "kick": { "transport": "rtmps", "serverRef": "Ujwalam/stream/kick-server", "keyRef": "Ujwalam/stream/kick" },
     "record": { "transport": "file", "name": "alpha.mkv" }
   },
