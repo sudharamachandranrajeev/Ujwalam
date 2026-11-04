@@ -20,9 +20,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The non-test cloud steps. The `test` step is left out here and runs per file in the `test` matrix below, because
+  # the whole suite hung on the runner (runs 41736001699 and 41793694256 hit the 30 and 60 min job limits).
   ci:
     runs-on: windows-latest
-    timeout-minutes: 60 # the 26.x probe (run 41736001699) was still in `test` at 30 min
+    timeout-minutes: 10
     env:
       UJWALAM_CI_ENV: cloud
       UJWALAM_HEADLESS: '1'
@@ -34,4 +36,39 @@ jobs:
           # in the event-core audit/SQLite and data-dir ACL tests; the engines floor (>=22.13) stays UNVERIFIED.
           node-version: '26.x'
       - run: npm ci
-      - run: npm run ci
+      - run: node tools/ci.mjs --only lint,validate-outputs,validate-games,stray-mocks
+
+  # The same files `npm test` runs (tests/*.test.mjs, tests/outputs/*.test.mjs), as a list for the matrix.
+  list:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    outputs:
+      files: ${{ steps.files.outputs.files }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: files
+        shell: pwsh
+        run: |
+          $f = @(Get-ChildItem tests/*.test.mjs, tests/outputs/*.test.mjs | ForEach-Object { (Resolve-Path -Relative $_.FullName).Replace('\', '/').TrimStart('./') })
+          "files=$(ConvertTo-Json -Compress -InputObject $f)" >> $env:GITHUB_OUTPUT
+
+  # One job per test file, so a hang is cut at 5 min and named. Each test's name is printed when it starts
+  # (tools/test-start-reporter.mjs) and again with its result (spec reporter).
+  test:
+    needs: list
+    runs-on: windows-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        file: ${{ fromJson(needs.list.outputs.files) }}
+    env:
+      UJWALAM_CI_ENV: cloud
+      UJWALAM_HEADLESS: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.x'
+      - run: npm ci
+      - run: node --test --test-timeout=240000 --test-reporter=./tools/test-start-reporter.mjs --test-reporter-destination=stdout --test-reporter=spec --test-reporter-destination=stdout "${{ matrix.file }}"
