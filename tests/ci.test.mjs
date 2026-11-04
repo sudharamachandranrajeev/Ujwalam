@@ -56,6 +56,16 @@ test('runSteps continues after a failure, reports every step, keeps output', asy
   assert.ok(lines.some((l) => l.includes('| boom')));
 });
 
+test('a failed step lists its TAP "not ok" tests with the first error line', async () => {
+  const tap = ['ok 1 - fine', 'not ok 2 - breaks', '  ---', "  error: 'expected 1, got 2'", '  ...', 'not ok 3 - silent', 'ok 4 - fine'].join('\\n');
+  const lines = [];
+  await runSteps([{ name: 't', ...node(`console.log("${tap}"); process.exit(1)`) }], { root: repo, log: (l) => lines.push(l) });
+  const text = lines.join('\n');
+  assert.match(text, /\| failing \(2\):/);
+  assert.match(text, /\| not ok 2 - breaks {2}=> 'expected 1, got 2'/);
+  assert.match(text, /\| not ok 3 - silent\n/);
+});
+
 test('CLI --list prints step names and runs nothing', () => {
   const r = cli(['--list'], repo);
   assert.equal(r.status, 0);

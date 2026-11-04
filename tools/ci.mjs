@@ -175,8 +175,18 @@ export async function runSteps(steps, { root = HERE, log = () => {}, tail = 30 }
     if (!res.ok) {
       const lines = res.output.trimEnd().split(/\r?\n/);
       // TAP "not ok" lines name the failing tests; the tail alone often shows only the summary.
-      const notOk = lines.filter((l) => /^\s*not ok \d+ /.test(l));
-      if (notOk.length) log([`    | failing (${notOk.length}):`, ...notOk.slice(0, 200).map((l) => `    | ${l.trim()}`)].join('\n'));
+      // Each one is followed by its YAML block; its first `error:` line says why (one line, cut at 200 chars).
+      const notOk = [];
+      lines.forEach((l, i) => {
+        if (!/^\s*not ok \d+ /.test(l)) return;
+        let why = '';
+        for (let j = i + 1; j < Math.min(lines.length, i + 40) && !/^\s*(not )?ok \d+ /.test(lines[j]); j++) {
+          const m = /^\s+error: (.*)$/.exec(lines[j]);
+          if (m) { why = m[1].trim().slice(0, 200); break; }
+        }
+        notOk.push(why ? `${l.trim()}  => ${why}` : l.trim());
+      });
+      if (notOk.length) log([`    | failing (${notOk.length}):`, ...notOk.slice(0, 200).map((l) => `    | ${l}`)].join('\n'));
       log(lines.slice(-tail).map((l) => `    | ${l}`).join('\n'));
     }
   }

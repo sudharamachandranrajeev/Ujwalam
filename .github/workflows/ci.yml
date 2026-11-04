@@ -22,7 +22,7 @@ concurrency:
 jobs:
   ci:
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 60 # the 26.x probe (run 41736001699) was still in `test` at 30 min
     env:
       UJWALAM_CI_ENV: cloud
       UJWALAM_HEADLESS: '1'
