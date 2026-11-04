@@ -136,6 +136,19 @@ test('refuses an API dump, a wrong version and non-sessions with a clear error',
   assert.throws(() => importMeld({ version: 1 }), /no "session" object/);
   assert.throws(() => importMeld([]), ImportError);
   assert.throws(() => importMeld({ version: 1, session: {} }), /scenes is missing/);
+  assert.throws(() => importMeld({ session: { scenes: [] } }), /schema version undefined/);
+  assert.throws(() => importMeld({ session: { version: 4, scenes: [] } }), /schema version 4/);
+});
+
+test('wrapper-less shape { session: { version: 3 } } imports the same as { version: 1, session } (D145)', () => {
+  const wrapped = session();
+  wrapped.session.version = 3;
+  const bare = { session: structuredClone(wrapped.session) };
+  const a = importMeld(wrapped, { id: 'x' });
+  const b = importMeld(bare, { id: 'x' });
+  assert.deepEqual(b.project, a.project);
+  assert.deepEqual([a.report.sessionVersion, a.report.sessionSchemaVersion], [1, 3]);
+  assert.deepEqual([b.report.sessionVersion, b.report.sessionSchemaVersion], [null, 3]);
 });
 
 test('vertical canvas disabled: V layers are skipped and listed, project is H only', () => {

@@ -82,14 +82,22 @@ export function importMeld(input, opts = {}) {
     throw new ImportError('this is a Meld API dump (apiVersion/items): it has no device ids or source kinds. Use the session file ({version, session}).');
   }
   if (!isObj(input.session)) throw new ImportError('not a Meld session file: no "session" object');
-  if (input.version !== 1) throw new ImportError(`unsupported Meld session version ${input.version} (only 1 has been seen)`);
+  // Two shapes seen (D145): the wrapped backup { version: 1, session: { version: 2|3, ... } } and the wrapper-less
+  // live file { session: { version: 3, ... } }. The outer version is the wrapper format, the inner one the session
+  // schema. Inner versions 2 and 3 have both been imported; anything else is refused rather than guessed.
+  const version = input.version;
+  const sessionVersion = input.session.version;
+  if (version !== undefined && version !== 1) throw new ImportError(`unsupported Meld session version ${version} (only 1 has been seen)`);
+  if (version === undefined && ![2, 3].includes(sessionVersion)) {
+    throw new ImportError(`unsupported Meld session schema version ${sessionVersion} (only 2 and 3 have been seen)`);
+  }
   const S = input.session;
   if (!Array.isArray(S.scenes)) throw new ImportError('session.scenes is missing');
   const vScenes = Array.isArray(S.verticalScenes) ? S.verticalScenes : [];
   const vEnabled = S.verticalCanvasEnabled === true && vScenes.length > 0;
 
   const report = {
-    importer: 'meld', sessionVersion: input.version, bases: {},
+    importer: 'meld', sessionVersion: version ?? null, sessionSchemaVersion: sessionVersion ?? null, bases: {},
     counts: { scenes: 0, verticalScenesMerged: 0, verticalScenesOnly: 0, layersSeen: 0, layersImported: 0, layersPaired: 0, layersHOnly: 0, layersVOnly: 0, devices: 0, audioSources: 0, overlays: 0 },
     skipped: [], skippedByKind: {}, ignored: {}, warnings: [], mapping: MAPPING,
   };
