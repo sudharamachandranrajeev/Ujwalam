@@ -39,6 +39,28 @@ Pinned `jev-1.13.0` (not `jev-latest` or `jev-preview`). `jev-1.14.0` has been o
 - Daily spend and call limits are in config. They are `null` (no cap) until the user sets them (2026-10-27).
 - Tokens and cost are logged per call. The monthly total is shown in the diagnostics view.
 
+### 5a. Lifetime cap and cutover (D207, 2026-11-04)
+
+The user's Jev balance is a fixed **5 USD total**, not a daily allowance. This is a cumulative lifetime
+cap, separate from (and in addition to) any daily/call limit set later.
+
+- `JevProvider` keeps a running lifetime-spend total in a local file (gitignored, e.g.
+  `<dataDir>/jev-spend.json`), updated after every call from the response's reported cost. The total
+  persists across restarts — never resets on a new day or a new session.
+- Before each call: if `lifetime_spent + estimated_call_cost > 5.00`, skip the call entirely (no partial
+  send) and route straight to `LocalProvider`, exactly like the existing offline/timeout/error fallback
+  path in §1.
+- Once the cap is reached, persist a flag (`jev_exhausted: true`) and stay on `LocalProvider`
+  permanently — do not keep probing Jev near the edge "just in case," and do not auto-resume on a new
+  day, a restart, or any schedule.
+- Log the cutover once, the moment it happens, in the diagnostics view ("Jev budget used, running on
+  LocalProvider"). No repeated warning on every subsequent decision.
+- Resuming Jev calls requires the user explicitly raising the figure (a top-up acknowledged in config or
+  this doc) — never automatic.
+- Because of this, `LocalProvider` must be a genuinely usable fallback, not a stub: the J2 evaluation
+  (§6.2) is what proves it is good enough to run on indefinitely after the 5 USD is spent, not just as a
+  brief gap-filler.
+
 ## 6. Before first use
 
 1. Docs and terms recorded with source and date: done in J0.
