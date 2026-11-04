@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Process priority rule (user decision 2026-10-28): `serve` sets itself to Normal (logged; a failure is reported, not
 // fatal); background children go to BelowNormal. The OS calls are faked, so the test runner's own priority is never
 // raised. Temp dirs only.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // P16a export-only posting: packager, ledger, text limits, store, CLI flag gate. Fixture run folder built in a temp dir
 // with a tiny ffmpeg-generated video (tests needing ffmpeg skip when it is missing). Placeholder names only; no network.
 import assert from 'node:assert/strict';

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Feature flags (alpha plan Part B, D149). Node stdlib only.
 //   defaults: data/flags.json (committed): { flags: [{ id, description, default, since }] }
 //   local state: <dataDir>/flags.local.json (gitignored): { flags: { <id>: true|false } }, written atomically.

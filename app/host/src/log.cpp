@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: logging (stdout + file + in-memory ring for log.tail). libobs messages arrive through
 // base_set_log_handler.
 #include "log.h"

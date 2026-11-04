@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // One-command launcher: event core, libobs host (when present) and the studio UI server, then the browser.
 // Usage: node services/studio-ui/launch.mjs [--data-dir DIR] [--mock] [--no-open] [--host-exe PATH] [--fake-host] [--allow-devices] [--outputs PLAN.json] [--stop-on-stdin] [--ui-port N]
 //                                           [--alpha [--rebuild-alpha] [--profile FILE] [--live] [--feedback-dir DIR]

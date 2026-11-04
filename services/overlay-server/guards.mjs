@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Effect guards (v1 F4/F5): one shared budget for effects and event-driven animated layers. Node stdlib only.
 //
 //   const guards = createEffectGuards({ config, now, audit, deliver });

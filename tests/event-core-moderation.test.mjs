@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/moderation: verdicts, reply guard, self-echo, routing, platform data, bus stage.
 // All text is invented. Temp dirs only. ajv is used here as a dev dependency, never at runtime.
 import test from 'node:test';

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Child process for tests/project-store.test.mjs: saves a project and is killed (exit 1) at a chosen point.
 // argv: <file> <project-json-file> <afterTemp|afterBackup>
 

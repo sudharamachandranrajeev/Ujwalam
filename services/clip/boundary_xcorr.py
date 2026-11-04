@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Measure the real overlap between consecutive clips from their audio (P2a step A2b).
 
 Python stdlib only (no numpy). Clip audio is decoded with ffmpeg to mono 16-bit PCM

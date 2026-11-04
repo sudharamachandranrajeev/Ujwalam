@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Event-core audit (P3 E5). Node stdlib only (node:sqlite, worker_threads).
 //
 //   const audit = createAudit({ dataDir });      // or createEventCore({ audit: { dataDir } })

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Stall tracer on the live service (2026-10-28): on by default in startService/serve, stall lines only, in the data
 // dir, bounded size with rotation, no chat text in records; off with stallTracer: false. All text and names are
 // invented. Temp dirs only.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Streamer.bot WebSocket Authenticate handshake (P3 E2). Node stdlib only.
 //
 // Source: https://docs.streamer.bot/api/websocket/guide/authentication (read 2026-10-28).

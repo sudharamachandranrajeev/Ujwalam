@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Builds the Alpha 0 portable zip (D133): out/dist/ujwalam-<base>-alpha.<N>-win64.zip
 //   node tools/package/build-alpha.mjs [--n N] [--host-exe FILE] [--runtime DIR] [--out-dir DIR] [--profile FILE]
 //                                      [--force] [--keep-staging]
@@ -12,7 +12,7 @@
 // Contents (tools/package/manifest.mjs): the host exe and its helper exes in bin/, the OBS runtime subset in obs/
 // (import closure, listed in notices/OBS-RUNTIME-FILES.txt), the Node services, UI, registry and runtime data at their
 // repo paths, Install-Ujwalam.ps1, Ujwalam.cmd, README.txt, release.json, CHANGELOG-alpha.md (this build's section),
-// notices/ (GPL-2.0 text, source offer, third-party list) and SHA256SUMS.txt. Node.js is not bundled: the installer
+// notices/ (GPL-3.0 and LGPL-3.0 text, source offer, third-party list) and SHA256SUMS.txt. Node.js is not bundled: the installer
 // and the launcher require Node >= release nodeMin on PATH.
 // Checks, any failure stops the build and nothing is written to out/dist: allowlist, forbidden paths (legacy/,
 // *.local.*, fonts incl. those named in docs/licence-headers.md, docs/, feedback/, out/, user data, secrets, media),
@@ -72,9 +72,9 @@ const COMPONENTS = [
   [/^(obs-ffmpeg-mux|obs-nvenc-test|obs-amf-test|obs-qsv-test)\.exe$/i, 'OBS Studio 32.1.2 (helper exes)', 'GPL-2.0-or-later'],
   [/^(image-source|obs-ffmpeg|obs-filters|obs-nvenc|obs-outputs|obs-qsv11|obs-text|obs-transitions|obs-x264|text-freetype2|win-dshow|win-wasapi|coreaudio-encoder|obs-browser)\.dll$/i, 'OBS Studio 32.1.2 (plugins)', 'GPL-2.0-or-later'],
   [/^obs-browser-page\.exe$/i, 'OBS Studio 32.1.2 (obs-browser)', 'GPL-2.0-or-later'],
-  [/^(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)-\d+\.dll$/i, 'FFmpeg (OBS build)', 'LGPL-2.1-or-later, or GPL-2.0-or-later if built with GPL parts (links libx264): UNVERIFIED'],
+  [/^(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)-\d+\.dll$/i, 'FFmpeg (OBS build)', 'GPL-3.0-or-later (verified 2026-11-05: build string has --enable-gpl --enable-version3, no --enable-nonfree; docs/evidence/2026-11-05-licence-verification.md)'],
   [/^libx264-\d+\.dll$/i, 'x264', 'GPL-2.0-or-later'],
-  [/^Qt6[A-Za-z]+\.dll$/i, 'Qt 6 (imported by obs-browser and obs-frontend-api)', 'LGPL-3.0-only (Qt open-source licence; UNVERIFIED which modules)'],
+  [/^Qt6[A-Za-z]+\.dll$/i, 'Qt 6.8.3 (imported by obs-browser and obs-frontend-api)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
   [/^(libcef\.dll|chrome_elf\.dll|.*\.pak|icudtl\.dat|v8_context_snapshot\.bin)$/i, 'Chromium Embedded Framework (CEF) and Chromium', 'BSD-3-Clause (CEF) plus Chromium third-party licences: UNVERIFIED, credits file not in the runtime'],
   [/^(libEGL|libGLESv2)\.dll$/i, 'ANGLE (part of CEF)', 'BSD-3-Clause: UNVERIFIED'],
   [/^zlib\.dll$/i, 'zlib', 'Zlib'],
@@ -90,9 +90,11 @@ function sourceOffer({ version, commit, obs }) {
   return [
     `Ujwalam ${version}: GPL source offer`,
     '',
-    'This package contains Ujwalam (GPL-2.0-or-later) and binaries of OBS Studio and the libraries it uses',
-    '(GPL-2.0-or-later, LGPL and other licences; see THIRD-PARTY.txt). The GNU General Public License v2 is in',
-    'GPL-2.0.txt.',
+    'This package contains Ujwalam (GPL-3.0-or-later) and binaries of OBS Studio and the libraries it uses',
+    '(GPL-2.0-or-later, LGPL-3.0-only and other licences; see THIRD-PARTY.txt). The bundled FFmpeg build is',
+    'GPL-3.0-or-later (verified from its own build flags; docs/evidence/2026-11-05-licence-verification.md),',
+    'which is why the combined package ships under GPL-3.0. The GNU General Public License v3 is in GPL-3.0.txt;',
+    'the LGPL-3.0 supplement (for Qt) is in LGPL-3.0.txt.',
     '',
     'Corresponding source:',
     `- Ujwalam: commit ${commit} of the Ujwalam repository. The Node.js services in this package are the`,
@@ -136,7 +138,7 @@ function readme({ version, nodeMin }) {
     'profile come from there too: data\\overlays\\ and data\\profile.local.json, or paths in data\\ujwalam.json',
     '{ "overlayRoot": "...", "profile": "..." }. Stream keys stay in Windows Credential Manager.',
     '',
-    'Licences: LICENSE (Ujwalam), notices\\ (GPL-2.0 text, source offer, third-party components).',
+    'Licences: LICENSE (Ujwalam), notices\\ (GPL-3.0 and LGPL-3.0 text, source offer, third-party components).',
     '',
   ].join('\r\n');
 }
@@ -218,12 +220,21 @@ export async function buildAlpha(opts = {}) {
       obsModules: obs.modules.shipped, systemDlls: obs.systemDlls,
     };
     put('release.json', 'generated', { text: `${JSON.stringify(release, null, 2)}\n` });
-    put('package.json', 'generated', { text: `${JSON.stringify({ name: 'ujwalam', version, private: true, license: 'GPL-2.0-or-later', type: 'module', engines: { node: `>=${rel.nodeMin}` } }, null, 2)}\n` });
+    put('package.json', 'generated', { text: `${JSON.stringify({ name: 'ujwalam', version, private: true, license: 'GPL-3.0-or-later', type: 'module', engines: { node: `>=${rel.nodeMin}` } }, null, 2)}\n` });
     put('CHANGELOG-alpha.md', 'generated', { text: changelogExcerpt(readFileSync(path.join(REPO, 'data', 'release', 'CHANGELOG-alpha.md'), 'utf8'), version) });
     put('README.txt', 'generated', { text: readme({ version, nodeMin: rel.nodeMin }) });
-    const gpl = [path.join(runtime, 'data', 'obs-studio', 'license', 'gplv2.txt'), cfg.obsSource && path.join(cfg.obsSource, 'COPYING')].find((f) => f && existsSync(f));
-    if (!gpl) throw new Error('GPL-2.0 text not found in the OBS runtime (data/obs-studio/license/gplv2.txt) or source (COPYING)');
-    put('notices/GPL-2.0.txt', 'generated', { src: gpl });
+    // GPL-3.0 and LGPL-3.0 (for the bundled Qt) are checked in at docs/licenses/ (no equivalent text ships
+    // inside the OBS runtime for either): see docs/evidence/2026-11-05-licence-verification.md.
+    put('notices/GPL-3.0.txt', 'generated', { src: path.join(REPO, 'docs', 'licenses', 'GPL-3.0.txt') });
+    put('notices/LGPL-3.0.txt', 'generated', { src: path.join(REPO, 'docs', 'licenses', 'LGPL-3.0.txt') });
+    const gplv2 = [path.join(runtime, 'data', 'obs-studio', 'license', 'gplv2.txt'), cfg.obsSource && path.join(cfg.obsSource, 'COPYING')].find((f) => f && existsSync(f));
+    if (gplv2) put('notices/GPL-2.0.txt', 'generated', { src: gplv2 }); // informational: OBS's own bundled text, OBS itself is "-or-later" so GPL-3.0 governs the combined package
+    // CEF/Chromium: no equivalent text ships in the OBS runtime either. Checked in at docs/licenses/
+    // (sourcing + platform/version caveat: docs/evidence/2026-11-05-cef-credits-sourcing.md).
+    if (obs.files.some((f) => /libcef\.dll$/i.test(f.dest))) {
+      put('notices/CEF-LICENSE.txt', 'generated', { src: path.join(REPO, 'docs', 'licenses', 'CEF-LICENSE.txt') });
+      put('notices/CEF-CHROMIUM-CREDITS-source.md', 'generated', { src: path.join(REPO, 'docs', 'licenses', 'CEF-CHROMIUM-CREDITS-source.md') });
+    }
     put('notices/SOURCE-OFFER.txt', 'generated', { text: sourceOffer({ version, commit, obs: rel.obsRuntime }) });
     const tp = ['Third-party components in this package (OBS runtime subset). Licence status as recorded; UNVERIFIED items need checking before any distribution.', ''];
     const byComp = new Map();

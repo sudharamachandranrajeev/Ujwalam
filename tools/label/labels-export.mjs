@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A6: build and validate a label file (data/labels/<sessionId>.json) from a labelling draft, check a
 // draft before it is saved, and diff two label files. Stdlib only: the label server and the pre-commit
 // hook (tools/git-hooks/private-scan.mjs) both use this file, so a commit needs no dev dependency.

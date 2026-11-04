@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A0 real outputs, against a real host process WITHOUT --allow-live (CI never uses it) and loopback listeners only:
 //   - real (non-loopback) targets are refused (FORBIDDEN) and malformed ones are invalid; no key field exists;
 //   - recordings are .mkv unless unsafeContainer; a host-killed .mkv still probes;

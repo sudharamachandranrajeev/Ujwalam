@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Meld session importer: mapping, skipped list, report content, CLI refusals. The fixture is a hand-made,
 // minimal Meld-shaped file with placeholder names only.
 

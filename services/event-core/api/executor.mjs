@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Action executor for the event-core service (P3 E6). Node stdlib only.
 //
 // The gate calls execute(action) only after an allow (reads) or an accepted confirmation. P3 has one real action:

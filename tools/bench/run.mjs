@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Benchmark harness (P3 E0). Stdlib only.
 // Usage: node tools/bench/run.mjs [--runs N] [--warmup N] [--only id,id] [--benches dir] [--out dir]
 //        node tools/bench/run.mjs --accept "<reason>"      (user-approved baseline change only)

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Encrypted backup of local-only data (decision D135). Stdlib only; uses the installed 7-Zip.
 //
 //   node tools/backup-local.mjs [--dry-run] [--keep N]

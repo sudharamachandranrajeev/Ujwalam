@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Project model: JSON Schema (ajv, dev dependency) and the hand-written validator agree on structure;
 // the validator also rejects bad cross-references and unsafe paths.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Mock Streamer.bot WebSocket server (P3 E2). Node stdlib only; binds 127.0.0.1 only; random port by default.
 // Ported in behaviour from the legacy mock: same envelope, Hello before anything else, Subscribe/UnSubscribe/GetInfo
 // answered ok, unknown requests answered ok. Additions: optional password auth (Hello carries salt+challenge,

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "description": "Local-first streaming studio: Meld-style UX, embedded libobs, AI clipping, chat-driven scenes and effects.",
-  "license": "GPL-2.0-or-later",
+  "license": "GPL-3.0-or-later",
   "type": "module",
   "engines": {
     "node": ">=22.13"

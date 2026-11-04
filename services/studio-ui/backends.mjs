@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Backend clients held by the studio UI server (never by the page). Node stdlib only.
 //
 //  - createCoreClient: event-core JSON-RPC (POST /rpc, Bearer api token). Port and token come from the environment

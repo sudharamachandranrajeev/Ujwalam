@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bench: wall time of `node tools/registry-validate.mjs registry` in a child process.
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';

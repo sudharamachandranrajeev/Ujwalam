@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Capture coverage tracker (P2b W1, workflow step T2).
 
 Checks recordings against a game pack's capture plan (data/games/<id>/capture-plan.json) and

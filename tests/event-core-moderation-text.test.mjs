@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/moderation text hygiene: normalise and cleanName (ported from legacy).
 // All names are invented. Invisible characters are written as escapes.
 import test from 'node:test';

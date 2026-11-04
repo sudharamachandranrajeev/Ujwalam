@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: discovery file with an owner-only DACL. See discovery.h.
 #include "discovery.h"
 #include "json.h"

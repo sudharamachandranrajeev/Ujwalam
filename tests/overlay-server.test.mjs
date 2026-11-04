@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Overlay server and bridge tests (v1 F4 part 1): static serving and traversal, Host/Origin checks, Streamer.bot-shaped
 // chat frames and overlay-bus frames against the legacy message-shape fixture, the token never reaching the feed, and the
 // day-4 effect gate hook. Loopback only. The legacy folder is optional (gitignored): its smoke test skips when absent.

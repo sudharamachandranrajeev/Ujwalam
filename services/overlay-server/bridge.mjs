@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Overlay bridge: event core -> legacy overlays, in the message formats the legacy overlays already consume.
 // Node stdlib only.
 //

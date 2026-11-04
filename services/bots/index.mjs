@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bot manager (BM1, D193). Node stdlib only. Finds the user's installed Streamer.bot and Speaker.bot, starts them
 // hidden, reports health, and stops only a copy Ujwalam started itself. Plan: docs/plan/2026-11-03-bot-manager-plan.md.
 //

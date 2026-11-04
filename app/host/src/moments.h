@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: clip markers and feedback captures (A0 day 2; alpha plan Part A item 8 and Part B).
 //
 // Markers: marker.add {source: hotkey|chat|audio|api, note?} appends one JSON line to

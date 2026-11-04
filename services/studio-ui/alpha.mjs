@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Alpha 0 project (alpha plan Part A, day 1): <dataDir>/projects/alpha.project.json.
 //   prepareAlphaProject({ dataDir, rebuild, build }) -> { file, action: 'loaded' | 'built' | 'rebuilt', moved? }
 //     An existing file is used unchanged (a user's edits are never modified). rebuild builds the new project first;

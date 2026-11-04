@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Private test stream options of the launcher (services/studio-ui/launch.mjs): --sinks (plan selection),
 // --twitch-bandwidth-test (host flag, fail-closed check), --test-stream-minutes / --test-sink-minutes (live-test
 // guard). Pure parts directly; the launcher end to end with the fake host (no libobs, no keychain, no network, no

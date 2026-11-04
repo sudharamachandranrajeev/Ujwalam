@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Streamer.bot payload -> event-core ingest input (P3 E2). Node stdlib only.
 //
 // Chat mapping is ported from the proven legacy source: every field is read the new way first and the old

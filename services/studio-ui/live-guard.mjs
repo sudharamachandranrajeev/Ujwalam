@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Live-test guard (Alpha 0 private test stream; launcher --test-stream-minutes N).
 //
 // The guard never starts an output. It waits until a stream sink becomes active, which only happens after the

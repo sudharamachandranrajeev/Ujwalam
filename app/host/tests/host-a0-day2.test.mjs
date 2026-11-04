@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A0 day 2 against a real host (libobs, test card, no devices, no previews, loopback only, nothing leaves the machine):
 // replay buffer H and V (fallback rungs, then bound to configured rungs with no extra encoder), markers, the feedback
 // capture, panic (in-process first, then event-core's system pipe with the contract's retries) and global hotkeys.

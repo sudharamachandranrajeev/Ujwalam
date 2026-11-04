@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bot manager (BM1, BM6): detect, start, stop, health and the "only what Ujwalam started" rule. The "bots" are copies
 // of the node executable running an idle loop; nothing real is started and the real bot ports are never contacted
 // (all listeners use port 0). The process list is a seam for most tests (fast); one Windows test uses the real query.

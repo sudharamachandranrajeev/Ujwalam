@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for the game pack loader (services/clip/game_pack.py, P2b W0).
 
 Stdlib only; runs under the system Python (npm run test:py). Reads the committed CODM pack;

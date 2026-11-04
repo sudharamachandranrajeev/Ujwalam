@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Child process for the idempotency kill test (tests/idempotency-crash.test.mjs, P3 E7 follow-up). Node stdlib only.
 //
 //   node tools/idem-crash-child.mjs <dataDir> <execLog> kill <phase>   # pauses at <phase> and waits to be killed

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Runs an overlay page in a headless Chrome/Chromium that is already installed, and records what
 // the page draws, so a legacy overlay can be compared with the same page inside libobs.
 // Node built-ins only (global WebSocket + fetch, Node 22+). Nothing is installed.

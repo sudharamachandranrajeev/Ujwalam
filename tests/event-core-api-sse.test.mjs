@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/api: Server-Sent Events. Auth and browser checks, kind filter, raw-text path, heartbeat,
 // slow-client drop with an unblocked bus, stall cut-off. All text is invented and never printed.
 import test from 'node:test';

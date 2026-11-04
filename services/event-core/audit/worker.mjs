@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Audit writer thread (P3 E5). Owns the SQLite connection. Receives batches and requests by message; replies with
 // counts and error CODES only (never an error message, which could echo SQL or values). Node stdlib only.
 

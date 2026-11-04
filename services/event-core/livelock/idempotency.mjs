@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Idempotent action execution (P3 E7 follow-up). Node stdlib only.
 //
 // Delivery into the event core is at-least-once: after a crash, Streamer.bot resends recent events, and the persisted

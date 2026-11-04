@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: health numbers. See stats.h.
 #include "stats.h"
 #include "log.h"

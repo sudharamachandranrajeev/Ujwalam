@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/livelock: invariant matrix. Every catalogue action x every source scenario x every live
 // state x panic on/off x two catalogue variants, plus hostile inputs, catalogue mutations, an epoch flip, cap
 // abuse by each source, panic.clear while live and a stale live state.

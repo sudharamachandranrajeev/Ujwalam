@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: health numbers for host.status. libobs render stats, process CPU and memory, and NVIDIA GPU /
 // NVENC load through NVML (nvml.dll from System32, loaded at runtime; absent = fields null, never an error).
 // Also reads (never writes) the Windows per-app graphics preference for the host exe.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Runs the output validator over every built-in preset, then plans every output plan file in data/outputs/*.json
 // (app/host/lib/outputs-plan.mjs: targets, keyRef/serverRef names, ingest data, recording container and rung rules).
 // Plans are checked with allowLive (validation only: nothing starts, no host, no keychain read).

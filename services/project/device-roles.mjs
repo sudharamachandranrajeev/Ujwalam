@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Device role binding for scene builds (Alpha 0). Pure: no device is listed, opened or created here.
 //   matchRoles({ list, presets, overrides, roles }) -> { bound: { role: binding }, unavailable: [{ role, reason }] }
 // list      the host's devices.list result ({ devices: [{ kind, name, path, obsId }] }); the caller lists only with

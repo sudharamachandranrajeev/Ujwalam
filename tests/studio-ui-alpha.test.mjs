@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Alpha 0 shell: device role matching, the alpha project build and its never-modify rule, the launcher's host flag
 // wiring (fake host, no libobs, no devices, mock Streamer.bot), host log rotation, the day-2 host config (hotkeys,
 // replay, feedback folder, event-core system file and token) and the --live plan (fake host: nothing is contacted).

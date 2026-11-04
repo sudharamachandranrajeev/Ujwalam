@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Chat and engage-log alignment to clip sessions (P2a step A3).
 
 Reads three optional signal sources, puts every event on UTC wall-clock time, and

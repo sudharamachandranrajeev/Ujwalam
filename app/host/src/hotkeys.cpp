@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: global hotkeys. See hotkeys.h.
 #include "hotkeys.h"
 #include "log.h"

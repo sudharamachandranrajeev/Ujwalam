@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bench: wall time of `node tools/git-hooks/private-scan.mjs scan-worktree` in a child process.
 // Every run also records the scan's input size (files and bytes, same file list the scan uses) and the
 // time per file, as `info` in the result, the run file and the baseline, so a later change in wall time

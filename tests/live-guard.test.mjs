@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Live-test guard (services/studio-ui/live-guard.mjs): budget file, option parsing, and the state machine on a
 // simulated clock and simulated outputs.status rows (no host, no network, no platform): it arms only on a started
 // stream, never starts outputs, stops everything at the time limit (exit 0) or on a failure / drop budget breach

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Writer-choice measurement for the audit (P3 E5): worker thread vs inline (batched setImmediate on the main thread),
 // plus synchronous=FULL vs NORMAL write rate. NOT a regression bench (nothing here is recorded as a baseline); the
 // numbers go into docs/evidence/2026-10-28-p3-e5-audit.md. SYNTHETIC events only (made-up ids, names and text).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A6 labelling page: logic with no DOM, shared by label.js and tests/label-server.test.mjs.
 // Plain script (no module syntax): in the page it sets LabelCore on the global object; under Node
 // (tests, through node:vm) it sets module.exports.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: replay buffer per canvas (A0 day 2). See the replay section of outputs.h.
 //
 // libobs replay_buffer (plugins/obs-ffmpeg/obs-ffmpeg-mux.c, OBS 32.1.2): keeps encoded packets in memory for

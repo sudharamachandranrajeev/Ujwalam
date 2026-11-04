@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // tools/ci.mjs: step selection and failure propagation. Real suites are never run here: the CLI
 // tests point UJWALAM_CI_ROOT at a temp project whose npm scripts are stubs.
 import test from 'node:test';

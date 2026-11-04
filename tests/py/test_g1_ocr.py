@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """OCR-dependent G1 tests (services/clip/g1_scan.py).
 
 Synthetic images only (text drawn with OpenCV's Hershey font; invented names).

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Audit hash chain (P3 E5). Node stdlib only.
 //   hash = SHA-256( prev_hash || canonical row JSON ), both as UTF-8; prev_hash is lowercase hex.
 // Canonical row JSON = JSON array of the COLS values in fixed order (missing -> null). `detail` is already a

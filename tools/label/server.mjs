@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A6 labelling page server (P2b). Node stdlib only, no dependencies.
 //
 // - Binds to 127.0.0.1 only (no host option). Host and Origin headers are checked; a Referer, when

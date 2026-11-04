@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* A6 labelling page. Design tokens only: every colour, size and radius below comes from :root. */
 :root {
   --bg: #14161a;

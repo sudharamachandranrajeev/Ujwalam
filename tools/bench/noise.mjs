@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Shared noisy-machine rules for the bench harness (tools/bench/run.mjs) and the soak system probe
 // (tools/soak/system-probe.mjs). One place, so both agree. Node stdlib only; everything is read-only.
 //

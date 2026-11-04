@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bench: event-core API (P3 E6). SYNTHETIC input: invented chat text and ids, loopback only, in-process server on a
 // random port, temp state only. Part of PB-12 (event-core internal p95 <= 20 ms): it shows what the HTTP layer adds.
 //   rpc_status_p50_ms / rpc_status_p95_ms   POST /rpc core.status round trip (keep-alive client, auth + parse + reply)

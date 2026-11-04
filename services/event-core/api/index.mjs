@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Event-core JSON-RPC and SSE API (P3 E6). Node stdlib only.
 export { createApiServer, DEFAULT_LIMITS, LOOPBACK, newToken } from './server.mjs';
 export { METHODS, roleTable, validateParams, RpcError } from './methods.mjs';

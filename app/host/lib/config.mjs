@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Resolves where the host exe, the OBS runtime and the host data live. No user paths are hardcoded:
 //   explicit option > environment > app/host/host.local.json (gitignored; template host.example.json) > default.
 //   buildDir   UJWALAM_HOST_BUILD     "buildDir"   default <repo>/out/host/build (a second dir lets you build while

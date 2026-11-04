@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: minimal strict JSON (RFC 8259) value, parser and serializer.
 //
 // Strict on input: no comments, no trailing commas, no duplicate object keys, valid UTF-8 only, lone surrogates

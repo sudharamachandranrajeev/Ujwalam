@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: output graph (O1). See outputs.h.
 //
 // configure params (built by app/host/lib/outputs-plan.mjs from an O0 output config that passed

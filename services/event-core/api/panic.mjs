@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // In-process panic entry point (review E8-03 follow-up, user decision 2026-10-29). Node stdlib only.
 //
 // panicNow() engages panic through the action gate with source 'system'. It does no I/O and never awaits, so no

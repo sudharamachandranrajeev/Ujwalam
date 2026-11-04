@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """F6 vertical variants: ffmpeg filter graphs and the render call.
 
 Layouts (data/clip/layouts.json, build plan 4.10):

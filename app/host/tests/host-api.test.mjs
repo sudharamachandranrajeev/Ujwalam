@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host API tests against a real host process (libobs, test card project, no devices, no previews).
 //   node --test app/host/tests/
 // Needs the built host (node app/host/tools/build.mjs) and the OBS runtime (app/host/host.local.json or env).

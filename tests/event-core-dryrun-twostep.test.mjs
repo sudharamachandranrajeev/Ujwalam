@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // P3 E4b (user decisions 2026-10-28): (1) chat-triggered actions run in DRY-RUN: the gate decides, the audit records what
 // would have run, nothing executes; chatMode "on" is refused at load; (2) an on-air write while live needs TWO
 // confirmations, "yes" then "yes, on air", single use, hash-bound to action + params + live epoch, 30 s per step.

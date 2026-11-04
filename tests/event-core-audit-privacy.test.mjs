@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/audit: raw chat never leaves chat_raw. Backups, exports and the audit module's own output hold
 // no raw text; createEventCore wiring; the audit tables hold ids only. SYNTHETIC chat; the marker strings are made up.
 import test from 'node:test';

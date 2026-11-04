@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: output graph (docs/plan/2026-10-26-output-graph.md, O1).
 //
 //   compositor (canvases H, V) -> encoder pool (rungs; audio encoded once) -> delivery pool (sinks bound to rungs)

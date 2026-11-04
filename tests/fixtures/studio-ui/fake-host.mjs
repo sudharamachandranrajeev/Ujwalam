@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Fake ujwalam-host for the launcher tests (services/studio-ui/launch.mjs --host-exe <this file>). No libobs, no
 // devices, no GPU. It records its argv, the NAMES of its UJWALAM_* environment variables and whether an event-core
 // token came in (never the value), and the RPC calls it got, into the file named by UJWALAM_FAKE_HOST_RECORD.

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Mock chat script source (P3 E2), ported in behaviour from the legacy mock-chat: a natural trickle, a burst
 // (to exercise rate limits), a "nasty" pool of messages that must not get a cheerful answer, and a single
 // message. Legacy POSTed to the engage server; here the source produces Streamer.bot-shaped chat envelopes

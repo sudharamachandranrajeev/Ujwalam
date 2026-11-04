@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Audit database schema and forward migrations (P3 E5). Node stdlib only.
 // schema_version holds one row per applied migration. Migrations only go forward; a database whose
 // version is higher than the code knows is refused (never downgraded or "repaired").

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Audit store (P3 E5): the synchronous SQLite layer. Node stdlib only (node:sqlite).
 // One process owns the database (see lock.mjs); inside it, one thread (the writer worker, or the main thread in
 // 'inline' mode) owns this object. Nothing here is on the live path: callers reach it through writer.mjs.

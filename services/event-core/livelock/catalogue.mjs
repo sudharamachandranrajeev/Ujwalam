@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Action catalogue loader and validator (P3 E4). Node stdlib only. Disk is read only at start-up.
 //
 // The catalogue is data (data/actions/catalogue.json). It can only RESTRICT. These are fixed in code and

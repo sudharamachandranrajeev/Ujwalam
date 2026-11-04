@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Report button (flag `report-button`, D199): URL format, strict repo validation, redaction, truncation, flag gate, the
 // placeholder profile message. Headless, 127.0.0.1 only, no network, no browser, nothing is opened.
 import assert from 'node:assert/strict';

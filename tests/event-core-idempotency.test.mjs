@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Idempotent actions (P3 E7 follow-up): executor wrapper, gate key derivation, persistence across a restart, API key.
 // All text, ids and names are invented. Temp dirs only.
 import test, { after } from 'node:test';

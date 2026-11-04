@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // tools/soak/replay.mjs (P3 E7): export choice, timeline (gap cap, looping, unique ids), memory-growth maths, and one short
 // end-to-end replay on a SYNTHETIC export (invented text, temp data root): child core, mock Streamer.bot, purge proof.
 import test from 'node:test';

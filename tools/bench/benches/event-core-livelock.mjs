@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bench: live-lock gate decision cost (P3 E4). Per-decision p50/p95 of the synchronous request() call.
 // SYNTHETIC input: made-up action params, actors and event ids, no real chat. The mix: read allow, chat refuse
 // (deny category), chat refuse (not allowed; the committed catalogue is chatAllowed false everywhere since the

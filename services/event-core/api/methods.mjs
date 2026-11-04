@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // JSON-RPC 2.0 method table for the event-core API (P3 E6). Node stdlib only.
 //
 // Each method declares the roles that may call it, a strict params schema (unknown fields are refused, positional

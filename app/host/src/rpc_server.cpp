@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: JSON-RPC over HTTP on 127.0.0.1. See rpc_server.h for the rules and check order.
 #include "rpc_server.h"
 #include "log.h"

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/audit: schema and migrations, hash chain, tamper and truncation detection, append-only triggers,
 // single-writer lock, queue overflow, retention (boundary, startup, daily timer, manual), secure delete.
 // Temp dirs and injected clocks only. SYNTHETIC rows; the marker strings are made up.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A6 labelling page. Plain script, no CDN, safe DOM only: every node is built with createElement and textContent.
 //
 // Two passes in a fixed order.

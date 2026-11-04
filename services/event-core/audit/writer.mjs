@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Audit writer (P3 E5): runs the store off the caller's path. Node stdlib only.
 //   mode 'worker' (default): a worker_threads thread owns the database; the main thread only posts a message.
 //   mode 'inline': the store runs on the main thread inside a setImmediate callback (kept for tests and as the

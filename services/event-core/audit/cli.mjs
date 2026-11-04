@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Audit command line (P3 E5). Node stdlib only. Reached through services/event-core/cli.mjs:
 //   audit purge [--older-than-days N] [--all [--confirm yes]] [--data-dir DIR]
 //   audit verify [--data-dir DIR]

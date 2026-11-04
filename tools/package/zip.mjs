@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Minimal ZIP writer and reader (stdlib only: node:zlib deflate-raw and crc32). No Zip64: the writer refuses an entry
 // or an archive over 4 GiB - 1 and more than 65535 entries, which the alpha package and the diagnostics bundle never
 // reach. Names are stored with forward slashes and the UTF-8 flag; every entry gets the same fixed DOS time (from

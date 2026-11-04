@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 #
 # ujwalam-host: the production libobs host (studio, previews, output graph, local JSON-RPC API).
 #

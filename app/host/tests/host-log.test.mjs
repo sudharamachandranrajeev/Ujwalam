@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // log.tail against a real host (libobs, test card, no devices, no previews): the in-memory ring of the last 1000
 // log lines (app/host/src/log.h), its limits, and that token-shaped hex runs never come out of it.
 //   node --test app/host/tests/host-log.test.mjs   (needs the built host and the OBS runtime, like host-api)

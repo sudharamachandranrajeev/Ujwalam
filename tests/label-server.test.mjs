@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A6: labelling page server, export validator and page rules. No corpus or real cache is used:
 // a temp fake cache, corpus and profile are built per test run.
 import test, { before, after } from 'node:test';
@@ -510,7 +510,7 @@ test('page files follow the overlay rules: plain script, no CDN, no innerHTML, t
   const js = readFileSync(path.join(dir, 'label.js'), 'utf8');
   const css = readFileSync(path.join(dir, 'label.css'), 'utf8');
   const coreJs = readFileSync(path.join(dir, 'label-core.js'), 'utf8');
-  for (const f of [html, js, css, coreJs]) assert.ok(f.includes('SPDX-License-Identifier: GPL-2.0-or-later'));
+  for (const f of [html, js, css, coreJs]) assert.ok(f.includes('SPDX-License-Identifier: GPL-3.0-or-later'));
   assert.ok(!/https?:\/\//.test(html + css), 'no external URLs in html/css');
   assert.ok(!/type="module"|<script[^>]*src="https?:/.test(html));
   assert.ok(/<script src="\/label-core\.js"><\/script>\s*<script src="\/label\.js"><\/script>/.test(html));

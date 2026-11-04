@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: stream keys from the Windows Credential Manager. See stream_keys.h.
 #include "stream_keys.h"
 

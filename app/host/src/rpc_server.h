@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: JSON-RPC 2.0 over HTTP/1.1 on 127.0.0.1 (POST /rpc). Winsock + BCrypt only.
 //
 // Same rules as the event-core API (services/event-core/api/server.mjs, P3 E6): callers are native local processes,

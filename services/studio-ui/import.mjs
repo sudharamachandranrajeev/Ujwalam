@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // "Import Meld session" for the studio UI (v1 F1/T2 path). Server side only: the page never supplies a path or a project.
 //   1. read the session file named by env UJWALAM_MELD_SESSION or paths.meld_session in data/profile.local.json
 //   2. services/project/import-meld.mjs importMeld() -> a NEW project file under <dataDir>/projects (never overwrites)

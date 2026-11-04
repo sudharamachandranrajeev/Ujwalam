@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // P16a packager CLI. Behind the feature flag `posting` (off by default; exit 3 while off). Local files only.
 //   node services/posting/cli.mjs package --run <clip run folder> [--data-dir DIR] [--profile FILE] [--ffmpeg FILE] [--targets a,b]
 // Writes <run>/posts/<clipId>/<target>/ and the ledger <data-dir>/posting/ledger.json. Prints counts only (no text).

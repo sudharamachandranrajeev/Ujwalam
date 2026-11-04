@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // P2a A4 (G0): profile, detector pack, detection record and label schemas.
 // P2b W0: the CODM pack is split into game.json, detectors.json, events.json, screens.json, capture-plan.json.
 import test from 'node:test';

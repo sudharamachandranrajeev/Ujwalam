@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/api: api.json (atomic, owner-only, removed on shutdown), data-dir ACL, env tokens, the service,
 // and the serve CLI in mock mode. Temp dirs only; no real platform; invented chat only. ACL checks run on Windows.
 import test from 'node:test';

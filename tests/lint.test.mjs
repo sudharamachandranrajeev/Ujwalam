@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // tools/lint.mjs: one positive and one negative case per rule, temp dirs only, no network.
 // Secret-like and user-path samples are written out plainly. Each sample line carries a marker naming its rule
 // (allowed in test files; the lint report lists every marker in use). The one exception is the bare, unknown
@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { lint, lintReport, listFiles, attributesFor, formatFinding, forbiddenUserNames, LINT_EXCLUSIONS } from '../tools/lint.mjs';
 
 const ATTRS = '* text=auto eol=lf\n*.ps1 text eol=crlf\n*.cmd text eol=crlf\n*.png binary\n';
-const HDR_JS = '// SPDX-License-Identifier: GPL-2.0-or-later\n';
+const HDR_JS = '// SPDX-License-Identifier: GPL-3.0-or-later\n';
 
 const dirs = [];
 function tmp() {
@@ -44,11 +44,11 @@ test('syntax-js: bad file flagged with line, good file clean', async () => {
 });
 
 test('syntax-py: bad file flagged with line, good file clean', async () => {
-  const bad = await run({ 'a.py': '# SPDX-License-Identifier: GPL-2.0-or-later\nx = 1\ndef f(:\n    pass\n' }, 'syntax-py');
+  const bad = await run({ 'a.py': '# SPDX-License-Identifier: GPL-3.0-or-later\nx = 1\ndef f(:\n    pass\n' }, 'syntax-py');
   assert.equal(bad.length, 1);
   assert.equal(bad[0].rule, 'syntax-py');
   assert.equal(bad[0].line, 3);
-  assert.deepEqual(await run({ 'a.py': '# SPDX-License-Identifier: GPL-2.0-or-later\nx = 1\n' }, 'syntax-py'), []);
+  assert.deepEqual(await run({ 'a.py': '# SPDX-License-Identifier: GPL-3.0-or-later\nx = 1\n' }, 'syntax-py'), []);
 });
 
 test('eol: CRLF in an LF file is flagged', async () => {
@@ -60,9 +60,9 @@ test('eol: CRLF in an LF file is flagged', async () => {
 });
 
 test('eol: .ps1 and .cmd need CRLF, LF is flagged', async () => {
-  const bad = await run({ 'x.ps1': '# SPDX-License-Identifier: GPL-2.0-or-later\nWrite-Host 1\n', 'y.cmd': '@echo off\n' }, 'eol');
+  const bad = await run({ 'x.ps1': '# SPDX-License-Identifier: GPL-3.0-or-later\nWrite-Host 1\n', 'y.cmd': '@echo off\n' }, 'eol');
   assert.deepEqual(bad.map((f) => f.path).sort(), ['x.ps1', 'y.cmd']);
-  const ok = await run({ 'x.ps1': '# SPDX-License-Identifier: GPL-2.0-or-later\r\nWrite-Host 1\r\n', 'y.cmd': '@echo off\r\n' }, 'eol');
+  const ok = await run({ 'x.ps1': '# SPDX-License-Identifier: GPL-3.0-or-later\r\nWrite-Host 1\r\n', 'y.cmd': '@echo off\r\n' }, 'eol');
   assert.deepEqual(ok, []);
 });
 
@@ -93,7 +93,7 @@ test('trailing-ws: spaces and tabs flagged in code and Markdown, clean files pas
 });
 
 test('trailing-ws: CRLF files do not count the CR as whitespace', async () => {
-  assert.deepEqual(await run({ 'x.ps1': '# SPDX-License-Identifier: GPL-2.0-or-later\r\nWrite-Host 1\r\n' }, 'trailing-ws'), []);
+  assert.deepEqual(await run({ 'x.ps1': '# SPDX-License-Identifier: GPL-3.0-or-later\r\nWrite-Host 1\r\n' }, 'trailing-ws'), []);
 });
 
 test('spdx: missing header flagged; header after shebang or doctype accepted; json and unknown exempt', async () => {
@@ -101,11 +101,11 @@ test('spdx: missing header flagged; header after shebang or doctype accepted; js
   assert.deepEqual(bad.map((f) => f.path), ['a.mjs', 'b.py', 'c.css', 'd.html']);
   const ok = await run({
     'a.mjs': `#!/usr/bin/env node\n${HDR_JS}export const a = 1;\n`,
-    'b.py': '# SPDX-License-Identifier: GPL-2.0-or-later\nx = 1\n',
-    'c.css': '/* SPDX-License-Identifier: GPL-2.0-or-later */\na {}\n',
-    'd.html': '<!doctype html>\n<!-- SPDX-License-Identifier: GPL-2.0-or-later -->\n<p>x</p>\n',
+    'b.py': '# SPDX-License-Identifier: GPL-3.0-or-later\nx = 1\n',
+    'c.css': '/* SPDX-License-Identifier: GPL-3.0-or-later */\na {}\n',
+    'd.html': '<!doctype html>\n<!-- SPDX-License-Identifier: GPL-3.0-or-later -->\n<p>x</p>\n',
     'e.json': '{"a": 1}\n',
-    'CMakeLists.txt': '# SPDX-License-Identifier: GPL-2.0-or-later\n',
+    'CMakeLists.txt': '# SPDX-License-Identifier: GPL-3.0-or-later\n',
     'notes.txt': 'plain\n',
     'hook': '#!/bin/sh\nexit 0\n',
   }, 'spdx');

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Suggestions for the A6 labelling page, pass 2 (P2b). Stdlib only; run with `python -I`.
 
 Turns `g1_scan analyse` output (hits.jsonl, times in clip seconds) for one session into the page's

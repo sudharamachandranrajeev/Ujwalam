@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Safe DOM helpers. All text goes through textContent; no HTML string is ever parsed by these scripts.
 (function () {
   'use strict';

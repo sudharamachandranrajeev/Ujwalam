@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // System-role local channel for event-core (review E8-03 follow-up, user decision 2026-10-29). Node stdlib only.
 //
 // Why: the JSON-RPC API listens on one loopback TCP port that any local process can flood. On Windows the accept

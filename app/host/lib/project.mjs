@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Project v1 into the host. services/project/validate.mjs is the authority: an invalid document is refused here and
 // never reaches the host. The host then re-checks what it consumes (app/host/src/model.cpp) and lists what it
 // cannot build (devices, browser, missing files) instead of guessing.

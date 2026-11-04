@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Reply length limits per platform, read from data/platforms/*.json (field replyMaxChars). Node stdlib only.
 // Never hardcoded here. A limit marked unverified is still used (it can only make a reply stricter than
 // the legacy cap if smaller) but is reported with unverified: true.

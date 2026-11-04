@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Windows Credential Manager password provider (P3 E2). Node stdlib only, no installs.
 //
 // Method: Windows PowerShell 5.1 (powershell.exe, present on every Windows 10/11) compiles a tiny P/Invoke

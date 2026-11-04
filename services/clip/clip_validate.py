@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """F6 clip validation: ffprobe facts checked against the output frame and every target in data/clip/targets.json.
 
 Checks per file: video codec, frame size, pixel format yuv420p, fps <= target max, audio present and its codec,

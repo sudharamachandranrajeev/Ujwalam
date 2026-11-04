@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Event-core SSE client, for running the overlay server as its own process. Node stdlib only (node:http).
 //
 // This process is a trusted server-side consumer: it holds the event-core API token (from the environment, never

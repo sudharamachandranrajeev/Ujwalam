@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 <#
 .SYNOPSIS
   Installs an unzipped Ujwalam alpha build for the current user (no admin rights), or rolls back to the previous one.

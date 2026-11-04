@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // BM7: clash check between Ujwalam, Streamer.bot and Speaker.bot. Stdlib only. READ-ONLY: it writes only to stdout.
 //
 //   node tools/bot-clash-check.mjs [--json] [--profile FILE]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Studio UI server: Posts API (P16a, flag `posting`). Hand-made package on disk (no ffmpeg needed), fake host, stub core,
 // 127.0.0.1 only. Checks the flag gate, auth/CSRF, media serving rules (ranges, allowlist, traversal), edit/approve/reject,
 // the ledger and the open-folder seam. Nothing is uploaded; there is no network code to test.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Live-lock and action gate (P3 E4). Node stdlib only.
 //
 // request(action) is SYNCHRONOUS and does no I/O, network, disk scan or await. The only work is one plain-data

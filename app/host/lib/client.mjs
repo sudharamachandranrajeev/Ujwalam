@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Client for the ujwalam-host JSON-RPC API (POST /rpc on 127.0.0.1, Bearer token).
 // Uses node:http, not fetch: fetch adds Sec-Fetch-* headers, which the host refuses (callers are native processes).
 // Never logs the token or request params.

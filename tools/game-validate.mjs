@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Game pack validator (P2b W0; capture-plan match criteria W1).
 // Usage: node tools/game-validate.mjs [gamesRoot] [repoRoot]
 //   gamesRoot  default "data/games"; holds the *.schema.json files and one folder per game pack

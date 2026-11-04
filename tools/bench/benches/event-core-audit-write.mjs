@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bench (a): PLAIN audit write. SYNTHETIC rows. Store used directly, synchronous=FULL, 200-row batches.
 // Writes included: audit rows only (the hash-chained `audit` table + `audit_head`). NOT included: chat_raw rows,
 // persisted dedupe keys (migration v2), idempotency action keys (migration v3), the live core, the writer thread.

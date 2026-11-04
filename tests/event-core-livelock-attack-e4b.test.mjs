@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/livelock: attacks from the independent E4b review (docs/evidence/2026-10-28-p3-e4b-opus-review.md),
 // ported from the reviewer's scratch file. Each test asserts the SECURE behaviour, so a failure means the attack works.
 // Before the review fixes (2026-10-29) A1, A2, A3, A4, A5 and A5b failed; A6 to A12 passed. The tests after A12 cover

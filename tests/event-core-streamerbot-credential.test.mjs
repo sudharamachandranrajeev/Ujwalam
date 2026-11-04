@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // P3 E2: Windows Credential Manager provider. Creates and deletes a clearly test-only credential.
 // P3 E7 follow-up: the read is asynchronous (no spawnSync), the provider caches for the connector's lifetime and
 // re-reads after an auth failure, and a reconnect with a slow read keeps the event loop responsive (< 100 ms delay).

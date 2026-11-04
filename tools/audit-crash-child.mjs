@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Child process for the audit crash test (P3 E5): writes audit rows and raw rows continuously until it is killed.
 // argv: dataDir round. Prints "ready", then "acked <rows>" lines (rows the writer has committed, durable with
 // synchronous=FULL). SYNTHETIC rows only.

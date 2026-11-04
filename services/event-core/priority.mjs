@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Process priority rule for the event core (user decision 2026-10-28). Node stdlib only.
 //
 // The live event core runs at Normal process priority, never BelowNormal: a Normal-priority burst elsewhere on the

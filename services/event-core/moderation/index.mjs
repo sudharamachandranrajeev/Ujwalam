@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Moderation verdicts (P3 E3). Node stdlib only.
 //
 //   const m = createModeration();                        // loads data/moderation + data/platforms

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/livelock: attacks from the 2026-10-28 security review (E4 findings 1, 2, 4, 6, 7, 8, 10,
 // 11, 12). Each test is the attack itself. All nine failed against the gate before the review fixes (see
 // docs/evidence/2026-10-28-p3-e4-livelock.md, "Review fixes"). Tests for findings 5, 9, 15, 16, 17 and 18

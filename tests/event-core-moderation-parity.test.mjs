@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Moderation parity against the committed fixture (generated from the legacy pipeline by
 // tools/parity/moderation-parity.mjs). Needs no legacy/ folder. Inputs are invented.
 import test from 'node:test';

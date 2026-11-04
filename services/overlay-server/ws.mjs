@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Minimal RFC 6455 server side for the overlay feed. Node stdlib only.
 //
 // Scope on purpose: text frames out, small unfragmented masked text frames in (the Streamer.bot "Subscribe" request),

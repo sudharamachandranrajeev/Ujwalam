@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Measures an overlay effect in a recording made over a flat-colour background.
 // Streams the video through ffmpeg as downscaled RGB, marks pixels that differ from the
 // background, and reports per-episode timing, geometry (distance from the canvas edges) and

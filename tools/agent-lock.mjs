@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Session lock for coding agents: one writer at a time (docs/procedures/session-protocol.md). Stdlib only.
 //
 //   node tools/agent-lock.mjs status

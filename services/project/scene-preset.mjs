@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Scene preset loader (v1 F1/F4). Turns a registry scene preset (registry/presets/scene-*.json, function
 // scene-layout-preset) into a NEW scene in a project. The input project is never modified: the result is a
 // deep copy with one scene appended (and overlay entries added only when no entry has the same file).

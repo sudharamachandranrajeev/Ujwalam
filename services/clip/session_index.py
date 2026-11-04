@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Session index for a folder of Meld Studio automatic clips (P2a step A2).
 
 Reads a flat folder of back-to-back clip MP4s, probes each file with ffprobe,

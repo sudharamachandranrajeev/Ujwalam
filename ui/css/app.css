@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: GPL-2.0-or-later */
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body { background: var(--color-bg); color: var(--color-text); font: var(--text-md) var(--font-ui); }

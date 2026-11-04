@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for services/clip/session_index.py.
 
 Synthetic filename lists and fake probe records only; no corpus access.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Studio UI server: the Bots card API (BM2, flag `bot-manager`). Fake bots (in memory) for the API rules, and one run
 // over the real bot manager with a copied node executable. Never touches the real Streamer.bot or Speaker.bot, never
 // contacts ports 8093 or 8083. Fake host, stub core, 127.0.0.1 only.
