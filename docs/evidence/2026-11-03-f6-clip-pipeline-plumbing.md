@@ -59,3 +59,17 @@ npm run validate:games   OK: 1 game pack(s) valid: codm 0.3.0
 ## 5. NVENC
 
 Not run (UNVERIFIED). The GPU was held by the soak, then by a coordinator hold for a device test and a live test stream. The `h264_nvenc` argv is unit-tested only. Next GPU slot: `clipper.py render --encoder h264_nvenc` on the same generated source, then `validate`.
+
+Run 2026-11-04 (GPU free: no host, no ffmpeg, no stream; RTX 4050 at 8 % and 1383 MiB before the run). Same kind of generated source (`testsrc2` 1920x1080 30 fps, 90 s, tone with loud bursts at 40 s and 70 s), media in the session scratchpad:
+
+```
+python -I services/clip/clipper.py --data-dir <tmp>/data candidates --recording <tmp>/rec-h-20261104-010000.mkv --markers <tmp>/markers.jsonl --record-start 2026-11-04T01:00:00Z --out <tmp>/out
+candidates: 1 from 2 events (markers 0, chat off, audio on, detectors 0); ranking proposed
+python -I services/clip/clipper.py --data-dir <tmp>/data render --recording ... --out <tmp>/out --encoder h264_nvenc
+render c01/full-crop: 5.04 s   c01/game-facecam: 4.98 s   c01/blurred-fill: 4.99 s
+render: 3 file(s), 0 failed, with h264_nvenc, captions none     (15 s wall)
+python -I services/clip/clipper.py --data-dir <tmp>/data validate --out <tmp>/out
+validate: 3/3 PASS
+```
+
+NVENC render path: PASS on generated media. The hand-written marker row in this run did not match the markers format (0 markers used); marker matching itself is covered by the 2026-11-03 run above. Still not run on a real recording.
