@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Output config validator (O0). Pure: (config, platforms) -> { rungs, errors, warnings, info }.
 // It reports only; it never mutates or "fixes" settings. Node stdlib only (no ajv at runtime).
 //

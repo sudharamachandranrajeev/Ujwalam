@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Hand-written runtime validator for event v1 (P3 E1). Node stdlib only, no ajv at runtime.
 // Must agree with schema/event.schema.json; tests/event-core-validate.test.mjs runs both on the same cases.
 // validateEvent(ev) -> { ok, errors: [{ path, message }] }. Reports every problem it finds; never throws.

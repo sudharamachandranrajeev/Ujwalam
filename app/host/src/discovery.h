@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: discovery file (host.json) and owner-only secret files.
 //
 //   { "port": N, "pid": N, "startedAt": ISO, "token": hex | null, "systemToken": hex | null }

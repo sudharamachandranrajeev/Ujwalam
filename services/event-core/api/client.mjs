@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Client helpers for panic senders (review E8-03 follow-up, user decision 2026-10-29). Node stdlib only.
 //
 //  - withRetry(fn): bounded retry for idempotent-safe calls (panic). 5 tries, 50 / 100 / 200 / 400 ms apart, and only

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Alpha 0 day 3 crash recovery (services/studio-ui/launch.mjs): restart policy (bounded backoff, at most 3 restarts in
 // 5 min), which sinks count as running, and the launcher end to end with the fake host simulating crashes (no
 // libobs, no devices, mock Streamer.bot): restart, project reload, recording resumed in a new file, restart marker,

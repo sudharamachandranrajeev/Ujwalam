@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Project load and save. Atomic save: write <file>.tmp-<pid>, fsync, copy the current file to <file>.bak, rename
 // the temp over the file. A kill at any point leaves the original (or the .bak) intact; a leftover temp is
 // ignored by load. No path is built from the environment: callers pass the file or the data dir.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // In-process publish/subscribe with a bounded queue per subscriber (P3 E1). Node stdlib only.
 //
 // Live path rule: publish() never awaits a subscriber. Each subscriber has its own queue (default 1000).

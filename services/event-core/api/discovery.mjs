@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // api.json: how local clients find the running core (P3 E6). Node stdlib only.
 //
 //   { "port": N, "pid": N, "startedAt": ISO, "tokens": { "api": hex, "system": hex } | null }

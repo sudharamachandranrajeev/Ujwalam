@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // What goes into the Alpha 0 zip (D133), and the checks that keep everything else out.
 //
 //   repoFiles(repo)                 -> [rel]   repo files the installed app needs at run time (allowlisted dirs and

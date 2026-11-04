@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Provenance and chat taint (P3 E4). Pure, synchronous, no I/O. Node stdlib only.
 //
 // provenance node: { kind, eventId?, parent? }

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Project model entry point (v1 F1/F2). Schema: data/schemas/project.schema.json.
 
 import { randomBytes } from 'node:crypto';

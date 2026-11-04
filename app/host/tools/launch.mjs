@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Starts ujwalam-host for a manual session (the test card by default) and keeps it running until Ctrl+C.
 //   node app/host/tools/launch.mjs [--project <file.json>] [--base <name>=<dir> ...] [--preview h,v|h|v|none]
 //                                  [--outputs <plan.json>] [--overlay]

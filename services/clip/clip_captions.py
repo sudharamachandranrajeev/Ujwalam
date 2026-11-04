@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """F6 captions: transcriber seam (local only) and an ASS writer for burn-in.
 
 Backends (--captions):

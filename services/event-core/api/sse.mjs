@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Server-Sent Events client for the event-core API (P3 E6). Node stdlib only.
 //
 // One client = one bus subscription whose handler is SYNCHRONOUS: it only pushes the event onto this client's own

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Finds test mocks and soak helpers that are still running (P3 E7). Stdlib only. Read-only: it never stops anything.
 //
 //   node tools/stray-procs.mjs            list strays (exit 1 when there are any)

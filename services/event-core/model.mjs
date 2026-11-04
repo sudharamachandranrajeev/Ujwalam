@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Event model v1 (P3 E1): constants, per-kind field table, construction. Node stdlib only.
 //
 // Rules this module enforces at construction (E3 does full moderation on top):

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // BM3 (D196): test-broadcast banner. Page logic (run in a vm, no browser, no window), params vs registry, scene layers,
 // flag gate, static mount. Nothing here opens a window or starts a child process.
 import test from 'node:test';

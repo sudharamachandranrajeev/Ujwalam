@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core: dedupe window, bus (bounded queues, filters, counters) and the ingest pipeline.
 import test from 'node:test';
 import assert from 'node:assert/strict';

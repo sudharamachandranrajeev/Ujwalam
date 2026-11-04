@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Private-data scanner for git hooks. Terms come from a gitignored profile
 // (data/profile.local.json). Output never echoes a term or matched text.
 import { execFileSync } from 'node:child_process';

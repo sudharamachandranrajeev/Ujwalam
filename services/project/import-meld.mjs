@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Meld Studio session -> Ujwalam project (v1 F1). Reads the on-disk session file ({ version: 1, session: {...} },
 // observed in Meld Studio 0.10.7.7 and in the legacy reference backups). Format reference only: no Meld code or
 // assets are used. Pure function plus a CLI; the CLI creates a NEW project file and refuses to overwrite one.

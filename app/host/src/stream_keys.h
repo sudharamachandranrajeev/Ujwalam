@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: stream keys (and per-account ingest URLs) from the Windows Credential Manager (Alpha 0).
 //
 // The host reads them itself, in-process, with advapi32 CredReadW on a GENERIC credential whose target name matches

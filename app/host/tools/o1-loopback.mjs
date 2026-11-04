@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // O1/O2 loopback run: compositor -> encoder pool -> delivery pool, against local listeners only.
 //
 //   node app/host/tools/o1-loopback.mjs [--plan app/host/outputs/o1-loopback.json] [--seconds 60] [--out <dir>]

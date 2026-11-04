@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """F6 signal readers: host markers, event-core chat, audio loudness, detector hits (seam).
 
 All times returned are seconds into the recording (t = 0 at the first frame of the file).

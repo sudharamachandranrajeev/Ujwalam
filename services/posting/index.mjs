@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // P16a export-only posting. Node stdlib only. NOTHING here uploads, signs in or touches the network.
 //
 //   packageRun({ runDir, ledgerFile, profile, ffmpeg?, ... }) -> { packaged, skipped }

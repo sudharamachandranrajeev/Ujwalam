@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: long-running libobs host. Hosts the studio (canvases H/V, scenes, layers), native previews and the
 // output graph, and serves the local JSON-RPC API on 127.0.0.1. Device sources (cameras, capture cards, mics) are
 // off unless --allow-devices is given; a device session needs the user's go.

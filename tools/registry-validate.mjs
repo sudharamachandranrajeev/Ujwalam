@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Feature registry validator.
 // Usage: node tools/registry-validate.mjs [registryRoot] [repoRoot]
 //   registryRoot  default "registry"; contains schema/, categories.json, tags.json, functions/, presets/, pools/

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Crash-safe capture-card recorder for reference footage.
 
 Records the capture device directly (not a program output) into 60 s

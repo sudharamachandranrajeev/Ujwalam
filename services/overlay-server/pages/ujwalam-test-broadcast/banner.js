@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Test-broadcast banner logic (BM3, D196). Plain script, no CDN, safe DOM (text is set with textContent only).
 // Loaded by index.html as a global (TestBroadcast); tests run it in a vm context.
 (function (root) {

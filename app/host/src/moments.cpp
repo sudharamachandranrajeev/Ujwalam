@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: clip markers and feedback captures. See moments.h.
 #include "moments.h"
 #include "app.h"

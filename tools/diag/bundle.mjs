@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Diagnostics bundle: one redacted zip to attach to a bug report. Works without the host, the UI server or any RPC:
 // it reads files the launcher and the host already write; the RPC parts are used only when a host token is at hand.
 //   node tools/diag/bundle.mjs --data-dir <event-core data dir> [--host-data DIR] [--profile FILE] [--release FILE]

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Event-core data dir and pseudonym key (P3 E1). Node stdlib only.
 //
 // Data dir: the `dataDir` option wins. If it is missing, `paths.event_core_data` in

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // tools/stray-procs.mjs and the mock cleanup guarantees (P3 E7): a mock left running is found and reported by pid,
 // a mock started in-process is tracked until closed, and the CLI mock stops itself after its TTL.
 import test from 'node:test';

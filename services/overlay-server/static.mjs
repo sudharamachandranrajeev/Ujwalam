@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Read-only static server for the overlay folder, 127.0.0.1 only. Node stdlib only.
 //
 // Layout (kept from the legacy server so imported browser layers resolve unchanged):

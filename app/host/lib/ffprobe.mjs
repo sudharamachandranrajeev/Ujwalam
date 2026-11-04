@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ffprobe helpers for loopback assertions. ffprobe is found on PATH (or FFPROBE); nothing is installed.
 import { spawnSync } from 'node:child_process';
 

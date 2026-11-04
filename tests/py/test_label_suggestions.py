@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests for tools/label/suggestions.py (A6). Stdlib only. Small fixtures are built here; the corpus is never used."""
 
 import importlib.util

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Idempotency kill test (P3 E7 follow-up): a real child process is killed (taskkill /F on Windows, SIGKILL elsewhere)
 // at each phase of a keyed action, restarted on the same database, and the same platform message is resent.
 // Asserts the documented bound: the action never runs twice; a kill between the durable start marker and the

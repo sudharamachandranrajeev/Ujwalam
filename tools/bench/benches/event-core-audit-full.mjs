@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bench (b): FULL write path, everything the live core writes per event. SYNTHETIC input: generated events with
 // made-up ids, names and text, no real chat. Part of PB-12.
 // Phase 1 (real core, real writer thread, all four queues): ingest_p95_ms (what attaching the audit adds to

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Compares one overlay run driven by mock-chat-schedule.mjs on two hosts at once:
 //   legacy  the page in headless Chrome, traced by legacy-browser-trace.mjs (draw calls + counters)
 //   libobs  the same page in a libobs recording, measured by effect-timeline.mjs

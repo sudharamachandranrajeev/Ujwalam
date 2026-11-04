@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: project v1 (data/schemas/project.schema.json, services/project/) -> host build plan.
 //
 // The plan is pure data: no libobs object is created and no device is opened. Studio::load builds the libobs graph

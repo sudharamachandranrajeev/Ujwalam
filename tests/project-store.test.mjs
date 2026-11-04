@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Project store: round trip, atomic save under a killed write, .bak recovery, migration, placeholder-only fixtures.
 
 import test from 'node:test';

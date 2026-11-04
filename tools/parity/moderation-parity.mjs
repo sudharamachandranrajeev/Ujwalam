@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Moderation parity (P3 E3, star item). Runs the same invented inputs through the LEGACY engage pipeline
 // and through Ujwalam moderation, prints per-case agreement, writes tests/fixtures/moderation/parity.json
 // (inputs + legacy verdicts + generatedFrom hashes) and exits 1 on any mismatch.

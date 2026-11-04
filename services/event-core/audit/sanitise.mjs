@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Defence in depth for the audit (P3 E5): every field that reaches an audit row passes a strict pattern, so a
 // free-text string (chat, a display name) can never be written there even if an upstream stage lets one through.
 // A value that fails its pattern is replaced by a fixed marker, never truncated into something readable.

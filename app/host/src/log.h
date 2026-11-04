@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: logging. libobs messages and host messages go to stdout and to the log file.
 // Never log tokens, stream keys or request params.
 #pragma once

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // D198: the studio starts the event core with the same Streamer.bot address as the bot manager (8093 by default),
 // not the connector's documented 8080. Pure argument tests: nothing is started.
 import test from 'node:test';

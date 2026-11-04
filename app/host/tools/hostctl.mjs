@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // hostctl: call one ujwalam-host JSON-RPC method and print the result.
 //   node app/host/tools/hostctl.mjs [--discovery <host.json>] <method> [params-json]
 // The discovery file defaults to the one app/host/lib/config.mjs resolves. The token comes from the discovery

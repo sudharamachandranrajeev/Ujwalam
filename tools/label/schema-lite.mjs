@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // A6: small JSON Schema checker for the label server (stdlib only; ajv is a dev dependency and is not
 // available at runtime). It supports exactly the keywords data/labels.schema.json uses: $ref (local),
 // type, const, enum, pattern, minimum, maximum, exclusiveMinimum, maxLength, items, uniqueItems,

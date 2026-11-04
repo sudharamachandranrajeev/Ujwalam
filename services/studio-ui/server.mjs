@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Studio UI server (v1 F2, decision D1). Node stdlib only.
 //
 // Serves ui/ (plain <script>, no CDN) on 127.0.0.1 and offers the page a NARROW same-origin API. The page never gets

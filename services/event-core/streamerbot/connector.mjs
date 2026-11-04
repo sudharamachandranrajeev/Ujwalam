@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Streamer.bot connector (P3 E2). Node stdlib only (global WebSocket, Node >= 22).
 //
 //   const sb = createStreamerbotConnector({ core, url?, getPassword?, recorder?, actions?, ... });

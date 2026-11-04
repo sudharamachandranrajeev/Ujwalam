@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Studio UI server security tests (v1 F2): Host/Origin/CSRF/cookie, login key, confirmation channel, no backend token
 // reaches the page, static path traversal. Uses a stub core and the in-memory fake host; no real backend, no network
 // beyond 127.0.0.1.

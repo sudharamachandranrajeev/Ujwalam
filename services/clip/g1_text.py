@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """G1 text matching helpers (P2a step A5). Stdlib only.
 
 Pure functions used by g1_scan.py on OCR output:

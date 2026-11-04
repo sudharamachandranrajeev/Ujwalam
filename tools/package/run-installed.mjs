@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Entry point of an installed (or unzipped) Alpha build, run by Ujwalam.cmd. Same as `npm run alpha` from a checkout,
 // with every path taken from the install dir and the user's data dir instead of the repo:
 //   install dir   two levels above this file (holds release.json, bin/ujwalam-host.exe, obs/)

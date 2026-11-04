@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Effect guards tests (v1 F4/F5): shared budget, cooldowns, priority and region overlap (drop, queue, preempt), flash
 // limit, seeded pools, audit rows, the cam-pop rule against the legacy capture, and the guards wired into the bridge.
 // A fake clock drives everything; no timers, no network except the loopback feed test at the end.

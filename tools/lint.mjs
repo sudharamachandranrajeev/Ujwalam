@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Repo lint (P3 E0). Stdlib only. Usage: node tools/lint.mjs [--root dir] [--rules a,b] [file ...]
 // Scope: `git ls-files` plus untracked-not-ignored files, so gitignored paths (legacy/, node_modules/,
 // out/) are never linted. Files that .gitattributes marks binary (or that hold a NUL byte) are skipped.
@@ -39,7 +39,7 @@ export const LINT_EXCLUSIONS = [
 ];
 const selfExempt = (rel, line) => rel === SELF_EXEMPT_FILE && line.startsWith(SELF_EXEMPT_LINE_START);
 
-const SPDX_ID = 'SPDX-License-Identifier: GPL-2.0-or-later';
+const SPDX_ID = 'SPDX-License-Identifier: GPL-3.0-or-later';
 const HASH = `# ${SPDX_ID}`;
 const SLASH = `// ${SPDX_ID}`;
 const SPDX_BY_EXT = {

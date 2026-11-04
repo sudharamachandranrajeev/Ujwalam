@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Post-stream feedback form backend (alpha plan Part B). Node stdlib only.
 // Moments live in <feedbackDir>/<YYYY-MM-DD>/<HHMMSS>/ (made by the host's feedback hotkey). This module reads
 // moment.json and reads/writes ONLY note.json in a moment folder. Ids are validated against MOMENT_ID before any

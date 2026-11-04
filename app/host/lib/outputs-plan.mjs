@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // O0 output config -> ujwalam-host outputs.configure params.
 //
 // The O0 config is validated with services/outputs/validate.mjs against data/platforms/*.json first (platform

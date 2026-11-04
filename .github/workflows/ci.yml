@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Cloud CI (D202). Runs the Node-only part of `npm run ci` on a GitHub-hosted Windows runner. Steps that need laptop-only
 # inputs (libobs host, GPU, .venv, legacy/, private profile) are reported NOT RUN by tools/ci.mjs and never stamp a push.
 name: ci

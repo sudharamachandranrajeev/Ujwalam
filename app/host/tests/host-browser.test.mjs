@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: browser layers (obs-browser, tier B) and the overlay server child under the host's supervisor.
 //   node --test app/host/tests/
 // Test card + one legacy overlay page (gg-burst, fired through the relay page) only: no devices, no event core, no

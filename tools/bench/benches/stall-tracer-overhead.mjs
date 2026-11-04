@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bench: cost of the event-loop stall tracer (services/event-core/diag/stall-tracer.mjs, P3 E7). SYNTHETIC input.
 // Same process, tracer ON (25 ms tick, watchdog worker on, file in a temp dir) against tracer OFF:
 //  - ingest p50/p95 per event, measured in alternating chunks (off, on, off, on, ...) so drift cancels; the metrics

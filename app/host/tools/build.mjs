@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Builds ujwalam-host into out/host/build (gitignored).
 //   node app/host/tools/build.mjs [--reconfigure]
 // OBS paths come from app/lib/config.mjs (env or app/host/host.local.json). cmake, ninja and cl come from the

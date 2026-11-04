@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """G1 geometry: detector ROIs (fractions of the game area) to frame pixels. Stdlib only.
 
 A layout describes where the game area sits in a frame and which part of the frame

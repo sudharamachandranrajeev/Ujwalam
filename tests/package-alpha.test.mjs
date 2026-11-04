@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Alpha 0 packaging (tools/package/): zip writer/reader, PE import reader, the file allowlist and forbidden-path check,
 // release info and changelog excerpt, the installed-run spec, the CRLF launcher scripts, and Install-Ujwalam.ps1 end
 // to end on a tiny fake package in a temp install root (install, tamper, reinstall refused, second version, rollback).
@@ -129,7 +129,7 @@ test('launcher scripts: CRLF line endings, SPDX header, Install-Ujwalam.ps1 pars
   for (const f of ['tools/package/Install-Ujwalam.ps1', 'tools/package/Ujwalam.cmd']) {
     const t = readFileSync(path.join(REPO, f), 'latin1');
     assert.ok(!/[^\r]\n/.test(t), `${f} has LF-only lines`);
-    assert.match(t, /SPDX-License-Identifier: GPL-2\.0-or-later/);
+    assert.match(t, /SPDX-License-Identifier: GPL-3\.0-or-later/);
   }
   const ps = path.join(REPO, 'tools', 'package', 'Install-Ujwalam.ps1').replace(/'/g, "''");
   const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `$e=$null; [void][System.Management.Automation.Language.Parser]::ParseFile('${ps}', [ref]$null, [ref]$e); $e.Count`], { encoding: 'utf8', windowsHide: true });

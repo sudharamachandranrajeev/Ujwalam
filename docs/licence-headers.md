@@ -1,6 +1,6 @@
 # Licence headers and publishing rules
 
-Ujwalam is licensed GPL-2.0-or-later (`LICENSE`, `package.json`). `LICENSE` carries the full verbatim GPL-2.0 text (2026-11-04, resolving the earlier placeholder, since the repo is now public).
+Ujwalam is licensed GPL-3.0-or-later (`LICENSE`, `package.json`). `LICENSE` carries the full verbatim GPL-3.0 text (2026-11-05, superseding the 2026-11-04 GPL-2.0 text: the bundled FFmpeg build was verified GPL-3.0-or-later, see `docs/evidence/2026-11-05-licence-verification.md`).
 
 Third-party packages and model files (OCR worker, from P2a A5) are listed with their licences in `docs/third-party-notices.md`.
 
@@ -12,11 +12,11 @@ Every source file starts with an SPDX header in the language's comment form:
 
 | Language | Header |
 |---|---|
-| JS / MJS / TS / C / C++ / QML | `// SPDX-License-Identifier: GPL-2.0-or-later` |
-| Python / shell / YAML / TOML | `# SPDX-License-Identifier: GPL-2.0-or-later` |
-| HTML / XML | `<!-- SPDX-License-Identifier: GPL-2.0-or-later -->` |
-| CSS | `/* SPDX-License-Identifier: GPL-2.0-or-later */` |
-| PowerShell | `# SPDX-License-Identifier: GPL-2.0-or-later` |
+| JS / MJS / TS / C / C++ / QML | `// SPDX-License-Identifier: GPL-3.0-or-later` |
+| Python / shell / YAML / TOML | `# SPDX-License-Identifier: GPL-3.0-or-later` |
+| HTML / XML | `<!-- SPDX-License-Identifier: GPL-3.0-or-later -->` |
+| CSS | `/* SPDX-License-Identifier: GPL-3.0-or-later */` |
+| PowerShell | `# SPDX-License-Identifier: GPL-3.0-or-later` |
 
 JSON cannot carry comments; its licence is covered by the repo `LICENSE`. Files under `legacy/` are not headered (read-only reference).
 

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Scheduled pretend Streamer.bot for overlay timing tests (cooldown, flash rate). Same envelope
 // as legacy/tools/mock-streamerbot.mjs, Node built-ins only. Chat text is synthetic.
 //

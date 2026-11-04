@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: project v1 -> build plan. See model.h.
 #include "model.h"
 #include "checks.h"

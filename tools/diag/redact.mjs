@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Redaction for the diagnostics bundle (tools/diag/bundle.mjs). Applied to every text that goes into the bundle.
 //   makeRedactor({ home, userName, profile }) -> (text) => text
 // Rules, in order:

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Event-loop stall tracer (P3 E7 follow-up). Node stdlib only.
 //
 //   const t = createStallTracer({ file, label: 'core-child', thresholdMs: 200, context: () => ({ ... }) });

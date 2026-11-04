@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/livelock: catalogue validation and tamper, confirmations, live state, panic, audit,
 // executor dispatch, and the end-to-end mock chat taint path. All text is invented. Temp dirs only.
 import test from 'node:test';

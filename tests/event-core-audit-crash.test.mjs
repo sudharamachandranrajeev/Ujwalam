@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/audit: hard-kill crash test. A child process writes audit rows through the real worker writer
 // and is killed (TerminateProcess) at a random point, 20 times in a row on the same database. After each kill the
 // database must pass integrity_check, the chain and the head record, hold this round's rows as a gap-free prefix, and

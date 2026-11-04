@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Diagnostics bundle (tools/diag/bundle.mjs, redact.mjs): the zip holds the expected files, and no key, token, URL,
 // chat text, profile value, user name or home path survives in any of them. All secrets here are random values made
 // by the test, and the home dir is a made-up folder, so nothing real is written.

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Audit crash test (P3 E5): spawn a child that writes audit rows continuously, kill it hard at a random point,
 // reopen and check; repeat. After each kill the parent requires: the single-writer lock is free again,
 // PRAGMA integrity_check ok, the whole chain verifies, the head row count equals the table row count,

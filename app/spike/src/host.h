@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-spike: headless libobs host helpers (startup, logging, encoders, outputs, stats).
 #pragma once
 

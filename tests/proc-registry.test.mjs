@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Child-process teardown (v1 test cleanup): a hung or abandoned child is killed with its whole tree, waits never hang,
 // and a replay run that fails part-way leaves no child and no mock behind.
 import test from 'node:test';

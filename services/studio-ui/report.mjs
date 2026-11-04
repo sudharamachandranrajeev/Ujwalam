@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // "Report" button support (flag `report-button`, D199). Builds a prefilled GitHub "new issue" URL. Nothing is sent:
 // no GitHub API, no token, no network from Ujwalam. The page opens the URL in the user's browser and the user reviews
 // and submits it there.

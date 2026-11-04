@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: global hotkeys (A0 day 2). RegisterHotKey on a dedicated message-loop thread (the hotkeys belong to
 // that thread's queue, no window). A binding that cannot be registered (bad combo, taken by another program or by
 // another binding) is logged and reported in host.info.hotkeys; it is never fatal.

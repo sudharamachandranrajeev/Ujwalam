@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Flash rate of a recording, from rendered-frame luminance (WCAG 2.x general-flash method).
 //
 //   node flash-rate.mjs --video FILE [--scale 4] [--grid 3] [--from S] [--to S] [--json OUT]

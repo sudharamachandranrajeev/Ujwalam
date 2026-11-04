@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Test-stream feedback collection (BM5, D195). Node stdlib only. Read-only: it opens event-core.db read-only, reads
 // chat_raw, and writes one Markdown file under feedback/ (gitignored). It never sends chat and starts no process.
 //

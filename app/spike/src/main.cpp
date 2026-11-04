@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-spike: P1 headless libobs host. All paths come from the command line.
 //
 //   ujwalam-spike <command> --runtime <OBS runtime dir> --out <output dir> [options]

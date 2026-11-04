@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """G1 corpus check of the CODM game-event detectors (P2a step A5).
 
 Read-only on the clips corpus: clips are only opened as ffmpeg inputs. Every output

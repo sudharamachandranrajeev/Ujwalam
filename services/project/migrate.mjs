@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Project migrations keyed on the document version. MIGRATIONS[n] turns a version n document into n+1 and must
 // not mutate its input. Version 0 is the pre-release shape (one shared transform per layer, one canvas);
 // it is kept so the migration hook has a tested path before the format ever changes in the wild.

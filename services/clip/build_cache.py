@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Analysis cache for labelled clip sessions (P2a step A2b).
 
 Builds, per session, from the original clips (read only):

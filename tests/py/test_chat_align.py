@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for services/clip/chat_align.py.
 
 Synthetic fixtures only: invented sessions, invented chat files and invented engage

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: scene model on libobs. Canvases H (libobs main canvas) and V (obs_canvas_create), scenes per canvas,
 // layers (one scene item each, on a source that may be shared), active scene per canvas, mixer state.
 //

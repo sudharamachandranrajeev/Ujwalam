@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Studio UI server entry. Usage: node services/studio-ui/cli.mjs serve [--port N] [--data-dir DIR] [--fake-host] [--feedback-dir DIR]
 // The launch key comes from UJWALAM_UI_LAUNCH_KEY (set by launch.mjs); without it a random one is made and the UI
 // cannot be logged into (useful only for tests). Backend tokens come from the environment or the data dir files; they

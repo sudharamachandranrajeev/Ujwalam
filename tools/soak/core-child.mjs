@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Event-core process under test for the E7 soak/crash runs (P3). Node stdlib only.
 //
 //   node tools/soak/core-child.mjs --data-dir DIR --sb-url ws://127.0.0.1:N/ --metrics-dir DIR --exec-log FILE [--sample-ms 10000]

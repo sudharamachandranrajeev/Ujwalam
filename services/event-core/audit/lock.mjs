@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Single-writer lock for the audit database (P3 E5). Node stdlib only.
 //
 // The lock is an EXCLUSIVE SQLite lock on a separate file, <dataDir>/event-core.db.lock, held for the life of the

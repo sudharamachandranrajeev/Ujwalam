@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Ujwalam side of the moderation parity check (P3 E3). Shared by tools/parity/moderation-parity.mjs and
 // tests/event-core-moderation-parity.test.mjs. Pure; no legacy import.
 //

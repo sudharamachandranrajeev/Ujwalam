@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Hand-written runtime validator for project v1 (v1 F1/F2). Node stdlib only, no ajv at runtime.
 // Must agree with data/schemas/project.schema.json on structure; tests/project-schema.test.mjs runs both on the
 // same cases. On top of structure it checks cross-references and path safety, which JSON Schema cannot.

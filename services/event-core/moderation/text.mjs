@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Text hygiene (P3 E3), ported from the legacy engage pipeline (normalise, cleanName). Node stdlib only.
 // Same behaviour as legacy; gaps are proposals in docs/evidence/2026-10-28-p3-e3-moderation.md.
 //

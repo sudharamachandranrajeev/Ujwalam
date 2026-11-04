@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Reads the DLL names a Windows PE file imports (normal and delay-load import tables) and the names it exports. Used
 // by the alpha packager to copy exactly the OBS runtime files the host can load (tools/package/manifest.mjs).
 //   peInfo(buffer) -> { machine, pe32plus, imports: [dll], delayImports: [dll], exports: [name] }

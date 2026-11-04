@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for services/clip/boundary_xcorr.py and services/clip/build_cache.py.
 
 Synthetic signals and synthetic session records only; no corpus access, no ffmpeg.

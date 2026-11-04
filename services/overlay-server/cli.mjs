@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Run the overlay server as its own process.
 //   node services/overlay-server/cli.mjs [--no-guards] [--root <dir>] [--port 8787] [--feed-port 8788] [--events-url http://127.0.0.1:<port>/events]
 // root defaults to ./legacy (the legacy overlay folder, read-only). The event-core API token comes from the

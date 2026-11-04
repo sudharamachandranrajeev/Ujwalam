@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core dedupe persistence (P3 E7): keys are SHA-256 of "platform:platformMessageId", queued off the hot
 // path, written by the audit worker in a new table, and seeded back into memory at start-up. SYNTHETIC ids only.
 import test from 'node:test';

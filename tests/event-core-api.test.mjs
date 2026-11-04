@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/api: auth, roles, browser and cross-site refusals, JSON-RPC validation, confirm flow, panic,
 // audit methods, limits and timeouts. All text is invented. No chat text is printed. Temp dirs and loopback only.
 import test from 'node:test';

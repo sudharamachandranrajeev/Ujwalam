@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // CI pass stamps (D190, batching). Commits run only the quick CI steps; the full CI runs about once an hour and
 // before every push. A full pass records the git tree hash of the working tree it tested; the pre-push hook refuses
 // a push whose commit tree has no stamp. Stdlib only.

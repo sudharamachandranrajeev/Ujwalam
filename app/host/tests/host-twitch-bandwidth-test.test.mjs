@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Twitch bandwidth-test mode (--twitch-bandwidth-test), against a real host process WITHOUT --allow-live and loopback
 // listeners only (no platform, no network beyond 127.0.0.1):
 //   - host.info flags and outputs.status report the mode; only the keyed twitch sink has bandwidthTest true;

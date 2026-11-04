@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Replay finished capture segments into a folder as if record.py were writing them (P2b W1).
 
 For demonstrating and testing the coverage tracker (services/clip/coverage.py watch) without the

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Same-origin client for the studio UI server. The page holds only the CSRF value from /ui/api/session; the session
 // cookie is HttpOnly and no backend token ever reaches this page.
 (function () {

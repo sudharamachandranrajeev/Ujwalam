@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Replay harness for the P3 E7 latency, soak and crash runs. Node stdlib only.
 //
 //   node tools/soak/replay.mjs --data-root DIR [--mode replay|crash] [--speed 1|10] [--duration-s N] [--max-gap-s G]

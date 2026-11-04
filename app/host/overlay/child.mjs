@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Overlay server as a child of ujwalam-host (the host supervises it: start, restart with backoff, stop).
 // It runs Agent A's services/overlay-server unchanged and adds a parent-only control channel on stdin/stdout:
 //   stdout: one JSON object per line, nothing else

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // P3 E2: the read-only listen CLI against the mock. No chat text or names in the output without --show-text,
 // and never in any file.
 import test from 'node:test';

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // post-commit helper: copy the latest bench run to out/bench/commits/<new sha>.json.
 // Never fails the commit: every error is swallowed and the exit code is always 0.
 import { spawnSync } from 'node:child_process';

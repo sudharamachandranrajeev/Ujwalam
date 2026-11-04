@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core/diag/stall-tracer.mjs: detects an injected stall, attributes it (CPU busy vs blocked off CPU),
 // keeps the breadcrumbs around it, writes JSON lines asynchronously, and stays quiet on an idle loop.
 import test from 'node:test';

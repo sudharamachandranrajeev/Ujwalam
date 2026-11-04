@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Game pack loader (P2b W0). Stdlib only.
 
 A pack is a folder data/games/<id>/ with game.json, detectors.json, events.json, screens.json

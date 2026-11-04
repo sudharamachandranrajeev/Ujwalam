@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: native preview windows. See preview.h.
 //
 // Threading: windows are created and pumped on one UI thread. obs_display draws on the libobs graphics thread

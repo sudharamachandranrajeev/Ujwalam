@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Starts ujwalam-host as a child process and waits for its discovery file.
 // By default the api token is passed by environment (UJWALAM_HOST_TOKEN), never on the command line, so the
 // discovery file carries token: null (the UI launcher's way). tokenByEnv: false lets the host generate it into the

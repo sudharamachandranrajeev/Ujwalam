@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: input checks shared by the studio (host test format) and the project v1 planner.
 // Every failure throws rpc::Error(INVALID_PARAMS) with a short message that never echoes long input.
 #pragma once

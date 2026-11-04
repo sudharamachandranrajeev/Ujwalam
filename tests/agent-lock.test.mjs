@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Agent session lock (docs/procedures/session-protocol.md): one writer at a time across tools.
 import test from 'node:test';
 import assert from 'node:assert/strict';

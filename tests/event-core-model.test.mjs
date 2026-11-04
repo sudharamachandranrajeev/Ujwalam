@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // services/event-core model: schema/validator agreement, ids, mono, caps, control characters, pseudonyms, key file.
 // Temp dirs only. ajv is a dev dependency and is used here, never at runtime.
 import test from 'node:test';

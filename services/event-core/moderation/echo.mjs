@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Self-echo tracker (P3 E3). Node stdlib only.
 //
 // Legacy definition (engage/lib/pipeline.mjs): key = normalise(text).toLowerCase(), TEXT ONLY (no

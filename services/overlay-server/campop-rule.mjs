@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Cam-pop rule (v1 F5): when to pop the camera. Port of the trigger logic of the legacy cam-pop tool, as data + a
 // small state machine. It only DECIDES; the pop itself goes through the same effect gate as every other effect
 // (`fire({ name: 'campop', source })`), so budget, region and flash guards apply and refusals are audited.

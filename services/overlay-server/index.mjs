@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Overlay server: read-only static server for the legacy overlay folder plus the event-core bridge feed. Node stdlib only.
 //
 //   const s = createOverlayServer({ root, bus });       // bus: event-core bus or createRemoteBus()

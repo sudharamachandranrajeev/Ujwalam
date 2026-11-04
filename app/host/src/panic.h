@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: panic (A0 day 2), following the call contract in services/event-core/api/panic.mjs:
 //
 //   1. In-process first, no IPC: the host hides every visible browser layer (overlays and effect pages) on every

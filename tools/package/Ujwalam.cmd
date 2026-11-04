@@ -1,5 +1,5 @@
 @echo off
-rem SPDX-License-Identifier: GPL-2.0-or-later
+rem SPDX-License-Identifier: GPL-3.0-or-later
 rem Ujwalam alpha launcher (D133). Two places use this same file:
 rem   %LOCALAPPDATA%\Ujwalam\Ujwalam.cmd       reads current.txt and runs that version's copy (the shortcuts point here)
 rem   %LOCALAPPDATA%\Ujwalam\<version>\Ujwalam.cmd  (or an unzipped build) runs this version with system Node.js

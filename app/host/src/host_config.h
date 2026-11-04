@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: the host config file (--host-config <file.json>; A0 day 2). Strict: unknown keys are refused.
 //
 //   { "replay":   { "seconds": 30, "autoStart": false, "fallbackKbps": { "H": 12000, "V": 8000 } },

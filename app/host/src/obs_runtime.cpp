@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: libobs startup and shutdown. Startup sequence and host facts from P1a
 // (docs/evidence/2026-10-27-p1a-build.md): PATH (not SetDllDirectory) for the runtime bin dir, helper exes next to
 // the host exe, module config under the host data dir.

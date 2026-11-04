@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: JSON-RPC method table. The contract (names, params, results) is listed in
 // docs/evidence/2026-10-29-v1-host-o1.md, with the day-2 changes (devices.list, project.plan, project v1 load,
 // optional canvas) in docs/evidence/2026-10-30-v1-host-devices-project.md. Canvas ids are "H"/"V" and accepted case-insensitively ("h", "v").

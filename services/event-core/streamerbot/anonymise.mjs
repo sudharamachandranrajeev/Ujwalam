@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Alert fixture anonymiser and recorder (P3 E2). Node stdlib only.
 //
 // Allowlist, not blocklist. A value survives only if its key is allowlisted AND its value passes that key's

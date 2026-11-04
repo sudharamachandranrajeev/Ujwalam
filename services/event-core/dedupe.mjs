@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Dedupe by (platform, platformMessageId) inside a bounded window (P3 E1, persistent since E7). Node stdlib only.
 //
 // Limits: an entry lives `windowMs` (default 120 000 ms, monotonic clock) and the table holds at most

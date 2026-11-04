@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unit tests for the G1 helpers: services/clip/g1_text.py and g1_geometry.py.
 
 Synthetic data only: invented player names and layouts. Stdlib only, so they run

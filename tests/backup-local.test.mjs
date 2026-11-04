@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Encrypted local-data backup (D135): the archive is encrypted (wrong password fails, names hidden), only existing
 // sources are taken, a rerun the same day keeps the earlier archive in _to_delete/, and --keep moves, never deletes.
 import test from 'node:test';

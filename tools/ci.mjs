@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Local CI (P3 E0). Runs every standing check in order, continues after a failure so the summary is
 // complete, exits 1 if any step failed. Stdlib only.
 // Usage: node tools/ci.mjs [--only step,step | --quick] [--list] [--tail N]

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Tests for the W1 capture coverage tracker (services/clip/coverage.py).
 
 Stdlib parts (run under the system Python, npm run test:py, and in the OCR venv, npm run

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // legacy/ integrity check against legacy.manifest.sha256.
 // Usage: node tools/legacy-verify.mjs [--write] [legacyDir] [manifestPath]
 //   legacyDir     default "legacy"

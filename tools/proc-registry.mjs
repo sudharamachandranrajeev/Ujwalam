@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Child-process teardown for tests and soak tools (v1 test cleanup). Stdlib only.
 //
 // Why: a test that spawns a child and then fails, times out or throws before its own cleanup leaves that child alive.

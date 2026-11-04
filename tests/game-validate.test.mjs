@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // P2b W0: game pack validator (tools/game-validate.mjs): the CODM pack passes; broken cross-file references fail.
 import test from 'node:test';
 import assert from 'node:assert/strict';

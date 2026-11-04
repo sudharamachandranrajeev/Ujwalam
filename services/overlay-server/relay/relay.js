@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Overlay relay script: bridge feed -> BroadcastChannel 'rp-events'. Plain script, no CDN, no DOM output.
 // UNVERIFIED: that every browser source in the libobs (CEF) session shares one BroadcastChannel scope. If it does
 // not, the host posts the same { rp: 'event', type, data } object into each page instead (window.postMessage).

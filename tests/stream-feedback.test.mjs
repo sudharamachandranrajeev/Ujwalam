@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // BM5 stream feedback collection: recorded mock chat only (placeholder names), headless, read-only database.
 process.env.UJWALAM_HEADLESS = '1';
 import test from 'node:test';

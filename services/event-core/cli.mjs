@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Event-core command line (P3 E2). Node stdlib only.
 //
 //   node services/event-core/cli.mjs listen [--url ws://127.0.0.1:8080/] [--interval 10000] [--duration SECONDS]

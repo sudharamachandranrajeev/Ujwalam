@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Bench: event core in-process cost per event (P3 E1): construct + validate + dedupe + publish to 3 subscribers.
 // SYNTHETIC input: generated chat and alert objects with made-up ids and names, no real chat. Timing covers
 // the synchronous ingest call only; handler delivery (a microtask later) is awaited after the batch and not

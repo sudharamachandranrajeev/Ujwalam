@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unit and plumbing tests for the F6 post-stream clipper (services/clip/clipper.py and clip_*.py).
 
 Plumbing only: generated inputs (lavfi media, fixture marker rows, a fixture chat table), never corpus files,

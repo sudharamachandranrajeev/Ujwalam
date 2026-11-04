@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Studio UI skeleton: scenes, layers, preview buttons, mixer placeholder, stream/record buttons, status bar.
 // Plain script, safe DOM only (Dom.el / textContent). Every host call goes through the same-origin UI server.
 (function () {

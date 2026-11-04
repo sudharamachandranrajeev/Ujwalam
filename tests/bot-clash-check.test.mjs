@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // BM7 clash checker tests: fake listener lists and fake hotkey data. Headless; no network, no window.
 process.env.UJWALAM_HEADLESS = '1';
 import assert from 'node:assert/strict';

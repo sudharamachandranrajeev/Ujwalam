@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: native preview windows (Win32 + obs_display_create), one per canvas (H, V). D1: the web control
 // UI drives the studio, previews are native libobs windows. Windows are resizable; the canvas is drawn letterboxed
 // at its own aspect ratio. Closing a window only closes the preview.

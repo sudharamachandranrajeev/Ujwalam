@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Power (AC/battery) and system-wide CPU load capture for soak and crash runs (P3 E7). Node stdlib only.
 // Uses the shared noise rules in tools/bench/noise.mjs (same as the bench harness): CPU limits (NOISE), battery, and the
 // known heavy processes in tools/bench/noisy-processes.json. Process CPU is read at start and every powerEveryMs (async,

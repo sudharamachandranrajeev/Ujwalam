@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // tools/bench: harness, 10 % regression flag, baseline, accept, post-commit hook. Temp dirs only.
 // The fixture benches spin for a time the test sets through a control file.
 import test from 'node:test';

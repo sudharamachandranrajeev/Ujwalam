@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: GPL-2.0-or-later
+# SPDX-License-Identifier: GPL-3.0-or-later
 """F6 candidate ranking: per-second signals -> events -> merged, scored windows.
 
 Signals (all seconds into the recording):

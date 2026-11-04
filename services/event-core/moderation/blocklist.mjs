@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Blocklist loading and matching (P3 E3). Node stdlib only.
 //
 // Shape and semantics are the legacy blocklist: case-insensitive regexes ('i' only, no 'u'), tested

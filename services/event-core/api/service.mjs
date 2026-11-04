@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // The event-core service: core + audit + action gate + Streamer.bot ingest + API (P3 E6). Node stdlib only.
 //
 //   const svc = await startService({ dataDir, mock: true });   // svc.port, svc.core, svc.api, await svc.stop()

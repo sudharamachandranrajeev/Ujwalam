@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Overlay child (app/host/overlay/child.mjs) op "mic": the host's fire-and-forget mic level for the cam-pop voice
 // trigger. The child is spawned directly, as the host does (stdin/stdout JSON lines), with an empty temp overlay root
 // and port 0: no host, no devices, no browser. The rule's counters come back in the stats reply (campop).

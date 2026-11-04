@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: GPL-2.0-or-later
+// SPDX-License-Identifier: GPL-3.0-or-later
 // Fail closed for writes when the audit is slow or down (user decisions 2026-10-28: on-air writes, then every write):
 // a write of class write or on-air-write while not offline runs only after a durable audit record; otherwise it is
 // refused 'audit-unavailable', never run, and shown (system.refused on the bus and SSE, an audit row once the audit
