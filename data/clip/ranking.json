@@ -2,8 +2,8 @@
   "$comment": "F6 post-stream clip ranking (docs/plan/2026-11-03-f6-clip-pipeline-plan.md). status 'proposed' = agent defaults, not approved by the user and not tuned on labels (AGENTS.md: weights and windows are approved by the user, never invented). Every run records this status in run.json. Backdating follows build plan 4.10 (windows backdated 20-40 s because chat reacts after the moment). Detector weights stay null until G3 (data/games/<id>/events.json); a hit with a null weight is a reason with weight 0.",
   "version": "0.1.0",
   "status": "proposed",
-  "approvedBy": "user 2026-11-03, as proposals only: values stay unverified and are tuned after the first real stream; normalise chat speed and loudness against the stream's own baseline",
-  "checked": "2026-11-03",
+  "approvedBy": "user 2026-11-03, as proposals only, reconfirmed 2026-11-06 (WhatsApp, 'approved as-is'): values stay unverified and are tuned after the first real stream; normalise chat speed and loudness against the stream's own baseline",
+  "checked": "2026-11-06",
   "weights": {
     "marker.hotkey": 1.0,
     "marker.api": 1.0,
