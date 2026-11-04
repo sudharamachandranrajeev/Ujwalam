@@ -1,6 +1,6 @@
 # Licence headers and publishing rules
 
-Ujwalam is licensed GPL-2.0-or-later (`LICENSE`, `package.json`). The full licence text in `LICENSE` is still a placeholder (short form with SPDX id and FSF URL).
+Ujwalam is licensed GPL-2.0-or-later (`LICENSE`, `package.json`). `LICENSE` carries the full verbatim GPL-2.0 text (2026-11-04, resolving the earlier placeholder, since the repo is now public).
 
 Third-party packages and model files (OCR worker, from P2a A5) are listed with their licences in `docs/third-party-notices.md`.
 
