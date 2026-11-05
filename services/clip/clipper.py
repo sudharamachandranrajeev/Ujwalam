@@ -2,14 +2,20 @@
 """F6 post-stream clipper (docs/plan/2026-11-03-f6-clip-pipeline-plan.md). Behind the feature flag `clip-pipeline`
 (data/flags.json, off by default): every subcommand exits 3 while the flag is off in the data dir.
 
+  detect      --recording FILE --out DIR [--game codm] [--detector-config F] [--profile F] [--layout F] [--fps F]
+              [--threads 1-4]
+              -> DIR/detector-hits.jsonl + DIR/detector-pass.json: the game pack's detectors over the H recording
+              (OCR venv; sample rate from data/clip/detector-pass.json; one heavy job at a time)
   candidates  --recording FILE [--markers FILE ...] [--chat-db event-core.db] [--hits FILE] [--record-start ISO]
               [--no-audio] --out DIR
-              -> DIR/candidates.json (times, scores, reasons; no chat text, no marker notes, no names)
+              -> DIR/candidates.json (times, scores, reasons, detectorHits; no chat text, no marker notes, no names)
+              Without --hits, DIR/detector-hits.jsonl from `detect` on the same recording is used. Detector hits
+              weigh 0 until ranking.json detectorWeightsStatus is "approved": listed and attached, never ranked.
   render      --recording FILE --out DIR [--layouts a,b,c] [--only c01,c02] [--encoder auto|libopenh264|h264_nvenc]
               [--captions none|whisper-cli|faster-whisper] [--whisper-bin F --whisper-model F] [--language xx]
               -> DIR/clips/<id>/<layout>.mp4 (+ captions.ass), DIR/render.json
   validate    --out DIR [--no-decode]  -> DIR/report.json; exit 4 when any file fails
-  run         candidates + render + validate with the same options
+  run         [--detect] candidates + render + validate with the same options (--detect runs `detect` first)
 
 Common: [--data-dir DIR] (flags.local.json; default paths.event_core_data from data/profile.local.json)
         [--ffmpeg F] [--ffprobe F] [--ranking F] [--layouts-file F] [--targets F]
@@ -37,9 +43,10 @@ import clip_rank as rank  # noqa: E402
 import clip_render as rnd  # noqa: E402
 import clip_signals as sig  # noqa: E402
 import clip_validate as val  # noqa: E402
+import game_pack  # noqa: E402
 from clip_common import (  # noqa: E402
-    EXIT_FLAG_OFF, FLAG, ClipError, check_out_dir, corpus_dir, eprint, find_tool, flag_on, load_config, load_json,
-    lower_own_priority, media_info, resolve_data_dir, write_json_atomic,
+    EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, corpus_dir, eprint, find_tool, flag_on, load_config,
+    load_json, lower_own_priority, media_info, resolve_data_dir, write_json_atomic,
 )
 
 TOOL_VERSION = 1
@@ -75,15 +82,24 @@ def cmd_candidates(a):
         lufs, astats = None, {"available": False, "reason": "skipped" if a.no_audio else "no audio stream"}
     else:
         lufs, astats = sig.audio_loudness(ffmpeg, a.recording, dur, float(cfg["audio"]["floorLufs"]))
-    hits, hstats = sig.read_hits(a.hits, dur)
+    hits_path = a.hits or _own_hits(a)
+    hits, hstats = sig.read_hits(hits_path, dur)
+    approved = cfg.get("detectorWeightsStatus") == "approved"
     w = cfg["weights"]
     gap = int(cfg["peaks"]["minGapSec"])
     events = rank.marker_events(markers, w)
     events += rank.chat_events(counts if a.chat_db else None, intents, {**cfg["chat"], "minGapSec": gap}, w)
     aev, abase = rank.loudness_events(lufs, cfg["audio"], w, gap)
     events += aev
-    events += rank.detector_events(hits, cfg.get("detectorWeights", {}))
+    dev = rank.detector_events(hits, cfg.get("detectorWeights", {}), approved)
+    events += dev
     cands = rank.build_candidates(events, dur, cfg)
+    if hstats is not None:
+        hstats = {**hstats, "file": os.path.basename(hits_path), "weightsStatus": cfg.get("detectorWeightsStatus"),
+                  "rule": "a detector hit counts only when detectorWeightsStatus is 'approved'; until then weight 0, "
+                          "listed and attached as a reason, never opens or ranks a candidate",
+                  "counted": sum(1 for e in dev if not e["attachOnly"]),
+                  "attached": sum(1 for e in dev if e.get("candidate"))}
     doc = {
         "tool": "clipper", "toolVersion": TOOL_VERSION, "createdAt": _now(),
         "recording": os.path.basename(a.recording),
@@ -99,12 +115,64 @@ def cmd_candidates(a):
             "events": len(events),
         },
         "candidates": cands,
+        # every detector hit, shown even when it adds nothing to a score (no OCR text, no names)
+        "detectorHits": [{"t": round(h["t"], 2), "detector": h["detector"], "label": h.get("label"),
+                          "signal": h.get("signal"), "weight": e["w"], "candidate": e.get("candidate")}
+                         for h, e in zip(hits, dev)],
     }
     os.makedirs(a.out, exist_ok=True)
     write_json_atomic(os.path.join(a.out, CANDIDATES), doc)
     print(f"candidates: {len(cands)} from {len(events)} events "
           f"(markers {mstats['matched']}, chat {'on' if a.chat_db else 'off'}, "
           f"audio {'on' if astats.get('available') else 'off'}, detectors {len(hits)}); ranking {cfg.get('status')}")
+    return 0
+
+
+# ---------------------------------------------------------------- detect
+
+def _own_hits(a):
+    """DIR/detector-hits.jsonl from an earlier `detect` on the same recording, else None."""
+    import detector_pass as dp
+    p = os.path.join(a.out, dp.HITS)
+    s = os.path.join(a.out, dp.SUMMARY)
+    if not (os.path.isfile(p) and os.path.isfile(s)):
+        return None
+    if load_json(s).get("recording") != os.path.basename(a.recording):
+        eprint("candidates: detector hits in --out belong to another recording; not used")
+        return None
+    return p
+
+
+def cmd_detect(a):
+    """Post-stream detector pass over the H recording -> DIR/detector-hits.jsonl + DIR/detector-pass.json."""
+    import detector_pass as dp  # needs the OCR venv (numpy, cv2, rapidocr) only from here on
+    _ffmpeg, ffprobe = _tools(a)
+    if not os.path.isfile(a.recording):
+        raise ClipError("recording not found")
+    info = media_info(ffprobe, a.recording)
+    gid, st, cdoc = dp.load_settings(a.game, a.detector_config)
+    if a.fps:
+        st["fps"] = float(a.fps)
+    pack = game_pack.load_pack(dp.pack_path(st))
+    names, have_profile = dp.load_names(a.profile or PROFILE_FILE, pack["nameMatch"]["profileKey"])
+    layout, lsrc = dp.layout_for(a.recording, a.layout)
+    with dp.HeavyJobLock():
+        summ = dp.run_pass(a.recording, a.out, st, pack, names, layout, threads=a.threads)
+    doc = {
+        "tool": "clipper.detect", "toolVersion": TOOL_VERSION, "detectorPassVersion": dp.TOOL_VERSION,
+        "createdAt": _now(), "recording": os.path.basename(a.recording), "duration": round(info["duration"], 3),
+        "game": gid, "packVersion": pack.get("version"),
+        "config": {"version": cdoc.get("version"), "status": cdoc.get("status"), "fps": st["fps"],
+                   "diffGate": st["diffGate"], "nameMin": st["nameMin"], "mergeGapSec": st["mergeGapSec"]},
+        "layout": {"source": lsrc, "status": "unverified" if lsrc == "full-frame" else "file",
+                   "game": layout["game"]},
+        "profileNames": len(names) if have_profile else 0,
+        "detectorStatus": {d["id"]: d.get("status") for d in pack["detectors"]},
+        "threads": a.threads, **summ,
+    }
+    write_json_atomic(os.path.join(a.out, dp.SUMMARY), doc)
+    print(f"detect: {summ['hits']} hit(s), {summ['signalHits']} with signal, from {summ['ocrFrames']} OCR frames "
+          f"at {st['fps']} fps in {summ['seconds']} s; detectors unverified, weights not approved")
     return 0
 
 
@@ -207,7 +275,8 @@ def cmd_validate(a):
 
 
 def cmd_run(a):
-    for step in (cmd_candidates, cmd_render, cmd_validate):
+    steps = ((cmd_detect,) if a.detect else ()) + (cmd_candidates, cmd_render, cmd_validate)
+    for step in steps:
         rc = step(a)
         if rc:
             return rc
@@ -251,11 +320,21 @@ def build_parser():
         sp.add_argument("--whisper-model")
         sp.add_argument("--language")
 
+    def detect_args(sp):
+        sp.add_argument("--game")
+        sp.add_argument("--detector-config")
+        sp.add_argument("--profile")
+        sp.add_argument("--layout")
+        sp.add_argument("--fps", type=float)
+        sp.add_argument("--threads", type=int, default=4, choices=range(1, 5), metavar="1-4")
+
+    s = sub.add_parser("detect"); common(s); detect_args(s); s.set_defaults(fn=cmd_detect)
     s = sub.add_parser("candidates"); common(s); cand_args(s); s.set_defaults(fn=cmd_candidates)
     s = sub.add_parser("render"); common(s); render_args(s); s.set_defaults(fn=cmd_render)
     s = sub.add_parser("validate"); common(s, recording=False); s.add_argument("--no-decode", action="store_true")
     s.set_defaults(fn=cmd_validate)
     s = sub.add_parser("run"); common(s); cand_args(s); render_args(s); s.add_argument("--no-decode", action="store_true")
+    detect_args(s); s.add_argument("--detect", action="store_true")
     s.set_defaults(fn=cmd_run)
     return p
 

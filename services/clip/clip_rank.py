@@ -6,7 +6,8 @@ Signals (all seconds into the recording):
   chat intent   any second with a "clip it" style message
   chat velocity rolling message count over windowSec against the session median (approved P2 baseline 1)
   loudness      short-term loudness z-score against the session median/MAD (approved P2 baseline 2)
-  detector hits seam; weight from ranking.json detectorWeights (empty until G3), else 0
+  detector hits from the post-stream detector pass (detector_pass.py); weight 0 until ranking.json
+                detectorWeightsStatus is "approved" (detector_weight); a zero-weight hit only attaches as a reason
 
 Each event opens a window [t - pre, t + post] (backdated, build plan 4.10). Overlapping windows merge into one
 candidate while the union stays within clip.maxSec; a candidate more than half inside a better one is dropped. Score = sum over signal kinds of the strongest weight*strength of that kind, so agreement between
@@ -90,13 +91,40 @@ def marker_events(markers, weights):
              "strength": 1.0, "detail": {}, "win": "marker"} for m in markers]
 
 
-def detector_events(hits, det_weights):
+def _num(x):
+    return isinstance(x, (int, float)) and not isinstance(x, bool)
+
+
+def detector_weight(h, det_weights, approved):
+    """(weight, why) of one detector hit. Rule (AGENTS.md: weights are approved by the user, never invented):
+    weight > 0 only when ranking.json detectorWeightsStatus is "approved" AND the hit is a positive clip reason
+    (signal not false, role positive, clipReason not false) AND a number exists, from ranking.json detectorWeights
+    ("<det>:<label>" first, then "<det>") or else the pack weight carried in the hit. Otherwise 0."""
+    if not approved:
+        return 0.0, "weights not approved"
+    if h.get("signal") is False:
+        return 0.0, "no signal"
+    if h.get("role", "positive") != "positive" or h.get("clipReason") is False:
+        return 0.0, "not a clip reason"
+    for w in (det_weights.get(f"{h['detector']}:{h.get('label')}"), det_weights.get(h["detector"]), h.get("weight")):
+        if _num(w):
+            return max(0.0, float(w)), None
+    return 0.0, "weight null"
+
+
+def detector_events(hits, det_weights, approved=False):
+    """Detector hits -> events. A zero-weight hit is attach-only: it never opens a window (so it cannot rank or
+    create a candidate) and is listed as a reason on a candidate that covers its time."""
     out = []
     for h in hits:
-        w = det_weights.get(h["detector"])
-        out.append({"t": h["t"], "kind": f"detector.{h['detector']}", "w": float(w) if isinstance(w, (int, float)) else 0.0,
-                    "strength": 1.0, "detail": {"label": h.get("label"), "weightApproved": isinstance(w, (int, float))},
-                    "win": "detector"})
+        w, why = detector_weight(h, det_weights, approved)
+        detail = {"label": h.get("label"), "weightApproved": why is None}
+        if why:
+            detail["zeroBecause"] = why
+        if "signal" in h:
+            detail["signal"] = h["signal"]
+        out.append({"t": h["t"], "kind": f"detector.{h['detector']}", "w": w, "strength": 1.0, "detail": detail,
+                    "win": "detector", "attachOnly": w <= 0.0})
     return out
 
 
@@ -105,7 +133,10 @@ def build_candidates(events, duration, cfg):
     wins = cfg["windows"]
     lo_len, hi_len = float(cfg["clip"]["minSec"]), float(cfg["clip"]["maxSec"])
     spans = []
+    attach = [e for e in events if e.get("attachOnly")]
     for e in events:
+        if e.get("attachOnly"):
+            continue
         w = wins[e["win"]]
         a, b = max(0.0, e["t"] - float(w["preSec"])), min(duration, e["t"] + float(w["postSec"]))
         if b > a:
@@ -143,6 +174,17 @@ def build_candidates(events, duration, cfg):
     for i, c in enumerate(cands, 1):
         c["id"] = f"c{i:02d}"
         c["rank"] = i
+    # Zero-weight (unapproved) detector hits: shown as reasons with weight 0 after scoring, so they never change a
+    # score, an anchor, a window or the order.
+    for e in sorted(attach, key=lambda e: e["t"]):
+        for c in cands:
+            if c["start"] <= e["t"] <= c["end"]:
+                c["reasons"].append({"kind": e["kind"], "t": round(e["t"], 2), "weight": 0.0,
+                                     "strength": round(e["strength"], 3), "detail": e["detail"]})
+                e["candidate"] = c["id"]
+                break
+    for c in cands:
+        c["reasons"].sort(key=lambda r: r["t"])
     return cands
 
 

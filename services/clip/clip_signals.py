@@ -11,7 +11,8 @@ Chat: event-core.db chat_raw (received_at = wall ms). Opened read-only (sqlite U
 Audio: ffmpeg ebur128 short-term loudness (S, 3 s window) every 100 ms on the first audio stream, video skipped.
   framelog=info: the per-block lines are logged at info level (the default 'verbose' is hidden at ffmpeg's
   default log level; checked on ffmpeg 8.1).
-Detector hits (seam for a future full-frame CODM pass): jsonl rows {t, detector, label?}; read only when given.
+Detector hits (from the post-stream detector pass, detector_pass.py): jsonl rows {t, detector, label?, signal?,
+  role?, clipReason?, weight?}; read only when given.
 """
 
 from __future__ import annotations
@@ -178,7 +179,9 @@ def audio_loudness(ffmpeg, path, duration, floor):
 # ---------------------------------------------------------------- detector hits (seam)
 
 def read_hits(path, duration):
-    """Detector hits jsonl {t, detector, label?}. Seam for a full-frame CODM pass (not built; detectors unverified)."""
+    """Detector hits jsonl {t, detector, label?, signal?, role?, clipReason?, weight?} written by the post-stream
+    detector pass (detector_pass.py; every detector still unverified). The optional fields are kept only when
+    present and well typed; they feed clip_rank.detector_weight."""
     if not path:
         return [], None
     out, bad = [], 0
@@ -196,5 +199,14 @@ def read_hits(path, duration):
                 continue
             if 0 <= t <= duration:
                 label = r.get("label")
-                out.append({"t": t, "detector": det, "label": str(label)[:64] if isinstance(label, str) else None})
+                h = {"t": t, "detector": det, "label": str(label)[:64] if isinstance(label, str) else None}
+                for k in ("signal", "clipReason"):
+                    if isinstance(r.get(k), bool):
+                        h[k] = r[k]
+                if r.get("role") in ("positive", "negative"):
+                    h["role"] = r["role"]
+                w = r.get("weight")
+                if "weight" in r and (w is None or (isinstance(w, (int, float)) and not isinstance(w, bool))):
+                    h["weight"] = w
+                out.append(h)
     return out, {"hits": len(out), "bad": bad}

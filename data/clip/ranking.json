@@ -24,5 +24,6 @@
   "audio": { "floorLufs": -70.0, "zThreshold": 2.5, "minSpread": 1.0, "minVoicedSec": 10 },
   "peaks": { "minGapSec": 30 },
   "detectorWeights": {},
+  "detectorWeightsStatus": "proposed",
   "top": 10
 }

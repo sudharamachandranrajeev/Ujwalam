@@ -1,0 +1,19 @@
+{
+  "$comment": "F6 post-stream detector pass over the full H recording (services/clip/detector_pass.py, clipper.py detect). status 'proposed' = agent defaults, not tuned on full H recordings and not approved by the user. fps 1.0: the G1 full-screen live captures A5b/A5c were scanned at 1 fps (services/clip/coverage.py --fps default); nameMin 0.8 is the g1_scan default; diffGate 0.2 (g1_scan default 1.5, set on vertical cutouts): on a full 1280x720 generated frame a medal banner appearing on a static background changed the 1/4-scale mean luma by 0.70 and a small KILLCAM label by 0.27 (docs/evidence/2026-11-05-f6-detector-pass.md), so 1.5 skipped both; 0.2 still skips unchanged frames (diff 0.0); nameMin stays a proposal while data/games/codm/game.json nameMatch.minScore is null. mergeGapSec joins consecutive sampled frames of one detector and label into one hit (2.5 s = two missed 1 fps samples). roiSlack is the ROI tolerance in game-area fractions (as K1 in g1_scan). Detector weights are NOT here: they come from the game pack and count only when ranking.json detectorWeightsStatus is 'approved'.",
+  "version": "0.1.0",
+  "status": "proposed",
+  "checked": "2026-11-05",
+  "defaultGame": "codm",
+  "games": {
+    "codm": {
+      "pack": "data/games/codm",
+      "fps": 1.0,
+      "diffGate": 0.2,
+      "nameMin": 0.8,
+      "mergeGapSec": 2.5,
+      "roiSlack": 0.02,
+      "layout": "full-frame",
+      "layoutStatus": "unverified"
+    }
+  }
+}
