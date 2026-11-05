@@ -354,3 +354,31 @@ test('game and display capture are skipped with the host-kind reason (no libobs 
     assert.match(report.skipped.find((x) => x.layer === id).reason, /^no host source kind for (game|display) capture/);
   }
 });
+
+test('Spark Element (Meld HTML overlay) imports as a browser layer sized from the layer box', () => {
+  const s = session();
+  const scene = s.session ? s.session.scenes[0] : s.scenes[0];
+  const spark = (id, url, extra = {}) => ({
+    id, name: 'Spark one', x: 10, y: 20, width: 505.4, height: 283.6, visible: true, isLocked: false, rotation: 0, opacity: 1,
+    scaleX: 1, scaleY: 1, effects: [], meta: { sceneObjectSourceName: 'MeldStudio/Spark Element' }, url, implicitWidth: 0, implicitHeight: 0, ...extra,
+  });
+  scene.childItems.push(
+    spark('H-L-SPARK-OV', 'http://localhost:8787/overlays/stream-alert/index.html?theme=demo'),
+    spark('H-L-SPARK-WEB', 'https://example.invalid/el.html'),
+    spark('H-L-SPARK-BAD', 'ftp://example.invalid/x'),
+    spark('H-L-SPARK-NOURL', undefined),
+  );
+  const { project: p, report: r } = importMeld(s, { id: 'spark-test' });
+  assert.equal(validateProject(p).ok, true);
+  const layers = p.scenes[0].layers;
+  const ov = layers.find((l) => l.origin && l.origin.id === 'H-L-SPARK-OV');
+  const web = layers.find((l) => l.origin && l.origin.id === 'H-L-SPARK-WEB');
+  assert.ok(ov && web, 'spark layers imported');
+  const src = (l) => (p.sources ? p.sources.find((x) => x.id === l.source) : l.source) || l.source;
+  assert.deepEqual([src(web).width, src(web).height], [505, 284]);
+  assert.equal(src(web).url, 'https://example.invalid/el.html');
+  assert.equal(src(ov).query, 'theme=demo');
+  const reasons = r.skipped.filter((x) => x.kind === 'Spark Element');
+  assert.deepEqual(reasons.map((x) => x.layer).sort(), ['H-L-SPARK-BAD', 'H-L-SPARK-NOURL']);
+  assert.ok(!r.skipped.some((x) => /unknown layer kind/.test(x.reason) && x.kind === 'Spark Element'));
+});

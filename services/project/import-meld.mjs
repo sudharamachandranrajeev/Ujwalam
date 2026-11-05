@@ -38,6 +38,7 @@ export const MAPPING = {
   'Video device deviceId / displayName / videoCaptureDevices[]': 'VERIFIED present; UNVERIFIED that libobs resolves deviceId',
   'Media source mediaSource (file URL), isLoopPlayback': 'VERIFIED present',
   'Browser url, browserWidth, browserHeight': 'VERIFIED present',
+  'Spark Element url (no browserWidth/Height; browser size = layer width x height at scale 1) -> browser layer': 'VERIFIED present in the real session (28 layers, 26 http(s) + 2 file urls, all scale 1); UNVERIFIED that Meld renders it as a plain browser source (Spark runtime/query injection not known)',
   'Text text, fontFamily, pixelSize, foregroundColor (#AARRGGBB read as #RRGGBBAA)': 'UNVERIFIED (colour byte order assumed Qt style)',
   'audioTracks[].gain -> volumeDb = 20*log10(gain)': 'VERIFIED as linear amplitude by data (real gains 0.0316228 and 0.0562341 are exactly -30.00 and -25.00 dB; 1 = 0 dB, max seen 1); UNVERIFIED by ear',
   'audioTracks[].monitoring true -> monitor-and-output': 'UNVERIFIED (Meld stores a boolean; every monitored real track also has outputTracks != 0, so it stays on the stream: monitor-and-output, not monitor-only)',
@@ -143,9 +144,13 @@ export function importMeld(input, opts = {}) {
         const ext = path.extname(p).toLowerCase();
         return { ...base, type: IMAGE_EXT.has(ext) ? 'image' : 'media', filePath: p, key: `file|${p.toLowerCase()}` };
       }
+      case 'Spark Element': // Meld's HTML overlay element: same url field as Browser, no browserWidth/Height (its size is the layer box, scale 1)
       case 'Browser': {
         if (typeof l.url !== 'string') { skip(canvas, sceneId, id, kind, 'no url'); return null; }
-        if (!num(l.browserWidth) || !num(l.browserHeight) || l.browserWidth < 1 || l.browserHeight < 1) { skip(canvas, sceneId, id, kind, 'no browser size'); return null; }
+        if (kind === 'Spark Element') {
+          if (l.width < 1 || l.height < 1) { skip(canvas, sceneId, id, kind, 'no browser size'); return null; }
+          base.browserSize = { width: Math.round(l.width), height: Math.round(l.height) };
+        } else if (!num(l.browserWidth) || !num(l.browserHeight) || l.browserWidth < 1 || l.browserHeight < 1) { skip(canvas, sceneId, id, kind, 'no browser size'); return null; }
         let url;
         try { url = new URL(l.url); } catch { skip(canvas, sceneId, id, kind, 'unparseable url'); return null; }
         if (url.protocol === 'file:') {
@@ -316,7 +321,7 @@ export function importMeld(input, opts = {}) {
       case 'image': return { file: { base: 'media', rel: relUnder(mediaRoot, c.filePath) } };
       case 'media': return { file: { base: 'media', rel: relUnder(mediaRoot, c.filePath) }, loop: l.isLoopPlayback === true };
       case 'browser': {
-        const s = { width: Math.round(l.browserWidth), height: Math.round(l.browserHeight) };
+        const s = c.browserSize ? { ...c.browserSize } : { width: Math.round(l.browserWidth), height: Math.round(l.browserHeight) };
         if (c.url) s.url = c.url;
         else {
           const rel = c.overlayRel ?? relUnder(overlayRoot, c.overlayFile);

@@ -42,3 +42,20 @@ Tests added: gain points, monitoring mode, rotation cases, fill-mode crop, group
 - Monitoring semantics (boolean read as monitor-and-output).
 - Fill-mode crop offsets; group flatten coordinate space beyond the sessions seen.
 - Host crop applies to stretch bounds as assumed (host comment says UNVERIFIED against Meld).
+
+## Spark Element (follow-up, 2026-11-05)
+
+Finding: `Spark Element` (`meta.sceneObjectSourceName` = `MeldStudio/Spark Element`) is Meld's HTML overlay element. In the real `Session.json` it appears 28 times (13 on V, 15 on H), always scale 1, rotation 0, `implicitWidth/Height` 0, no `browserWidth/browserHeight`. Every one carries a `url`: 26 http(s) (the user's own local overlay pages, e.g. alert, goals, captions, ticker, tracker, frame, divider) and 2 `file:` (the chat spotlight page). Query strings seen: none, `theme=`, and a four-key tracker query. Same data shape as `Browser` minus the size fields, and the same overlay files the legacy setup (`legacy/spark/`, `layer-map.md`) loads as browser layers. No Meld-specific payload field was found on these layers.
+
+Change: `services/project/import-meld.mjs` maps `Spark Element` through the `Browser` path (http(s), `file:` and `/overlays/...` handling unchanged). Browser size = rounded layer width x height (scale is 1, so the box is the page size). Skips with a reason: no url, unparseable url, unsupported scheme, size under 1, non-local file url. MAPPING gains one line.
+
+Result on the real file (counts only): imported 181 -> 209 layers (+28), `Spark Element` skips 28 -> 0; scenes 12, overlays 7.
+
+Test: `Spark Element ... imports as a browser layer sized from the layer box` (overlay url with query, plain https url, bad scheme and missing url skipped, no `unknown layer kind`). Fixture unchanged (test builds the layers in memory, placeholders only).
+
+```
+node --test tests/project-import-meld.test.mjs   pass 22 fail 0
+node tools/lint.mjs                              0 findings
+```
+
+UNVERIFIED: that Meld renders a Spark Element as a plain browser source (Meld's Spark runtime may inject data or events into the page; the Meld install was not inspected for that); that the layer box equals the intended page viewport; the 2 `file:` urls resolve under the overlay base like other file overlays.
