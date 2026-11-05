@@ -240,3 +240,19 @@ That one finding is in a file this change does not touch (another session's unco
 - `services/studio-ui/launch.mjs`, `services/event-core/cli.mjs`, `services/event-core/api/service.mjs`, `services/event-core/live-markers.mjs`
 - `tests/fixtures/studio-ui/fake-host.mjs`, `tests/studio-ui-alpha.test.mjs`, `tests/live-markers.test.mjs`
 - `docs/evidence/2026-11-05-f6-live-markers.md` (this section)
+
+## Codex second-opinion review (2026-11-05)
+
+`codex exec --sandbox read-only` (codex-cli 0.166.0, medium effort) over `git show` of the f6 live-markers and security scoped-role commits (code only, docs excluded), fed on stdin because the sandbox blocked git.
+
+Result (verbatim):
+
+NONE — no confirmed high/medium findings in the combined final diff.
+
+The markers role defaults to deny, restricts marker sources to `chat`/`audio`, and receives a separate token. Chat-derived host notes contain fixed text or counts; marker calls are bounded and deduplicated.
+
+UNVERIFIED from this diff: `digest_equal` timing safety; discovery-file contents and permissions; `HostClient` error redaction; upstream chat-size limits; and crash/restart token handling. Those implementations are omitted, so this is not full assurance for those paths.
+
+No commands run. Files changed: none.
+
+The review's UNVERIFIED points are covered elsewhere: `digest_equal` is the pre-existing constant-time compare; the discovery file not holding the markers token and crash-restart reuse are asserted in `app/host/tests/host-api.test.mjs` and `tests/studio-ui-alpha.test.mjs` (see Scoped role section). Two model families now agree: no high/medium findings. Flag `live-markers` may be switched on for a real stream; real-stream use stays UNVERIFIED.
