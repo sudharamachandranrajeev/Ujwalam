@@ -1,0 +1,27 @@
+{
+  "$comment": "fx test settings (v1 F4, tools/fx-test.mjs). Which overlay page renders each effect in host mode, how the host render is set up, and how frames are sampled. Effect names are the ones in data/effects/guards.json. Pages are rel paths under the overlay root (overlays/...), never absolute.",
+  "version": 1,
+  "pages": {
+    "gg": { "rel": "gg-burst/index.html", "query": "", "trigger": "effect.fire", "status": "verified", "source": "app/host/tests/host-browser.test.mjs draws gg-burst on effect.fire" },
+    "storm": { "rel": "chat-storm/index.html", "query": "", "trigger": "chat", "status": "unverified", "source": "legacy chat-storm fires itself on chat (data/overlays/feed-scopes.json effectPages); effect.fire alone may draw nothing, then fx test reports no-render" },
+    "charge": { "rel": "chat-charge/index.html", "query": "", "trigger": "chat", "status": "unverified", "source": "legacy chat-charge fires itself on chat (data/overlays/feed-scopes.json effectPages); effect.fire alone may draw nothing, then fx test reports no-render" },
+    "campop": { "rel": "cam-pop-frame/index.html", "query": "", "trigger": "effect.fire", "status": "unverified", "source": "legacy cam-pop-frame; not yet rendered by fx test" }
+  },
+  "render": {
+    "canvases": { "h": { "width": 1280, "height": 720 }, "v": { "width": 720, "height": 1280 } },
+    "rung": { "h": { "w": 640, "h": 360 }, "v": { "w": 360, "h": 640 } },
+    "fps": 30,
+    "background": "#000000",
+    "backgroundNote": "Black behind the overlay: the darkest backdrop gives the largest luminance swing for a bright flash, so it is the worst case for the general threshold. Real gameplay behind the overlay lowers it.",
+    "settleMs": 3000,
+    "leadMs": 1500,
+    "tailMs": 2500
+  },
+  "sample": {
+    "h": { "width": 192, "height": 108 },
+    "v": { "width": 108, "height": 192 },
+    "note": "Frames are scaled down (area filter) to this size and analysed as rgb24. Sizes divide by 6 so the one-third windows and one-sixth strides land on whole pixels.",
+    "drawnThreshold": 0.002,
+    "drawnNote": "host mode: the share of pixels that must differ from the first frame by more than 24 levels for the effect to count as drawn (same as app/host/tests/host-browser.test.mjs)"
+  }
+}

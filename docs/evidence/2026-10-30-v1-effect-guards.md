@@ -52,6 +52,8 @@ Result: the Ujwalam rule through the gate admits pops at exactly the legacy time
 
 ## Open hook (not faked)
 
+Update 2026-11-05: the `fx test` part is done. See `docs/evidence/2026-11-05-f4-measured-flash.md`. The mic-level part below is unchanged by that update.
+
 TODO(host): `fx test` must render each flashing effect on the host, measure flash rate from rendered-frame luminance per canvas, and call `guards.reportMeasuredFlashes({effect, canvas, flashesPerSecond})`. Until then the flash limit rests on the declared offsets only, which are UNVERIFIED. Also TODO(host/P8): feed `onMicLevel` from the host meter.
 
 ## Tests

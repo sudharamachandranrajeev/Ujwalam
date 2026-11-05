@@ -11,16 +11,17 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFeedServer, createOverlayBridge } from './bridge.mjs';
 import { createCamPopRule } from './campop-rule.mjs';
-import { createEffectGuards, loadGuardConfig } from './guards.mjs';
+import { createEffectGuards, loadFlashMeasurements, loadGuardConfig } from './guards.mjs';
 import { createStaticServer } from './static.mjs';
 
 export { createFeedServer, createOverlayBridge, chatEnvelope, alertBusEvent, maskChatText, MODES } from './bridge.mjs';
 export { createStaticServer, OVERLAY_CSP } from './static.mjs';
 export { createRemoteBus } from './event-source.mjs';
-export { createEffectGuards, createPool, loadGuardConfig, mulberry32, validateGuardConfig } from './guards.mjs';
+export { createEffectGuards, createPool, loadFlashMeasurements, loadGuardConfig, mulberry32, saveFlashMeasurement, validateFlashMeasurements, validateGuardConfig } from './guards.mjs';
 export { createCamPopRule } from './campop-rule.mjs';
 
 export const DEFAULT_GUARDS_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'effects', 'guards.json');
+export const DEFAULT_FLASH_MEASUREMENTS_FILE = path.join(path.dirname(DEFAULT_GUARDS_FILE), 'flash-measurements.json');
 
 const RELAY_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'relay');
 export const OWN_OVERLAYS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pages');
@@ -43,7 +44,7 @@ export function feedQuery(feedPort, scope = 'effects', effect = '') {
   return `streamerbot=1&sbHost=127.0.0.1&sbPort=${feedPort}&sbPath=${p}`;
 }
 
-/** opts: { root, bus?, staticPort?, feedPort?, guards?, audit?, now?, effectGate?, extraOrigins?, csp?, log?, flags? }.
+/** opts: { root, bus?, staticPort?, feedPort?, guards?, flashMeasurements?, audit?, now?, effectGate?, extraOrigins?, csp?, log?, flags? }.
  *  flags: { isOn(id) } read on every /_ujwalam/flags.json request, so a flip on the control page reaches the pages live.
  *  guards: true (data/effects/guards.json), a file path, or a parsed config object; it builds the effect guards and
  *  the cam-pop rule and plugs them in. Without guards the gate allows everything (tests only). */
@@ -52,7 +53,11 @@ export function createOverlayServer(opts) {
   let rule = null;
   if (opts.guards) {
     const config = typeof opts.guards === 'object' ? opts.guards : loadGuardConfig(opts.guards === true ? DEFAULT_GUARDS_FILE : opts.guards);
-    guards = createEffectGuards({ config, now: opts.now, audit: opts.audit });
+    // Measured flash rates (fx test): flashMeasurements is a file path, a parsed object, or false for none; by default
+    // the repo file is used with guards: true (the live path), and none with a config object or file (tests).
+    const fm = opts.flashMeasurements ?? (opts.guards === true ? DEFAULT_FLASH_MEASUREMENTS_FILE : false);
+    const measurements = fm === false ? null : typeof fm === 'object' ? fm : loadFlashMeasurements(fm);
+    guards = createEffectGuards({ config, now: opts.now, audit: opts.audit, measurements });
   }
   // Flag `chat-effects` (D149, D204): chat-fired effects and the cam-pop rule run only while it is on; it is read on
   // every decision, so a flip on the control page acts at once, also while live. No flags object: off.

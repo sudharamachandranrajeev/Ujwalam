@@ -20,13 +20,14 @@
 // Every decision (allow, refuse, queue, release, drop, preempt) is counted, kept in a short ring and sent to the
 // audit as a system row with a reason code and numbers only. No chat text, names or ids are ever stored here.
 //
-// TODO(host): flash rate here is the DECLARED rate from guards.json ('flashes' offsets). The measured rate needs
-// the host's rendered frames (luminance per frame, `fx test`), which this service cannot see. Until the host
-// provides frames, the declared values are UNVERIFIED and no measurement is claimed. Hook: guards.reportMeasuredFlashes(
-// { effect, canvas, flashesPerSecond }) lets `fx test` write the measured peak back; the gate then uses the larger of
-// the declared and the measured value for that effect.
+// Flash rate: the DECLARED offsets from guards.json ('flashes') are scheduled per canvas as above. On top of that,
+// the MEASURED peak from `fx test` (tools/fx-test.mjs: rendered-frame luminance, flash-detect.mjs) is persisted in
+// data/effects/flash-measurements.json and applied at start (opts.measurements = loadFlashMeasurements(file)), or
+// live through guards.reportMeasuredFlashes({ effect, canvas, flashesPerSecond }). An effect measured above
+// maxPerSecond on a canvas is refused 'flash-limit' there. Effects without a measurement rest on the declared
+// offsets only, which stay UNVERIFIED.
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 
 export const REASONS = Object.freeze(['unknown-effect', 'busy', 'cooldown', 'budget', 'region-busy', 'flash-limit', 'queued', 'queue-expired', 'queue-full', 'preempted', 'bad-name']);
 const TOKEN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
@@ -144,6 +145,53 @@ export function loadGuardConfig(file) {
   return validateGuardConfig(JSON.parse(readFileSync(file, 'utf8')));
 }
 
+// ---- measured flash rates (fx test, data/effects/flash-measurements.json) ----
+// { version: 1, definition, measurements: { <effect>: { h?: rec, v?: rec } } }, rec = { flashesPerSecond, frames, fps,
+// date (YYYY-MM-DD), method ('host' | 'video' | 'frames'), pass, ... }. Written only by tools/fx-test.mjs --write.
+
+/** Throws RangeError listing every problem. Returns the object (not copied). */
+export function validateFlashMeasurements(m) {
+  const errs = [];
+  const bad = (s) => errs.push(s);
+  if (!isObj(m)) throw new RangeError('flash measurements: not an object');
+  if (m.version !== 1) bad('version must be 1');
+  if (!isObj(m.measurements)) bad('measurements must be an object');
+  for (const [effect, per] of Object.entries(isObj(m.measurements) ? m.measurements : {})) {
+    if (!TOKEN.test(effect)) bad(`measurements: bad effect name ${effect.slice(0, 32)}`);
+    if (!isObj(per)) { bad(`measurements.${effect} must be an object`); continue; }
+    for (const [canvas, rec] of Object.entries(per)) {
+      const at = `measurements.${effect}.${canvas}`;
+      if (!CANVASES.includes(canvas)) { bad(`${at}: canvas must be h or v`); continue; }
+      if (!isObj(rec)) { bad(`${at} must be an object`); continue; }
+      if (!num(rec.flashesPerSecond, 0, 1000)) bad(`${at}.flashesPerSecond must be a number 0..1000`);
+      if (!Number.isInteger(rec.frames) || rec.frames < 1) bad(`${at}.frames must be a positive integer (evidence)`);
+      if (!num(rec.fps, 1, 1000)) bad(`${at}.fps must be 1..1000`);
+      if (typeof rec.date !== 'string' || !DATE.test(rec.date) || Number.isNaN(Date.parse(rec.date))) bad(`${at}.date must be YYYY-MM-DD`);
+      if (!['host', 'video', 'frames'].includes(rec.method)) bad(`${at}.method must be host, video or frames`);
+    }
+  }
+  if (errs.length) throw new RangeError(`flash measurements: ${errs.join('; ')}`);
+  return m;
+}
+
+/** The measurements file, validated; an absent file is an empty set (nothing measured yet). */
+export function loadFlashMeasurements(file) {
+  if (!existsSync(file)) return { version: 1, measurements: {} };
+  return validateFlashMeasurements(JSON.parse(readFileSync(file, 'utf8')));
+}
+
+/** Insert or replace one measurement and write the file (temp file, then rename). Returns the whole object. */
+export function saveFlashMeasurement(file, { effect, canvas, record, definition }) {
+  const m = existsSync(file) ? validateFlashMeasurements(JSON.parse(readFileSync(file, 'utf8'))) : { version: 1, measurements: {} };
+  if (definition) m.definition = definition;
+  (m.measurements[effect] ??= {})[canvas] = record;
+  validateFlashMeasurements(m);
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(m, null, 2)}\n`);
+  renameSync(tmp, file);
+  return m;
+}
+
 // ---- geometry ----
 const overlap = (a, b) => a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3];
 const regionsOverlap = (ra, rb) => ra.some((a) => rb.some((b) => overlap(a, b)));
@@ -182,6 +230,20 @@ export function createEffectGuards(opts) {
   let seq = 0;
   let playId = 0;
   let timer = null;
+
+  function reportMeasuredFlashes({ effect, canvas, flashesPerSecond }) {
+    if (!cfg.effects[effect] || !CANVASES.includes(canvas) || !num(flashesPerSecond, 0, 1000)) throw new RangeError('bad measurement');
+    measured.set(`${effect}:${canvas}`, flashesPerSecond);
+  }
+  // Persisted fx test results (opts.measurements = loadFlashMeasurements(...)): applied at start. An effect that is
+  // not in this config is skipped (it can never pass the gate anyway).
+  if (opts.measurements) {
+    validateFlashMeasurements(opts.measurements);
+    for (const [effect, per] of Object.entries(opts.measurements.measurements)) {
+      if (!cfg.effects[effect]) continue;
+      for (const [canvas, rec] of Object.entries(per)) reportMeasuredFlashes({ effect, canvas, flashesPerSecond: rec.flashesPerSecond });
+    }
+  }
 
   const stats = { allowed: 0, refused: 0, queued: 0, released: 0, dropped: 0, preempted: 0, byReason: {}, byEffect: {} };
   const ring = [];
@@ -326,11 +388,11 @@ export function createEffectGuards(opts) {
       if (!p) throw new RangeError(`unknown pool ${String(poolId).slice(0, 32)}`);
       return p.pick();
     },
-    /** TODO(host): fx test writes the measured peak flashes/s of an effect here (from rendered-frame luminance). */
-    reportMeasuredFlashes({ effect, canvas, flashesPerSecond }) {
-      if (!cfg.effects[effect] || !CANVASES.includes(canvas) || !num(flashesPerSecond, 0, 1000)) throw new RangeError('bad measurement');
-      measured.set(`${effect}:${canvas}`, flashesPerSecond);
-    },
+    /** The measured peak flashes/s of an effect on a canvas (fx test, rendered-frame luminance). Above the limit the
+     *  gate refuses the effect with 'flash-limit' on that canvas (and on 'both' when either canvas is over). */
+    reportMeasuredFlashes,
+    /** { '<effect>:<canvas>': flashesPerSecond } currently applied. */
+    measuredFlashes: () => Object.fromEntries(measured),
     stats: () => JSON.parse(JSON.stringify({ ...stats, active: active.length, queued_now: queue.length, budgetUsed: budgetStamps.length })),
     recent: () => ring.map((r) => ({ ...r })),
     config: cfg,
