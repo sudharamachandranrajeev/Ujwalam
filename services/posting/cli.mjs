@@ -13,6 +13,7 @@ import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, PostingError, createPostStore, packageRun } from './index.mjs';
 import { createYoutubeAuth } from './oauth.mjs';
 import { uploadPost, UploadError } from './youtube.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, loadRules, planAuto, runAuto } from './auto-post.mjs';
 import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
 
@@ -53,8 +54,9 @@ function parseArgs(argv) {
 export async function main(argv, out = (s) => console.log(s), err = (s) => console.error(s), deps = {}) {
   const a = parseArgs(argv);
   if (a._[0] === 'youtube') return youtubeMain(a, out, err, deps);
+  if (a._[0] === 'auto') return autoMain(a, out, err, deps);
   if (a._[0] !== 'package' || typeof a.run !== 'string') {
-    err('usage: node services/posting/cli.mjs package --run <clip run folder> [--data-dir DIR] [--profile FILE] [--ffmpeg FILE] [--targets a,b]\n       node services/posting/cli.mjs youtube signin|status|signout\n       node services/posting/cli.mjs youtube upload --id <post id> [--data-dir DIR]');
+    err('usage: node services/posting/cli.mjs package --run <clip run folder> [--data-dir DIR] [--profile FILE] [--ffmpeg FILE] [--targets a,b]\n       node services/posting/cli.mjs youtube signin|status|signout\n       node services/posting/cli.mjs youtube upload --id <post id> [--data-dir DIR]\n       node services/posting/cli.mjs auto [--run] [--data-dir DIR] [--rules FILE]');
     return 2;
   }
   try {
@@ -76,6 +78,41 @@ export async function main(argv, out = (s) => console.log(s), err = (s) => conso
     return 0;
   } catch (e) {
     err(`posting: ${e instanceof PostingError ? e.message : (e?.message ?? 'error')}`);
+    return 1;
+  }
+}
+
+/** `auto` (dry-run listing, read-only) and `auto --run` (post-stream; needs flags `posting` and `auto-post`).
+ *  Review-first stays the default: with no rules, or a flag off, nothing happens. */
+async function autoMain(a, out, err, deps) {
+  try {
+    const dataDir = resolveDataDir({ dataDir: typeof a['data-dir'] === 'string' ? a['data-dir'] : undefined });
+    const flags = createFlags({ dataDir });
+    const flagOn = flags.isOn(POSTING_FLAG) && flags.isOn(AUTO_FLAG);
+    const rules = deps.rules ?? loadRules(typeof a.rules === 'string' ? a.rules : undefined);
+    const store = createPostStore({ ledgerFile: path.join(dataDir, 'posting', LEDGER_NAME) });
+    const logFile = path.join(dataDir, 'posting', AUTO_LOG_NAME);
+    const mode = describeMode({ flagOn, rules });
+    if (a.run !== true) {
+      const plan = planAuto({ posts: store.list(), rules: rules.rules, autoUpload: rules.autoUpload, log: createAutoLog(logFile).list(), now: (deps.now ?? (() => new Date()))() });
+      out(`auto-post (dry run): ${mode.enabled ? 'on' : 'off'} (flags posting+auto-post: ${flagOn}), ${mode.ruleCount} rule(s), autoUpload ${mode.autoUpload}, privacy private`);
+      for (const s of plan) out(`  ${s.action} ${s.id} rule ${s.ruleId}: ${s.reason}`);
+      return 0;
+    }
+    if (!flagOn) { err(`auto-post: the '${POSTING_FLAG}' and '${AUTO_FLAG}' feature flags must both be on`); return EXIT_FLAG_OFF; }
+    if (!rules.rules.length) { out('auto-post: no rules; nothing to do'); return 0; }
+    const auth = rules.autoUpload ? (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen }) : null;
+    const outputsStatus = deps.outputsStatus ?? defaultOutputsStatus;
+    const r = await runAuto({
+      store, rules, outputsStatus, logFile, now: deps.now,
+      upload: auth ? (id) => (deps.upload ?? uploadPost)({ id, store, auth, outputsStatus, fetchImpl: deps.fetchImpl }) : undefined,
+    });
+    if (r.refused) { err(`auto-post: refused (${r.refused}); nothing approved or uploaded`); return 1; }
+    const n = {}; for (const e of r.done) n[e.action] = (n[e.action] ?? 0) + 1;
+    out(`auto-post: ${JSON.stringify(n)}`);
+    return 0;
+  } catch (e) {
+    err(`auto-post: ${e instanceof AutoPostError || e instanceof PostingError ? e.message : (e?.message ?? 'error')}`);
     return 1;
   }
 }

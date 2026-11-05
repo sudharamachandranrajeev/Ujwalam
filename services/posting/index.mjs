@@ -309,7 +309,7 @@ export async function packageRun(opts) {
         ...post,
         privacy: 'private',
         status: 'draft',
-        source: { run: runName, clipId: c.id, layout: row.layout, startSec: c.start, endSec: c.end, sha256: sha },
+        source: { run: runName, clipId: c.id, layout: row.layout, startSec: c.start, endSec: c.end, score: Number.isFinite(c.score) ? c.score : null, sha256: sha },
         video: { file: videoName, bytes: statSync(dst).size },
         cover: coverOk ? { file: 'cover.jpg', atSec: Number(at.toFixed(3)) } : null,
         captions,
@@ -349,7 +349,7 @@ export function createPostStore(opts) {
   }
   const find = (id) => (typeof id === 'string' && POST_ID.test(id) ? entries().find((e) => postId(e) === id) ?? null : null);
   const view = (e, p) => ({
-    id: postId(e), target: p.target, clipId: p.source.clipId, layout: p.source.layout, startSec: p.source.startSec, endSec: p.source.endSec,
+    id: postId(e), target: p.target, clipId: p.source.clipId, layout: p.source.layout, score: Number.isFinite(p.source.score) ? p.source.score : null, startSec: p.source.startSec, endSec: p.source.endSec,
     status: e.status, videoId: e.videoId ?? null, privacy: 'private', title: p.title, description: p.description, tags: p.tags, hashtags: p.hashtags,
     limits: p.limits, unresolved: p.unresolved ?? [], hasCover: !!p.cover, hasCaptions: !!p.captions, videoBytes: p.video?.bytes ?? null, updatedAt: p.updatedAt,
   });

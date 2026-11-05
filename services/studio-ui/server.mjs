@@ -31,6 +31,7 @@ import { BOTS, BOT_LABELS, GRACEFUL_MS, createBots } from '../bots/index.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, loadRules, planAuto } from '../posting/auto-post.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
@@ -336,6 +337,15 @@ export function createStudioServer(opts) {
       try { return json(res, 200, { bots: await bots.statusAll() }); } catch { return json(res, 502, { error: 'bots-error' }); }
     }
     if (req.method === 'GET' && route === '/ui/api/posts') return json(res, 200, { posts: posting.list() });
+    if (req.method === 'GET' && route === '/ui/api/posts/auto') {
+      // Read-only: the auto-post mode and what a run would do now. Enabling stays a flag; nothing is changed here.
+      try {
+        const rules = loadRules(opts.autoRulesFile);
+        const mode = describeMode({ flagOn: !!flags && flags.isOn(AUTO_FLAG), rules });
+        const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
+        return json(res, 200, { mode, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
+      } catch { return json(res, 200, { mode: { enabled: false, flagOn: false, autoUpload: false, ruleCount: 0, privacy: 'private', error: 'rules-unreadable' }, plan: [] }); }
+    }
     if (req.method === 'GET' && route === '/ui/api/posts/media') return postMedia(req, res, url);
     if (req.method === 'GET' && route === '/ui/api/posts/youtube/status') {
       try { const st = await youtubeAuth().status(); return json(res, 200, { signedIn: st.signedIn === true, hasClient: st.hasClient === true, phrase: UPLOAD_PHRASE }); } catch { return json(res, 502, { error: 'youtube-status-failed' }); }

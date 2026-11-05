@@ -354,9 +354,19 @@
       .then(function () { yt.busy = false; return Api.posts().then(function (r) { ps.posts = r.posts || []; renderPosts(); var q = selPost(); if (q) fillPost(q); }); })
       .catch(function () { yt.busy = false; });
   }
+  // Auto-post mode (F7, flag auto-post): read-only display of the mode and a dry-run list of what a run would do.
+  function loadAuto() {
+    var ul = $('posts-auto-plan'); clear(ul);
+    Api.postsAuto().then(function (r) {
+      var m = r.mode || {};
+      setText($('posts-auto'), 'Auto-post: ' + (m.enabled ? 'ON' : 'off (review-first)') + ', ' + (m.ruleCount || 0) + ' rule(s), ' + (m.autoUpload ? 'approve and upload (private)' : 'approve only') + '. Runs only when you start it after a stream; switch it with the auto-post flag.');
+      (r.plan || []).forEach(function (x) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'would ' + x.action + ' ' + x.id }), el('span', { class: 'muted', text: x.ruleId + ': ' + x.reason })])); });
+    }).catch(function () { setText($('posts-auto'), ''); });
+  }
   function openPosts() {
     $('posts').hidden = false; ps.sel = null; $('post-form').hidden = true;
     guard(Api.posts().then(function (r) { ps.posts = r.posts || []; renderPosts(); }));
+    loadAuto();
     Api.ytStatus().then(function (r) { yt.signedIn = r.signedIn === true; if (r.phrase) yt.phrase = r.phrase; var p = selPost(); if (p) renderYt(p); }).catch(function () { yt.signedIn = false; });
   }
   function postAction(call) {
