@@ -30,6 +30,8 @@ export const REPO_FILES = Object.freeze([
   'LICENSE',
   'app/host/projects/test-card.project.json',
   'data/flags.json',
+  // F6 live markers (services/event-core/live-markers.mjs): shared ranking rules + live-only values
+  'data/clip/ranking.json', 'data/clip/live-markers.json',
   'data/actions/catalogue.json', 'data/actions/catalogue.schema.json',
   'data/effects/guards.json',
   'data/moderation/blocklist.json', 'data/moderation/blocklist.schema.json',
@@ -214,7 +216,7 @@ export function selectObsRuntime(runtime, { hostExe, disabled, cefLocales = ['en
   return { files: [...files.values()].sort((a, b) => a.dest.localeCompare(b.dest)), modules: { all: modules.sort(), shipped, disabled: [...dis].sort() }, systemDlls: [...systemDlls].sort(), skipped };
 }
 
-export const TOP_FILES = Object.freeze(['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'README.txt', 'CHANGELOG-alpha.md', 'SHA256SUMS.txt', 'release.json', 'package.json', 'LICENSE']);
+export const TOP_FILES = Object.freeze(['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'README.txt', 'HOW-TO.md', 'CHANGELOG-alpha.md', 'SHA256SUMS.txt', 'release.json', 'package.json', 'LICENSE']);
 
 /** Every packaged path must match the allowlist (package-relative, '/' separators). */
 export function allowProblems(paths) {

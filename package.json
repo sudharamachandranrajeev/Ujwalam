@@ -15,6 +15,7 @@
     "alpha": "node services/studio-ui/launch.mjs --alpha",
     "package:alpha": "node tools/package/build-alpha.mjs",
     "diag": "node tools/diag/bundle.mjs",
+    "restore": "node tools/restore-local.mjs",
     "build:host": "node app/host/tools/build.mjs",
     "test:host": "node --test --test-timeout=300000 --test-concurrency=1 \"app/host/tests/*.test.mjs\"",
     "bench": "node tools/bench/run.mjs",

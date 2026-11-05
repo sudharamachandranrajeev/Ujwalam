@@ -11,7 +11,7 @@
 //             without a profile.
 // Contents (tools/package/manifest.mjs): the host exe and its helper exes in bin/, the OBS runtime subset in obs/
 // (import closure, listed in notices/OBS-RUNTIME-FILES.txt), the Node services, UI, registry and runtime data at their
-// repo paths, Install-Ujwalam.ps1, Ujwalam.cmd, README.txt, release.json, CHANGELOG-alpha.md (this build's section),
+// repo paths, Install-Ujwalam.ps1, Ujwalam.cmd, README.txt, HOW-TO.md (docs/how-to.md), release.json, CHANGELOG-alpha.md (this build's section),
 // notices/ (GPL-3.0 and LGPL-3.0 text, source offer, third-party list) and SHA256SUMS.txt. Node.js is not bundled: the installer
 // and the launcher require Node >= release nodeMin on PATH.
 // Checks, any failure stops the build and nothing is written to out/dist: allowlist, forbidden paths (legacy/,
@@ -222,6 +222,7 @@ export async function buildAlpha(opts = {}) {
     put('release.json', 'generated', { text: `${JSON.stringify(release, null, 2)}\n` });
     put('package.json', 'generated', { text: `${JSON.stringify({ name: 'ujwalam', version, private: true, license: 'GPL-3.0-or-later', type: 'module', engines: { node: `>=${rel.nodeMin}` } }, null, 2)}\n` });
     put('CHANGELOG-alpha.md', 'generated', { text: changelogExcerpt(readFileSync(path.join(REPO, 'data', 'release', 'CHANGELOG-alpha.md'), 'utf8'), version) });
+    put('HOW-TO.md', 'generated', { src: path.join(REPO, 'docs', 'how-to.md') });
     put('README.txt', 'generated', { text: readme({ version, nodeMin: rel.nodeMin }) });
     // GPL-3.0 and LGPL-3.0 (for the bundled Qt) are checked in at docs/licenses/ (no equivalent text ships
     // inside the OBS runtime for either): see docs/evidence/2026-11-05-licence-verification.md.

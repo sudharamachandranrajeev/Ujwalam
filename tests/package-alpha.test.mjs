@@ -214,3 +214,12 @@ test('full build (real host exe + OBS runtime)', { skip: process.env.UJWALAM_PAC
     for (const n of ['bin/ujwalam-host.exe', 'Install-Ujwalam.ps1', 'Ujwalam.cmd', 'SHA256SUMS.txt', 'notices/GPL-2.0.txt', 'notices/SOURCE-OFFER.txt']) assert.ok(names.includes(n), n);
   } finally { rmSync(out, { recursive: true, force: true }); }
 });
+
+test('HOW-TO.md ships in the zip: allowlisted top file, built from docs/how-to.md by the packager', () => {
+  assert.deepEqual(allowProblems(['HOW-TO.md']), []);
+  assert.deepEqual(forbiddenProblems(['HOW-TO.md'], { fontNames: ['Corbel', 'Consolas'] }), []);
+  const doc = readFileSync(path.join(REPO, 'docs', 'how-to.md'), 'utf8');
+  assert.match(doc, /^# Ujwalam how-to/);
+  const build = readFileSync(path.join(REPO, 'tools', 'package', 'build-alpha.mjs'), 'utf8');
+  assert.match(build, /put\('HOW-TO\.md', 'generated', \{ src: path\.join\(REPO, 'docs', 'how-to\.md'\) \}\)/);
+});
