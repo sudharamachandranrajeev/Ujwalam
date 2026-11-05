@@ -22,6 +22,8 @@
 //   UJWALAM_OBS_RUNTIME        runtime dir when --runtime is not given
 //   UJWALAM_HOST_TOKEN         api token (64 hex); generated when absent
 //   UJWALAM_HOST_SYSTEM_TOKEN  system token (64 hex); generated when absent
+//   UJWALAM_HOST_MARKERS_TOKEN markers token (64 hex, differs from the others): may call only marker.add (chat/audio)
+//                              and mixer.list. Never generated, never in the discovery file; absent = role off
 //   UJWALAM_HOST_DISCOVERY     discovery file when --discovery is not given
 //   UJWALAM_HEADLESS           "1": same as --headless
 //   UJWALAM_EVENT_CORE_API_TOKEN  event-core token for the overlay server's event feed; passed only to that child
@@ -325,6 +327,15 @@ int wmain(int argc, wchar_t **wargv)
 		fprintf(stderr, "token generation failed\n");
 		return 70;
 	}
+	// Markers token (least-privilege role: marker.add and mixer.list only; rpc_server.h Role::Markers). Only from the
+	// launcher, never generated and never in the discovery file; absent = no markers role.
+	std::string markers_token = env(L"UJWALAM_HOST_MARKERS_TOKEN");
+	SetEnvironmentVariableW(L"UJWALAM_HOST_MARKERS_TOKEN", nullptr);
+	if (!markers_token.empty() &&
+	    (!rpc::is_token(markers_token) || markers_token == api_token || markers_token == sys_token)) {
+		fprintf(stderr, "UJWALAM_HOST_MARKERS_TOKEN must be 64 lowercase hex characters and differ from the other tokens\n");
+		return 64;
+	}
 
 	std::string err;
 	for (const std::string &d : {app.data_dir, app.recordings_dir,
@@ -479,7 +490,8 @@ int wmain(int argc, wchar_t **wargv)
 
 		std::unique_ptr<rpc::Server> server;
 		if (!rc) {
-			server = std::make_unique<rpc::Server>(rpc::Limits{}, api_token, sys_token, make_methods(app));
+			server = std::make_unique<rpc::Server>(rpc::Limits{}, api_token, sys_token, make_methods(app), markers_token);
+			hlog::info("rpc markers role: %s", markers_token.empty() ? "off" : "on (marker.add, mixer.list)");
 			if (!server->start((uint16_t)port, err)) {
 				hlog::error("rpc listen failed: %s", err.c_str());
 				rc = 5;
@@ -502,6 +514,7 @@ int wmain(int argc, wchar_t **wargv)
 		}
 		api_token.assign(api_token.size(), '0');
 		sys_token.assign(sys_token.size(), '0');
+		markers_token.assign(markers_token.size(), '0');
 		if (!rc) {
 			// Global hotkeys last: every handler's target exists. A binding that fails is reported, never fatal.
 			app.hotkeys->start(app.config.hotkeys,

@@ -331,6 +331,37 @@ describe('service wiring', () => {
       assert.ok(lines.includes('[serve] live markers: off (no host token)'));
     } finally { await svc.stop(); rmSync(d, { recursive: true, force: true }); }
   });
+  test('cli serve: takes UJWALAM_HOST_MARKERS_TOKEN only; a full host token is removed unread', async () => {
+    const { serve } = await import('../services/event-core/cli.mjs');
+    const run = async (env) => {
+      const keys = ['UJWALAM_HOST_TOKEN', 'UJWALAM_HOST_SYSTEM_TOKEN', 'UJWALAM_HOST_MARKERS_TOKEN', 'UJWALAM_HOST_DISCOVERY'];
+      const saved = Object.fromEntries(keys.map((k) => [k, process.env[k]]));
+      Object.assign(process.env, env);
+      const d = mkdtempSync(path.join(tmpdir(), 'lm-cli-'));
+      const out = [];
+      const ac = new AbortController();
+      const io = { out: (l) => { out.push(l); if (l.startsWith('[serve] api on')) setImmediate(() => ac.abort()); }, signal: ac.signal, setPriority: () => ({ ok: true, target: 'normal', before: 'normal', after: 'normal' }) };
+      try {
+        const code = await serve({ 'data-dir': d, mock: true, 'no-stall-tracer': true }, io);
+        const left = keys.filter((k) => k !== 'UJWALAM_HOST_DISCOVERY' && process.env[k] !== undefined);
+        return { code, out, left };
+      } finally {
+        for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+        rmSync(d, { recursive: true, force: true });
+      }
+    };
+    const full = randomBytes(32).toString('hex');
+    const sys = randomBytes(32).toString('hex');
+    let r = await run({ UJWALAM_HOST_TOKEN: full, UJWALAM_HOST_SYSTEM_TOKEN: sys });
+    assert.equal(r.code, 0);
+    assert.ok(r.out.includes('[serve] live markers: off (no host token)'), r.out.join(' | '));
+    assert.deepEqual(r.left, [], 'host tokens removed from the environment');
+    r = await run({ UJWALAM_HOST_MARKERS_TOKEN: randomBytes(32).toString('hex'), UJWALAM_HOST_TOKEN: full });
+    assert.equal(r.code, 0);
+    assert.ok(r.out.some((l) => l.startsWith('[serve] live markers: ready')), r.out.join(' | '));
+    assert.deepEqual(r.left, []);
+    assert.ok(!r.out.some((l) => /[0-9a-f]{64}/.test(l)), 'no token printed');
+  });
   test('a published chat.message reaches the producer through the real core', async () => {
     const { startService } = await import('../services/event-core/api/service.mjs');
     const d = mkdtempSync(path.join(tmpdir(), 'lm-svc-'));

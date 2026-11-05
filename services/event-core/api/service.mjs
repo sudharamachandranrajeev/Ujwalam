@@ -45,8 +45,8 @@ function stallContext(getCore) {
   };
 }
 
-/** Live markers (F6, flag 'live-markers'): built only when a host api token is given (opts.hostToken; the launcher passes
- *  UJWALAM_HOST_TOKEN, see cli.mjs serve). The host is found through opts.hostDiscovery (default <dataDir>/host.json).
+/** Live markers (F6, flag 'live-markers'): built only when a host markers token is given (opts.hostToken; the launcher
+ *  passes UJWALAM_HOST_MARKERS_TOKEN, see cli.mjs serve; the host lets that role call marker.add and mixer.list only). The host is found through opts.hostDiscovery (default <dataDir>/host.json).
  *  Any failure here is a log line and the service runs without markers. Returns the producer or null. */
 function startLiveMarkers({ core, dataDir, opts, out }) {
   if (opts.liveMarkers === false) return null;

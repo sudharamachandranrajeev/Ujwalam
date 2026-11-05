@@ -16,6 +16,9 @@
 // UJWALAM_FAKE_HOST_DROP_PCT % network-dropped and UJWALAM_FAKE_HOST_SKIP_PCT % encoder-skipped frames (default 0;
 // the skipped and render-lagged counters start above 0, as host-wide counters do); outputs.stop (logged with its params) stops them.
 // --twitch-bandwidth-test is reflected as bandwidthTest on twitch stream sinks, like the real host.
+// UJWALAM_HOST_MARKERS_TOKEN (the event core's least-privilege token) is accepted for marker.add and mixer.list only,
+// like the real host's markers role; any other method with it answers -32001 forbidden. Recorded: shape ok, whether it
+// equals the api token or appears in argv (never the value).
 import http from 'node:http';
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -23,6 +26,8 @@ import path from 'node:path';
 const argv = process.argv.slice(2);
 const arg = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
 const token = process.env.UJWALAM_HOST_TOKEN ?? '';
+const markersToken = process.env.UJWALAM_HOST_MARKERS_TOKEN ?? '';
+const MARKERS_METHODS = new Set(['marker.add', 'mixer.list']);
 const eventToken = process.env.UJWALAM_EVENT_CORE_API_TOKEN ?? '';
 const systemToken = process.env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN ?? '';
 const readJson = (f) => (f ? JSON.parse(readFileSync(f, 'utf8')) : null);
@@ -34,6 +39,9 @@ const record = {
   eventTokenOk: /^[0-9a-f]{64}$/.test(eventToken),
   eventTokenInArgv: eventToken !== '' && argv.some((a) => a.includes(eventToken)),
   hostTokenInArgv: token !== '' && argv.some((a) => a.includes(token)),
+  markersTokenOk: /^[0-9a-f]{64}$/.test(markersToken),
+  markersTokenInArgv: markersToken !== '' && argv.some((a) => a.includes(markersToken)),
+  markersTokenIsApiToken: markersToken !== '' && markersToken === token,
   systemTokenOk: /^[0-9a-f]{64}$/.test(systemToken),
   systemTokenInArgv: systemToken !== '' && argv.some((a) => a.includes(systemToken)),
   systemTokenIsApiToken: systemToken !== '' && systemToken === eventToken,
@@ -42,6 +50,7 @@ const record = {
   calls: [],
 };
 delete process.env.UJWALAM_HOST_TOKEN;
+delete process.env.UJWALAM_HOST_MARKERS_TOKEN;
 delete process.env.UJWALAM_EVENT_CORE_API_TOKEN;
 delete process.env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN;
 let captures = 0;
@@ -153,9 +162,11 @@ const server = http.createServer((req, res) => {
   req.on('data', (c) => chunks.push(c));
   req.on('end', () => {
     const send = (o) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
-    if (req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401); res.end(); return; }
+    const asMarkers = markersToken !== '' && req.headers.authorization === `Bearer ${markersToken}`;
+    if (!asMarkers && req.headers.authorization !== `Bearer ${token}`) { res.writeHead(401); res.end(); return; }
     let m;
     try { m = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { res.writeHead(400); res.end(); return; }
+    if (asMarkers && !MARKERS_METHODS.has(m.method)) { res.writeHead(403, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: m.id, error: { code: -32001, message: 'forbidden' } })); return; }
     record.calls.push(m.method);
     save();
     const fn = methods[m.method];

@@ -131,11 +131,15 @@ export async function serve(args, io = { out: (s) => console.log(s), signal: nul
   let pr;
   try { pr = (io.setPriority ?? setLivePriority)(); } catch (e) { pr = { ok: false, target: 'normal', before: null, after: null, error: e?.code ?? 'ERROR' }; }
   io.out(`[serve] ${formatPriority(pr)}`);
-  // F6 live markers: the launcher passes the host api token by environment only; it is taken out of the environment at
-  // once and handed to the narrow host link (marker.add, mixer.list). Without it the live markers stay off.
-  const hostToken = process.env.UJWALAM_HOST_TOKEN;
+  // F6 live markers: the launcher passes the host MARKERS token by environment only (UJWALAM_HOST_MARKERS_TOKEN; the
+  // host lets that role call marker.add and mixer.list only). It is taken out of the environment at once and handed
+  // to the narrow host link. Without it the live markers stay off. A full host token is never used here: if one is
+  // in the environment it is removed unread.
+  const hostToken = process.env.UJWALAM_HOST_MARKERS_TOKEN;
   const hostDiscovery = process.env.UJWALAM_HOST_DISCOVERY;
+  delete process.env.UJWALAM_HOST_MARKERS_TOKEN;
   delete process.env.UJWALAM_HOST_TOKEN;
+  delete process.env.UJWALAM_HOST_SYSTEM_TOKEN;
   const svc = await startService({
     hostToken, ...(hostDiscovery ? { hostDiscovery } : {}),
     dataDir: args['data-dir'], port, mock: args.mock === true, url: args.url, allowRemote: args['allow-remote'] === true, credential: args.credential,

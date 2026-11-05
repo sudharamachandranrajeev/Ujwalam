@@ -180,7 +180,8 @@ export function levelOf(list, sources = null) {
   return best;
 }
 
-/** A narrow host link: only marker.add and mixer.list. The token stays in this closure. The discovery file is
+/** A narrow host link: only marker.add and mixer.list. token is the host markers token (UJWALAM_HOST_MARKERS_TOKEN),
+ *  which the host itself limits to those two methods (rpc_server.h Role::Markers). The token stays in this closure. The discovery file is
  *  re-read after a failure (a restarted host has a new port), at most once per retryMs. */
 export function createHostLink({ discoveryFile, token, timeoutMs = 2000, retryMs = 2000, now = () => performance.now() }) {
   if (typeof discoveryFile !== 'string' || !discoveryFile) throw new Error('host link: discoveryFile required');

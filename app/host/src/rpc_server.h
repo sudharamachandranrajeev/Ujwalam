@@ -43,12 +43,15 @@ struct Error : std::runtime_error {
 	Error(int c, const std::string &m, int h = 200) : std::runtime_error(m), code(c), http(h) {}
 };
 
-enum class Role { Api, System };
+// Markers: least-privilege role for the event core (F6 live markers; it processes untrusted chat). Its token can call
+// only the methods that set Method::markers (marker.add and mixer.list); every other method answers FORBIDDEN.
+enum class Role { Api, System, Markers };
 const char *role_name(Role r);
 
 struct Method {
 	bool api = true;
 	bool system = true;
+	bool markers = false; // opt-in only: a new method is never callable with the markers token
 	std::function<json::Value(const json::Value &params, Role role)> run;
 };
 
@@ -67,9 +70,10 @@ struct Limits {
 
 class Server {
 public:
-	// Tokens are 64 lowercase hex characters each and must differ.
+	// Tokens are 64 lowercase hex characters each and must differ. markers_token empty = no markers role (no token
+	// authenticates as Markers).
 	Server(Limits limits, const std::string &api_token, const std::string &system_token,
-	       std::map<std::string, Method> methods);
+	       std::map<std::string, Method> methods, const std::string &markers_token = std::string());
 	~Server();
 
 	bool start(uint16_t port, std::string &err); // binds 127.0.0.1 only; port 0 = random
@@ -95,6 +99,8 @@ private:
 	Limits L_;
 	uint8_t api_digest_[32] = {};
 	uint8_t sys_digest_[32] = {};
+	uint8_t markers_digest_[32] = {};
+	bool has_markers_ = false;
 	std::map<std::string, Method> methods_;
 	uintptr_t listen_sock_ = ~(uintptr_t)0;
 	uint16_t port_ = 0;

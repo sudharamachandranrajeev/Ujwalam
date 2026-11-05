@@ -446,6 +446,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		(void)Params(p, {});
 		return a.studio->mixer_list();
 	});
+	m["mixer.list"].markers = true; // read-only meter for the F6 audio-peak producer (markers role)
 	add("mixer.setVolume", [&a](const json::Value &p) {
 		Params q(p, {"id", "volume", "db"});
 		bool hv = q.has("volume"), hd = q.has("db");
@@ -530,10 +531,20 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 	});
 
 	// ---- markers and feedback (moments.h)
-	add("marker.add", [&a](const json::Value &p) {
-		Params q(p, {"source", "note"});
-		return a.moments->marker_add(q.str("source", 16), q.str_or("note", "", 500));
-	});
+	// marker.add is one of the two methods the markers role may call (the event core's F6 live markers); that role
+	// writes chat and audio markers only.
+	{
+		rpc::Method x;
+		x.markers = true;
+		x.run = [&a](const json::Value &p, rpc::Role role) {
+			Params q(p, {"source", "note"});
+			std::string source = q.str("source", 16);
+			if (role == rpc::Role::Markers && source != "chat" && source != "audio")
+				throw Error(rpc::FORBIDDEN, "the markers role writes chat or audio markers only");
+			return a.moments->marker_add(source, q.str_or("note", "", 500));
+		};
+		m["marker.add"] = std::move(x);
+	}
 	add("feedback.capture", [&a](const json::Value &p) {
 		Params q(p, {"note"});
 		return a.moments->feedback_capture("api", q.str_or("note", "", 2000));

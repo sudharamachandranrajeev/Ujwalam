@@ -170,6 +170,15 @@ export const isHeadless = () => process.env.UJWALAM_HEADLESS === '1';
 /** Event-core `serve` arguments. sbWs: loadBotConfig().streamerbot ({ ws, wsError }). With --mock no Streamer.bot is
  *  contacted, so no --url. A refused address (not ws://127.0.0.1) is never passed: the core keeps its default and a
  *  note says so. Returns { argv, note|null }. */
+/** Environment for the event-core child. It gets the host MARKERS token (UJWALAM_HOST_MARKERS_TOKEN; the host lets
+ *  it call marker.add and mixer.list only), never the full host token: UJWALAM_HOST_TOKEN and
+ *  UJWALAM_HOST_SYSTEM_TOKEN are removed even when the launcher's own environment has them. */
+export function coreEnv({ coreTokens, hostMarkersToken, base = process.env }) {
+  const env = { ...base, UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: coreTokens.system, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken };
+  for (const k of Object.keys(env)) if (k.toUpperCase() === 'UJWALAM_HOST_TOKEN' || k.toUpperCase() === 'UJWALAM_HOST_SYSTEM_TOKEN') delete env[k];
+  return env;
+}
+
 export function coreServeArgs({ dataDir, mock = false, sbWs = {} }) {
   const argv = ['serve', '--data-dir', dataDir];
   if (mock) return { argv: [...argv, '--mock'], note: null };
@@ -586,6 +595,9 @@ export async function main(argv = process.argv.slice(2)) {
   process.once('SIGTERM', () => { stopAll().then(() => process.exit(0)); });
 
   const hostToken = hex(32);
+  // Least-privilege host token for the event core (F6 live markers): the host lets it call marker.add (chat/audio)
+  // and mixer.list only. The event core processes untrusted chat, so it never gets hostToken.
+  const hostMarkersToken = hex(32);
   const coreTokens = { api: hex(32), system: hex(32) };
   const launchKey = hex(32);
 
@@ -596,8 +608,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (coreArgs.note) console.log(`[studio] ${coreArgs.note}`);
   const core = spawn(process.execPath, [path.join(REPO, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], {
     stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true,
-    // UJWALAM_HOST_TOKEN: the F6 live markers (flag live-markers) write host markers; the host is found at <dataDir>/host.json.
-    env: { ...process.env, UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: coreTokens.system, UJWALAM_HOST_TOKEN: hostToken },
+    // UJWALAM_HOST_MARKERS_TOKEN: the F6 live markers (flag live-markers) write host markers; the host is found at
+    // <dataDir>/host.json. coreEnv never passes the full host token.
+    env: coreEnv({ coreTokens, hostMarkersToken }),
   });
   children.push(core);
   const corePort = await portFrom(core, /api on 127\.0\.0\.1:(\d+)/);
@@ -651,7 +664,7 @@ export async function main(argv = process.argv.slice(2)) {
       const hostLog = openHostLog(logsDir);
       const child = spawn(script ? process.execPath : hostExe, script ? [hostExe, ...hostArgs] : hostArgs, {
         stdio: ['ignore', hostLog.fd, hostLog.fd],
-        env: { ...process.env, ...spec.env, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
+        env: { ...process.env, ...spec.env, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
         windowsHide: true,
       });
       closeSync(hostLog.fd); // the child holds its own handle

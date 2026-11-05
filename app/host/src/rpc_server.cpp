@@ -100,7 +100,7 @@ const std::regex &bearer_re()
 
 const char *role_name(Role r)
 {
-	return r == Role::System ? "system" : "api";
+	return r == Role::System ? "system" : r == Role::Markers ? "markers" : "api";
 }
 
 bool sha256(const std::string &data, uint8_t out[32])
@@ -161,12 +161,15 @@ struct Server::Job {
 };
 
 Server::Server(Limits limits, const std::string &api_token, const std::string &system_token,
-	       std::map<std::string, Method> methods)
+	       std::map<std::string, Method> methods, const std::string &markers_token)
 	: L_(limits),
 	  methods_(std::move(methods))
 {
 	sha256(api_token, api_digest_);
 	sha256(system_token, sys_digest_);
+	has_markers_ = !markers_token.empty();
+	if (has_markers_)
+		sha256(markers_token, markers_digest_);
 }
 
 Server::~Server()
@@ -299,6 +302,7 @@ bool Server::auth(const std::string &header, Role &role) const
 	sha256(ok ? m[1].str() : std::string(), d); // same work whether or not a token was presented
 	bool is_api = digest_equal(d, api_digest_);
 	bool is_sys = digest_equal(d, sys_digest_);
+	bool is_mk = digest_equal(d, markers_digest_) && has_markers_; // compared every time: same work for every token
 	if (!ok)
 		return false;
 	if (is_api) {
@@ -307,6 +311,10 @@ bool Server::auth(const std::string &header, Role &role) const
 	}
 	if (is_sys) {
 		role = Role::System;
+		return true;
+	}
+	if (is_mk) {
+		role = Role::Markers;
 		return true;
 	}
 	return false;
@@ -643,7 +651,8 @@ void Server::run_job(Job &j)
 	auto it = methods_.find(meth->as_string());
 	if (it == methods_.end())
 		return rpc_err(200, id, METHOD_NOT_FOUND, "method-not-found");
-	if ((j.role == Role::Api && !it->second.api) || (j.role == Role::System && !it->second.system))
+	if ((j.role == Role::Api && !it->second.api) || (j.role == Role::System && !it->second.system) ||
+	    (j.role == Role::Markers && !it->second.markers))
 		return rpc_err(403, id, FORBIDDEN, "forbidden");
 	const json::Value *pp = msg.find("params");
 	json::Value empty = json::Value::object();

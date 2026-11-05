@@ -5,7 +5,8 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { launchHost, stopHost } from '../lib/launch.mjs';
 import { rawRequest, HostClient } from '../lib/client.mjs';
@@ -14,6 +15,7 @@ import { REPO_ROOT, HOST_DIR } from '../lib/config.mjs';
 const OUT = path.join(REPO_ROOT, 'out', 'host', 'tests');
 let h;
 let c;
+const MARKERS_TOKEN = randomBytes(32).toString('hex'); // least-privilege role (F6 live markers): marker.add + mixer.list
 
 before(async () => {
   const { mkdirSync } = await import('node:fs');
@@ -21,7 +23,8 @@ before(async () => {
   h = await launchHost({
     dataDir: mkdtempSync(path.join(OUT, 'data-')),
     project: path.join(HOST_DIR, 'projects', 'test-card.project.json'),
-    extraArgs: ['--headless'] // also set by UJWALAM_HEADLESS=1 in CI; given here so the test below holds anywhere
+    extraArgs: ['--headless'], // also set by UJWALAM_HEADLESS=1 in CI; given here so the test below holds anywhere
+    env: { UJWALAM_HOST_MARKERS_TOKEN: MARKERS_TOKEN }
   });
   c = h.client;
 });
@@ -135,6 +138,47 @@ test('system token works and is a separate role', async () => {
   const sys = new HostClient({ port: h.discoveryJson.port, token: h.discoveryJson.systemToken });
   const info = await sys.call('host.info');
   assert.equal(info.name, 'ujwalam-host');
+});
+
+test('markers token: marker.add (chat/audio) and mixer.list only; every other method is forbidden', async () => {
+  const mk = new HostClient({ port: h.discoveryJson.port, token: MARKERS_TOKEN });
+  const ml = await mk.call('mixer.list');
+  assert.ok(Array.isArray(ml.sources), 'mixer.list answers for the markers role');
+  const r = await mk.call('marker.add', { source: 'chat', note: 'chat: clip request' });
+  assert.equal(r.marker.source, 'chat');
+  assert.equal((await mk.call('marker.add', { source: 'audio' })).marker.source, 'audio');
+  for (const source of ['hotkey', 'api']) {
+    const e = await mk.call('marker.add', { source }).then(() => null, (x) => x);
+    assert.equal(e?.code, -32001, `markers role refused source ${source}`);
+  }
+  const lines = readFileSync(r.file, 'utf8').trim().split(/\r?\n/).map((l) => JSON.parse(l));
+  assert.deepEqual(lines.slice(0, 2).map((l) => l.source), ['chat', 'audio'], 'only the two allowed markers were written');
+  assert.equal(lines.length, 2, 'the refused hotkey/api markers wrote nothing');
+  // Every other method the host serves, including the ones that start/stop outputs or shut the host down.
+  const others = ['host.info', 'host.status', 'host.shutdown', 'log.tail', 'project.load', 'project.get', 'project.plan',
+    'devices.list', 'overlay.status', 'overlay.stats', 'effect.fire', 'scenes.list', 'scenes.create', 'scenes.remove',
+    'scenes.activate', 'layers.list', 'layers.add', 'layers.remove', 'layers.setVisible', 'layers.move', 'preview.open',
+    'preview.focus', 'preview.close', 'preview.list', 'mixer.setVolume', 'mixer.setMute', 'outputs.configure',
+    'outputs.clear', 'outputs.status', 'outputs.start', 'outputs.stop', 'stream.start', 'stream.stop', 'record.start',
+    'record.stop', 'replay.start', 'replay.stop', 'replay.status', 'replay.save', 'panic.now', 'panic.status',
+    'panic.clear', 'feedback.capture', 'feedback.status', 'hotkeys.status', 'hotkeys.trigger', 'encoders.probe'];
+  for (const method of others) {
+    const e = await mk.call(method, {}).then(() => null, (x) => x);
+    assert.equal(e?.code, -32001, `${method} forbidden for the markers role`);
+    assert.equal(e?.httpStatus, 403, method);
+  }
+  assert.equal((await c.call('host.info')).name, 'ujwalam-host', 'host still up after the refused host.shutdown');
+  // The event core's own host link (services/event-core/live-markers.mjs) against this real host with the markers token.
+  const { createHostLink } = await import('../../../services/event-core/live-markers.mjs');
+  const link = createHostLink({ discoveryFile: h.discovery, token: MARKERS_TOKEN });
+  assert.ok(Array.isArray((await link.mixerList()).sources));
+  assert.equal((await link.addMarker('chat', 'chat: clip request')).marker.source, 'chat');
+  assert.notEqual(h.discoveryJson.systemToken, MARKERS_TOKEN);
+  assert.ok(!readFileSync(h.discovery, 'utf8').includes(MARKERS_TOKEN), 'markers token never in the discovery file');
+});
+
+test('a malformed markers token stops the host before it starts', async () => {
+  await assert.rejects(launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), extraArgs: ['--headless'], env: { UJWALAM_HOST_MARKERS_TOKEN: 'not-a-token' } }), /exited with 64/);
 });
 
 test('host.info / host.status contract (UI fields)', async () => {

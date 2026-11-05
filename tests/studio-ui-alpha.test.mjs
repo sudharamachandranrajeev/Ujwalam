@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, DEFAULT_FEEDBACK_DIR, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, coreEnv, DEFAULT_FEEDBACK_DIR, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,6 +39,19 @@ function presetsDir({ v = false } = {}) {
 }
 
 // ---- role matching
+
+test('event-core env: the host markers token only, never the full host or host system token', () => {
+  const coreTokens = { api: 'a'.repeat(64), system: 'b'.repeat(64) };
+  const base = { PATH: 'x', UJWALAM_HOST_TOKEN: 'c'.repeat(64), ujwalam_host_system_token: 'd'.repeat(64) };
+  const env = coreEnv({ coreTokens, hostMarkersToken: 'e'.repeat(64), base });
+  assert.equal(env.UJWALAM_HOST_MARKERS_TOKEN, 'e'.repeat(64));
+  assert.equal(env.UJWALAM_EVENT_CORE_API_TOKEN, coreTokens.api);
+  assert.equal(env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN, coreTokens.system);
+  assert.equal(env.PATH, 'x');
+  assert.ok(!Object.keys(env).some((k) => /^ujwalam_host_(system_)?token$/i.test(k)), Object.keys(env).join(','));
+  assert.ok(!Object.values(env).includes('c'.repeat(64)) && !Object.values(env).includes('d'.repeat(64)));
+  assert.equal(base.UJWALAM_HOST_TOKEN, 'c'.repeat(64), 'the base environment is not changed');
+});
 
 test('roles: registry presets bind game capture, facecam and mic from an anonymised devices.list', () => {
   assert.equal(devicePresets.length, 4, 'four device presets carry match data');
@@ -366,6 +379,9 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(h.eventTokenOk, true, 'the event-core token reached the host by environment');
     assert.equal(h.eventTokenInArgv, false);
     assert.equal(h.hostTokenInArgv, false);
+    assert.equal(h.markersTokenOk, true, 'the host got the markers token (F6 live markers) by environment');
+    assert.equal(h.markersTokenInArgv, false);
+    assert.equal(h.markersTokenIsApiToken, false, 'the markers token is a separate token');
     assert.ok(!h.calls.includes('devices.list'), 'no device listing without --allow-devices');
     assert.equal(h.load.skipUnavailable, true);
     assert.equal(h.load.captureLayers, 0);

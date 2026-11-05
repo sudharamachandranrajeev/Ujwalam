@@ -131,3 +131,112 @@ Changed:
 - `services/event-core/cli.mjs`: `serve` takes `UJWALAM_HOST_TOKEN` / `UJWALAM_HOST_DISCOVERY` from env and removes the token from env
 - `services/studio-ui/launch.mjs`: one env entry on the event-core spawn
 - `tools/package/manifest.mjs`: ships the two `data/clip` files
+
+## Scoped role (follow-up, 2026-11-05)
+
+This resolves the security note above. The event core no longer holds the host api token. It holds a separate least-privilege **markers** token. The host itself checks that token and allows only `marker.add` (sources `chat` and `audio`) and `mixer.list` with it.
+
+### What changed
+
+- `app/host/src/rpc_server.h` / `rpc_server.cpp`:
+  - New `Role::Markers` and new field `Method::markers`, which is **false by default**. A method that is not opted in, including any method added later, answers `-32001 forbidden` (HTTP 403) to this role.
+  - `Server` takes an optional `markers_token`. When it is empty, no token authenticates as Markers.
+  - `auth()` hashes the presented token once (SHA-256). It then compares the hash against all three digests with the existing constant-time `digest_equal`, every time, so the work is the same for every token.
+  - Logs name the role `markers`.
+- `app/host/src/methods.cpp`: `marker.add` and `mixer.list` set `markers = true`, and they are the only methods that do. When the caller has the Markers role, `marker.add` also refuses any source other than `chat` or `audio` (`-32001`), so this role cannot write `hotkey` or `api` markers.
+- `app/host/src/main.cpp`: reads `UJWALAM_HOST_MARKERS_TOKEN` and removes it from the environment.
+  - The token must be 64 lowercase hex characters and differ from the api and system tokens. Otherwise the host exits with code 64.
+  - The host never generates this token and never writes it to the discovery file. When it is absent, the role is off.
+  - The token is zeroed after the server is built, like the other tokens.
+  - Log line: `rpc markers role: on (marker.add, mixer.list)` or `off`.
+- `services/studio-ui/launch.mjs`:
+  - Generates `hostMarkersToken = hex(32)` separately from `hostToken`.
+  - The new exported `coreEnv()` builds the event-core child's environment. It passes `UJWALAM_HOST_MARKERS_TOKEN` and strips `UJWALAM_HOST_TOKEN` and `UJWALAM_HOST_SYSTEM_TOKEN` in any letter case, even when the launcher's own environment has them.
+  - The host child gets `UJWALAM_HOST_MARKERS_TOKEN` beside its api token, so a crash restart reuses the same token.
+- `services/event-core/cli.mjs serve`: reads `UJWALAM_HOST_MARKERS_TOKEN` only. It removes that token from `process.env`, and it also removes `UJWALAM_HOST_TOKEN` and `UJWALAM_HOST_SYSTEM_TOKEN` unread.
+- Comments updated in `services/event-core/api/service.mjs` and `services/event-core/live-markers.mjs`.
+- `tests/fixtures/studio-ui/fake-host.mjs`: accepts the markers token for `marker.add` and `mixer.list` only (403 for anything else). It records only the token's shape and whether the token was found in argv or equals the api token, never the value.
+
+### Commands and output
+
+```
+node app/host/tools/build.mjs
+```
+```
+[1/1] Linking CXX executable ujwalam-host.exe
+built C:\AI\Claude\Ujwalam\out\host\build\ujwalam-host.exe
+```
+The first attempt compiled every changed file, but the link failed with `LNK1168: cannot open ujwalam-host.exe for writing`, a short-lived file lock. The retry linked.
+
+```
+UJWALAM_HEADLESS=1 node --test --test-reporter=spec app/host/tests/host-api.test.mjs
+```
+```
+✔ system token works and is a separate role (1.9302ms)
+✔ markers token: marker.add (chat/audio) and mixer.list only; every other method is forbidden (81.7676ms)
+✔ a malformed markers token stops the host before it starts (106.5084ms)
+...
+ℹ tests 14
+ℹ pass 14
+ℹ fail 0
+```
+The markers test runs against the real host:
+- `mixer.list` returns `sources[]`, and `marker.add` works with sources chat and audio.
+- `marker.add` with sources hotkey or api gets `-32001`, and the markers file holds exactly the 2 allowed lines.
+- All 47 other method names get `-32001` with HTTP 403. These include `outputs.start/stop`, `stream.start/stop`, `record.*`, `replay.*`, `panic.*`, `host.shutdown`, `outputs.configure`, `mixer.setVolume/setMute`, `project.load` and `effect.fire`.
+- The event core's own `createHostLink` works against the real host with this token.
+- The token is not in the discovery file, and the api token still works afterwards.
+
+An earlier run of the same file plus `host-a0-day2.test.mjs` also passed: 9/9 day-2 tests, including `markers: api, chat and hotkey sources append JSON lines` with the api token.
+
+```
+UJWALAM_HEADLESS=1 node --test --test-concurrency=1 app/host/tests/
+```
+```
+ℹ tests 59
+ℹ pass 58
+ℹ fail 1
+✖ replay: binds to the configured rungs (no extra encoder), shares the encoder with a recording, follows clear
+  AssertionError: NVENC sessions with the replays bound to rungs: 1 (fallback encoders would add more)  1 !== 2
+```
+This failure is environmental and not caused by this change. The test counts NVENC sessions across the whole GPU (NVML minus a baseline taken before the host starts, D188). During this run, another session's fx-test host (`out/fx-test/campop-h-*`, with a browser GPU process) was running on the same GPU, so the GPU-wide count moved. This same test passed earlier in this session on the same build (`✔ replay: binds to the configured rungs ... (9726.6971ms)`). Re-run it when the GPU is otherwise idle: **UNVERIFIED for this run**.
+
+```
+UJWALAM_HEADLESS=1 node --test --test-reporter=spec tests/live-markers.test.mjs tests/studio-ui-alpha.test.mjs tests/event-core-priority.test.mjs
+```
+```
+  ✔ without a host token the service starts and says live markers are off
+  ✔ cli serve: takes UJWALAM_HOST_MARKERS_TOKEN only; a full host token is removed unread
+✔ event-core env: the host markers token only, never the full host or host system token
+ℹ tests 47
+ℹ pass 47
+ℹ fail 0
+```
+- The launcher e2e with the fake host (`studio-ui-alpha`) now also asserts that the host got the markers token by environment, not in argv, and that it differs from the api token.
+- `cli serve` with only `UJWALAM_HOST_TOKEN` set: live markers stay off, and every host token is removed from the environment.
+- `cli serve` with the markers token: live markers are ready, and no token-shaped value is printed.
+
+```
+node tools/lint.mjs
+```
+```
+docs/plan/2026-10-29-v1-decisions.md:194: eol: expected LF (.gitattributes), found 1 CRLF line(s)
+lint: 1 finding(s) (eol=1), 31 allow marker(s), in 4.0s
+```
+That one finding is in a file this change does not touch (another session's uncommitted D213 row). The files this change touches have no findings.
+
+### Residual risks
+
+- `mixer.list` is still readable with the markers token. It returns audio source ids and names, scene and layer ids, and levels, which may include device names. It is read-only, cannot change anything and goes only to the local event core.
+- The event core can still write any number of chat or audio markers, up to its own cap of 4 in flight. A flood would fill the markers JSONL file, a disk-use risk only. The host has no rate limit per role.
+- The markers token lives in the event-core process for the whole session. If chat processing were compromised (code execution in the event core), the attacker would still get only these two methods.
+- `UJWALAM_HOST_TOKEN` still goes to the UI server and the host, unchanged. Other consumers of the full token (posting CLI, hostctl, diag bundle) are out of scope.
+- No real-stream use yet (the flag stays off).
+
+### Files changed
+
+- `app/host/src/rpc_server.h`, `app/host/src/rpc_server.cpp`, `app/host/src/methods.cpp`, `app/host/src/main.cpp`
+- `app/host/tests/host-api.test.mjs`
+- `services/studio-ui/launch.mjs`, `services/event-core/cli.mjs`, `services/event-core/api/service.mjs`, `services/event-core/live-markers.mjs`
+- `tests/fixtures/studio-ui/fake-host.mjs`, `tests/studio-ui-alpha.test.mjs`, `tests/live-markers.test.mjs`
+- `docs/evidence/2026-11-05-f6-live-markers.md` (this section)
