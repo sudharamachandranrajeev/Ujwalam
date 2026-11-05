@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, coreEnv, DEFAULT_FEEDBACK_DIR, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, coreEnv, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -219,6 +219,13 @@ test('launch spec: headless (UJWALAM_HEADLESS=1) starts the alpha host without p
   assert.ok(!s.argv.includes('--preview'));
   assert.ok(s.argv.includes('--allow-browser'), 'everything else is as in a normal start');
   assert.ok(s.notes.some((n) => /headless/.test(n)));
+});
+
+test('headless: only UJWALAM_BROWSER = this Node (a login script) gets the login URL, never a browser (D191, F2)', () => {
+  assert.equal(headlessLoginScript({}), false);
+  assert.equal(headlessLoginScript({ UJWALAM_BROWSER: 'C:/Program Files/Google/Chrome/Application/chrome.exe' }), false);
+  assert.equal(headlessLoginScript({ UJWALAM_BROWSER: process.execPath }), true);
+  assert.equal(headlessLoginScript({ UJWALAM_BROWSER: process.execPath.toUpperCase() }), true, 'Windows paths compare case-insensitively');
 });
 
 test('launch spec: alpha mode wires previews, browser layers, overlay child and the event feed; token by env only', () => {

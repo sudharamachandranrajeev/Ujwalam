@@ -167,6 +167,9 @@ function parseArgs(argv) {
 export const isHeadless = () => process.env.UJWALAM_HEADLESS === '1';
 
 // UJWALAM_BROWSER (an executable) and UJWALAM_BROWSER_ARGS (space separated flags) pick the browser; used by the UI tests.
+// Under UJWALAM_HEADLESS=1 only UJWALAM_BROWSER = this Node executable is honoured (a login script, never a browser).
+export const headlessLoginScript = (env = process.env) => typeof env.UJWALAM_BROWSER === 'string'
+  && path.resolve(env.UJWALAM_BROWSER).toLowerCase() === path.resolve(process.execPath).toLowerCase();
 /** Event-core `serve` arguments. sbWs: loadBotConfig().streamerbot ({ ws, wsError }). With --mock no Streamer.bot is
  *  contacted, so no --url. A refused address (not ws://127.0.0.1) is never passed: the core keeps its default and a
  *  note says so. Returns { argv, note|null }. */
@@ -730,7 +733,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (!uiPort) { console.log('[studio] UI server did not start; stopping'); await stopAll(); return 1; }
 
   console.log(`[studio] UI at http://127.0.0.1:${uiPort}/ (the login key is one-time and not printed). Ctrl-C stops everything.`);
-  if (args['no-open'] !== true && !isHeadless()) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);
+  // Headless (D191): no browser. One exception for scripted runs (F2 real-host test): UJWALAM_BROWSER naming this
+  // Node runs that script (windowsHide, no window) with the login URL, so it can drive the page API like the browser.
+  if (args['no-open'] !== true && (!isHeadless() || headlessLoginScript())) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);
   if (alphaClient) {
     // One line that answers "are the overlays fed?": bridge counters 10 s after start (counts only, never text).
     // UJWALAM_ALPHA_STATS_MS shortens the wait for tests.
