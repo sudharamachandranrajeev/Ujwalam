@@ -14,6 +14,8 @@
 // from the overlay root and the read-only bridge feed, both on 127.0.0.1, never on 8093 (the real Streamer.bot).
 // --host-config (host_config.h): replay buffer, global hotkeys, feedback and markers folders, event-core system file.
 // --test-hooks enables hotkeys.trigger (tests only).
+// --test-crash <kind> (needs --test-hooks; tests only): crash on purpose right after the crash reporter is installed and
+// before libobs starts (no GPU), to test the report (crash.h).
 // --headless (or UJWALAM_HEADLESS=1; every test run sets it): no preview window is ever created; preview.open fails
 // with CONFLICT (D191).
 // --twitch-bandwidth-test: keyed twitch sinks connect with "?bandwidthtest=true" appended to the stored key at connect
@@ -33,6 +35,7 @@
 // Token variables are removed from the process environment once read, so helper processes never inherit them.
 // The discovery file carries a token only when the host generated it (null when it came by environment).
 #include "app.h"
+#include "crash.h"
 #include "discovery.h"
 #include "log.h"
 #include "obs_runtime.h"
@@ -133,7 +136,7 @@ void usage()
 	fprintf(stderr, "usage: ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>]\n"
 			"         [--recordings <dir>] [--port <n>] [--project <file.json>] [--outputs <file.json>]\n"
 			"         [--preview h,v] [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]\n"
-			"         [--twitch-bandwidth-test] [--host-config <file.json>] [--test-hooks] [--headless]\n"
+			"         [--twitch-bandwidth-test] [--host-config <file.json>] [--test-hooks [--test-crash <kind>]] [--headless]\n"
 			"         [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]\n"
 			"          [--overlay-feed-port <n>] [--overlay-events-url <url>]]\n");
 }
@@ -155,6 +158,7 @@ int wmain(int argc, wchar_t **wargv)
 	Overlay::Config ov;
 	std::string ov_port_s = "0", ov_feed_s = "0";
 	bool headless = false;
+	std::string test_crash;
 	for (size_t i = 0; i < args.size(); i++) {
 		const std::string &a = args[i];
 		auto next = [&](std::string &dst) {
@@ -194,6 +198,8 @@ int wmain(int argc, wchar_t **wargv)
 			next(app.config_path);
 		else if (a == "--test-hooks") // hotkeys.trigger; tests only
 			app.test_hooks = true;
+		else if (a == "--test-crash") // crash.h test trigger; needs --test-hooks
+			next(test_crash);
 		else if (a == "--headless") // no preview windows (D191)
 			headless = true;
 		else if (a == "--overlay-root")
@@ -216,6 +222,10 @@ int wmain(int argc, wchar_t **wargv)
 			usage();
 			return 64;
 		}
+	}
+	if (!test_crash.empty() && !app.test_hooks) {
+		fprintf(stderr, "--test-crash needs --test-hooks\n");
+		return 64;
 	}
 	if (env(L"UJWALAM_HEADLESS") == "1")
 		headless = true;
@@ -366,6 +376,29 @@ int wmain(int argc, wchar_t **wargv)
 		app.log_path = (fs::u8path(app.data_dir) / "logs" / ("host-" + st + ".log")).generic_u8string();
 	}
 	hlog::open_file(app.log_path);
+	{
+		crash::Config cc;
+		cc.logs_dir = (fs::u8path(app.data_dir) / "logs").generic_u8string();
+		cc.version = app.version;
+		cc.log_file = fs::u8path(app.log_path).filename().u8string();
+		cc.runtime_dir = o.runtime;
+		crash::Status cs = crash::install(cc);
+		if (cs.writing)
+			hlog::info("crash reporter: on (text report to logs/crash-*.txt, no dump; symbols %s; %d earlier reports)",
+				   cs.symbols ? "on" : "off", cs.existing);
+		else
+			hlog::warn("crash reporter: on, but NO report file will be written: %d crash-*.txt files in logs/ (limit %d; "
+				   "nothing is deleted: move old reports away)",
+				   cs.existing, crash::kMaxReports);
+		if (!test_crash.empty()) {
+			hlog::warn("test-crash %s (--test-hooks)", test_crash.c_str());
+			if (!crash::test_trigger(test_crash)) {
+				hlog::error("unknown --test-crash kind (av, abort, cxx, purecall, invalid-parameter, stack-overflow)");
+				hlog::close_file();
+				return 64;
+			}
+		}
+	}
 	wchar_t exe[MAX_PATH];
 	DWORD en = GetModuleFileNameW(nullptr, exe, MAX_PATH);
 	app.exe_path = std::wstring(exe, en);
@@ -515,6 +548,8 @@ int wmain(int argc, wchar_t **wargv)
 		api_token.assign(api_token.size(), '0');
 		sys_token.assign(sys_token.size(), '0');
 		markers_token.assign(markers_token.size(), '0');
+		if (!crash::reassert())
+			hlog::warn("crash reporter: a module had replaced the unhandled-exception filter; ours is back on top");
 		if (!rc) {
 			// Global hotkeys last: every handler's target exists. A binding that fails is reported, never fatal.
 			app.hotkeys->start(app.config.hotkeys,

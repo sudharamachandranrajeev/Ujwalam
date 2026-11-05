@@ -15,6 +15,8 @@
 //   log-ring.txt       host.log.tail (1000 lines) with --rpc
 //   logs/host-*.log    the newest N host logs (default 3, last 2 MiB of each)
 //   host-crashes.jsonl launcher crash-recovery log
+//   crash/crash-*.txt  the host's own crash reports (app/host/src/crash.h: text only, no dump), newest 5, from the
+//                      host data dir's logs/ and the data dir's logs/
 //   markers.jsonl      the newest N markers (default 50): v, at, source, hostMs, streamMs, recordMs only (no notes,
 //                      no scene names)
 // Never included: keys, tokens, chat text, profile values, project files, feedback captures, recordings.
@@ -29,6 +31,8 @@ import { writeZip } from '../package/zip.mjs';
 export const SNAPSHOT_FILE = 'host-snapshot.json';
 export const CRASH_LOG_FILE = 'host-crashes.jsonl';
 const LOG_TAIL_BYTES = 2 * 1024 * 1024;
+const CRASH_REPORTS = 5;
+const CRASH_REPORT_BYTES = 64 * 1024;
 const SINK_FIELDS = ['id', 'kind', 'platform', 'target', 'state', 'keyPresent', 'urlPresent', 'container', 'attempts', 'retries', 'consecutiveFailures', 'lastCode', 'active', 'totalFrames', 'droppedFrames', 'bytes', 'liveForMs'];
 const MARKER_FIELDS = ['v', 'at', 'source', 'hostMs', 'streamMs', 'recordMs'];
 
@@ -150,6 +154,14 @@ export async function collectDiag({
   for (const n of hostLogs) add(`logs/${n}`, tailFile(path.join(logsDir, n), LOG_TAIL_BYTES));
   sources.hostLogs = hostLogs.length;
   if (existsSync(path.join(logsDir, CRASH_LOG_FILE))) add(CRASH_LOG_FILE, tailFile(path.join(logsDir, CRASH_LOG_FILE), 256 * 1024));
+  const crashReports = [];
+  for (const dir of [...new Set([hostData ? path.join(hostData, 'logs') : null, logsDir].filter(Boolean))]) {
+    if (!existsSync(dir)) continue;
+    for (const n of readdirSync(dir)) if (/^crash-[\w.-]+\.txt$/.test(n) && !crashReports.some((c) => c.n === n)) crashReports.push({ n, f: path.join(dir, n) });
+  }
+  crashReports.sort((a, b) => (a.n < b.n ? -1 : a.n > b.n ? 1 : 0));
+  for (const c of crashReports.slice(-CRASH_REPORTS)) add(`crash/${c.n}`, tailFile(c.f, CRASH_REPORT_BYTES));
+  sources.crashReports = Math.min(crashReports.length, CRASH_REPORTS);
   const mk = lastMarkers(hostData ? path.join(hostData, 'markers') : null, markers);
   sources.markers = mk.length;
   if (mk.length) add('markers.jsonl', `${mk.map((m) => JSON.stringify(m)).join('\n')}\n`);

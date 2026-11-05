@@ -104,3 +104,108 @@ itself has no crash handler.
    upstream. A host-side workaround cannot lock libobs-internal state, so it would only paper over the race.
 
 Scripts used (scratchpad, not in the repo): `loop.mjs`, `stress.mjs`, `load.mjs`, `diag-veh.patch`.
+
+## Crash reporter (added 2026-11-05, not committed yet)
+
+Next step 1 above is built, with one change from the proposal: **no minidump** (decision 2026-11-05, privacy:
+process memory holds stream keys and tokens). The host now writes a text report instead.
+
+Files: `app/host/src/crash.h` (design, privacy rules, limits), `app/host/src/crash.cpp`, installed in
+`app/host/src/main.cpp` right after the host log is opened; `dbghelp` added to `app/host/CMakeLists.txt`.
+
+What it does:
+
+- Hooks: `SetUnhandledExceptionFilter` (last chance only; no vectored handler, so first-chance exceptions that a
+  driver or plugin handles itself never produce a report), `SIGABRT`, `_set_purecall_handler`,
+  `_set_invalid_parameter_handler`. The filter is put back on top once more after libobs, the plugins and the project
+  are loaded (`crash::reassert`, a warning in the host log if a module had replaced it).
+- Report: `<data dir>/logs/crash-<UTC time>-p<pid>.txt`. Kind, exception code and name, flags, faulting address as
+  module+offset, for an access violation read/write/execute and the target (exact only in the null page), fast-fail
+  code, thread id (main or not), the faulting thread's stack unwound with `RtlVirtualUnwind` as module+offset, then
+  the same frames with dbghelp symbols (function, source file base name, line; PDBs next to the exe and in the OBS
+  runtime's `bin/64bit` and `obs-plugins/64bit`; never a symbol server), host version, time, host log file name.
+  One line also goes to stderr, which the launcher writes into its host log.
+- Privacy: no register values, no memory contents, no strings read from process memory, no folder paths (base names
+  only). An address that is not code in a loaded module or in the null page is printed as `<withheld>` with its
+  memory state and type only, since its value could be made of data bytes.
+- Safety: buffers, file name prefix, dbghelp and a dedicated reporter thread are set up at install. The crashing
+  thread copies the exception record and context into a static slot, wakes the reporter and waits at most 20 s. The
+  report is written with `WriteFile` (no CRT stdio); the header and the module+offset stack use no heap and are
+  flushed before the dbghelp section. Each section runs under its own `__try`. One report per process; a second
+  crashing thread waits for the first report.
+- File limit: at most 10 `crash-*.txt`. With 10 present, no file is written (the stderr line still is, and the host
+  log warns at start). Nothing is ever deleted.
+- Exit codes are unchanged. The filter chains to the previous (CRT) filter and returns `EXCEPTION_CONTINUE_SEARCH`;
+  the SIGABRT and pure call handlers return into the CRT; the invalid parameter handler ends with the same
+  `__fastfail(FAST_FAIL_INVALID_ARG)` as the CRT default.
+- Host log ring: not flushed. The log file already flushes every line (`log.cpp`), and reading the ring needs the
+  log mutex, which the crashing thread may hold.
+- Diagnostics bundle (`tools/diag/bundle.mjs`): the newest 5 `crash-*.txt` from the host data dir's `logs/` and the
+  data dir's `logs/` go in as `crash/<name>`, through the same redactor as every other file.
+
+Test trigger: `--test-crash <av|abort|cxx|purecall|invalid-parameter|stack-overflow>`, only with `--test-hooks`
+(the existing test-only flag), fires right after install and **before libobs starts**: no GPU, no NVENC, no outputs.
+
+Exit codes without a reporter, measured with a probe exe built by the same toolchain (`cl /O2 /MD /EHsc`, scratchpad,
+not in the repo): `abort()`, `_purecall()`, `_invalid_parameter_noinfo()` and an uncaught throw all end with
+0xC0000409, also with a SIGABRT handler installed. The host with the reporter ends with the same codes (test below).
+
+```
+node app/host/tools/build.mjs            (BelowNormal; MeldStudio was running, CPU-only build)
+built C:\AI\Claude\Ujwalam\out\host\build\ujwalam-host.exe
+
+node --test --test-concurrency=1 app/host/tests/host-crash-report.test.mjs
+✔ crash report: av -> one text report, exit code 0xc0000005, no secret or path in it
+✔ crash report: stack-overflow -> one text report, exit code 0xc00000fd, no secret or path in it
+✔ crash report: abort -> one text report, exit code 0xc0000409, no secret or path in it
+✔ crash report: cxx -> one text report, exit code 0xc0000409, no secret or path in it
+✔ crash report: purecall -> one text report, exit code 0xc0000409, no secret or path in it
+✔ crash report: invalid-parameter -> one text report, exit code 0xc0000409, no secret or path in it
+✔ crash report: with 10 reports present, no new file is written and none is deleted; exit code unchanged
+✔ crash report: --test-crash needs --test-hooks; an unknown kind is refused (exit 64, no report)
+ℹ pass 8  ℹ fail 0
+
+node --test tests/diag-bundle.test.mjs    pass 4, fail 0 (crash reports included, newest 5, redacted)
+node --test tests/report-button.test.mjs  pass 15, fail 0
+node tools/lint.mjs                       0 finding(s)
+```
+
+Sample report (the `av` trigger, on a second thread):
+
+```
+ujwalam-host crash report (text only: no memory dump, no register values, no memory contents)
+version: 0.1.0
+time: 2026-11-05T22:26:00.888Z
+thread: 24316 (not the main thread)
+kind: unhandled exception
+code: 0xc0000005 (access violation)
+address: ujwalam-host.exe+0x146c40
+access: write at 0x0 (null page)
+stack (faulting thread, module+offset, 5 frames):
+  #00 ujwalam-host.exe+0x146c40
+  ...
+stack (symbols from PDBs; source file names only):
+  #00 ujwalam-host!crash::`anonymous namespace'::test_av+0x0 (crash.cpp:551)
+  #01 ujwalam-host!std::thread::_Invoke<std::tuple<void (__cdecl*)(void)>,0>+0xb (thread:60)
+  #03 KERNEL32!BaseThreadInitThunk+0x17 [no PDB: nearest export, may be wrong]
+end of report
+```
+
+Not run: the GPU host tests and the full `npm run ci` (MeldStudio was running; no NVENC work). Not tested: a real
+crash after libobs has loaded, so symbols for `obs.dll` and the plugins come from `SymRefreshModuleList` at crash
+time and are UNVERIFIED in this path (their PDBs are in the runtime).
+
+Residual risks:
+
+1. **Fail-fast paths skip every handler**: `/GS` cookie failures, CFG, and heap corruption that the heap reports
+   with fail-fast (0xC0000409 / 0xC0000374). Hypothesis 1 above (a write at `array[-1]`) may end this way, and then
+   no report is written. The launcher's `host-crashes.jsonl` still has the exit code. Whether WER LocalDumps fires
+   for fail-fast despite `SEM_NOGPFAULTERRORBOX` is UNVERIFIED (and a dump would conflict with the privacy decision).
+2. A module that calls `SetUnhandledExceptionFilter` after `reassert` (for example, if CEF were to start a crash
+   handler when the first browser source is created) silently replaces ours. UNVERIFIED for OBS 32.1.2's CEF.
+3. libobs `bcrash` goes through `def_crash_handler`, which prints to stderr and calls `exit(0)`: the supervisor sees a
+   clean exit and there is no report. A `base_set_crash_handler` hook would be a separate change.
+4. A crash while the loader lock is held can block `GetModuleFileNameW` or dbghelp: the header is on disk, the rest
+   may be missing, and the process ends after the 20 s wait. During that wait the other host threads keep running.
+5. An uncaught C++ exception is reported by code only (no type, no `what()`), by design.
+6. One report per process; more crashes at once are not reported separately.

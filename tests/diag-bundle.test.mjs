@@ -101,6 +101,14 @@ test('bundle: files from a data dir with logs, snapshot, crash log and markers; 
       outputs: { sinks: [{ id: 'twitch', kind: 'stream', url: `rtmp://x/app/${s.twitchKey}`, keyPresent: true, state: 'live' }] },
     }));
     writeFileSync(path.join(dataDir, 'logs', 'host-crashes.jsonl'), `${JSON.stringify({ at: '2026-11-05T10:01:00Z', exit: 'code 3', action: 'restart', recording: ['record'] })}\n`);
+    // Host crash reports (app/host/src/crash.h) live in the host data dir's logs/: the newest 5 go in, redacted.
+    mkdirSync(path.join(hostData, 'logs'), { recursive: true });
+    for (let i = 1; i <= 6; i++) {
+      writeFileSync(path.join(hostData, 'logs', `crash-2026-11-0${i}T10-00-00-000Z-p${i}.txt`), [
+        'ujwalam-host crash report (text only: no memory dump, no register values, no memory contents)',
+        'code: 0xc0000005 (access violation)', 'address: obs.dll+0x1234', `  #00 ${s.home}\\x.dll+0x10 ${s.hex} ${s.brand}`, 'end of report', '',
+      ].join('\n'));
+    }
     const markers = [];
     for (let i = 0; i < 60; i++) markers.push(JSON.stringify({ v: 1, at: `2026-11-05T10:${String(i).padStart(2, '0')}:00Z`, source: 'chat', note: `${s.chat} ${i}`, hostMs: i, streamMs: i * 10, recordMs: null, scenes: { H: `${s.brand} H` } }));
     writeFileSync(path.join(hostData, 'markers', 'session-1.jsonl'), `${markers.join('\n')}\n`);
@@ -110,7 +118,7 @@ test('bundle: files from a data dir with logs, snapshot, crash log and markers; 
 
     const files = await collectDiag({ dataDir, hostData, profile, release, home: s.home, userName: s.userName, gpu: () => 'name, driver_version\nNVIDIA GeForce RTX 4050 Laptop GPU, 999.99\n' });
     const names = files.map((f) => f.name).sort();
-    assert.deepEqual(names, ['gpu.txt', 'host-crashes.jsonl', 'host-info.json', 'host-status.json', 'logs/host-2026-11-02T10-00-00-000Z.log', 'logs/host-2026-11-03T10-00-00-000Z.log', 'logs/host-2026-11-04T10-00-00-000Z.log', 'manifest.json', 'markers.jsonl', 'outputs.json', 'versions.json']);
+    assert.deepEqual(names, ['crash/crash-2026-11-02T10-00-00-000Z-p2.txt', 'crash/crash-2026-11-03T10-00-00-000Z-p3.txt', 'crash/crash-2026-11-04T10-00-00-000Z-p4.txt', 'crash/crash-2026-11-05T10-00-00-000Z-p5.txt', 'crash/crash-2026-11-06T10-00-00-000Z-p6.txt', 'gpu.txt', 'host-crashes.jsonl', 'host-info.json', 'host-status.json', 'logs/host-2026-11-02T10-00-00-000Z.log', 'logs/host-2026-11-03T10-00-00-000Z.log', 'logs/host-2026-11-04T10-00-00-000Z.log', 'manifest.json', 'markers.jsonl', 'outputs.json', 'versions.json']);
 
     const out = path.join(root, 'out', 'diag.zip');
     const origHome = process.env.USERPROFILE;
@@ -137,6 +145,8 @@ test('bundle: files from a data dir with logs, snapshot, crash log and markers; 
     assert.equal(manifest.profileUsedForRedaction, true);
     assert.equal(manifest.sources.hostLogs, 3);
     assert.equal(manifest.sources.markers, 50);
+    assert.equal(manifest.sources.crashReports, 5);
+    assert.match(files.find((f) => f.name === 'crash/crash-2026-11-06T10-00-00-000Z-p6.txt').data, /^address: obs\.dll\+0x1234$/m, 'crash report content kept');
     assert.match(files.find((f) => f.name === 'gpu.txt').data, /RTX 4050/);
   } finally {
     rmSync(root, { recursive: true, force: true, maxRetries: 3 });
