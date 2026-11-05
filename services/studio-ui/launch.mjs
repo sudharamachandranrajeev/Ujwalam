@@ -596,7 +596,8 @@ export async function main(argv = process.argv.slice(2)) {
   if (coreArgs.note) console.log(`[studio] ${coreArgs.note}`);
   const core = spawn(process.execPath, [path.join(REPO, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], {
     stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true,
-    env: { ...process.env, UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: coreTokens.system },
+    // UJWALAM_HOST_TOKEN: the F6 live markers (flag live-markers) write host markers; the host is found at <dataDir>/host.json.
+    env: { ...process.env, UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: coreTokens.system, UJWALAM_HOST_TOKEN: hostToken },
   });
   children.push(core);
   const corePort = await portFrom(core, /api on 127\.0\.0\.1:(\d+)/);

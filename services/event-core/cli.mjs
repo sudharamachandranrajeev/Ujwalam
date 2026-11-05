@@ -131,7 +131,13 @@ export async function serve(args, io = { out: (s) => console.log(s), signal: nul
   let pr;
   try { pr = (io.setPriority ?? setLivePriority)(); } catch (e) { pr = { ok: false, target: 'normal', before: null, after: null, error: e?.code ?? 'ERROR' }; }
   io.out(`[serve] ${formatPriority(pr)}`);
+  // F6 live markers: the launcher passes the host api token by environment only; it is taken out of the environment at
+  // once and handed to the narrow host link (marker.add, mixer.list). Without it the live markers stay off.
+  const hostToken = process.env.UJWALAM_HOST_TOKEN;
+  const hostDiscovery = process.env.UJWALAM_HOST_DISCOVERY;
+  delete process.env.UJWALAM_HOST_TOKEN;
   const svc = await startService({
+    hostToken, ...(hostDiscovery ? { hostDiscovery } : {}),
     dataDir: args['data-dir'], port, mock: args.mock === true, url: args.url, allowRemote: args['allow-remote'] === true, credential: args.credential,
     noFixtures: args['no-fixtures'] === true, out: io.out, ...(args['no-stall-tracer'] === true ? { stallTracer: false } : {}),
   });

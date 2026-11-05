@@ -1,0 +1,18 @@
+{
+  "$comment": "F6 live marker producers (services/event-core/live-markers.mjs), behind the feature flag 'live-markers' (off by default). The matching rules and thresholds are NOT here: they are read from data/clip/ranking.json (chat.intentPattern, chat.windowSec, chat.minMessages, chat.ratio, audio.floorLufs, audio.zThreshold, audio.minSpread, audio.minVoicedSec, peaks.minGapSec), so the live producers and the post-stream ranking (services/clip/clip_rank.py) use the same values. peaks.minGapSec is also the live dedupe window: at most one marker of each kind (chat intent, chat speed, audio) per that many seconds. This file holds only what exists live and not post-stream. status 'proposed' = agent defaults, not approved by the user and not tuned on a real stream (AGENTS.md: thresholds and windows are approved by the user, never invented).",
+  "version": "0.1.0",
+  "status": "proposed",
+  "approvedBy": null,
+  "checked": "2026-11-05",
+  "chat": {
+    "$comment": "baselineSec: the running median of the rolling chat count uses at most this many past seconds (post-stream uses the whole recording).",
+    "baselineSec": 3600
+  },
+  "audio": {
+    "$comment": "Live level = the highest libobs meter peak (dBFS, host mixer.list peakDb) over the counted sources, sampled every sampleMs, max per second. Post-stream uses short-term loudness (LUFS) of the recording; the same median/MAD z-score rule is applied to the live peak level (UNVERIFIED equivalence). sources: null = every active, unmuted source with a meter; or a list of mixer ids / project audio source ids. baselineSec: running median/MAD over at most this many past voiced seconds. hostTimeoutMs: one host call (marker.add, mixer.list) gives up after this.",
+    "sampleMs": 250,
+    "sources": null,
+    "baselineSec": 3600,
+    "hostTimeoutMs": 2000
+  }
+}

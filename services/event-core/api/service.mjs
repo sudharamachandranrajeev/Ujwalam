@@ -23,6 +23,8 @@ import { publishApiFile, publishSystemFile, tokensFromEnv } from './discovery.mj
 import { createSystemPipeServer } from './pipe.mjs';
 import path from 'node:path';
 import { createStallTracer } from '../diag/stall-tracer.mjs';
+import { createFlags } from '../../flags/index.mjs';
+import { createHostLink, createLiveMarkers, loadLiveMarkerConfig } from '../live-markers.mjs';
 
 export const STALL_FILE = 'stalls.jsonl';
 export const STALL_DEFAULTS = Object.freeze({ thresholdMs: 200, maxBytes: 1_048_576 });
@@ -43,8 +45,29 @@ function stallContext(getCore) {
   };
 }
 
+/** Live markers (F6, flag 'live-markers'): built only when a host api token is given (opts.hostToken; the launcher passes
+ *  UJWALAM_HOST_TOKEN, see cli.mjs serve). The host is found through opts.hostDiscovery (default <dataDir>/host.json).
+ *  Any failure here is a log line and the service runs without markers. Returns the producer or null. */
+function startLiveMarkers({ core, dataDir, opts, out }) {
+  if (opts.liveMarkers === false) return null;
+  const token = opts.hostToken;
+  if (!opts.liveMarkers?.host && (token === undefined || token === null || token === '')) { out('[serve] live markers: off (no host token)'); return null; }
+  try {
+    const config = loadLiveMarkerConfig();
+    const host = opts.liveMarkers?.host ?? createHostLink({ discoveryFile: opts.hostDiscovery ?? path.join(dataDir, 'host.json'), token, timeoutMs: config.audio.hostTimeoutMs });
+    const flags = opts.liveMarkers?.flags ?? createFlags({ dataDir });
+    const lm = createLiveMarkers({ bus: core.bus, flags, host, config, log: out });
+    out("[serve] live markers: ready; flag 'live-markers' is read every second (default off)");
+    return lm;
+  } catch (e) {
+    out(`[serve] warn: live markers not started (${String(e?.message ?? 'error').slice(0, 80)})`);
+    return null;
+  }
+}
+
 /** opts: { dataDir?, port?, systemPipe? (false = no system pipe), mock?, url?, allowRemote? (E8-15: ws:// to a non-loopback host), credential?, noFixtures?, noStreamerbot?, env?, limits?, chatIntervalMs?, seed?, out?(line),
- *          stallTracer?: false | { thresholdMs?, maxBytes?, tickMs?, watchdog? }, core?: createEventCore overrides } */
+ *          stallTracer?: false | { thresholdMs?, maxBytes?, tickMs?, watchdog? }, core?: createEventCore overrides,
+ *          hostToken?, hostDiscovery?, liveMarkers?: false | { host?, flags? } (test seams) } */
 export async function startService(opts = {}) {
   const out = opts.out ?? (() => {});
   if (opts.url !== undefined) checkUrl(opts.url, { allowRemote: opts.allowRemote === true }); // before anything starts
@@ -122,16 +145,18 @@ export async function startService(opts = {}) {
     sb = createStreamerbotConnector({ core, url, allowRemote: opts.allowRemote === true, getPassword, recorder, onNote: (level, code) => out(`[serve] ${level}: ${code}`) });
     sb.start();
   }
+  const liveMarkers = startLiveMarkers({ core, dataDir, opts, out });
 
   let stopped = false;
   return {
     core, api, tokens, dataDir, port: addr.port, apiFile: file, dataDirProtection, dataDirCreated: created,
     systemPipe: pipe, systemFile: sysFile,
-    mockStreamerbot: mockSb, streamerbot: () => sb, stallTracer: tracer, stallFile: tracer ? path.join(dataDir, STALL_FILE) : null,
+    mockStreamerbot: mockSb, streamerbot: () => sb, liveMarkers, stallTracer: tracer, stallFile: tracer ? path.join(dataDir, STALL_FILE) : null,
     async stop() {
       if (stopped) return;
       stopped = true;
       if (chatTimer) clearInterval(chatTimer);
+      liveMarkers?.stop();
       sb?.stop();
       if (mockSb) await mockSb.close();
       core.audit.recordSystem({ subtype: 'api-stop', source: 'api', verdict: 'ok' });

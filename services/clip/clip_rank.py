@@ -55,7 +55,7 @@ def loudness_events(lufs, cfg, weights, min_gap):
         return [], None
     floor = float(cfg["floorLufs"])
     live = [x for x in lufs if x > floor]
-    if len(live) < 10:
+    if len(live) < int(cfg.get("minVoicedSec", 10)):
         return [], {"median": None, "spread": None, "voicedSec": len(live)}
     med = _median(live)
     mad = _median([abs(x - med) for x in live]) * 1.4826

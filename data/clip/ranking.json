@@ -21,7 +21,7 @@
   },
   "clip": { "minSec": 10, "maxSec": 60 },
   "chat": { "windowSec": 20, "minMessages": 3, "ratio": 3.0, "intentPattern": "(?:^|\\W)(?:!clip\\b|clip\\s+(?:it|that|this)\\b)" },
-  "audio": { "floorLufs": -70.0, "zThreshold": 2.5, "minSpread": 1.0 },
+  "audio": { "floorLufs": -70.0, "zThreshold": 2.5, "minSpread": 1.0, "minVoicedSec": 10 },
   "peaks": { "minGapSec": 30 },
   "detectorWeights": {},
   "top": 10
