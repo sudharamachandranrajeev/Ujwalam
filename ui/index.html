@@ -16,7 +16,7 @@
     <div class="spacer"></div>
     <button id="btn-import" class="btn" type="button" title="Create a new project from the Meld session and check it against the host">Import Meld session</button>
     <button id="btn-feedback" class="btn" type="button" title="Review feedback moments saved during streams">Feedback</button>
-    <button id="btn-posts" class="btn" type="button" title="Review export-only post packages (nothing is uploaded)" hidden>Posts</button>
+    <button id="btn-posts" class="btn" type="button" title="Review post packages; optional private YouTube upload" hidden>Posts</button>
     <button id="btn-record"class="btn" type="button" disabled>Record</button>
     <button id="btn-stream" class="btn btn-live" type="button" disabled>Start stream</button>
   </header>
@@ -143,7 +143,7 @@
 
 <div id="posts" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="posts-title">
   <div class="modal-card wide">
-    <h3 id="posts-title">Posts (export only)</h3>
+    <h3 id="posts-title">Posts</h3>
     <p id="posts-text" class="muted" role="status"></p>
     <div class="fb-body">
       <ul id="post-list" class="list fb-list" aria-label="Post packages"></ul>
@@ -164,6 +164,15 @@
           <button id="post-reject" class="btn btn-quiet" type="button">Reject</button>
           <button id="post-save" class="btn btn-quiet" type="submit">Save text</button>
           <button id="post-approve" class="btn" type="button">Approve</button>
+        </div>
+        <div id="post-yt" class="fb-form" hidden>
+          <div id="post-yt-info" class="muted" role="status"></div>
+          <label for="post-yt-confirm">To upload this video to YouTube as private, type: yes, upload</label>
+          <input id="post-yt-confirm" type="text" autocomplete="off">
+          <div class="modal-actions">
+            <button id="post-yt-upload" class="btn" type="button">Upload to YouTube (private)</button>
+            <button id="post-yt-check" class="btn btn-quiet" type="button">Check status</button>
+          </div>
         </div>
       </form>
     </div>

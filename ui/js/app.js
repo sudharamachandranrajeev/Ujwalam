@@ -308,7 +308,7 @@
       li.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
       ul.appendChild(li);
     });
-    setText($('posts-text'), ps.posts.length ? ps.posts.length + ' package(s). Private drafts only; approving marks a package, nothing is uploaded.' : 'No packages yet. Run: node services/posting/cli.mjs package --run <clip run folder>');
+    setText($('posts-text'), ps.posts.length ? ps.posts.length + ' package(s). Private drafts only; approving marks a package. Upload to YouTube is separate and needs a typed confirmation.' : 'No packages yet. Run: node services/posting/cli.mjs package --run <clip run folder>');
     $('post-form').hidden = !ps.sel;
   }
   function fillPost(p) {
@@ -323,10 +323,41 @@
     if (p.unresolved && p.unresolved.length) bits.push('unresolved: ' + p.unresolved.join(', '));
     setText($('post-limits'), (bits.join('  ') || 'no limits checked') + (lim.status === 'unverified' ? '  (limits UNVERIFIED)' : ''));
     $('post-form').hidden = false;
+    renderYt(p);
+  }
+  // YouTube private upload. Sign-in is CLI-only; the browser never sees a token.
+  var yt = { signedIn: false, busy: false, phrase: 'yes, upload' };
+  function renderYt(p) {
+    var box = $('post-yt'); box.hidden = !p || (p.target || '').indexOf('youtube') !== 0;
+    if (box.hidden) return;
+    var uploaded = p.status === 'uploaded';
+    var info = uploaded ? 'Uploaded as private video ' + (p.videoId || '?') + '. Use Check status to see if YouTube finished processing.'
+      : (yt.signedIn ? (p.status === 'approved' ? 'Approved. Ready to upload as private.' : 'Approve the package first.') : 'Not signed in. Run in a terminal: node services/posting/cli.mjs youtube signin');
+    setText($('post-yt-info'), info);
+    $('post-yt-upload').disabled = yt.busy || uploaded || !yt.signedIn || p.status !== 'approved';
+    $('post-yt-check').disabled = yt.busy || !uploaded;
+    $('post-yt-confirm').disabled = uploaded;
+  }
+  function ytMsg(x) {
+    var m = { 'confirm-required': 'Type the confirmation exactly.', 'stream-active': 'A stream is live, or live state could not be confirmed. Upload refused.', 'not-approved': 'Approve the package first.', 'already-uploaded': 'Already uploaded.', 'upload-in-progress': 'Another upload is running.', 'youtube-not-signed-in': 'Not signed in. Run the signin command in a terminal.', 'youtube-no-client': 'No OAuth client set yet.', 'status-not-permitted': 'YouTube would not show the status with this sign-in. Check it in YouTube Studio.' };
+    return m[x.message] || x.message || 'error';
+  }
+  function ytAction(kind) {
+    var p = selPost(); if (!p || yt.busy) return;
+    yt.busy = true; renderYt(p);
+    var call = kind === 'upload' ? Api.ytUpload(p.id, $('post-yt-confirm').value) : Api.ytCheck(p.id);
+    setText($('posts-text'), kind === 'upload' ? 'Uploading... this can take a while. Keep this window open.' : 'Checking...');
+    call.then(function (r) {
+      if (kind === 'upload') { $('post-yt-confirm').value = ''; setText($('posts-text'), 'Uploaded as private video ' + r.videoId + (r.uploadStatus ? ' (' + r.uploadStatus + ')' : '') + '.'); }
+      else setText($('posts-text'), 'Video ' + r.videoId + ': ' + (r.found ? 'upload ' + (r.uploadStatus || '?') + ', processing ' + (r.processingStatus || '?') + ', privacy ' + (r.privacyStatus || '?') + (r.failureReason ? ', failure ' + r.failureReason : '') : 'not found yet') + '.');
+    }).catch(function (x) { setText($('posts-text'), 'Not done: ' + ytMsg(x)); })
+      .then(function () { yt.busy = false; return Api.posts().then(function (r) { ps.posts = r.posts || []; renderPosts(); var q = selPost(); if (q) fillPost(q); }); })
+      .catch(function () { yt.busy = false; });
   }
   function openPosts() {
     $('posts').hidden = false; ps.sel = null; $('post-form').hidden = true;
     guard(Api.posts().then(function (r) { ps.posts = r.posts || []; renderPosts(); }));
+    Api.ytStatus().then(function (r) { yt.signedIn = r.signedIn === true; if (r.phrase) yt.phrase = r.phrase; var p = selPost(); if (p) renderYt(p); }).catch(function () { yt.signedIn = false; });
   }
   function postAction(call) {
     var p = selPost(); if (!p) return;
@@ -343,6 +374,8 @@
     });
     $('post-approve').addEventListener('click', function () { postAction(function (p) { return Api.postStatus(p.id, 'approved'); }); });
     $('post-reject').addEventListener('click', function () { postAction(function (p) { return Api.postStatus(p.id, 'rejected'); }); });
+    $('post-yt-upload').addEventListener('click', function () { ytAction('upload'); });
+    $('post-yt-check').addEventListener('click', function () { ytAction('check'); });
     $('post-open').addEventListener('click', function () {
       var p = selPost(); if (!p) return;
       Api.postOpen(p.id).catch(function (x) { setText($('posts-text'), 'Could not open the folder: ' + (x.message || 'error')); });

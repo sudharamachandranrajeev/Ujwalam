@@ -43,6 +43,9 @@
     postMediaUrl: function (id, kind) { return '/ui/api/posts/media?id=' + encodeURIComponent(id) + '&kind=' + encodeURIComponent(kind); },
     postEdit: function (id, fields) { var b = { id: id }; Object.keys(fields).forEach(function (k) { b[k] = fields[k]; }); return request('POST', '/ui/api/posts/edit', b); },
     postStatus: function (id, status) { return request('POST', '/ui/api/posts/status', { id: id, status: status }); },
+    ytStatus: function () { return request('GET', '/ui/api/posts/youtube/status'); },
+    ytUpload: function (id, confirm) { return request('POST', '/ui/api/posts/youtube/upload', { id: id, confirm: confirm }); },
+    ytCheck: function (id) { return request('POST', '/ui/api/posts/youtube/check', { id: id }); },
     postOpen: function (id) { return request('POST', '/ui/api/posts/open', { id: id }); },
     events: function (onStatus, onState, onFlags) {
       var es = new EventSource('/ui/api/events');

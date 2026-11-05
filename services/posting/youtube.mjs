@@ -19,13 +19,19 @@
 //
 // Tests inject fetchImpl; the plan's own rule: "No test touches Google".
 
-import { createReadStream, statSync } from 'node:fs';
-import { checkLimits, composeField } from './index.mjs';
+import { createReadStream, readFileSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { checkLimits, composeField, loadLimits } from './index.mjs';
 
 const UPLOAD_INIT_URL = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
 const THUMBNAIL_URL = (videoId) => `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`;
 const DEFAULT_CHUNK = 8 * 1024 * 1024; // 8 MiB, a multiple of 256 KiB as Google's resumable protocol requires
 const MAX_RETRIES = 5;
+const VIDEOS_URL = (videoId) => `https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=${encodeURIComponent(videoId)}`;
+const ACTIVE_STATES = new Set(['starting', 'live', 'retrying']);
+
+/** True when an outputs.status result shows any stream sink running (either the `active` flag or a running state). */
+export const isStreamLive = (outputs) => (Array.isArray(outputs?.sinks) ? outputs.sinks : []).some((s) => s?.kind === 'stream' && (s.active === true || ACTIVE_STATES.has(s.state)));
 
 export class UploadError extends Error {
   constructor(code, message) { super(message ?? code); this.name = 'UploadError'; this.code = code; }
@@ -142,7 +148,7 @@ export async function uploadVideo(opts) {
   if (existing?.status === 'uploaded') throw new UploadError('already-uploaded', `already uploaded as ${existing.videoId}`);
 
   const live = await opts.outputsStatus();
-  if ((live?.sinks ?? []).some((s) => s.kind === 'stream' && s.active)) throw new UploadError('stream-active', 'a stream sink is active; uploads never compete with a live stream');
+  if (isStreamLive(live)) throw new UploadError('stream-active', 'a stream sink is active; uploads never compete with a live stream');
 
   const bytes = statSync(opts.videoPath).size;
   const metadata = uploadMetadata(opts.post);
@@ -160,5 +166,53 @@ export async function uploadVideo(opts) {
   let thumbnailOk = null;
   if (opts.coverPath) thumbnailOk = await setThumbnail(fetchImpl, opts.accessToken, videoId, opts.coverPath);
 
-  return { videoId, thumbnailOk };
+  return { videoId, thumbnailOk, uploadStatus: typeof resource?.status?.uploadStatus === 'string' ? resource.status.uploadStatus : null };
+}
+
+/**
+ * Shared by `cli.mjs youtube upload` and the studio Posts view: uploads one post package by id.
+ * opts: { id, store (createPostStore), auth (createYoutubeAuth), outputsStatus, fetchImpl?, limits?, now? }
+ * Persists the video id in the ledger entry (so the status check can find it later). Throws UploadError.
+ */
+export async function uploadPost(opts) {
+  const { id, store, auth } = opts;
+  const dir = store.dir(id);
+  if (!dir) throw new UploadError('unknown-post', `unknown post id ${id}`);
+  const post = JSON.parse(readFileSync(path.join(dir, 'post.json'), 'utf8'));
+  const video = store.media(id, 'video');
+  if (!video) throw new UploadError('video-missing', 'the video file is missing or was tampered with');
+  const cover = store.media(id, 'cover');
+  const sha256 = post.source.sha256;
+  const accessToken = await auth.accessToken();
+  const r = await uploadVideo({
+    post, sha256, videoPath: video.file, coverPath: cover?.file, accessToken,
+    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now,
+    recordUploaded: async ({ videoId }) => { store.ledger.annotate(sha256, post.target, { videoId }); },
+  });
+  return { ...r, hasCover: !!cover };
+}
+
+/** GET videos.list for one video. Returns { found, uploadStatus, processingStatus, privacyStatus, failureReason, rejectionReason }.
+ *  UNVERIFIED: videos.list may need a broader scope than youtube.upload; a 401/403 is reported as 'status-not-permitted'. */
+export async function checkUploadStatus({ videoId, accessToken, fetchImpl }) {
+  const f = fetchImpl ?? fetch;
+  const res = await f(VIDEOS_URL(videoId), { method: 'GET', headers: { Authorization: `Bearer ${accessToken}` } });
+  if (res.status === 401 || res.status === 403) throw new UploadError('status-not-permitted', `HTTP ${res.status}: the sign-in scope may not allow reading video status`);
+  if (!res.ok) throw new UploadError('status-check-failed', `HTTP ${res.status} reading the video status`);
+  const j = await res.json();
+  const item = Array.isArray(j?.items) ? j.items[0] : null;
+  if (!item) return { found: false, uploadStatus: null, processingStatus: null, privacyStatus: null, failureReason: null, rejectionReason: null };
+  const str = (v) => (typeof v === 'string' ? v : null);
+  return {
+    found: true, uploadStatus: str(item.status?.uploadStatus), processingStatus: str(item.processingDetails?.processingStatus),
+    privacyStatus: str(item.status?.privacyStatus), failureReason: str(item.status?.failureReason ?? item.processingDetails?.processingFailureReason), rejectionReason: str(item.status?.rejectionReason),
+  };
+}
+
+/** Status check for an uploaded post (by id): reads the video id from the ledger, asks YouTube. */
+export async function checkPostStatus({ id, store, auth, fetchImpl }) {
+  const post = store.get(id);
+  if (!post) throw new UploadError('unknown-post', `unknown post id ${id}`);
+  if (post.status !== 'uploaded' || !post.videoId) throw new UploadError('not-uploaded', 'this post has not been uploaded from here');
+  return { videoId: post.videoId, ...(await checkUploadStatus({ videoId: post.videoId, accessToken: await auth.accessToken(), fetchImpl })) };
 }

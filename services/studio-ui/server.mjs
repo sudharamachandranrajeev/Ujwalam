@@ -30,6 +30,8 @@ import { fileURLToPath } from 'node:url';
 import { BOTS, BOT_LABELS, GRACEFUL_MS, createBots } from '../bots/index.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
+import { createYoutubeAuth } from '../posting/oauth.mjs';
+import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
@@ -99,7 +101,9 @@ const NOTE_KEYS = ['id', 'text', 'tag', 'severity'];
 
 export const BOT_FLAG = 'bot-manager';
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
-const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409 };
+const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
+const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
+export const UPLOAD_PHRASE = 'yes, upload';
 const POST_EDIT_KEYS = ['id', 'title', 'description', 'tags', 'hashtags'];
 
 // "Open folder" for a package (local only, no shell). explorer.exe comes from SystemRoot, never from PATH.
@@ -156,6 +160,18 @@ export function createStudioServer(opts) {
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
   // Export-only posting (P16a, flag `posting`): packages are listed from <dataDir>/posting/ledger.json. Nothing is uploaded.
   const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME) }) : null);
+  // YouTube private upload (P16b, behind `posting`). Sign-in stays CLI-only: tokens live in the Credential Manager and never
+  // reach the browser. opts.youtube = { auth, fetchImpl, outputsStatus } are test seams.
+  let ytAuth = opts.youtube?.auth ?? null;
+  const youtubeAuth = () => (ytAuth ??= createYoutubeAuth({ browserOpen: async () => { throw new Error('sign-in runs from the command line'); } }));
+  const uploading = new Set();
+  // Live check, fail closed: outputs.status (any stream sink running), falling back to host.status.live; both failing = refuse.
+  async function ytOutputsStatus() {
+    if (opts.youtube?.outputsStatus) return opts.youtube.outputsStatus();
+    try { return await host.call('outputs.status', {}); } catch { /* try host.status */ }
+    const hs = await host.call('host.status', {});
+    return { sinks: hs?.live === true ? [{ kind: 'stream', active: true }] : [] };
+  }
   const openFolder = opts.openFolder ?? defaultOpenFolder;
   // Bot manager (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot. opts.bots is a test seam (see createFakeBots).
   const bots = opts.bots ?? (typeof opts.dataDir === 'string' ? createBots({ dataDir: opts.dataDir }) : null);
@@ -321,6 +337,9 @@ export function createStudioServer(opts) {
     }
     if (req.method === 'GET' && route === '/ui/api/posts') return json(res, 200, { posts: posting.list() });
     if (req.method === 'GET' && route === '/ui/api/posts/media') return postMedia(req, res, url);
+    if (req.method === 'GET' && route === '/ui/api/posts/youtube/status') {
+      try { const st = await youtubeAuth().status(); return json(res, 200, { signedIn: st.signedIn === true, hasClient: st.hasClient === true, phrase: UPLOAD_PHRASE }); } catch { return json(res, 502, { error: 'youtube-status-failed' }); }
+    }
     if (req.method !== 'POST') return text(res, 405, 'method-not-allowed');
     // Mutating: Origin == our origin, CSRF header (timing-safe), JSON body.
     if (req.headers.origin !== origin) return text(res, 403, 'bad-origin');
@@ -373,6 +392,30 @@ export function createStudioServer(opts) {
       const err = feedback.saveNote(body.id, { text: body.text, tag: body.tag, severity: body.severity });
       if (err) return json(res, err === 'unknown-moment' ? 404 : (err === 'write-failed' ? 500 : 400), { error: err });
       return json(res, 200, { ok: true, moments: feedback.list() });
+    }
+    if (route === '/ui/api/posts/youtube/upload' || route === '/ui/api/posts/youtube/check') {
+      const isUpload = route.endsWith('/upload');
+      if (typeof body.id !== 'string' || body.id.length > 64 || Object.keys(body).some((k) => !(isUpload ? ['id', 'confirm'] : ['id']).includes(k))) return json(res, 400, { error: 'bad-params' });
+      const fail = (e) => {
+        if (e instanceof UploadError) return json(res, YT_ERR[e.code] ?? 502, { error: e.code, detail: e.message.slice(0, 200) });
+        if (e?.code === 'oauth-no-client' || e?.code === 'oauth-reauth-needed') return json(res, 401, { error: e.code === 'oauth-no-client' ? 'youtube-no-client' : 'youtube-not-signed-in' });
+        return json(res, 502, { error: 'youtube-failed' });
+      };
+      const v = posting.get(body.id);
+      if (!v) return json(res, 404, { error: 'unknown-post' });
+      if (!isUpload) {
+        try { return json(res, 200, await checkPostStatus({ id: body.id, store: posting, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl })); } catch (e) { return fail(e); }
+      }
+      if (typeof body.confirm !== 'string' || normPhrase(body.confirm) !== UPLOAD_PHRASE) return json(res, 400, { error: 'confirm-required', phrase: UPLOAD_PHRASE });
+      if (v.status === 'uploaded') return json(res, 409, { error: 'already-uploaded', videoId: v.videoId });
+      if (v.status !== 'approved') return json(res, 409, { error: 'not-approved' });
+      if (uploading.size) return json(res, 409, { error: 'upload-in-progress' });
+      uploading.add(body.id);
+      try {
+        // Live is re-checked inside uploadPost just before the transfer; here a failed check also refuses (fail closed).
+        const r = await uploadPost({ id: body.id, store: posting, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl, outputsStatus: async () => { try { return await ytOutputsStatus(); } catch { throw new UploadError('stream-active', 'could not confirm that nothing is live; upload refused'); } } });
+        return json(res, 200, { videoId: r.videoId, uploadStatus: r.uploadStatus, thumbnailOk: r.thumbnailOk, privacy: 'private' });
+      } catch (e) { return fail(e); } finally { uploading.delete(body.id); }
     }
     if (route === '/ui/api/posts/edit' || route === '/ui/api/posts/status' || route === '/ui/api/posts/open') {
       // Local files only: post.json and the ledger. Nothing is uploaded; approving only marks the package.

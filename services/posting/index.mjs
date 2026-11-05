@@ -203,6 +203,14 @@ export function createLedger(file) {
       e.status = status; e.updatedAt = at;
       writeJsonAtomic(file, j);
     },
+    /** Adds plain string fields (e.g. videoId) to one entry. Fresh read, atomic write. */
+    annotate(sha, target, fields) {
+      const j = read();
+      const e = j.entries[key(sha, target)];
+      if (!e) throw new PostingError('unknown-post', 'ledger: unknown entry');
+      for (const [k, v] of Object.entries(fields)) if (k === 'videoId' && typeof v === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(v)) e[k] = v;
+      writeJsonAtomic(file, j);
+    },
   };
 }
 
@@ -342,7 +350,7 @@ export function createPostStore(opts) {
   const find = (id) => (typeof id === 'string' && POST_ID.test(id) ? entries().find((e) => postId(e) === id) ?? null : null);
   const view = (e, p) => ({
     id: postId(e), target: p.target, clipId: p.source.clipId, layout: p.source.layout, startSec: p.source.startSec, endSec: p.source.endSec,
-    status: e.status, privacy: 'private', title: p.title, description: p.description, tags: p.tags, hashtags: p.hashtags,
+    status: e.status, videoId: e.videoId ?? null, privacy: 'private', title: p.title, description: p.description, tags: p.tags, hashtags: p.hashtags,
     limits: p.limits, unresolved: p.unresolved ?? [], hasCover: !!p.cover, hasCaptions: !!p.captions, videoBytes: p.video?.bytes ?? null, updatedAt: p.updatedAt,
   });
   function save(e, p) {
@@ -362,6 +370,7 @@ export function createPostStore(opts) {
     edit(id, fields) {
       const e = find(id); const p = e && load(e);
       if (!p) return 'unknown-post';
+      if (e.status === 'uploaded') return 'already-uploaded';
       if (!isPlain(fields) || Object.keys(fields).some((k) => !['title', 'description', 'tags', 'hashtags'].includes(k))) return 'bad-params';
       const next = { title: p.title, description: p.description, tags: p.tags, hashtags: p.hashtags };
       if (fields.title !== undefined) {
@@ -387,6 +396,7 @@ export function createPostStore(opts) {
       if (!STATUSES.includes(status)) return 'bad-status';
       const e = find(id); const p = e && load(e);
       if (!p) return 'unknown-post';
+      if (e.status === 'uploaded') return 'already-uploaded';
       if (status === 'approved') {
         if (!p.title) return 'empty-title';
         if (!checkLimits(p, limits()).ok) return 'over-limit';

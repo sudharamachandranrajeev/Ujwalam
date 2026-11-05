@@ -10,9 +10,9 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolveDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
-import { LEDGER_NAME, POSTING_FLAG, PostingError, createLedger, createPostStore, loadLimits, packageRun } from './index.mjs';
+import { LEDGER_NAME, POSTING_FLAG, PostingError, createPostStore, packageRun } from './index.mjs';
 import { createYoutubeAuth } from './oauth.mjs';
-import { uploadVideo, UploadError } from './youtube.mjs';
+import { uploadPost, UploadError } from './youtube.mjs';
 import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
 
@@ -94,19 +94,8 @@ async function youtubeMain(a, out, err, deps) {
       if (typeof a.id !== 'string') { err('usage: node services/posting/cli.mjs youtube upload --id <post id> [--data-dir DIR]'); return 2; }
       const ledgerFile = path.join(dataDir, 'posting', LEDGER_NAME);
       const store = createPostStore({ ledgerFile });
-      const dir = store.dir(a.id);
-      if (!dir) { err(`youtube: unknown post id ${a.id}`); return 1; }
-      const post = JSON.parse(readFileSync(path.join(dir, 'post.json'), 'utf8'));
-      const video = store.media(a.id, 'video');
-      if (!video) { err('youtube: the video file is missing or was tampered with'); return 1; }
-      const cover = store.media(a.id, 'cover');
-      const accessToken = await auth.accessToken();
-      const r = await uploadVideo({
-        post, sha256: post.source.sha256, videoPath: video.file, coverPath: cover?.file, accessToken,
-        ledger: createLedger(ledgerFile), limits: loadLimits(),
-        outputsStatus: deps.outputsStatus ?? defaultOutputsStatus,
-        fetchImpl: deps.fetchImpl,
-      });
+      const r = await uploadPost({ id: a.id, store, auth, outputsStatus: deps.outputsStatus ?? defaultOutputsStatus, fetchImpl: deps.fetchImpl });
+      const cover = r.hasCover;
       out(`youtube: uploaded ${a.id} as ${r.videoId}${cover ? ` (cover: ${r.thumbnailOk ? 'ok' : 'failed, video is still up'})` : ''}`);
       return 0;
     }
