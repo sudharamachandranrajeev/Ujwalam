@@ -30,13 +30,17 @@ export const MAPPING = {
   'layer kind from meta.sceneObjectSourceName ("MeldStudio/<Kind>")': 'VERIFIED (9 kinds seen)',
   'layer x, y, width, height (final displayed rectangle)': 'VERIFIED against implicit size x scale; UNVERIFIED in a render',
   'layer rotation, visible, opacity, isLocked': 'VERIFIED present; UNVERIFIED in a render',
-  'childItems order: index 0 is the TOP layer': 'UNVERIFIED (assumed from the legacy layer map; project z-order is bottom first)',
+  'rotation 180 with one negative scale (webcam mirror): rotation dropped, mirror reported as ignored': 'UNVERIFIED in a render (rotation 180 with one flipped axis is a pure mirror; the project placement has no flip, so the mirror is lost and reported)',
+  'Video device fitmentMode 2 (fill): centre crop in source pixels from implicit size and scale': 'UNVERIFIED (offsetX/offsetY ignored; fit mode 2 read as cover)',
+  'Group: children flattened in place when the group has scale 1, rotation 0, offset 0': 'UNVERIFIED in a render (child x/y are canvas coordinates in every real group seen; visible, opacity and lock are inherited)',
+  'Game capture, Display capture: no host source kind, reported as skipped': 'VERIFIED (app/host layer types: color, test_pattern, media, image, dshow_video, wasapi_input, browser)',
+  'childItems order: index 0 is the TOP layer': 'UNVERIFIED in a render; statistical support (2026-11-05): large layers sit at the higher index in 332 of 493 large-vs-small top-level pairs, background-named layers are never first, overlay-named layers never last. Project z-order is bottom first.',
   'Video device deviceId / displayName / videoCaptureDevices[]': 'VERIFIED present; UNVERIFIED that libobs resolves deviceId',
   'Media source mediaSource (file URL), isLoopPlayback': 'VERIFIED present',
   'Browser url, browserWidth, browserHeight': 'VERIFIED present',
   'Text text, fontFamily, pixelSize, foregroundColor (#AARRGGBB read as #RRGGBBAA)': 'UNVERIFIED (colour byte order assumed Qt style)',
-  'audioTracks[].gain -> volumeDb = 20*log10(gain)': 'UNVERIFIED (gain assumed linear amplitude, 1 = 0 dB)',
-  'audioTracks[].monitoring true -> monitor-only': 'UNVERIFIED (monitor-and-output not distinguishable)',
+  'audioTracks[].gain -> volumeDb = 20*log10(gain)': 'VERIFIED as linear amplitude by data (real gains 0.0316228 and 0.0562341 are exactly -30.00 and -25.00 dB; 1 = 0 dB, max seen 1); UNVERIFIED by ear',
+  'audioTracks[].monitoring true -> monitor-and-output': 'UNVERIFIED (Meld stores a boolean; every monitored real track also has outputTracks != 0, so it stays on the stream: monitor-and-output, not monitor-only)',
   'audioTracks[].outputTracks bitmask -> track ids': 'UNVERIFIED (bit n = track n+1 assumed)',
   'audioTracks[].uniqueId -> device match.deviceId': 'VERIFIED present; UNVERIFIED that libobs resolves it',
   'canvas fps': 'UNVERIFIED (not stored in the session; defaults to the --fps option, 60)',
@@ -111,9 +115,11 @@ export function importMeld(input, opts = {}) {
   // ---- first pass: classify every top-level layer, collect file paths for base roots
   const mediaPaths = [];
   const overlayFilePaths = [];
-  const classify = (l, canvas, sceneId) => {
-    report.counts.layersSeen++;
-    if (Array.isArray(l.childItems) && l.childItems.length) report.counts.layersSeen += countAll(l.childItems);
+  const classify = (l, canvas, sceneId, nested = false) => {
+    if (!nested) {
+      report.counts.layersSeen++;
+      if (Array.isArray(l.childItems) && l.childItems.length) report.counts.layersSeen += countAll(l.childItems);
+    }
     const kind = isObj(l.meta) && typeof l.meta.sceneObjectSourceName === 'string' && l.meta.sceneObjectSourceName.startsWith(KIND_PREFIX)
       ? l.meta.sceneObjectSourceName.slice(KIND_PREFIX.length) : null;
     const id = typeof l.id === 'string' ? l.id : null;
@@ -166,10 +172,28 @@ export function importMeld(input, opts = {}) {
       case 'Duplicator':
         if (typeof l.sourceItemId !== 'string' || !l.sourceItemId) { skip(canvas, sceneId, id, kind, 'target-skipped', 'duplicator has no source item'); return null; }
         return { ...base, type: 'duplicate', targetMeldId: l.sourceItemId, key: '' };
-      case 'Game capture': skip(canvas, sceneId, id, kind, 'game capture has no device mapping'); return null;
-      case 'Display capture': skip(canvas, sceneId, id, kind, 'display capture has no device mapping'); return null;
-      case 'Group':
-        skip(canvas, sceneId, id, kind, `group not flattened (child coordinate space unverified); ${countAll(l.childItems || [])} child layer(s) not imported`); return null;
+      case 'Game capture': skip(canvas, sceneId, id, kind, 'no host source kind for game capture (host layer types: color, test_pattern, media, image, dshow_video, wasapi_input, browser); add a capture-device layer by hand'); return null;
+      case 'Display capture': skip(canvas, sceneId, id, kind, 'no host source kind for display capture (see game capture); add a capture-device layer by hand'); return null;
+      case 'Group': {
+        const kids = Array.isArray(l.childItems) ? l.childItems : [];
+        const near = (v, t) => v === undefined || v === null || (num(v) && Math.abs(v - t) < 1e-6);
+        if (!near(l.scaleX, 1) || !near(l.scaleY, 1) || !near(l.rotation, 0) || !near(l.offsetX, 0) || !near(l.offsetY, 0)) {
+          skip(canvas, sceneId, id, kind, `group has its own scale, rotation or offset (child coordinates would need a transform); ${countAll(kids)} child layer(s) not imported`); return null;
+        }
+        const gOpacity = num(l.opacity) ? l.opacity : 1;
+        const out = [];
+        for (const k of kids) {
+          if (!isObj(k)) continue;
+          // children are in canvas coordinates; visible, opacity and lock are inherited from the group
+          const inh = { ...k };
+          if (l.visible === false) inh.visible = false;
+          if (l.isLocked === true) inh.isLocked = true;
+          if (gOpacity !== 1) inh.opacity = (num(k.opacity) ? k.opacity : 1) * gOpacity;
+          const c = classify(inh, canvas, sceneId, true);
+          if (c) out.push(...(Array.isArray(c) ? c : [c]));
+        }
+        return out;
+      }
       default: skip(canvas, sceneId, id, kind, 'unknown layer kind'); return null;
     }
   };
@@ -179,14 +203,14 @@ export function importMeld(input, opts = {}) {
   const scenesById = new Map(S.scenes.map((s) => [s.id, s]));
   S.scenes.forEach((sc) => {
     if (!isObj(sc) || typeof sc.id !== 'string') { report.warnings.push('a scene without id was ignored'); return; }
-    sceneEntries.push({ h: sc, hLayers: (sc.childItems || []).map((l) => classify(l, 'h', sc.id)), v: null, vLayers: [] });
+    sceneEntries.push({ h: sc, hLayers: (sc.childItems || []).map((l) => classify(l, 'h', sc.id)).flat(), v: null, vLayers: [] });
   });
   const byH = new Map(sceneEntries.map((e) => [e.h.id, e]));
   if (vEnabled) {
     for (const vs of vScenes) {
       if (!isObj(vs) || typeof vs.id !== 'string') { report.warnings.push('a vertical scene without id was ignored'); continue; }
       const entry = typeof vs.linkedSceneId === 'string' ? byH.get(vs.linkedSceneId) : null;
-      const vLayers = (vs.childItems || []).map((l) => classify(l, 'v', vs.id));
+      const vLayers = (vs.childItems || []).map((l) => classify(l, 'v', vs.id)).flat();
       if (entry && !entry.v) { entry.v = vs; entry.vLayers = vLayers; report.counts.verticalScenesMerged++; }
       else {
         report.counts.verticalScenesOnly++;
@@ -263,12 +287,26 @@ export function importMeld(input, opts = {}) {
   const toPlacement = (c) => {
     const l = c.meld;
     const p = { visible: l.visible !== false, x: l.x, y: l.y, width: l.width, height: l.height };
-    if (num(l.rotation) && l.rotation !== 0) p.rotation = Math.max(-360, Math.min(360, l.rotation));
+    let rot = num(l.rotation) ? l.rotation : 0;
+    const flips = (num(l.scaleX) && l.scaleX < 0 ? 1 : 0) + (num(l.scaleY) && l.scaleY < 0 ? 1 : 0);
+    // rotation 180 with exactly one flipped axis is a pure mirror: importing the 180 would turn the picture upside down
+    if (flips === 1 && Math.abs((((rot % 360) + 360) % 360) - 180) < 1e-6) rot = 0;
+    if (rot !== 0) p.rotation = Math.max(-360, Math.min(360, rot));
     if (num(l.opacity) && l.opacity !== 1) p.opacity = Math.max(0, Math.min(1, l.opacity));
-    if (num(l.scaleX) && num(l.scaleY) && (l.scaleX < 0 || l.scaleY < 0)) ignore('flip (negative scale)');
+    if (flips) ignore('flip (negative scale)');
     if (isObj(l.radii) && Object.values(l.radii).some((r) => r)) ignore('rounded corners (radii)');
     if (Array.isArray(l.effects) && l.effects.length) ignore('effects', l.effects.length);
     if (num(l.fitmentMode) && l.fitmentMode !== 0) ignore('fitmentMode other than 0');
+    // Video device fill mode (2): scaled uniformly, then clipped to the rectangle. Centre crop in source pixels.
+    if (c.type === 'capture' && l.fitmentMode === 2 && num(l.implicitWidth) && num(l.implicitHeight) && l.implicitWidth > 0 && l.implicitHeight > 0
+      && num(l.scaleX) && num(l.scaleY) && Math.abs(l.scaleX) > 0 && Math.abs(l.scaleY) > 0) {
+      const cx = Math.max(0, l.implicitWidth - l.width / Math.abs(l.scaleX));
+      const cy = Math.max(0, l.implicitHeight - l.height / Math.abs(l.scaleY));
+      if (cx >= 1 || cy >= 1) {
+        p.crop = { left: Math.round(cx / 2), top: Math.round(cy / 2), right: Math.round(cx / 2), bottom: Math.round(cy / 2) };
+        ignore('offsetX/offsetY of a filled video device');
+      }
+    }
     return p;
   };
   const sourceFor = (c) => {
@@ -429,7 +467,7 @@ export function importMeld(input, opts = {}) {
     tracks.forEach((x) => usedTracks.add(x));
     sources.push({
       id: mid('aud', t.id), name: label(t.name, 'Audio'), device: devId, volumeDb: num(t.gain) ? toDb(t.gain) : 0,
-      muted: t.muted === true, monitoring: t.monitoring === true ? 'monitor-only' : 'off', tracks,
+      muted: t.muted === true, monitoring: t.monitoring === true ? 'monitor-and-output' : 'off', tracks,
       origin: { importer: 'meld', id: clip(t.id, 128) },
     });
   }
@@ -441,7 +479,7 @@ export function importMeld(input, opts = {}) {
     tracks.forEach((x) => usedTracks.add(x));
     sources.push({
       id: mid('aud', la.at.id || la.meldId), name: 'Layer audio', layer: la.layerId, volumeDb: num(la.at.gain) ? toDb(la.at.gain) : 0,
-      muted: la.at.muted === true, monitoring: la.at.monitoring === true ? 'monitor-only' : 'off', tracks,
+      muted: la.at.muted === true, monitoring: la.at.monitoring === true ? 'monitor-and-output' : 'off', tracks,
       origin: { importer: 'meld', id: clip(la.meldId, 128) },
     });
   }

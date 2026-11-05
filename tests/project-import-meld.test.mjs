@@ -58,7 +58,7 @@ test('maps the fixture: scenes, layer kinds, pairs, origins, devices, overlays, 
   assert.deepEqual(Object.keys(text.placements), ['v']);
 
   assert.equal(cam.source.device, p.devices.find((d) => d.kind === 'camera').id);
-  assert.equal(cam.placements.h.rotation, 180);
+  assert.equal(cam.placements.h.rotation, undefined, 'rotation 180 with one flipped axis is a mirror, not an upside-down picture');
   assert.deepEqual(cam.placements.v, { visible: true, x: -420, y: 656, width: 1920, height: 1080 });
 
   assert.deepEqual(web.source, { url: 'https://example.invalid/page', width: 640, height: 360 });
@@ -80,7 +80,7 @@ test('maps the fixture: scenes, layer kinds, pairs, origins, devices, overlays, 
   assert.deepEqual(byName.Mic.tracks, ['track1', 'track2']);
   assert.equal(byName.Headphones.volumeDb, -100);
   assert.equal(byName.Headphones.muted, true);
-  assert.equal(byName.Headphones.monitoring, 'monitor-only');
+  assert.equal(byName.Headphones.monitoring, 'monitor-and-output');
   assert.deepEqual(byName.Headphones.tracks, []);
   const layerAudio = p.audio.sources.filter((s) => s.layer);
   assert.equal(layerAudio.length, 2);
@@ -245,4 +245,112 @@ test('fixture holds placeholders only: no real-looking paths, names or ids', () 
   assert.doesNotMatch(text, /\\Users\\|\/Users\/|C:\//i);
   assert.doesNotMatch(text, /[0-9A-F]{32}/, 'no real 32-hex Meld ids');
   assert.doesNotMatch(text, /meldstudio\.co/i);
+});
+
+// ---- F1 fidelity (2026-11-05)
+const extraLayer = (id, kind, more = {}) => ({
+  id, name: id, x: 10, y: 20, width: 100, height: 50, visible: true, rotation: 0, effects: [], childItems: [],
+  meta: { sceneObjectSourceName: `MeldStudio/${kind}` }, ...more,
+});
+
+test('gain is linear amplitude: -30 dB and -25 dB points, 1 is 0 dB, 0 is the floor', () => {
+  const s = session();
+  s.session.audioTracks.push(
+    { id: 'A-30', type: 1, deviceName: 'Dev30', uniqueId: 'U30', name: 'n30', gain: 0.03162277660168379, muted: false, monitoring: false, outputTracks: 1 },
+    { id: 'A-25', type: 1, deviceName: 'Dev25', uniqueId: 'U25', name: 'n25', gain: 0.05623413251903491, muted: false, monitoring: false, outputTracks: 1 },
+    { id: 'A-1', type: 1, deviceName: 'Dev1', uniqueId: 'U1', name: 'n1', gain: 1, muted: false, monitoring: false, outputTracks: 1 },
+  );
+  const { project } = importMeld(s);
+  const db = Object.fromEntries(project.audio.sources.map((x) => [x.name, x.volumeDb]));
+  assert.ok(Math.abs(db.n30 + 30) < 1e-9);
+  assert.ok(Math.abs(db.n25 + 25) < 1e-9);
+  assert.equal(db.n1, 0);
+});
+
+test('monitoring true keeps the track on the stream (monitor-and-output); false is off', () => {
+  const { project } = importMeld(session());
+  const modes = new Set(project.audio.sources.map((x) => x.monitoring));
+  assert.ok(modes.has('monitor-and-output'));
+  assert.ok(!modes.has('monitor-only'));
+});
+
+test('rotation: 180 with both axes flipped or none stays 180; other angles are kept; 180 with one flip is a mirror', () => {
+  const s = session();
+  const items = s.session.scenes[1].childItems;
+  items.push(
+    extraLayer('R-NONE', 'Text', { text: 'a', rotation: 180, scaleX: 1, scaleY: 1 }),
+    extraLayer('R-BOTH', 'Text', { text: 'b', rotation: 180, scaleX: -1, scaleY: -1 }),
+    extraLayer('R-45', 'Text', { text: 'c', rotation: 45, scaleX: 1, scaleY: 1 }),
+    extraLayer('R-MIRROR', 'Text', { text: 'd', rotation: 180, scaleX: 1, scaleY: -1 }),
+    extraLayer('R-90FLIP', 'Text', { text: 'e', rotation: 90, scaleX: -1, scaleY: 1 }),
+  );
+  const { project, report } = importMeld(s);
+  const by = Object.fromEntries(project.scenes[1].layers.map((l) => [l.origin.id, l.placements.h.rotation]));
+  assert.equal(by['R-NONE'], 180);
+  assert.equal(by['R-BOTH'], 180);
+  assert.equal(by['R-45'], 45);
+  assert.equal(by['R-MIRROR'], undefined);
+  assert.equal(by['R-90FLIP'], 90);
+  assert.equal(report.ignored['flip (negative scale)'] >= 2, true);
+});
+
+test('video device fill mode crops the centre in source pixels instead of stretching', () => {
+  const s = session();
+  s.session.scenes[1].childItems.push(extraLayer('R-CAMFILL', 'Video device', {
+    deviceId: 'DEVICE-CAMERA-1', width: 387, height: 373, scaleX: 0.345, scaleY: 0.345, implicitWidth: 1920, implicitHeight: 1080, fitmentMode: 2,
+  }));
+  const { project } = importMeld(s);
+  const l = project.scenes[1].layers.find((x) => x.origin.id === 'R-CAMFILL');
+  const c = l.placements.h.crop;
+  assert.ok(c && c.left === c.right && c.top === 0 && c.bottom === 0);
+  // visible source width = 387 / 0.345 = 1121.7 px of 1920
+  assert.ok(Math.abs(1920 - c.left - c.right - 387 / 0.345) <= 1);
+  assert.equal(validateProject(project).ok, true);
+});
+
+test('group: children are flattened in place with inherited visibility, opacity and lock; counts stay right', () => {
+  const s = session();
+  const grp = extraLayer('G-OK', 'Group', {
+    visible: false, opacity: 0.5, isLocked: true,
+    childItems: [
+      extraLayer('G-C1', 'Text', { text: 'one', x: 5, y: 6 }),
+      extraLayer('G-INNER', 'Group', { childItems: [extraLayer('G-C2', 'Text', { text: 'two', x: 7, y: 8, opacity: 0.5 })] }),
+      extraLayer('G-C3', 'Game capture'),
+    ],
+  });
+  s.session.scenes[1].childItems.push(grp);
+  const { project, report } = importMeld(s);
+  const ls = project.scenes[1].layers;
+  const c1 = ls.find((x) => x.origin.id === 'G-C1');
+  const c2 = ls.find((x) => x.origin.id === 'G-C2');
+  assert.deepEqual([c1.placements.h.x, c1.placements.h.y], [5, 6], 'child coordinates are canvas coordinates, unchanged');
+  assert.equal(c1.placements.h.visible, false);
+  assert.equal(c1.placements.h.opacity, 0.5);
+  assert.equal(c1.locked, true);
+  assert.equal(c2.placements.h.opacity, 0.25, 'nested group opacity multiplies');
+  assert.ok(ls.indexOf(c2) < ls.indexOf(c1), 'index 0 is top: the first child ends above the later ones');
+  assert.ok(!ls.some((x) => x.origin.id === 'G-OK'), 'the group itself is not a layer');
+  assert.ok(report.skipped.some((x) => x.layer === 'G-C3' && x.kind === 'Game capture'), 'unsupported children are still reported');
+  assert.equal(report.counts.layersSeen, 18 + 5);
+});
+
+test('group with its own scale, rotation or offset is skipped with the reason and the child count', () => {
+  const s = session();
+  for (const [id, more] of [['G-SC', { scaleX: 0.5 }], ['G-ROT', { rotation: 180 }], ['G-OFF', { offsetX: 3 }]]) {
+    s.session.scenes[1].childItems.push(extraLayer(id, 'Group', { ...more, childItems: [extraLayer(`${id}-C`, 'Text', { text: 'x' })] }));
+  }
+  const { report } = importMeld(s);
+  for (const id of ['G-SC', 'G-ROT', 'G-OFF']) {
+    const sk = report.skipped.find((x) => x.layer === id);
+    assert.match(sk.reason, /own scale, rotation or offset.*1 child layer/);
+  }
+});
+
+test('game and display capture are skipped with the host-kind reason (no libobs source kind in the host)', () => {
+  const s = session();
+  s.session.scenes[1].childItems.push(extraLayer('C-GAME', 'Game capture'));
+  const { report } = importMeld(s);
+  for (const id of ['C-GAME', 'H-L-DISPLAY']) {
+    assert.match(report.skipped.find((x) => x.layer === id).reason, /^no host source kind for (game|display) capture/);
+  }
 });
