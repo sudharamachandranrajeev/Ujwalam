@@ -209,3 +209,81 @@ Residual risks:
    may be missing, and the process ends after the 20 s wait. During that wait the other host threads keep running.
 5. An uncaught C++ exception is reported by code only (no type, no `what()`), by design.
 6. One report per process; more crashes at once are not reported separately.
+
+## Loop B with the crash reporter (2026-11-05 22:33 to 2026-11-06 00:40)
+
+This section replaces the "Status" line at the top: **the crash was reproduced and captured. Root cause found: an
+upstream obs-nvenc bug in OBS 32.1.2, fixed upstream in 32.2.0. No fix applied yet.**
+
+MeldStudio was closed during all runs (checked before every loop run and every 25 stress cycles). Another process was
+using NVENC during the runs (encoder about 21 % before the start, `nvml before 2` in the host's NVENC probe; the
+process was not identified, it was not MeldStudio). All runs headless, BelowNormal, one GPU job at a time. Host binary
+built 2026-11-05 22:27, newer than every host source file, so not rebuilt.
+
+| run | what | result |
+|---|---|---|
+| loop B | `host-a0-day2.test.mjs`, 32 runs in sequence (scratchpad `loop2.mjs`) | 31 PASS, 1 FAIL (run 9: exit 3221225477, crash report written) |
+| stress B | one host, 1000 cycles: configure (replays bind to h1/v1), record start/stop, clear (scratchpad `stress2.mjs`) | 1000/1000, exit 0, no crash report |
+| suite | all 11 files in `app/host/tests`, `--test-concurrency=1` | 73 pass, 0 fail |
+
+Crash reports found after all runs: one, `out/host/tests/a0d2-mVPI7G/logs/crash-2026-11-05T22-41-50-421Z-p49736.txt`.
+No `host-crashes.jsonl` (the host tests start the host directly, not through the studio launcher that writes that log).
+No stray host, node, ffmpeg or python processes from these runs afterwards.
+
+Host log of the failed run: the same window as the first failure. `replay H detached`, then
+`Output 'ujw:replay:V': stopping` and the frame counts, then nothing.
+
+The report (complete, as written by the host):
+
+```
+thread: 40648 (not the main thread)
+kind: unhandled exception
+code: 0xc0000005 (access violation)
+flags: continuable
+address: nvEncodeAPI64.dll+0x261f0
+access: read at <withheld> (reserved private)
+stack (symbols from PDBs; source file names only):
+  #00 nvEncodeAPI64!? (no symbol)
+  #01 obs-nvenc!nvenc_destroy+0xff
+  #02 obs!obs_encoder_shutdown+0x3c (obs-encoder.c:708)
+  #03 obs!remove_connection+0x252 (obs-encoder.c:405)
+  #04 obs!stop_video_encoders+0x17a (obs-output.c:2820)
+  #05 obs!end_data_capture_thread+0x66 (obs-output.c:2851)
+  #06 w32-pthreads!ptw32_threadStart+0x171
+```
+
+The reporter worked on a real crash after libobs had loaded: obs.dll and obs-nvenc.dll symbols resolved from their
+PDBs (this was UNVERIFIED above).
+
+### Analysis
+
+- `dumpbin /disasm` of the shipped `obs-nvenc.dll` (32.1.2): `nvenc_destroy+0xff` (RVA 0x899f) is the return
+  address of the `nvEncUnregisterResource` call inside the inlined `d3d11_free_textures` loop
+  (`nvenc-d3d11.c:158`). In 32.1.2, `nvenc_destroy` (`nvenc.c:1018`) calls `nvEncDestroyEncoder(enc->session)`
+  first and only then `d3d11_free_textures`, which unregisters every texture against that destroyed session. The
+  driver reads freed session memory; usually it is still mapped, rarely it is not, and then the read faults.
+- Upstream fixed this in commit `bd96ff53dd` "obs-nvenc: Fix resource destruction order" (2026-02-10): textures and
+  surfaces are freed before `nvEncDestroyEncoder`. GitHub compare: not in tag 32.1.2, contained in 32.2.0-beta1.
+- **Hypothesis 1 (the `encoder_packet_times` race) is refuted for this crash.** The faulting thread is
+  `end_data_capture_thread`, and `remove_connection` has already run `stop_gpu_encode` before
+  `obs_encoder_shutdown`. That race may still exist in libobs, but it did not cause this crash. **Hypothesis 2 (NVENC
+  teardown) is confirmed**, with the bug in obs-nvenc, not in the driver. **Hypothesis 3 (host code) is refuted**:
+  no host frame is on the stack.
+- The first failure (20:45, no report) stopped at the same log line in the same call, so it is very likely the same
+  bug (UNVERIFIED: no stack for that one).
+- Why stress B did not hit it in 1000 cycles (about 2000 NVENC destroys) while the day-2 test hit it twice in about
+  116 runs: UNVERIFIED. The day-2 test creates and destroys more encoders per run (probe encoders, fallback rungs,
+  shared rungs), and the fault needs the freed session memory to be unmapped, which depends on what else the driver
+  allocates and frees at that moment.
+- This path runs on every NVENC encoder destroy: sink stop on the last user of a rung, rung change, replay detach,
+  shutdown. Including while live.
+
+### Proposed fix (not implemented)
+
+There is no host-side fix: host code cannot change the order inside `nvenc_destroy`. ADR draft:
+`docs/adr/2026-11-05-obs-nvenc-destroy-order.md`. It proposes rebuilding only `obs-nvenc.dll` from 32.1.2 sources
+with `bd96ff53dd` cherry-picked (the narrowest fix that removes the cause; the official `obs.dll` stays unchanged),
+then moving the runtime to 32.2.x or later as the follow-up. It needs review and the user's yes.
+
+After the fix: the same loop (30+ runs) and stress (1000+ cycles), zero crash reports expected. At about 1 failure in
+50 runs, one clean 32-run loop is not proof by itself; record the counts.
