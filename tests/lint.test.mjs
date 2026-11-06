@@ -96,6 +96,12 @@ test('trailing-ws: CRLF files do not count the CR as whitespace', async () => {
   assert.deepEqual(await run({ 'x.ps1': '# SPDX-License-Identifier: GPL-3.0-or-later\r\nWrite-Host 1\r\n' }, 'trailing-ws'), []);
 });
 
+test('trailing-ws: unified diffs are exempt (blank context line is a space by format); other rules still run', async () => {
+  const diff = '--- a/x.c\n+++ b/x.c\n@@ -1,3 +1,3 @@\n int a;\n \n-int b;\n+int c;\n';
+  assert.deepEqual(await run({ 'p/fix.diff': diff, 'p/fix.patch': diff }, 'trailing-ws'), []);
+  assert.deepEqual((await run({ 'p/fix.diffx': ' \n' }, 'trailing-ws')).map(formatFinding), ['p/fix.diffx:1: trailing-ws: trailing whitespace']);
+});
+
 test('spdx: missing header flagged; header after shebang or doctype accepted; json and unknown exempt', async () => {
   const bad = await run({ 'a.mjs': 'export const a = 1;\n', 'b.py': 'x = 1\n', 'c.css': 'a {}\n', 'd.html': '<!doctype html>\n<p>x</p>\n' }, 'spdx');
   assert.deepEqual(bad.map((f) => f.path), ['a.mjs', 'b.py', 'c.css', 'd.html']);

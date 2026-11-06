@@ -11,6 +11,7 @@ The OCR packages below are not bundled: they live in the project-local, gitignor
 | Component | Shipped files | Licence | Status |
 |---|---|---|---|
 | OBS Studio 32.1.2 (libobs, plugins, helper exes) | `obs.dll`, `libobs-*.dll`, `obs-frontend-api.dll`, 14 plugins, `obs-ffmpeg-mux.exe` and the encoder test exes | GPL-2.0-or-later | The runtime was built from the 32.1.2 tag: UNVERIFIED |
+| OBS Studio 32.1.2 obs-nvenc, **modified** (2026-11-06) | `obs-nvenc.dll` (replaces the official file in the runtime; the original is kept in `<runtime>/../runtime-originals/`) | GPL-2.0-or-later | See "Modified OBS file" below |
 | w32-pthreads | `w32-pthreads.dll` | LGPL-2.1-or-later (OBS fork of pthreads-win32) | UNVERIFIED |
 | FFmpeg (OBS build) | `avcodec`, `avformat`, `avutil`, `avfilter`, `avdevice`, `swresample`, `swscale` | **GPL-3.0-or-later** (verified 2026-11-05: `avcodec-61.dll`'s own build-config string has `--enable-gpl --enable-version3`, no `--enable-nonfree`; see `docs/evidence/2026-11-05-licence-verification.md`) | Verified |
 | x264 | `libx264-*.dll` | GPL-2.0-or-later | from obs-deps; build 164 confirmed |
@@ -19,6 +20,26 @@ The OCR packages below are not bundled: they live in the project-local, gitignor
 | zlib, curl, SRT, librist, libdatachannel, LuaJIT | as imported | Zlib; curl (MIT-style); MPL-2.0; BSD-2-Clause; MPL-2.0; MIT | from obs-deps; not re-checked |
 
 Not shipped: Microsoft fonts, `legacy/`, any font file, `.pdb` symbols, disabled modules (obs-websocket, win-capture, rtmp-services, VST and others), Qt plugins, the frontend's data and scripting files, and CEF locales other than en-US. The Visual C++ runtime and `d3dcompiler_47.dll` are not bundled either: they are system prerequisites, and the installer checks the VC++ runtime.
+
+### Modified OBS file: obs-nvenc.dll (2026-11-06)
+
+`obs-nvenc.dll` is not the official OBS binary. It is built from OBS Studio 32.1.2 sources (tag `32.1.2`, commit
+`fb4d98bf88fae5fc85cb11fc57f7c5e309282194`) with one upstream change applied: obs-studio commit
+`bd96ff53ddfc0787dd7b17344252ff6f6afb31d5` "obs-nvenc: Fix resource destruction order" (2026-02-10, first released
+in 32.2.0). Reason: the official 32.1.2 plugin crashes the host on encoder destroy
+(`docs/adr/2026-11-05-obs-nvenc-destroy-order.md`, `docs/evidence/2026-11-05-host-shutdown-av.md`). Its version
+resource says so in its "Comments" field. It is not signed by the OBS Project (the official file is).
+
+- Licence: GPL-2.0-or-later, the same as the unmodified plugin (OBS Studio `COPYING`).
+- Corresponding source: the OBS Studio 32.1.2 tag above, plus the diff `tools/obs-patch/patches/obs-nvenc-bd96ff53dd.diff`
+  (byte-identical to the upstream commit's diff; checked by the build script), the build project
+  `tools/obs-patch/obs-nvenc/CMakeLists.txt`, the NVIDIA headers `nv-codec-headers` tag `n12.2.72.0` (commit
+  `c69278340ab1d5559c7d7bf0edf615dc33ddbba7`, MIT-style licence in its own header files), and the build script
+  `tools/obs-patch/build-obs-nvenc.mjs`. Every input and the output SHA-256 are pinned in
+  `tools/obs-patch/obs-nvenc.manifest.json`.
+- The zip's `notices/SOURCE-OFFER.txt` names this modification and where its source is; the written offer there covers it.
+- `tools/package/build-alpha.mjs` refuses to package a runtime whose `obs-nvenc.dll` is not the patched build.
+- When the runtime moves to OBS 32.2 or later (the fix is upstream there), drop the patch and this entry.
 
 Before a build goes to anyone other than the user: check each remaining
 UNVERIFIED row, confirm the source offer (`docs/plan/2026-10-29-v1-decisions.md`,

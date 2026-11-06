@@ -1,0 +1,64 @@
+{
+  "$comment": "Pinned inputs and outputs of the patched obs-nvenc.dll (tools/obs-patch/build-obs-nvenc.mjs; ADR docs/adr/2026-11-05-obs-nvenc-destroy-order.md). Only obs-nvenc.dll/.pdb are replaced in the runtime; the originals are copied to <runtime>/../<backupDir>/obs-plugins/64bit/ first. 'patched' is written by --record. Licence: obs-nvenc is GPL-2.0-or-later (OBS Studio); source offer in docs/third-party-notices.md.",
+  "obsSource": {
+    "url": "https://github.com/obsproject/obs-studio.git",
+    "tag": "32.1.2",
+    "tagObject": "c17423ce05899ecb93f678601b3feaa8a469b180",
+    "commit": "fb4d98bf88fae5fc85cb11fc57f7c5e309282194",
+    "sparse": [
+      "libobs",
+      "plugins/obs-nvenc",
+      "shared/opts-parser",
+      "deps/w32-pthreads"
+    ]
+  },
+  "patch": {
+    "file": "tools/obs-patch/patches/obs-nvenc-bd96ff53dd.diff",
+    "sha256": "52b0d6da4b9f54e129564f66f3da7d99239fd4e2a71d36201d3ed1cc3243cebe",
+    "upstreamCommit": "bd96ff53ddfc0787dd7b17344252ff6f6afb31d5",
+    "upstreamParent": "a0a480dc80ef87f321d754246d0ea5a7f3f38279",
+    "upstreamTitle": "obs-nvenc: Fix resource destruction order",
+    "upstreamDate": "2026-02-10",
+    "upstreamUrl": "https://github.com/obsproject/obs-studio/commit/bd96ff53ddfc0787dd7b17344252ff6f6afb31d5",
+    "firstRelease": "32.2.0-beta1",
+    "files": [
+      "plugins/obs-nvenc/nvenc.c"
+    ],
+    "preImageBlob": "fb389452591515238ff4b9a7f63b91f954e6b1f6",
+    "postImageBlob": "1bf7149939be6316c5381e96f73bf9b584840f3a"
+  },
+  "nvCodecHeaders": {
+    "url": "https://github.com/FFmpeg/nv-codec-headers.git",
+    "tag": "n12.2.72.0",
+    "tagObject": "157becbf51c8b813425572b75c06c370bd43d8fd",
+    "commit": "c69278340ab1d5559c7d7bf0edf615dc33ddbba7",
+    "why": "The shipped 32.1.2 plugin logs 'NVENC version: 12.2 (compiled)'. n12.2.72.0 is the only nv-codec-headers 12.2 tag (checked 2026-11-06), and obs-deps deps.ffmpeg/70-nv-codec.ps1 pinned exactly this commit whenever it used 12.2 (e.g. obs-deps aa3edad9). Which obs-deps release built the shipped 32.1.2 is UNVERIFIED; the header version match is what matters for the ABI with the driver."
+  },
+  "versionResourceNote": "Modified by Ujwalam 2026-11-06 - OBS Studio 32.1.2 obs-nvenc with upstream commit bd96ff53dd applied (resource destruction order). GPL-2.0-or-later.",
+  "backupDir": "runtime-originals",
+  "official": {
+    "obsDll": {
+      "sha256": "3163e8e8a41dd568de400064645374f7fb96c872d8d148b6042e31e51c555d98"
+    },
+    "dll": {
+      "sha256": "6f3d4db21f4d04ea817410b8d74438bd1968548a6e9ab78e1b0ad2aca53721d7",
+      "bytes": 76048
+    },
+    "pdb": {
+      "sha256": "bc965ed8fd76f8a831d58de9f395e92188c052fb25a4063f822c5330c4ffc523",
+      "bytes": 192512
+    }
+  },
+  "patched": {
+    "dll": {
+      "sha256": "9f27a4318b1b1ea04d053b585280412ea9e191df128fede6b4d8d1e678052dfc",
+      "codeSha256": "04b59e49a6683c9656214afe68523ff936313c1132eddaf2a442c080d2f25d97",
+      "bytes": 68096
+    },
+    "pdb": {
+      "sha256": "5e224a5fc4a834cb3e620d235ea51412672d92e210fc5485f5f079f89f83d52a"
+    },
+    "toolchain": "Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35229 for x64",
+    "recorded": "2026-11-06"
+  }
+}

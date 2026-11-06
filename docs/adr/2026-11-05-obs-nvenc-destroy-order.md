@@ -1,6 +1,7 @@
 # 2026-11-05 — obs-nvenc session destroyed before its registered textures (host access violation)
 
-Status: proposed
+Status: accepted (user yes 2026-11-06: option 2, "patch one DLL"). Implemented 2026-11-06; Codex second-opinion
+review still due before the encoder-graph item is marked done.
 Phase: Alpha 0 (host, encoder graph; high stakes: Opus + Codex review before acceptance)
 
 ## Context
@@ -47,9 +48,26 @@ Phase: Alpha 0 (host, encoder graph; high stakes: Opus + Codex review before acc
 
 ## Decision
 
-Proposed: option 2 now (narrowest fix that removes the root cause, same official libobs), and option 1 as the
-planned follow-up when the runtime is next moved. Not implemented; needs review (Opus sign-off + Codex second
-opinion, high-stakes encoder graph) and the user's yes for the vendor build.
+Accepted 2026-11-06 (user yes): option 2 now (narrowest fix that removes the root cause, same official libobs), and
+option 1 as the planned follow-up when the runtime is next moved. The user also approved downloading the OBS source
+and NVIDIA nv-codec-headers (no system-wide installs).
+
+Implementation (2026-11-06):
+
+- `tools/obs-patch/build-obs-nvenc.mjs` fetches obs-studio tag 32.1.2 (commit `fb4d98bf88`, sparse) and
+  nv-codec-headers `n12.2.72.0` (commit `c69278340a`, the 12.2 API the shipped plugin was compiled with) into
+  `out/obs-src/` (gitignored, untrusted), checks that the committed diff
+  `tools/obs-patch/patches/obs-nvenc-bd96ff53dd.diff` is byte-identical to upstream `bd96ff53dd`, applies it, and builds
+  only `obs-nvenc.dll` with `tools/obs-patch/obs-nvenc/CMakeLists.txt` (import libs generated from the shipped
+  `obs.dll` and `w32-pthreads.dll`; OBS's Release flags: C17, /MD, /GL + /LTCG, /Brepro).
+- It verifies the result before use: same imported DLLs and exported symbols as the official file, and in the
+  disassembly of `nvenc_destroy` every `nvEncUnregisterResource` call comes before `nvEncDestroyEncoder` (the
+  official file has the opposite order).
+- `--install` copies the official `obs-nvenc.dll`/`.pdb` to `<runtime>/../runtime-originals/obs-plugins/64bit/` (never
+  deleted), then puts the patched pair into the runtime. Host and `package:alpha` use the runtime as before.
+  `tools/package/build-alpha.mjs` refuses a runtime whose `obs-nvenc.dll` is not the patched build.
+- Pins and SHA-256s: `tools/obs-patch/obs-nvenc.manifest.json`. Licence/source offer: `docs/third-party-notices.md`.
+- Evidence: `docs/evidence/2026-11-05-host-shutdown-av.md` (section "Fix applied").
 
 ## Consequences
 

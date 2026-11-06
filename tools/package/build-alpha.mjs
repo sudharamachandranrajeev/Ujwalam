@@ -16,7 +16,8 @@
 // and the launcher require Node >= release nodeMin on PATH.
 // Checks, any failure stops the build and nothing is written to out/dist: allowlist, forbidden paths (legacy/,
 // *.local.*, fonts incl. those named in docs/licence-headers.md, docs/, feedback/, out/, user data, secrets, media),
-// import closure of the packaged .mjs files, private-term scan. The same path checks run again on the finished zip.
+// import closure of the packaged .mjs files, private-term scan, and the runtime's obs-nvenc.dll must be the patched
+// build (tools/obs-patch/obs-nvenc.manifest.json). The same path checks run again on the finished zip.
 // An existing zip of the same version is refused unless --force (then it is moved to out/dist/_old/, never deleted).
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -29,6 +30,7 @@ import {
   allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
 import { readZip, writeZip } from './zip.mjs';
+import { readManifest, runtimeNvencState } from '../obs-patch/build-obs-nvenc.mjs';
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -70,7 +72,8 @@ export function vcRuntimeMin(buildDir) {
 const COMPONENTS = [
   [/^(obs\.dll|libobs-.*\.dll|obs-frontend-api\.dll|w32-pthreads\.dll)$/i, 'OBS Studio 32.1.2 (libobs)', 'GPL-2.0-or-later (w32-pthreads: OBS fork of pthreads-win32, LGPL-2.1-or-later; UNVERIFIED)'],
   [/^(obs-ffmpeg-mux|obs-nvenc-test|obs-amf-test|obs-qsv-test)\.exe$/i, 'OBS Studio 32.1.2 (helper exes)', 'GPL-2.0-or-later'],
-  [/^(image-source|obs-ffmpeg|obs-filters|obs-nvenc|obs-outputs|obs-qsv11|obs-text|obs-transitions|obs-x264|text-freetype2|win-dshow|win-wasapi|coreaudio-encoder|obs-browser)\.dll$/i, 'OBS Studio 32.1.2 (plugins)', 'GPL-2.0-or-later'],
+  [/^obs-nvenc\.dll$/i, 'OBS Studio 32.1.2 obs-nvenc, MODIFIED: upstream commit bd96ff53dd applied (tools/obs-patch/, ADR docs/adr/2026-11-05-obs-nvenc-destroy-order.md)', 'GPL-2.0-or-later (modified file; source: SOURCE-OFFER.txt)'],
+  [/^(image-source|obs-ffmpeg|obs-filters|obs-outputs|obs-qsv11|obs-text|obs-transitions|obs-x264|text-freetype2|win-dshow|win-wasapi|coreaudio-encoder|obs-browser)\.dll$/i, 'OBS Studio 32.1.2 (plugins)', 'GPL-2.0-or-later'],
   [/^obs-browser-page\.exe$/i, 'OBS Studio 32.1.2 (obs-browser)', 'GPL-2.0-or-later'],
   [/^(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)-\d+\.dll$/i, 'FFmpeg (OBS build)', 'GPL-3.0-or-later (verified 2026-11-05: build string has --enable-gpl --enable-version3, no --enable-nonfree; docs/evidence/2026-11-05-licence-verification.md)'],
   [/^libx264-\d+\.dll$/i, 'x264', 'GPL-2.0-or-later'],
@@ -100,6 +103,9 @@ function sourceOffer({ version, commit, obs }) {
     `- Ujwalam: commit ${commit} of the Ujwalam repository. The Node.js services in this package are the`,
     '  complete source of those parts; the host exe (bin/ujwalam-host.exe) is built from app/host/ at that commit.',
     `- OBS Studio ${obs.version}: ${obs.source}`,
+    '  Except obs-nvenc.dll, which is modified: OBS Studio 32.1.2 sources with upstream commit',
+    '  bd96ff53ddfc0787dd7b17344252ff6f6afb31d5 ("obs-nvenc: Fix resource destruction order") applied. The diff,',
+    '  the pinned inputs and the build script are tools/obs-patch/ at the Ujwalam commit above.',
     '- OBS Windows dependencies (FFmpeg, x264, Qt, CEF, ...): https://github.com/obsproject/obs-deps, at the',
     `  version that OBS Studio ${obs.version} names in its build files (UNVERIFIED which tag).`,
     '',
@@ -195,7 +201,14 @@ export async function buildAlpha(opts = {}) {
   const imp = importProblems(REPO, repoRel);
   if (imp.length) throw new Error(`import closure:\n  ${imp.join('\n  ')}`);
   const obs = selectObsRuntime(runtime, { hostExe, disabled: disabledModules(REPO) });
-  log(`OBS runtime: ${obs.files.length} files from ${obs.modules.shipped.length} modules (${obs.modules.shipped.join(', ')}); skipped ${obs.skipped.files} files`);
+  // The shipped obs-nvenc.dll must be the patched build (official 32.1.2 crashes on encoder destroy; ADR
+  // docs/adr/2026-11-05-obs-nvenc-destroy-order.md). Fail closed: fix with `node tools/obs-patch/build-obs-nvenc.mjs --install`.
+  const nvenc = obs.files.some((f) => /(^|\/)obs-nvenc\.dll$/i.test(f.dest)) ? runtimeNvencState(runtime) : { state: 'not shipped' };
+  if (nvenc.state !== 'patched' && nvenc.state !== 'not shipped') {
+    throw new Error(`runtime obs-nvenc.dll is '${nvenc.state}', not the patched build: run node tools/obs-patch/build-obs-nvenc.mjs --install`);
+  }
+  log(`obs-nvenc.dll: ${nvenc.state}${nvenc.sha ? ` (sha256 ${nvenc.sha})` : ''}`);
+  log(`OBS runtime:${obs.files.length} files from ${obs.modules.shipped.length} modules (${obs.modules.shipped.join(', ')}); skipped ${obs.skipped.files} files`);
 
   // 2. stage
   const stageRoot = mkdtempSync(path.join(os.tmpdir(), 'ujw-package-'));
@@ -218,6 +231,7 @@ export async function buildAlpha(opts = {}) {
       product: rel.product, version, n, date: build.date, title: build.title, nodeMin: rel.nodeMin,
       vcRuntimeMin: vcRuntimeMin(path.dirname(hostExe)), commit, hostExeSha256: hostSha, obsRuntime: rel.obsRuntime,
       obsModules: obs.modules.shipped, systemDlls: obs.systemDlls,
+      obsPatches: nvenc.sha ? [{ file: 'obs-nvenc.dll', state: nvenc.state, sha256: nvenc.sha, upstreamCommit: readManifest().patch.upstreamCommit }] : [],
     };
     put('release.json', 'generated', { text: `${JSON.stringify(release, null, 2)}\n` });
     put('package.json', 'generated', { text: `${JSON.stringify({ name: 'ujwalam', version, private: true, license: 'GPL-3.0-or-later', type: 'module', engines: { node: `>=${rel.nodeMin}` } }, null, 2)}\n` });

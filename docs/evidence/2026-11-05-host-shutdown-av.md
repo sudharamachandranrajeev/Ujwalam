@@ -1,6 +1,9 @@
 # Host access violation in host-a0-day2 (2026-11-05)
 
-Status: **root cause UNVERIFIED. No fix applied. Not reproduced in 13 + 515 attempts.**
+Status (2026-11-06): **root cause found (upstream obs-nvenc 32.1.2 destroy order, see "Loop B" below). Fix applied:
+patched `obs-nvenc.dll` (upstream commit `bd96ff53dd` on 32.1.2), ADR accepted. After the fix: 64/64 day-2 runs, 0
+crash reports (see "Fix applied").** Codex second-opinion review still due. The sections below the next heading are
+the history in the order it happened; their own status lines are superseded by this one.
 
 ## Symptom
 
@@ -278,7 +281,7 @@ PDBs (this was UNVERIFIED above).
 - This path runs on every NVENC encoder destroy: sink stop on the last user of a rung, rung change, replay detach,
   shutdown. Including while live.
 
-### Proposed fix (not implemented)
+### Proposed fix (implemented 2026-11-06, see "Fix applied" below)
 
 There is no host-side fix: host code cannot change the order inside `nvenc_destroy`. ADR draft:
 `docs/adr/2026-11-05-obs-nvenc-destroy-order.md`. It proposes rebuilding only `obs-nvenc.dll` from 32.1.2 sources
@@ -287,3 +290,156 @@ then moving the runtime to 32.2.x or later as the follow-up. It needs review and
 
 After the fix: the same loop (30+ runs) and stress (1000+ cycles), zero crash reports expected. At about 1 failure in
 50 runs, one clean 32-run loop is not proof by itself; record the counts.
+
+## Fix applied (2026-11-06)
+
+User yes (2026-11-06) for ADR option 2, "patch one DLL". ADR status: accepted
+(`docs/adr/2026-11-05-obs-nvenc-destroy-order.md`). Only `obs-nvenc.dll` (and its PDB) is replaced; the official
+`obs.dll` and every other runtime file stay OBS 32.1.2 (the build script refuses a runtime whose `obs.dll` is not the
+pinned 32.1.2 file).
+
+### What was built
+
+- Script `tools/obs-patch/build-obs-nvenc.mjs`, CMake project `tools/obs-patch/obs-nvenc/CMakeLists.txt`, diff
+  `tools/obs-patch/patches/obs-nvenc-bd96ff53dd.diff`, pins and hashes `tools/obs-patch/obs-nvenc.manifest.json`.
+- Downloads go into a new dir, `out/obs-src/`. It is gitignored and treated as untrusted: only git and the compiler
+  read it.
+  - `https://github.com/obsproject/obs-studio.git`: tag `32.1.2` (tag object `c17423ce05`), commit
+    `fb4d98bf88fae5fc85cb11fc57f7c5e309282194`. The clone is shallow and sparse: `libobs`, `plugins/obs-nvenc`,
+    `shared/opts-parser`, `deps/w32-pthreads`. The upstream fix is fetched by its full hash
+    `bd96ff53ddfc0787dd7b17344252ff6f6afb31d5` (parent `a0a480dc80`).
+  - `https://github.com/FFmpeg/nv-codec-headers.git`: tag `n12.2.72.0`, commit
+    `c69278340ab1d5559c7d7bf0edf615dc33ddbba7`. The shipped plugin logs "NVENC version: 12.2 (compiled)", and
+    `n12.2.72.0` is the only 12.2 tag.
+- The script checks the patch every time:
+  - the committed diff (sha256 `52b0d6da…3cebe`) is byte-identical to
+    `git diff a0a480dc80 bd96ff53dd -- plugins/obs-nvenc/nvenc.c`;
+  - the 32.1.2 `nvenc.c` blob is the diff's pre-image (`fb38945259`);
+  - after the patch, the file hashes to upstream's post-image (`1bf7149939`), and nothing else in the tree changed.
+- Toolchain: VS 2022 Build Tools 17.14, MSVC 19.44.35229. The shipped DLL reports linker 14.44, so this is the same
+  toolchain. CMake 3.31.6 and Ninja 1.12.1 come from the same Build Tools. Nothing was installed.
+- Flags are OBS's Release configuration:
+  - compiler: C17, `/MD`, `/W3 /utf-8 /Brepro /permissive- /Zc:preprocessor /Gy /Oi`, `/GL`;
+  - linker: `/LTCG /OPT:REF /OPT:ICF /EMITTOOLVERSIONINFO:NO /DEBUG /PDBALTPATH:obs-nvenc.pdb`;
+  - defines: `ENABLE_HEVC`, `REGISTER_FFMPEG_IDS`.
+- Import libs are generated from the export tables of the shipped `obs.dll` (1782 exports) and `w32-pthreads.dll`
+  (120 exports).
+- Install (`--install`):
+  1. Copy the official `obs-nvenc.dll` (sha256 `6f3d4db2…21d7`) and `obs-nvenc.pdb` (`bc965ed8…c523`) to
+     `<vendor>/obs-32.1.2/runtime-originals/obs-plugins/64bit/`.
+  2. Verify both copies. Nothing is deleted.
+  3. Put the patched DLL and PDB into `runtime/obs-plugins/64bit/`.
+
+| file | sha256 |
+|---|---|
+| patched `obs-nvenc.dll` (installed, 68096 bytes) | `9f27a4318b1b1ea04d053b585280412ea9e191df128fede6b4d8d1e678052dfc` |
+| patched `obs-nvenc.dll` codeSha256 (link-identity fields zeroed) | `04b59e49a6683c9656214afe68523ff936313c1132eddaf2a442c080d2f25d97` |
+| patched `obs-nvenc.pdb` | `5e224a5fc4a834cb3e620d235ea51412672d92e210fc5485f5f079f89f83d52a` |
+
+Reproducibility:
+
+- A second build in a fresh dir (`out/obs-patch/build-repro`) and a `--clean-first` rebuild gave a different file
+  SHA-256, but the same codeSha256.
+- A byte diff found 73 differing bytes. They are the COFF, export and debug-entry time stamps, the CodeView GUID and
+  age, and the `/Brepro` hash.
+- All of these come from the PDB, which records build paths and is not byte-deterministic.
+- So the script pins codeSha256 to identify "the same build", and the exact SHA-256 for the installed file.
+
+The patched file is smaller than the official one (68096 vs 76048 bytes). The difference is the Authenticode
+signature: the official file is signed by "OBS Project, LLC", and the patched file is not signed. Other checks:
+
+- Section sizes match within 64 bytes (.text 0x9808 vs 0x9818).
+- The version resource says FileVersion 32.1.2. Its Comments field says "Modified by Ujwalam 2026-11-06 - OBS Studio
+  32.1.2 obs-nvenc with upstream commit bd96ff53dd applied …".
+- The PE subsystem field is GUI; the official file says CUI. The loader ignores this field for DLLs.
+
+### Proof: destroy order in the binary
+
+`dumpbin /disasm` of `nvenc_destroy`, showing the calls through the global `nv` function table:
+
+- The table is at the same address, 0x180010500, in both files.
+- Slot offsets come from `offsetof(NV_ENCODE_API_FUNCTION_LIST, …)` with the same headers: EncodePicture 136,
+  DestroyBitstreamBuffer 128, UnmapInputResource 216, DestroyEncoder 224, UnregisterResource 256.
+
+```
+patched (runtime/obs-plugins/64bit/obs-nvenc.dll)      official (runtime-originals/.../obs-nvenc.dll)
+  1800088FE call [180010588h]  EncodePicture (EOS)       180008900 call [180010588h]  EncodePicture (EOS)
+  180008934 call [180010580h]  DestroyBitstreamBuffer    180008934 call [180010580h]  DestroyBitstreamBuffer
+  18000897C call [1800105D8h]  UnmapInputResource        18000894F call [1800105E0h]  DestroyEncoder   <- first
+  180008989 call [180010600h]  UnregisterResource        18000898C call [1800105D8h]  UnmapInputResource
+  1800089FD call [1800105D8h]  UnmapInputResource        180008999 call [180010600h]  UnregisterResource (crash site +0x899f)
+  180008A0B call [180010600h]  UnregisterResource        180008A7D call [1800105D8h]  UnmapInputResource
+  180008A49 call [1800105E0h]  DestroyEncoder   <- last  180008A8B call [180010600h]  UnregisterResource
+```
+
+The script checks the result on every build. It fails in each of these cases:
+
+- any UnregisterResource call comes after DestroyEncoder;
+- `d3d11_free_textures` is not inlined;
+- the official file does not show the old order;
+- the imports or exports differ from the official file. Expected imports: `obs.dll`, `w32-pthreads.dll`,
+  `KERNEL32.dll`, `VCRUNTIME140.dll` and 4 `api-ms-win-crt-*`. Expected exports: the 8 `obs_module_*` functions.
+
+```
+node tools/obs-patch/build-obs-nvenc.mjs --record --install   (BelowNormal)  exit 0
+[obs-patch] nvenc_destroy table calls (offsets) built: 136,128,216,256,216,256,224 | official: 136,128,224,216,256,216,256 (unregister=256, destroy=224)
+node tools/obs-patch/build-obs-nvenc.mjs --check
+[obs-patch] runtime obs-nvenc.dll: patched (sha256 9f27a4318b1b1ea04d053b585280412ea9e191df128fede6b4d8d1e678052dfc)
+```
+
+### Proof: the host loads it and NVENC works
+
+The host was not rebuilt: `node app/host/tools/build.mjs` reported "ninja: no work to do", and the host's link does
+not depend on the plugin. Host log of a day-2 run (`out/host/tests/a0d2-u0LIey`):
+
+```
+debug: Loading module: obs-nvenc.dll
+info: [obs-nvenc] NVENC version: 12.2 (compiled) / 13.1 (driver), CUDA driver version: 13.50, AV1 supported: true
+info:     obs-nvenc.dll                      (loaded-modules list; no MODULE LOAD FAILURE line)
+debug: encoder 'ujw:enc:replay-H' (obs_nvenc_h264_tex) created
+info: [host] nvenc probe h264: 3 of 3 started (nvml before 0, during 3)
+info: [host] exit 0
+```
+
+### Loop C: after the fix (2026-11-06)
+
+- All runs were headless (`UJWALAM_HEADLESS=1`), at BelowNormal priority, one GPU job at a time.
+- Before each batch of 8 runs, a check looked for MeldStudio. It was never running.
+- At the start, no other NVENC user was seen (nvidia-smi encoder 0 %, `nvml before 0`).
+- The loop used a scratchpad helper, `loop-nvenc.mjs`, which is not in the repo.
+
+| run | what | result |
+|---|---|---|
+| loop C | `host-a0-day2.test.mjs`, 1 + 64 runs in sequence | 65/65 PASS (9/9 tests each), every run exit 0 |
+| crash reports | `crash-*.txt` in the 260 new test data dirs | none |
+| NVENC loaded | host logs with the `[obs-nvenc] NVENC version` line | 195 (3 per run) |
+| suite | all files in `app/host/tests`, `--test-concurrency=1` | 73 pass, 0 fail, 0 skipped (258 s); no `crash-*.txt` in its 19 new data dirs |
+
+This loop is consistent with the fix but is not proof by itself:
+
+- Before the fix, the failure rate was 2 in about 116 day-2 runs, about one in 58.
+- At that rate, 65 clean runs in a row would happen by chance about 32 % of the time ((57/58)^65).
+- The binary check above is the direct proof: the code path that faulted no longer runs in the faulting order.
+
+### Residual risk
+
+- The patched DLL is not Authenticode-signed. Nothing in Ujwalam checks OBS signatures. Whether security tools
+  treat it differently is UNVERIFIED.
+- ABI: the plugin is built from the 32.1.2 headers, with import libs from the shipped `obs.dll`. Imports, exports,
+  section layout and the function-table address match the official file.
+  - The defines were checked against `plugins/obs-nvenc/CMakeLists.txt` and the `libobs` PUBLIC definitions.
+  - Any libobs behaviour that depends on a build option not set here is UNVERIFIED.
+- nv-codec-headers: the 12.2 API matches what the shipped plugin reports. Which obs-deps release built the official
+  32.1.2 is UNVERIFIED.
+- Re-copying the runtime from an installed OBS brings back the official DLL, which has the crash.
+  - `tools/package/build-alpha.mjs` refuses to package an unpatched runtime.
+  - `node tools/obs-patch/build-obs-nvenc.mjs --check` reports which DLL the runtime holds.
+  - The host itself does not check.
+- Other libobs races on the encoder stop path are not addressed, for example hypothesis 1 (`encoder_packet_times`).
+  They did not cause the captured crash.
+- Not run against the patched DLL here:
+  - the 1000-cycle stress harness;
+  - the O2 loopback and live-keys tests, beyond what the host suite above covers;
+  - the full `npm run ci` (not allowed in this task);
+  - the Codex second-opinion review.
+- Drop the patch when the runtime moves to OBS 32.2 or later.

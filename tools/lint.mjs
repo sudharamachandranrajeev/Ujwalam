@@ -202,7 +202,11 @@ function forbiddenPathRegex(names) {
 // ctx: { markers: [], exemptions: [], forbidden: RegExp|null }
 function checkText(rel, text, lines, out, wanted, ctx) {
   const isTest = rel.startsWith('tests/') || rel.includes('/tests/');
-  if (wanted('trailing-ws')) {
+  // Unified diffs (.diff/.patch): a blank context line is a single space by format, and vendored patches
+  // must stay byte-identical to upstream, so trailing whitespace is content there, not a defect. Only this
+  // rule is off for them; every other rule (secret, user-path, eol, spdx) still runs.
+  const isDiff = /\.(diff|patch)$/i.test(rel);
+  if (wanted('trailing-ws') && !isDiff) {
     lines.forEach((l, i) => {
       if (/[ \t]+$/.test(l)) out.push([rel, i + 1, 'trailing-ws', 'trailing whitespace']);
     });
