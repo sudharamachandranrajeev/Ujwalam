@@ -1,0 +1,21 @@
+{
+  "name": "Practice recording H + V (local files only)",
+  "canvases": [
+    { "id": "H", "w": 1920, "h": 1080, "fps": 60 },
+    { "id": "V", "w": 1080, "h": 1920, "fps": 60 }
+  ],
+  "encoders": [
+    { "id": "rec-h", "canvas": "H", "w": 1920, "h": 1080, "codec": "h264", "bitrate": 17000, "rc": "cbr", "gop_sec": 2, "encoder": "nvenc" },
+    { "id": "rec-v", "canvas": "V", "w": 1080, "h": 1920, "codec": "h264", "bitrate": 7500, "rc": "cbr", "gop_sec": 2, "encoder": "nvenc" }
+  ],
+  "audio": {
+    "tracks": [
+      { "id": "master", "name": "Master Track", "codec": "aac", "bitrate": 160, "sampleRate": 48000 }
+    ]
+  },
+  "sinks": [
+    { "id": "practice-h", "platform": "local", "encoder": "rec-h", "proto": "file", "priority": 1 },
+    { "id": "practice-v", "platform": "local", "encoder": "rec-v", "proto": "file", "priority": 2 }
+  ],
+  "note": "Same H and V rungs as youtube-1080p60 (yt-h, vert), recorded locally for clipping practice (2026-11-06). 2 NVENC sessions. No stream sink."
+}

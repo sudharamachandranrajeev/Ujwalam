@@ -1,0 +1,9 @@
+{
+  "$comment": "Practice recording plan (2026-11-06, user choice: record a practice session for AI clipping). Config data/outputs/presets/practice-record.json: the live plan's H 1920x1080@60 17 Mbps and V 1080x1920 7.5 Mbps rungs, each recorded to a local .mkv (crash-safe). No stream target, so it runs without --live. The clipper uses the H file; V checks the vertical layout. Run: npm run alpha -- --allow-devices --outputs data/outputs/alpha-practice.json, then Record on the control page.",
+  "config": "data/outputs/presets/practice-record.json",
+  "targets": {
+    "practice-h": { "transport": "file", "name": "practice-h.mkv" },
+    "practice-v": { "transport": "file", "name": "practice-v.mkv" }
+  },
+  "policy": { "retryBaseMs": 2000, "retryCapMs": 30000, "retryMax": 0, "retryResetLiveMs": 30000 }
+}
