@@ -443,3 +443,13 @@ This loop is consistent with the fix but is not proof by itself:
   - the full `npm run ci` (not allowed in this task);
   - the Codex second-opinion review.
 - Drop the patch when the runtime moves to OBS 32.2 or later.
+
+## Codex second-opinion review of the patch build (2026-11-06)
+
+Codex CLI 0.166.0, read-only, given `git show dd39bb1` for `tools/obs-patch`, `build-alpha.mjs` and the notices. Findings and fixes:
+
+- High: only `HEAD` of the source checkouts was verified, so an edited header could enter the build and the offset probe that is run. Fixed: `treeChanges()` re-hashes the working tree (`update-index --really-refresh`) and lists untracked and ignored files; nv-codec-headers must be clean, and obs-studio may differ only by the one patched file.
+- Medium: install overwrote the DLL and PDB in place. Fixed: both are copied beside the destination as `*.ujw-new`, verified, then renamed; on any failure the verified originals are restored from the backup dir.
+- Medium: `build-alpha` checked the runtime file, not the staged bytes. Fixed: the staged `obs-nvenc.dll` is checked with `nvencFileState()` and must match the verified hash recorded in `release.json`.
+
+Re-verified: `--check` patched (sha256 `9f27a431…2dfc`), a rebuild passes the new tree checks with the same destroy order, `--install` replaced the files with no `*.ujw-new` left, `tests/package-alpha.test.mjs` 10 pass / 1 skipped, lint 0 findings.

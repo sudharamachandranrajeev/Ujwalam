@@ -30,7 +30,7 @@ import {
   allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
 import { readZip, writeZip } from './zip.mjs';
-import { readManifest, runtimeNvencState } from '../obs-patch/build-obs-nvenc.mjs';
+import { nvencFileState, readManifest, runtimeNvencState } from '../obs-patch/build-obs-nvenc.mjs';
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const sha256 = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -224,6 +224,13 @@ export async function buildAlpha(opts = {}) {
     for (const r of repoRel) put(r, 'repo', { src: path.join(REPO, ...r.split('/')) });
     put('bin/ujwalam-host.exe', 'host', { src: hostExe });
     for (const f of obs.files) put(f.dest, 'obs', { src: f.src });
+    // Re-check the bytes actually staged (the runtime file could change between the check above and the copy);
+    // release.json records this staged file's state and hash.
+    const stagedNvenc = files.find((f) => f.origin === 'obs' && /(^|\/)obs-nvenc\.dll$/i.test(f.rel));
+    if (stagedNvenc) {
+      const st = nvencFileState(stagedNvenc.abs);
+      if (st.state !== 'patched' || st.sha !== nvenc.sha) throw new Error(`staged obs-nvenc.dll is '${st.state}' (sha256 ${st.sha}), not the verified patched build ${nvenc.sha}`);
+    }
     put('Install-Ujwalam.ps1', 'repo', { src: path.join(REPO, 'tools', 'package', 'Install-Ujwalam.ps1') });
     put('Ujwalam.cmd', 'repo', { src: path.join(REPO, 'tools', 'package', 'Ujwalam.cmd') });
     const hostSha = sha256(readFileSync(hostExe));

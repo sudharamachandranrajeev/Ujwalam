@@ -21,7 +21,7 @@
 // prompt or from VS Build Tools' vcvars64.bat found through vswhere (nothing is installed).
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig, REPO_ROOT } from '../../app/host/lib/config.mjs';
@@ -70,7 +70,11 @@ export const readManifest = () => JSON.parse(readFileSync(MANIFEST_FILE, 'utf8')
 
 /** Which obs-nvenc.dll the runtime holds: 'patched', 'official', 'missing' or 'unknown' (+ its sha256). */
 export function runtimeNvencState(runtime, manifest = readManifest()) {
-  const dll = path.join(runtime, ...PLUGIN_REL, 'obs-nvenc.dll');
+  return nvencFileState(path.join(runtime, ...PLUGIN_REL, 'obs-nvenc.dll'), manifest);
+}
+
+/** The same check for any obs-nvenc.dll file (e.g. the staged copy in a package). */
+export function nvencFileState(dll, manifest = readManifest()) {
   if (!existsSync(dll)) return { state: 'missing', dll };
   const sha = sha256(dll);
   if (manifest.patched?.dll?.sha256 && sha === manifest.patched.dll.sha256) return { state: 'patched', sha, dll };
@@ -124,11 +128,21 @@ function checkout(dir, { url, tag, commit, sparse }) {
   return head;
 }
 
+/** Working-tree changes against HEAD, re-hashing every file (--really-refresh ignores cached stat data, so a file
+ *  edited with its size and mtime kept is still caught), plus untracked and ignored files. */
+function treeChanges(dir) {
+  run('git', ['update-index', '-q', '--really-refresh'], { cwd: dir, allowFail: true });
+  return run('git', ['status', '--porcelain', '-z', '--ignored', '--untracked-files=all'], { cwd: dir }).stdout.split('\0').filter(Boolean);
+}
+
 function fetchAndPatch(m) {
   const obsDir = path.join(SRC_ROOT, 'obs-studio');
   const nvDir = path.join(SRC_ROOT, 'nv-codec-headers');
   checkout(obsDir, { url: m.obsSource.url, tag: m.obsSource.tag, commit: m.obsSource.commit, sparse: m.obsSource.sparse });
   checkout(nvDir, { url: m.nvCodecHeaders.url, tag: m.nvCodecHeaders.tag, commit: m.nvCodecHeaders.commit });
+  // The headers are compiled into the DLL and into the offset probe that is run, so their files must be the pinned tree.
+  const nvChanges = treeChanges(nvDir);
+  if (nvChanges.length) throw new Error(`${nvDir}: working tree differs from ${m.nvCodecHeaders.commit}: ${nvChanges.join(', ')}; move the dir aside and re-run`);
 
   const patchFile = path.join(REPO_ROOT, ...m.patch.file.split('/'));
   const patchSha = sha256(patchFile);
@@ -142,11 +156,12 @@ function fetchAndPatch(m) {
 
   // A clean tree gets the patch; a tree an earlier run patched is accepted only if exactly this patch is applied
   // (checked below by the reverse-apply check and the changed-file list).
-  if (git(obsDir, 'status', '--porcelain') === '') {
+  if (treeChanges(obsDir).length === 0) {
     git(obsDir, 'apply', '--check', patchFile);
     git(obsDir, 'apply', patchFile);
   }
-  const after = run('git', ['status', '--porcelain', '-z'], { cwd: obsDir }).stdout.split('\0').filter(Boolean).map((l) => l.slice(3)).sort();
+  // Re-hashed, untracked and ignored included: the only change in the tree is the one patched file.
+  const after = treeChanges(obsDir).map((l) => l.slice(3)).sort();
   if (JSON.stringify(after) !== JSON.stringify([...m.patch.files].sort())) throw new Error(`unexpected tree changes after patching: ${after.join(', ')}`);
   run('git', ['apply', '--check', '--reverse', patchFile], { cwd: obsDir }); // proves exactly this patch is applied
   // Blob ids: the 32.1.2 file is the patch's pre-image, and the patched file is byte-for-byte upstream's post-image.
@@ -246,10 +261,30 @@ function install(m, runtime, b) {
     if (sha256(saved) !== want) throw new Error(`backup copy of ${name} does not verify`);
     console.log(`[obs-patch] original ${name} copied aside to ${saved}`);
   }
-  copyFileSync(b.dll, path.join(plug, 'obs-nvenc.dll'));
-  copyFileSync(b.pdb, path.join(plug, 'obs-nvenc.pdb'));
-  const st = runtimeNvencState(runtime, m);
-  if (st.state !== 'patched') throw new Error(`after install the runtime DLL is '${st.state}'`);
+  // Copy each new file beside its destination and verify it, then swap by rename (same volume). If any step
+  // fails, the verified originals from the backup dir are put back, so the runtime is never left half-installed.
+  const pairs = [['obs-nvenc.dll', b.dll, b.dllSha, m.official.dll.sha256], ['obs-nvenc.pdb', b.pdb, b.pdbSha, m.official.pdb.sha256]];
+  const tmp = (name) => path.join(plug, `${name}.ujw-new`);
+  try {
+    for (const [name, src, sha] of pairs) {
+      copyFileSync(src, tmp(name));
+      if (sha256(tmp(name)) !== sha) throw new Error(`staged ${name} does not verify`);
+    }
+    for (const [name] of pairs) renameSync(tmp(name), path.join(plug, name));
+    const st = runtimeNvencState(runtime, m);
+    if (st.state !== 'patched') throw new Error(`after install the runtime DLL is '${st.state}'`);
+  } catch (e) {
+    for (const [name, , , officialSha] of pairs) {
+      if (existsSync(tmp(name))) rmSync(tmp(name), { force: true });
+      const dest = path.join(plug, name);
+      const saved = path.join(backup, name);
+      if (!existsSync(dest) || sha256(dest) !== officialSha) {
+        copyFileSync(saved, dest);
+        if (sha256(dest) !== officialSha) throw new Error(`install failed (${e.message}) and restoring ${name} did not verify; the original is in ${saved}`);
+      }
+    }
+    throw new Error(`install failed, originals restored: ${e.message}`);
+  }
   console.log(`[obs-patch] installed patched obs-nvenc.dll into ${plug}`);
 }
 
