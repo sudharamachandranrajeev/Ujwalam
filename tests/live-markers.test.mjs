@@ -207,6 +207,9 @@ describe('audio peak', () => {
     assert.equal(levelOf(list, ['mic']), -20);
     assert.equal(levelOf(list, ['b']), -Infinity);
     assert.equal(levelOf(null), -Infinity);
+    // a metered layer that is in no track (looping video, mixers 0) is not heard: no peak from it
+    list.sources.push({ id: 's/wordmark', active: true, muted: false, mixers: 0, peakDb: -3 });
+    assert.equal(levelOf(list), -10);
   });
 });
 

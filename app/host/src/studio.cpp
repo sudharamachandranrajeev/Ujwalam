@@ -805,6 +805,7 @@ json::Value Studio::load_model(const json::Value &doc, const LoadOptions &o)
 				target = it->second;
 			}
 			target->audio_id = a.id;
+			target->audio_name = a.name.empty() ? a.id : a.name;
 			obs_source_set_volume(target->src, obs_db_to_mul((float)a.volume_db));
 			obs_source_set_muted(target->src, a.muted);
 			obs_source_set_audio_mixers(target->src, a.mixers);
@@ -1270,13 +1271,18 @@ json::Value Studio::mixer_list() const
 		o.set("magnitudeDb", std::isfinite(mg) ? json::Value((double)mg) : json::Value());
 		a.push(std::move(o));
 	};
-	for (auto &s : scenes_)
-		for (auto &l : s.layers)
-			if (l.src && l.src->meter && seen.insert(l.src.get()).second)
-				entry(*l.src, s.id + "/" + l.id, s.id, l.id, l.name, s.canvas);
+	// Project audio sources first (named by their project name, e.g. "Mic", "Game"), device sources before layer
+	// audio; then layer sources with audio but no audio.sources entry (mixers 0: metered, not in any track).
 	for (auto &g : globals_)
 		if (g.src->meter && seen.insert(g.src.get()).second)
-			entry(*g.src, "audio:" + g.src->audio_id, "", "", g.src->audio_id, "");
+			entry(*g.src, "audio:" + g.src->audio_id, "", "", g.src->audio_name, "");
+	for (int bound = 1; bound >= 0; bound--)
+		for (auto &s : scenes_)
+			for (auto &l : s.layers)
+				if (l.src && l.src->meter && (l.src->audio_id.empty() != (bound == 1)) &&
+				    seen.insert(l.src.get()).second)
+					entry(*l.src, s.id + "/" + l.id, s.id, l.id,
+					      l.src->audio_name.empty() ? l.name : l.src->audio_name, s.canvas);
 	json::Value r = json::Value::object();
 	r.set("sources", std::move(a));
 	return r;

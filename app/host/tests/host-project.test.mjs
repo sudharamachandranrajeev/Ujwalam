@@ -255,6 +255,7 @@ test('project v1 render: H and V placements, duplicate item, shared source, laye
   assert.equal(mx.sources.length, 1, 'colour and text have no audio');
   assert.ok(Math.abs(clips[0].volumeDb + 6) < 0.01);
   assert.equal(clips[0].mixers, 2, 'track t2 is mixer bit 1');
+  assert.equal(clips[0].name, 'Clip audio', 'mixer row named by the project audio source name');
 
   const RUNGS = [
     { id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 640, h: 360, fps: 30, bitrate: 2500, gopSec: 1 },

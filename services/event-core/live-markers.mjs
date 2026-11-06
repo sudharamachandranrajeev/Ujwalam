@@ -174,11 +174,13 @@ export function createAudioDetector(cfg, minGapSec) {
   };
 }
 
-/** Level of one mixer.list answer: the highest finite peakDb over the counted sources (active, not muted). */
+/** Level of one mixer.list answer: the highest finite peakDb over the counted sources (active, not muted, in at
+ *  least one track). A source with mixers 0 (e.g. a looping video layer with no audio.sources entry) is metered by
+ *  the host but never heard on the stream, so it must not make audio peaks (2026-11-06). */
 export function levelOf(list, sources = null) {
   let best = -Infinity;
   for (const m of Array.isArray(list?.sources) ? list.sources : []) {
-    if (!m || m.muted === true || m.active === false || typeof m.peakDb !== 'number' || !Number.isFinite(m.peakDb)) continue;
+    if (!m || m.muted === true || m.active === false || m.mixers === 0 || typeof m.peakDb !== 'number' || !Number.isFinite(m.peakDb)) continue;
     if (sources && !sources.includes(m.id) && !sources.includes(m.audioSource)) continue;
     if (m.peakDb > best) best = m.peakDb;
   }

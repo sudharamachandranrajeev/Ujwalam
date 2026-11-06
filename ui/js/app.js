@@ -98,7 +98,10 @@
   function renderMixer() {
     var box = $('mixer'); clear(box);
     meterEls = {};
-    state.mixer.forEach(function (m) {
+    // Only what the stream hears (2026-11-06: a looping video layer showed up as a moving "Wordmark" row). A source
+    // in no track (mixers 0) is not in the mix; it is named in a note below instead of a channel strip.
+    var offMix = state.mixer.filter(function (m) { return m.mixers === 0; });
+    state.mixer.filter(function (m) { return m.mixers !== 0; }).forEach(function (m) {
       var db = el('span', { class: 'db', text: fmt(m.volumeDb, ' dB') });
       var slider = el('input', { type: 'range', min: -60, max: 0, step: 1, value: Math.max(-60, Math.min(0, typeof m.volumeDb === 'number' ? m.volumeDb : 0)), 'aria-label': m.name + ' volume' });
       slider.addEventListener('input', function () { setText(db, slider.value + ' dB'); });
@@ -107,7 +110,8 @@
       var level = el('i'); level.style.width = meterWidth(m.peakDb); meterEls[m.id] = level;
       box.appendChild(el('div', { class: 'chan' }, [el('span', { text: m.name }), mute, el('div', { class: 'meter' }, [level]), slider, db]));
     });
-    box.appendChild(el('p', { class: 'muted mixer-note', text: 'Meters show the host peak level; per-source mixer ids are <scene>/<layer>.' }));
+    if (offMix.length) box.appendChild(el('p', { class: 'muted mixer-note', text: 'Not in the stream mix (layer sound off): ' + offMix.map(function (m) { return m.name; }).join(', ') + '.' }));
+    box.appendChild(el('p', { class: 'muted mixer-note', text: 'Meters show the host peak level.' }));
   }
   function loadMixer() { return Api.host('mixer.list').then(function (r) { state.mixer = unwrap(r.result, 'sources'); renderMixer(); }); }
 

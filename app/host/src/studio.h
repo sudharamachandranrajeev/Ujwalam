@@ -103,6 +103,7 @@ private:
 		std::shared_ptr<Meter> meter;
 		std::string owner;    // layer id that owns it
 		std::string audio_id; // project audio source id bound to it
+		std::string audio_name; // its project name ("Mic", "Game"): the mixer row name
 		~Src();
 	};
 	struct Layer {
