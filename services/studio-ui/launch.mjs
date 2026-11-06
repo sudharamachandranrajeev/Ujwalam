@@ -189,13 +189,25 @@ export function coreServeArgs({ dataDir, mock = false, sbWs = {} }) {
   return { argv: [...argv, '--url', sbWs.ws], note: null };
 }
 
+/** The cmd.exe line that opens url in the default browser, or null if url is not a plain loopback http URL.
+ *  Only [A-Za-z0-9:/.?=_-] are allowed, so nothing in it is special to cmd (no & | ^ % " < >). */
+export function startCommandLine(url) {
+  if (typeof url !== 'string' || !/^http:\/\/127\.0\.0\.1:\d{1,5}\/[A-Za-z0-9/.?=_-]*$/.test(url)) return null;
+  return `"start "" "${url}""`;
+}
+
 function openBrowser(url) {
   const opts = { stdio: 'ignore', detached: true, windowsHide: true };
   if (process.env.UJWALAM_BROWSER) {
     spawn(process.env.UJWALAM_BROWSER, [...(process.env.UJWALAM_BROWSER_ARGS ?? '').split(' ').filter(Boolean), url], { ...opts, windowsHide: true }).unref();
     return;
   }
-  if (process.platform === 'win32') spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'start', '""', url], { ...opts, windowsHide: true }).unref();
+  if (process.platform === 'win32') {
+    const line = startCommandLine(url);
+    if (!line) { console.log('[studio] control page URL has unexpected characters; open it from the terminal line above'); return; }
+    // Verbatim: with Node's default quoting cmd received `start "\"\"" <url>` (2026-11-06: no browser opened).
+    spawn(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', line], { ...opts, windowsHide: true, windowsVerbatimArguments: true }).unref();
+  }
   else spawn(process.platform === 'darwin' ? 'open' : 'xdg-open', [url], { ...opts, windowsHide: true }).unref();
 }
 

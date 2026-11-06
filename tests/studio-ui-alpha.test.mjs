@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, coreEnv, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, coreEnv, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -455,4 +455,9 @@ test('roles: the capture-card preset asks for 1920x1080@60 and the alpha project
   assert.deepEqual(card.format, { width: 1920, height: 1080, fps: 60 });
   assert.equal('format' in project.devices.find((d) => d.origin?.id === 'role/facecam'), false);
   assert.equal(validateProject(project).ok, true);
+});
+
+test('open browser: cmd line is start "" "<url>" for a loopback URL; anything else is refused (2026-11-06: no browser opened)', () => {
+  assert.equal(startCommandLine('http://127.0.0.1:5000/login?k=abc123'), '"start "" "http://127.0.0.1:5000/login?k=abc123""');
+  for (const bad of ['http://127.0.0.1:5000/x&calc', 'http://127.0.0.1:5000/"x', 'https://example.com/', 'http://127.0.0.1:5000/%PATH%', null]) assert.equal(startCommandLine(bad), null, String(bad));
 });
