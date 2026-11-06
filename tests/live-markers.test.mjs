@@ -145,6 +145,14 @@ describe('chat speed', () => {
     return { out, c };
   };
   test('no chat, no marker', () => { assert.equal(run(new Array(120).fill(0)).out.length, 0); });
+  test('warm-up: an opening burst gives no speed marker before warmupSec; the same burst after it does', () => {
+    assert.equal(cfg.chat.warmupSec, 120, 'data/clip/live-markers.json chat.warmupSec (user 2026-11-06)');
+    const opening = run([...new Array(30).fill(0), ...new Array(40).fill(3)]); // quiet start, then the opening burst
+    assert.equal(opening.out.length, 0, JSON.stringify(opening.out));
+    assert.ok(opening.c.stats().speedWarmup > 0);
+    const later = run([...new Array(130).fill(0), ...new Array(40).fill(3)]);
+    assert.ok(later.out.length >= 1 && later.out.every((o) => o.t > cfg.chat.warmupSec), JSON.stringify(later.out));
+  });
   test('steady chat at the baseline does not fire; a burst does, once per gap', () => {
     // 1 message every 2 s for 10 min (rolling 20 s ~ 10), then 3 messages/s for 40 s (rolling 60 >= 10 * ratio 3)
     const quiet = Array.from({ length: 600 }, (_, i) => (i % 2 ? 1 : 0));

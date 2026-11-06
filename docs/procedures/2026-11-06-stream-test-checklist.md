@@ -52,7 +52,7 @@ Stop with Ctrl-C. The terminal ends without errors.
 |---|---|---|
 | `test-broadcast` | ON at go-live | Shows viewers the test message at the start and every 15 minutes |
 | `live-markers` | your choice (recommended ON) | Writes clip markers on "clip it" chat and chat spikes. Thresholds are `proposed`, and a marker can never affect the stream. The mock run produced chat markers as expected. |
-| `chat-effects` | your choice (recommended OFF for the first test) | Chat-fired effects. The guards (budget, cooldown, flash limit of 3 per second) held in the mock run. Leave it off for the first test so there are fewer moving parts. |
+| `chat-effects` | ON (user's choice, 2026-11-06) | Chat-fired effects. The guards (budget, cooldown, flash limit of 3 per second) held in the mock run. If an effect misbehaves, switch the flag off on the control page; it takes effect live. |
 | `posting`, `auto-post` | OFF | Post-stream only. Nothing uploads during a stream. Since 6 Nov, `auto --run` also refuses while the studio's host is running. |
 | `clip-pipeline` | OFF | Post-stream only |
 

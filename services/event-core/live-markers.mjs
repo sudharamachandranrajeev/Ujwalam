@@ -65,6 +65,7 @@ export function loadLiveMarkerConfig({ rankingFile = RANKING_FILE, liveFile = LI
       minMessages: num(rc.minMessages, 'chat.minMessages', { min: 1 }),
       ratio: num(rc.ratio, 'chat.ratio', { gt: 0 }),
       baselineSec: num(lc.baselineSec, 'live chat.baselineSec', { min: 1, int: true }),
+      warmupSec: num(lc.warmupSec ?? 0, 'live chat.warmupSec', { min: 0, int: true }),
     }),
     audio: Object.freeze({
       floor: num(ra.floorLufs, 'audio.floorLufs'),
@@ -106,9 +107,9 @@ export function createChatDetector(cfg, minGapSec) {
   const gapMs = minGapSec * 1000;
   const counts = []; // last windowSec per-second counts
   let cur = 0, roll = 0, anyChat = false;
-  let lastIntent = -Infinity, lastSpeed = -Infinity;
+  let lastIntent = -Infinity, lastSpeed = -Infinity, ticks = 0;
   const hist = createRollingWindow(cfg.baselineSec);
-  const s = { messages: 0, intents: 0, intentSuppressed: 0, speedSuppressed: 0 };
+  const s = { messages: 0, intents: 0, intentSuppressed: 0, speedSuppressed: 0, speedWarmup: 0 };
   return {
     message(text, nowMs) {
       s.messages++;
@@ -120,6 +121,7 @@ export function createChatDetector(cfg, minGapSec) {
       return { source: 'chat', kind: 'chat.intent', note: 'chat: clip request' };
     },
     tick(nowMs) {
+      ticks++;
       counts.push(cur);
       roll += cur;
       if (counts.length > cfg.windowSec) roll -= counts.shift();
@@ -130,6 +132,9 @@ export function createChatDetector(cfg, minGapSec) {
       const base = hist.median();
       const need = Math.max(cfg.minMessages, base * cfg.ratio);
       if (roll < need) return null;
+      // Warm-up (user 2026-11-06): chat starts from zero, so the baseline is ~0 for the first minutes and the opening
+      // chat burst would read as a spike every stream. Speed markers wait warmupSec ticks; the baseline still learns.
+      if (ticks <= (cfg.warmupSec ?? 0)) { s.speedWarmup++; return null; }
       if (nowMs - lastSpeed < gapMs) { s.speedSuppressed++; return null; }
       lastSpeed = nowMs;
       return { source: 'chat', kind: 'chat.velocity', note: `chat: speed spike, ${roll} messages in ${cfg.windowSec} s (baseline ${r2(base)}, need ${r2(need)})` };

@@ -5,8 +5,9 @@
   "approvedBy": null,
   "checked": "2026-11-05",
   "chat": {
-    "$comment": "baselineSec: the running median of the rolling chat count uses at most this many past seconds (post-stream uses the whole recording).",
-    "baselineSec": 3600
+    "$comment": "baselineSec: the running median of the rolling chat count uses at most this many past seconds (post-stream uses the whole recording). warmupSec: no chat-speed marker in the first this many seconds after the producer starts (chat starts from zero, so the opening burst would read as a spike every stream; 2026-11-06 stream-day mock run). warmupSec 120 chosen by the user 2026-11-06; the other values stay proposed.",
+    "baselineSec": 3600,
+    "warmupSec": 120
   },
   "audio": {
     "$comment": "Live level = the highest libobs meter peak (dBFS, host mixer.list peakDb) over the counted sources, sampled every sampleMs, max per second. Post-stream uses short-term loudness (LUFS) of the recording; the same median/MAD z-score rule is applied to the live peak level (UNVERIFIED equivalence). sources: null = every active, unmuted source with a meter; or a list of mixer ids / project audio source ids. baselineSec: running median/MAD over at most this many past voiced seconds. hostTimeoutMs: one host call (marker.add, mixer.list) gives up after this.",
