@@ -31,14 +31,40 @@ function defaultBrowserOpen(url) {
   });
 }
 
-/** Live-refusal check for `youtube upload`: asks the running host if any stream sink is active. No discovery
- *  file (host not running) means nothing is live -- safe to upload. Any other failure is NOT swallowed: an
- *  upload must never proceed on a guess about whether a stream is live. */
-async function defaultOutputsStatus() {
-  const cfg = resolveHostConfig({});
-  if (!existsSync(cfg.discovery)) return { sinks: [] };
-  const client = HostClient.fromDiscovery(cfg.discovery, process.env.UJWALAM_HOST_TOKEN || undefined);
-  return client.call('outputs.status');
+/** Discovery files a running host may have written: the studio's (<event-core data dir>/host.json, where
+ *  services/studio-ui/launch.mjs puts it) and the host config's own (app/host/lib/config.mjs, standalone host). */
+export function hostDiscoveryCandidates(dataDir, hostCfg = resolveHostConfig({})) {
+  const out = [];
+  for (const f of [typeof dataDir === 'string' && dataDir ? path.join(dataDir, 'host.json') : null, hostCfg?.discovery]) {
+    if (f && !out.some((x) => path.resolve(x).toLowerCase() === path.resolve(f).toLowerCase())) out.push(f);
+  }
+  return out;
+}
+
+const pidAlive = (pid) => {
+  if (!Number.isInteger(pid) || pid <= 0) return true; // unknown: treat as running (fail closed)
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
+};
+
+/** Live-refusal check for `youtube upload` and `auto --run`: asks every running host if any sink is active.
+ *  No discovery file, or only stale ones (their pid is gone), means no host runs: nothing is live. A running host
+ *  whose state cannot be read (no host token in this shell, host not answering) throws, so the caller refuses: an
+ *  upload must never proceed on a guess about whether a stream is live. (2026-11-06 stream-day mock run: this used
+ *  to look only at the standalone host's discovery file, so a studio session's live outputs read as "nothing live".) */
+export function outputsStatusFor(dataDir, { hostCfg, token = process.env.UJWALAM_HOST_TOKEN, alive = pidAlive } = {}) {
+  return async () => {
+    const sinks = [];
+    for (const f of hostDiscoveryCandidates(dataDir, hostCfg ?? resolveHostConfig({}))) {
+      if (!existsSync(f)) continue;
+      let d;
+      try { d = JSON.parse(readFileSync(f, 'utf8')); } catch { throw new Error('host discovery file unreadable'); }
+      if (!alive(d?.pid)) continue;
+      const client = HostClient.fromDiscovery(f, token || undefined);
+      const st = await client.call('outputs.status');
+      sinks.push(...(Array.isArray(st?.sinks) ? st.sinks : [null]));
+    }
+    return { sinks };
+  };
 }
 
 
@@ -102,7 +128,7 @@ async function autoMain(a, out, err, deps) {
     if (!flagOn) { err(`auto-post: the '${POSTING_FLAG}' and '${AUTO_FLAG}' feature flags must both be on`); return EXIT_FLAG_OFF; }
     if (!rules.rules.length) { out('auto-post: no rules; nothing to do'); return 0; }
     const auth = rules.autoUpload ? (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen }) : null;
-    const outputsStatus = deps.outputsStatus ?? defaultOutputsStatus;
+    const outputsStatus = deps.outputsStatus ?? outputsStatusFor(dataDir);
     const r = await runAuto({
       store, rules, outputsStatus, logFile, now: deps.now,
       upload: auth ? (id) => (deps.upload ?? uploadPost)({ id, store, auth, outputsStatus, fetchImpl: deps.fetchImpl }) : undefined,
@@ -131,7 +157,7 @@ async function youtubeMain(a, out, err, deps) {
       if (typeof a.id !== 'string') { err('usage: node services/posting/cli.mjs youtube upload --id <post id> [--data-dir DIR]'); return 2; }
       const ledgerFile = path.join(dataDir, 'posting', LEDGER_NAME);
       const store = createPostStore({ ledgerFile });
-      const r = await uploadPost({ id: a.id, store, auth, outputsStatus: deps.outputsStatus ?? defaultOutputsStatus, fetchImpl: deps.fetchImpl });
+      const r = await uploadPost({ id: a.id, store, auth, outputsStatus: deps.outputsStatus ?? outputsStatusFor(dataDir), fetchImpl: deps.fetchImpl });
       const cover = r.hasCover;
       out(`youtube: uploaded ${a.id} as ${r.videoId}${cover ? ` (cover: ${r.thumbnailOk ? 'ok' : 'failed, video is still up'})` : ''}`);
       return 0;

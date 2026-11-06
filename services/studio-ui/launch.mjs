@@ -314,7 +314,7 @@ function removeStaleDiscovery(file) {
   try { rmSync(file); } catch { /* gone or in use */ }
 }
 
-async function waitForDiscovery(file, child, timeoutMs = 60_000) {
+export async function waitForDiscovery(file, child, timeoutMs = 60_000) {
   const t0 = Date.now();
   while (Date.now() - t0 < timeoutMs && child.exitCode === null) {
     try {
@@ -327,7 +327,8 @@ async function waitForDiscovery(file, child, timeoutMs = 60_000) {
 }
 
 // Alpha project: build (or keep) <dataDir>/projects/alpha.project.json, then project.load it into the host.
-async function alphaProject({ client, dataDir, args, hostCfg }) {
+// Exported for tools/soak/stream-day.mjs (the stream-day mock run builds the same alpha session).
+export async function alphaProject({ client, dataDir, args, hostCfg }) {
   const profileFile = typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json');
   const profile = readProfile(profileFile);
   let report = null;
@@ -384,7 +385,7 @@ async function alphaProject({ client, dataDir, args, hostCfg }) {
 const yn = (v) => (v === true ? 'yes' : v === false ? 'no' : '-');
 
 // One block at start: outputs (per sink keyPresent / urlPresent, never a key or URL), hotkeys, replay buffer.
-async function alphaStatus(client) {
+export async function alphaStatus(client) {
   try {
     const o = await client.call('outputs.status');
     const sinks = Array.isArray(o.sinks) ? o.sinks : [];
