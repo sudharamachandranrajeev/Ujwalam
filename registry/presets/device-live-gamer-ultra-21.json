@@ -13,7 +13,13 @@
       "listKind": "video",
       "nameContains": "live gamer ultra 2.1",
       "status": "unverified",
-      "evidence": "legacy/meld/session.json video device layer \"Live Gamer Ultra 2.1-Video\"; not yet seen in a devices.list run"
+      "evidence": "legacy/meld/session.json video device layer \"Live Gamer Ultra 2.1-Video\"; seen in a devices.list run 2026-11-06"
+    },
+    "format": {
+      "width": 1920,
+      "height": 1080,
+      "fps": 60,
+      "evidence": "2026-11-06 dry run: with the device default the card opened at 1280x720, but the scene crops (scene-default-h/v game) are measured on a 1920x1080 source (Meld visible region 1248x1080), so the game layer was stretched. 1080p60 matches the canvases."
     }
   },
   "themeOverrides": {},

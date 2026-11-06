@@ -88,7 +88,18 @@ export function matchRoles({ list, presets = [], overrides = {}, roles = Object.
       preset: h.preset?.id ?? null,
       by: h.by,
       projectKind: spec.projectKinds.includes(pk) ? pk : spec.defaultProjectKind,
+      // Capture format the preset asks for (params.format { width, height, fps }); null = device default.
+      // Layer crops are in source pixels, so a device that opens at another size would show a stretched picture.
+      format: formatOf(h.preset?.params?.format),
     };
   }
   return { bound, unavailable };
+}
+
+/** A preset's params.format, or null when absent or out of range (same limits as the project schema). */
+export function formatOf(f) {
+  if (!f || typeof f !== 'object' || Array.isArray(f)) return null;
+  const ok = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi;
+  if (!ok(f.width, 16, 8192) || !ok(f.height, 16, 8192) || (f.fps !== undefined && !ok(f.fps, 1, 240))) return null;
+  return f.fps === undefined ? { width: f.width, height: f.height } : { width: f.width, height: f.height, fps: f.fps };
 }

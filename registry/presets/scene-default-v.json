@@ -61,12 +61,12 @@
           "h": 0.23177
         },
         "crop": {
-          "top": 21,
-          "bottom": 21
+          "left": 328,
+          "right": 328
         },
-        "visible": false,
+        "visible": true,
         "geometry": "meld",
-        "note": "Hidden in the Meld vertical scene (a duplicate of the camera). Meld rotates it 180.65 degrees (camera mounted upside down); the project placement cannot rotate, so a shown facecam would be upside down until rotation exists. Vertical crop of 42 source pixels is centred, UNVERIFIED."
+        "note": "Shown (user 2026-11-06: camera must be visible in vertical). It was hidden in the Meld vertical scene (a duplicate of the camera, rotated 180.65 degrees there). It duplicates the H facecam layer, so it shows the camera the same way up as H. Crop (user 2026-11-06: V was stretched): the Meld crop (top/bottom 21) left a 1920x1038 area in a 521x445 box (1.85 vs 1.17); a centred side crop of 328 px on the 1920x1080 camera gives 1264x1080 (1.170), the box ratio. Crop centre UNVERIFIED."
       },
       {
         "key": "subscribe-cta",

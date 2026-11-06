@@ -82,16 +82,29 @@
     return Api.host('layers.list', layerArgs()).then(function (r) { state.layers = unwrap(r.result, 'layers'); renderLayers(); });
   }
 
-  // ---- mixer placeholder (volume/mute wired to the host API; meters from the host when it provides them) ----
+  // ---- mixer (volume/mute wired to the host API; meters polled from the host's mixer.list peakDb) ----
+  var meterEls = {}; // mixer id -> meter bar element, so a meter poll updates widths without rebuilding the controls
+  var meterBusy = false;
+  function meterWidth(peakDb) { return Math.max(0, Math.min(100, (typeof peakDb === 'number' ? (peakDb + 60) / 60 * 100 : 0))) + '%'; }
+  // Live meters (2026-11-06: the meter was read once at page load, so it never moved while speaking).
+  // One request in flight at a time; skipped while the tab is hidden or there is no mixer to show.
+  function pollMeters() {
+    if (meterBusy || document.hidden || !state.mixer.length) return;
+    meterBusy = true;
+    Api.host('mixer.list').then(function (r) {
+      unwrap(r.result, 'sources').forEach(function (m) { var bar = meterEls[m.id]; if (bar) bar.style.width = meterWidth(m.peakDb); });
+    }, function () { /* a missed meter frame is harmless; the next poll retries */ }).then(function () { meterBusy = false; });
+  }
   function renderMixer() {
     var box = $('mixer'); clear(box);
+    meterEls = {};
     state.mixer.forEach(function (m) {
       var db = el('span', { class: 'db', text: fmt(m.volumeDb, ' dB') });
       var slider = el('input', { type: 'range', min: -60, max: 0, step: 1, value: Math.max(-60, Math.min(0, typeof m.volumeDb === 'number' ? m.volumeDb : 0)), 'aria-label': m.name + ' volume' });
       slider.addEventListener('input', function () { setText(db, slider.value + ' dB'); });
       slider.addEventListener('change', function () { guard(Api.host('mixer.setVolume', { id: m.id, db: Number(slider.value) })); });
       var mute = el('button', { class: 'icon-btn', type: 'button', text: m.muted ? 'Unmute' : 'Mute', onclick: function () { guard(Api.host('mixer.setMute', { id: m.id, muted: !m.muted }).then(loadMixer)); } });
-      var level = el('i'); level.style.width = Math.max(0, Math.min(100, (typeof m.peakDb === 'number' ? (m.peakDb + 60) / 60 * 100 : 0))) + '%';
+      var level = el('i'); level.style.width = meterWidth(m.peakDb); meterEls[m.id] = level;
       box.appendChild(el('div', { class: 'chan' }, [el('span', { text: m.name }), mute, el('div', { class: 'meter' }, [level]), slider, db]));
     });
     box.appendChild(el('p', { class: 'muted mixer-note', text: 'Meters show the host peak level; per-source mixer ids are <scene>/<layer>.' }));
@@ -416,6 +429,7 @@
   function start() {
     wire();
     setInterval(function () { if (!$('bots').hidden) loadBots(); }, 15000); // each check lists processes: slow on purpose
+    setInterval(pollMeters, 250); // the live-marker audio producer samples mixer.list at the same rate
     Api.session()
       .then(function () { return Promise.all([loadScenes(), loadMixer(), loadFlags(), Api.status().then(applyStatus)]); })
       .then(function () { Api.events(applyStatus, function (ok) { if (!ok) pill($('st-core'), 'Reconnecting...', 'warn'); }, function (d) { renderFlags(d.flags); }); })

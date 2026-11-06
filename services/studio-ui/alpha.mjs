@@ -72,7 +72,9 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
     const id = idFn('dev');
     const match = { name: String(b.entry.name).slice(0, 256) };
     if (b.entry.path && String(b.entry.path).length <= 512) match.deviceId = b.entry.path;
-    base.devices.push({ id, kind: b.projectKind, name: String(b.entry.name || role).slice(0, 120), match, origin: { importer: 'alpha', id: `role/${role}` } });
+    const dev = { id, kind: b.projectKind, name: String(b.entry.name || role).slice(0, 120), match, origin: { importer: 'alpha', id: `role/${role}` } };
+    if (b.format) dev.format = { ...b.format };
+    base.devices.push(dev);
     deviceOf[role] = id;
   }
   const roles = Object.fromEntries(LAYER_ROLES.filter((r) => deviceOf[r]).map((r) => [r, deviceOf[r]]));

@@ -445,3 +445,14 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     rmSync(root, { recursive: true, force: true, maxRetries: 5 });
   }
 });
+
+test('roles: the capture-card preset asks for 1920x1080@60 and the alpha project carries it (2026-11-06: card opened at 720p, layers stretched)', () => {
+  const r = matchRoles({ list: LIST, presets: devicePresets });
+  assert.deepEqual(r.bound['game-capture'].format, { width: 1920, height: 1080, fps: 60 });
+  assert.equal(r.bound.facecam.format, null, 'no format in the preset: device default');
+  const { project } = buildAlphaProject({ presetsDir: presetsDir({ v: true }), profile: PROFILE, bindings: r, devicesListed: true });
+  const card = project.devices.find((d) => d.origin?.id === 'role/game-capture');
+  assert.deepEqual(card.format, { width: 1920, height: 1080, fps: 60 });
+  assert.equal('format' in project.devices.find((d) => d.origin?.id === 'role/facecam'), false);
+  assert.equal(validateProject(project).ok, true);
+});
