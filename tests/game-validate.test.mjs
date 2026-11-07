@@ -45,7 +45,7 @@ function expectError(t, file, fn, pattern) {
 test('game-validate: committed packs are valid', () => {
   const { errors, packs } = validateGames(games, repo);
   assert.deepEqual(errors, []);
-  assert.deepEqual(packs, [{ id: 'codm', version: '0.3.0' }]);
+  assert.deepEqual(packs, [{ id: 'codm', version: '0.4.0' }]);
 });
 
 test('game-validate: a copy of the pack (without local/) is valid', (t) => {
@@ -117,7 +117,7 @@ test('game-validate: missing pack file and evidence file', (t) => {
 test('game-validate: CLI exit code 0 on the committed packs, 1 on a broken pack', (t) => {
   const good = spawnSync(process.execPath, [tool, games, repo], { encoding: 'utf8', windowsHide: true });
   assert.equal(good.status, 0, good.stderr);
-  assert.match(good.stdout, /OK: 1 game pack\(s\) valid: codm 0\.3\.0/);
+  assert.match(good.stdout, /OK: 1 game pack\(s\) valid: codm 0\.4\.0/);
   const dir = build();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   edit(dir, 'detectors.json', (d) => { det(d, 'K1').screens = ['mp_top3']; });
