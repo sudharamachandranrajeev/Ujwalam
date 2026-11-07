@@ -5,7 +5,7 @@
   "default": ["stream-v"],
   "defaultNote": "User 2026-11-07: the three ffmpeg layouts look immature; clips are cut from the V canvas recording (the vertical stream design). The others render only when asked with --layouts.",
   "layouts": [
-    { "id": "stream-v", "kind": "canvas", "input": "v", "geometry": "verified", "note": "Cut of the V canvas recording at the same times as the H candidate; H and V record from one start (time offset UNVERIFIED)." },
+    { "id": "stream-v", "kind": "canvas", "input": "v", "geometry": "verified", "note": "Cut of the V canvas recording at the same times as the H candidate; H and V record from one start; measured offset 85 ms, constant over 15 min (audio cross-correlation, one practice recording, 2026-11-07, docs/evidence/2026-11-07-hv-time-offset.md): no correction." },
     { "id": "full-crop", "kind": "crop", "centerX": 0.5, "geometry": "verified" },
     { "id": "game-facecam", "kind": "stack", "facecam": [0.01397, 0.5652, 0.20165, 0.34522], "game": [0.24373, 0.02887, 0.73844, 0.90541], "topHeight": 640, "geometry": "unverified", "source": "read-only copy of the Facecam and Game capture rects of registry/presets/scene-default-h.json (H canvas = H recording frame), 2026-11-03; unverified until a rendered frame is checked" },
     { "id": "blurred-fill", "kind": "fill", "blur": 24, "geometry": "verified" }
