@@ -187,6 +187,12 @@ export const headlessLoginScript = (env = process.env) => typeof env.UJWALAM_BRO
  *  it call marker.add and mixer.list only), never the full host token: UJWALAM_HOST_TOKEN,
  *  UJWALAM_HOST_SYSTEM_TOKEN and the live clipper's UJWALAM_HOST_CLIPS_TOKEN are removed even when the launcher's own
  *  environment has them. */
+// Parent pipe (D234, services/common/parent-pipe.mjs): every long-running child gets stdin as a pipe from this
+// launcher plus this marker. When the launcher dies, even by a hard kill that sends no signal on Windows, the pipes
+// close and the children stop by themselves (the host only once no stream or recording runs) instead of being left
+// as orphans holding devices and ports. Nothing is ever written to the pipes.
+const PARENT_PIPE = Object.freeze({ UJWALAM_PARENT_PIPE: '1' });
+
 export function coreEnv({ coreTokens, hostMarkersToken, base = process.env }) {
   const env = { ...base, UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: coreTokens.system, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken };
   for (const k of Object.keys(env)) if (['UJWALAM_HOST_TOKEN', 'UJWALAM_HOST_SYSTEM_TOKEN', 'UJWALAM_HOST_CLIPS_TOKEN'].includes(k.toUpperCase())) delete env[k];
@@ -695,10 +701,10 @@ export async function main(argv = process.argv.slice(2)) {
   const coreArgs = coreServeArgs({ dataDir, mock: args.mock === true, sbWs: loadBotConfig().streamerbot });
   if (coreArgs.note) console.log(`[studio] ${coreArgs.note}`);
   const core = spawn(process.execPath, [path.join(REPO, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], {
-    stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true,
+    stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true, // stdin: the parent pipe (D234)
     // UJWALAM_HOST_MARKERS_TOKEN: the F6 live markers (flag live-markers) write host markers; the host is found at
     // <dataDir>/host.json. coreEnv never passes the full host token.
-    env: coreEnv({ coreTokens, hostMarkersToken }),
+    env: { ...coreEnv({ coreTokens, hostMarkersToken }), ...PARENT_PIPE },
   });
   children.push(core);
   const corePort = await portFrom(core, /api on 127\.0\.0\.1:(\d+)/);
@@ -752,8 +758,8 @@ export async function main(argv = process.argv.slice(2)) {
       removeStaleDiscovery(hostDiscovery);
       const hostLog = openHostLog(logsDir);
       const child = spawn(script ? process.execPath : hostExe, script ? [hostExe, ...hostArgs] : hostArgs, {
-        stdio: ['ignore', hostLog.fd, hostLog.fd],
-        env: { ...process.env, ...spec.env, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
+        stdio: ['pipe', hostLog.fd, hostLog.fd], // stdin: the parent pipe (D234)
+        env: { ...process.env, ...spec.env, ...PARENT_PIPE, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
         windowsHide: true,
       });
       closeSync(hostLog.fd); // the child holds its own handle
@@ -800,7 +806,7 @@ export async function main(argv = process.argv.slice(2)) {
       else {
         let restarts = 0;
         const startClipper = () => {
-          const c = spawn(lc.spec.exe, lc.spec.argv, { stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true, env: clipsEnv({ hostClipsToken, hostDiscovery }) });
+          const c = spawn(lc.spec.exe, lc.spec.argv, { stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true, env: { ...clipsEnv({ hostClipsToken, hostDiscovery }), ...PARENT_PIPE } });
           children.push(c);
           c.once('exit', (code) => {
             const i = children.indexOf(c);
@@ -838,8 +844,8 @@ export async function main(argv = process.argv.slice(2)) {
   // P5b autosave: layer edits accepted by the host are written into the alpha project file (project-sync.mjs).
   else if (alpha) uiArgs.push('--project', alphaFile(dataDir));
   const ui = spawn(process.execPath, uiArgs, {
-    stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true,
-    env: { ...process.env, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' },
+    stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true, // stdin: the parent pipe (D234)
+    env: { ...process.env, ...PARENT_PIPE, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' },
   });
   children.push(ui);
   const uiPort = await portFrom(ui, /listening on http:\/\/127\.0\.0\.1:(\d+)\//);

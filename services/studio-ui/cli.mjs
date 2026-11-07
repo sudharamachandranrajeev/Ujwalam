@@ -11,6 +11,7 @@ import { resolveDataDir } from '../event-core/config.mjs';
 import { createCoreClient, createFakeBots, createHostRouter } from './backends.mjs';
 import { createProjectSync } from './project-sync.mjs';
 import { createStudioServer } from './server.mjs';
+import { watchParent } from '../common/parent-pipe.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const UI_ROOT = path.resolve(HERE, '..', '..', 'ui');
@@ -41,7 +42,8 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   const { port } = await srv.listen();
   out(`[studio-ui] listening on http://127.0.0.1:${port}/ (no token printed)`);
   if (host.describe().kind === 'fake') out('[studio-ui] BLOCKED-ON-HOST: no libobs host found, using the in-memory fake backend');
-  await new Promise((resolve) => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); });
+  // watchParent: the launcher died (even by a hard kill): stop like on Ctrl-C (D234)
+  await new Promise((resolve) => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); watchParent(resolve); });
   await srv.close();
   return 0;
 }

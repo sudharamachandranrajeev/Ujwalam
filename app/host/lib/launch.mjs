@@ -15,7 +15,7 @@ import { overlayRootProblem, resolveConfig } from './config.mjs';
 
 export async function launchHost({
   dataDir, project, outputs, preview, port = 0, extraArgs = [], env = {}, stdio = 'pipe', timeoutMs = 30000, cfg: cfgIn, tokenByEnv = true,
-  overlay
+  overlay, parentPipe = false // parentPipe: stdin as a pipe + UJWALAM_PARENT_PIPE=1, like the studio launcher (D234)
 } = {}) {
   const cfg = cfgIn ?? resolveConfig({ dataDir });
   if (!cfg.runtime) throw new Error('OBS runtime not set: UJWALAM_OBS_RUNTIME or app/host/host.local.json "obsRuntime"');
@@ -38,8 +38,8 @@ export async function launchHost({
   }
   args.push(...extraArgs);
   const child = spawn(cfg.exe, args, {
-    env: { ...process.env, ...env, ...(envToken ? { UJWALAM_HOST_TOKEN: envToken } : {}) },
-    stdio: stdio === 'inherit' ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, ...env, ...(parentPipe ? { UJWALAM_PARENT_PIPE: '1' } : {}), ...(envToken ? { UJWALAM_HOST_TOKEN: envToken } : {}) },
+    stdio: [parentPipe ? 'pipe' : 'ignore', ...(stdio === 'inherit' ? ['inherit', 'inherit'] : ['pipe', 'pipe'])],
     windowsHide: true // the host is a console program: no console window; previews are its own windows (D191)
   });
   const log = [];

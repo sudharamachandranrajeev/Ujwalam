@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 import urllib.request
 from datetime import datetime, timezone
@@ -164,6 +165,30 @@ class Worker:
         return row
 
 
+PARENT_PIPE_ENV = "UJWALAM_PARENT_PIPE"
+
+
+def watch_parent(stdin=None, env=None):
+    """Parent pipe (D234, services/common/parent-pipe.mjs): with UJWALAM_PARENT_PIPE=1 the launcher holds our stdin
+    as a pipe; end-of-file means the launcher is gone (even after a hard kill). Returns an Event set at that point
+    (never set without the env marker)."""
+    gone = threading.Event()
+    if (env if env is not None else os.environ).get(PARENT_PIPE_ENV) != "1":
+        return gone
+    src = stdin if stdin is not None else sys.stdin.buffer
+
+    def read():
+        try:
+            while src.read(64):
+                pass
+        except (OSError, ValueError):
+            pass
+        gone.set()
+
+    threading.Thread(target=read, name="parent-pipe", daemon=True).start()
+    return gone
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="live_worker")
     p.add_argument("--layer", required=True)
@@ -187,9 +212,10 @@ def main(argv=None):
         cc.eprint(f"live-clips: {CLIPS_ENV} and {DISCOVERY_ENV} are required")
         return 64
     w = Worker(a, HostLink(disc, token))
+    gone = watch_parent()
     period = 1.0 / float(w.live["fps"])
     backoff, next_flag, on = 1.0, 0.0, False
-    while True:
+    while not gone.is_set():  # a save in progress finishes first
         start = time.monotonic()
         if start >= next_flag:
             was, on = on, cc.flag_on(a.data_dir, FLAG)
@@ -197,7 +223,7 @@ def main(argv=None):
             if was != on:
                 cc.eprint(f"live-clips: {'on' if on else 'off'}")
         if not on:
-            time.sleep(FLAG_EVERY_SEC)
+            gone.wait(FLAG_EVERY_SEC)
             continue
         try:
             w.tick()
@@ -205,10 +231,12 @@ def main(argv=None):
         except cc.ClipError as e:
             w.stats["errors"] += 1
             cc.eprint(f"live-clips: {e}; retry in {backoff:g} s")
-            time.sleep(backoff)
+            gone.wait(backoff)
             backoff = min(MAX_BACKOFF_SEC, backoff * 2)
             continue
-        time.sleep(max(0.0, period - (time.monotonic() - start)))
+        gone.wait(max(0.0, period - (time.monotonic() - start)))
+    cc.eprint("live-clips: launcher gone; stopped")
+    return 0
 
 
 if __name__ == "__main__":

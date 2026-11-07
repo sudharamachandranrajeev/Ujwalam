@@ -39,6 +39,7 @@ import { startService } from './api/service.mjs';
 import { auditCommand } from './audit/cli.mjs';
 import { formatPriority, setLivePriority } from './priority.mjs';
 import { createCredentialStore, credentialProvider, DEFAULT_TARGET } from './streamerbot/credential.mjs';
+import { watchParent } from '../common/parent-pipe.mjs';
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -152,6 +153,7 @@ export async function serve(args, io = { out: (s) => console.log(s), signal: nul
     process.once('SIGINT', resolve);
     process.once('SIGTERM', resolve);
     io.signal?.addEventListener('abort', resolve);
+    watchParent(resolve); // the launcher died (even by a hard kill): stop like on Ctrl-C (D234)
   });
   await svc.stop();
   io.out('[serve] stopped; api.json removed');

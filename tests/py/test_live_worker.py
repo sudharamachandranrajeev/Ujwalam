@@ -130,6 +130,20 @@ class LiveWorkerTests(unittest.TestCase):
             os.environ.update(env)
 
 
+class ParentPipeTests(unittest.TestCase):
+    """D234: the worker stops when the launcher's stdin pipe closes."""
+
+    def test_no_marker_never_set(self):
+        import io
+        g = lw.watch_parent(stdin=io.BytesIO(b""), env={})
+        self.assertFalse(g.wait(0.2))
+
+    def test_eof_sets_gone(self):
+        import io
+        g = lw.watch_parent(stdin=io.BytesIO(b"x" * 100), env={"UJWALAM_PARENT_PIPE": "1"})
+        self.assertTrue(g.wait(2.0))
+
+
 if __name__ == "__main__":
     unittest.main()
 

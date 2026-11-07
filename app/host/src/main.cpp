@@ -53,6 +53,7 @@
 #include <fstream>
 #include <regex>
 #include <sstream>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -483,6 +484,8 @@ int wmain(int argc, wchar_t **wargv)
 					return e.what();
 				}
 			};
+			Outputs *outs = app.outputs.get();
+			edit.locked = [outs]() { return outs->live(); };
 		}
 		app.previews = std::make_unique<Previews>(headless, std::move(edit));
 		hlog::info("previews: %s", headless ? "OFF (headless)" : "on (second display only, never take focus)");
@@ -603,7 +606,54 @@ int wmain(int argc, wchar_t **wargv)
 					   app.config.hotkeys_enabled);
 			hlog::info("ready: rpc on 127.0.0.1:%u, discovery %s, log %s", (unsigned)server->port(),
 				   app.discovery_path.c_str(), app.log_path.c_str());
-			WaitForSingleObject(g_shutdown, INFINITE);
+			// Parent pipe (D234): started by the studio launcher with stdin as a pipe and UJWALAM_PARENT_PIPE=1.
+			// The pipe closes when the launcher dies, even by a hard kill that sends no signal. The host then shuts
+			// down cleanly, but only while no stream or recording runs: a supervisor crash never stops the stream
+			// or a recording (AGENTS.md), so it waits for them to end. The reader thread only signals an event; the
+			// outputs are checked here, on the main thread, before any teardown. The event is never closed: the
+			// detached reader may still hold it.
+			HANDLE parent_gone = nullptr;
+			{
+				char pv[4] = {};
+				if (GetEnvironmentVariableA("UJWALAM_PARENT_PIPE", pv, sizeof pv) == 1 && pv[0] == '1') {
+					parent_gone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+					HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+					if (parent_gone && in && in != INVALID_HANDLE_VALUE) {
+						std::thread([in, ev = parent_gone]() {
+							char b[64];
+							DWORD n = 0;
+							while (ReadFile(in, b, sizeof b, &n, nullptr) && n > 0) {
+							}
+							SetEvent(ev);
+						}).detach();
+						hlog::info("parent pipe: on (the host stops when the launcher is gone and nothing is live)");
+					}
+				}
+			}
+			bool gone = false;
+			for (;;) {
+				HANDLE hs[2] = {g_shutdown, parent_gone};
+				DWORD w = WaitForMultipleObjects(parent_gone ? 2 : 1, hs, FALSE, gone ? 5000 : INFINITE);
+				if (w == WAIT_OBJECT_0)
+					break;
+				if (w == WAIT_OBJECT_0 + 1) {
+					ResetEvent(parent_gone); // seen once; from now on a 5 s re-check
+					gone = true;
+				}
+				if (!gone)
+					continue;
+				if (!app.outputs->live() && !app.outputs->recording()) {
+					if (!app.shutting_down.exchange(true))
+						app.shutdown_reason = "launcher gone";
+					break;
+				}
+				static bool told = false;
+				if (!told) {
+					hlog::warn("launcher gone (parent pipe closed) while a stream or recording runs: kept running; "
+						   "the host stops when they end");
+					told = true;
+				}
+			}
 			hlog::info("shutdown (%s)", app.shutdown_reason.empty() ? "event" : app.shutdown_reason.c_str());
 			Sleep(150); // let the host.shutdown response reach the caller
 		}
