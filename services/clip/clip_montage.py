@@ -170,11 +170,12 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     return argv
 
 
-def match_reels(hits, ranking, cfg):
+def match_reels(hits, ranking, cfg, duration=None):
     """Won-match highlights (user decision 2026-11-07, D237): for each VICTORY (detector W1, signal true), every own
     kill of that match (the kill rule of step 1, streak or not), each [kill - preSec, kill + postSec] cut before a
     death, plus the VICTORY screen itself; no 60 s cap. The match runs from the previous match result (W1, either
-    word) or the start of the recording. A won match with no own kill gives no reel."""
+    word) or the start of the recording. A won match with no own kill gives no reel. Pieces end at `duration`
+    (the shorter of the H and V recordings) when it is given."""
     results = sorted((h for h in hits if h["detector"] == "W1" and h.get("signal") is True), key=lambda h: h["t"])
     kills, medals = _kill_events(hits, ranking, cfg)
     near, lead = float(cfg["medalMatchSec"]), float(cfg["medalLeadSec"])
@@ -190,7 +191,11 @@ def match_reels(hits, ranking, cfg):
             ks = [k for k in kills if start < k <= t]
             if ks:
                 ps = _pieces(ks, deaths, ranking, cfg)
+                if duration is not None:
+                    ps = [dict(p, end=min(p["end"], float(duration))) for p in ps]
                 end = float(r.get("tEnd") or t) + float(cfg["resultHoldSec"])
+                if duration is not None:
+                    end = min(end, float(duration))
                 ps.append({"start": round(t - float(cfg["resultLeadSec"]), 3), "end": round(end, 3), "kills": 0})
                 ps.sort(key=lambda p: p["start"])
                 merged = []

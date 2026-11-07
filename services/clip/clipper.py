@@ -403,8 +403,8 @@ def cmd_live_review(a):
 
 def cmd_montage(a):
     """Kill montages (clip_montage.py, data/clip/montage.json) from the detector hits of the H recording, cut from the
-    V recording of the same session -> DIR/montage/clips/<id>/montage-v.mp4 + DIR/montage/render.json
-    (then `validate --out DIR/montage`)."""
+    V recording of the same session -> DIR/montage/clips/<id>/montage-v.mp4 + DIR/montage/render.json +
+    DIR/montage/candidates.json (then `validate --out DIR/montage`; then the folder packages for posting)."""
     import clip_montage as mont
     ffmpeg, ffprobe = _tools(a)
     hits_path = a.hits or os.path.join(a.out, "detector-hits.jsonl")
@@ -427,7 +427,7 @@ def cmd_montage(a):
     os.makedirs(out, exist_ok=True)
     sts, _ = mont.streaks(hits, ranking, cfg)
     print(f"montage: {len(sts)} qualifying streak(s), {sum(len(s['kills']) for s in sts)} kill(s) in them")
-    reels = mont.match_reels(hits, ranking, cfg)  # won matches (W1 VICTORY), every own kill (D237)
+    reels = mont.match_reels(hits, ranking, cfg, min(info["duration"], vinfo["duration"]))  # won matches (W1 VICTORY), every own kill (D237)
     print(f"montage: {len(reels)} won-match reel(s)")
     jobs = [(f"M{i:02d}", m) for i, m in enumerate(plans, 1)] + [(f"W{i:02d}", m) for i, m in enumerate(reels, 1)]
     rows, failed = [], 0
@@ -454,6 +454,19 @@ def cmd_montage(a):
         "recording": os.path.basename(a.recording), "vRecording": os.path.basename(vrec), "encoder": encoder,
         "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
         "failed": failed, "clips": rows,
+    })
+    # candidates.json in the montage folder makes it a clip run folder for posting (services/posting packageRun):
+    # times are on the montage's own timeline (0 .. seconds); anchor = the first kill (cover frame); the source
+    # recording times are in `pieces`
+    pre = float(cfg["preSec"])
+    write_json_atomic(os.path.join(out, CANDIDATES), {
+        "tool": "clipper.montage", "toolVersion": TOOL_VERSION, "createdAt": _now(),
+        "recording": os.path.basename(a.recording),
+        "recordStartUtc": sig.recording_start(a.recording, a.record_start).isoformat().replace("+00:00", "Z"),
+        "candidates": [{"id": r["id"], "rank": i, "kind": "won-match" if r["id"].startswith("W") else "montage",
+                        "start": 0.0, "end": r["end"], "anchor": min(pre, r["end"]), "score": r["score"],
+                        "labels": r["labels"], "pieces": r["pieces"]}
+                       for i, r in enumerate((r for r in rows if r["files"]), 1)],
     })
     print(f"montage: {len(plans)} montage(s), {len(reels)} won-match reel(s), {failed} failed; "
           f"validate with: validate --out {out}")
@@ -530,6 +543,7 @@ def build_parser():
     s = sub.add_parser("montage"); common(s)
     s.add_argument("--hits"); s.add_argument("--montage-config")
     s.add_argument("--v-recording", type=os.path.abspath); s.add_argument("--encoder", default="auto")
+    s.add_argument("--record-start")
     s.set_defaults(fn=cmd_montage)
     s = sub.add_parser("live-review"); common(s, recording=False)
     s.add_argument("--saves", required=True, type=os.path.abspath, help="live clipper session folder (saves.jsonl)")

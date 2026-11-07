@@ -436,6 +436,37 @@ class EndToEndTests(unittest.TestCase):
             self.assertTrue(r["decode"]["ok"])
             self.assertEqual((r["facts"]["width"], r["facts"]["height"]), (1080, 1920))
 
+    def test_montage_writes_a_posting_run_folder(self):
+        """Won-match reel from fixture hits (two own kills, one VICTORY): rendered from the V recording, validated,
+        and candidates.json written so the montage folder packages for posting."""
+        d = os.path.join(self.td.name, "out-montage")
+        os.makedirs(d)
+        _write(os.path.join(d, "detector-hits.jsonl"), "".join(json.dumps(h) + "\n" for h in (
+            {"t": 3.0, "detector": "M5", "signal": True}, {"t": 5.0, "detector": "M5", "signal": True},
+            {"t": 9.0, "detector": "W1", "label": "VICTORY", "signal": True, "tEnd": 10.0})))
+        vrec = self.rec.replace("-h-", "-v-")
+        shutil.copyfile(self.rec, vrec)
+        try:
+            base = ["--data-dir", self.data_on]
+            self.assertEqual(clipper.main(base + ["montage", "--recording", self.rec, "--out", d,
+                                                  "--record-start", "2026-11-03T07:00:00Z", "--encoder", "libopenh264"]), 0)
+        finally:
+            os.remove(vrec)
+        out = os.path.join(d, "montage")
+        self.assertEqual(clipper.main(["--data-dir", self.data_on, "validate", "--out", out]), 0)
+        cand = cc.load_json(os.path.join(out, clipper.CANDIDATES))
+        self.assertEqual(cand["recordStartUtc"], "2026-11-03T07:00:00Z")
+        c = cand["candidates"]
+        self.assertEqual([(x["id"], x["kind"], x["rank"]) for x in c], [("W01", "won-match", 1)])
+        p = c[0]["pieces"]
+        self.assertEqual(p[0], {"start": 0.0, "end": 6.5, "kills": 2})
+        self.assertEqual((p[1]["start"], p[1]["kills"]), (8.5, 0))
+        self.assertAlmostEqual(p[1]["end"], 12.0, delta=0.05, msg="the VICTORY hold stops at the recording end")
+        self.assertEqual((c[0]["start"], c[0]["anchor"]), (0.0, 3.0))
+        self.assertAlmostEqual(c[0]["end"], 10.0, delta=0.05)
+        rep = cc.load_json(os.path.join(out, clipper.REPORT))
+        self.assertEqual([(r["id"], r["layout"], r["ok"]) for r in rep["results"]], [("W01", "montage-v", True)])
+
     def test_caption_burn_in(self):
         """Burns a fixture ASS through the libass subtitles filter and validates the file."""
         wd = os.path.join(self.td.name, "burn")

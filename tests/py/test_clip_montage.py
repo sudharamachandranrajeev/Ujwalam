@@ -119,6 +119,10 @@ class MatchReelTests(unittest.TestCase):
         h["signal"] = False
         self.assertEqual(mont.match_reels([kill(100), h], RANKING, CFG), [])
 
+    def test_reel_ends_at_the_recording_end(self):
+        r = mont.match_reels([kill(355), result(358)], RANKING, CFG, duration=359.0)[0]
+        self.assertEqual(r["pieces"], [{"start": 352.0, "end": 356.5, "kills": 1}, {"start": 357.5, "end": 359.0, "kills": 0}])
+
 
 if __name__ == "__main__":
     unittest.main()
