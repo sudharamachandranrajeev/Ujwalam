@@ -240,9 +240,11 @@ QWidget *MainWindow::buildLeft()
 			QJsonObject x;
 			x.insert(QStringLiteral("layer"), selected_);
 			x.insert(QStringLiteral("index"), to);
-			api_->host(QStringLiteral("layers.move"), layerArgs(x), [this](bool ok, const QJsonObject &, const QString &err) {
+			api_->host(QStringLiteral("layers.move"), layerArgs(x), [this](bool ok, const QJsonObject &b, const QString &err) {
 				if (!ok)
 					note(QStringLiteral("Move failed: ") + err);
+				else if (b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
+					return confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air" (D233)
 				loadLayers();
 			});
 			return;
@@ -579,7 +581,9 @@ void MainWindow::applyInspector()
 	QJsonObject x;
 	x.insert(QStringLiteral("layer"), selected_);
 	x.insert(QStringLiteral("placement"), patch);
-	api_->host(QStringLiteral("layers.setPlacement"), layerArgs(x), [this](bool ok, const QJsonObject &, const QString &err) {
+	api_->host(QStringLiteral("layers.setPlacement"), layerArgs(x), [this](bool ok, const QJsonObject &b, const QString &err) {
+		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
+			return confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air" (D233)
 		note(ok ? QStringLiteral("Applied.") : QStringLiteral("Not applied: ") + err);
 		loadLayers();
 	});

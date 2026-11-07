@@ -91,8 +91,10 @@ export const HOST_CALLS = Object.freeze({
   'scenes.activate': { schema: { scene: SCENE, canvas: OPT_CANVAS } },
   'layers.list': { schema: { scene: SCENE, canvas: OPT_CANVAS } },
   'layers.setVisible': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, visible: { type: 'bool', required: true } } },
-  'layers.move': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, index: { type: 'int', min: 0, max: 255, required: true } } },
-  'layers.setPlacement': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, placement: PLACEMENT } },
+  // liveConfirm: instant while nothing is live; while live, a layout change needs "yes, on air" (live-lock, D233).
+  // Scene switches, visibility and the mixer stay instant: they are the controls a live show needs.
+  'layers.move': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, index: { type: 'int', min: 0, max: 255, required: true } }, liveConfirm: true, summary: 'Change the layer order while live' },
+  'layers.setPlacement': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, placement: PLACEMENT }, liveConfirm: true, summary: 'Move or resize a layer while live' },
   // parent/x/y/width/height: the Qt shell embeds the preview in its window (decimal window handle, client pixels).
   'preview.open': { schema: { canvas: CANVAS, parent: { type: 'string', pattern: /^[1-9][0-9]{0,19}$/ }, x: { type: 'int', min: 0, max: 16384 }, y: { type: 'int', min: 0, max: 16384 }, width: { type: 'int', min: 160, max: 8192 }, height: { type: 'int', min: 90, max: 8192 } } },
   'preview.focus': { schema: { canvas: CANVAS } },
@@ -306,7 +308,8 @@ export function createStudioServer(opts) {
     if (previewBusy) return previewBusy;
     previewBusy = (async () => {
       try {
-        const want = !!flags && flags.isOn(PREVIEW_EDIT_FLAG);
+        // Off while live (live-lock, D233; the host also refuses a press while a stream output is live).
+        const want = !!flags && flags.isOn(PREVIEW_EDIT_FLAG) && hs.live !== true;
         if (typeof hs.previewEditing === 'boolean' && hs.previewEditing !== want) {
           try { await host.call('preview.setEditing', { enabled: want }); } catch { /* next poll */ }
         }
@@ -374,7 +377,7 @@ export function createStudioServer(opts) {
   function applyFlag(id, on) {
     const out = flags.set(id, on);
     // Preview mouse editing switches at once (off is instant safety); previewSync re-checks on every poll anyway.
-    if (id === PREVIEW_EDIT_FLAG && host.describe().kind === 'host') host.call('preview.setEditing', { enabled: on }).catch(() => {});
+    if (id === PREVIEW_EDIT_FLAG && host.describe().kind === 'host') host.call('preview.setEditing', { enabled: on && !live }).catch(() => {});
     broadcast('flags', { flags: out });
     return out;
   }
@@ -430,8 +433,8 @@ export function createStudioServer(opts) {
       const params = body.params ?? {};
       const bad = validate(spec.schema, params);
       if (bad) return json(res, 400, { error: bad });
-      if (spec.confirm) {
-        // Stream and recording changes need a typed phrase; while live, the on-air phrase.
+      if (spec.confirm || (live && spec.liveConfirm)) {
+        // Stream and recording changes need a typed phrase; while live, the on-air phrase (also for layout changes).
         const phrase = (live || spec.confirm === 'onair') ? 'yes, on air' : 'yes';
         const id = addPending({ kind: 'host', summary: spec.summary, phrase, method: body.method, params });
         if (!id) return json(res, 429, { error: 'too-many-pending' });
@@ -557,7 +560,9 @@ export function createStudioServer(opts) {
         }
         if (p.kind === 'host') {
           const out = await callHost(p.method, p.params);
-          return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null) });
+          // A layout change confirmed while live autosaves like an instant one (P5b).
+          const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, p.params) : false;
+          return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}) });
         }
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });
         return json(res, 200, await handleCoreOutcome(r, p.summary));

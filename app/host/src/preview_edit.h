@@ -84,6 +84,9 @@ struct Backend {
 	std::function<std::string(const std::string &canvas, const std::string &scene, const std::string &layer,
 				  const Rect &r)>
 		apply;
+	// true while any stream output is live (live-lock, D233): a press then selects nothing and starts no drag.
+	// Placement changes while live go through the control page's "yes, on air". Unset: never locked.
+	std::function<bool()> locked;
 };
 
 class Editor {

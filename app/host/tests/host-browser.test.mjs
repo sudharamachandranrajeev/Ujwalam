@@ -41,7 +41,7 @@ const PROJECT = {
 before(async () => {
   if (!haveRoot) return;
   mkdirSync(OUT, { recursive: true });
-  h = await launchHost({ dataDir: mkdtempSync(path.join(OUT, 'browser-')), overlay: true, project: path.join(HOST_DIR, 'projects', 'test-card.project.json') });
+  h = await launchHost({ dataDir: mkdtempSync(path.join(OUT, 'browser-')), overlay: true, project: path.join(HOST_DIR, 'projects', 'test-card.project.json'), extraArgs: ['--test-hooks'] });
   c = h.client;
 });
 
@@ -286,4 +286,17 @@ test('cam-pop mic feed: the named audio source reaches the rule as op mic (about
   const stats1 = await c.call('overlay.stats');
   assert.ok(stats1.campop.triggers > stats0.campop.triggers, 'the loud tone held over holdMs counted as a voice trigger');
   assert.equal(b.state, 'running');
+});
+
+test('preview mouse editing: a click goes through a full-canvas browser page to the layer below (D233)', { skip: !haveRoot && 'no overlay root' }, async () => {
+  await loadIntoHost(c, PROJECT);
+  await c.call('preview.setEditing', { enabled: true });
+  try {
+    // H 1280x720 in a 640x360 client: scale 0.5, no letterbox
+    const r = await c.call('preview.editSim', { canvas: 'H', width: 640, height: 360, steps: [{ event: 'down', x: 320, y: 180 }, { event: 'up', x: 320, y: 180 }] });
+    assert.equal(r.steps[0].layer, 'bg', 'the full-canvas browser layer gg on top is skipped; bg below is selected');
+    assert.equal(r.seq, 0, 'a click is not an edit');
+  } finally {
+    await c.call('preview.setEditing', { enabled: false });
+  }
 });

@@ -229,6 +229,11 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 			return false;
 		cur = sel_[canvas];
 	}
+	if (be_.locked && be_.locked()) {
+		std::lock_guard<std::mutex> l(m_);
+		sel_[canvas] = Sel(); // live: nothing selected, nothing moves
+		return true;
+	}
 	std::string scene;
 	std::vector<Item> items;
 	if (!be_.layers || !be_.layers(canvas, scene, items))

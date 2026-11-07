@@ -1235,8 +1235,15 @@ bool Studio::preview_items(const std::string &cv, std::string &sid, std::vector<
 		item.r.w = num("width");
 		item.r.h = num("height");
 		item.r.rot = num("rotation");
-		if (item.r.w > 0 && item.r.h > 0)
-			top_first.push_back(std::move(item));
+		if (item.r.w <= 0 || item.r.h <= 0)
+			continue;
+		// A browser page covering (nearly) the whole canvas is a transparent effect / atmosphere layer: a click
+		// goes through it to the layers below (D233). It stays editable from the inspector.
+		const char *sid_type = l.src && l.src->src ? obs_source_get_id(l.src->src) : nullptr;
+		if (sid_type && strcmp(sid_type, "browser_source") == 0 && c->w > 0 && c->h > 0 &&
+		    item.r.w * item.r.h >= 0.9 * (double)c->w * (double)c->h)
+			continue;
+		top_first.push_back(std::move(item));
 	}
 	return true;
 }

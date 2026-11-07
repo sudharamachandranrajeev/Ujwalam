@@ -101,11 +101,18 @@
     var r = inspectorPatch();
     if (r.bad) { setText($('insp-note'), 'Check the value of ' + r.bad + '.'); return; }
     if (!Object.keys(r.patch).length) { setText($('insp-note'), 'Nothing changed.'); return; }
-    guard(Api.host('layers.setPlacement', layerArgs({ layer: l.id, placement: r.patch })).then(function () {
+    guard(Api.host('layers.setPlacement', layerArgs({ layer: l.id, placement: r.patch })).then(function (res) {
+      // While live a layout change waits for the typed "yes, on air" (live-lock, D233).
+      if (res && res.verdict === 'confirm') { openConfirm(res.pending); setText($('insp-note'), 'Live: type the phrase to apply.'); return; }
       return loadLayers().then(function () { renderInspector(); setText($('insp-note'), 'Applied.'); });
     }));
   }
-  function move(l, to) { guard(Api.host('layers.move', layerArgs({ layer: l.id, index: to })).then(loadLayers)); }
+  function move(l, to) {
+    guard(Api.host('layers.move', layerArgs({ layer: l.id, index: to })).then(function (res) {
+      if (res && res.verdict === 'confirm') { openConfirm(res.pending); return; }
+      return loadLayers();
+    }));
+  }
   function loadScenes() {
     return Api.host('scenes.list').then(function (r) {
       // The host lists a scene once per canvas it is on; show one row per scene id.

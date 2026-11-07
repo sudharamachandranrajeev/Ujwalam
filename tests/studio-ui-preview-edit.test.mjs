@@ -42,13 +42,13 @@ async function until(fn, what, ms = 3000) {
 
 // A host that edits like the real one: editing switch, an edit log with a seq, host.status fields.
 function stubHost() {
-  const st = { editing: false, seq: 0, edits: [], calls: [] };
+  const st = { editing: false, seq: 0, edits: [], calls: [], live: false };
   return {
     st,
     describe: () => ({ kind: 'host', available: true }),
     call: async (m, p) => {
       st.calls.push([m, p]);
-      if (m === 'host.status') return { live: false, recording: false, previewEditing: st.editing, previewEditSeq: st.seq };
+      if (m === 'host.status') return { live: st.live, recording: false, previewEditing: st.editing, previewEditSeq: st.seq };
       if (m === 'preview.setEditing') { st.editing = p.enabled; return { enabled: p.enabled }; }
       if (m === 'preview.edits') return { seq: st.seq, truncated: false, edits: st.edits.filter((e) => e.seq > p.since) };
       return {};
@@ -136,5 +136,35 @@ test('the status snapshot names the newest host edit (Qt shell / page refresh th
       const j = JSON.parse(r.text);
       return j.host?.previewEdit?.layer === 'layer-logo' && j.host.previewEdit.canvas === 'h' && j.host.previewEdit.scene === 'scene-main';
     }, 'previewEdit in the status snapshot');
+  } finally { await c.srv.close(); }
+});
+
+test('live-lock (D233): mouse editing is switched off while live and back on after; a layout change while live needs "yes, on air" and then autosaves', async () => {
+  const c = await setup();
+  try {
+    c.flags.set(PREVIEW_EDIT_FLAG, true);
+    await until(() => c.host.st.editing === true, 'host switched on');
+    c.host.st.live = true;
+    await until(() => c.host.st.editing === false, 'switched off while live');
+    const s = await raw(c.port, { url: '/ui/api/session', headers: { cookie: c.cookie } });
+    const csrf = JSON.parse(s.text).csrf;
+    const post = (route, body) => raw(c.port, { method: 'POST', url: route, body: JSON.stringify(body),
+      headers: { cookie: c.cookie, origin: `http://127.0.0.1:${c.port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
+    const params = { scene: 'scene-main', canvas: 'h', layer: 'layer-cam', placement: { x: 11, y: 12, width: 640, height: 360 } };
+    const r = JSON.parse((await post('/ui/api/host', { method: 'layers.setPlacement', params })).text);
+    assert.equal(r.verdict, 'confirm', 'not applied at once while live');
+    assert.equal(r.pending.phrase, 'yes, on air');
+    assert.ok(!c.host.st.calls.some(([m]) => m === 'layers.setPlacement'), 'host not called before the phrase');
+    assert.equal(JSON.parse((await post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes' })).text).verdict, 'wrong-phrase');
+    const ok = JSON.parse((await post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes, on air' })).text);
+    assert.equal(ok.verdict, 'allow');
+    assert.equal(ok.saved, 'pending');
+    await until(() => placementOf(c.file, 'layer-cam').x === 11, 'saved after the on-air confirm');
+    const vis = JSON.parse((await post('/ui/api/host', { method: 'layers.setVisible', params: { scene: 'scene-main', layer: 'layer-cam', visible: false } })).text);
+    assert.notEqual(vis.verdict, 'confirm', 'visibility stays instant while live');
+    c.host.st.live = false;
+    await until(() => c.host.st.editing === true, 'back on after the stream');
+    const idle = JSON.parse((await post('/ui/api/host', { method: 'layers.setPlacement', params })).text);
+    assert.notEqual(idle.verdict, 'confirm', 'instant again when nothing is live');
   } finally { await c.srv.close(); }
 });
