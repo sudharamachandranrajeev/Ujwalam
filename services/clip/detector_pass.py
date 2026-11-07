@@ -70,6 +70,9 @@ def load_settings(game=None, path=None):
             raise ClipError(f"detector-pass.json games.{gid}.{k} must be a number >= 0")
     if s["fps"] <= 0 or s["fps"] > 10:
         raise ClipError("detector-pass.json fps must be in (0, 10]")
+    sb = s.setdefault("splitBySignal", [])
+    if not isinstance(sb, list) or not all(isinstance(x, str) and 0 < len(x) <= 32 for x in sb):
+        raise ClipError(f"detector-pass.json games.{gid}.splitBySignal must be a list of detector ids")
     s.setdefault("ocrRegions", "full")
     if s["ocrRegions"] not in OCR_REGION_MODES:
         raise ClipError(f"detector-pass.json games.{gid}.ocrRegions must be one of {', '.join(OCR_REGION_MODES)}")
@@ -200,12 +203,16 @@ def frame_hits(boxes, pack, names, settings, mode=None):
     return out
 
 
-def merge_hits(rows, gap):
+def merge_hits(rows, gap, split_by_signal=()):
     """rows: [{t, detector, label, ...}] sorted by t. Consecutive frames of one (detector, label) no more than gap
-    seconds apart become one instance (t = first frame, tEnd = last). signal = any frame signalled."""
+    seconds apart become one instance (t = first frame, tEnd = last). signal = any frame signalled.
+    split_by_signal: detectors that stay on screen most of a match (kill feeds, settings.splitBySignal). Their
+    signalled and unsignalled frames merge separately, so an own-kill line is its own short instance; merging them
+    together made one MP kill-feed instance of the whole recording (2026-11-07)."""
     open_, out = {}, []
+    split = set(split_by_signal)
     for r in sorted(rows, key=lambda r: r["t"]):
-        k = (r["detector"], r["label"])
+        k = (r["detector"], r["label"], bool(r["signal"]) if r["detector"] in split else None)
         cur = open_.get(k)
         if cur and r["t"] - cur["tEnd"] <= gap + 1e-6:
             cur["tEnd"] = r["t"]
@@ -614,7 +621,7 @@ def run_pass(recording, out_dir, settings, pack, names, layout, threads=g1_scan.
         if progress and st["frames"] % 300 == 0:
             progress(f"detect: {t:.0f} s, ocr {st['ocrFrames']}, skipped {st['diffGateSkips']}, "
                      f"{time.monotonic() - t0:.0f} s elapsed")
-    hits = merge_hits(rows, float(settings["mergeGapSec"]))
+    hits = merge_hits(rows, float(settings["mergeGapSec"]), settings.get("splitBySignal") or ())
     os.makedirs(out_dir, exist_ok=True)
     tmp = os.path.join(out_dir, HITS + f".{os.getpid()}.tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:

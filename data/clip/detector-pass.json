@@ -11,6 +11,7 @@
       "diffGate": 0.2,
       "nameMin": 0.8,
       "mergeGapSec": 2.5,
+      "splitBySignal": ["M5", "B1"],
       "roiSlack": 0.02,
       "ocrRegions": "rois",
       "roiPad": [0.04, 0.02],

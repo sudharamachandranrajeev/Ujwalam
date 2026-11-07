@@ -199,6 +199,15 @@ class MergeTests(unittest.TestCase):
                          [(10.0, 12.0, 3, "Triple Kill"), (11.0, 11.0, 1, "Fury Kill"), (20.0, 20.0, 1, "Triple Kill")])
         self.assertTrue(out[0]["signal"])
 
+    def test_split_by_signal_keeps_own_kill_feed_lines_short(self):
+        rows = [self.row(float(t), signal=False, why=["not_own_kill"]) for t in range(0, 60)]
+        rows[30] = self.row(30.0)
+        rows[31] = self.row(31.0)
+        out = dp.merge_hits(rows, 2.5, split_by_signal=[rows[0]["detector"]])
+        sig = [(r["t"], r["tEnd"]) for r in out if r["signal"]]
+        self.assertEqual(sig, [(30.0, 31.0)])
+        self.assertEqual(len(dp.merge_hits(rows, 2.5)), 1, "without the split: one whole-span instance")
+
     def test_signal_upgrade_clears_why(self):
         out = dp.merge_hits([self.row(1.0, signal=False, why=["no_name_in_roi"]), self.row(2.0)], 2.5)
         self.assertEqual((out[0]["signal"], out[0]["why"]), (True, []))
