@@ -76,6 +76,7 @@ private:
 	QString selected_;
 	QJsonArray scenes_, layers_, mixer_;
 	bool live_ = false, recording_ = false, meterBusy_ = false;
+	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
 
 	QListWidget *sceneList_ = nullptr;
 	QListWidget *layerList_ = nullptr;

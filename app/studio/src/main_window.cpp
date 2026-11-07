@@ -725,6 +725,16 @@ void MainWindow::pollStatus()
 				   : h.value(QStringLiteral("available")).toBool()   ? QStringLiteral("Host: up")
 										     : QStringLiteral("Host: down"));
 		pillCore_->setText(c.value(QStringLiteral("available")).toBool() ? QStringLiteral("Event core: up") : QStringLiteral("Event core: down"));
+		// A layer moved or resized with the mouse on the embedded preview (D230): select it, reload layers + inspector.
+		const QJsonObject pe = h.value(QStringLiteral("previewEdit")).toObject();
+		if (!pe.isEmpty()) {
+			const int seq = pe.value(QStringLiteral("seq")).toInt();
+			if (previewSeq_ >= 0 && seq != previewSeq_ && pe.value(QStringLiteral("scene")).toString() == activeScene_) {
+				selected_ = pe.value(QStringLiteral("layer")).toString();
+				loadLayers();
+			}
+			previewSeq_ = seq;
+		}
 		const QJsonObject ready = h.value(QStringLiteral("outputsReady")).toObject();
 		streamBtn_->setEnabled(ready.value(QStringLiteral("stream")).toBool());
 		recordBtn_->setEnabled(ready.value(QStringLiteral("record")).toBool());

@@ -113,6 +113,9 @@ const FLAG_SET_SCHEMA = { id: { type: 'string', pattern: /^[a-z][a-z0-9-]{0,47}$
 const NOTE_KEYS = ['id', 'text', 'tag', 'severity'];
 
 export const BOT_FLAG = 'bot-manager';
+// Mouse editing on the preview (P5, D230): the host does the editing; this server keeps the host's switch equal to the
+// flag and saves the host's committed edits (preview.edits) into the project file like inspector edits.
+export const PREVIEW_EDIT_FLAG = 'preview-edit';
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
 const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
@@ -224,6 +227,9 @@ export function createStudioServer(opts) {
   let lastSnapshot = null;
   let live = false;
   let lastImport = null; // { file, project, bases }: server side only, never sent to the page
+  let previewSeen = null; // last host preview edit seq handled (null: not read yet)
+  let previewBusy = null; // one previewSync at a time
+  let previewLast = null; // { seq, scene, canvas, layer } of the newest host preview edit, for the status snapshot
 
   const sec = (res) => {
     res.setHeader('Content-Security-Policy', CSP);
@@ -278,14 +284,52 @@ export function createStudioServer(opts) {
     try { hs = await host.call('host.status', {}); } catch { hs = null; }
     try { cs = core.describe().available ? await core.call('core.status', {}) : null; } catch { cs = null; }
     if (hs && typeof hs.live === 'boolean') live = hs.live;
+    if (hs) await previewSync(hs);
     const pick = (o, ks) => Object.fromEntries(ks.filter((k) => o && Object.hasOwn(o, k)).map((k) => [k, o[k]]));
     return {
       at: now(),
       host: { kind: h.kind, available: hs !== null, blockedOnHost: h.kind === 'fake',
-        ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady']) : {}) },
+        ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing']) : {}),
+        ...(previewLast ? { previewEdit: previewLast } : {}) },
       core: { available: cs !== null, ...(cs ? { liveState: typeof cs.live?.liveState === 'string' ? cs.live.liveState : null, panic: cs.live?.panic === true } : {}) },
     };
   }
+  // Host preview mouse edits (D230). Called with each host.status: (1) the host's editing switch follows flag
+  // preview-edit (a restarted host starts off and is switched on again here); (2) when previewEditSeq moved, the new
+  // edits are read with preview.edits and recorded into the project file through the same projectSync.record as an
+  // inspector layers.setPlacement (they already went through the host's layer_set_placement). The first read only
+  // notes the current seq: edits from before this server started are not replayed over newer saves. A host restart
+  // (seq went down) reads from 0. Pages and the Qt shell see the newest edit in the status snapshot (previewEdit) and
+  // as an SSE 'layers' event, and reload the layer list. Failures are ignored here and retried on the next poll.
+  async function previewSync(hs) {
+    if (host.describe().kind !== 'host') return;
+    if (previewBusy) return previewBusy;
+    previewBusy = (async () => {
+      try {
+        const want = !!flags && flags.isOn(PREVIEW_EDIT_FLAG);
+        if (typeof hs.previewEditing === 'boolean' && hs.previewEditing !== want) {
+          try { await host.call('preview.setEditing', { enabled: want }); } catch { /* next poll */ }
+        }
+        const seq = hs.previewEditSeq;
+        if (!Number.isSafeInteger(seq) || seq < 0) return;
+        if (previewSeen === null) { previewSeen = seq; return; }
+        if (seq < previewSeen) previewSeen = 0;
+        if (seq === previewSeen) return;
+        const r = await host.call('preview.edits', { since: previewSeen });
+        const edits = Array.isArray(r?.edits) ? r.edits : [];
+        for (const e of edits) {
+          if (!e || typeof e.scene !== 'string' || typeof e.layer !== 'string' || typeof e.canvas !== 'string' || !isPlain(e.placement)) continue;
+          const params = { scene: e.scene, canvas: e.canvas.toLowerCase(), layer: e.layer, placement: e.placement };
+          if (projectSync) projectSync.record('layers.setPlacement', params);
+          previewLast = { seq: e.seq, scene: e.scene, canvas: params.canvas, layer: e.layer };
+        }
+        if (edits.length) broadcast('layers', { source: 'preview', edit: previewLast });
+        previewSeen = Number.isSafeInteger(r?.seq) ? r.seq : seq;
+      } catch { /* host busy or gone: next poll */ }
+    })().finally(() => { previewBusy = null; }); // after the assignment, even when the body never awaited
+    return previewBusy;
+  }
+
   function broadcast(event, data) {
     const frame = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
     for (const c of sseClients) { if (!c.write(frame)) { /* slow client: dropped by the stall timer below */ } }
@@ -329,6 +373,8 @@ export function createStudioServer(opts) {
 
   function applyFlag(id, on) {
     const out = flags.set(id, on);
+    // Preview mouse editing switches at once (off is instant safety); previewSync re-checks on every poll anyway.
+    if (id === PREVIEW_EDIT_FLAG && host.describe().kind === 'host') host.call('preview.setEditing', { enabled: on }).catch(() => {});
     broadcast('flags', { flags: out });
     return out;
   }

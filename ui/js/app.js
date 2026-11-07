@@ -181,6 +181,13 @@
     pill($('st-host'), h.blockedOnHost ? 'BLOCKED-ON-HOST (fake)' : (h.available ? 'Host: up' : 'Host: down'), h.blockedOnHost ? 'blocked' : (h.available ? 'ok' : 'warn'));
     var banner = $('banner');
     banner.hidden = !h.blockedOnHost;
+    // A layer moved or resized with the mouse on a host preview (D230): select it and reload the list and inspector.
+    var pe = h.previewEdit;
+    if (pe && typeof pe.seq === 'number' && pe.seq !== state.previewSeq) {
+      var first = state.previewSeq === undefined;
+      state.previewSeq = pe.seq;
+      if (!first && pe.scene === state.activeScene && pe.canvas === state.canvas) { state.selected = pe.layer; loadLayers().catch(function () {}); }
+    }
     // When the backend flips between the fake and the real host, the scene ids change: reload the lists.
     if (state.wasBlocked !== undefined && state.wasBlocked !== !!h.blockedOnHost) { state.activeScene = null; loadScenes().then(loadMixer).catch(function () {}); }
     state.wasBlocked = !!h.blockedOnHost;
