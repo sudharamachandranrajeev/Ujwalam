@@ -1120,6 +1120,75 @@ json::Value Studio::layer_set_visible(const std::string &sid, const std::string 
 	return r;
 }
 
+// Inspector edit (P5a, 2026-11-06): merges `patch` (any of x, y, width, height, rotation, crop{left,top,right,bottom},
+// canvas pixels / degrees / source pixels) into the project v1 placement of every item of layer `lid` and applies it.
+// The whole patch is checked before anything changes; width/height stay >= 1 (hide a layer with setVisible instead).
+// Host test-format layers (no project placement) are refused. In memory only, like setVisible/move (dirty).
+json::Value Studio::layer_set_placement(const std::string &sid, const std::string &cv, const std::string &lid,
+					const json::Value &patch)
+{
+	const std::string what = "placement";
+	if (!patch.is_object() || patch.size() == 0)
+		throw Error(rpc::INVALID_PARAMS, "placement: give at least one of x, y, width, height, rotation, crop");
+	only_keys(patch, {"x", "y", "width", "height", "rotation", "crop"}, what);
+	for (const char *k : {"x", "y"})
+		get_num(patch, k, 0, -16384, 16384, what);
+	for (const char *k : {"width", "height"})
+		get_num(patch, k, 1, 1, 16384, what);
+	get_num(patch, "rotation", 0, -360, 360, what);
+	const json::Value *crop = patch.find("crop");
+	if (crop) {
+		if (!crop->is_object())
+			throw Error(rpc::INVALID_PARAMS, "placement: crop must be an object");
+		only_keys(*crop, {"left", "top", "right", "bottom"}, "crop");
+		for (const char *k : {"left", "top", "right", "bottom"})
+			get_num(*crop, k, 0, 0, 16384, "crop");
+	}
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	std::vector<Layer *> targets;
+	std::vector<std::string> cvs;
+	for (Scene *s : scenes_named(sid, cv))
+		for (auto &l : s->layers)
+			if (l.id == lid) {
+				if (l.placement.is_null())
+					throw Error(rpc::INVALID_PARAMS, "layer has no project placement");
+				targets.push_back(&l);
+				cvs.push_back(s->canvas);
+			}
+	if (targets.empty())
+		throw Error(rpc::INVALID_PARAMS, "no such layer");
+	json::Value done = json::Value::array();
+	json::Value last;
+	for (size_t i = 0; i < targets.size(); i++) {
+		Layer &l = *targets[i];
+		json::Value merged = l.placement;
+		for (auto &kv : patch.members()) {
+			if (kv.first != "crop") {
+				merged.set(kv.first, kv.second);
+				continue;
+			}
+			json::Value c = json::Value::object();
+			if (const json::Value *old = merged.find("crop"))
+				if (old->is_object())
+					c = *old;
+			for (auto &ck : kv.second.members())
+				c.set(ck.first, ck.second);
+			merged.set("crop", c);
+		}
+		l.placement = merged;
+		apply_placement(l);
+		done.push(cvs[i]);
+		last = merged;
+	}
+	dirty_ = true;
+	json::Value r = json::Value::object();
+	r.set("scene", sid);
+	r.set("layer", lid);
+	r.set("placement", last);
+	r.set("canvases", std::move(done));
+	return r;
+}
+
 std::vector<Studio::LayerRef> Studio::hide_browser_layers()
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);

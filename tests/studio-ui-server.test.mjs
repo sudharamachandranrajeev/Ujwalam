@@ -154,6 +154,10 @@ describe('mutating API', () => {
     assert.equal((await post(port, a, route, { method: 'mixer.setVolume', params: { id: 'scene-1/cam', db: 12 } })).status, 400);
     assert.equal((await post(port, a, route, { method: 'mixer.setVolume', params: { id: 'nocolon', db: -3 } })).status, 400);
     assert.equal((await post(port, a, route, { method: 'mixer.setVolume', params: { id: 'scene-1/cam', db: -3 } })).status, 200);
+    // inspector: nested placement patch, every field range-checked; no unknown keys, no empty patch
+    const sp = (placement) => post(port, a, route, { method: 'layers.setPlacement', params: { scene: 's', layer: 'l', placement } });
+    for (const bad of [{}, { width: 0 }, { x: 1e6 }, { opacity: 0.5 }, { crop: { left: -1 } }, { crop: { inner: 1 } }, { crop: {} }, { rotation: '5' }, []]) assert.equal((await sp(bad)).status, 400, JSON.stringify(bad));
+    assert.equal((await post(port, a, route, { method: 'layers.setPlacement', params: { scene: 's', layer: 'l' } })).status, 400, 'placement required');
     assert.ok(Object.keys(HOST_CALLS).every((k) => !/^(host|project|outputs|encoders)\./.test(k)));
   });
   test('stream start needs the typed phrase; the host is not called before it', async () => {

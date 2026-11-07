@@ -205,6 +205,9 @@ def read_hits(path, duration):
                         h[k] = r[k]
                 if r.get("role") in ("positive", "negative"):
                     h["role"] = r["role"]
+                te = r.get("tEnd")
+                if isinstance(te, (int, float)) and not isinstance(te, bool) and t <= te <= duration:
+                    h["tEnd"] = float(te)
                 w = r.get("weight")
                 if "weight" in r and (w is None or (isinstance(w, (int, float)) and not isinstance(w, bool))):
                     h["weight"] = w

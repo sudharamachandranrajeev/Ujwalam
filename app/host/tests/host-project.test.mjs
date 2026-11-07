@@ -257,6 +257,19 @@ test('project v1 render: H and V placements, duplicate item, shared source, laye
   assert.equal(clips[0].mixers, 2, 'track t2 is mixer bit 1');
   assert.equal(clips[0].name, 'Clip audio', 'mixer row named by the project audio source name');
 
+  // inspector (P5a): partial placement patch merges into the project placement; bad patches change nothing
+  const box0 = lh.layers.find((l) => l.id === 'box').placement;
+  const sp = await c.call('layers.setPlacement', { scene: 'main', canvas: 'H', layer: 'box', placement: { x: 11, width: 222, crop: { left: 3 } } });
+  assert.equal(sp.placement.x, 11);
+  assert.equal(sp.placement.width, 222);
+  assert.equal(sp.placement.y, box0.y, 'untouched fields kept');
+  assert.equal(sp.placement.crop.left, 3);
+  for (const bad of [{ width: 0 }, { opacity: 0.5 }, { crop: { left: -1 } }, {}]) {
+    await assert.rejects(c.call('layers.setPlacement', { scene: 'main', canvas: 'H', layer: 'box', placement: bad }), JSON.stringify(bad));
+  }
+  const after = (await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.find((l) => l.id === 'box').placement;
+  assert.deepEqual(after, sp.placement, 'a refused patch leaves the placement as it was');
+
   const RUNGS = [
     { id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 640, h: 360, fps: 30, bitrate: 2500, gopSec: 1 },
     { id: 'rv', canvas: 'V', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 360, h: 640, fps: 30, bitrate: 2500, gopSec: 1 }

@@ -128,9 +128,34 @@ def detector_events(hits, det_weights, approved=False):
     return out
 
 
-def build_candidates(events, duration, cfg):
-    """Events -> merged windows, scored and ranked. Returns at most cfg['top'] candidates."""
+def death_spans(hits, cfg):
+    """(start, end) of each streamer death: hits of the cfg['death']['detectors'] (e.g. the KILLCAM label). A death is a
+    hard negative: no clip may contain it (user decision 2026-11-07)."""
+    dets = set((cfg.get("death") or {}).get("detectors", []))
+    return sorted((h["t"], h.get("tEnd", h["t"])) for h in hits if h["detector"] in dets)
+
+
+def _cut_deaths(a, b, anchor_t, deaths, cfg):
+    """Keeps the part of [a, b] around the anchor that holds no death: the clip ends endBeforeSec before the next
+    death after the anchor and starts startAfterSec after the last death before it. None when nothing is left."""
+    d = cfg.get("death") or {}
+    before, after = float(d.get("endBeforeSec", 2.0)), float(d.get("startAfterSec", 1.0))
+    for ds, de in deaths:
+        if ds - before < anchor_t <= de + after:
+            return None  # the anchor itself is inside a death (killcam replay of the streamer's own death)
+        if anchor_t < ds and ds - before < b:
+            b = ds - before
+        elif de < anchor_t and de + after > a:
+            a = de + after
+    return (a, b) if b > a else None
+
+
+def build_candidates(events, duration, cfg, deaths=()):
+    """Events -> merged windows, scored and ranked. Returns at most cfg['top'] candidates. Kinds listed in
+    cfg['sumKinds'] add up inside a window (a kill chain scores more than one medal); other kinds count once, by
+    their strongest event. deaths: death_spans(); a candidate never contains one."""
     wins = cfg["windows"]
+    sum_kinds = set(cfg.get("sumKinds", []))
     lo_len, hi_len = float(cfg["clip"]["minSec"]), float(cfg["clip"]["maxSec"])
     spans = []
     attach = [e for e in events if e.get("attachOnly")]
@@ -153,18 +178,24 @@ def build_candidates(events, duration, cfg):
             merged.append(s)
     cands = []
     for a, b, evs in merged:
-        best_kind = {}
-        for e in evs:
-            v = e["w"] * e["strength"]
-            if v > best_kind.get(e["kind"], -1.0):
-                best_kind[e["kind"]] = v
-        score = sum(best_kind.values())
         anchor = max(evs, key=lambda e: (e["w"] * e["strength"], -e["t"]))
         a, b = _fit(a, b, anchor, duration, lo_len, hi_len, wins[anchor["win"]])
+        if deaths:
+            cut = _cut_deaths(a, b, anchor["t"], deaths, cfg)
+            if cut is None or cut[1] - cut[0] < lo_len:
+                continue  # too short once the death is cut out (user decision 2026-11-07)
+            a, b = cut
+            evs = [e for e in evs if a <= e["t"] <= b]
+        score = _score(evs, sum_kinds)
         reasons = [{"kind": e["kind"], "t": round(e["t"], 2), "weight": e["w"], "strength": round(e["strength"], 3),
                     **({"detail": e["detail"]} if e["detail"] else {})} for e in sorted(evs, key=lambda e: e["t"])]
         cands.append({"start": round(a, 2), "end": round(b, 2), "score": round(score, 4),
                       "anchor": round(anchor["t"], 2), "reasons": reasons})
+    # minScore keeps weak automatic windows out (e.g. loudness alone); an explicit request (marker, chat "clip it")
+    # always makes a clip
+    min_score = float(cfg.get("minScore", 0.0))
+    cands = [c for c in cands if c["score"] >= min_score
+             or any(r["kind"].startswith("marker.") or r["kind"] == "chat.intent" for r in c["reasons"])]
     cands.sort(key=lambda c: (-c["score"], c["start"]))
     kept = []
     for c in cands:  # a candidate that is mostly inside a better one adds nothing
@@ -186,6 +217,15 @@ def build_candidates(events, duration, cfg):
     for c in cands:
         c["reasons"].sort(key=lambda r: r["t"])
     return cands
+
+
+def _score(evs, sum_kinds):
+    per_kind = {}
+    for e in evs:
+        v = e["w"] * e["strength"]
+        k = e["kind"]
+        per_kind[k] = per_kind.get(k, 0.0) + v if k in sum_kinds else max(v, per_kind.get(k, -1.0))
+    return sum(per_kind.values())
 
 
 def _overlap(x, y):

@@ -7,6 +7,8 @@ Layouts (data/clip/layouts.json, build plan 4.10):
          cover its panel.
   fill   blurred fill: the whole source fitted in the frame over a blurred, cover-scaled copy (blurred at quarter
          size to keep the CPU cost low). gblur, not boxblur: boxblur is GPL-only and absent from LGPL ffmpeg builds.
+  canvas the studio's V canvas recording itself (input "v"): the clip looks exactly like the vertical stream scene
+         (design, overlays, blurred game layer); only fitted to the output frame (user decision 2026-11-07).
 Captions are burned with the libass `subtitles` filter. ffmpeg runs with cwd = the clip folder and a bare file
 name, so no Windows path ever needs filter escaping.
 
@@ -55,6 +57,9 @@ def _cover(w, h):
 def layout_graph(layout, iw, ih, ow, oh):
     """Returns the video filter graph from [0:v] to [vout] (without captions and final format)."""
     kind = layout["kind"]
+    if kind == "canvas":
+        return (f"[0:v]scale={ow}:{oh}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2,setsar=1[vout]")
     if kind == "crop":
         if iw * oh >= ih * ow:   # source wider than the output aspect: cut the sides
             cw, ch = _even(ih * ow / oh), _even(ih)

@@ -58,10 +58,11 @@ class ConfigTests(unittest.TestCase):
             with self.assertRaises(cc.ClipError):
                 dp.load_settings(game="nope", path=p)
 
-    def test_detector_weights_not_approved(self):
-        # The rule this pass depends on: detector hits weigh 0 until the user approves weights.
-        self.assertEqual(RANKING["detectorWeightsStatus"], "proposed")
-        self.assertEqual(RANKING["detectorWeights"], {})
+    def test_detector_weights_approval_recorded(self):
+        # Detector hits weigh 0 until the user approves weights; approved 2026-11-07 ('Streaks only').
+        self.assertEqual(RANKING["detectorWeightsStatus"], "approved")
+        self.assertIn("user 2026-11-07", RANKING["detectorWeightsApproved"])
+        self.assertEqual(RANKING["detectorWeights"]["M3"], 0, "single medals and Double Kill make no clip")
 
     def test_pack_weights_still_null(self):
         for d in PACK["detectors"]:
@@ -112,7 +113,7 @@ class WeightRuleTests(unittest.TestCase):
 
     def test_approved_weight_opens_and_scores(self):
         dev = rank.detector_events([dict(self.H, weight=0.5)], {}, approved=True)
-        c = rank.build_candidates(dev, 1000.0, RANKING)
+        c = rank.build_candidates(dev, 1000.0, {**RANKING, "minScore": 0})
         self.assertEqual(len(c), 1)
         self.assertAlmostEqual(c[0]["score"], 0.5)
         self.assertEqual((c[0]["start"], c[0]["end"]), (35.0, 58.0))  # detector window 15 s before, 8 s after
@@ -213,7 +214,7 @@ class SeamTests(unittest.TestCase):
                 f.write(json.dumps({"t": 6, "detector": "N1", "role": "bogus", "signal": "yes", "weight": "1"}) + "\n")
             hits, st = sig.read_hits(p, 100.0)
         self.assertEqual(hits[0], {"t": 5.0, "detector": "M3", "label": "Triple Kill", "signal": True,
-                                   "clipReason": True, "role": "positive", "weight": None})
+                                   "clipReason": True, "role": "positive", "weight": None, "tEnd": 6.0})
         self.assertEqual(hits[1], {"t": 6.0, "detector": "N1", "label": None})
         self.assertEqual(st, {"hits": 2, "bad": 0})
 
@@ -263,8 +264,11 @@ class CandidatesWithHitsTests(unittest.TestCase):
                                         "clipReason": True, "weight": None}) + "\n")
             with open(os.path.join(out, dp.SUMMARY), "w", encoding="utf-8") as f:
                 json.dump({"recording": os.path.basename(rec)}, f)
-            rc = clipper.main(["--data-dir", data, "candidates", "--recording", rec, "--markers", markers,
-                               "--record-start", "2026-11-03T07:00:00Z", "--out", out])
+            ranking = os.path.join(td, "ranking.json")  # the rule under test: weights not approved
+            with open(ranking, "w", encoding="utf-8") as f:
+                json.dump({**RANKING, "detectorWeightsStatus": "proposed", "detectorWeights": {}}, f)
+            rc = clipper.main(["--data-dir", data, "--ranking", ranking, "candidates", "--recording", rec,
+                               "--markers", markers, "--record-start", "2026-11-03T07:00:00Z", "--out", out])
             self.assertEqual(rc, 0)
             doc = cc.load_json(os.path.join(out, clipper.CANDIDATES))
         self.assertEqual(len(doc["candidates"]), 1)

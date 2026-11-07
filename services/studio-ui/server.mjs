@@ -77,6 +77,14 @@ const OPT_CANVAS = { type: 'enum', values: ['h', 'v'] };
 const CANVAS = { type: 'enum', values: ['h', 'v'], required: true };
 const SCENE = { type: 'string', pattern: ID, required: true };
 const LAYER = { type: 'string', pattern: ID, required: true };
+// Inspector patch (host layers.setPlacement): canvas pixels, degrees, crop in source pixels; same ranges as the host.
+const CROP_PX = { type: 'num', min: 0, max: 16384 };
+const PLACEMENT = { type: 'object', required: true, schema: {
+  x: { type: 'num', min: -16384, max: 16384 }, y: { type: 'num', min: -16384, max: 16384 },
+  width: { type: 'num', min: 1, max: 16384 }, height: { type: 'num', min: 1, max: 16384 },
+  rotation: { type: 'num', min: -360, max: 360 },
+  crop: { type: 'object', schema: { left: CROP_PX, top: CROP_PX, right: CROP_PX, bottom: CROP_PX } },
+} };
 // Names follow the host contract (docs/evidence/2026-10-29-v1-host-o1.md section 8).
 export const HOST_CALLS = Object.freeze({
   'scenes.list': { schema: {} },
@@ -84,6 +92,7 @@ export const HOST_CALLS = Object.freeze({
   'layers.list': { schema: { scene: SCENE, canvas: OPT_CANVAS } },
   'layers.setVisible': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, visible: { type: 'bool', required: true } } },
   'layers.move': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, index: { type: 'int', min: 0, max: 255, required: true } } },
+  'layers.setPlacement': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, placement: PLACEMENT } },
   'preview.open': { schema: { canvas: CANVAS } },
   'preview.focus': { schema: { canvas: CANVAS } },
   'preview.close': { schema: { canvas: CANVAS } },
@@ -140,6 +149,12 @@ export function validate(schema, p) {
       case 'num': if (typeof v !== 'number' || !Number.isFinite(v) || v < (d.min ?? 0) || v > (d.max ?? 1e9)) return `bad field ${k}`; break;
       case 'bool': if (typeof v !== 'boolean') return `bad field ${k}`; break;
       case 'enum': if (!d.values.includes(v)) return `bad field ${k}`; break;
+      case 'object': {
+        if (!isPlain(v) || Object.keys(v).length === 0) return `bad field ${k}`;
+        const e = validate(d.schema, v);
+        if (e) return `${k}: ${e}`;
+        break;
+      }
       default: return 'internal schema error';
     }
   }

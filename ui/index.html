@@ -54,6 +54,31 @@
       </div>
       <p id="preview-note" class="muted" role="status"></p>
     </div>
+    <section id="inspector" class="panel inspector" aria-label="Layer inspector">
+      <h2>Inspector</h2>
+      <p id="insp-empty" class="muted">Select a layer to edit its position, size and crop.</p>
+      <form id="insp-form" hidden>
+        <div class="insp-title"><strong id="insp-name"></strong> <span id="insp-canvas" class="muted"></span></div>
+        <fieldset><legend>Position and size (canvas pixels)</legend>
+          <label>X <input id="insp-x" type="number" step="1" min="-16384" max="16384"></label>
+          <label>Y <input id="insp-y" type="number" step="1" min="-16384" max="16384"></label>
+          <label>W <input id="insp-width" type="number" step="1" min="1" max="16384"></label>
+          <label>H <input id="insp-height" type="number" step="1" min="1" max="16384"></label>
+          <label>Rotation <input id="insp-rotation" type="number" step="0.1" min="-360" max="360"></label>
+        </fieldset>
+        <fieldset><legend>Crop (source pixels)</legend>
+          <label>Left <input id="insp-crop-left" type="number" step="1" min="0" max="16384"></label>
+          <label>Top <input id="insp-crop-top" type="number" step="1" min="0" max="16384"></label>
+          <label>Right <input id="insp-crop-right" type="number" step="1" min="0" max="16384"></label>
+          <label>Bottom <input id="insp-crop-bottom" type="number" step="1" min="0" max="16384"></label>
+        </fieldset>
+        <div class="insp-actions">
+          <button id="insp-apply" class="btn" type="submit">Apply</button>
+          <button id="insp-reset" class="btn btn-quiet" type="button">Undo changes</button>
+        </div>
+        <p id="insp-note" class="muted" role="status"></p>
+      </form>
+    </section>
   </main>
 
   <aside class="right">

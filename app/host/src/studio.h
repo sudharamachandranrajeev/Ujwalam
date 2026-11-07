@@ -69,6 +69,8 @@ public:
 	json::Value layer_add(const std::string &scene, const std::string &canvas, const json::Value &layer, int64_t index);
 	json::Value layer_remove(const std::string &scene, const std::string &canvas, const std::string &layer);
 	json::Value layer_set_visible(const std::string &scene, const std::string &canvas, const std::string &layer, bool visible);
+	json::Value layer_set_placement(const std::string &scene, const std::string &canvas, const std::string &layer,
+					const json::Value &patch);
 	json::Value layer_move(const std::string &scene, const std::string &canvas, const std::string &layer, int64_t index,
 			       const std::string &dir);
 

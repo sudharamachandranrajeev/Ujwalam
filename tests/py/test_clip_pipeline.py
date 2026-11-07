@@ -206,7 +206,7 @@ class RankTests(unittest.TestCase):
                 "win": "audio"},
                {"t": 400.0, "kind": "audio.loudness", "w": w["audio.loudness"], "strength": 0.2, "detail": {},
                 "win": "audio"}]
-        c = rank.build_candidates(ev, 1000.0, {**RANKING, "top": 2})
+        c = rank.build_candidates(ev, 1000.0, {**RANKING, "top": 2, "minScore": 0})
         self.assertEqual([x["id"] for x in c], ["c01", "c02"])
         self.assertEqual((c[0]["start"], c[0]["end"]), (70.0, 115.0))  # marker 30 s back, audio 10 s after
         self.assertAlmostEqual(c[0]["score"], 1.0 + 0.4 * 0.5)
@@ -217,7 +217,7 @@ class RankTests(unittest.TestCase):
         w = RANKING["weights"]
         ev = [{"t": float(t), "kind": "audio.loudness", "w": w["audio.loudness"], "strength": 1.0, "detail": {},
                "win": "audio"} for t in (30, 55, 80, 105, 130)]
-        c = rank.build_candidates(ev, 1000.0, RANKING)
+        c = rank.build_candidates(ev, 1000.0, {**RANKING, "minScore": 0})
         for x in c:
             self.assertLessEqual(x["end"] - x["start"], RANKING["clip"]["maxSec"] + 1e-6)
             self.assertGreaterEqual(x["end"] - x["start"], RANKING["clip"]["minSec"] - 1e-6)
@@ -227,6 +227,31 @@ class RankTests(unittest.TestCase):
         ev = rank.marker_events([{"t": 2.0, "source": "hotkey"}], RANKING["weights"])
         c = rank.build_candidates(ev, 8.0, RANKING)
         self.assertEqual((c[0]["start"], c[0]["end"]), (0.0, 8.0))
+
+    def test_kill_chain_sums_and_streaks_only(self):
+        hits = [{"t": t, "detector": "M3", "label": l, "signal": True, "role": "positive"}
+                for t, l in ((100.0, "Double Kill"), (103.0, "Triple Kill"), (106.0, "Fury Kill"), (400.0, "Double Kill"))]
+        ev = rank.detector_events(hits, RANKING["detectorWeights"], RANKING["detectorWeightsStatus"] == "approved")
+        c = rank.build_candidates(ev, 1000.0, RANKING)
+        self.assertEqual(len(c), 1, "a lone Double Kill makes no clip")
+        self.assertAlmostEqual(c[0]["score"], 3 + 4)
+        self.assertLessEqual(c[0]["start"], 100.0)
+
+    def test_death_ends_clip_before_killcam(self):
+        hits = [{"t": 100.0, "detector": "M3", "label": "Triple Kill", "signal": True},
+                {"t": 104.0, "tEnd": 109.0, "detector": "N1", "label": "KILLCAM", "role": "negative"},
+                {"t": 80.0, "tEnd": 84.0, "detector": "N1", "label": "KILLCAM", "role": "negative"}]
+        ev = rank.detector_events(hits, RANKING["detectorWeights"], True)
+        cfg = {**RANKING, "clip": {"minSec": 10, "maxSec": 60}}
+        c = rank.build_candidates(ev, 1000.0, cfg, rank.death_spans(hits, cfg))
+        self.assertEqual((c[0]["start"], c[0]["end"]), (85.0, 102.0))
+        short = rank.build_candidates(ev, 1000.0, {**cfg, "clip": {"minSec": 20, "maxSec": 60}},
+                                      rank.death_spans(hits, cfg))
+        self.assertEqual(short, [], "too short after the cut: dropped")
+
+    def test_marker_clip_kept_below_min_score(self):
+        ev = rank.marker_events([{"t": 50.0, "source": "hotkey"}], RANKING["weights"])
+        self.assertEqual(len(rank.build_candidates(ev, 1000.0, RANKING)), 1)
 
     def test_detector_weight_null_is_zero(self):
         ev = rank.detector_events([{"t": 10.0, "detector": "M3", "label": "x"}], {})
@@ -378,7 +403,7 @@ class EndToEndTests(unittest.TestCase):
 
     def test_run_end_to_end(self):
         out = os.path.join(self.td.name, "out")
-        self.assertEqual(clipper.main(self.args(self.data_on, out)), 0)
+        self.assertEqual(clipper.main(self.args(self.data_on, out, "--layouts", "full-crop,game-facecam,blurred-fill")), 0)
         cand = cc.load_json(os.path.join(out, clipper.CANDIDATES))
         self.assertEqual(cand["signals"]["markers"]["matched"], 1)
         self.assertTrue(cand["signals"]["audio"]["available"])
@@ -389,6 +414,24 @@ class EndToEndTests(unittest.TestCase):
         rep = cc.load_json(os.path.join(out, clipper.REPORT))
         self.assertEqual((rep["files"], rep["failed"]), (3, 0))
         self.assertEqual({r["layout"] for r in rep["results"]}, {"full-crop", "game-facecam", "blurred-fill"})
+        for r in rep["results"]:
+            self.assertTrue(r["decode"]["ok"])
+            self.assertEqual((r["facts"]["width"], r["facts"]["height"]), (1080, 1920))
+
+    def test_default_layout_cuts_the_v_recording(self):
+        out = os.path.join(self.td.name, "out-v")
+        self.assertNotEqual(clipper.main(self.args(self.data_on, out)), 0,
+                            "no V sibling: refused, never a silent H render")
+        vrec = self.rec.replace("-h-", "-v-")
+        shutil.copyfile(self.rec, vrec)
+        try:
+            self.assertEqual(clipper.v_recording(self.rec), vrec)
+            self.assertEqual(clipper.main(self.args(self.data_on, out)), 0)
+            rep = cc.load_json(os.path.join(out, clipper.REPORT))
+            self.assertEqual([r["layout"] for r in rep["results"]], ["stream-v"])
+            self.assertTrue(rep["results"][0]["decode"]["ok"])
+        finally:
+            os.remove(vrec)
         for r in rep["results"]:
             self.assertTrue(r["decode"]["ok"])
             self.assertEqual((r["facts"]["width"], r["facts"]["height"]), (1080, 1920))

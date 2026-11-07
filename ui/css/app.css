@@ -100,3 +100,10 @@ body:has(.banner:not([hidden])) .shell { height: calc(100% - 24px); }
 .flag-row .desc { display: block; }
 #report input[type="text"], #report textarea { width: 100%; box-sizing: border-box; background: var(--color-bg); color: var(--color-text); border: 1px solid var(--color-border); border-radius: var(--radius); padding: var(--space-2); font: inherit; margin-bottom: var(--space-2); }
 #report a { color: var(--color-accent); }
+.row.selected { outline: 1px solid var(--color-accent); }
+.row .name[role="button"] { cursor: pointer; }
+.inspector { margin-top: var(--space-4); border: 1px solid var(--color-border); border-radius: var(--radius); }
+.inspector fieldset { border: 1px solid var(--color-border); border-radius: var(--radius); margin: var(--space-2) 0; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.inspector label { display: flex; align-items: center; gap: var(--space-1); }
+.inspector input[type="number"] { width: 6.5em; }
+.insp-actions { display: flex; gap: var(--space-2); }

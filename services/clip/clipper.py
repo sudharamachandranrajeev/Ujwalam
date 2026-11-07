@@ -11,7 +11,7 @@
               -> DIR/candidates.json (times, scores, reasons, detectorHits; no chat text, no marker notes, no names)
               Without --hits, DIR/detector-hits.jsonl from `detect` on the same recording is used. Detector hits
               weigh 0 until ranking.json detectorWeightsStatus is "approved": listed and attached, never ranked.
-  render      --recording FILE --out DIR [--layouts a,b,c] [--only c01,c02] [--encoder auto|libopenh264|h264_nvenc]
+  render      --recording FILE --out DIR [--v-recording FILE] [--layouts a,b,c] [--only c01,c02] [--encoder auto|libopenh264|h264_nvenc]
               [--captions none|whisper-cli|faster-whisper] [--whisper-bin F --whisper-model F] [--language xx]
               -> DIR/clips/<id>/<layout>.mp4 (+ captions.ass), DIR/render.json
   validate    --out DIR [--no-decode]  -> DIR/report.json; exit 4 when any file fails
@@ -93,7 +93,8 @@ def cmd_candidates(a):
     events += aev
     dev = rank.detector_events(hits, cfg.get("detectorWeights", {}), approved)
     events += dev
-    cands = rank.build_candidates(events, dur, cfg)
+    deaths = rank.death_spans(hits, cfg)
+    cands = rank.build_candidates(events, dur, cfg, deaths)
     if hstats is not None:
         hstats = {**hstats, "file": os.path.basename(hits_path), "weightsStatus": cfg.get("detectorWeightsStatus"),
                   "rule": "a detector hit counts only when detectorWeightsStatus is 'approved'; until then weight 0, "
@@ -178,6 +179,18 @@ def cmd_detect(a):
 
 # ---------------------------------------------------------------- render
 
+def v_recording(h_path, given=None):
+    """The V canvas recording of the same session: --v-recording, else the sibling file whose name has '-v-' where
+    the H file has '-h-' (sinks record H and V from one start, e.g. practice-h-<ts>.mkv / practice-v-<ts>.mkv)."""
+    if given:
+        return given if os.path.isfile(given) else None
+    d, base = os.path.split(h_path)
+    if "-h-" not in base:
+        return None
+    cand = os.path.join(d, base.replace("-h-", "-v-", 1))
+    return cand if os.path.isfile(cand) else None
+
+
 def cmd_render(a):
     ffmpeg, ffprobe = _tools(a)
     doc = load_json(os.path.join(a.out, CANDIDATES))
@@ -186,11 +199,18 @@ def cmd_render(a):
     lay_doc = load_config("layouts", a.layouts_file)
     targets = load_config("targets", a.targets)
     frame = lay_doc["output"]
-    wanted = [x for x in (a.layouts or "").split(",") if x] or [x["id"] for x in lay_doc["layouts"]]
+    wanted = ([x for x in (a.layouts or "").split(",") if x] or lay_doc.get("default")
+              or [x["id"] for x in lay_doc["layouts"]])
     by_id = {x["id"]: x for x in lay_doc["layouts"]}
     missing = [x for x in wanted if x not in by_id]
     if missing:
         raise ClipError(f"unknown layout(s): {', '.join(missing)}")
+    sources = {"h": (a.recording, info)}
+    if any(by_id[x].get("input") == "v" for x in wanted):
+        vrec = v_recording(a.recording, a.v_recording)
+        if not vrec:
+            raise ClipError("layout needs the V canvas recording: none next to the H recording; give --v-recording")
+        sources["v"] = (vrec, media_info(ffprobe, vrec))
     only = {x for x in (a.only or "").split(",") if x}
     cands = [c for c in doc["candidates"] if not only or c["id"] in only]
     encoder = rnd.pick_encoder(a.encoder)
@@ -221,7 +241,8 @@ def cmd_render(a):
             lay = by_id[lid]
             t1 = time.monotonic()
             try:
-                name = rnd.render_variant(ffmpeg, a.recording, info, c, lay, frame, encoder, wd, capname)
+                src, sinfo = sources[lay.get("input", "h")]
+                name = rnd.render_variant(ffmpeg, src, sinfo, c, lay, frame, encoder, wd, capname)
             except ClipError as e:  # one failed variant never stops the others; validate reports it
                 errors.append({"layout": lid, "error": str(e)[-300:]})
                 failed += 1
@@ -302,7 +323,8 @@ def build_parser():
     def common(sp, recording=True):
         sp.add_argument("--out", required=True)
         if recording:
-            sp.add_argument("--recording", required=True)
+            # absolute: ffmpeg renders run in a work folder, where a relative path does not resolve
+            sp.add_argument("--recording", required=True, type=os.path.abspath)
 
     def cand_args(sp):
         sp.add_argument("--markers", action="append", default=[])
@@ -314,6 +336,8 @@ def build_parser():
     def render_args(sp):
         sp.add_argument("--layouts")
         sp.add_argument("--only")
+        sp.add_argument("--v-recording", type=os.path.abspath,
+                        help="V canvas recording for source-v layouts (default: the '-v-' sibling of --recording)")
         sp.add_argument("--encoder", default="auto")
         sp.add_argument("--captions", default="none", choices=caps.BACKENDS)
         sp.add_argument("--whisper-bin")

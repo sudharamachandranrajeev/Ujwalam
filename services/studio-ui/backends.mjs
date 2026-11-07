@@ -98,9 +98,13 @@ export function createFakeHost({ outputsReady = false } = {}) {
     { id: 'scene-1', name: 'Gameplay', canvas: 'H' }, { id: 'scene-2', name: 'Starting soon', canvas: 'H' }, { id: 'scene-3', name: 'Gameplay V', canvas: 'V' },
   ];
   const layers = {
-    'scene-1': [{ id: 'game', name: 'Game capture', visible: true }, { id: 'cam', name: 'Camera', visible: true }, { id: 'chat', name: 'Chat overlay', visible: false }], // host order: bottom first
-    'scene-2': [{ id: 'text', name: 'Title card', visible: true }],
-    'scene-3': [{ id: 'cam', name: 'Camera', visible: true }],
+    'scene-1': [
+      { id: 'game', name: 'Game capture', visible: true, placement: { visible: true, x: 0, y: 0, width: 1920, height: 1080 } },
+      { id: 'cam', name: 'Camera', visible: true, placement: { visible: true, x: 1440, y: 40, width: 440, height: 248 } },
+      { id: 'chat', name: 'Chat overlay', visible: false, placement: { visible: false, x: 40, y: 600, width: 480, height: 440 } },
+    ], // host order: bottom first
+    'scene-2': [{ id: 'text', name: 'Title card', visible: true, placement: { visible: true, x: 0, y: 0, width: 1920, height: 1080 } }],
+    'scene-3': [{ id: 'cam', name: 'Camera', visible: true, placement: { visible: true, x: 0, y: 0, width: 1080, height: 608 } }],
   };
   const mixer = [{ id: 'scene-1/cam', name: 'Camera', volumeDb: 0, muted: false }, { id: 'scene-1/game', name: 'Game', volumeDb: -6, muted: false }, { id: 'scene-2/text', name: 'Music', volumeDb: -18, muted: true }];
   const active = { H: 'scene-1', V: 'scene-3' };
@@ -114,7 +118,14 @@ export function createFakeHost({ outputsReady = false } = {}) {
         case 'host.status': return { fake: true, live: state.live, recording: state.recording, droppedFrames: 0, totalFrames: 0, fps: 0, cpuPct: Math.round(noise() * 10), gpuPct: Math.round(noise() * 5), outputsReady: { stream: outputsReady, record: outputsReady } };
         case 'scenes.list': return { scenes: scenes.map((s) => ({ ...s, active: active[s.canvas] === s.id, layers: layers[s.id].length })) };
         case 'scenes.activate': { const s = need(scenes.find((x) => x.id === p.scene), 'scene'); active[s.canvas] = s.id; return { ok: true }; }
-        case 'layers.list': { const sc = need(scenes.find((x) => x.id === p.scene), 'scene'); return { scene: sc.id, canvas: sc.canvas, layers: layers[sc.id].map((l) => ({ ...l })) }; }
+        case 'layers.list': { const sc = need(scenes.find((x) => x.id === p.scene), 'scene'); return { scene: sc.id, canvas: sc.canvas, layers: layers[sc.id].map((l) => structuredClone(l)) }; }
+        case 'layers.setPlacement': {
+          const l = need(need(layers[p.scene], 'scene').find((x) => x.id === p.layer), 'layer');
+          const { crop, ...rest } = p.placement;
+          Object.assign(l.placement, rest);
+          if (crop) l.placement.crop = { ...(l.placement.crop ?? {}), ...crop };
+          return { scene: p.scene, layer: p.layer, placement: structuredClone(l.placement) };
+        }
         case 'layers.setVisible': need(need(layers[p.scene], 'scene').find((l) => l.id === p.layer), 'layer').visible = p.visible; return { ok: true };
         case 'layers.move': {
           const arr = need(layers[p.scene], 'scene');

@@ -23,7 +23,24 @@
   "chat": { "windowSec": 20, "minMessages": 3, "ratio": 3.0, "intentPattern": "(?:^|\\W)(?:!clip\\b|clip\\s+(?:it|that|this)\\b)" },
   "audio": { "floorLufs": -70.0, "zThreshold": 2.5, "minSpread": 1.0, "minVoicedSec": 10 },
   "peaks": { "minGapSec": 30 },
-  "detectorWeights": {},
-  "detectorWeightsStatus": "proposed",
-  "top": 10
+  "detectorWeights": {
+    "M3": 0,
+    "M3:Triple Kill": 3, "M3:Fury Kill": 4,
+    "M3:Frenzy Kill": 5, "M3:Super Kill": 5, "M3:Merciless": 5, "M3:Ruthless": 5,
+    "M3:Mega Kill": 6, "M3:Ultra Kill": 6, "M3:Brutal": 6,
+    "M3:Nuclear": 6, "M3:Ultimate Terminator": 6, "M3:Relentless": 6,
+    "X1": 5, "K1": 3,
+    "M1": 0, "M2": 0, "M4": 0, "M5": 0, "B1": 0
+  },
+  "detectorWeightsStatus": "approved",
+  "detectorWeightsApproved": "user 2026-11-07 after reviewing 30 clips of the 2026-11-06 practice session: 'Streaks only' (Triple Kill and above; Double Kill, score pop-ups, single medals, MVP/Impact and BR feed 0). Ladder values Triple 3, Fury 4, Frenzy/Super/Merciless/Ruthless 5, Nuclear/Ultimate Terminator/Relentless 6 from the approved proposal; Mega Kill, Ultra Kill and Brutal placed in the top tier by the agent (UNVERIFIED tier). M5 0 until its whole-recording merge bug is fixed. Values unverified.",
+  "sumKinds": ["detector.M3", "detector.X1"],
+  "death": {
+    "detectors": ["N1"],
+    "endBeforeSec": 2.0,
+    "startAfterSec": 1.0,
+    "note": "Streamer death is a hard negative (user 2026-11-07): a clip ends endBeforeSec before the KILLCAM label and never starts inside one; a clip left shorter than clip.minSec is dropped. Offsets proposed, unverified."
+  },
+  "minScore": 3,
+  "top": 30
 }

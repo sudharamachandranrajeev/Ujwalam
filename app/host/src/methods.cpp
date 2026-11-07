@@ -403,6 +403,10 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Params q(p, {"scene", "canvas", "layer", "visible"});
 		return a.studio->layer_set_visible(q.str("scene", 64), canvas_opt(q), q.str("layer", 64), q.boolean("visible"));
 	});
+	add("layers.setPlacement", [&a](const json::Value &p) {
+		Params q(p, {"scene", "canvas", "layer", "placement"});
+		return a.studio->layer_set_placement(q.str("scene", 64), canvas_opt(q), q.str("layer", 64), q.obj("placement"));
+	});
 	add("layers.move", [&a](const json::Value &p) {
 		Params q(p, {"scene", "canvas", "layer", "index", "direction"});
 		bool hi = q.has("index"), hd = q.has("direction");

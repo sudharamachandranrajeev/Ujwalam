@@ -6,7 +6,7 @@
   var el = Dom.el, clear = Dom.clear, setText = Dom.setText;
   var $ = function (id) { return document.getElementById(id); };
 
-  var state = { canvas: 'h', scenes: [], activeScene: null, layers: [], mixer: [], status: null, pending: null };
+  var state = { canvas: 'h', scenes: [], activeScene: null, layers: [], selected: null, mixer: [], status: null, pending: null };
 
   // The host wraps lists ({scenes:[...]}, {layers:[...]}, {sources:[...]}); accept a bare array too.
   function unwrap(r, key) { return Array.isArray(r) ? r : ((r && Array.isArray(r[key])) ? r[key] : []); }
@@ -52,9 +52,58 @@
         var vis = el('button', { class: 'icon-btn', type: 'button', text: l.visible ? 'Hide' : 'Show', 'aria-label': (l.visible ? 'Hide ' : 'Show ') + l.name, onclick: function () { guard(Api.host('layers.setVisible', layerArgs({ layer: l.id, visible: !l.visible })).then(loadLayers)); } });
         var up = el('button', { class: 'icon-btn', type: 'button', text: 'Up', 'aria-label': 'Move ' + l.name + ' up', disabled: hi === n - 1, onclick: function () { move(l, hi + 1); } });
         var dn = el('button', { class: 'icon-btn', type: 'button', text: 'Dn', 'aria-label': 'Move ' + l.name + ' down', disabled: hi === 0, onclick: function () { move(l, hi - 1); } });
-        ul.appendChild(el('li', { class: 'row' + (l.visible ? '' : ' hidden-layer') }, [el('span', { class: 'name', text: l.name }), up, dn, vis]));
+        var name = el('span', { class: 'name', text: l.name, tabindex: '0', role: 'button', title: 'Edit in the inspector', 'aria-label': 'Edit ' + l.name + ' in the inspector' });
+        var pick = function () { state.selected = l.id; renderLayers(); renderInspector(); };
+        name.addEventListener('click', pick);
+        name.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+        ul.appendChild(el('li', { class: 'row' + (l.visible ? '' : ' hidden-layer') + (state.selected === l.id ? ' selected' : '') }, [name, up, dn, vis]));
       })(state.layers[n - 1 - d], n - 1 - d);
     }
+  }
+
+  // ---- inspector (P5a, 2026-11-06): position, size, rotation and crop of the selected layer (host layers.setPlacement).
+  // Only changed fields are sent. Layers without a project placement (host test format) are read-only here.
+  var INSP_NUM = ['x', 'y', 'width', 'height', 'rotation'];
+  var INSP_CROP = ['left', 'top', 'right', 'bottom'];
+  function selectedLayer() { return state.layers.filter(function (l) { return l.id === state.selected; })[0] || null; }
+  function renderInspector() {
+    var l = selectedLayer(), p = l && l.placement;
+    $('insp-empty').hidden = !!p;
+    $('insp-form').hidden = !p;
+    if (l && !p) setText($('insp-empty'), l.name + ' has no editable placement.');
+    else if (!l) setText($('insp-empty'), 'Select a layer to edit its position, size and crop.');
+    if (!p) return;
+    setText($('insp-name'), l.name);
+    setText($('insp-canvas'), (l.canvas || state.canvas).toUpperCase() + ' canvas' + (typeof l.width === 'number' && l.width ? ', source ' + l.width + 'x' + l.height : ''));
+    INSP_NUM.forEach(function (k) { $('insp-' + k).value = typeof p[k] === 'number' ? String(Math.round(p[k] * 10) / 10) : (k === 'rotation' ? '0' : ''); });
+    var c = p.crop || {};
+    INSP_CROP.forEach(function (k) { $('insp-crop-' + k).value = String(typeof c[k] === 'number' ? c[k] : 0); });
+    setText($('insp-note'), '');
+  }
+  function inspectorPatch() {
+    var l = selectedLayer(), p = (l && l.placement) || {}, c = p.crop || {}, patch = {}, crop = {}, bad = null;
+    INSP_NUM.forEach(function (k) {
+      var v = Number($('insp-' + k).value), old = typeof p[k] === 'number' ? p[k] : 0;
+      if (!isFinite(v) || $('insp-' + k).value === '' || !$('insp-' + k).checkValidity()) { bad = k; return; }
+      if (Math.abs(v - old) > 1e-6) patch[k] = v;
+    });
+    INSP_CROP.forEach(function (k) {
+      var v = Number($('insp-crop-' + k).value), old = typeof c[k] === 'number' ? c[k] : 0;
+      if (!isFinite(v) || !$('insp-crop-' + k).checkValidity()) { bad = 'crop ' + k; return; }
+      if (Math.abs(v - old) > 1e-6) crop[k] = v;
+    });
+    if (Object.keys(crop).length) patch.crop = crop;
+    return { patch: patch, bad: bad };
+  }
+  function applyInspector(ev) {
+    ev.preventDefault();
+    var l = selectedLayer(); if (!l) return;
+    var r = inspectorPatch();
+    if (r.bad) { setText($('insp-note'), 'Check the value of ' + r.bad + '.'); return; }
+    if (!Object.keys(r.patch).length) { setText($('insp-note'), 'Nothing changed.'); return; }
+    guard(Api.host('layers.setPlacement', layerArgs({ layer: l.id, placement: r.patch })).then(function () {
+      return loadLayers().then(function () { renderInspector(); setText($('insp-note'), 'Applied.'); });
+    }));
   }
   function move(l, to) { guard(Api.host('layers.move', layerArgs({ layer: l.id, index: to })).then(loadLayers)); }
   function loadScenes() {
@@ -79,7 +128,7 @@
   }
   function loadLayers() {
     if (!state.activeScene) { state.layers = []; renderLayers(); return Promise.resolve(); }
-    return Api.host('layers.list', layerArgs()).then(function (r) { state.layers = unwrap(r.result, 'layers'); renderLayers(); });
+    return Api.host('layers.list', layerArgs()).then(function (r) { state.layers = unwrap(r.result, 'layers'); renderLayers(); renderInspector(); });
   }
 
   // ---- mixer (volume/mute wired to the host API; meters polled from the host's mixer.list peakDb) ----
@@ -391,7 +440,12 @@
     call(p).then(function (r) { replacePost(r.post); setText($('posts-text'), 'Saved.'); })
       .catch(function (x) { setText($('posts-text'), 'Not done: ' + (x.message || 'error')); });
   }
+  function wireInspector() {
+    $('insp-form').addEventListener('submit', applyInspector);
+    $('insp-reset').addEventListener('click', renderInspector);
+  }
   function wirePosts() {
+    wireInspector();
     $('btn-posts').addEventListener('click', openPosts);
     $('btn-report').addEventListener('click', reportClick);
     $('posts-close').addEventListener('click', function () { $('posts').hidden = true; clear($('post-media')); });
