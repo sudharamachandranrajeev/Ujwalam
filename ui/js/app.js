@@ -32,6 +32,20 @@
   function showError(msg) { setText($('preview-note'), msg); }
   function guard(p) { return p.catch(function (e) { showError('Error: ' + (e && e.message ? e.message : 'failed')); }); }
 
+  // ---- undo / redo of layer edits (P5b, D238; the server keeps the history, refused while live) ----
+  function renderEdits(st) {
+    if (!st) return;
+    var u = $('btn-undo'), r = $('btn-redo');
+    u.disabled = !st.undo; r.disabled = !st.redo;
+    u.title = st.nextUndo ? 'Undo: ' + st.nextUndo + ' (Ctrl+Z)' : 'Undo (Ctrl+Z)';
+    r.title = st.nextRedo ? 'Redo: ' + st.nextRedo + ' (Ctrl+Y)' : 'Redo (Ctrl+Y)';
+  }
+  var EDIT_ERRORS = { 'live-locked': 'Undo is off while live.', 'nothing-to-undo': 'Nothing to undo.', 'nothing-to-redo': 'Nothing to redo.', 'edit-gone': 'That layer changed or is gone; the undo list was cleared.', 'host-unavailable': 'The studio host is not reachable.' };
+  function undoRedo(undo) {
+    (undo ? Api.undo() : Api.redo()).then(function (res) { renderEdits(res.edits); return loadLayers(); })
+      .catch(function (e) { showError(EDIT_ERRORS[e && e.message] || ('Error: ' + (e && e.message ? e.message : 'failed'))); Api.edits().then(renderEdits).catch(function () {}); });
+  }
+
   // ---- scenes and layers ----
   function renderScenes() {
     var ul = $('scene-list'); clear(ul);
@@ -497,6 +511,14 @@
     ['h', 'v'].forEach(function (c) { $('tab-' + c).addEventListener('click', function () { state.canvas = c; renderTabs(); loadLayers(); }); });
     $('confirm-ok').addEventListener('click', submitConfirm);
     $('confirm-cancel').addEventListener('click', cancelConfirm);
+    $('btn-undo').addEventListener('click', function () { undoRedo(true); });
+    $('btn-redo').addEventListener('click', function () { undoRedo(false); });
+    document.addEventListener('keydown', function (e) {
+      var t = e.target && e.target.tagName;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return; // text fields keep their own undo
+      var k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); undoRedo(true); } else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); undoRedo(false); }
+    });
     $('confirm-input').addEventListener('keydown', function (e) { if (e.key === 'Enter') submitConfirm(); if (e.key === 'Escape') cancelConfirm(); });
   }
 
@@ -505,8 +527,8 @@
     setInterval(function () { if (!$('bots').hidden) loadBots(); }, 15000); // each check lists processes: slow on purpose
     setInterval(pollMeters, 250); // the live-marker audio producer samples mixer.list at the same rate
     Api.session()
-      .then(function () { return Promise.all([loadScenes(), loadMixer(), loadFlags(), Api.status().then(applyStatus)]); })
-      .then(function () { Api.events(applyStatus, function (ok) { if (!ok) pill($('st-core'), 'Reconnecting...', 'warn'); }, function (d) { renderFlags(d.flags); }); })
+      .then(function () { return Promise.all([loadScenes(), loadMixer(), loadFlags(), Api.status().then(applyStatus), Api.edits().then(renderEdits)]); })
+      .then(function () { Api.events(applyStatus, function (ok) { if (!ok) pill($('st-core'), 'Reconnecting...', 'warn'); }, function (d) { renderFlags(d.flags); }, renderEdits); })
       .catch(function (e) { showError(e.status === 401 ? 'Session missing. Start the studio with npm run studio.' : 'Start-up failed: ' + (e && e.message ? e.message : 'could not reach the studio server')); });
   }
   start();

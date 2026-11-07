@@ -48,9 +48,13 @@
     ytUpload: function (id, confirm) { return request('POST', '/ui/api/posts/youtube/upload', { id: id, confirm: confirm }); },
     ytCheck: function (id) { return request('POST', '/ui/api/posts/youtube/check', { id: id }); },
     postOpen: function (id) { return request('POST', '/ui/api/posts/open', { id: id }); },
-    events: function (onStatus, onState, onFlags) {
+    edits: function () { return request('GET', '/ui/api/edits'); },
+    undo: function () { return request('POST', '/ui/api/edits/undo', {}); },
+    redo: function () { return request('POST', '/ui/api/edits/redo', {}); },
+    events: function (onStatus, onState, onFlags, onEdits) {
       var es = new EventSource('/ui/api/events');
       if (onFlags) es.addEventListener('flags', function (e) { try { onFlags(JSON.parse(e.data)); } catch (x) { /* ignore a bad frame */ } });
+      if (onEdits) es.addEventListener('edits', function (e) { try { onEdits(JSON.parse(e.data)); } catch (x) { /* ignore a bad frame */ } });
       es.addEventListener('status', function (e) { try { onStatus(JSON.parse(e.data)); } catch (x) { /* ignore a bad frame */ } });
       es.onopen = function () { onState(true); };
       es.onerror = function () { onState(false); };

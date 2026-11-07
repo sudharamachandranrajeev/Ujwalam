@@ -114,6 +114,7 @@ public:
 		uint64_t seq = 0;
 		std::string canvas, scene, layer;
 		Rect r;
+		Rect before; // the rectangle when the gesture began (UI server undo, D238)
 	};
 	uint64_t seq() const;
 	// Committed edits with seq > since (oldest first; the last 64 are kept). truncated: some were dropped.

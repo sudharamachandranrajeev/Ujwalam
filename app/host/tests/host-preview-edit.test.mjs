@@ -101,7 +101,8 @@ test('drag moves, snaps to the canvas edge (Alt: no snap), commits once through 
   const e = await c.call('preview.edits', { since: 0 });
   assert.equal(e.seq, 1);
   assert.equal(e.truncated, false);
-  assert.deepEqual(e.edits, [{ seq: 1, canvas: 'H', scene: 'main', layer: 'box', placement: { x: 200, y: 150, width: 200, height: 100 } }]);
+  assert.deepEqual(e.edits, [{ seq: 1, canvas: 'H', scene: 'main', layer: 'box', placement: { x: 200, y: 150, width: 200, height: 100 },
+    before: { x: before.x, y: before.y, width: before.width, height: before.height } }], 'before = the rectangle when the press began (undo, D238)');
   assert.equal((await c.call('host.status')).previewEditSeq, 1);
 
   // left edge 200 -> 10 (within 8 screen px = 16 canvas px of 0): snaps to 0; with Alt it stays at 10

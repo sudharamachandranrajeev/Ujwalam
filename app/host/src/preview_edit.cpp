@@ -351,6 +351,7 @@ bool Editor::up(const std::string &canvas, const View &v, double sx, double sy, 
 		e.scene = s.scene;
 		e.layer = s.layer;
 		e.r = s.r;
+		e.before = s.start;
 		edits_.push_back(e);
 		while (edits_.size() > kKeepEdits)
 			edits_.pop_front();
@@ -467,6 +468,7 @@ json::Value Editor::edits(uint64_t since) const
 		o.set("scene", e.scene);
 		o.set("layer", e.layer);
 		o.set("placement", rect_json(e.r));
+		o.set("before", rect_json(e.before));
 		a.push(std::move(o));
 	}
 	uint64_t oldest = edits_.empty() ? seq_ + 1 : edits_.front().seq;

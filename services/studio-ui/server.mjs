@@ -34,6 +34,7 @@ import { createYoutubeAuth } from '../posting/oauth.mjs';
 import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, loadRules, planAuto } from '../posting/auto-post.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
+import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 
@@ -68,6 +69,7 @@ const digest = (s) => createHash('sha256').update(String(s), 'utf8').digest();
 const sameSecret = (a, b) => timingSafeEqual(digest(a), digest(b));
 const newId = (n = 32) => randomBytes(n).toString('hex');
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
+const pickKeys = (o, ks) => Object.fromEntries(ks.filter((k) => Object.hasOwn(o, k) && Number.isFinite(o[k])).map((k) => [k, o[k]]));
 
 // Calls the page may make on the host. write: true marks a studio write. confirm: when set, the call is not run until
 // the human types the phrase (live-aware). Everything else the page sends is refused. Schema: see validate().
@@ -181,6 +183,8 @@ export function createStudioServer(opts) {
   const { core, host } = opts;
   // P5b autosave of layer edits into the project file (project-sync.mjs); null: edits stay live-only.
   const projectSync = opts.projectSync ?? null;
+  // Undo / redo of layer edits (P5b, D238): in memory, newest 50; inspector, layer-list and preview-mouse edits.
+  const history = opts.history ?? createEditHistory();
   // Feature flags (D149) and the post-stream feedback form (D150). opts.flags / opts.feedback are test seams.
   const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir }) : null);
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
@@ -324,6 +328,7 @@ export function createStudioServer(opts) {
           if (!e || typeof e.scene !== 'string' || typeof e.layer !== 'string' || typeof e.canvas !== 'string' || !isPlain(e.placement)) continue;
           const params = { scene: e.scene, canvas: e.canvas.toLowerCase(), layer: e.layer, placement: e.placement };
           if (projectSync) projectSync.record('layers.setPlacement', params);
+          if (isPlain(e.before)) remember('layers.setPlacement', params, { placement: pickKeys(e.before, Object.keys(e.placement)) });
           previewLast = { seq: e.seq, scene: e.scene, canvas: params.canvas, layer: e.layer };
         }
         if (edits.length) broadcast('layers', { source: 'preview', edit: previewLast });
@@ -342,6 +347,15 @@ export function createStudioServer(opts) {
   }
 
   // Host call with a retry on CONFLICT (-32009) for project.load.
+  // Undo history (D238): the layer's value before an edit, read from the host just before the call. A failed read
+  // only means the edit is not undoable; the edit itself goes ahead.
+  async function readBefore(method, params) {
+    if (!UNDOABLE.includes(method)) return null;
+    try { return beforeOf(method, params, await host.call('layers.list', { scene: params.scene, ...(params.canvas ? { canvas: params.canvas } : {}) })); } catch { return null; }
+  }
+  function remember(method, params, before) {
+    if (before && history.record({ method, scene: params.scene, canvas: params.canvas, layer: params.layer, before, after: afterOf(method, params) })) broadcast('edits', history.state());
+  }
   async function callHost(method, params) {
     const waits = method === 'project.load' ? limits.loadRetryMs : [];
     for (let i = 0; ; i++) {
@@ -392,6 +406,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/status') return json(res, 200, lastSnapshot ?? await snapshot());
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
+    if (req.method === 'GET' && route === '/ui/api/edits') return json(res, 200, history.state());
     if (req.method === 'GET' && route === '/ui/api/feedback') return json(res, 200, { moments: feedback.list() });
     if (route === '/ui/api/report-url') {
       if (!reportOn()) return json(res, 404, { error: 'report-button-off' });
@@ -427,6 +442,28 @@ export function createStudioServer(opts) {
     const body = await readBody(req, res);
     if (body === null) return undefined;
 
+    if (route === '/ui/api/edits/undo' || route === '/ui/api/edits/redo') {
+      // Not while live (D238): a live layout change needs the typed on-air phrase, so undo there is the inspector's
+      // job. Fresh host.status, fail closed.
+      let hs = null;
+      try { hs = await host.call('host.status', {}); } catch { hs = null; }
+      if (!hs || hs.live !== false) return json(res, 409, { error: hs ? 'live-locked' : 'host-unavailable', edits: history.state() });
+      const undo = route.endsWith('/undo');
+      const e = undo ? history.peekUndo() : history.peekRedo();
+      if (!e) return json(res, 409, { error: undo ? 'nothing-to-undo' : 'nothing-to-redo', edits: history.state() });
+      const params = paramsOf(e, undo ? 'before' : 'after');
+      try { await host.call(e.method, params); } catch (err) {
+        // The layer or scene is gone (or the host refused): this edit cannot be undone any more; drop the history.
+        history.clear();
+        broadcast('edits', history.state());
+        return json(res, 409, { error: 'edit-gone', detail: String(err?.code ?? err?.message ?? 'error').slice(0, 80), edits: history.state() });
+      }
+      if (undo) history.commitUndo(); else history.commitRedo();
+      const saved = projectSync && host.describe().kind === 'host' ? projectSync.record(e.method, params) : false;
+      broadcast('edits', history.state());
+      broadcast('layers', { source: undo ? 'undo' : 'redo', edit: { scene: e.scene, canvas: e.canvas ?? null, layer: e.layer } });
+      return json(res, 200, { ok: true, method: e.method, scene: e.scene, layer: e.layer, edits: history.state(), ...(saved ? { saved: 'pending' } : {}) });
+    }
     if (route === '/ui/api/host') {
       const spec = typeof body.method === 'string' && Object.hasOwn(HOST_CALLS, body.method) ? HOST_CALLS[body.method] : null;
       if (!spec) return json(res, 400, { error: 'unknown-method' });
@@ -441,7 +478,9 @@ export function createStudioServer(opts) {
         return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
       }
       let result;
+      const before = await readBefore(body.method, params);
       try { result = await host.call(body.method, params) ?? null; } catch (e) { return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+      remember(body.method, params, before);
       // P5b autosave: only after the host accepted the edit; the real host only (the fake has no project file).
       const saved = projectSync && host.describe().kind === 'host' ? projectSync.record(body.method, params) : false;
       return json(res, 200, saved ? { result, saved: 'pending' } : { result });
@@ -559,7 +598,9 @@ export function createStudioServer(opts) {
           return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, forced: r.forced === true, bots: await bots.statusAll() });
         }
         if (p.kind === 'host') {
+          const before = await readBefore(p.method, p.params);
           const out = await callHost(p.method, p.params);
+          remember(p.method, p.params, before);
           // A layout change confirmed while live autosaves like an instant one (P5b).
           const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, p.params) : false;
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}) });
