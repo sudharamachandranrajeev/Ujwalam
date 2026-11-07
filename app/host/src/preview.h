@@ -8,9 +8,13 @@
 // only on a second display: the laptop's built-in panel when that is not the main display, else the first
 // non-main display; x/y are clamped into that display's work area. With one display, or when headless
 // (--headless / UJWALAM_HEADLESS=1, used by every test run), open() refuses with CONFLICT and no window exists.
+//
+// Mouse editing (P5, D230, flag preview-edit): clicks in a preview select, move and resize layers (preview_edit.h).
+// The window takes mouse capture while a drag runs (SetCapture never activates or focuses it, D191).
 #pragma once
 
 #include "json.h"
+#include "preview_edit.h"
 
 #include <condition_variable>
 #include <cstdint>
@@ -22,8 +26,11 @@
 
 class Previews {
 public:
-	explicit Previews(bool headless = false);
+	// edit: the studio hooks for mouse editing on the preview (preview_edit.h; off until set_enabled).
+	explicit Previews(bool headless = false, pedit::Backend edit = {});
 	~Previews();
+	// Mouse editing (flag preview-edit). Usable headless too (preview.editSim drives it without a window).
+	pedit::Editor &editor() { return editor_; }
 
 	struct OpenArgs {
 		std::string canvas; // "H" | "V"
@@ -46,6 +53,7 @@ public:
 
 private:
 	bool headless_ = false;
+	pedit::Editor editor_;
 	std::thread ui_;
 	unsigned long ui_tid_ = 0;
 	std::mutex m_;

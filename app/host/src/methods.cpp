@@ -147,6 +147,10 @@ json::Value host_status_json(App &a)
 	rp.set("V", a.outputs->replay_running("V"));
 	r.set("replayRunning", std::move(rp));
 	r.set("panic", a.panic ? a.panic->engaged() : false);
+	// Preview mouse editing (D230): the UI server compares previewEditing with flag preview-edit and reads
+	// preview.edits when previewEditSeq moves (autosave + inspector refresh).
+	r.set("previewEditing", a.previews ? a.previews->editor().enabled() : false);
+	r.set("previewEditSeq", a.previews ? (int64_t)a.previews->editor().seq() : (int64_t)0);
 	return r;
 }
 
@@ -453,6 +457,74 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 	add("preview.list", [&a](const json::Value &p) {
 		(void)Params(p, {});
 		return a.previews->list();
+	});
+	// Mouse editing on the preview (P5, D230; preview_edit.h). preview.setEditing follows flag preview-edit (the UI
+	// server calls it when the flag and host.status previewEditing differ; off is instant). preview.edits lists the
+	// placements committed by mouse releases after `since` (they went through layer_set_placement already; the UI
+	// server autosaves them like inspector edits). Live: no extra gate here, as for layers.setPlacement (D230).
+	add("preview.setEditing", [&a](const json::Value &p) {
+		Params q(p, {"enabled"});
+		bool on = q.boolean("enabled");
+		if (on != a.previews->editor().enabled())
+			hlog::info("preview mouse editing %s", on ? "ON" : "off");
+		a.previews->editor().set_enabled(on);
+		json::Value r = json::Value::object();
+		r.set("enabled", on);
+		return r;
+	});
+	add("preview.edits", [&a](const json::Value &p) {
+		Params q(p, {"since"});
+		return a.previews->editor().edits((uint64_t)q.int_or("since", 0, 0, INT64_MAX));
+	});
+	// preview.editSim {canvas, width, height, steps: [{event: down|move|up|cancel, x, y, shift?, alt?}]}: runs the
+	// window procedure's editor calls for a preview of width x height client px, without a window (headless tests).
+	// Returns the selection after each step and the edit seq. --test-hooks only.
+	add("preview.editSim", [&a](const json::Value &p) {
+		Params q(p, {"canvas", "width", "height", "steps"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "preview.editSim needs a host started with --test-hooks");
+		std::string canvas = canvas_param(q);
+		uint32_t cw = 0, ch = 0, fps = 0;
+		if (!a.studio->canvas_size(canvas, cw, ch, fps))
+			throw Error(rpc::CONFLICT, "canvas " + canvas + " does not exist");
+		pedit::View v = pedit::fit_view((double)q.integer("width", 16, 8192), (double)q.integer("height", 16, 8192), cw, ch);
+		const json::Value &steps = q.arr("steps");
+		if (steps.size() > 256)
+			throw Error(rpc::INVALID_PARAMS, "too many steps");
+		pedit::Editor &ed = a.previews->editor();
+		json::Value out = json::Value::array();
+		for (auto &st : steps.as_array()) {
+			Params s(st, {"event", "x", "y", "shift", "alt"});
+			std::string ev = s.str("event", 8);
+			double x = s.num_or("x", 0, -16384, 16384), y = s.num_or("y", 0, -16384, 16384);
+			pedit::Mods m;
+			m.shift = s.bool_or("shift", false);
+			m.alt = s.bool_or("alt", false);
+			bool used = false;
+			if (ev == "down")
+				used = ed.down(canvas, v, x, y, m);
+			else if (ev == "move")
+				used = ed.move(canvas, v, x, y, m);
+			else if (ev == "up")
+				used = ed.up(canvas, v, x, y, m);
+			else if (ev == "cancel")
+				ed.cancel(canvas);
+			else
+				throw Error(rpc::INVALID_PARAMS, "event must be down, move, up or cancel");
+			json::Value o = ed.selection_json(canvas);
+			o.set("used", used);
+			out.push(std::move(o));
+		}
+		json::Value r = json::Value::object();
+		r.set("steps", std::move(out));
+		r.set("seq", (int64_t)ed.seq());
+		json::Value view = json::Value::object();
+		view.set("x", v.vx);
+		view.set("y", v.vy);
+		view.set("width", v.vw);
+		view.set("height", v.vh);
+		r.set("view", std::move(view));
+		return r;
 	});
 
 	// ---- mixer

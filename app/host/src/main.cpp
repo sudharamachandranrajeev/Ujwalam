@@ -468,7 +468,23 @@ int wmain(int argc, wchar_t **wargv)
 		hlog::info("real stream targets %s", app.allow_live ? "ALLOWED (--allow-live)" : "off (loopback only)");
 		hlog::info("twitch bandwidth test %s",
 			   app.twitch_bandwidth_test ? "ON (--twitch-bandwidth-test: twitch sinks are not broadcast)" : "off");
-		app.previews = std::make_unique<Previews>(headless);
+		pedit::Backend edit; // preview mouse editing (D230): the same Studio calls as layers.list / layers.setPlacement
+		{
+			Studio *st = app.studio.get();
+			edit.layers = [st](const std::string &canvas, std::string &scene, std::vector<pedit::Item> &items) {
+				return st->preview_items(canvas, scene, items);
+			};
+			edit.apply = [st](const std::string &canvas, const std::string &scene, const std::string &layer,
+					  const pedit::Rect &r) -> std::string {
+				try {
+					st->layer_set_placement(scene, canvas, layer, pedit::rect_json(r));
+					return "";
+				} catch (const std::exception &e) {
+					return e.what();
+				}
+			};
+		}
+		app.previews = std::make_unique<Previews>(headless, std::move(edit));
 		hlog::info("previews: %s", headless ? "OFF (headless)" : "on (second display only, never take focus)");
 		pc.system_file = app.config.core_system_file;
 		bool core_ready = !pc.system_file.empty() && rpc::is_token(pc.token);

@@ -1207,6 +1207,40 @@ json::Value Studio::layer_set_placement(const std::string &sid, const std::strin
 	return r;
 }
 
+bool Studio::preview_items(const std::string &cv, std::string &sid, std::vector<pedit::Item> &top_first) const
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	top_first.clear();
+	sid.clear();
+	const Canvas *c = canvas(cv);
+	if (!c || c->active.empty() || format_ == TEST_FORMAT)
+		return false;
+	const Scene *s = scene(c->active, cv);
+	if (!s)
+		return false;
+	sid = s->id;
+	for (auto it = s->layers.rbegin(); it != s->layers.rend(); ++it) {
+		const Layer &l = *it;
+		if (l.placement.is_null() || !l.item || !obs_sceneitem_visible(l.item))
+			continue;
+		const json::Value &p = l.placement;
+		auto num = [&p](const char *k) {
+			const json::Value *v = p.find(k);
+			return v && v->is_number() ? v->as_double() : 0.0;
+		};
+		pedit::Item item;
+		item.id = l.id;
+		item.r.x = num("x");
+		item.r.y = num("y");
+		item.r.w = num("width");
+		item.r.h = num("height");
+		item.r.rot = num("rotation");
+		if (item.r.w > 0 && item.r.h > 0)
+			top_first.push_back(std::move(item));
+	}
+	return true;
+}
+
 std::vector<Studio::LayerRef> Studio::hide_browser_layers()
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);

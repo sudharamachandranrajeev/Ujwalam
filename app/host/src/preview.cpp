@@ -9,15 +9,19 @@
 #include "rpc_server.h"
 
 #include <obs.h>
+#include <graphics/vec4.h>
 
 #include <windows.h>
+#include <windowsx.h>
 
 #include <algorithm>
+#include <cmath>
 #include <future>
 #include <vector>
 
 static const wchar_t *kClass = L"UjwalamPreview";
 static const UINT WM_APP_RUN = WM_APP + 1;
+static const UINT_PTR kRefreshTimer = 1; // re-reads the selected layer's placement (inspector edits, scene switches)
 
 struct Previews::Win {
 	std::string canvas;
@@ -47,6 +51,68 @@ void canvas_base(const std::string &canvas, uint32_t &w, uint32_t &h, obs_canvas
 	h = ovi.base_height;
 }
 
+// Immediate-mode triangles (two per quad) in canvas coordinates; the caller has the solid effect's pass open.
+void quad(float ax, float ay, float bx, float by, float cx, float cy, float dx, float dy) // a b c d around
+{
+	gs_vertex2f(ax, ay);
+	gs_vertex2f(bx, by);
+	gs_vertex2f(cx, cy);
+	gs_vertex2f(ax, ay);
+	gs_vertex2f(cx, cy);
+	gs_vertex2f(dx, dy);
+}
+
+// A line of thickness t from p to q, extended by t/2 at both ends so that box corners close.
+void line(double px, double py, double qx, double qy, double t)
+{
+	double dx = qx - px, dy = qy - py, len = std::hypot(dx, dy);
+	if (len <= 0)
+		return;
+	double ux = dx / len * t / 2, uy = dy / len * t / 2; // along
+	double nx = -uy, ny = ux;                            // across
+	px -= ux;
+	py -= uy;
+	qx += ux;
+	qy += uy;
+	quad((float)(px + nx), (float)(py + ny), (float)(qx + nx), (float)(qy + ny), (float)(qx - nx), (float)(qy - ny),
+	     (float)(px - nx), (float)(py - ny));
+}
+
+void solid_pass(const vec4 &col, const std::function<void()> &emit)
+{
+	gs_effect_t *solid = obs_get_base_effect(OBS_EFFECT_SOLID);
+	gs_eparam_t *color = gs_effect_get_param_by_name(solid, "color");
+	gs_effect_set_vec4(color, &col);
+	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
+	gs_technique_begin(tech);
+	gs_technique_begin_pass(tech, 0);
+	gs_render_start(true);
+	emit();
+	gs_render_stop(GS_TRIS);
+	gs_technique_end_pass(tech);
+	gs_technique_end(tech);
+}
+
+// Selection box and corner handles, in canvas coordinates (the caller's ortho), sized in screen px (k = canvas px
+// per screen px) so they look the same at any preview size. A dark rim under a light line reads on any picture.
+void draw_selection(const pedit::Rect &r, double k)
+{
+	double c[4][2];
+	pedit::corners(r, c);
+	auto box = [&](double t, double hs) {
+		for (int i = 0; i < 4; i++)
+			line(c[i][0], c[i][1], c[(i + 1) % 4][0], c[(i + 1) % 4][1], t);
+		for (auto &p : c)
+			quad((float)(p[0] - hs), (float)(p[1] - hs), (float)(p[0] + hs), (float)(p[1] - hs), (float)(p[0] + hs),
+			     (float)(p[1] + hs), (float)(p[0] - hs), (float)(p[1] + hs));
+	};
+	vec4 rim, fg;
+	vec4_set(&rim, 0.0f, 0.0f, 0.0f, 1.0f);
+	vec4_set(&fg, 0.36f, 0.75f, 1.0f, 1.0f);
+	solid_pass(rim, [&] { box(4 * k, 6 * k); });
+	solid_pass(fg, [&] { box(2 * k, 5 * k); });
+}
+
 void draw_cb(void *param, uint32_t cx, uint32_t cy)
 {
 	auto *w = static_cast<Previews::Win *>(param);
@@ -69,15 +135,74 @@ void draw_cb(void *param, uint32_t cx, uint32_t cy)
 		obs_render_main_texture();
 	else
 		obs_render_canvas_texture(c);
+	pedit::Rect sel; // copied under the editor's lock; drawn with no lock held
+	if (w->owner && vw > 0 && w->owner->editor().selection(w->canvas, sel))
+		draw_selection(sel, (double)bw / vw);
 	gs_projection_pop();
 	gs_viewport_pop();
 	if (c)
 		obs_canvas_release(c);
 }
 
+// The letterbox of a preview window right now (draw_cb's math, from the client size and the canvas size).
+pedit::View view_of(const Previews::Win *w)
+{
+	RECT r;
+	GetClientRect(w->hwnd, &r);
+	uint32_t bw = 0, bh = 0;
+	obs_canvas_t *c = nullptr;
+	canvas_base(w->canvas, bw, bh, &c);
+	if (c)
+		obs_canvas_release(c);
+	return pedit::fit_view(r.right, r.bottom, bw, bh);
+}
+
+pedit::Mods mods_of(WPARAM wp)
+{
+	pedit::Mods m;
+	m.shift = (wp & MK_SHIFT) != 0;
+	m.alt = GetKeyState(VK_MENU) < 0;
+	return m;
+}
+
 LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
 	auto *w = reinterpret_cast<Previews::Win *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+	// Mouse editing (preview_edit.h). The editor ignores every event while flag preview-edit is off. Capture keeps
+	// the drag going outside the window; it never activates or focuses the window (D191).
+	switch (msg) {
+	case WM_LBUTTONDOWN:
+		if (w && w->owner && w->owner->editor().down(w->canvas, view_of(w), GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_of(wp))) {
+			if (w->owner->editor().dragging(w->canvas))
+				SetCapture(hwnd);
+			return 0;
+		}
+		break;
+	case WM_MOUSEMOVE:
+		if (w && w->owner && (wp & MK_LBUTTON) && w->owner->editor().dragging(w->canvas)) {
+			w->owner->editor().move(w->canvas, view_of(w), GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_of(wp));
+			return 0;
+		}
+		break;
+	case WM_LBUTTONUP: {
+		bool used = w && w->owner && w->owner->editor().up(w->canvas, view_of(w), GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_of(wp));
+		if (GetCapture() == hwnd)
+			ReleaseCapture(); // after up(): the WM_CAPTURECHANGED it sends finds no drag to cancel
+		if (used)
+			return 0;
+		break;
+	}
+	case WM_CAPTURECHANGED: // capture taken away mid-drag: the layer goes back to where the drag began
+		if (w && w->owner)
+			w->owner->editor().cancel(w->canvas);
+		return 0;
+	case WM_TIMER:
+		if (wp == kRefreshTimer && w && w->owner) {
+			w->owner->editor().refresh(w->canvas);
+			return 0;
+		}
+		break;
+	}
 	switch (msg) {
 	case WM_SIZE:
 		if (w && w->display) {
@@ -100,6 +225,8 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		DestroyWindow(hwnd);
 		return 0;
 	case WM_DESTROY: // also reached when an embedding parent window (the studio shell) is destroyed
+		if (w && w->owner)
+			w->owner->editor().cancel(w->canvas);
 		if (w && w->display) {
 			obs_display_remove_draw_callback(w->display, draw_cb, w);
 			obs_display_destroy(w->display);
@@ -216,7 +343,7 @@ void raise_no_activate(HWND hwnd)
 
 } // namespace
 
-Previews::Previews(bool headless) : headless_(headless)
+Previews::Previews(bool headless, pedit::Backend edit) : headless_(headless), editor_(std::move(edit))
 {
 	ui_ = std::thread([this] { ui_loop(); });
 	std::unique_lock<std::mutex> l(m_);
@@ -387,6 +514,7 @@ json::Value Previews::open(const OpenArgs &a)
 			throw rpc::Error(rpc::INTERNAL, "obs_display_create failed");
 		}
 		obs_display_add_draw_callback(w->display, draw_cb, w);
+		SetTimer(hwnd, kRefreshTimer, 200, nullptr);
 		w->screen = why + " " + narrow(disp.device);
 		// The first ShowWindow in a process started with STARTF_USESHOWWINDOW (Node's windowsHide: true) may
 		// take the parent's SW_HIDE instead of ours; this hide call absorbs that, then show without activating.
@@ -451,6 +579,7 @@ json::Value Previews::open_embedded(const OpenArgs &a)
 		throw rpc::Error(rpc::INTERNAL, "obs_display_create failed");
 	}
 	obs_display_add_draw_callback(w->display, draw_cb, w);
+	SetTimer(hwnd, kRefreshTimer, 200, nullptr);
 	w->screen = "embedded " + narrow(mi.szDevice);
 	ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 	hlog::info("preview embedded: %s %dx%d in the studio window on %s (no focus)", a.canvas.c_str(), a.width, a.height,

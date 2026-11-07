@@ -91,6 +91,7 @@ add_executable(ujwalam-host
   src/model.cpp
   src/devices.cpp
   src/preview.cpp
+  src/preview_edit.cpp
   src/outputs.cpp
   src/stream_keys.cpp
   src/stats.cpp
