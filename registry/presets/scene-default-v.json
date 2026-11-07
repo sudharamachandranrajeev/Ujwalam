@@ -27,7 +27,33 @@
           "h": 1
         },
         "geometry": "spec",
-        "note": "Theme backdrop, mirrored from Default H. Meld draws a blurred, enlarged duplicate of the game capture here; the preset loader has no duplicate layer type, so that backdrop is a gap (see evidence). The atmos-frame canvas option is UNVERIFIED."
+        "note": "Theme backdrop, mirrored from Default H. Meld draws a blurred, enlarged duplicate of the game capture here; that is the game-backdrop layer above (feature flag layer-effects). The atmos-frame canvas option is UNVERIFIED."
+      },
+      {
+        "key": "game-backdrop",
+        "z": 0.5,
+        "name": "Game backdrop (blurred)",
+        "type": "duplicate",
+        "of": "game",
+        "flag": "layer-effects",
+        "effects": [
+          {
+            "type": "blur",
+            "strength": 40
+          }
+        ],
+        "rect": {
+          "x": 0,
+          "y": 0,
+          "w": 1,
+          "h": 1
+        },
+        "crop": {
+          "left": 656,
+          "right": 656
+        },
+        "geometry": "spec",
+        "note": "Blurred, enlarged copy of the game capture filling the canvas behind the framed game (Meld V layout; user reference 2026-11-07). Crop: centre 608x1080 of the 1920x1080 source covers 9:16 without stretching. Blur strength 40 = sigma 20 source px (about 36 canvas px at this scale); proposed, UNVERIFIED. Shown only with feature flag layer-effects."
       },
       {
         "key": "game",
@@ -46,7 +72,14 @@
           "right": 336
         },
         "geometry": "meld-clamped",
-        "note": "Meld box is x -1.5 percent, width 101.6 percent (past both edges); clamped to the canvas, crop recomputed from the same uniform scale (0.866). Crop, not stretch: visible source region 1248x1080. Rounded frame in Meld (corner radius not carried). Centred crop UNVERIFIED."
+        "note": "Meld box is x -1.5 percent, width 101.6 percent (past both edges); clamped to the canvas, crop recomputed from the same uniform scale (0.866). Crop, not stretch: visible source region 1248x1080. Rounded frame in Meld (corner radius not carried). Centred crop UNVERIFIED. Rounded corners (radius 48 source px, about 42 canvas px at scale 0.866) with feature flag layer-effects; radius proposed from the user's vertical reference 2026-11-07, UNVERIFIED.",
+        "effects": [
+          {
+            "type": "rounded",
+            "radius": 48
+          }
+        ],
+        "effectsFlag": "layer-effects"
       },
       {
         "key": "facecam",

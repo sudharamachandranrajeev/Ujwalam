@@ -25,6 +25,7 @@ struct Previews::Win {
 	obs_display_t *display = nullptr;
 	Previews *owner = nullptr;
 	std::string screen; // where it opened: "laptop display" | "second display", plus the GDI device name
+	HWND parent = nullptr; // embedded: the studio shell window it is a child of
 };
 
 namespace {
@@ -98,6 +99,13 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		}
 		DestroyWindow(hwnd);
 		return 0;
+	case WM_DESTROY: // also reached when an embedding parent window (the studio shell) is destroyed
+		if (w && w->display) {
+			obs_display_remove_draw_callback(w->display, draw_cb, w);
+			obs_display_destroy(w->display);
+			w->display = nullptr;
+		}
+		break;
 	case WM_NCDESTROY:
 		if (w) {
 			w->hwnd = nullptr;
@@ -301,10 +309,16 @@ json::Value Previews::open(const OpenArgs &a)
 	if (headless_)
 		throw rpc::Error(rpc::CONFLICT, "headless (--headless / UJWALAM_HEADLESS=1): no preview windows");
 	return run_on_ui([this, a]() -> json::Value {
+		if (a.parent)
+			return open_embedded(a);
 		auto found = wins_.find(a.canvas);
 		if (found != wins_.end() && found->second->hwnd && IsWindow(found->second->hwnd)) {
-			raise_no_activate(found->second->hwnd);
-			return win_json(found->second);
+			if (found->second->parent) // embedded one: a plain open replaces it with a window of its own
+				SendMessageW(found->second->hwnd, WM_CLOSE, 0, 0);
+			else {
+				raise_no_activate(found->second->hwnd);
+				return win_json(found->second);
+			}
 		}
 		Display disp;
 		std::string why;
@@ -383,6 +397,65 @@ json::Value Previews::open(const OpenArgs &a)
 			   (int)cr.bottom, (long)x, (long)y, w->screen.c_str());
 		return win_json(w);
 	});
+}
+
+// On the UI thread. Child window of the shell's preview slot: no frame, no activation, no taskbar entry.
+json::Value Previews::open_embedded(const OpenArgs &a)
+{
+	HWND parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(a.parent));
+	if (!IsWindow(parent))
+		throw rpc::Error(rpc::INVALID_PARAMS, "parent is not a window");
+	if (a.width <= 0 || a.height <= 0 || a.x < 0 || a.y < 0)
+		throw rpc::Error(rpc::INVALID_PARAMS, "an embedded preview needs x, y, width and height");
+	// D219: embedded previews follow the studio window's display (the user opened that window on purpose); only
+	// stand-alone preview windows keep D191's second-display-only rule (pick_display in open()).
+	HMONITOR mon = MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST);
+	MONITORINFOEXW mi = {};
+	mi.cbSize = sizeof(mi);
+	GetMonitorInfoW(mon, &mi);
+	uint32_t bw = 0, bh = 0;
+	obs_canvas_t *c = nullptr;
+	canvas_base(a.canvas, bw, bh, &c);
+	if (c)
+		obs_canvas_release(c);
+	if (!bw || !bh)
+		throw rpc::Error(rpc::CONFLICT, "canvas " + a.canvas + " does not exist (load a project with it first)");
+	Win *&w = wins_[a.canvas];
+	if (!w) {
+		w = new Win;
+		w->canvas = a.canvas;
+		w->owner = this;
+	}
+	if (w->hwnd && IsWindow(w->hwnd) && w->parent == parent) { // same slot: move / resize only
+		SetWindowPos(w->hwnd, nullptr, a.x, a.y, a.width, a.height, SWP_NOZORDER | SWP_NOACTIVATE);
+		return win_json(w);
+	}
+	if (w->hwnd && IsWindow(w->hwnd))
+		SendMessageW(w->hwnd, WM_CLOSE, 0, 0);
+	HWND hwnd = CreateWindowExW(WS_EX_NOACTIVATE, kClass, L"", WS_CHILD | WS_CLIPSIBLINGS, a.x, a.y, a.width, a.height,
+				    parent, nullptr, GetModuleHandleW(nullptr), nullptr);
+	if (!hwnd)
+		throw rpc::Error(rpc::INTERNAL, "CreateWindow (embedded) failed");
+	SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)w);
+	w->hwnd = hwnd;
+	w->parent = parent;
+	struct gs_init_data gid = {};
+	gid.cx = (uint32_t)a.width;
+	gid.cy = (uint32_t)a.height;
+	gid.format = GS_BGRA;
+	gid.zsformat = GS_ZS_NONE;
+	gid.window.hwnd = hwnd;
+	w->display = obs_display_create(&gid, 0xFF101010);
+	if (!w->display) {
+		DestroyWindow(hwnd);
+		throw rpc::Error(rpc::INTERNAL, "obs_display_create failed");
+	}
+	obs_display_add_draw_callback(w->display, draw_cb, w);
+	w->screen = "embedded " + narrow(mi.szDevice);
+	ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+	hlog::info("preview embedded: %s %dx%d in the studio window on %s (no focus)", a.canvas.c_str(), a.width, a.height,
+		   narrow(mi.szDevice).c_str());
+	return win_json(w);
 }
 
 json::Value Previews::focus(const std::string &canvas)

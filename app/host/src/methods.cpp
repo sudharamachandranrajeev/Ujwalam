@@ -418,8 +418,16 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 
 	// ---- previews
 	add("preview.open", [&a](const json::Value &p) {
-		Params q(p, {"canvas", "x", "y", "width", "height", "topmost"});
+		Params q(p, {"canvas", "x", "y", "width", "height", "topmost", "parent"});
 		Previews::OpenArgs o;
+		if (q.has("parent")) { // decimal window handle of the studio shell's preview slot (P5a)
+			const std::string ps = q.str("parent", 20);
+			if (ps.empty() || ps.find_first_not_of("0123456789") != std::string::npos)
+				throw Error(rpc::INVALID_PARAMS, "parent must be a decimal window handle");
+			o.parent = std::stoull(ps);
+			if (!o.parent)
+				throw Error(rpc::INVALID_PARAMS, "parent must be a decimal window handle");
+		}
 		o.canvas = canvas_param(q);
 		o.x = (int)q.int_or("x", -1, -1, 16384);
 		o.y = (int)q.int_or("y", -1, -1, 16384);
@@ -462,6 +470,10 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 	add("mixer.setMute", [&a](const json::Value &p) {
 		Params q(p, {"id", "muted"});
 		return a.studio->mixer_set_mute(q.str("id", 130), q.boolean("muted"));
+	});
+	add("mixer.setCue", [&a](const json::Value &p) {
+		Params q(p, {"id", "cue"});
+		return a.studio->mixer_set_cue(q.str("id", 130), q.boolean("cue"));
 	});
 
 	// ---- outputs (O1: loopback targets only)

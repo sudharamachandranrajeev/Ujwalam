@@ -3,6 +3,7 @@
 // (docs/evidence/2026-10-27-p1a-build.md): PATH (not SetDllDirectory) for the runtime bin dir, helper exes next to
 // the host exe, module config under the host data dir.
 #include "obs_runtime.h"
+#include "effects.h"
 #include "log.h"
 
 #include <windows.h>
@@ -104,13 +105,16 @@ bool start(const Options &o, std::string &err)
 		err = "obs_reset_video failed rc=" + std::to_string(rc);
 		return false;
 	}
-	struct obs_audio_info oai = {};
+	struct obs_audio_info2 oai = {};
 	oai.samples_per_sec = 48000;
 	oai.speakers = SPEAKERS_STEREO;
-	if (!obs_reset_audio(&oai)) {
-		err = "obs_reset_audio failed";
+	oai.max_buffering_ms = o.low_latency_audio ? 20 : 1000; // the values OBS uses for its low-latency mode
+	oai.fixed_buffering = o.low_latency_audio;
+	if (!obs_reset_audio2(&oai)) {
+		err = "obs_reset_audio2 failed";
 		return false;
 	}
+	hlog::info("audio buffering: %s", o.low_latency_audio ? "low latency (fixed 20 ms)" : "default (grows up to 1 s)");
 	struct obs_module_failure_info mfi = {};
 	obs_load_all_modules2(&mfi);
 	for (size_t i = 0; i < mfi.count; i++)
@@ -118,6 +122,7 @@ bool start(const Options &o, std::string &err)
 	obs_module_failure_info_free(&mfi);
 	obs_post_load_modules();
 	obs_log_loaded_modules();
+	fx::register_types(); // host-owned effect sources (effects.h)
 	hlog::info("main video %ux%u@%u NV12 709 partial; audio 48000 Hz stereo; adapter %s", o.width, o.height, o.fps,
 		   adapter_name().c_str());
 	return true;

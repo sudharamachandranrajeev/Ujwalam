@@ -17,6 +17,7 @@
     "diag": "node tools/diag/bundle.mjs",
     "restore": "node tools/restore-local.mjs",
     "build:host": "node app/host/tools/build.mjs",
+    "build:studio": "node app/studio/tools/build.mjs",
     "test:host": "node --test --test-timeout=300000 --test-concurrency=1 \"app/host/tests/*.test.mjs\"",
     "bench": "node tools/bench/run.mjs",
     "fx:test": "node tools/fx-test.mjs",

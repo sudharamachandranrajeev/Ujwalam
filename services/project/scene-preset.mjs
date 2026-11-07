@@ -49,7 +49,9 @@ export function placeholderKeys(preset) {
 const label = (s) => String(s).slice(0, 120) || 'Layer';
 
 export function loadScenePreset(project, preset, opts = {}) {
-  const { profile = {}, roles = {}, sceneName, idFn = newId } = opts;
+  // flags: feature flag states ({ id: bool }); a preset layer with `flag` starts hidden while that flag is off, and
+  // its `effects` apply only while `effectsFlag` (if set) is on
+  const { profile = {}, roles = {}, sceneName, idFn = newId, flags = {} } = opts;
   if (!preset || preset.function !== 'scene-layout-preset') throw new ScenePresetError('not a scene-layout-preset preset');
   const P = preset.params;
   const canvasId = P.canvas;
@@ -100,11 +102,12 @@ export function loadScenePreset(project, preset, opts = {}) {
   const layerIds = {};
   const layers = [];
   const ordered = [...P.layers].sort((a, b) => a.z - b.z);
-  for (const l of ordered) {
-    const id = fresh('lyr');
-    layerIds[l.key] = id;
+  for (const l of ordered) layerIds[l.key] = fresh('lyr'); // first: a duplicate may point at a layer above it
+  const placeholder = new Set();
+  for (const l of [...ordered].sort((a, b) => (a.type === 'duplicate') - (b.type === 'duplicate'))) {
+    const id = layerIds[l.key];
     const px = {
-      visible: l.visible !== false,
+      visible: l.visible !== false && (!l.flag || flags[l.flag] === true),
       x: Math.round(l.rect.x * canvas.width * 100) / 100,
       y: Math.round(l.rect.y * canvas.height * 100) / 100,
       width: Math.round(l.rect.w * canvas.width * 100) / 100,
@@ -120,6 +123,7 @@ export function loadScenePreset(project, preset, opts = {}) {
         if (devId) throw new ScenePresetError(`role "${l.role}" is bound to a device that is missing or of the wrong kind`);
         unbound.push(l.role);
         type = 'color'; source = { color: '#00000000' }; delete px.crop;
+        placeholder.add(l.key);
       }
     } else if (l.type === 'browser') {
       type = 'browser';
@@ -134,12 +138,24 @@ export function loadScenePreset(project, preset, opts = {}) {
       else { type = 'media'; source = { file, loop: true }; }
     } else if (l.type === 'color') {
       type = 'color'; source = { color: l.color };
+    } else if (l.type === 'duplicate') {
+      // a second picture of another layer of this preset (e.g. the blurred, enlarged game behind the framed game);
+      // the device is opened once. An unbound target leaves a transparent placeholder here too.
+      const target = P.layers.find((x) => x.key === l.of);
+      if (!target || target.type === 'duplicate') throw new ScenePresetError(`layer "${l.key}": duplicate of unknown or duplicate layer "${l.of}"`);
+      if (placeholder.has(l.of)) { type = 'color'; source = { color: '#00000000' }; delete px.crop; placeholder.add(l.key); }
+      else { type = 'duplicate'; source = { layer: layerIds[l.of] }; }
     } else throw new ScenePresetError(`layer "${l.key}": unknown type "${l.type}"`);
-    layers.push({ id, type, name: label(l.name), source, placements: { [canvasId]: px }, origin: { importer: 'preset', id: `${preset.id}/${l.key}` } });
+    const layer = { id, type, name: label(l.name), source, placements: { [canvasId]: px }, origin: { importer: 'preset', id: `${preset.id}/${l.key}` } };
+    // effects apply only while `flag` and `effectsFlag` (if set) are on; effectsFlag keeps the layer itself
+    const effectsOn = [l.flag, l.effectsFlag].every((f) => !f || flags[f] === true);
+    if (Array.isArray(l.effects) && l.effects.length && effectsOn && !placeholder.has(l.key)) layer.effects = structuredClone(l.effects);
+    layers.push({ z: l.z, layer });
   }
+  layers.sort((a, b) => a.z - b.z);
 
   const sceneId = fresh('scene');
-  out.scenes.push({ id: sceneId, name: label(sceneName ?? P.sceneName), layers, origin: { importer: 'preset', id: preset.id } });
+  out.scenes.push({ id: sceneId, name: label(sceneName ?? P.sceneName), layers: layers.map((x) => x.layer), origin: { importer: 'preset', id: preset.id } });
 
   const rules = (P.rules ?? []).map((r) => {
     const target = layerIds[r.target?.layerKey];

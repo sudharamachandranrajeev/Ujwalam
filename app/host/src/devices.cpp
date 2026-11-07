@@ -9,6 +9,8 @@
 #include <propkeydef.h> // DEFINE_PROPERTYKEY (not pulled in under WIN32_LEAN_AND_MEAN)
 #include <functiondiscoverykeys_devpkey.h>
 
+#include <obs.h>
+
 #include <algorithm>
 #include <cwctype>
 #include <thread>
@@ -279,6 +281,34 @@ Match resolve(const json::Value &device, const List &l)
 	if (!m.entry)
 		m.problem = "no connected device matches";
 	return m;
+}
+
+json::Value set_monitoring_output(const std::string &name, const List &l)
+{
+	json::Value r = json::Value::object();
+	const Entry *hit = nullptr;
+	int n = 0;
+	for (auto &e : l.entries)
+		if (e.kind == "audio-output" && lower(e.name) == lower(name)) {
+			hit = &e;
+			n++;
+		}
+	if (n != 1) {
+		std::string names;
+		for (auto &e : l.entries)
+			if (e.kind == "audio-output")
+				names += (names.empty() ? "\"" : ", \"") + e.name + "\"";
+		r.set("problem", std::string(n ? "more than one output has this name" : "no connected output has this name") +
+					 " (connected outputs: " + (names.empty() ? "none" : names) + ")");
+		return r;
+	}
+	if (!obs_set_audio_monitoring_device(hit->name.c_str(), hit->obs_id.c_str())) {
+		r.set("problem", "libobs refused the output");
+		return r;
+	}
+	r.set("device", hit->name);
+	r.set("id", hit->obs_id);
+	return r;
 }
 
 bool module_mapped(const wchar_t *dll)

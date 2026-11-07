@@ -193,6 +193,11 @@ test('mixer volume + mute + live meter (peakDb)', async () => {
   assert.equal((await find()).muted, true);
   await host('mixer.setMute', { id: 'card-h/bars', muted: false });
   assert.equal((await find()).muted, false);
+  // CUE (headphone monitoring): reported per row; switching it off works without devices
+  assert.equal(typeof m.cue, 'boolean');
+  assert.equal(typeof m.cueDelayed, 'boolean');
+  await host('mixer.setCue', { id: 'card-h/bars', cue: false });
+  assert.equal((await find()).cue, false);
   await host('mixer.setVolume', { id: 'card-h/bars', db: 0 });
 });
 

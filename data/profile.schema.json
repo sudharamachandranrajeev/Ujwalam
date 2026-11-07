@@ -89,8 +89,16 @@
           "properties": {
             "game-capture": { "$ref": "#/$defs/deviceBinding" },
             "facecam": { "$ref": "#/$defs/deviceBinding" },
-            "mic": { "$ref": "#/$defs/deviceBinding" }
+            "mic": { "$ref": "#/$defs/deviceBinding" },
+            "game-audio": { "$ref": "#/$defs/deviceBinding" }
           }
+        },
+        "monitoringOutput": {
+          "type": "object",
+          "description": "Audio monitoring output: where sources set to monitor play (headphones). name = the Windows output's friendly name as devices.list shows it (kind audio-output). Without it libobs uses the Windows default output. Applied only with --allow-devices.",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 200 } }
         }
       }
     },

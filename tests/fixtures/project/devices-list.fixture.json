@@ -8,6 +8,8 @@
     { "kind": "dshow-audio", "name": "Microphone (fifine SC3)", "path": "", "obsId": "Microphone (fifine SC3)#3A" },
     { "kind": "audio-input", "name": "Microphone (fifine SC3)", "path": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a1}", "obsId": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a1}" },
     { "kind": "audio-input", "name": "Microphone Array (Fixture Audio)", "path": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a2}", "obsId": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a2}" },
+    { "kind": "audio-input", "name": "HDMI/Line In (Live Gamer Ultra 2.1-Audio)", "path": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a3}", "obsId": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a3}" },
+    { "kind": "audio-input", "name": "Not To Use (Live Gamer Ultra 2.1-Audio)", "path": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a4}", "obsId": "{0.0.1.00000000}.{00000000-0000-0000-0000-0000000000a4}" },
     { "kind": "audio-output", "name": "Speakers (Fixture Audio)", "path": "{0.0.0.00000000}.{00000000-0000-0000-0000-0000000000b1}", "obsId": "{0.0.0.00000000}.{00000000-0000-0000-0000-0000000000b1}" }
   ],
   "errors": [],

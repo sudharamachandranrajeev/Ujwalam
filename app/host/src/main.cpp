@@ -36,6 +36,7 @@
 // The discovery file carries a token only when the host generated it (null when it came by environment).
 #include "app.h"
 #include "crash.h"
+#include "devices.h"
 #include "discovery.h"
 #include "log.h"
 #include "obs_runtime.h"
@@ -412,6 +413,7 @@ int wmain(int argc, wchar_t **wargv)
 	o.allow_devices = app.allow_devices;
 	o.allow_browser = app.allow_browser;
 	o.adapter = app.adapter;
+	o.low_latency_audio = app.config.low_latency_audio;
 	if (!obsrt::start(o, err)) {
 		hlog::error("libobs start failed: %s", err.c_str());
 		return 2;
@@ -422,6 +424,18 @@ int wmain(int argc, wchar_t **wargv)
 	hlog::info("adapter %u: %s; windows graphics preference for this exe: %s", app.adapter,
 		   obsrt::adapter_name().c_str(), pref.dump().c_str());
 	hlog::info("devices %s, browser %s", app.allow_devices ? "ALLOWED" : "off", app.allow_browser ? "allowed" : "off");
+	if (!app.config.monitoring_device.empty()) {
+		if (!app.allow_devices) {
+			hlog::info("audio monitoring output: Windows default (monitoringDevice applies only with --allow-devices)");
+		} else {
+			json::Value m = devices::set_monitoring_output(app.config.monitoring_device, devices::enumerate());
+			if (const json::Value *pr = m.find("problem"))
+				hlog::warn("audio monitoring output \"%s\": %s; using the Windows default output",
+					   app.config.monitoring_device.c_str(), pr->as_string().c_str());
+			else
+				hlog::info("audio monitoring output: %s", m.find("device")->as_string().c_str());
+		}
+	}
 	if (!ov.root.empty()) {
 		app.overlay = std::make_unique<Overlay>(ov);
 		ov.events_token.assign(ov.events_token.size(), '0');

@@ -106,7 +106,7 @@ export function createFakeHost({ outputsReady = false } = {}) {
     'scene-2': [{ id: 'text', name: 'Title card', visible: true, placement: { visible: true, x: 0, y: 0, width: 1920, height: 1080 } }],
     'scene-3': [{ id: 'cam', name: 'Camera', visible: true, placement: { visible: true, x: 0, y: 0, width: 1080, height: 608 } }],
   };
-  const mixer = [{ id: 'scene-1/cam', name: 'Camera', volumeDb: 0, muted: false }, { id: 'scene-1/game', name: 'Game', volumeDb: -6, muted: false }, { id: 'scene-2/text', name: 'Music', volumeDb: -18, muted: true }];
+  const mixer = [{ id: 'scene-1/cam', name: 'Camera', volumeDb: 0, muted: false, cue: false }, { id: 'scene-1/game', name: 'Game', volumeDb: -6, muted: false, cue: true }, { id: 'scene-2/text', name: 'Music', volumeDb: -18, muted: true, cue: false }];
   const active = { H: 'scene-1', V: 'scene-3' };
   const state = { live: false, recording: false };
   const noise = () => randomBytes(1)[0] / 255;
@@ -138,6 +138,7 @@ export function createFakeHost({ outputsReady = false } = {}) {
         case 'mixer.list': return { sources: mixer.map((m) => ({ ...m, peakDb: null })) };
         case 'mixer.setVolume': need(mixer.find((m) => m.id === p.id), 'source').volumeDb = p.db; return { ok: true };
         case 'mixer.setMute': need(mixer.find((m) => m.id === p.id), 'source').muted = p.muted; return { ok: true };
+        case 'mixer.setCue': need(mixer.find((m) => m.id === p.id), 'source').cue = p.cue; return { id: p.id, cue: p.cue, cueDelayed: false };
         case 'stream.start': case 'stream.stop': case 'record.start': case 'record.stop':
           if (!outputsReady) throw Object.assign(new Error('outputs-not-ready'), { code: 'NOT_READY' });
           if (method.startsWith('stream')) state.live = method.endsWith('start'); else state.recording = method.endsWith('start');

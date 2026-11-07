@@ -90,6 +90,7 @@ public:
 	json::Value mixer_list() const;
 	json::Value mixer_set_volume(const std::string &id, const double *mul, const double *db);
 	json::Value mixer_set_mute(const std::string &id, bool muted);
+	json::Value mixer_set_cue(const std::string &id, bool cue);
 
 	// Canvas video for encoders: "H" -> obs_get_video(), "V" -> V canvas video. nullptr if absent.
 	video_t *canvas_video(const std::string &canvas) const;
@@ -115,6 +116,10 @@ private:
 		std::string dup_of;              // project v1 duplicate: target layer id
 		bool visible = true;
 		std::shared_ptr<Src> src;
+		// project v1 layer.effects: the item shows `fx` (a private ujw_effects_wrap over src->src, owned by this
+		// layer, effects.h) instead of the shared source; the placement crop is applied by the wrapper.
+		std::vector<model::Effect> effects;
+		obs_source_t *fx = nullptr;
 		obs_sceneitem_t *item = nullptr;
 	};
 	struct Scene {

@@ -172,6 +172,23 @@ export function validateProject(doc) {
       }
     }
   };
+  // Per-layer visual effects (host filters, applied in list order): blur {strength 1..100}, rounded {radius 0..500}.
+  const effectsOk = (list, p) => {
+    if (!arr(list, p, 4)) return;
+    list.forEach((e, i) => {
+      const ep = `${p}[${i}]`;
+      if (!isObj(e)) { err(ep, 'must be an object'); return; }
+      if (e.type === 'blur') {
+        noExtra(e, ['type', 'strength'], ep); req(e, ['strength'], ep);
+        if ('strength' in e) num(e.strength, `${ep}.strength`, 1, 100);
+      } else if (e.type === 'rounded') {
+        noExtra(e, ['type', 'radius'], ep); req(e, ['radius'], ep);
+        if ('radius' in e) num(e.radius, `${ep}.radius`, 0, 500);
+      } else {
+        err(`${ep}.type`, 'must be one of blur, rounded');
+      }
+    });
+  };
   // Layer index for duplicate checks: id -> { type, target }. Built before layers are walked so a duplicate may
   // point at a layer in a later scene.
   const layerIndex = new Map();
@@ -255,13 +272,14 @@ export function validateProject(doc) {
         sc.layers.forEach((l, j) => {
           const lp = `${p}.layers[${j}]`;
           if (!isObj(l)) { err(lp, 'must be an object'); return; }
-          noExtra(l, ['id', 'type', 'name', 'visible', 'locked', 'source', 'placements', 'origin'], lp);
+          noExtra(l, ['id', 'type', 'name', 'visible', 'locked', 'source', 'placements', 'effects', 'origin'], lp);
           req(l, ['id', 'type', 'name', 'source', 'placements'], lp);
           if ('id' in l) idOf(l.id, `${lp}.id`);
           if ('name' in l) str(l.name, `${lp}.name`, 1, 120);
           if ('visible' in l && typeof l.visible !== 'boolean') err(`${lp}.visible`, 'must be a boolean');
           if ('locked' in l && typeof l.locked !== 'boolean') err(`${lp}.locked`, 'must be a boolean');
           originOk(l.origin, `${lp}.origin`);
+          if ('effects' in l) effectsOk(l.effects, `${lp}.effects`);
           if ('type' in l) {
             if (!LAYER_TYPES.includes(l.type)) err(`${lp}.type`, `must be one of ${LAYER_TYPES.join(', ')}`);
             else if ('source' in l) sourceOk(l.type, l.source, `${lp}.source`, l.id);

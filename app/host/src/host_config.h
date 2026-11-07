@@ -5,7 +5,10 @@
 //     "hotkeys":  { "enabled": false, "panic": "Ctrl+Alt+P", "feedback": "Ctrl+Alt+F", "marker": "Ctrl+Alt+Shift+M" },
 //     "feedbackDir": "<absolute dir>",                 default <dataDir>/feedback
 //     "markersDir":  "<absolute dir>",                 default <dataDir>/markers
-//     "eventCore": { "systemFile": "<absolute path to event-core system.json>" } }
+//     "eventCore": { "systemFile": "<absolute path to event-core system.json>" },
+//     "audio": { "lowLatency": true },                  fixed 20 ms audio buffering (obs_runtime.h); default off
+//     "monitoringDevice": "<Windows output name>" }   friendly name as devices.list shows it; default: the
+//                                                     Windows default output. Applied only with --allow-devices (it opens an output).
 //
 // Defaults keep a bare host (tests, tools) quiet: no global hotkeys and no replay buffer unless the config turns them
 // on (npm run alpha does). A hotkey value of null disables that binding. Combos: modifiers Ctrl, Alt, Shift, Win
@@ -26,6 +29,8 @@ struct HostConfig {
 	std::vector<std::pair<std::string, std::string>> hotkeys = {
 		{"panic", "Ctrl+Alt+P"}, {"feedback", "Ctrl+Alt+F"}, {"marker", "Ctrl+Alt+Shift+M"}};
 	std::string feedback_dir, markers_dir, core_system_file;
+	bool low_latency_audio = false;
+	std::string monitoring_device; // audio monitoring output, by friendly name (empty: Windows default)
 };
 
 // Fills cfg from a parsed config document. false + err on any unknown key or bad value.

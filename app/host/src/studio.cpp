@@ -2,6 +2,7 @@
 // ujwalam-host: scene model on libobs. See studio.h.
 #include "studio.h"
 #include "checks.h"
+#include "effects.h"
 #include "log.h"
 #include "obs_runtime.h"
 #include "rpc_server.h"
@@ -192,6 +193,10 @@ void Studio::destroy_layer(Layer &l)
 	if (l.item) {
 		obs_sceneitem_remove(l.item);
 		l.item = nullptr;
+	}
+	if (l.fx) { // the wrapper (and its filters) first: it holds a reference on the shared source
+		obs_source_release(l.fx);
+		l.fx = nullptr;
 	}
 	l.src.reset(); // the source goes with its last item
 }
@@ -412,7 +417,7 @@ obs_source_t *Studio::create_source(const Scene &s, const std::string &layer_id,
 
 void Studio::add_item(Scene &s, Layer &l)
 {
-	l.item = obs_scene_add(s.scene, l.src->src);
+	l.item = obs_scene_add(s.scene, l.fx ? l.fx : l.src->src);
 	if (!l.item)
 		throw Error(rpc::INTERNAL, "scene add failed");
 }
@@ -470,12 +475,20 @@ void Studio::apply_placement(Layer &l)
 	vec2_set(&pos, (float)(x + w / 2), (float)(y + h / 2));
 	obs_sceneitem_set_pos(l.item, &pos);
 	obs_sceneitem_set_rot(l.item, (float)get_num(p, "rotation", 0, -360, 360, "placement"));
+	struct obs_sceneitem_crop cr = {};
 	if (const json::Value *c = p.find("crop")) {
-		struct obs_sceneitem_crop cr = {};
 		cr.left = (int)std::lround(get_num(*c, "left", 0, 0, 16384, "crop"));
 		cr.top = (int)std::lround(get_num(*c, "top", 0, 0, 16384, "crop"));
 		cr.right = (int)std::lround(get_num(*c, "right", 0, 0, 16384, "crop"));
 		cr.bottom = (int)std::lround(get_num(*c, "bottom", 0, 0, 16384, "crop"));
+	}
+	if (l.fx) {
+		// Effects work on the cropped picture (rounded corners on the visible edge, blur clamped at the crop), so
+		// the wrapper crops and the item does not.
+		fx::set_crop(l.fx, {cr.left, cr.top, cr.right, cr.bottom});
+		struct obs_sceneitem_crop none = {};
+		obs_sceneitem_set_crop(l.item, &none);
+	} else if (p.find("crop")) {
 		obs_sceneitem_set_crop(l.item, &cr);
 	}
 	if (w <= 0 || h <= 0)
@@ -769,7 +782,10 @@ json::Value Studio::load_model(const json::Value &doc, const LoadOptions &o)
 					if (pi.type == "duplicate")
 						l.dup_of = pi.source_layer;
 					l.src = get_src(pi.source_layer);
+					l.effects = pi.effects;
 					try {
+						if (!l.effects.empty()) // one wrapper per item: effects never reach the shared source
+							l.fx = fx::create_chain(l.src->src, "ujw:fx:" + pc.id + ":" + pi.layer, l.effects, {});
 						add_item(s, l);
 						apply_placement(l);
 					} catch (...) {
@@ -882,6 +898,8 @@ json::Value Studio::layer_json(const Scene &s, const Layer &l) const
 	o.set("source", l.src ? l.src->owner : "");
 	if (!l.dup_of.empty())
 		o.set("duplicateOf", l.dup_of);
+	if (!l.effects.empty())
+		o.set("effects", model::effects_json(l.effects));
 	obs_source_t *src = l.src ? l.src->src : nullptr;
 	o.set("width", src ? obs_source_get_width(src) : 0u);
 	o.set("height", src ? obs_source_get_height(src) : 0u);
@@ -1334,6 +1352,9 @@ json::Value Studio::mixer_list() const
 		o.set("volumeDb", mul > 0 ? (double)obs_mul_to_db(mul) : json::Value());
 		o.set("muted", obs_source_muted(src.src));
 		o.set("mixers", obs_source_get_audio_mixers(src.src));
+		o.set("cue", obs_source_get_monitoring_type(src.src) != OBS_MONITORING_TYPE_NONE);
+		// libobs holds back monitoring of a source with video until its frame is shown: CUE on such a source is late.
+		o.set("cueDelayed", (obs_source_get_output_flags(src.src) & OBS_SOURCE_VIDEO) != 0);
 		o.set("active", obs_source_active(src.src));
 		float pk = src.meter->peak, mg = src.meter->magnitude;
 		o.set("peakDb", std::isfinite(pk) ? json::Value((double)pk) : json::Value());
@@ -1379,6 +1400,28 @@ json::Value Studio::mixer_set_mute(const std::string &id, bool muted)
 	json::Value r = json::Value::object();
 	r.set("id", id);
 	r.set("muted", obs_source_muted(s->src));
+	return r;
+}
+
+// CUE (Meld's per-channel headphone button): monitoring on or off, applied at once. A source in the stream mix is
+// monitored and still output (monitor-and-output); a source on no track is monitor-only. The monitoring output is
+// the host config's monitoringDevice (headphones). Opens an audio output, so it needs --allow-devices.
+json::Value Studio::mixer_set_cue(const std::string &id, bool cue)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	if (cue && !flags_.allow_devices)
+		throw Error(rpc::CONFLICT, "CUE opens the headphone output: start the host with --allow-devices");
+	auto s = find_audio(id);
+	enum obs_monitoring_type t = OBS_MONITORING_TYPE_NONE;
+	if (cue)
+		t = obs_source_get_audio_mixers(s->src) ? OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT
+							  : OBS_MONITORING_TYPE_MONITOR_ONLY;
+	obs_source_set_monitoring_type(s->src, t);
+	dirty_ = true;
+	json::Value r = json::Value::object();
+	r.set("id", id);
+	r.set("cue", obs_source_get_monitoring_type(s->src) != OBS_MONITORING_TYPE_NONE);
+	r.set("cueDelayed", cue && (obs_source_get_output_flags(s->src) & OBS_SOURCE_VIDEO) != 0);
 	return r;
 }
 

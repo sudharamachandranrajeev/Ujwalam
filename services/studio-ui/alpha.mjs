@@ -46,19 +46,26 @@ function mergeInto(project, hSceneId, vSceneId) {
   const v = out.scenes.find((s) => s.id === vSceneId);
   const hCapture = new Map(h.layers.filter((l) => l.type === 'capture').map((l) => [l.source.device, l.id]));
   const duplicated = [];
+  const movedTo = new Map(); // V capture layer id -> the H layer it now duplicates
   for (const l of v.layers) {
     if (l.type === 'capture' && hCapture.has(l.source.device)) {
       l.type = 'duplicate';
       l.source = { layer: hCapture.get(l.source.device) };
       duplicated.push(l.id);
+      movedTo.set(l.id, l.source.layer);
     }
+  }
+  for (const l of v.layers) {
+    // a V duplicate of a V capture layer (e.g. the blurred game backdrop) points at the real H layer: the host
+    // refuses a duplicate of a duplicate
+    if (l.type === 'duplicate' && movedTo.has(l.source.layer)) l.source = { layer: movedTo.get(l.source.layer) };
     h.layers.push(l);
   }
   out.scenes = out.scenes.filter((s) => s.id !== vSceneId);
   return { project: out, duplicated };
 }
 
-export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound: {}, unavailable: [] }, devicesListed = false, idFn = newId } = {}) {
+export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound: {}, unavailable: [] }, devicesListed = false, idFn = newId, flags = {} } = {}) {
   const warnings = [];
   const hFile = path.join(presetsDir, H_PRESET);
   if (!existsSync(hFile)) throw new ScenePresetError(`${H_PRESET} not found in the registry presets`);
@@ -80,7 +87,7 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
   const roles = Object.fromEntries(LAYER_ROLES.filter((r) => deviceOf[r]).map((r) => [r, deviceOf[r]]));
 
   const hPreset = JSON.parse(readFileSync(hFile, 'utf8'));
-  const h = loadScenePreset(base, hPreset, { profile, roles, idFn });
+  const h = loadScenePreset(base, hPreset, { profile, roles, idFn, flags });
   let project = h.project;
   const unbound = h.unbound.map((r) => `h:${r}`);
   const missingAssets = new Set(h.missingAssets);
@@ -92,7 +99,7 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
     if (vPreset?.params?.canvas !== 'v') {
       warnings.push(`${V_PRESET} is not a V canvas preset; the V canvas stays empty`);
     } else {
-      const v = loadScenePreset(project, vPreset, { profile, roles, idFn });
+      const v = loadScenePreset(project, vPreset, { profile, roles, idFn, flags });
       unbound.push(...v.unbound.map((r) => `v:${r}`));
       v.missingAssets.forEach((k) => missingAssets.add(k));
       vScene = v.sceneId;
@@ -110,7 +117,13 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
   // audio: mic device + the game capture layer's own audio, both on track 1, monitoring off (no echo)
   if (deviceOf.mic) project.audio.sources.push({ id: 'aud-mic', name: 'Mic', device: deviceOf.mic, volumeDb: 0, muted: false, monitoring: 'off', tracks: ['track1'] });
   const game = roles['game-capture'] && h.layerIds.game;
-  if (game) project.audio.sources.push({ id: 'aud-game', name: 'Game', layer: game, volumeDb: 0, muted: false, monitoring: 'off', tracks: ['track1'] });
+  // Game (Meld layout: the "Track" channel is the card's "HDMI/Line In" input): the card's WASAPI audio input
+  // (role game-audio) is the Game channel, CUE on, in the stream mix. It has no video, so libobs monitors it at
+  // once; the capture layer's own audio then stays out of the mix (mixers 0, metered only). libobs holds back
+  // monitoring of a source with video until its frame is shown, so without that input the layer audio is the Game
+  // channel and its CUE is late. Mic: CUE off (no echo of your own voice).
+  if (deviceOf['game-audio']) project.audio.sources.push({ id: 'aud-game', name: 'Game', device: deviceOf['game-audio'], volumeDb: 0, muted: false, monitoring: 'monitor-and-output', tracks: ['track1'] });
+  else if (game) project.audio.sources.push({ id: 'aud-game', name: 'Game', layer: game, volumeDb: 0, muted: false, monitoring: 'monitor-and-output', tracks: ['track1'] });
 
   if (missingAssets.size) warnings.push(`profile has no file for ${[...missingAssets].sort().join(', ')}: those layers are transparent placeholders until it is set`);
   const v = validateProject(project);

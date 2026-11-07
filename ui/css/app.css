@@ -35,6 +35,8 @@ body:has(.banner:not([hidden])) .shell { height: calc(100% - 24px); }
 .icon-btn { background: transparent; border: 0; color: inherit; cursor: pointer; padding: var(--space-1); border-radius: 4px; font: inherit; min-width: 28px; }
 .icon-btn:hover:not(:disabled) { background: var(--color-border); }
 .icon-btn:disabled { opacity: 0.35; cursor: default; }
+.icon-btn.cue { border: 1px solid var(--color-border); font-size: var(--text-sm); font-weight: 600; }
+.icon-btn.cue.on { background: var(--color-accent); color: var(--color-accent-text); border-color: var(--color-accent); }
 
 .btn { background: var(--color-surface-2); color: var(--color-text); border: 1px solid var(--color-border); padding: var(--space-1) var(--space-3); border-radius: var(--radius); font: inherit; cursor: pointer; transition: background var(--anim-in); }
 .btn:hover:not(:disabled) { background: var(--color-border); }

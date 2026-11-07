@@ -321,7 +321,8 @@ test('second host: real RegisterHotKey, a taken combo and a bad combo are report
     assert.equal(r.code, 0);
   }
   const d3 = mkdtempSync(path.join(OUT, 'a0d2-bad-'));
-  writeFileSync(path.join(d3, 'host-config.json'), JSON.stringify({ hotkeys: { enabled: true, panic: 'Shift+P', feedback: 'Ctrl+Alt+Bogus', marker: null } }));
+  writeFileSync(path.join(d3, 'host-config.json'), JSON.stringify({ hotkeys: { enabled: true, panic: 'Shift+P', feedback: 'Ctrl+Alt+Bogus', marker: null }, monitoringDevice: 'No Such Output', audio: { lowLatency: true } }));
+  // monitoringDevice without --allow-devices: accepted, not applied (the host still starts)
   const h3 = await launchHost({ dataDir: d3, project: path.join(HOST_DIR, 'projects', 'test-card.project.json'), extraArgs: ['--host-config', path.join(d3, 'host-config.json')] });
   try {
     const by = Object.fromEntries((await h3.client.call('host.info')).hotkeys.bindings.map((b) => [b.name, b]));
@@ -334,7 +335,7 @@ test('second host: real RegisterHotKey, a taken combo and a bad combo are report
 
 test('host config: unknown keys and bad values stop the host with exit 64', async () => {
   const d4 = mkdtempSync(path.join(OUT, 'a0d2-cfg-'));
-  for (const [i, cfg] of [{ nope: 1 }, { replay: { seconds: 2 } }, { feedbackDir: 'relative/dir' }, { hotkeys: { panic: 5 } }].entries()) {
+  for (const [i, cfg] of [{ nope: 1 }, { replay: { seconds: 2 } }, { feedbackDir: 'relative/dir' }, { hotkeys: { panic: 5 } }, { monitoringDevice: '' }, { monitoringDevice: 5 }, { audio: { lowLatency: 1 } }, { audio: { other: true } }].entries()) {
     const f = path.join(d4, `c${i}.json`);
     writeFileSync(f, JSON.stringify(cfg));
     await assert.rejects(launchHost({ dataDir: d4, extraArgs: ['--host-config', f], timeoutMs: 15000 }), /exited with 64/, JSON.stringify(cfg));

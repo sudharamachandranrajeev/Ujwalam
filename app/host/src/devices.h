@@ -50,6 +50,12 @@ struct Match {
 };
 Match resolve(const json::Value &device, const List &l);
 
+// Audio monitoring output (what "monitor" layers play through, e.g. headphones). Finds exactly one audio-output
+// entry whose friendly name equals `name` (case-insensitive) and passes its endpoint id to
+// obs_set_audio_monitoring_device. Returns {"device", "id"} on success; {"problem"} otherwise (libobs keeps the
+// Windows default output).
+json::Value set_monitoring_output(const std::string &name, const List &l);
+
 // True if the named DLL is mapped into this process (GetModuleHandleW). Used to prove device modules are absent.
 bool module_mapped(const wchar_t *dll);
 

@@ -48,6 +48,16 @@ const BAD = [
   ['device directShowId empty', (d) => { d.devices[0].match.directShowId = ''; }, true],
   ['duplicate without layer', (d) => { d.scenes[1].layers.push({ ...dupLayer('layer-d1', 'layer-cam'), source: {} }); }, true],
   ['duplicate source has extra key', (d) => { d.scenes[1].layers.push({ ...dupLayer('layer-d1', 'layer-cam'), source: { layer: 'layer-cam', device: 'dev-cam' } }); }, true],
+  ['effects not an array', (d) => { d.scenes[0].layers[3].effects = { type: 'blur', strength: 5 }; }, true],
+  ['effect type unknown', (d) => { d.scenes[0].layers[3].effects = [{ type: 'glow', strength: 5 }]; }, true],
+  ['blur without strength', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blur' }]; }, true],
+  ['blur strength 0', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blur', strength: 0 }]; }, true],
+  ['blur strength above 100', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blur', strength: 101 }]; }, true],
+  ['blur with a radius key', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blur', strength: 5, radius: 4 }]; }, true],
+  ['rounded radius negative', (d) => { d.scenes[0].layers[3].effects = [{ type: 'rounded', radius: -1 }]; }, true],
+  ['rounded radius above 500', (d) => { d.scenes[0].layers[3].effects = [{ type: 'rounded', radius: 501 }]; }, true],
+  ['five effects', (d) => { d.scenes[0].layers[3].effects = Array.from({ length: 5 }, () => ({ type: 'rounded', radius: 4 })); }, true],
+  ['effect not an object', (d) => { d.scenes[0].layers[3].effects = ['blur']; }, true],
   // semantic only
   ['duplicate of a missing layer', (d) => { d.scenes[1].layers.push(dupLayer('layer-d1', 'layer-nope')); }, false],
   ['duplicate of itself (cycle)', (d) => { d.scenes[1].layers.push(dupLayer('layer-d1', 'layer-d1')); }, false],
@@ -92,6 +102,15 @@ test('a duplicate of a real layer, also in another scene, is valid (schema and v
   const d = sample();
   d.scenes[1].layers.push(dupLayer('layer-d1', 'layer-cam'));
   d.scenes[0].layers.push({ ...dupLayer('layer-d2', 'layer-cam'), placements: { v: { visible: true, x: 0, y: 0, width: 10, height: 10 } } });
+  assert.equal(schemaCheck(d), true, JSON.stringify(schemaCheck.errors));
+  assert.deepEqual(validateProject(d).errors, []);
+});
+
+test('layer effects: blurred duplicate and rounded layer are valid (schema and validator)', () => {
+  const d = sample();
+  d.scenes[1].layers.push({ ...dupLayer('layer-d1', 'layer-cam'), effects: [{ type: 'blur', strength: 40 }] });
+  d.scenes[0].layers[3].effects = [{ type: 'rounded', radius: 24 }, { type: 'blur', strength: 1 }];
+  d.scenes[0].layers[4].effects = [];
   assert.equal(schemaCheck(d), true, JSON.stringify(schemaCheck.errors));
   assert.deepEqual(validateProject(d).errors, []);
 });

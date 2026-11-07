@@ -1,0 +1,49 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_rounded_corners filter (src/effects.cpp). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Alpha mask outside a rounded rectangle: `size` is the source size in pixels, `radius` the corner radius in pixels
+// (clamped to half the shorter side). One pixel of anti-aliasing at the edge.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 size;
+uniform float radius;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSRounded(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(clampSampler, v_in.uv);
+	float2 half_size = size * 0.5;
+	float r = min(radius, min(half_size.x, half_size.y));
+	float2 q = abs(v_in.uv * size - half_size) - (half_size - r);
+	float d = length(max(q, float2(0.0, 0.0))) - r;
+	rgba.a *= saturate(0.5 - d);
+	return rgba;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSRounded(v_in);
+	}
+}

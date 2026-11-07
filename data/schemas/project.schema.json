@@ -103,6 +103,15 @@
         }
       }
     },
+    "effect": {
+      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside.",
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["type", "strength"],
+          "properties": { "type": { "const": "blur" }, "strength": { "type": "number", "minimum": 1, "maximum": 100 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "radius"],
+          "properties": { "type": { "const": "rounded" }, "radius": { "type": "number", "minimum": 0, "maximum": 500 } } }
+      ]
+    },
     "layer": {
       "type": "object", "additionalProperties": false,
       "required": ["id", "type", "name", "source", "placements"],
@@ -117,6 +126,7 @@
           "type": "object", "additionalProperties": false, "minProperties": 1,
           "properties": { "h": { "$ref": "#/$defs/placement" }, "v": { "$ref": "#/$defs/placement" } }
         },
+        "effects": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/effect" } },
         "origin": { "$ref": "#/$defs/origin" }
       },
       "allOf": [

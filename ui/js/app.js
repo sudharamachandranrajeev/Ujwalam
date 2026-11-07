@@ -156,8 +156,10 @@
       slider.addEventListener('input', function () { setText(db, slider.value + ' dB'); });
       slider.addEventListener('change', function () { guard(Api.host('mixer.setVolume', { id: m.id, db: Number(slider.value) })); });
       var mute = el('button', { class: 'icon-btn', type: 'button', text: m.muted ? 'Unmute' : 'Mute', onclick: function () { guard(Api.host('mixer.setMute', { id: m.id, muted: !m.muted }).then(loadMixer)); } });
+      // CUE: hear this channel in the headphones (Meld's per-channel button), applied at once.
+      var cue = el('button', { class: 'icon-btn cue' + (m.cue ? ' on' : ''), type: 'button', text: 'CUE', 'aria-pressed': m.cue ? 'true' : 'false', title: m.cueDelayed ? 'This channel has video: libobs delays its headphone sound to match the picture' : 'Hear this channel in the headphones', onclick: function () { guard(Api.host('mixer.setCue', { id: m.id, cue: !m.cue }).then(loadMixer)); } });
       var level = el('i'); level.style.width = meterWidth(m.peakDb); meterEls[m.id] = level;
-      box.appendChild(el('div', { class: 'chan' }, [el('span', { text: m.name }), mute, el('div', { class: 'meter' }, [level]), slider, db]));
+      box.appendChild(el('div', { class: 'chan' }, [el('span', { text: m.name }), cue, mute, el('div', { class: 'meter' }, [level]), slider, db]));
     });
     if (offMix.length) box.appendChild(el('p', { class: 'muted mixer-note', text: 'Not in the stream mix (layer sound off): ' + offMix.map(function (m) { return m.name; }).join(', ') + '.' }));
     box.appendChild(el('p', { class: 'muted mixer-note', text: 'Meters show the host peak level.' }));

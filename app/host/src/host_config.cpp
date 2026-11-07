@@ -53,7 +53,7 @@ bool int_in(const json::Value *v, int64_t lo, int64_t hi, int64_t &dst, const ch
 
 bool parse_host_config(const json::Value &doc, HostConfig &cfg, std::string &err)
 {
-	if (!only(doc, {"$comment", "replay", "hotkeys", "feedbackDir", "markersDir", "eventCore"}, "host config", err))
+	if (!only(doc, {"$comment", "replay", "hotkeys", "feedbackDir", "markersDir", "eventCore", "monitoringDevice", "audio"}, "host config", err))
 		return false;
 	if (const json::Value *r = doc.find("replay")) {
 		if (!only(*r, {"seconds", "autoStart", "fallbackKbps"}, "replay", err))
@@ -111,6 +111,24 @@ bool parse_host_config(const json::Value &doc, HostConfig &cfg, std::string &err
 		if (!only(*e, {"systemFile"}, "eventCore", err) ||
 		    !abs_path(e->find("systemFile"), cfg.core_system_file, "eventCore.systemFile", err))
 			return false;
+	}
+	if (const json::Value *a = doc.find("audio")) {
+		if (!only(*a, {"lowLatency"}, "audio", err))
+			return false;
+		if (const json::Value *l = a->find("lowLatency")) {
+			if (!l->is_bool()) {
+				err = "audio.lowLatency must be true or false";
+				return false;
+			}
+			cfg.low_latency_audio = l->as_bool();
+		}
+	}
+	if (const json::Value *m = doc.find("monitoringDevice")) {
+		if (!m->is_string() || m->as_string().empty() || m->as_string().size() > 200) {
+			err = "monitoringDevice must be a device name (1-200 characters)";
+			return false;
+		}
+		cfg.monitoring_device = m->as_string();
 	}
 	return true;
 }

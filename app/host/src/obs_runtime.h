@@ -16,6 +16,10 @@ struct Options {
 	bool allow_devices = false; // win-dshow / win-wasapi; off by default (a device session needs the user's go)
 	bool allow_browser = false; // obs-browser (CEF)
 	uint32_t adapter = 0;
+	// Low-latency audio buffering (OBS "Low Latency Audio Buffering Mode"): fixed 20 ms instead of growing up to
+	// 960 ms when a source is late. Cuts the delay of everything heard through monitoring (headphones); a source that
+	// delivers late audio is cut short instead of delaying the whole mix.
+	bool low_latency_audio = false;
 	uint32_t width = 1920, height = 1080, fps = 60;
 	std::vector<std::string> plugin_roots;
 };

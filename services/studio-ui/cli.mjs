@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Studio UI server entry. Usage: node services/studio-ui/cli.mjs serve [--port N] [--data-dir DIR] [--fake-host] [--feedback-dir DIR]
+// Studio UI server entry. Usage: node services/studio-ui/cli.mjs serve [--port N] [--data-dir DIR] [--fake-host] [--feedback-dir DIR] [--project FILE]
 // The launch key comes from UJWALAM_UI_LAUNCH_KEY (set by launch.mjs); without it a random one is made and the UI
 // cannot be logged into (useful only for tests). Backend tokens come from the environment or the data dir files; they
 // are never printed and never sent to the page.
@@ -9,6 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveDataDir } from '../event-core/config.mjs';
 import { createCoreClient, createFakeBots, createHostRouter } from './backends.mjs';
+import { createProjectSync } from './project-sync.mjs';
 import { createStudioServer } from './server.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -34,7 +35,9 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   // --profile / --release: for the Report button only (links.issues_url, version). launch.mjs passes the same files as the diag bundle.
   const profileFile = typeof args.profile === 'string' ? path.resolve(args.profile) : undefined;
   const releaseFile = typeof args.release === 'string' ? path.resolve(args.release) : undefined;
-  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
+  // --project: the project file the host loaded; layer edits are autosaved into it (P5b, project-sync.mjs).
+  const projectSync = typeof args.project === 'string' ? createProjectSync({ file: path.resolve(args.project), log: (m) => out(`[studio-ui] ${m}`) }) : null;
+  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, projectSync, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
   const { port } = await srv.listen();
   out(`[studio-ui] listening on http://127.0.0.1:${port}/ (no token printed)`);
   if (host.describe().kind === 'fake') out('[studio-ui] BLOCKED-ON-HOST: no libobs host found, using the in-memory fake backend');
@@ -46,5 +49,5 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
 if (process.argv[1] && process.argv[1].endsWith('cli.mjs') && process.argv[1].includes('studio-ui')) {
   const args = parseArgs(process.argv.slice(2));
   if (args._[0] === 'serve') process.exit(await serve(args));
-  else { console.log('usage: node services/studio-ui/cli.mjs serve [--port N] [--data-dir DIR] [--fake-host] [--feedback-dir DIR] [--profile FILE] [--release FILE]'); process.exit(2); }
+  else { console.log('usage: node services/studio-ui/cli.mjs serve [--port N] [--data-dir DIR] [--fake-host] [--feedback-dir DIR] [--profile FILE] [--release FILE] [--project FILE]'); process.exit(2); }
 }

@@ -1,0 +1,37 @@
+{
+  "id": "device-live-gamer-ultra-21-audio",
+  "version": "0.1.0",
+  "function": "capture-devices",
+  "functionVersion": "^0.1.0",
+  "name": "Live Gamer Ultra 2.1 audio input binding",
+  "params": {
+    "match": {
+      "roles": [
+        "game-audio"
+      ],
+      "projectKind": "microphone",
+      "listKind": "audio-input",
+      "nameContains": "line in (live gamer ultra 2.1",
+      "status": "unverified",
+      "evidence": "2026-11-06 Windows capture endpoints (MMDevices registry): \"HDMI/Line In\" and \"Not To Use\" on \"Live Gamer Ultra 2.1-Audio\"; only the first carries the HDMI audio. The Game channel (stream mix + CUE), as Meld's \"Track\" channel uses \"HDMI/Line In\" (user screenshot 2026-11-06)."
+    }
+  },
+  "themeOverrides": {},
+  "family": "devices",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "planned",
+  "parity": "pending",
+  "legacySource": "legacy/meld/session.json",
+  "legacySourceVerified": false,
+  "legacyNote": "Meld's mixer channel \"Track\" has source \"HDMI/Line I...\" with CUE on (user screenshot 2026-11-06); session.json entry not checked."
+}

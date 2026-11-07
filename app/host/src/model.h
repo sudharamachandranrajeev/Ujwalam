@@ -12,6 +12,8 @@
 //                                   so rotation turns about the centre (UNVERIFIED against Meld)
 //   placement.crop               -> item crop in source pixels (UNVERIFIED against Meld)
 //   placement.opacity != 1       -> not applied (libobs items have no opacity); listed in warnings
+//   layer.effects                -> per-item effect chain (studio.cpp: a private ujw_effects_wrap source over the shared
+//                                   source, so a duplicate's effects never reach the original and no device opens twice)
 //   browser layer                -> browser_source at the largest canvas fps, page control level 0 (no access to
 //                                   the studio), no audio reroute; source.overlay pages come from the host's overlay
 //                                   server (see Options), source.url pages only from 127.0.0.1 / localhost
@@ -51,12 +53,25 @@ struct Source {
 	bool overlay = false; // browser layer showing a project overlay from the host's overlay server
 };
 
+// Per-layer visual effect (project.schema.json $defs/effect), applied in list order.
+//   blur:    value = strength 1..100 (Gaussian sigma = strength * 0.5 source pixels, after the placement crop)
+//   rounded: value = corner radius 0..500 source pixels (after the placement crop); transparent outside
+struct Effect {
+	std::string type; // "blur" | "rounded"
+	double value = 0;
+};
+
 struct Item {
 	std::string layer, name, type;
 	std::string source_layer; // == layer, or the duplicate's target
 	bool visible = true;
 	json::Value placement;
+	std::vector<Effect> effects; // empty: the item shows the shared source directly
 };
+
+// Parses and checks a layer's "effects" array (absent: empty). Throws rpc::Error(INVALID_PARAMS).
+std::vector<Effect> parse_effects(const json::Value *effects, const std::string &what);
+json::Value effects_json(const std::vector<Effect> &e);
 
 struct Scene {
 	std::string id, name;

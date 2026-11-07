@@ -17,6 +17,10 @@ export const ROLES = Object.freeze({
   'game-capture': { listKinds: ['video'], projectKinds: ['capture-card', 'camera'], defaultProjectKind: 'capture-card' },
   facecam: { listKinds: ['video'], projectKinds: ['camera'], defaultProjectKind: 'camera' },
   mic: { listKinds: ['audio-input'], projectKinds: ['microphone'], defaultProjectKind: 'microphone' },
+  // The capture card's own audio input endpoint (WASAPI; project kind "microphone" = any WASAPI capture input): the
+  // Game channel, as in Meld. libobs delays monitoring of a source that has video until its frame is shown, so the
+  // capture layer's audio is late in the headphones; this endpoint has no video and is heard at once.
+  'game-audio': { listKinds: ['audio-input'], projectKinds: ['microphone'], defaultProjectKind: 'microphone' },
 });
 
 const isPlaceholder = (s) => typeof s === 'string' && /^<[^<>]*>$/.test(s);

@@ -29,6 +29,8 @@ before(async () => {
   ffmpeg(['-f', 'lavfi', '-i', 'color=c=blue:s=64x64', '-frames:v', '1', path.join(media, 'logo.png')]);
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
     '-t', '3', '-c:v', 'mpeg4', '-q:v', '5', '-c:a', 'aac', '-shortest', path.join(media, 'intro.mp4')]);
+  // 16 px black/white vertical stripes (effects render test)
+  ffmpeg(['-f', 'lavfi', '-i', "nullsrc=s=256x256,format=gbrp,geq=r='if(mod(floor(X/16),2),255,0)':g='if(mod(floor(X/16),2),255,0)':b='if(mod(floor(X/16),2),255,0)',format=rgb24", '-frames:v', '1', path.join(media, 'stripes.png')]);
   h = await launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), project: path.join(HOST_DIR, 'projects', 'test-card.project.json') });
   c = h.client;
 });
@@ -301,6 +303,107 @@ test('project v1 render: H and V placements, duplicate item, shared source, laye
   near(pv(100, 100), R, 'V background');
   near(pv(250, 400), R, 'V above box');
   near(pv(500 / 2, 237), R, 'V: no duplicate (H-only placement)');
+  await c.call('outputs.clear');
+});
+
+// Per-layer effects (2026-11-07): a blurred duplicate of a sharp image (the original must stay sharp: the effect is on
+// the duplicate's own wrapper, not on the shared source) and rounded corners on a cropped colour card.
+const FX = {
+  version: 1, id: 'effects-check', name: 'Effects check', activeScene: 'main',
+  canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }],
+  devices: [], overlays: [], outputs: [],
+  scenes: [{
+    id: 'main', name: 'Main', layers: [
+      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#ff0000' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
+      { id: 'stripes', type: 'image', name: 'Stripes', source: { file: { base: 'media', rel: 'stripes.png' } },
+        placements: { h: { visible: true, x: 64, y: 64, width: 256, height: 256 } } },
+      { id: 'stripes-soft', type: 'duplicate', name: 'Stripes blurred', source: { layer: 'stripes' }, effects: [{ type: 'blur', strength: 40 }],
+        placements: { h: { visible: true, x: 400, y: 64, width: 256, height: 256 } } },
+      { id: 'card', type: 'color', name: 'Card', source: { color: '#00ff00' }, effects: [{ type: 'rounded', radius: 60 }],
+        placements: { h: { visible: true, x: 800, y: 64, width: 256, height: 256, crop: { left: 128 } } } }
+    ]
+  }],
+  audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+};
+
+test('project v1 effects: host refuses malformed effects; plan and layers.list carry them', async () => {
+  const bad = [
+    'blur',
+    [{ type: 'glow', strength: 5 }],
+    [{ type: 'blur' }],
+    [{ type: 'blur', strength: 0 }],
+    [{ type: 'blur', strength: 101 }],
+    [{ type: 'blur', strength: 5, radius: 3 }],
+    [{ type: 'rounded', radius: -1 }],
+    [{ type: 'rounded', radius: 501 }],
+    Array.from({ length: 5 }, () => ({ type: 'rounded', radius: 4 }))
+  ];
+  const { validateProject } = await import('../../../services/project/validate.mjs');
+  for (const effects of bad) {
+    const doc = clone(FX);
+    doc.scenes[0].layers[2].effects = effects;
+    assert.equal(validateProject(doc).ok, false, `validator: ${JSON.stringify(effects)}`);
+    assert.equal((await rpcErr('project.plan', { project: doc, bases: { media } })).code, -32602, `host: ${JSON.stringify(effects)}`);
+  }
+  const plan = await planInHost(c, FX, { bases: { media } });
+  const items = Object.fromEntries(plan.scenes[0].items.H.map((i) => [i.layer, i]));
+  assert.deepEqual(items['stripes-soft'].effects, [{ type: 'blur', strength: 40 }]);
+  assert.deepEqual(items.card.effects, [{ type: 'rounded', radius: 60 }]);
+  assert.equal(items.stripes.effects, undefined, 'no effects key without effects');
+  assert.equal(plan.warnings.filter((w) => w.scene).length, 0, 'image/colour sources: no audio warning');
+  const solo = clone(FX);
+  solo.scenes[0].layers.push({ id: 'clip', type: 'media', name: 'Clip', source: { file: { base: 'media', rel: 'intro.mp4' } },
+    effects: [{ type: 'rounded', radius: 8 }], placements: { h: { visible: true, x: 0, y: 400, width: 320, height: 240 } } });
+  const sp = await planInHost(c, solo, { bases: { media } });
+  assert.deepEqual(sp.warnings.filter((w) => w.scene).map((w) => w.layer), ['clip'], 'audio source shown only through effects on H is flagged');
+});
+
+test('project v1 effects render: blurred duplicate, sharp original, rounded corners after crop', async () => {
+  assert.ok((await import('../../../services/project/validate.mjs')).validateProject(FX).ok);
+  const r = await loadIntoHost(c, FX, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  assert.deepEqual(r.built, { scenes: 1, sources: 3, items: 4, audio: 0, overlayLayers: 0, relay: null }, 'the duplicate opens no second source');
+  const info = await c.call('host.info');
+  for (const t of ['ujw_effects_wrap']) assert.ok(info.sourceTypes.includes(t), `${t} registered`);
+  const lh = (await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers;
+  const by = Object.fromEntries(lh.map((l) => [l.id, l]));
+  assert.deepEqual(by['stripes-soft'].effects, [{ type: 'blur', strength: 40 }]);
+  assert.equal(by['stripes-soft'].source, 'stripes', 'duplicate still names the shared source');
+  assert.equal(by['stripes-soft'].width, 256, 'width is the shared source size');
+  assert.equal(by.stripes.effects, undefined);
+  assert.equal(by.card.width, 256, 'source size, not the cropped wrapper size');
+
+  await c.call('outputs.configure', {
+    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
+    audio: { bitrate: 128, sampleRate: 48000 },
+    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: 'effects-h.mkv' } }]
+  });
+  await c.call('record.start', {});
+  await new Promise((res) => setTimeout(res, 2000));
+  await c.call('record.stop', {});
+  let st;
+  for (let i = 0; i < 60; i++) {
+    st = await c.call('outputs.status');
+    if (st.sinks.every((s) => s.state === 'stopped')) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  const px = frameRgb(st.sinks.find((s) => s.id === 'fh').path, 1280, 720);
+  const span = (x0, y) => { // luma range along 128 px of one row (4 stripe periods)
+    let lo = 255, hi = 0;
+    for (let x = x0; x < x0 + 128; x++) { const [R, G, B] = px(x, y); const l = 0.2126 * R + 0.7152 * G + 0.0722 * B; lo = Math.min(lo, l); hi = Math.max(hi, l); }
+    return hi - lo;
+  };
+  const sharp = span(64 + 64, 192), soft = span(400 + 64, 192);
+  assert.ok(sharp > 150, `original stays sharp (luma range ${sharp.toFixed(0)})`);
+  assert.ok(soft < 40, `duplicate is blurred (luma range ${soft.toFixed(0)})`);
+  const mid = px(400 + 128, 192);
+  assert.ok(mid.every((v) => v > 60 && v < 200), `blurred stripes average to grey: ${mid}`);
+  const R = [255, 0, 0], G = [0, 255, 0];
+  near(px(928, 192), G, 'card centre');
+  near(px(803, 192), G, 'card left edge, middle (the crop does not cut into the card)');
+  near(px(803, 67), R, 'card top-left corner is rounded off (radius applies after the wrapper crop)');
+  near(px(1052, 316), R, 'card bottom-right corner is rounded off');
+  near(px(928, 67), G, 'card top edge, middle');
   await c.call('outputs.clear');
 });
 

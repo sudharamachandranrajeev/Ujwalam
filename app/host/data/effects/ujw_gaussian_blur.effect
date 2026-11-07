@@ -1,0 +1,68 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: passes of the ujw_gaussian_blur filter (src/effects.cpp). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+//   Draw: bilinear copy (2x downsample steps and the final upsample).
+//   Blur: one direction of a separable Gaussian; `texel` is one texel of `image` along the pass direction, `inv2s2` is
+//         1 / (2 sigma^2) with sigma in texels of `image`, `radius` the taps used per side (at most 20).
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 texel;
+uniform float inv2s2;
+uniform float radius;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSCopy(VertData v_in) : TARGET
+{
+	return image.Sample(clampSampler, v_in.uv);
+}
+
+float4 PSBlur(VertData v_in) : TARGET
+{
+	float4 sum = image.Sample(clampSampler, v_in.uv);
+	float wsum = 1.0;
+	for (int i = 1; i <= 20; i++) {
+		float fi = i;
+		float w = (fi <= radius) ? exp(-fi * fi * inv2s2) : 0.0;
+		float2 o = texel * fi;
+		sum += (image.Sample(clampSampler, v_in.uv + o) + image.Sample(clampSampler, v_in.uv - o)) * w;
+		wsum += 2.0 * w;
+	}
+	return sum / wsum;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSCopy(v_in);
+	}
+}
+
+technique Blur
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSBlur(v_in);
+	}
+}

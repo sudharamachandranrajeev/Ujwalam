@@ -26,9 +26,9 @@ test('V preset: registry validates, targets the v canvas, similar to Default H',
   assert.equal(presetV.parity, 'pending');
 });
 
-test('V preset: z unique 0..13 (z13 = test-broadcast banner) plus cam-pop rule z14, rects inside the canvas, crop not stretch', () => {
+test('V preset: z unique 0..13 (z13 = test-broadcast banner, z0.5 = blurred game backdrop) plus cam-pop rule z14, rects inside the canvas, crop not stretch', () => {
   const zs = presetV.params.layers.map((l) => l.z).sort((a, b) => a - b);
-  assert.deepEqual(zs, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  assert.deepEqual(zs, [0, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
   assert.equal(presetV.params.rules[0].z, 14);
   for (const l of presetV.params.layers) {
     for (const k of ['x', 'y', 'w', 'h']) assert.ok(l.rect[k] >= 0 && l.rect[k] <= 1, `${l.key}.${k}`);
@@ -45,15 +45,42 @@ test('V preset loads into the v canvas with roles bound and validates', () => {
   assert.equal(validateProject(r.project).ok, true);
   const sc = r.project.scenes.at(-1);
   assert.equal(sc.name, 'Default V');
-  assert.equal(sc.layers.length, 14);
+  assert.equal(sc.layers.length, 15);
   assert.ok(sc.layers.every((l) => Object.keys(l.placements).join() === 'v'));
-  assert.deepEqual(sc.layers[1].source, { device: 'dev-cap' });
-  assert.deepEqual(sc.layers[2].source, { device: 'dev-cam' });
-  assert.equal(sc.layers[2].placements.v.visible, false);
-  assert.deepEqual(sc.layers[1].placements.v.crop, { left: 336, right: 336 });
-  assert.equal(sc.layers[1].placements.v.width, 1080);
+  const byKey = (k) => sc.layers.find((l) => l.id === r.layerIds[k]);
+  assert.deepEqual(byKey('game').source, { device: 'dev-cap' });
+  assert.deepEqual(byKey('facecam').source, { device: 'dev-cam' });
+  assert.equal(byKey('facecam').placements.v.visible, true); // shown (user 2026-11-06)
+  assert.deepEqual(byKey('game').placements.v.crop, { left: 336, right: 336 });
+  assert.equal(byKey('game').placements.v.width, 1080);
+  // layer-effects off (default): the backdrop is built but hidden, and no layer carries effects
+  assert.equal(sc.layers[1].id, r.layerIds['game-backdrop']);
+  assert.deepEqual(byKey('game-backdrop').source, { layer: r.layerIds.game });
+  assert.equal(byKey('game-backdrop').placements.v.visible, false);
+  assert.ok(sc.layers.every((l) => !l.effects));
   assert.equal(r.project.devices.length, 2);
   assert.equal(r.rules[0].layer, r.layerIds.facecam);
+});
+
+test('V preset with layer-effects on: blurred backdrop shown behind the game, game rounded; validates', () => {
+  const r = loadScenePreset(base(), presetV, { profile, roles: { 'game-capture': 'dev-cap', facecam: 'dev-cam' }, flags: { 'layer-effects': true } });
+  assert.equal(validateProject(r.project).ok, true);
+  const sc = r.project.scenes.at(-1);
+  const byKey = (k) => sc.layers.find((l) => l.id === r.layerIds[k]);
+  const bd = byKey('game-backdrop');
+  assert.equal(bd.type, 'duplicate');
+  assert.equal(bd.placements.v.visible, true);
+  assert.deepEqual(bd.effects, [{ type: 'blur', strength: 40 }]);
+  assert.deepEqual([bd.placements.v.width, bd.placements.v.height], [1080, 1920]);
+  assert.ok(sc.layers.indexOf(bd) < sc.layers.indexOf(byKey('game')), 'backdrop under the game');
+  assert.deepEqual(byKey('game').effects, [{ type: 'rounded', radius: 48 }]);
+});
+
+test('V preset: an unbound game leaves the backdrop a transparent placeholder too', () => {
+  const r = loadScenePreset(base(), presetV, { profile, flags: { 'layer-effects': true } });
+  const bd = r.project.scenes.at(-1).layers.find((l) => l.id === r.layerIds['game-backdrop']);
+  assert.equal(bd.type, 'color');
+  assert.equal(bd.effects, undefined);
 });
 
 test('V preset: unbound roles give transparent colour layers; browser pages are sized to the placement', () => {

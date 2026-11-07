@@ -93,12 +93,15 @@ export const HOST_CALLS = Object.freeze({
   'layers.setVisible': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, visible: { type: 'bool', required: true } } },
   'layers.move': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, index: { type: 'int', min: 0, max: 255, required: true } } },
   'layers.setPlacement': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, placement: PLACEMENT } },
-  'preview.open': { schema: { canvas: CANVAS } },
+  // parent/x/y/width/height: the Qt shell embeds the preview in its window (decimal window handle, client pixels).
+  'preview.open': { schema: { canvas: CANVAS, parent: { type: 'string', pattern: /^[1-9][0-9]{0,19}$/ }, x: { type: 'int', min: 0, max: 16384 }, y: { type: 'int', min: 0, max: 16384 }, width: { type: 'int', min: 160, max: 8192 }, height: { type: 'int', min: 90, max: 8192 } } },
   'preview.focus': { schema: { canvas: CANVAS } },
   'preview.close': { schema: { canvas: CANVAS } },
   'mixer.list': { schema: {} },
   'mixer.setVolume': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, db: { type: 'num', min: -100, max: 0, required: true } } },
   'mixer.setMute': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, muted: { type: 'bool', required: true } } },
+  // CUE (headphone monitoring, Meld's per-channel button): not a stream change, applied at once.
+  'mixer.setCue': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, cue: { type: 'bool', required: true } } },
   'stream.start': { schema: {}, confirm: 'onair', summary: 'Start the stream' },
   'stream.stop': { schema: {}, confirm: 'live', summary: 'Stop the stream' },
   'record.start': { schema: {}, confirm: 'live', summary: 'Start recording' },
@@ -171,6 +174,8 @@ export function createStudioServer(opts) {
   const now = opts.now ?? Date.now;
   const root = realpathSync(path.resolve(opts.uiRoot));
   const { core, host } = opts;
+  // P5b autosave of layer edits into the project file (project-sync.mjs); null: edits stay live-only.
+  const projectSync = opts.projectSync ?? null;
   // Feature flags (D149) and the post-stream feedback form (D150). opts.flags / opts.feedback are test seams.
   const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir }) : null);
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
@@ -386,7 +391,11 @@ export function createStudioServer(opts) {
         if (!id) return json(res, 429, { error: 'too-many-pending' });
         return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
       }
-      try { return json(res, 200, { result: await host.call(body.method, params) ?? null }); } catch (e) { return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+      let result;
+      try { result = await host.call(body.method, params) ?? null; } catch (e) { return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+      // P5b autosave: only after the host accepted the edit; the real host only (the fake has no project file).
+      const saved = projectSync && host.describe().kind === 'host' ? projectSync.record(body.method, params) : false;
+      return json(res, 200, saved ? { result, saved: 'pending' } : { result });
     }
     if (route === '/ui/api/bots/start' || route === '/ui/api/bots/stop') {
       // Studio write: typed "yes", or "yes, on air" while live. Stop only ever ends a copy Ujwalam started (checked in the module).
@@ -633,6 +642,7 @@ export function createStudioServer(opts) {
     },
     async close() {
       clearInterval(pollTimer);
+      projectSync?.flush(); // write a pending layer edit now rather than lose it
       for (const c of sseClients) c.write(': bye\n\n');
       server.closeAllConnections?.();
       await new Promise((r) => server.close(() => r()));

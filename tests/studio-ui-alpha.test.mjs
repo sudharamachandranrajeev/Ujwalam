@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, coreEnv, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, coreEnv, shellSpawnSpec, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -54,7 +54,7 @@ test('event-core env: the host markers token only, never the full host or host s
 });
 
 test('roles: registry presets bind game capture, facecam and mic from an anonymised devices.list', () => {
-  assert.equal(devicePresets.length, 4, 'four device presets carry match data');
+  assert.equal(devicePresets.length, 5, 'five device presets carry match data');
   const r = matchRoles({ list: LIST, presets: devicePresets });
   assert.deepEqual(r.unavailable, []);
   assert.equal(r.bound['game-capture'].entry, byName('Live Gamer Ultra 2.1-Video'));
@@ -64,6 +64,8 @@ test('roles: registry presets bind game capture, facecam and mic from an anonymi
   assert.equal(r.bound.facecam.projectKind, 'camera');
   assert.equal(r.bound.mic.entry.kind, 'audio-input', 'the WASAPI endpoint, not the DirectShow audio entry');
   assert.equal(r.bound.mic.projectKind, 'microphone');
+  assert.equal(r.bound['game-audio'].entry.name, 'HDMI/Line In (Live Gamer Ultra 2.1-Audio)', 'the HDMI input, not the "Not To Use" endpoint');
+  assert.equal(r.bound['game-audio'].projectKind, 'microphone');
 });
 
 test('roles: missing and ambiguous devices stay unbound with a reason, never guessed', () => {
@@ -77,7 +79,7 @@ test('roles: missing and ambiguous devices stay unbound with a reason, never gue
   assert.match(r.unavailable.find((u) => u.role === 'facecam').reason, /2 connected devices match "facecam"; set devices.roles.facecam/);
   r = matchRoles({ list: { devices: [] }, presets: devicePresets });
   assert.deepEqual(Object.keys(r.bound), []);
-  assert.equal(r.unavailable.length, 3);
+  assert.equal(r.unavailable.length, 4);
 });
 
 test('roles: profile overrides by path or name; placeholders count as unset; one device per role', () => {
@@ -109,6 +111,9 @@ test('profile schema: devices.roles is optional and strict', () => {
   p.devices = { roles: { mic: { path: 'x', name: 'y' } } }; assert.equal(v(p), false);
   p.devices = { roles: { webcam: { path: 'x' } } }; assert.equal(v(p), false);
   p.devices = { roles: { mic: { id: 'x' } } }; assert.equal(v(p), false);
+  p.devices = { monitoringOutput: { name: 'Out 1' } }; assert.ok(v(p), JSON.stringify(v.errors));
+  p.devices = { monitoringOutput: { name: '' } }; assert.equal(v(p), false);
+  p.devices = { monitoringOutput: { path: 'x' } }; assert.equal(v(p), false);
 });
 
 // ---- alpha project
@@ -134,7 +139,7 @@ test('alpha build with bound roles and a V preset: one scene, V capture layers d
   assert.equal(project.scenes.length, 1);
   assert.equal(project.scenes[0].name, 'Default');
   assert.equal(project.origin.id, 'devices-listed');
-  assert.deepEqual(project.devices.map((d) => d.kind).sort(), ['camera', 'capture-card', 'microphone']);
+  assert.deepEqual(project.devices.map((d) => d.kind).sort(), ['camera', 'capture-card', 'microphone', 'microphone'], 'mic + the card audio input');
   const layers = project.scenes[0].layers;
   const caps = layers.filter((l) => l.type === 'capture');
   const dups = layers.filter((l) => l.type === 'duplicate');
@@ -147,7 +152,35 @@ test('alpha build with bound roles and a V preset: one scene, V capture layers d
   for (const c of caps) assert.deepEqual(Object.keys(c.placements), ['h']);
   assert.equal(report.duplicated, 2);
   assert.deepEqual(report.unbound, []);
-  assert.deepEqual(project.audio.sources.map((s) => [s.id, s.monitoring, s.tracks[0]]), [['aud-mic', 'off', 'track1'], ['aud-game', 'off', 'track1']]);
+  assert.deepEqual(project.audio.sources.map((s) => [s.id, s.monitoring, s.tracks[0]]), [['aud-mic', 'off', 'track1'], ['aud-game', 'monitor-and-output', 'track1']]);
+  // Game = the card's audio input (no video: CUE in real time), not the capture layer's audio
+  const game = project.audio.sources.find((s) => s.id === 'aud-game');
+  assert.equal(game.layer, undefined);
+  assert.equal(project.devices.find((d) => d.id === game.device).name, 'HDMI/Line In (Live Gamer Ultra 2.1-Audio)');
+});
+
+test('alpha build with the real V preset and layer-effects on: the blurred backdrop duplicates the H game layer (never a duplicate of a duplicate)', () => {
+  const d = tmp('presets-real');
+  for (const f of ['scene-default-h.json', 'scene-default-v.json']) copyFileSync(path.join(PRESETS, f), path.join(d, f));
+  const bindings = matchRoles({ list: LIST, presets: devicePresets });
+  const { project } = buildAlphaProject({ presetsDir: d, profile: PROFILE, bindings, devicesListed: true, flags: { 'layer-effects': true } });
+  assert.ok(validateProject(project).ok, JSON.stringify(validateProject(project).errors));
+  const layers = project.scenes[0].layers;
+  const byId = new Map(layers.map((l) => [l.id, l]));
+  for (const l of layers.filter((x) => x.type === 'duplicate')) assert.equal(byId.get(l.source.layer).type, 'capture', l.name);
+  const bd = layers.find((l) => l.effects?.some((e) => e.type === 'blur'));
+  assert.ok(bd, 'backdrop present');
+  const hGame = byId.get(bd.source.layer);
+  assert.ok(hGame.placements.h, 'points at the H game capture layer');
+  assert.equal(bd.placements.v.visible, true);
+});
+
+test('alpha build without the card audio input: the capture layer audio is the Game channel (CUE late, still on)', () => {
+  const list = listWith(LIST.devices.filter((d) => !d.name.includes('Live Gamer Ultra 2.1-Audio')));
+  const { project } = buildAlphaProject({ presetsDir: presetsDir({ v: true }), profile: PROFILE, bindings: matchRoles({ list, presets: devicePresets }), devicesListed: true });
+  const game = project.audio.sources.find((s) => s.id === 'aud-game');
+  assert.ok(game.layer);
+  assert.equal(game.monitoring, 'monitor-and-output');
 });
 
 test('alpha build: a missing profile placeholder fails by key name before anything is saved', () => {
@@ -261,13 +294,16 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
 test('host config: day-2 keys only (hotkeys on, replay 30 s autostart, feedback folder, event-core system file); written owner-only', () => {
   const d = tmp('hcfg');
   const c = alphaHostConfig({ dataDir: d });
-  assert.deepEqual(Object.keys(c).sort(), ['$comment', 'eventCore', 'feedbackDir', 'hotkeys', 'replay']);
+  assert.deepEqual(Object.keys(c).sort(), ['$comment', 'audio', 'eventCore', 'feedbackDir', 'hotkeys', 'replay']);
   assert.deepEqual(c.replay, { seconds: 30, autoStart: true });
   assert.deepEqual(c.hotkeys, { enabled: true });
+  assert.deepEqual(c.audio, { lowLatency: true });
   assert.equal(c.feedbackDir, DEFAULT_FEEDBACK_DIR);
   assert.equal(DEFAULT_FEEDBACK_DIR, path.join(REPO, 'feedback'), 'repo-root feedback/ (gitignored), the UI form default');
   assert.equal(c.eventCore.systemFile, path.join(d, 'system.json'));
   assert.equal(alphaHostConfig({ dataDir: d, feedbackDir: path.join(d, 'fb') }).feedbackDir, path.join(d, 'fb'));
+  assert.equal(c.monitoringDevice, undefined, 'no monitoring output: the Windows default');
+  assert.equal(alphaHostConfig({ dataDir: d, monitoringOutput: 'Out 1' }).monitoringDevice, 'Out 1');
   for (const p of [c.feedbackDir, c.eventCore.systemFile]) assert.ok(path.isAbsolute(p));
   const f = writeHostConfig(d, c);
   assert.equal(f, path.join(d, 'host-config.json'));
@@ -460,4 +496,17 @@ test('roles: the capture-card preset asks for 1920x1080@60 and the alpha project
 test('open browser: cmd line is start "" "<url>" for a loopback URL; anything else is refused (2026-11-06: no browser opened)', () => {
   assert.equal(startCommandLine('http://127.0.0.1:5000/login?k=abc123'), '"start "" "http://127.0.0.1:5000/login?k=abc123""');
   for (const bad of ['http://127.0.0.1:5000/x&calc', 'http://127.0.0.1:5000/"x', 'https://example.com/', 'http://127.0.0.1:5000/%PATH%', null]) assert.equal(startCommandLine(bad), null, String(bad));
+});
+
+test('Qt shell spawn spec: URL and launch key by env only, every token/key variable stripped, Qt bin first on PATH', () => {
+  const env = { Path: 'C:/x', UJWALAM_HOST_TOKEN: 'h', UJWALAM_EVENT_CORE_API_TOKEN: 'a', UJWALAM_HOST_MARKERS_TOKEN: 'm', UJWALAM_UI_LAUNCH_KEY: 'old', OTHER: '1' };
+  const s = shellSpawnSpec({ uiPort: 5000, launchKey: 'K'.repeat(40), exe: 'C:/studio.exe', qtDir: 'C:/qt', env, exists: () => true });
+  assert.equal(s.cmd, 'C:/studio.exe');
+  assert.equal(s.env.UJWALAM_UI_URL, 'http://127.0.0.1:5000/');
+  assert.equal(s.env.UJWALAM_UI_LAUNCH_KEY, 'K'.repeat(40));
+  for (const k of ['UJWALAM_HOST_TOKEN', 'UJWALAM_EVENT_CORE_API_TOKEN', 'UJWALAM_HOST_MARKERS_TOKEN']) assert.equal(k in s.env, false, k);
+  assert.equal(s.env.OTHER, '1');
+  assert.ok(s.env.Path.startsWith(path.join('C:/qt', 'bin')));
+  assert.equal(shellSpawnSpec({ uiPort: 5000, launchKey: 'k', exe: 'C:/none.exe', exists: () => false }), null, 'not built');
+  assert.equal(shellSpawnSpec({ uiPort: 0, launchKey: 'k', exe: 'C:/studio.exe', exists: () => true }), null, 'bad port');
 });

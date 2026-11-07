@@ -174,6 +174,47 @@ void check_placement(const json::Value &pl, const std::string &what)
 
 } // namespace
 
+std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
+{
+	std::vector<Effect> r;
+	if (!e)
+		return r;
+	if (!e->is_array() || e->size() > 4)
+		throw Error(rpc::INVALID_PARAMS, what + ": effects must be an array (max 4)");
+	for (auto &x : e->as_array()) {
+		const std::string w = what + ".effects";
+		if (!x.is_object())
+			throw Error(rpc::INVALID_PARAMS, w + ": each effect must be an object");
+		Effect fx;
+		fx.type = chk::get_str(x, "type", "", 16, w);
+		if (fx.type == "blur") {
+			chk::only_keys(x, {"type", "strength"}, w);
+			chk::require(x, {"strength"}, w);
+			fx.value = chk::get_num(x, "strength", 0, 1, 100, w);
+		} else if (fx.type == "rounded") {
+			chk::only_keys(x, {"type", "radius"}, w);
+			chk::require(x, {"radius"}, w);
+			fx.value = chk::get_num(x, "radius", 0, 0, 500, w);
+		} else {
+			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur or rounded");
+		}
+		r.push_back(fx);
+	}
+	return r;
+}
+
+json::Value effects_json(const std::vector<Effect> &e)
+{
+	json::Value a = json::Value::array();
+	for (auto &fx : e) {
+		json::Value o = json::Value::object();
+		o.set("type", fx.type);
+		o.set(fx.type == "blur" ? "strength" : "radius", fx.value);
+		a.push(std::move(o));
+	}
+	return a;
+}
+
 bool is_model(const json::Value &doc)
 {
 	return doc.is_object() && !doc.find("format");
@@ -270,7 +311,8 @@ Plan build(const json::Value &doc, const Options &o)
 		chk::only_keys(sc, {"id", "name", "layers", "origin"}, "scene");
 		std::string sid = mid(sc.find("id"), "scene");
 		for (auto &l : arr(sc, "layers", 256, "scene " + sid).as_array()) {
-			chk::only_keys(l, {"id", "type", "name", "visible", "locked", "source", "placements", "origin"}, "layer");
+			chk::only_keys(l, {"id", "type", "name", "visible", "locked", "source", "placements", "effects", "origin"},
+				       "layer");
 			chk::require(l, {"id", "type", "name", "source", "placements"}, "layer");
 			std::string lid = mid(l.find("id"), "layer");
 			if (layers.count(lid))
@@ -450,6 +492,7 @@ Plan build(const json::Value &doc, const Options &o)
 			bool lvis = chk::get_bool(l, "visible", true, "layer " + it.layer);
 			chk::get_bool(l, "locked", false, "layer " + it.layer);
 			it.source_layer = it.layer;
+			it.effects = parse_effects(l.find("effects"), "layer " + it.layer);
 			if (it.type == "duplicate") {
 				const json::Value &s2 = *l.find("source");
 				chk::only_keys(s2, {"layer"}, "layer " + it.layer + ".source");
@@ -481,6 +524,26 @@ Plan build(const json::Value &doc, const Options &o)
 					plan.warnings.push(std::move(w));
 				}
 				s.items[c].push_back(std::move(x));
+			}
+		}
+		// Effects items show a wrapper without audio. When it is the only item of an audio source on the mixed canvas
+		// (H), that source's audio does not reach the scene mix (two or more items: libobs mixes it once as a root
+		// node). UNVERIFIED by test; see effects.h.
+		std::map<std::string, std::pair<int, int>> uses; // source layer -> {items, items with effects} on H
+		for (auto &i : s.items["H"]) {
+			auto &u = uses[i.source_layer];
+			u.first++;
+			u.second += i.effects.empty() ? 0 : 1;
+		}
+		for (auto &[src, u] : uses) {
+			const std::string &ty = layers[src].type;
+			if (u.first == 1 && u.second == 1 && (ty == "capture" || ty == "media")) {
+				json::Value w = json::Value::object();
+				w.set("layer", src);
+				w.set("scene", s.id);
+				w.set("canvas", "H");
+				w.set("warning", "the only item of this source on H has effects: its audio is not in this scene's mix");
+				plan.warnings.push(std::move(w));
 			}
 		}
 		plan.scenes.push_back(std::move(s));
@@ -673,6 +736,8 @@ json::Value to_json(const Plan &p)
 				x.set("type", i.type);
 				x.set("source", i.source_layer);
 				x.set("visible", i.visible);
+				if (!i.effects.empty())
+					x.set("effects", effects_json(i.effects));
 				a.push(std::move(x));
 			}
 			items.set(c, std::move(a));

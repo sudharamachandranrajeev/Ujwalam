@@ -13,6 +13,7 @@
 #include "json.h"
 
 #include <condition_variable>
+#include <cstdint>
 #include <functional>
 #include <map>
 #include <mutex>
@@ -28,6 +29,10 @@ public:
 		std::string canvas; // "H" | "V"
 		int x = -1, y = -1, width = 0, height = 0; // client size; 0 = default for the canvas aspect
 		bool topmost = false;
+		// Embedded (P5a step 4): a window handle of the studio shell. The preview becomes a child window of it at
+		// x,y (parent client pixels) with width x height (both required); calling open again with the same parent
+		// moves/resizes it. It follows the studio window's display (D219).
+		uint64_t parent = 0;
 	};
 	// Opens (or raises, if open) the window for a canvas. Returns {canvas, open, width, height, x, y, display}.
 	json::Value open(const OpenArgs &a);
@@ -49,4 +54,5 @@ private:
 	std::map<std::string, Win *> wins_;
 	void ui_loop();
 	json::Value run_on_ui(std::function<json::Value()> fn);
+	json::Value open_embedded(const OpenArgs &a);
 };

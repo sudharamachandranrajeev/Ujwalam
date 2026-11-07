@@ -4,6 +4,10 @@
 //                                           [--alpha [--rebuild-alpha] [--profile FILE] [--live] [--feedback-dir DIR]
 //                                                    [--hotkey-panic C] [--hotkey-feedback C] [--hotkey-marker C]]
 //
+// --shell qt (P5a): open the Qt studio shell (out/studio/build/ujwalam-studio.exe, npm run build:studio) instead of the
+// browser. It gets the UI URL and the one-time launch key by environment only (shellSpawnSpec), no host or event-core
+// token. Closing its window does not stop the studio (a stream keeps running); Ctrl-C here stops everything. When the
+// shell is not built the browser opens as before.
 // Tokens: the launcher makes the event-core api/system tokens and a host token, passes them to the children by
 // environment (never argv, never printed). The UI server gets only the api token, never the system token. The browser
 // is opened on /login?k=<one-time launch key>; the key is not printed.
@@ -76,10 +80,11 @@ import { resolveDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../project/device-roles.mjs';
 import { loadProject } from '../project/store.mjs';
-import { alphaBases, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
+import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
 import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
 import { writeZip } from '../../tools/package/zip.mjs';
+import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { GUARD_ABORT_EXIT, LIVE_TEST_BUDGET, loadBudget, MAX_TEST_MINUTES, parseMinutes, parseSinkMinutes, runGuard } from './live-guard.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -135,13 +140,17 @@ export function hotkeyOverrides(args) {
 }
 
 /** The alpha host config (keys of app/host/src/host_config.cpp; pure; tested). Combos: host defaults unless overridden. */
-export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, hotkeys = {} }) {
+export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, hotkeys = {}, monitoringOutput = null }) {
   return {
     $comment: 'Written by services/studio-ui/launch.mjs --alpha at every start (edits are overwritten; use --hotkey-panic/--hotkey-feedback/--hotkey-marker). Host defaults: panic Ctrl+Alt+P, feedback Ctrl+Alt+F, marker Ctrl+Alt+Shift+M.',
     replay: { seconds: ALPHA_REPLAY_SECONDS, autoStart: true },
     hotkeys: { enabled: true, ...hotkeys },
     feedbackDir: path.resolve(feedbackDir),
     eventCore: { systemFile: path.join(path.resolve(dataDir), SYSTEM_FILE) },
+    // Low-latency audio buffering: what you hear in the headphones follows the game closely (OBS low-latency mode).
+    audio: { lowLatency: true },
+    // Headphones for monitored sources (profile devices.monitoringOutput.name); absent: the Windows default output.
+    ...(typeof monitoringOutput === 'string' && monitoringOutput ? { monitoringDevice: monitoringOutput } : {}),
   };
 }
 
@@ -191,6 +200,18 @@ export function coreServeArgs({ dataDir, mock = false, sbWs = {} }) {
 
 /** The cmd.exe line that opens url in the default browser, or null if url is not a plain loopback http URL.
  *  Only [A-Za-z0-9:/.?=_-] are allowed, so nothing in it is special to cmd (no & | ^ % " < >). */
+/** Qt shell spawn spec (pure; tested). null when the exe is missing. env: the launcher's environment without any
+ *  UJWALAM_*TOKEN* or *_KEY variable, plus the UI URL, the one-time launch key and the Qt kit's bin first on PATH
+ *  (development build; a packaged build carries its Qt DLLs next to the exe). */
+export function shellSpawnSpec({ uiPort, launchKey, exe, qtDir = null, env = process.env, exists = existsSync }) {
+  if (!exe || !exists(exe) || !Number.isInteger(uiPort) || uiPort < 1 || uiPort > 65535) return null;
+  const clean = {};
+  for (const [k, v] of Object.entries(env)) if (!/^UJWALAM_.*(TOKEN|KEY)/i.test(k)) clean[k] = v;
+  const pathKey = Object.keys(clean).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
+  if (qtDir) clean[pathKey] = `${path.join(qtDir, 'bin')}${path.delimiter}${clean[pathKey] ?? ''}`;
+  return { cmd: exe, env: { ...clean, UJWALAM_UI_URL: `http://127.0.0.1:${uiPort}/`, UJWALAM_UI_LAUNCH_KEY: launchKey } };
+}
+
 export function startCommandLine(url) {
   if (typeof url !== 'string' || !/^http:\/\/127\.0\.0\.1:\d{1,5}\/[A-Za-z0-9/.?=_-]*$/.test(url)) return null;
   return `"start "" "${url}""`;
@@ -356,7 +377,9 @@ export async function alphaProject({ client, dataDir, args, hostCfg }) {
         const list = await client.call('devices.list');
         bindings = matchRoles({ list, presets: loadDevicePresets(path.join(REPO, 'registry', 'presets')), overrides });
       }
-      const b = buildAlphaProject({ presetsDir: path.join(REPO, 'registry', 'presets'), profile, bindings, devicesListed: args['allow-devices'] === true });
+      const flagState = createFlags({ dataDir });
+      const flags = Object.fromEntries(flagState.ids().map((id) => [id, flagState.isOn(id)]));
+      const b = buildAlphaProject({ presetsDir: path.join(REPO, 'registry', 'presets'), profile, bindings, devicesListed: args['allow-devices'] === true, flags });
       report = b.report;
       return b.project;
     },
@@ -648,8 +671,9 @@ export async function main(argv = process.argv.slice(2)) {
     let hostConfigFile;
     if (alpha) {
       try {
-        hostConfigFile = writeHostConfig(dataDir, alphaHostConfig({ dataDir, feedbackDir, hotkeys: hk.overrides }));
-        console.log(`[studio] host config: ${hostConfigFile} (hotkeys on, replay ${ALPHA_REPLAY_SECONDS} s autostart, feedback folder ${feedbackDir})`);
+        const monitoringOutput = readProfile(typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'))?.devices?.monitoringOutput?.name ?? null;
+        hostConfigFile = writeHostConfig(dataDir, alphaHostConfig({ dataDir, feedbackDir, hotkeys: hk.overrides, monitoringOutput }));
+        console.log(`[studio] host config: ${hostConfigFile} (hotkeys on, replay ${ALPHA_REPLAY_SECONDS} s autostart, feedback folder ${feedbackDir}, monitoring output ${monitoringOutput ? 'from the profile' : 'Windows default'})`);
       } catch (e) { console.log(`[studio] host config could not be written owner-only (${e.message}); stopping`); await stopAll(); return 1; }
     }
     const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system });
@@ -737,6 +761,8 @@ export async function main(argv = process.argv.slice(2)) {
   uiArgs.push('--profile', typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'), '--release', path.join(REPO, 'release.json'));
   if (typeof args['ui-port'] === 'string') uiArgs.push('--port', args['ui-port']);
   if (args['fake-host'] === true) uiArgs.push('--fake-host');
+  // P5b autosave: layer edits accepted by the host are written into the alpha project file (project-sync.mjs).
+  else if (alpha) uiArgs.push('--project', alphaFile(dataDir));
   const ui = spawn(process.execPath, uiArgs, {
     stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true,
     env: { ...process.env, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' },
@@ -748,7 +774,19 @@ export async function main(argv = process.argv.slice(2)) {
   console.log(`[studio] UI at http://127.0.0.1:${uiPort}/ (the login key is one-time and not printed). Ctrl-C stops everything.`);
   // Headless (D191): no browser. One exception for scripted runs (F2 real-host test): UJWALAM_BROWSER naming this
   // Node runs that script (windowsHide, no window) with the login URL, so it can drive the page API like the browser.
-  if (args['no-open'] !== true && (!isHeadless() || headlessLoginScript())) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);
+  const wantShell = args.shell === 'qt';
+  const shellSpec = wantShell ? shellSpawnSpec({ uiPort, launchKey, exe: STUDIO_EXE, qtDir: studioQtDir() }) : null;
+  if (wantShell && !shellSpec) console.log('[studio] --shell qt: the Qt shell is not built (npm run build:studio); opening the browser instead');
+  if (args['no-open'] !== true && shellSpec && !isHeadless()) {
+    const shell = spawn(shellSpec.cmd, [], {
+      stdio: 'ignore', env: shellSpec.env,
+      windowsHide: false // GUI window: the Qt studio window the user asked for (--shell qt); a GUI exe, no console
+    });
+    shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
+    shell.on('exit', (code) => { if (!stopping) console.log(`[studio] Qt shell closed (exit ${code}); the studio keeps running. Ctrl-C stops everything.`); });
+    children.push(shell);
+    console.log('[studio] Qt studio shell started');
+  } else if (args['no-open'] !== true && (!isHeadless() || headlessLoginScript())) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);
   if (alphaClient) {
     // One line that answers "are the overlays fed?": bridge counters 10 s after start (counts only, never text).
     // UJWALAM_ALPHA_STATS_MS shortens the wait for tests.

@@ -158,7 +158,7 @@ test('markers token: marker.add (chat/audio) and mixer.list only; every other me
   const others = ['host.info', 'host.status', 'host.shutdown', 'log.tail', 'project.load', 'project.get', 'project.plan',
     'devices.list', 'overlay.status', 'overlay.stats', 'effect.fire', 'scenes.list', 'scenes.create', 'scenes.remove',
     'scenes.activate', 'layers.list', 'layers.add', 'layers.remove', 'layers.setVisible', 'layers.move', 'preview.open',
-    'preview.focus', 'preview.close', 'preview.list', 'mixer.setVolume', 'mixer.setMute', 'outputs.configure',
+    'preview.focus', 'preview.close', 'preview.list', 'mixer.setVolume', 'mixer.setMute', 'mixer.setCue', 'outputs.configure',
     'outputs.clear', 'outputs.status', 'outputs.start', 'outputs.stop', 'stream.start', 'stream.stop', 'record.start',
     'record.stop', 'replay.start', 'replay.stop', 'replay.status', 'replay.save', 'panic.now', 'panic.status',
     'panic.clear', 'feedback.capture', 'feedback.status', 'hotkeys.status', 'hotkeys.trigger', 'encoders.probe'];
