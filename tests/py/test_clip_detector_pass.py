@@ -236,6 +236,154 @@ class LockTests(unittest.TestCase):
                 self.assertTrue(lk.held)
 
 
+ROI_SETTINGS = {**SETTINGS, "ocrRegions": "rois", "roiPad": [0.04, 0.02], "roiMergeArea": 0.02,
+                "roiEvery": {"M1": 3, "M2": 3}, "modeProbeEvery": 10}
+try:
+    import cv2
+    import numpy as np
+    HAVE_CV = True
+except ImportError:
+    HAVE_CV = False
+
+
+class OcrRegionTests(unittest.TestCase):
+    """ocrRegions "rois": pack ROIs -> merged bands -> band crops; boxes come back in the full-frame space."""
+
+    def test_settings_validation(self):
+        def load(**over):
+            with tempfile.TemporaryDirectory() as td:
+                p = os.path.join(td, "c.json")
+                with open(p, "w", encoding="utf-8") as f:
+                    json.dump({"defaultGame": "codm", "games": {"codm": {**ROI_SETTINGS, **over}}}, f)
+                return dp.load_settings(path=p)[1]
+        self.assertEqual(load()["ocrRegions"], "rois")
+        full = {k: v for k, v in SETTINGS.items() if k not in ("ocrRegions", "roiPad", "roiMergeArea", "roiEvery",
+                                                                "modeProbeEvery", "roiDetScale", "roiTextFilter")}
+        with tempfile.TemporaryDirectory() as td:
+            p = os.path.join(td, "c.json")
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump({"defaultGame": "codm", "games": {"codm": full}}, f)
+            self.assertEqual(dp.load_settings(path=p)[1]["ocrRegions"], "full")  # older files keep full frame
+        for bad in ({"ocrRegions": "half"}, {"roiPad": [0.1]}, {"roiPad": [0.1, -1]}, {"roiPad": "0.1"},
+                    {"roiMergeArea": 2}, {"roiMergeArea": True}, {"roiEvery": {"M1": 0}}, {"roiEvery": {"M1": 1.5}},
+                    {"roiEvery": []}, {"modeProbeEvery": -1}, {"modeProbeEvery": 2.5}, {"roiDetScale": 0.1},
+                    {"roiDetScale": 1.5}, {"roiTextFilter": "yes"}):
+            with self.assertRaises(cc.ClipError, msg=str(bad)):
+                load(**bad)
+
+    def test_merge_bands(self):
+        a = (0.0, 0.0, 0.2, 0.1, 1, {"A"})
+        b = (0.2, 0.0, 0.4, 0.1, 1, {"B"})  # touching: the union adds no area
+        far = (0.8, 0.8, 0.9, 0.9, 1, {"C"})
+        inner = (0.82, 0.82, 0.85, 0.85, 1, {"D"})
+        slow = (0.0, 0.1, 0.4, 0.2, 3, {"E"})  # other cadence: never merged
+        bands = dp.merge_bands([a, b, far, inner, slow], 0.02)
+        self.assertEqual(sorted((tuple(round(v, 3) for v in x[:4]), x[4], sorted(x[5])) for x in bands),
+                         [((0.0, 0.0, 0.4, 0.1), 1, ["A", "B"]), ((0.0, 0.1, 0.4, 0.2), 3, ["E"]),
+                          ((0.8, 0.8, 0.9, 0.9), 1, ["C", "D"])])
+        self.assertEqual(len(dp.merge_bands([a, (0.3, 0.3, 0.5, 0.4, 1, {"F"})], 0.02)), 2)  # gap costs 0.07
+
+    def test_every_roi_lies_in_a_band(self):
+        rects = dp.roi_rects(PACK, ROI_SETTINGS)
+        bands = dp.merge_bands(rects, ROI_SETTINGS["roiMergeArea"])
+        for d in PACK["detectors"]:
+            for r in d.get("rois", []):
+                self.assertTrue(any(b[0] <= r["x0"] and b[1] <= r["y0"] and b[2] >= r["x1"] and b[3] >= r["y1"]
+                                    and d["id"] in b[5] for b in bands), (d["id"], r))
+
+    def test_mode_band_sets(self):
+        self.assertEqual(dp.pack_modes(PACK), ["br", "mp"])
+        mp = {i for r in dp.roi_rects(PACK, ROI_SETTINGS, "mp") for i in r[5]}
+        br = {i for r in dp.roi_rects(PACK, ROI_SETTINGS, "br") for i in r[5]}
+        self.assertIn("M3", mp)
+        self.assertNotIn("B1", mp)
+        self.assertIn("B1", br)
+        self.assertNotIn("M3", br)
+        self.assertIn("X1", mp & br)  # both modes, one ROI each
+        x1 = [r[:4] for r in dp.roi_rects(PACK, ROI_SETTINGS, "br") if r[5] == {"X1"}]
+        self.assertEqual(len(x1), 1)
+        self.assertLess(x1[0][1], 0.05)  # the BR banner ROI (top), not the MP one
+
+    def test_band_boxes_back_to_game_fractions(self):
+        # H canvas 1920x1080 with the game area at (100, 50, 1600x900); the sampled image is the visible area
+        import g1_scan
+        layout = {"frame": [1920, 1080], "game": [100, 50, 1600, 900], "visible": [100, 50, 1700, 950]}
+        v = g1_scan.visible_box(layout)
+        origin, size = (v[0], v[1]), (v[2] - v[0], v[3] - v[1])
+        bands = dp.band_pixels([(0.25, 0.0, 0.75, 0.4, 1, {"M3"})], layout, origin, size)
+        self.assertEqual(bands[0]["px"], (400, 0, 1200, 360))
+        # a box at band-local px (240, 198)-(560, 243) = image px (640, 198)-(960, 243)
+        boxes = dp.band_boxes([[{"text": "TRIPLE KILL", "score": 0.9, "x0": 240, "y0": 198, "x1": 560, "y1": 243}]],
+                              bands, size)
+        rec = g1_scan._frame_record(boxes, layout, origin)
+        self.assertEqual(rec[0]["g"], [0.4, 0.22, 0.6, 0.27])
+        self.assertEqual([h["label"] for h in dp.frame_hits(rec, PACK, NAMES, SETTINGS, "mp")
+                          if h["detector"] == "M3" and h["signal"]], ["Triple Kill"])
+
+    def test_overlapping_bands_read_once(self):
+        size = (1000, 500)
+        bands = [{"px": (0, 0, 600, 200)}, {"px": (400, 0, 1000, 200)}]
+        same = {"text": "FURY KILL", "x0": 450, "y0": 50, "x1": 550, "y1": 80}
+        cut = {"text": "ULTRA K", "x0": 520, "y0": 100, "x1": 598, "y1": 130}  # cut by band 0's right edge
+        whole = {"text": "ULTRA KILL", "x0": 120, "y0": 100, "x1": 260, "y1": 130}  # band 1 local px
+        out = dp.band_boxes([[dict(same, score=0.8), dict(cut, score=0.99)],
+                             [dict(same, x0=50, x1=150, score=0.9), dict(whole, score=0.9)]], bands, size)
+        self.assertEqual(sorted((b["text"], b["score"], b["x0"]) for b in out),
+                         [("FURY KILL", 0.9, 450), ("ULTRA KILL", 0.9, 520)])
+
+    def test_text_filter_keeps_rule_rois_only(self):
+        import g1_scan
+        layout = g1_scan.full_screen_layout(1920, 1080, [0, 0, 1920, 1080])
+        real_set = g1_scan.set_ocr_params
+        g1_scan.set_ocr_params = lambda extra: None
+        try:
+            sc = dp.FrameScanner(PACK, NAMES, {**ROI_SETTINGS, "roiTextFilter": True}, layout, threads=1)
+        finally:
+            g1_scan.set_ocr_params = real_set
+        band = next(b for b in sc.band_sets["mp"] if "M3" in b["detectors"] and b["px"][1] == 0)
+        keep = sc._keeper(band)
+        x0, y0 = band["px"][:2]
+        self.assertTrue(keep((960 - x0, 265 - y0)))  # medal banner centre (0.5, 0.245)
+        w, h = band["px"][2] - x0, band["px"][3] - y0
+        grid = [(x, y) for x in range(0, w, 8) for y in range(0, h, 8)]
+        outside = [p for p in grid if not any(r[0] <= (p[0] + x0) / 1920 <= r[2] and r[1] <= (p[1] + y0) / 1080 <= r[3]
+                                              for r in band["rules"])]
+        self.assertTrue(outside)  # the pad around the rule ROIs
+        self.assertFalse(any(keep(p) for p in outside))
+        self.assertTrue(all(keep(p) for p in grid if p not in outside))
+
+    @unittest.skipUnless(HAVE_CV, "needs numpy and opencv")
+    def test_scanner_rois_with_stub_ocr(self):
+        import g1_scan
+        layout = g1_scan.full_screen_layout(1920, 1080, [0, 0, 1920, 1080])
+        real_ocr, real_set = dp.ocr_crops, g1_scan.set_ocr_params
+        calls = []
+
+        def stub(crops, det_scale=1.0, keep=None):  # "reads" the medal text where its white block sits in a crop
+            calls.append(len(crops))
+            out = []
+            for c in crops:
+                n, _lab, st, _c = cv2.connectedComponentsWithStats((c[..., 0] == 255).astype(np.uint8))
+                out.append([{"text": "TRIPLE KILL", "score": 0.95, "x0": float(x), "y0": float(y),
+                             "x1": float(x + w), "y1": float(y + h)} for x, y, w, h, _a in st[1:n]])
+            return out
+        dp.ocr_crops, g1_scan.set_ocr_params = stub, lambda extra: None
+        try:
+            sc = dp.FrameScanner(PACK, NAMES, ROI_SETTINGS, layout, threads=1)
+            img = np.zeros((1080, 1920, 3), np.uint8)
+            img[238:292, 845:1075] = 255  # the M3 banner text block, game fractions (0.44, 0.22)-(0.56, 0.27)
+            h1 = sc.scan(0.0, img)
+            h2 = sc.scan(1.0, img)  # unchanged: every band diff-gated, the hits continue
+        finally:
+            dp.ocr_crops, g1_scan.set_ocr_params = real_ocr, real_set
+        self.assertEqual(calls, [len(sc.band_sets[None])])  # mode unknown: all bands, in one batched call
+        self.assertEqual(sc.stats["ocrCalls"], 1)
+        self.assertEqual([(h["detector"], h["label"], h["signal"], h["t"]) for h in h1 if h["detector"] == "M3"],
+                         [("M3", "Triple Kill", True, 0.0)])
+        self.assertEqual([(h["label"], h["t"]) for h in h2 if h["detector"] == "M3"], [("Triple Kill", 1.0)])
+        self.assertEqual(sc.stats["diffGateSkips"], 1)
+
+
 @unittest.skipUnless(HAVE_FFMPEG, "ffmpeg/ffprobe not on PATH")
 class CandidatesWithHitsTests(unittest.TestCase):
     """clipper candidates picks up DIR/detector-hits.jsonl from `detect`; hits are listed, weigh 0, rank nothing."""

@@ -5,7 +5,8 @@
 //
 // stream.* and record.* are the UI's names for outputs.start/stop on network or file sinks. The UI server asks for
 // a typed human confirmation before it calls them; the host does not gate them again (one gate, in one place).
-// Both roles (api: UI server, system: supervisor) may call every method.
+// Both roles (api: UI server, system: supervisor) may call every method. The least-privilege roles (rpc_server.h)
+// may call only the methods marked for them: markers (event core) and clips (live clipper, D226).
 #include "app.h"
 #include "devices.h"
 #include "log.h"
@@ -240,6 +241,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		(void)Params(p, {});
 		return host_status_json(a);
 	});
+	m["host.status"].clips = true; // the live clipper's health check
 	add("host.shutdown", [&a](const json::Value &p) {
 		(void)Params(p, {});
 		if (!a.shutting_down.exchange(true)) {
@@ -523,13 +525,38 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		(void)Params(p, {});
 		return a.outputs->replay_status();
 	});
-	// replay.save {canvas?}: <recordings>/replay/replay-<canvas>-<stamp>.mkv for each running replay (or the one
-	// canvas). The folder is fixed; feedback captures save into their own folder in-process.
+	m["replay.status"].clips = true;
+	// replay.save {canvas?}: <recordings>/replay/replay-<canvas>-<stamp>[-<n>].mkv for each running replay (or the one
+	// canvas); -2, -3 ... only when a save in the same second already wrote that name. Returns after libobs's "saved"
+	// signal, so each saved[].path exists when the call returns. The folder is fixed; feedback captures save into
+	// their own folder in-process.
 	add("replay.save", [&a](const json::Value &p) {
 		Params q(p, {"canvas"});
 		return a.outputs->replay_save(canvas_opt(q), a.outputs->replay_dir(), "replay-{canvas}-%CCYY%MM%DD-%hh%mm%ss",
 					      10000);
 	});
+	m["replay.save"].clips = true; // the live clipper saves on a kill chain (D226)
+
+	// ---- frames (frames.h): frames.grab {layer, maxWidth?} -> one still of the layer's shared source (never the
+	// composed canvas) as <dataDir>/live/frame-<layer>.bmp. For the live clipper's OCR (clips role).
+	add("frames.grab", [&a](const json::Value &p) {
+		Params q(p, {"layer", "maxWidth"});
+		std::string layer = q.str("layer", 64);
+		if (layer.empty())
+			throw Error(rpc::INVALID_PARAMS, "layer must be a layer id");
+		uint32_t max_width = (uint32_t)q.int_or("maxWidth", 0, 16, (int64_t)Frames::kMaxSide);
+		std::string type;
+		obs_source_t *src = a.studio->layer_source_ref(layer, type);
+		try {
+			json::Value r = a.frames->grab(src, layer, type, max_width);
+			obs_source_release(src);
+			return r;
+		} catch (...) {
+			obs_source_release(src);
+			throw;
+		}
+	});
+	m["frames.grab"].clips = true;
 
 	// ---- panic (panic.h). panic.now acts in-process at once and queues the event-core notification; the result is in
 	// panic.status (core). panic.clear restores the hidden layers (the UI gates it); event-core's panic is cleared there.
@@ -548,15 +575,18 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 
 	// ---- markers and feedback (moments.h)
 	// marker.add is one of the two methods the markers role may call (the event core's F6 live markers); that role
-	// writes chat and audio markers only.
+	// writes chat and audio markers only. The clips role (live clipper) writes clip markers only.
 	{
 		rpc::Method x;
 		x.markers = true;
+		x.clips = true;
 		x.run = [&a](const json::Value &p, rpc::Role role) {
 			Params q(p, {"source", "note"});
 			std::string source = q.str("source", 16);
 			if (role == rpc::Role::Markers && source != "chat" && source != "audio")
 				throw Error(rpc::FORBIDDEN, "the markers role writes chat or audio markers only");
+			if (role == rpc::Role::Clips && source != "clip")
+				throw Error(rpc::FORBIDDEN, "the clips role writes clip markers only");
 			return a.moments->marker_add(source, q.str_or("note", "", 500));
 		};
 		m["marker.add"] = std::move(x);

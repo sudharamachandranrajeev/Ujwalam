@@ -45,13 +45,17 @@ struct Error : std::runtime_error {
 
 // Markers: least-privilege role for the event core (F6 live markers; it processes untrusted chat). Its token can call
 // only the methods that set Method::markers (marker.add and mixer.list); every other method answers FORBIDDEN.
-enum class Role { Api, System, Markers };
+// Clips: least-privilege role for the live clipper (D226; it reads game frames and saves the replay buffer). Its token
+// can call only the methods that set Method::clips (frames.grab, replay.save, replay.status, marker.add with source
+// "clip", host.status); every other method answers FORBIDDEN.
+enum class Role { Api, System, Markers, Clips };
 const char *role_name(Role r);
 
 struct Method {
 	bool api = true;
 	bool system = true;
 	bool markers = false; // opt-in only: a new method is never callable with the markers token
+	bool clips = false;   // opt-in only: a new method is never callable with the clips token
 	std::function<json::Value(const json::Value &params, Role role)> run;
 };
 
@@ -70,10 +74,11 @@ struct Limits {
 
 class Server {
 public:
-	// Tokens are 64 lowercase hex characters each and must differ. markers_token empty = no markers role (no token
-	// authenticates as Markers).
+	// Tokens are 64 lowercase hex characters each and must differ. markers_token / clips_token empty = that role is
+	// off (no token authenticates as it).
 	Server(Limits limits, const std::string &api_token, const std::string &system_token,
-	       std::map<std::string, Method> methods, const std::string &markers_token = std::string());
+	       std::map<std::string, Method> methods, const std::string &markers_token = std::string(),
+	       const std::string &clips_token = std::string());
 	~Server();
 
 	bool start(uint16_t port, std::string &err); // binds 127.0.0.1 only; port 0 = random
@@ -101,6 +106,8 @@ private:
 	uint8_t sys_digest_[32] = {};
 	uint8_t markers_digest_[32] = {};
 	bool has_markers_ = false;
+	uint8_t clips_digest_[32] = {};
+	bool has_clips_ = false;
 	std::map<std::string, Method> methods_;
 	uintptr_t listen_sock_ = ~(uintptr_t)0;
 	uint16_t port_ = 0;

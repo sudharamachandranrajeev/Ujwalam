@@ -1312,6 +1312,30 @@ std::shared_ptr<Studio::Src> Studio::find_audio(const std::string &id)
 	throw Error(rpc::INVALID_PARAMS, "no such layer");
 }
 
+obs_source_t *Studio::layer_source_ref(const std::string &layer_id, std::string &type) const
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	bool found = false;
+	for (auto &s : scenes_)
+		for (auto &l : s.layers) {
+			if (l.id != layer_id)
+				continue;
+			found = true;
+			if (!l.src || !l.src->src)
+				continue;
+			// The shared source (a duplicate's points at its target's); never the layer's private effects wrapper,
+			// so placement crop, effects and anything composed above the layer never reach the caller.
+			if (!(obs_source_get_output_flags(l.src->src) & OBS_SOURCE_VIDEO))
+				throw Error(rpc::INVALID_PARAMS, "layer has no video");
+			type = l.type;
+			obs_source_t *ref = obs_source_get_ref(l.src->src);
+			if (!ref)
+				throw Error(rpc::UNAVAILABLE, "layer source is being removed");
+			return ref;
+		}
+	throw Error(rpc::INVALID_PARAMS, found ? "layer has no source" : "no such layer");
+}
+
 int Studio::audio_peak_db(const std::string &audio_id, float &peak_db) const
 {
 	std::unique_lock<std::recursive_mutex> lk(m_, std::try_to_lock);

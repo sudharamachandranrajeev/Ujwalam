@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, coreEnv, shellSpawnSpec, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, clipsEnv, coreEnv, liveClipsSpec, shellSpawnSpec, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,14 +42,28 @@ function presetsDir({ v = false } = {}) {
 
 test('event-core env: the host markers token only, never the full host or host system token', () => {
   const coreTokens = { api: 'a'.repeat(64), system: 'b'.repeat(64) };
-  const base = { PATH: 'x', UJWALAM_HOST_TOKEN: 'c'.repeat(64), ujwalam_host_system_token: 'd'.repeat(64) };
+  const base = { PATH: 'x', UJWALAM_HOST_TOKEN: 'c'.repeat(64), ujwalam_host_system_token: 'd'.repeat(64), UJWALAM_HOST_CLIPS_TOKEN: 'f'.repeat(64) };
   const env = coreEnv({ coreTokens, hostMarkersToken: 'e'.repeat(64), base });
+  assert.equal('UJWALAM_HOST_CLIPS_TOKEN' in env, false, 'the event core never gets the clips token');
   assert.equal(env.UJWALAM_HOST_MARKERS_TOKEN, 'e'.repeat(64));
   assert.equal(env.UJWALAM_EVENT_CORE_API_TOKEN, coreTokens.api);
   assert.equal(env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN, coreTokens.system);
   assert.equal(env.PATH, 'x');
   assert.ok(!Object.keys(env).some((k) => /^ujwalam_host_(system_)?token$/i.test(k)), Object.keys(env).join(','));
   assert.ok(!Object.values(env).includes('c'.repeat(64)) && !Object.values(env).includes('d'.repeat(64)));
+  assert.equal(base.UJWALAM_HOST_TOKEN, 'c'.repeat(64), 'the base environment is not changed');
+});
+
+test('live clipper env: the host clips token and discovery file only, every other token or key removed', () => {
+  const base = { PATH: 'x', UJWALAM_HOST_TOKEN: 'c'.repeat(64), ujwalam_host_system_token: 'd'.repeat(64), UJWALAM_HOST_MARKERS_TOKEN: 'e'.repeat(64),
+    UJWALAM_EVENT_CORE_API_TOKEN: 'a'.repeat(64), UJWALAM_EVENT_CORE_SYSTEM_TOKEN: 'b'.repeat(64), UJWALAM_UI_LAUNCH_KEY: 'k', UJWALAM_HEADLESS: '1' };
+  const env = clipsEnv({ hostClipsToken: 'f'.repeat(64), hostDiscovery: 'C:/data/host.json', base });
+  assert.equal(env.UJWALAM_HOST_CLIPS_TOKEN, 'f'.repeat(64));
+  assert.equal(env.UJWALAM_HOST_DISCOVERY, 'C:/data/host.json');
+  assert.equal(env.PATH, 'x');
+  assert.equal(env.UJWALAM_HEADLESS, '1', 'non-secret variables pass');
+  assert.deepEqual(Object.keys(env).filter((k) => /^UJWALAM_.*(TOKEN|KEY)/i.test(k)), ['UJWALAM_HOST_CLIPS_TOKEN']);
+  for (const v of ['a', 'b', 'c', 'd', 'e']) assert.ok(!Object.values(env).includes(v.repeat(64)), v);
   assert.equal(base.UJWALAM_HOST_TOKEN, 'c'.repeat(64), 'the base environment is not changed');
 });
 
@@ -291,11 +305,11 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
   assert.ok(live.argv.includes('--allow-live'));
 });
 
-test('host config: day-2 keys only (hotkeys on, replay 30 s autostart, feedback folder, event-core system file); written owner-only', () => {
+test('host config: day-2 keys only (hotkeys on, replay 60 s autostart, feedback folder, event-core system file); written owner-only', () => {
   const d = tmp('hcfg');
   const c = alphaHostConfig({ dataDir: d });
   assert.deepEqual(Object.keys(c).sort(), ['$comment', 'audio', 'eventCore', 'feedbackDir', 'hotkeys', 'replay']);
-  assert.deepEqual(c.replay, { seconds: 30, autoStart: true });
+  assert.deepEqual(c.replay, { seconds: 60, autoStart: true });
   assert.deepEqual(c.hotkeys, { enabled: true });
   assert.deepEqual(c.audio, { lowLatency: true });
   assert.equal(c.feedbackDir, DEFAULT_FEEDBACK_DIR);
@@ -399,7 +413,7 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     const after = (f) => h.argv[h.argv.indexOf(f) + 1];
     assert.equal(after('--host-config'), path.join(dataDir, 'host-config.json'));
     assert.deepEqual(h.hostConfig.hotkeys, { enabled: true });
-    assert.deepEqual(h.hostConfig.replay, { seconds: 30, autoStart: true });
+    assert.deepEqual(h.hostConfig.replay, { seconds: 60, autoStart: true });
     assert.equal(h.hostConfig.feedbackDir, fb);
     assert.equal(h.hostConfig.eventCore.systemFile, path.join(dataDir, 'system.json'));
     assert.equal(h.systemTokenOk, true, 'the event-core system token reached the host by environment');
@@ -409,7 +423,7 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(h.outputsParams, null);
     assert.match(r.out, /\[studio\] outputs: real targets off; 0 sink\(s\) \(no plan; real targets need --live\)/);
     assert.match(r.out, /\[studio\] hotkeys: on; panic Ctrl\+Alt\+P registered; feedback Ctrl\+Alt\+F registered; marker Ctrl\+Alt\+M registered/);
-    assert.match(r.out, /\[studio\] replay buffer: on, 30 s; H running \(fallback rung\); V running \(fallback rung\)/);
+    assert.match(r.out, /\[studio\] replay buffer: on, 60 s; H running \(fallback rung\); V running \(fallback rung\)/);
     assert.match(r.out, /\[studio\] feedback probe: moment \d{4}-\d{2}-\d{2}\/\d{6} listed by the UI server \(1 moment\(s\), HTTP 200\); replay files: replay-H\.mkv, replay-V\.mkv; scene: H: scene-default, V: scene-default; at: \d{4}-/);
     assert.ok(h.calls.includes('feedback.capture') && h.calls.includes('feedback.status'));
     assert.ok(!/[0-9a-f]{64}/.test(r.out), 'no token-shaped value printed');
@@ -425,6 +439,9 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(h.markersTokenOk, true, 'the host got the markers token (F6 live markers) by environment');
     assert.equal(h.markersTokenInArgv, false);
     assert.equal(h.markersTokenIsApiToken, false, 'the markers token is a separate token');
+    assert.equal(h.clipsTokenOk, true, 'the host got the clips token (live clipper) by environment');
+    assert.equal(h.clipsTokenInArgv, false);
+    assert.equal(h.clipsTokenIsOtherToken, false, 'the clips token is a separate token');
     assert.ok(!h.calls.includes('devices.list'), 'no device listing without --allow-devices');
     assert.equal(h.load.skipUnavailable, true);
     assert.equal(h.load.captureLayers, 0);
@@ -509,4 +526,17 @@ test('Qt shell spawn spec: URL and launch key by env only, every token/key varia
   assert.ok(s.env.Path.startsWith(path.join('C:/qt', 'bin')));
   assert.equal(shellSpawnSpec({ uiPort: 5000, launchKey: 'k', exe: 'C:/none.exe', exists: () => false }), null, 'not built');
   assert.equal(shellSpawnSpec({ uiPort: 0, launchKey: 'k', exe: 'C:/studio.exe', exists: () => true }), null, 'bad port');
+});
+
+test('live clipper spec: H game capture layer, GPU venv first, no spec for a placeholder game layer', () => {
+  const scene = (game) => ({ scenes: [{ id: 'h', layers: [{ id: 'L1', type: 'color', origin: { id: 'scene-default-h/frame' } }, { id: 'L7', ...game, origin: { id: 'scene-default-h/game' } }] }] });
+  const both = () => true;
+  const r = liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: both });
+  assert.equal(r.spec.gpu, true);
+  assert.deepEqual(r.spec.argv.slice(1), ['--layer', 'L7', '--data-dir', 'D']);
+  const cpu = liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: (p) => !p.includes('.venv-gpu') });
+  assert.equal(cpu.spec.gpu, false);
+  assert.equal(liveClipsSpec({ project: scene({ type: 'color' }), dataDir: 'D', repo: 'R', exists: both }).spec, null);
+  assert.equal(liveClipsSpec({ project: { scenes: [] }, dataDir: 'D', repo: 'R', exists: both }).spec, null);
+  assert.equal(liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: () => false }).spec, null);
 });

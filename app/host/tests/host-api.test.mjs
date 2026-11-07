@@ -16,6 +16,7 @@ const OUT = path.join(REPO_ROOT, 'out', 'host', 'tests');
 let h;
 let c;
 const MARKERS_TOKEN = randomBytes(32).toString('hex'); // least-privilege role (F6 live markers): marker.add + mixer.list
+const CLIPS_TOKEN = randomBytes(32).toString('hex'); // least-privilege role (live clipper, D226)
 
 before(async () => {
   const { mkdirSync } = await import('node:fs');
@@ -24,7 +25,7 @@ before(async () => {
     dataDir: mkdtempSync(path.join(OUT, 'data-')),
     project: path.join(HOST_DIR, 'projects', 'test-card.project.json'),
     extraArgs: ['--headless'], // also set by UJWALAM_HEADLESS=1 in CI; given here so the test below holds anywhere
-    env: { UJWALAM_HOST_MARKERS_TOKEN: MARKERS_TOKEN }
+    env: { UJWALAM_HOST_MARKERS_TOKEN: MARKERS_TOKEN, UJWALAM_HOST_CLIPS_TOKEN: CLIPS_TOKEN }
   });
   c = h.client;
 });
@@ -161,7 +162,7 @@ test('markers token: marker.add (chat/audio) and mixer.list only; every other me
     'preview.focus', 'preview.close', 'preview.list', 'mixer.setVolume', 'mixer.setMute', 'mixer.setCue', 'outputs.configure',
     'outputs.clear', 'outputs.status', 'outputs.start', 'outputs.stop', 'stream.start', 'stream.stop', 'record.start',
     'record.stop', 'replay.start', 'replay.stop', 'replay.status', 'replay.save', 'panic.now', 'panic.status',
-    'panic.clear', 'feedback.capture', 'feedback.status', 'hotkeys.status', 'hotkeys.trigger', 'encoders.probe'];
+    'panic.clear', 'feedback.capture', 'feedback.status', 'hotkeys.status', 'hotkeys.trigger', 'encoders.probe', 'frames.grab'];
   for (const method of others) {
     const e = await mk.call(method, {}).then(() => null, (x) => x);
     assert.equal(e?.code, -32001, `${method} forbidden for the markers role`);
@@ -175,6 +176,60 @@ test('markers token: marker.add (chat/audio) and mixer.list only; every other me
   assert.equal((await link.addMarker('chat', 'chat: clip request')).marker.source, 'chat');
   assert.notEqual(h.discoveryJson.systemToken, MARKERS_TOKEN);
   assert.ok(!readFileSync(h.discovery, 'utf8').includes(MARKERS_TOKEN), 'markers token never in the discovery file');
+});
+
+test('clips token: frames.grab, replay.save, replay.status, marker.add (clip) and host.status only', async () => {
+  const cl = new HostClient({ port: h.discoveryJson.port, token: CLIPS_TOKEN });
+  const hs = await cl.call('host.status');
+  assert.equal(typeof hs, 'object', 'host.status answers for the clips role (health check)');
+  const rs = await cl.call('replay.status');
+  assert.ok(Array.isArray(rs.canvases), 'replay.status answers');
+  const sv = await cl.call('replay.save');
+  assert.deepEqual(sv.saved, [], 'replay.save is allowed (nothing running here, so it reports why)');
+  assert.match(sv.errors[0].error, /not running/);
+  const g = await cl.call('frames.grab', { layer: 'motion', maxWidth: 320 });
+  assert.equal(g.layer, 'motion');
+  assert.deepEqual([g.width, g.height], [320, 180], 'testsrc2 640x360 downscaled to maxWidth');
+  assert.ok(existsSync(g.path));
+  await new Promise((r) => setTimeout(r, 260)); // the host allows 4 grabs per second
+  const t0 = Date.now();
+  const full = await cl.call('frames.grab', { layer: 'bars' });
+  assert.equal(full.bytes, 54 + full.width * full.height * 4);
+  console.log(`frames.grab bars ${full.width}x${full.height}: ${Date.now() - t0} ms round trip, graphics thread ${full.gfxMs} ms`);
+  const mk =await cl.call('marker.add', { source: 'clip', note: 'clip: kill chain' });
+  assert.equal(mk.marker.source, 'clip');
+  for (const source of ['chat', 'audio', 'hotkey', 'api']) {
+    const e = await cl.call('marker.add', { source }).then(() => null, (x) => x);
+    assert.equal(e?.code, -32001, `clips role refused marker source ${source}`);
+  }
+  const mkr = new HostClient({ port: h.discoveryJson.port, token: MARKERS_TOKEN });
+  assert.equal((await mkr.call('marker.add', { source: 'clip' }).then(() => null, (x) => x))?.code, -32001, 'the markers role cannot write clip markers');
+  const others = ['host.info', 'host.shutdown', 'log.tail', 'project.load', 'project.get', 'project.plan',
+    'devices.list', 'overlay.status', 'overlay.stats', 'effect.fire', 'scenes.list', 'scenes.create', 'scenes.remove',
+    'scenes.activate', 'layers.list', 'layers.add', 'layers.remove', 'layers.setVisible', 'layers.setPlacement', 'layers.move',
+    'preview.open', 'preview.focus', 'preview.close', 'preview.list', 'mixer.list', 'mixer.setVolume', 'mixer.setMute',
+    'mixer.setCue', 'outputs.configure', 'outputs.clear', 'outputs.status', 'outputs.start', 'outputs.stop', 'stream.start',
+    'stream.stop', 'record.start', 'record.stop', 'replay.start', 'replay.stop', 'panic.now', 'panic.status', 'panic.clear',
+    'feedback.capture', 'feedback.status', 'hotkeys.status', 'hotkeys.trigger', 'encoders.probe'];
+  for (const method of others) {
+    const e = await cl.call(method, {}).then(() => null, (x) => x);
+    assert.equal(e?.code, -32001, `${method} forbidden for the clips role`);
+    assert.equal(e?.httpStatus, 403, method);
+  }
+  // Real params on the two the task names, so a refusal cannot come from a params error.
+  for (const [method, params] of [['stream.start', { sinks: ['yt-h'] }], ['layers.setVisible', { scene: 'card-h', layer: 'bars', visible: false }]]) {
+    const e = await cl.call(method, params).then(() => null, (x) => x);
+    assert.equal(e?.code, -32001, `${method} forbidden for the clips role`);
+  }
+  assert.equal((await c.call('layers.list', { scene: 'card-h' })).layers.find((l) => l.id === 'bars').visible, true, 'the refused setVisible changed nothing');
+  assert.equal((await c.call('host.info')).name, 'ujwalam-host', 'host still up after the refused host.shutdown');
+  assert.ok(!readFileSync(h.discovery, 'utf8').includes(CLIPS_TOKEN), 'clips token never in the discovery file');
+});
+
+test('a malformed or reused clips token stops the host before it starts', async () => {
+  await assert.rejects(launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), extraArgs: ['--headless'], env: { UJWALAM_HOST_CLIPS_TOKEN: 'not-a-token' } }), /exited with 64/);
+  const t = randomBytes(32).toString('hex');
+  await assert.rejects(launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), extraArgs: ['--headless'], env: { UJWALAM_HOST_MARKERS_TOKEN: t, UJWALAM_HOST_CLIPS_TOKEN: t } }), /exited with 64/);
 });
 
 test('a malformed markers token stops the host before it starts', async () => {

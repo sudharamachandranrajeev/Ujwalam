@@ -88,8 +88,8 @@ void Moments::stop()
 
 json::Value Moments::marker_add(const std::string &source, const std::string &note)
 {
-	if (source != "hotkey" && source != "chat" && source != "audio" && source != "api")
-		throw Error(rpc::INVALID_PARAMS, "source must be hotkey, chat, audio or api");
+	if (source != "hotkey" && source != "chat" && source != "audio" && source != "api" && source != "clip")
+		throw Error(rpc::INVALID_PARAMS, "source must be hotkey, chat, audio, api or clip");
 	if (note.size() > 500)
 		throw Error(rpc::INVALID_PARAMS, "note: at most 500 bytes");
 	int64_t stream_ms = -1, record_ms = -1;

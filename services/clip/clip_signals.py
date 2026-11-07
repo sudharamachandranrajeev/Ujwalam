@@ -78,7 +78,7 @@ def read_markers(paths, rec_start, duration, tolerance=MATCH_TOLERANCE_SEC):
                     continue
                 at = parse_iso(r.get("at")) if isinstance(r, dict) else None
                 src = r.get("source") if isinstance(r, dict) else None
-                if not at or src not in ("hotkey", "chat", "audio", "api"):
+                if not at or src not in ("hotkey", "chat", "audio", "api", "clip"):
                     stats["bad"] += 1
                     continue
                 rec_ms = r.get("recordMs")

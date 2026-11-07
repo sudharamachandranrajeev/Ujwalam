@@ -23,7 +23,9 @@ hard negative; clipping should happen live like Meld.
 - Ranking "streaks only" (`data/clip/ranking.json`): 27 candidates; top two: a Nuclear / Ultimate Terminator chain
   (score 76) and a Super Kill / Ruthless chain (score 34); 12 single Triple Kills at score 3.
 - Default layout `stream-v` cuts the V canvas recording: 27 files, h264_nvenc, validate 27/27 PASS.
-- H/V time offset assumed 0 (one start for both sinks): **UNVERIFIED**, user check pending.
+- H/V time offset assumed 0 (one start for both sinks). User review of the 27 `stream-v` clips (2026-11-07):
+  "clips looks good ... for now this works perfectly" — design, choice of moments and timing accepted; further
+  refinement later. Offset 0 accepted by eye (not measured).
 - Tests: `python -I -m unittest discover -s tests/py -t tests/py -p "test_clip_*.py"` → 60 OK (new: chain sum,
   death cut and drop, marker kept below minScore, V sibling default layout and refusal without it, hits keep tEnd).
 

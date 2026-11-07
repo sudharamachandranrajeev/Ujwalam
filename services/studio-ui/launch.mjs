@@ -93,7 +93,7 @@ export const HOST_LOGS_KEPT = 10;
 export const HOST_CONFIG_FILE = 'host-config.json';
 export const ALPHA_LIVE_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-live.json');
 export const DEFAULT_FEEDBACK_DIR = path.join(REPO, 'feedback');
-export const ALPHA_REPLAY_SECONDS = 30;
+export const ALPHA_REPLAY_SECONDS = 60; // live clipping (D226): a kill chain plus preSec needs up to 55 s (data/clip/live-clips.json)
 const HEX64 = /^[0-9a-f]{64}$/;
 
 export const HOST_RESTART_MAX = 3;
@@ -183,12 +183,38 @@ export const headlessLoginScript = (env = process.env) => typeof env.UJWALAM_BRO
  *  contacted, so no --url. A refused address (not ws://127.0.0.1) is never passed: the core keeps its default and a
  *  note says so. Returns { argv, note|null }. */
 /** Environment for the event-core child. It gets the host MARKERS token (UJWALAM_HOST_MARKERS_TOKEN; the host lets
- *  it call marker.add and mixer.list only), never the full host token: UJWALAM_HOST_TOKEN and
- *  UJWALAM_HOST_SYSTEM_TOKEN are removed even when the launcher's own environment has them. */
+ *  it call marker.add and mixer.list only), never the full host token: UJWALAM_HOST_TOKEN,
+ *  UJWALAM_HOST_SYSTEM_TOKEN and the live clipper's UJWALAM_HOST_CLIPS_TOKEN are removed even when the launcher's own
+ *  environment has them. */
 export function coreEnv({ coreTokens, hostMarkersToken, base = process.env }) {
   const env = { ...base, UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: coreTokens.system, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken };
-  for (const k of Object.keys(env)) if (k.toUpperCase() === 'UJWALAM_HOST_TOKEN' || k.toUpperCase() === 'UJWALAM_HOST_SYSTEM_TOKEN') delete env[k];
+  for (const k of Object.keys(env)) if (['UJWALAM_HOST_TOKEN', 'UJWALAM_HOST_SYSTEM_TOKEN', 'UJWALAM_HOST_CLIPS_TOKEN'].includes(k.toUpperCase())) delete env[k];
   return env;
+}
+
+/** Environment for the live clipper child (D226). It gets the host CLIPS token (UJWALAM_HOST_CLIPS_TOKEN; the host lets
+ *  it call frames.grab, replay.save, replay.status, marker.add with source "clip" and host.status only) and the host
+ *  discovery file (UJWALAM_HOST_DISCOVERY, for the port). Every other UJWALAM_*TOKEN* / *KEY* variable of the
+ *  launcher's environment is removed (full host, host system, markers, event-core tokens, launch key). */
+export function clipsEnv({ hostClipsToken, hostDiscovery, base = process.env }) {
+  const env = {};
+  for (const [k, v] of Object.entries(base)) if (!/^UJWALAM_.*(TOKEN|KEY)/i.test(k)) env[k] = v;
+  return { ...env, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery };
+}
+
+/** Live clipper child (D226): the Python worker and its argv, or null with the reason. The worker reads the game
+ *  layer of the H scene (preset origin scene-default-h/game, bound to a capture device); a placeholder game layer
+ *  (devices off) has no picture to read. Python: .venv-gpu (DirectML OCR) when present, else .venv (CPU OCR). */
+export function liveClipsSpec({ project, dataDir, repo = REPO, exists = existsSync }) {
+  const game = (project?.scenes ?? []).flatMap((s) => s.layers ?? []).find((l) => l.origin?.id === 'scene-default-h/game');
+  if (!game) return { spec: null, reason: 'no H game layer in the project' };
+  if (game.type !== 'capture') return { spec: null, reason: 'the game layer has no capture device (devices off)' };
+  const venv = ['.venv-gpu', '.venv'].map((v) => path.join(repo, v, 'Scripts', 'python.exe')).find((p) => exists(p));
+  if (!venv) return { spec: null, reason: 'no Python venv (.venv-gpu or .venv)' };
+  return {
+    spec: { exe: venv, gpu: venv.includes('.venv-gpu'), argv: [path.join(repo, 'services', 'clip', 'live_worker.py'), '--layer', game.id, '--data-dir', dataDir] },
+    reason: null,
+  };
 }
 
 export function coreServeArgs({ dataDir, mock = false, sbWs = {} }) {
@@ -637,6 +663,9 @@ export async function main(argv = process.argv.slice(2)) {
   // Least-privilege host token for the event core (F6 live markers): the host lets it call marker.add (chat/audio)
   // and mixer.list only. The event core processes untrusted chat, so it never gets hostToken.
   const hostMarkersToken = hex(32);
+  // Least-privilege host token for the live clipper (D226): frames.grab, replay.save, replay.status, marker.add (clip)
+  // and host.status only. A clipper child gets it through clipsEnv({ hostClipsToken, hostDiscovery }), never hostToken.
+  const hostClipsToken = hex(32);
   const coreTokens = { api: hex(32), system: hex(32) };
   const launchKey = hex(32);
 
@@ -704,7 +733,7 @@ export async function main(argv = process.argv.slice(2)) {
       const hostLog = openHostLog(logsDir);
       const child = spawn(script ? process.execPath : hostExe, script ? [hostExe, ...hostArgs] : hostArgs, {
         stdio: ['ignore', hostLog.fd, hostLog.fd],
-        env: { ...process.env, ...spec.env, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
+        env: { ...process.env, ...spec.env, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
         windowsHide: true,
       });
       closeSync(hostLog.fd); // the child holds its own handle
@@ -740,6 +769,31 @@ export async function main(argv = process.argv.slice(2)) {
         for (const x of (e.errors ?? e.details ?? []).slice(0, 10)) console.log(`[studio]   ${x.path ?? ''} ${x.message ?? x}`);
         await stopAll();
         return 1;
+      }
+    }
+    if (disc && alpha) {
+      // Live clipper (D226): started with the alpha session, idles while the live-clips flag is off (re-read every
+      // 5 s). Only the clips token reaches it. Restarted after a crash at most 5 times; never stops the stream.
+      let lc = { spec: null, reason: 'project not readable' };
+      try { lc = liveClipsSpec({ project: loadProject(alphaFile(dataDir)).project, dataDir }); } catch { /* reason above */ }
+      if (!lc.spec) console.log(`[studio] live clipper not started: ${lc.reason}`);
+      else {
+        let restarts = 0;
+        const startClipper = () => {
+          const c = spawn(lc.spec.exe, lc.spec.argv, { stdio: ['ignore', 'inherit', 'inherit'], windowsHide: true, env: clipsEnv({ hostClipsToken, hostDiscovery }) });
+          children.push(c);
+          c.once('exit', (code) => {
+            const i = children.indexOf(c);
+            if (i >= 0) children.splice(i, 1);
+            if (stopping) return;
+            if (restarts >= 5) { console.log(`[studio] live clipper exited (${code}); not restarted again`); return; }
+            restarts += 1;
+            console.log(`[studio] live clipper exited (${code}); restart ${restarts}/5 in 10 s`);
+            setTimeout(() => { if (!stopping) startClipper(); }, 10_000).unref();
+          });
+        };
+        startClipper();
+        console.log(`[studio] live clipper started (OCR ${lc.spec.gpu ? 'GPU, DirectML' : 'CPU'}; acts only while the live-clips flag is on)`);
       }
     }
     if (disc) {

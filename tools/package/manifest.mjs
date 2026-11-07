@@ -42,6 +42,8 @@ export const REPO_FILES = Object.freeze([
   'data/profile.example.json', 'data/profile.schema.json',
   'data/release/alpha.json',
   'tools/package/run-installed.mjs', 'tools/package/zip.mjs',
+  // Qt shell exe path (services/studio-ui/launch.mjs imports EXE and qtDir)
+  'app/studio/tools/build.mjs',
   // --mock (event core without Streamer.bot): imported by services/event-core/api/service.mjs
   'tools/mock/mock-streamerbot.mjs', 'tools/mock/mock-chat.mjs',
 ]);

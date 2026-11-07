@@ -104,10 +104,12 @@ class DetectorPassOcrTests(unittest.TestCase):
                            "--record-start", "2026-11-03T07:00:00Z", "--no-audio"])
         self.assertEqual(rc, 0)
         doc = cc.load_json(os.path.join(self.out, clipper.CANDIDATES))
-        self.assertEqual(doc["candidates"], [])  # no approved weight, no other signal: hits never open a clip
-        self.assertEqual(doc["signals"]["detectors"]["counted"], 0)
+        # weights approved 2026-11-07 (Streaks only): the Triple Kill counts (3); the 6 s fixture with the death
+        # (N1, hard negative) right after it leaves no clip of clip.minSec, so no candidate opens
+        self.assertEqual(doc["candidates"], [])
+        self.assertEqual(doc["signals"]["detectors"]["counted"], 1)
         self.assertTrue(doc["detectorHits"])
-        self.assertTrue(all(h["weight"] == 0.0 for h in doc["detectorHits"]))
+        self.assertEqual(sorted(h["weight"] for h in doc["detectorHits"]), [0.0] * (len(doc["detectorHits"]) - 1) + [3.0])
 
 
 if __name__ == "__main__":

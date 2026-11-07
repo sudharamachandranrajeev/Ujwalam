@@ -79,6 +79,7 @@ file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/generated/ujw_effects.h" CONTENT "${_
 
 add_executable(ujwalam-host
   src/effects.cpp
+  src/frames.cpp
   src/main.cpp
   src/methods.cpp
   src/json.cpp

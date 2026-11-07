@@ -90,7 +90,8 @@ public:
 	json::Value replay_status() const;
 	bool replay_running(const std::string &canvas) const;
 	// Saves the buffered seconds of each running replay (canvas "" = every running one) into dir as
-	// <name_fmt>.mkv (libobs os_generate_formatted_filename specifiers allowed; {canvas} is replaced by H or V).
+	// <name_fmt>.mkv (libobs os_generate_formatted_filename specifiers allowed; {canvas} is replaced by H or V; when
+	// that file exists already, -2, -3 ... is appended: libobs itself would overwrite it).
 	// Waits up to timeout_ms per save for libobs's "saved" signal. Never holds the graph lock while waiting.
 	// {saved: [{canvas, path, bytes, rung, fallback}], errors: [{canvas, error}]}
 	json::Value replay_save(const std::string &canvas, const std::string &dir, const std::string &name_fmt,

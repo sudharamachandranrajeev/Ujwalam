@@ -7,6 +7,7 @@
   "weights": {
     "marker.hotkey": 1.0,
     "marker.api": 1.0,
+    "marker.clip": 1.0,
     "marker.chat": 0.6,
     "marker.audio": 0.4,
     "chat.intent": 0.6,

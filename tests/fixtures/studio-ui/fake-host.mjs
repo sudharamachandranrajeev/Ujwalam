@@ -27,6 +27,7 @@ const argv = process.argv.slice(2);
 const arg = (k) => { const i = argv.indexOf(k); return i >= 0 ? argv[i + 1] : undefined; };
 const token = process.env.UJWALAM_HOST_TOKEN ?? '';
 const markersToken = process.env.UJWALAM_HOST_MARKERS_TOKEN ?? '';
+const clipsToken = process.env.UJWALAM_HOST_CLIPS_TOKEN ?? '';
 const MARKERS_METHODS = new Set(['marker.add', 'mixer.list']);
 const eventToken = process.env.UJWALAM_EVENT_CORE_API_TOKEN ?? '';
 const systemToken = process.env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN ?? '';
@@ -42,6 +43,9 @@ const record = {
   markersTokenOk: /^[0-9a-f]{64}$/.test(markersToken),
   markersTokenInArgv: markersToken !== '' && argv.some((a) => a.includes(markersToken)),
   markersTokenIsApiToken: markersToken !== '' && markersToken === token,
+  clipsTokenOk: /^[0-9a-f]{64}$/.test(clipsToken),
+  clipsTokenInArgv: clipsToken !== '' && argv.some((a) => a.includes(clipsToken)),
+  clipsTokenIsOtherToken: clipsToken !== '' && (clipsToken === token || clipsToken === markersToken),
   systemTokenOk: /^[0-9a-f]{64}$/.test(systemToken),
   systemTokenInArgv: systemToken !== '' && argv.some((a) => a.includes(systemToken)),
   systemTokenIsApiToken: systemToken !== '' && systemToken === eventToken,
@@ -51,6 +55,7 @@ const record = {
 };
 delete process.env.UJWALAM_HOST_TOKEN;
 delete process.env.UJWALAM_HOST_MARKERS_TOKEN;
+delete process.env.UJWALAM_HOST_CLIPS_TOKEN;
 delete process.env.UJWALAM_EVENT_CORE_API_TOKEN;
 delete process.env.UJWALAM_EVENT_CORE_SYSTEM_TOKEN;
 let captures = 0;

@@ -100,7 +100,7 @@ const std::regex &bearer_re()
 
 const char *role_name(Role r)
 {
-	return r == Role::System ? "system" : r == Role::Markers ? "markers" : "api";
+	return r == Role::System ? "system" : r == Role::Markers ? "markers" : r == Role::Clips ? "clips" : "api";
 }
 
 bool sha256(const std::string &data, uint8_t out[32])
@@ -161,7 +161,7 @@ struct Server::Job {
 };
 
 Server::Server(Limits limits, const std::string &api_token, const std::string &system_token,
-	       std::map<std::string, Method> methods, const std::string &markers_token)
+	       std::map<std::string, Method> methods, const std::string &markers_token, const std::string &clips_token)
 	: L_(limits),
 	  methods_(std::move(methods))
 {
@@ -170,6 +170,9 @@ Server::Server(Limits limits, const std::string &api_token, const std::string &s
 	has_markers_ = !markers_token.empty();
 	if (has_markers_)
 		sha256(markers_token, markers_digest_);
+	has_clips_ = !clips_token.empty();
+	if (has_clips_)
+		sha256(clips_token, clips_digest_);
 }
 
 Server::~Server()
@@ -303,6 +306,7 @@ bool Server::auth(const std::string &header, Role &role) const
 	bool is_api = digest_equal(d, api_digest_);
 	bool is_sys = digest_equal(d, sys_digest_);
 	bool is_mk = digest_equal(d, markers_digest_) && has_markers_; // compared every time: same work for every token
+	bool is_cl = digest_equal(d, clips_digest_) && has_clips_;
 	if (!ok)
 		return false;
 	if (is_api) {
@@ -315,6 +319,10 @@ bool Server::auth(const std::string &header, Role &role) const
 	}
 	if (is_mk) {
 		role = Role::Markers;
+		return true;
+	}
+	if (is_cl) {
+		role = Role::Clips;
 		return true;
 	}
 	return false;
@@ -652,7 +660,7 @@ void Server::run_job(Job &j)
 	if (it == methods_.end())
 		return rpc_err(200, id, METHOD_NOT_FOUND, "method-not-found");
 	if ((j.role == Role::Api && !it->second.api) || (j.role == Role::System && !it->second.system) ||
-	    (j.role == Role::Markers && !it->second.markers))
+	    (j.role == Role::Markers && !it->second.markers) || (j.role == Role::Clips && !it->second.clips))
 		return rpc_err(403, id, FORBIDDEN, "forbidden");
 	const json::Value *pp = msg.find("params");
 	json::Value empty = json::Value::object();
@@ -669,8 +677,8 @@ void Server::run_job(Job &j)
 		r.set("result", std::move(result));
 		respond((uintptr_t)j.s, 200, r.dump());
 		double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
-		const std::string &mn = meth->as_string(); // polled methods are not logged
-		if (mn != "host.status" && mn != "mixer.list" && mn != "outputs.status" && mn != "preview.list")
+		const std::string &mn = meth->as_string(); // polled methods are not logged (frames.grab: about 1/s while live)
+		if (mn != "host.status" && mn != "mixer.list" && mn != "outputs.status" && mn != "preview.list" && mn != "frames.grab")
 			hlog::info("rpc %s role=%s ok %.1fms", meth->as_string().c_str(), role_name(j.role), ms);
 	} catch (const Error &e) {
 		hlog::info("rpc %s role=%s error %d %s", meth->as_string().c_str(), role_name(j.role), e.code, e.what());

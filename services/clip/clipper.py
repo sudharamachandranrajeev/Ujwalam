@@ -16,6 +16,9 @@
               -> DIR/clips/<id>/<layout>.mp4 (+ captions.ass), DIR/render.json
   validate    --out DIR [--no-decode]  -> DIR/report.json; exit 4 when any file fails
   run         [--detect] candidates + render + validate with the same options (--detect runs `detect` first)
+  live-review --saves DIR --out DIR [--layouts ...] [--encoder ...]
+              -> DIR/clips/<id>/<layout>.mp4 + DIR/render.json from the live clipper's replay saves
+              (DIR/saves.jsonl, live_worker.py); overlapping saves are merged; then `validate --out DIR`
 
 Common: [--data-dir DIR] (flags.local.json; default paths.event_core_data from data/profile.local.json)
         [--ffmpeg F] [--ffprobe F] [--ranking F] [--layouts-file F] [--targets F]
@@ -28,6 +31,7 @@ priority with 4 threads. Run isolated: python -I services/clip/clipper.py ...
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import tempfile
@@ -295,6 +299,92 @@ def cmd_validate(a):
     return 0 if bad == 0 else 4
 
 
+def merge_saves(rows, durations):
+    """Live saves -> clip windows. rows: saves.jsonl rows; durations: {path: seconds} of each save's V file.
+    A save's clip is [at - startBack, at - endBack] in wall time. Overlapping clips merge into one cut from the
+    later save's file when that file still holds the earlier start; otherwise they stay separate."""
+    items = []
+    for r in rows:
+        at = sig.parse_iso(r.get("at"))
+        v = next((f.get("path") for f in r.get("files", []) if f.get("canvas") == "v" and f.get("path")), None)
+        if not at or not v or v not in durations:
+            continue
+        t = at.timestamp()
+        items.append({"s": t - float(r["startBack"]), "e": t - float(r["endBack"]), "at": t, "file": v,
+                      "score": r.get("score", 0), "labels": list(r.get("labels", [])), "reasons": [r.get("reason")]})
+    items.sort(key=lambda x: x["s"])
+    out = []
+    for it in items:
+        prev = out[-1] if out else None
+        if prev and it["s"] <= prev["e"] and it["at"] - prev["s"] <= durations[it["file"]]:
+            prev.update(e=max(prev["e"], it["e"]), at=it["at"], file=it["file"], score=prev["score"] + it["score"],
+                        labels=prev["labels"] + it["labels"], reasons=prev["reasons"] + it["reasons"])
+        else:
+            out.append(dict(it))
+    clips = []
+    for i, c in enumerate(out, 1):
+        dur = durations[c["file"]]
+        start, end = max(0.0, dur - (c["at"] - c["s"])), max(0.0, dur - (c["at"] - c["e"]))
+        if end - start < 1.0:
+            continue
+        clips.append({"id": f"L{i:02d}", "file": c["file"], "start": round(start, 3), "end": round(end, 3),
+                      "score": c["score"], "labels": c["labels"], "reasons": c["reasons"]})
+    return clips
+
+
+def cmd_live_review(a):
+    ffmpeg, ffprobe = _tools(a)
+    path = os.path.join(a.saves, "saves.jsonl")
+    rows = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                try:
+                    rows.append(json.loads(line))
+                except ValueError:
+                    eprint("live-review: skipped a bad saves.jsonl line")
+    infos = {}
+    for r in rows:
+        for fl in r.get("files", []):
+            p = fl.get("path")
+            if fl.get("canvas") == "v" and p and p not in infos and os.path.isfile(p):
+                infos[p] = media_info(ffprobe, p)
+    clips = merge_saves(rows, {p: i["duration"] for p, i in infos.items()})
+    lay_doc = load_config("layouts", a.layouts_file)
+    frame = lay_doc["output"]
+    by_id = {x["id"]: x for x in lay_doc["layouts"]}
+    wanted = [x for x in (a.layouts or "").split(",") if x] or lay_doc.get("default") or []
+    bad = [x for x in wanted if x not in by_id or by_id[x].get("input") != "v"]
+    if bad:
+        raise ClipError(f"live-review renders V-canvas layouts only: {', '.join(bad)}")
+    encoder = rnd.pick_encoder(a.encoder)
+    out_rows, failed = [], 0
+    for c in clips:
+        wd = os.path.join(a.out, "clips", c["id"])
+        os.makedirs(wd, exist_ok=True)
+        files, errors = [], []
+        for lid in wanted:
+            try:
+                name = rnd.render_variant(ffmpeg, c["file"], infos[c["file"]], c, by_id[lid], frame, encoder, wd)
+                files.append({"layout": lid, "file": name, "geometry": by_id[lid].get("geometry", "unverified")})
+                print(f"live-review {c['id']}/{lid}: rendered ({c['end'] - c['start']:.1f} s)")
+            except ClipError as e:
+                errors.append({"layout": lid, "error": str(e)[-300:]})
+                failed += 1
+                eprint(f"live-review {c['id']}/{lid}: FAILED")
+        out_rows.append({"id": c["id"], "start": c["start"], "end": c["end"], "source": os.path.basename(c["file"]),
+                         "score": c["score"], "labels": c["labels"], "reasons": c["reasons"],
+                         "captions": {"backend": "none", "status": "off"}, "files": files, "errors": errors})
+    write_json_atomic(os.path.join(a.out, RENDER), {
+        "tool": "clipper", "toolVersion": TOOL_VERSION, "createdAt": _now(), "recording": "live-saves",
+        "saves": len(rows), "encoder": encoder, "frame": frame, "layoutsVersion": lay_doc.get("version"),
+        "failed": failed, "clips": out_rows,
+    })
+    print(f"live-review: {len(rows)} save(s) -> {len(clips)} clip(s), {failed} failed render(s)")
+    return 0
+
+
 def cmd_run(a):
     steps = ((cmd_detect,) if a.detect else ()) + (cmd_candidates, cmd_render, cmd_validate)
     for step in steps:
@@ -360,6 +450,10 @@ def build_parser():
     s = sub.add_parser("run"); common(s); cand_args(s); render_args(s); s.add_argument("--no-decode", action="store_true")
     detect_args(s); s.add_argument("--detect", action="store_true")
     s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("live-review"); common(s, recording=False)
+    s.add_argument("--saves", required=True, type=os.path.abspath, help="live clipper session folder (saves.jsonl)")
+    s.add_argument("--layouts"); s.add_argument("--encoder", default="auto")
+    s.set_defaults(fn=cmd_live_review)
     return p
 
 

@@ -67,7 +67,7 @@ for (const f of presetFiles) {
 }
 
 test('three built-in presets exist', () => {
-  assert.deepEqual(presetFiles.map((f) => path.basename(f)), ['youtube-1080p60.json', 'youtube-1440p60.json', 'youtube-2160p60.json']);
+  assert.deepEqual(presetFiles.map((f) => path.basename(f)), ['practice-record.json', 'youtube-1080p60.json', 'youtube-1440p60.json', 'youtube-2160p60.json']);
 });
 
 for (const n of ['output-graph-example.json', 'meld-migrated-multi.json']) {

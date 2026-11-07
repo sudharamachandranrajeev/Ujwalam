@@ -128,6 +128,31 @@ test('replay: refused before start, then H and V on fallback rungs, replay.save 
   assert.equal((await rpcErr('replay.save', { canvas: 'X' })).code, -32602);
 });
 
+// Live clipping (D226) saves on every kill chain, so two saves can land within one second and within one buffer
+// length: each must keep its own file, and the file exists when replay.save returns.
+test('replay: back-to-back saves (same second) each keep their own H and V files', async () => {
+  const st = await c.call('replay.status');
+  assert.deepEqual(st.canvases.map((x) => [x.canvas, x.state]), [['H', 'running'], ['V', 'running']], 'still running from the test above');
+  const t0 = Date.now();
+  const a = await c.call('replay.save');
+  const ta = Date.now() - t0;
+  for (const s of a.saved) assert.ok(existsSync(s.path) && s.bytes > 0, `file exists when replay.save returns: ${s.path}`);
+  const b = await c.call('replay.save');
+  const tb = Date.now() - t0 - ta;
+  assert.deepEqual(a.errors, []);
+  assert.deepEqual(b.errors, []);
+  assert.deepEqual(a.saved.map((x) => x.canvas), ['H', 'V']);
+  assert.deepEqual(b.saved.map((x) => x.canvas), ['H', 'V']);
+  const paths = [...a.saved, ...b.saved].map((x) => path.resolve(x.path));
+  assert.equal(new Set(paths).size, 4, `four distinct files: ${paths.map((x) => path.basename(x)).join(', ')}`);
+  for (const s of [...a.saved, ...b.saved]) {
+    assert.match(path.basename(s.path), new RegExp(`^replay-${s.canvas}-\\d{8}-\\d{6}(-\\d+)?\\.mkv$`));
+    const m = checkClip(s.path, s.canvas);
+    assert.ok(m.durationSec >= 2, `${path.basename(s.path)}: ${m.durationSec} s`);
+  }
+  console.log(`replay.save back to back: first ${ta} ms, second ${tb} ms; ${paths.map((x) => path.basename(x)).join(', ')}`);
+});
+
 test('replay: binds to the configured rungs (no extra encoder), shares the encoder with a recording, follows clear', async () => {
   // This host's sessions = GPU-wide count minus the other apps' sessions counted before the host started (D188).
   const sessions = async () => {

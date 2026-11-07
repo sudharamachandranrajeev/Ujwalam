@@ -407,6 +407,76 @@ test('project v1 effects render: blurred duplicate, sharp original, rounded corn
   await c.call('outputs.clear');
 });
 
+// frames.grab (live clipper OCR, D226): reads the BMP the host writes (frames.h): 54-byte header, 32 bpp, top-down,
+// B G R A rows of width*4 bytes.
+function readBmp(file) {
+  const b = readFileSync(file);
+  assert.equal(b.toString('latin1', 0, 2), 'BM');
+  assert.equal(b.readUInt32LE(10), 54, 'pixel data at byte 54');
+  assert.equal(b.readUInt16LE(28), 32, '32 bits per pixel');
+  assert.equal(b.readUInt32LE(30), 0, 'BI_RGB');
+  const w = b.readInt32LE(18), hNeg = b.readInt32LE(22);
+  assert.ok(hNeg < 0, 'top-down (negative height)');
+  const ht = -hNeg;
+  assert.equal(b.length, 54 + w * ht * 4, 'no row padding');
+  return { w, h: ht, px: (x, y) => { const i = 54 + (y * w + x) * 4; return [b[i + 2], b[i + 1], b[i]]; }, alpha: (x, y) => b[54 + (y * w + x) * 4 + 3] };
+}
+const FRAMES_MIN_MS = 260; // the host allows a new grab 250 ms after the last one started (frames.h)
+
+test('frames.grab: the layer source at native size, never the composed canvas or its effects (BMP, top-down BGRA)', async () => {
+  // The effects project (FX) is still loaded from the test above: a blurred duplicate of sharp stripes, a rounded and
+  // cropped green card, a red background.
+  const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
+  const t0 = Date.now();
+  const g = await c.call('frames.grab', { layer: 'stripes-soft' });
+  assert.deepEqual([g.width, g.height, g.sourceWidth, g.sourceHeight], [256, 256, 256, 256], 'native size of the shared source');
+  assert.equal(path.basename(g.path), 'frame-stripes-soft.bmp');
+  assert.equal(path.resolve(path.dirname(g.path)), path.resolve(h.dataDir, 'live'), 'fixed file under <data>/live');
+  assert.ok(g.ts >= t0 - 1000 && g.ts <= Date.now() + 1000, `ts is Unix epoch ms: ${g.ts}`);
+  let f = readBmp(g.path);
+  const luma = ([R, G, B]) => 0.2126 * R + 0.7152 * G + 0.0722 * B;
+  near(f.px(8, 128), [0, 0, 0], 'stripe 0 black (the blur effect of the duplicate does not reach the grab)');
+  near(f.px(24, 128), [255, 255, 255], 'stripe 1 white');
+  near(f.px(8, 0), [0, 0, 0], 'first row (top-down order)');
+  near(f.px(24, 255), [255, 255, 255], 'last row');
+  assert.equal(f.alpha(24, 128), 255, 'opaque');
+  let lo = 255, hi = 0;
+  for (let x = 0; x < 128; x++) { const l = luma(f.px(x, 100)); lo = Math.min(lo, l); hi = Math.max(hi, l); }
+  assert.ok(hi - lo > 200, `sharp stripes (luma range ${hi - lo})`);
+  console.log(`frames.grab 256x256: ${Date.now() - t0} ms round trip, graphics thread ${g.gfxMs} ms`);
+
+  await sleep(FRAMES_MIN_MS);
+  const card = await c.call('frames.grab', { layer: 'card' });
+  f = readBmp(card.path);
+  assert.deepEqual([f.w, f.h], [256, 256], 'card: source size, not the cropped wrapper');
+  for (const [x, y] of [[1, 1], [254, 254], [10, 128], [128, 128]]) near(f.px(x, y), [0, 255, 0], `card (${x},${y}) green: crop and rounded corners not applied`);
+
+  await sleep(FRAMES_MIN_MS);
+  const bg = await c.call('frames.grab', { layer: 'bg' });
+  f = readBmp(bg.path);
+  near(f.px(10, 10), [255, 0, 0], 'red background: channel order B G R');
+
+  await sleep(FRAMES_MIN_MS);
+  const small = await c.call('frames.grab', { layer: 'stripes', maxWidth: 128 });
+  assert.deepEqual([small.width, small.height, small.sourceWidth], [128, 128, 256], 'maxWidth downscales keeping aspect');
+  f = readBmp(small.path);
+  near(f.px(3, 64), [0, 0, 0], 'downscaled stripe 0');
+  near(f.px(12, 64), [255, 255, 255], 'downscaled stripe 1');
+
+  // Rate limit: a grab right after another is refused at once (never queued).
+  await sleep(FRAMES_MIN_MS);
+  const [r1, r2] = await Promise.all([c.call('frames.grab', { layer: 'bg' }).then((x) => x, (e) => e), sleep(30).then(() => c.call('frames.grab', { layer: 'bg' }).then((x) => x, (e) => e))]);
+  assert.equal(r1.width > 0, true, 'first grab ok');
+  assert.equal(r2.code, -32004, 'second grab within 250 ms refused');
+  assert.match(r2.message, /busy|rate limit/);
+
+  await sleep(FRAMES_MIN_MS);
+  assert.equal((await rpcErr('frames.grab', { layer: 'nope' })).code, -32602, 'unknown layer');
+  assert.equal((await rpcErr('frames.grab', {})).code, -32602, 'layer required');
+  assert.equal((await rpcErr('frames.grab', { layer: 'bg', maxWidth: 8 })).code, -32602, 'maxWidth too small');
+  assert.equal((await rpcErr('frames.grab', { layer: 'bg', path: 'C:/x.bmp' })).code, -32602, 'no caller path');
+});
+
 test('--project on the command line takes the host test format only (v1 goes through the validator)', async () => {
   await assert.rejects(
     launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), project: path.join(REPO_ROOT, 'tests', 'fixtures', 'project', 'sample.project.json') }),

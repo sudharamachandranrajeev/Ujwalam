@@ -87,6 +87,10 @@ public:
 	// (a device global or a layer's audio). Never blocks: 1 found, 0 no such source, -1 the model is busy (another
 	// thread holds it, e.g. project.load). For the cam-pop mic feed (overlay.h); any thread.
 	int audio_peak_db(const std::string &audio_id, float &peak_db) const;
+	// frames.grab (frames.h): a strong reference to the shared source behind layer `layer_id` (first match in any
+	// scene on any canvas; a duplicate resolves to its target's source; a layer's effects wrapper is never returned).
+	// The caller releases it. type = the layer type. Throws rpc::Error: no such layer, layer has no source / video.
+	obs_source_t *layer_source_ref(const std::string &layer_id, std::string &type) const;
 	json::Value mixer_list() const;
 	json::Value mixer_set_volume(const std::string &id, const double *mul, const double *db);
 	json::Value mixer_set_mute(const std::string &id, bool muted);

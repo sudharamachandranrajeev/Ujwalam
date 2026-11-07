@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: clip markers and feedback captures (A0 day 2; alpha plan Part A item 8 and Part B).
 //
-// Markers: marker.add {source: hotkey|chat|audio|api, note?} appends one JSON line to
+// Markers: marker.add {source: hotkey|chat|audio|api|clip, note?} appends one JSON line to
 //   <markersDir>/<session>.jsonl (session = the host start, local time YYYYMMDD-HHMMSS):
 //   {"v":1,"at":ISO UTC,"source":...,"note":...|absent,"hostMs":n,"streamMs":n|null,"recordMs":n|null,
 //    "scenes":{"H":id|null,"V":id|null}}

@@ -19,8 +19,10 @@ Hit row (one per detector instance; consecutive frames of the same detector and 
   (name where required, inside a pack ROI, not suppressed, not a reference medal); `why` lists the rules that
   failed otherwise.
 
-Settings (sample rate, diff gate, name threshold, merge gap) come from data/clip/detector-pass.json per game
-(status proposed). Resource limits (user, 2026-10-27): OCR on 4 onnxruntime threads (inter-op 1), ffmpeg decode
+Settings (sample rate, diff gate, name threshold, merge gap, OCR regions) come from data/clip/detector-pass.json per
+game (status proposed). ocrRegions "full" OCRs the whole frame; "rois" OCRs only bands built from the pack ROIs
+(FrameScanner; docs/evidence/2026-11-07-roi-ocr-speed.md). FrameScanner.scan is also the per-frame call of the live
+loop. Resource limits (user, 2026-10-27): OCR on 4 onnxruntime threads (inter-op 1), ffmpeg decode
 on 2 threads, process and children at below-normal priority, and one heavy clip job at a time (a lock file in the
 temp folder). Needs the OCR venv (numpy, opencv-python-headless, rapidocr, onnxruntime). CPU only.
 """
@@ -43,6 +45,12 @@ HITS = "detector-hits.jsonl"
 SUMMARY = "detector-pass.json"
 LOCK_NAME = "ujwalam-clip-heavy.lock"
 
+OCR_REGION_MODES = ("full", "rois")
+# RapidOCR text-detector input rule for band crops: "max" with a side limit above any 1080p band never rescales a band
+# (the default "min"/736 rule upscales a thin band; CROP_PROFILE's 960 would halve a full-width band); any downscale
+# is explicit (roiDetScale). The angle classifier is off (HUD text is never rotated).
+BAND_PROFILE = {"Det.limit_type": "max", "Det.limit_side_len": 4096, "Global.use_cls": False}
+
 _MULTI = re.compile(r"(\d+)\s*(X|\+)?\s*MU[LI]TI-?\s*KI[LI]{2}")
 _STREAK = re.compile(r"ON\s*A\s*(\d+)\s*KI[LI]{2}\s*STREAK")
 
@@ -62,6 +70,30 @@ def load_settings(game=None, path=None):
             raise ClipError(f"detector-pass.json games.{gid}.{k} must be a number >= 0")
     if s["fps"] <= 0 or s["fps"] > 10:
         raise ClipError("detector-pass.json fps must be in (0, 10]")
+    s.setdefault("ocrRegions", "full")
+    if s["ocrRegions"] not in OCR_REGION_MODES:
+        raise ClipError(f"detector-pass.json games.{gid}.ocrRegions must be one of {', '.join(OCR_REGION_MODES)}")
+    if s["ocrRegions"] == "rois":
+        pad = s.get("roiPad")
+        if (not isinstance(pad, list) or len(pad) != 2
+                or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and 0 <= v <= 0.5 for v in pad)):
+            raise ClipError(f"detector-pass.json games.{gid}.roiPad must be [x, y] game fractions in [0, 0.5]")
+        ma = s.get("roiMergeArea")
+        if not isinstance(ma, (int, float)) or isinstance(ma, bool) or not 0 <= ma <= 1:
+            raise ClipError(f"detector-pass.json games.{gid}.roiMergeArea must be a number in [0, 1]")
+        every = s.setdefault("roiEvery", {})
+        if not isinstance(every, dict) or not all(
+                isinstance(k, str) and isinstance(v, int) and not isinstance(v, bool) and 1 <= v <= 10
+                for k, v in every.items()):
+            raise ClipError(f"detector-pass.json games.{gid}.roiEvery must map detector ids to whole frames 1-10")
+        ds = s.setdefault("roiDetScale", 1.0)
+        if not isinstance(ds, (int, float)) or isinstance(ds, bool) or not 0.25 <= ds <= 1:
+            raise ClipError(f"detector-pass.json games.{gid}.roiDetScale must be a number in [0.25, 1]")
+        if not isinstance(s.setdefault("roiTextFilter", False), bool):
+            raise ClipError(f"detector-pass.json games.{gid}.roiTextFilter must be true or false")
+        probe = s.setdefault("modeProbeEvery", 0)
+        if not isinstance(probe, int) or isinstance(probe, bool) or not 0 <= probe <= 60:
+            raise ClipError(f"detector-pass.json games.{gid}.modeProbeEvery must be a whole number of frames 0-60")
     return gid, s, doc
 
 
@@ -192,6 +224,307 @@ def merge_hits(rows, gap):
     return sorted(out, key=lambda r: (r["t"], r["detector"]))
 
 
+# ---------------------------------------------------------------- OCR regions (bands)
+
+def _area(r):
+    return max(0.0, r[2] - r[0]) * max(0.0, r[3] - r[1])
+
+
+def _overlap(a, b):
+    return _area([max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])])
+
+
+def pack_modes(pack):
+    """Game modes the pack's detectors declare (detector `modes`, ROI `mode`), sorted."""
+    out = set()
+    for d in pack["detectors"]:
+        out.update(d.get("modes") or [])
+        out.update(r["mode"] for r in d.get("rois", []) if r.get("mode"))
+    return sorted(out)
+
+
+def roi_rects(pack, settings, mode=None):
+    """[(x0, y0, x1, y1, every, {detector ids})] in game-area fractions: every pack ROI widened by the slack the
+    per-frame rules allow (killfeed slack for M5/B1, roiSlack otherwise; never less than the 0.02 the K1 name check
+    uses) plus roiPad, so a text box whose centre is inside the ROI also lies inside the crop. `every` = OCR the rect
+    on every Nth sampled frame (settings.roiEvery, default 1). mode (e.g. "mp") keeps only the ROIs of detectors
+    that declare that mode (detector `modes`; ROI `mode`); None keeps all."""
+    px, py = (float(v) for v in settings["roiPad"])
+    slack = max(float(settings["roiSlack"]), 0.02)
+    every = settings.get("roiEvery") or {}
+    out = []
+    for d in pack["detectors"]:
+        if mode is not None and d.get("modes") and mode not in d["modes"]:
+            continue
+        s = g1_scan.KILLFEED_SLACK if d["id"] in ("M5", "B1") else slack
+        for r in d.get("rois", []):
+            if mode is not None and r.get("mode") and r["mode"] != mode:
+                continue
+            out.append((max(0.0, r["x0"] - s - px), max(0.0, r["y0"] - s - py),
+                        min(1.0, r["x1"] + s + px), min(1.0, r["y1"] + s + py), int(every.get(d["id"], 1)), {d["id"]}))
+    return out
+
+
+def merge_bands(rects, merge_area):
+    """Greedy merge of rects with the same cadence: two rects become their bounding box when that box is no more
+    than merge_area (game-area fraction) larger than the area they cover together, or when one contains the other.
+    Detector cost grows with crop area and every OCR call has a fixed cost, so merge_area trades the two. Overlap
+    left between bands is resolved per box (band_boxes)."""
+    bands = [(r[0], r[1], r[2], r[3], r[4], set(r[5])) for r in rects]
+    while True:
+        best = None
+        for i in range(len(bands)):
+            for j in range(i + 1, len(bands)):
+                a, b = bands[i], bands[j]
+                if a[4] != b[4]:
+                    continue
+                u = (min(a[0], b[0]), min(a[1], b[1]), max(a[2], b[2]), max(a[3], b[3]))
+                cost = _area(u) - (_area(a) + _area(b) - _overlap(a, b))
+                if cost <= merge_area + 1e-9 and (best is None or cost < best[0]):
+                    best = (cost, i, j, u)
+        if best is None:
+            break
+        _, i, j, u = best
+        a, b = bands[i], bands[j]
+        bands[i] = (*u, a[4], a[5] | b[5])
+        del bands[j]
+    return sorted(bands, key=lambda b: (b[1], b[0]))
+
+
+def band_pixels(bands, layout, origin, size):
+    """Bands in game fractions -> pixel crops (x0, y0, x1, y1) of the sampled image (the layout's visible area,
+    whose top-left is `origin` in frame px). Clipped to the image; empty bands dropped."""
+    gx, gy, gw, gh = layout["game"]
+    ox, oy = origin
+    w, h = size
+    out = []
+    for b in bands:
+        x0 = max(0, int(gx + b[0] * gw - ox))
+        y0 = max(0, int(gy + b[1] * gh - oy))
+        x1 = min(w, int(round(gx + b[2] * gw - ox + 0.4999)))
+        y1 = min(h, int(round(gy + b[3] * gh - oy + 0.4999)))
+        if x1 - x0 >= 8 and y1 - y0 >= 8:
+            out.append({"px": (x0, y0, x1, y1), "every": b[4], "detectors": sorted(b[5])})
+    return out
+
+
+def no_power_throttling():
+    """Opt this process out of Windows execution-speed power throttling (EcoQoS). Measured 2026-11-07: with the
+    terminal in the background Windows throttled the OCR process and one full-frame OCR took 7.1-8.2 s instead of
+    1.4 s (docs/evidence/2026-11-07-roi-ocr-speed.md). Priority stays below normal and the thread caps stay; this
+    only stops the efficiency-mode clock/core downgrade. Returns True when applied (False elsewhere)."""
+    if os.name != "nt":
+        return False
+    import ctypes
+    from ctypes import wintypes
+
+    class _State(ctypes.Structure):
+        _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG), ("StateMask", wintypes.ULONG)]
+    k = ctypes.windll.kernel32
+    k.GetCurrentProcess.restype = wintypes.HANDLE
+    k.SetProcessInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    st = _State(1, 1, 0)  # PROCESS_POWER_THROTTLING_CURRENT_VERSION, EXECUTION_SPEED controlled, state off
+    process_power_throttling = 4  # PROCESS_INFORMATION_CLASS
+    return bool(k.SetProcessInformation(k.GetCurrentProcess(), process_power_throttling, ctypes.byref(st),
+                                        ctypes.sizeof(st)))
+
+
+def ocr_crops(crops, det_scale=1.0, keep=None):
+    """Two-stage RapidOCR over band crops -> per-crop box lists (g1_scan.ocr format, crop px).
+
+    Text detection runs per crop, on a copy scaled by det_scale when below 1 (detector cost grows with pixel count);
+    recognition then runs once, batched over the text lines of all crops, each line cut from the full-resolution
+    crop (as RapidOCR cuts them). keep: optional per-crop callable (centre x, y in crop px) -> bool; a text line
+    whose centre fails it is not recognised. Recognition score filter as RapidOCR (Global.text_score). Uses the pinned
+    rapidocr 3.10 detector/recogniser objects of g1_scan.engine()."""
+    import cv2
+    import numpy as np
+    from rapidocr.ch_ppocr_rec import TextRecInput
+    from rapidocr.utils.process_img import get_rotate_crop_image
+    eng = g1_scan.engine()
+    det, rec = eng._load_det_model(), eng._load_rec_model()
+    lines, owner, quads = [], [], []
+    for k, c in enumerate(crops):
+        c = np.ascontiguousarray(c)
+        src = c if det_scale >= 1 else cv2.resize(c, None, fx=det_scale, fy=det_scale, interpolation=cv2.INTER_AREA)
+        r = det(src)
+        if r.boxes is None or not len(r.boxes):
+            continue
+        h, w = c.shape[:2]
+        for q in r.boxes:
+            q = np.asarray(q, np.float32) / min(det_scale, 1.0)
+            q[:, 0] = np.clip(q[:, 0], 0, w - 1)
+            q[:, 1] = np.clip(q[:, 1], 0, h - 1)
+            if keep is not None and not keep[k]((float(q[:, 0].min() + q[:, 0].max()) / 2,
+                                                 float(q[:, 1].min() + q[:, 1].max()) / 2)):
+                continue  # no rule reads a box centred here: not recognised
+            lines.append(get_rotate_crop_image(c, q.copy()))
+            owner.append(k)
+            quads.append(q)
+    out = [[] for _ in crops]
+    if not lines:
+        return out
+    rr = rec(TextRecInput(img=lines))
+    min_score = float(eng.text_score)
+    for k, q, txt, sc in zip(owner, quads, rr.txts or (), rr.scores or ()):
+        if not txt.strip() or sc < min_score:
+            continue
+        out[k].append({"text": txt, "score": round(float(sc), 4), "x0": float(q[:, 0].min()),
+                       "y0": float(q[:, 1].min()), "x1": float(q[:, 0].max()), "y1": float(q[:, 1].max())})
+    return out
+
+
+def _iou(a, b):
+    ra, rb = (a["x0"], a["y0"], a["x1"], a["y1"]), (b["x0"], b["y0"], b["x1"], b["y1"])
+    ov = _overlap(ra, rb)
+    u = _area(ra) + _area(rb) - ov
+    return ov / u if u > 0 else 0.0
+
+
+def band_boxes(per_band, bands, size, edge=2):
+    """OCR boxes per band (band px) -> one list in image px, the coordinate space of a full-frame OCR.
+    Overlapping bands can read one text twice: a box cut by an inner band edge is dropped when another band holds
+    it whole, and of two boxes with IoU >= 0.5 the higher score is kept."""
+    w, h = size
+    cand = []
+    for boxes, band in zip(per_band, bands):
+        bx0, by0, bx1, by1 = band["px"]
+        for b in boxes:
+            g = dict(b, x0=b["x0"] + bx0, y0=b["y0"] + by0, x1=b["x1"] + bx0, y1=b["y1"] + by0)
+            cut = ((g["x0"] <= bx0 + edge and bx0 > 0) or (g["y0"] <= by0 + edge and by0 > 0)
+                   or (g["x1"] >= bx1 - edge and bx1 < w) or (g["y1"] >= by1 - edge and by1 < h))
+            if cut and any(o is not band and o["px"][0] <= g["x0"] - edge and o["px"][1] <= g["y0"] - edge
+                           and o["px"][2] >= g["x1"] + edge and o["px"][3] >= g["y1"] + edge for o in bands):
+                continue
+            cand.append(g)
+    kept = []
+    for g in sorted(cand, key=lambda b: -b["score"]):
+        if all(_iou(g, k) < 0.5 for k in kept):
+            kept.append(g)
+    return sorted(kept, key=lambda b: (b["y0"], b["x0"]))
+
+
+class FrameScanner:
+    """Per-frame detector scan, shared by the post-stream pass (run_pass) and the live loop.
+
+    scan(t, img) takes one sampled BGR frame of the layout's visible area (g1_scan.visible_box) and returns the
+    single-frame hit rows (frame_hits format plus t). State kept between calls: the last known mode, the last
+    OCR'd frame (whole-frame diff gate, settings.ocrRegions "full") or per band (band diff gate and cadence,
+    "rois"). The constructor configures the shared OCR engine (thread caps; band profile in "rois" mode), so one
+    process runs one scanner at a time."""
+
+    def __init__(self, pack, names, settings, layout, threads=g1_scan.DEFAULT_THREADS):
+        self.pack, self.names, self.settings, self.layout = pack, names, settings, layout
+        self.regions = settings.get("ocrRegions", "full")
+        self.gate = float(settings["diffGate"])
+        v = g1_scan.visible_box(layout)
+        self.origin = (v[0], v[1])
+        self.size = (v[2] - v[0], v[3] - v[1])
+        params = g1_scan.thread_params(threads)
+        self.band_sets, self.band_state = {}, {}
+        self.probe = int(settings.get("modeProbeEvery") or 0)
+        self.det_scale = float(settings.get("roiDetScale", 1.0))
+        self.text_filter = bool(settings.get("roiTextFilter"))
+        if self.regions == "rois":
+            params.update(BAND_PROFILE)
+            ma = float(settings["roiMergeArea"])
+            modes = [None] + (pack_modes(pack) if self.probe else [])
+            for m in modes:
+                self.band_sets[m] = band_pixels(merge_bands(roi_rects(pack, settings, m), ma), layout, self.origin,
+                                                self.size)
+                # the ROIs (with rule slack, without pad) a text centre must fall in to be read at all
+                rules = roi_rects(pack, dict(settings, roiPad=[0, 0]), m)
+                for b in self.band_sets[m]:
+                    b["rules"] = [r[:4] for r in rules if r[5] & set(b["detectors"])]
+            self.bands = self.band_sets[None]
+        else:
+            self.bands = []
+            for k in BAND_PROFILE:  # full frame keeps RapidOCR's own detector rule and angle classifier
+                g1_scan.OCR_PARAMS.pop(k, None)
+        g1_scan.set_ocr_params(params)
+        self.unthrottled = no_power_throttling()
+        self.mode, self.last, self.prev, self.n = None, None, [], 0
+        self.stats = {"frames": 0, "ocrFrames": 0, "diffGateSkips": 0, "ocrCalls": 0, "bandOcr": 0, "bandSkips": 0,
+                      "bandHeld": 0, "ocrSeconds": 0.0}
+
+    def active_bands(self):
+        """Bands for this frame: all pack ROIs while the mode is unknown, on every modeProbeEvery-th frame (so a mode
+        change is seen) and when mode gating is off (modeProbeEvery 0); otherwise only the current mode's ROIs."""
+        if not self.probe or self.mode not in self.band_sets or self.n % self.probe == 0:
+            return self.band_sets[None]
+        return self.band_sets[self.mode]
+
+    def _keeper(self, band):
+        """Text filter of one band (roiTextFilter): True when a centre (band px) lies in one of the band's rule ROIs."""
+        gx, gy, gw, gh = self.layout["game"]
+        ox = band["px"][0] + self.origin[0] - gx
+        oy = band["px"][1] + self.origin[1] - gy
+        rules = band["rules"]
+
+        def keep(c):
+            fx, fy = (c[0] + ox) / gw, (c[1] + oy) / gh
+            return any(r[0] <= fx <= r[2] and r[1] <= fy <= r[3] for r in rules)
+        return keep
+
+    def _scan_rois(self, img):
+        import cv2
+        import numpy as np
+        bands = self.active_bands()
+        per_band = [None] * len(bands)
+        todo = []  # (index, key, small) of bands OCR'd this frame
+        for i, band in enumerate(bands):
+            x0, y0, x1, y1 = band["px"]
+            key = (band["px"], band["every"])
+            last, held, seen = self.band_state.get(key, (None, [], None))
+            if self.n % band["every"] and seen is not None and self.n - seen < band["every"]:
+                self.stats["bandHeld"] += 1  # not this frame's turn: its last boxes still hold
+                per_band[i] = held
+                continue
+            small = cv2.resize(cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY), None, fx=0.25, fy=0.25,
+                               interpolation=cv2.INTER_AREA).astype(np.int16)
+            if last is not None and last.shape == small.shape and float(np.abs(small - last).mean()) < self.gate:
+                self.stats["bandSkips"] += 1  # unchanged band: its last boxes still hold
+                per_band[i] = held
+                continue
+            todo.append((i, key, small))
+        if todo:
+            crops = [img[bands[i]["px"][1]:bands[i]["px"][3], bands[i]["px"][0]:bands[i]["px"][2]] for i, _, _ in todo]
+            t0 = time.perf_counter()
+            keep = [self._keeper(bands[i]) for i, _, _ in todo] if self.text_filter else None
+            got_all = ocr_crops(crops, self.det_scale, keep)
+            self.stats["ocrSeconds"] += time.perf_counter() - t0
+            self.stats["ocrCalls"] += 1
+            for (i, key, small), got in zip(todo, got_all):
+                self.stats["bandOcr"] += 1
+                self.band_state[key] = (small, got, self.n)
+                per_band[i] = got
+        return band_boxes(per_band, bands, self.size), len(todo)
+
+    def scan(self, t, img):
+        self.stats["frames"] += 1
+        if self.regions == "rois":
+            boxes, ran = self._scan_rois(img)
+            self.n += 1
+            if not ran:
+                self.stats["diffGateSkips"] += 1
+                return [dict(h, t=t) for h in self.prev]
+            recboxes = g1_scan._frame_record(boxes, self.layout, self.origin)
+        else:
+            t0 = time.perf_counter()
+            rec, self.last = g1_scan.scan_frame({"src": "recording"}, t, img, self.origin, self.layout, self.last,
+                                                self.gate)
+            if "skipped" in rec:
+                self.stats["diffGateSkips"] += 1
+                # unchanged frame: whatever was on screen at the last OCR'd frame still is, so its hits continue
+                return [dict(h, t=t) for h in self.prev]
+            self.stats["ocrSeconds"] += time.perf_counter() - t0
+            recboxes = rec["boxes"]
+        self.stats["ocrFrames"] += 1
+        self.mode = g1_scan.classify_frame(recboxes) or self.mode  # keep the last known mode through cue-less frames
+        self.prev = frame_hits(recboxes, self.pack, self.names, self.settings, self.mode)
+        return [dict(h, t=t) for h in self.prev]
+
+
 # ---------------------------------------------------------------- one heavy job
 
 def _pid_alive(pid):
@@ -267,29 +600,20 @@ def layout_for(recording, layout_path=None):
 
 
 def run_pass(recording, out_dir, settings, pack, names, layout, threads=g1_scan.DEFAULT_THREADS, duration=None,
-             progress=print):
+             progress=print, start=None):
     """Samples the recording at settings.fps, OCRs changed frames, writes out_dir/detector-hits.jsonl.
-    Returns the summary dict (counts only; no text)."""
-    g1_scan.set_ocr_params(g1_scan.thread_params(threads))
+    Returns the summary dict (counts only; no text). start/duration (seconds) limit the pass to a segment; hit
+    times stay recording times."""
+    scanner = FrameScanner(pack, names, settings, layout, threads)
     v = g1_scan.visible_box(layout)
-    origin = (v[0], v[1])
-    rows, last, mode, prev = [], None, None, []
-    n_ocr = n_skip = n_frames = 0
+    rows = []
     t0 = time.monotonic()
-    for t, img in g1_scan.decode_frames(recording, float(settings["fps"]), crop=v):
-        n_frames += 1
-        rec, last = g1_scan.scan_frame({"src": "recording"}, t, img, origin, layout, last, float(settings["diffGate"]))
-        if "skipped" in rec:
-            n_skip += 1
-            # unchanged frame: whatever was on screen at the last OCR'd frame still is, so its hits continue
-            rows.extend(dict(h, t=t) for h in prev)
-            continue
-        n_ocr += 1
-        mode = g1_scan.classify_frame(rec["boxes"]) or mode  # keep the last known mode through cue-less frames
-        prev = frame_hits(rec["boxes"], pack, names, settings, mode)
-        rows.extend(dict(h, t=t) for h in prev)
-        if progress and n_frames % 300 == 0:
-            progress(f"detect: {t:.0f} s, ocr {n_ocr}, skipped {n_skip}, {time.monotonic() - t0:.0f} s elapsed")
+    for t, img in g1_scan.decode_frames(recording, float(settings["fps"]), crop=v, start=start, dur=duration):
+        rows.extend(scanner.scan(t, img))
+        st = scanner.stats
+        if progress and st["frames"] % 300 == 0:
+            progress(f"detect: {t:.0f} s, ocr {st['ocrFrames']}, skipped {st['diffGateSkips']}, "
+                     f"{time.monotonic() - t0:.0f} s elapsed")
     hits = merge_hits(rows, float(settings["mergeGapSec"]))
     os.makedirs(out_dir, exist_ok=True)
     tmp = os.path.join(out_dir, HITS + f".{os.getpid()}.tmp")
@@ -302,6 +626,14 @@ def run_pass(recording, out_dir, settings, pack, names, layout, threads=g1_scan.
         p = per.setdefault(h["detector"], {"hits": 0, "signal": 0})
         p["hits"] += 1
         p["signal"] += 1 if h["signal"] else 0
-    return {"frames": n_frames, "ocrFrames": n_ocr, "diffGateSkips": n_skip, "hits": len(hits),
-            "signalHits": sum(1 for h in hits if h["signal"]), "perDetector": per,
-            "seconds": round(time.monotonic() - t0, 2)}
+    st = scanner.stats
+    out = {"frames": st["frames"], "ocrFrames": st["ocrFrames"], "diffGateSkips": st["diffGateSkips"],
+           "hits": len(hits), "signalHits": sum(1 for h in hits if h["signal"]), "perDetector": per,
+           "seconds": round(time.monotonic() - t0, 2), "ocrRegions": scanner.regions,
+           "powerThrottlingOff": scanner.unthrottled,
+           "ocrSeconds": round(st["ocrSeconds"], 2)}
+    if scanner.regions == "rois":
+        out.update(bands={m or "all": [{"px": list(b["px"]), "every": b["every"], "detectors": b["detectors"]}
+                                      for b in bs] for m, bs in scanner.band_sets.items()},
+                   bandOcr=st["bandOcr"], bandSkips=st["bandSkips"], bandHeld=st["bandHeld"])
+    return out

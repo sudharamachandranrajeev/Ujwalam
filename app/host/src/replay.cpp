@@ -85,6 +85,25 @@ std::string replace_all(std::string s, const std::string &from, const std::strin
 	return s;
 }
 
+// libobs's replay save OVERWRITES a file of the same name (obs-ffmpeg-mux.c replay_buffer_save -> generate_filename
+// with overwrite = true), and the default name has one-second resolution, so two saves within one second (live
+// clipping, D226) would leave one file. The name is resolved here with the formatter libobs uses, gets "-2", "-3" ...
+// while <dir>/<name>.mkv exists, and goes to libobs as a literal ("%" escaped). Called with the replay's save_m held,
+// so an earlier save of the same replay has finished writing its file.
+std::string unique_literal_name(const std::string &dir, const std::string &fmt)
+{
+	char *fn = os_generate_formatted_filename("mkv", false, fmt.c_str());
+	std::string stem = fn ? fn : fmt;
+	bfree(fn);
+	if (stem.size() > 4 && stem.compare(stem.size() - 4, 4, ".mkv") == 0)
+		stem.resize(stem.size() - 4);
+	std::string name = stem;
+	std::error_code ec;
+	for (int n = 2; n < 1000 && fs::exists(fs::u8path(dir) / fs::u8path(name + ".mkv"), ec); n++)
+		name = stem + "-" + std::to_string(n);
+	return replace_all(name, "%", "%%");
+}
+
 } // namespace
 
 std::string Outputs::replay_dir() const
@@ -393,7 +412,7 @@ json::Value Outputs::replay_save(const std::string &canvas, const std::string &d
 		}
 		obs_data_t *os = obs_data_create();
 		obs_data_set_string(os, "directory", dir.c_str());
-		obs_data_set_string(os, "format", replace_all(name_fmt, "{canvas}", r->canvas).c_str());
+		obs_data_set_string(os, "format", unique_literal_name(dir, replace_all(name_fmt, "{canvas}", r->canvas)).c_str());
 		obs_output_update(p.ref, os);
 		obs_data_release(os);
 		calldata_t cd = {};
