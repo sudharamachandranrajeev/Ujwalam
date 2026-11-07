@@ -76,6 +76,12 @@ export const STEPS = [
   { name: 'build', run: buildStep },
   { name: 'lint', cmd: 'npm', args: ['run', 'lint', '--silent'], shell: true },
   npmRun('build-host', 'build:host'),
+  // Benchmarks fail CI only on a QUIET machine. On a noisy one the bench prints "bench: advisory (noisy: ...)", exits 0,
+  // and the step shows as advisory with the reasons (regressions are listed in its output). Until ENFORCE_FROM in
+  // tools/bench/run.mjs (v1 window) a quiet-run regression is advisory too: "bench: advisory (v1 window: ...)".
+  // Runs before the test suites (D229): after ~8 min of host/GPU/Python tests the machine is still loaded and the
+  // sub-millisecond ingest p95 read 0.14-0.16 ms in CI against 0.02 ms run alone (2026-11-07), a false regression.
+  { ...npmRun('bench', 'bench'), advisory: /^bench: (advisory \((?:noisy|v1 window): .*\))\r?$/m },
   npmRun('test', 'test'),
   // Host suite after the main tests, never in parallel with them: it starts libobs and NVENC (one heavy GPU job, D100).
   npmRun('test-host', 'test:host'),
@@ -87,10 +93,6 @@ export const STEPS = [
   npmRun('validate-games', 'validate:games'),
   { name: 'private-scan', cmd: process.execPath, args: ['tools/git-hooks/private-scan.mjs', 'scan-worktree'] },
   npmRun('legacy-verify', 'legacy:verify'),
-  // Benchmarks fail CI only on a QUIET machine. On a noisy one the bench prints "bench: advisory (noisy: ...)", exits 0,
-  // and the step shows as advisory with the reasons (regressions are listed in its output). Until ENFORCE_FROM in
-  // tools/bench/run.mjs (v1 window) a quiet-run regression is advisory too: "bench: advisory (v1 window: ...)".
-  { ...npmRun('bench', 'bench'), advisory: /^bench: (advisory \((?:noisy|v1 window): .*\))\r?$/m },
   // Last: no test mock or soak helper may outlive the run. Fails and names the pid when one does.
   { name: 'stray-mocks', run: async () => { const s = scanStrays(); return { ok: s.length === 0, output: `${strayReport(s)}
 ` }; } },
