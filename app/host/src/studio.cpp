@@ -178,14 +178,67 @@ Studio::Scene *Studio::one_scene(const std::string &id, const std::string &cv)
 	return v.front();
 }
 
-void Studio::set_channel(Canvas &c, Scene *s)
+static void route_channel(const std::string &id, obs_canvas_t *vc, obs_source_t *src)
+{
+	if (id == "H")
+		obs_set_output_source(0, src);
+	else if (vc)
+		obs_canvas_set_channel(vc, 0, src);
+}
+
+// Channel 0 of a canvas is its transition (created on first use, sized to the canvas); the scene is the transition's
+// child. animate: a scene switch fades when the canvas's transition is a fade with a duration; otherwise it cuts. A
+// transition that cannot be created (no obs-transitions module) falls back to routing the scene directly (cuts).
+void Studio::set_channel(Canvas &c, Scene *s, bool animate)
 {
 	obs_source_t *src = s ? obs_scene_get_source(s->scene) : nullptr;
-	if (c.id == "H")
-		obs_set_output_source(0, src);
-	else if (c.vc)
-		obs_canvas_set_channel(c.vc, 0, src);
+	if (!c.tr && src) {
+		std::string name = "ujw:transition:" + c.id;
+		c.tr = obs_source_create_private("fade_transition", name.c_str(), nullptr);
+		if (c.tr) {
+			obs_transition_set_size(c.tr, c.w, c.h);
+			route_channel(c.id, c.vc, c.tr);
+		} else {
+			hlog::warn("canvas %s: fade_transition unavailable; scene switches cut", c.id.c_str());
+		}
+	}
+	if (!c.tr) {
+		route_channel(c.id, c.vc, src);
+	} else if (animate && src && c.tr_type == "fade" && c.tr_ms > 0 && !c.active.empty() && (!s || c.active != s->id)) {
+		if (!obs_transition_start(c.tr, OBS_TRANSITION_MODE_AUTO, c.tr_ms, src))
+			obs_transition_set(c.tr, src);
+	} else {
+		obs_transition_set(c.tr, src);
+	}
 	c.active = s ? s->id : "";
+}
+
+json::Value Studio::transition_set(const std::string &cv, const std::string &type, int64_t ms)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	if (type != "cut" && type != "fade")
+		throw Error(rpc::INVALID_PARAMS, "type must be cut or fade");
+	Canvas *c = canvas(norm_canvas(cv));
+	if (!c)
+		throw Error(rpc::INVALID_PARAMS, "unknown canvas");
+	c->tr_type = type;
+	c->tr_ms = type == "fade" ? (uint32_t)ms : 0;
+	hlog::info("transition %s: %s %u ms", c->id.c_str(), c->tr_type.c_str(), c->tr_ms);
+	return transitions();
+}
+
+json::Value Studio::transitions() const
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	json::Value r = json::Value::object();
+	for (auto &c : canvases_) {
+		json::Value o = json::Value::object();
+		o.set("type", c.tr_type);
+		o.set("durationMs", (int64_t)c.tr_ms);
+		o.set("available", c.tr != nullptr); // false before the first scene, or without obs-transitions
+		r.set(c.id, std::move(o));
+	}
+	return r;
 }
 
 void Studio::destroy_layer(Layer &l)
@@ -268,8 +321,14 @@ void Studio::teardown()
 {
 	std::lock_guard<std::recursive_mutex> l(m_);
 	drop_relay();
-	for (auto &c : canvases_)
+	for (auto &c : canvases_) {
 		set_channel(c, nullptr);
+		if (c.tr) { // off the output before the release, then the transition drops its scene references
+			route_channel(c.id, c.vc, nullptr);
+			obs_source_release(c.tr);
+			c.tr = nullptr;
+		}
+	}
 	for (auto &g : globals_)
 		obs_set_output_source(g.channel, nullptr);
 	globals_.clear();
@@ -1052,7 +1111,7 @@ json::Value Studio::scene_activate(const std::string &id, const std::string &cv)
 	json::Value cvs = json::Value::array();
 	for (Scene *s : scenes_named(id, cv)) {
 		Canvas *c = canvas(s->canvas);
-		set_channel(*c, s);
+		set_channel(*c, s, true);
 		cvs.push(c->id);
 		hlog::info("scene activated: %s on %s", id.c_str(), c->id.c_str());
 	}

@@ -120,6 +120,9 @@ export const BOT_FLAG = 'bot-manager';
 // Mouse editing on the preview (P5, D230): the host does the editing; this server keeps the host's switch equal to the
 // flag and saves the host's committed edits (preview.edits) into the project file like inspector edits.
 export const PREVIEW_EDIT_FLAG = 'preview-edit';
+// Scene transitions (D239): while on, the host's per-canvas transition follows the project's canvases[].transition
+// (Meld import: fade of Meld's duration); off (default) = cut.
+export const TRANSITIONS_FLAG = 'transitions';
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
 const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
@@ -291,6 +294,7 @@ export function createStudioServer(opts) {
     try { cs = core.describe().available ? await core.call('core.status', {}) : null; } catch { cs = null; }
     if (hs && typeof hs.live === 'boolean') live = hs.live;
     if (hs) await previewSync(hs);
+    if (hs) await transitionSync(hs);
     const pick = (o, ks) => Object.fromEntries(ks.filter((k) => o && Object.hasOwn(o, k)).map((k) => [k, o[k]]));
     return {
       at: now(),
@@ -307,6 +311,36 @@ export function createStudioServer(opts) {
   // notes the current seq: edits from before this server started are not replayed over newer saves. A host restart
   // (seq went down) reads from 0. Pages and the Qt shell see the newest edit in the status snapshot (previewEdit) and
   // as an SSE 'layers' event, and reload the layer list. Failures are ignored here and retried on the next poll.
+  // The project's transitions, re-read when the project file changes (mtime). opts.transitions = { h, v } is a test seam.
+  let projTr = { mtimeMs: -1, value: {} };
+  function projectTransitions() {
+    if (opts.transitions) return opts.transitions;
+    const file = projectSync?.status?.().file;
+    if (typeof file !== 'string') return {};
+    try {
+      const m = statSync(file).mtimeMs;
+      if (m !== projTr.mtimeMs) {
+        const doc = JSON.parse(readFileSync(file, 'utf8'));
+        const value = {};
+        for (const c of Array.isArray(doc?.canvases) ? doc.canvases : []) if (isPlain(c?.transition) && (c.id === 'h' || c.id === 'v')) value[c.id] = c.transition;
+        projTr = { mtimeMs: m, value };
+      }
+    } catch { /* unreadable: keep the last value */ }
+    return projTr.value;
+  }
+  // Keeps host.status.transitions equal to what flag + project want; a mismatch is set again on the next poll.
+  async function transitionSync(hs) {
+    if (!isPlain(hs.transitions)) return; // older host or fake: nothing to sync
+    const on = !!flags && flags.isOn(TRANSITIONS_FLAG);
+    const want = on ? projectTransitions() : {};
+    for (const [hid, cur] of Object.entries(hs.transitions)) {
+      const t = want[hid.toLowerCase()];
+      const type = t && (t.type === 'fade' || t.type === 'cut') ? t.type : 'cut';
+      const durationMs = type === 'fade' && Number.isInteger(t.durationMs) ? Math.min(10000, Math.max(0, t.durationMs)) : 0;
+      if (cur?.type === type && cur?.durationMs === durationMs) continue;
+      try { await host.call('transitions.set', { canvas: hid, type, durationMs }); } catch { /* next poll */ }
+    }
+  }
   async function previewSync(hs) {
     if (host.describe().kind !== 'host') return;
     if (previewBusy) return previewBusy;

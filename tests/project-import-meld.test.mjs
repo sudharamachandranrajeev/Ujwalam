@@ -382,3 +382,19 @@ test('Spark Element (Meld HTML overlay) imports as a browser layer sized from th
   assert.deepEqual(reasons.map((x) => x.layer).sort(), ['H-L-SPARK-BAD', 'H-L-SPARK-NOURL']);
   assert.ok(!r.skipped.some((x) => /unknown layer kind/.test(x.reason) && x.kind === 'Spark Element'));
 });
+
+test('scene transitions (D239): Meld durations become per-canvas fades; an enabled stinger is reported, not guessed', () => {
+  const s = session();
+  s.session.sceneTransition = { duration: 2006, effects: [{ type: 'Stinger', enabled: false }] };
+  s.session.verticalSceneTransition = { duration: 1000, effects: [{ type: 'Stinger', enabled: true }] };
+  const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
+  assert.deepEqual(p.canvases.map((c) => [c.id, c.transition]), [['h', { type: 'fade', durationMs: 2006 }], ['v', { type: 'fade', durationMs: 1000 }]]);
+  assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
+  assert.ok(r.warnings.some((w) => w.includes('canvas v') && w.includes('stinger')));
+  assert.ok(!r.warnings.some((w) => w.includes('canvas h')), 'a disabled stinger is not reported');
+  const none = importMeld(session(), { id: 'meld-test' }).project;
+  assert.ok(none.canvases.every((c) => !('transition' in c)), 'no Meld transition: none imported (cut)');
+  const bad = structuredClone(p);
+  bad.canvases[0].transition = { type: 'wipe', durationMs: 20000 };
+  assert.equal(validateProject(bad).ok, false);
+});

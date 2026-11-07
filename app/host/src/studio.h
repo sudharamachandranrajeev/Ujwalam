@@ -65,6 +65,9 @@ public:
 	json::Value scene_create(const json::Value &scene);
 	json::Value scene_remove(const std::string &scene, const std::string &canvas);
 	json::Value scene_activate(const std::string &scene, const std::string &canvas);
+	// transitions.set / transitions.get (D239): per canvas {type: cut|fade, durationMs}.
+	json::Value transition_set(const std::string &canvas, const std::string &type, int64_t ms);
+	json::Value transitions() const;
 
 	json::Value layers_list(const std::string &scene, const std::string &canvas) const;
 	json::Value layer_add(const std::string &scene, const std::string &canvas, const json::Value &layer, int64_t index);
@@ -140,6 +143,12 @@ private:
 		uint32_t w = 0, h = 0, fps = 0;
 		obs_canvas_t *vc = nullptr; // V only; H is the main canvas
 		std::string active;
+		// Scene transition (D239): channel 0 holds a fade transition whose child is the active scene. type "cut"
+		// (default) switches at once; "fade" over ms. The UI server sets it (transitions.set) from the project file
+		// while flag `transitions` is on.
+		obs_source_t *tr = nullptr;
+		std::string tr_type = "cut";
+		uint32_t tr_ms = 0;
 	};
 	struct Global { // project v1 audio device source on a main-canvas output channel
 		std::shared_ptr<Src> src;
@@ -178,7 +187,7 @@ private:
 	void apply_order(Scene &s);
 	void destroy_layer(Layer &l);
 	void destroy_scene(Scene &s);
-	void set_channel(Canvas &c, Scene *s);
+	void set_channel(Canvas &c, Scene *s, bool animate = false);
 	json::Value load_model(const json::Value &doc, const LoadOptions &o);
 	json::Value load_test_format(const json::Value &project, const LoadOptions &o);
 	json::Value scene_json(const Scene &s) const;

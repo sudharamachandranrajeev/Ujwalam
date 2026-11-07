@@ -64,3 +64,6 @@ data/datasets/
 
 # Per-game local data (pack format W0): reference datasets, crops, labels work files, evaluations. Never committed.
 data/games/*/local/
+
+# The user's own stream assets (media, faces, brand, Meld sessions with local paths): local only, never committed (2026-11-07)
+/data/stream assets/

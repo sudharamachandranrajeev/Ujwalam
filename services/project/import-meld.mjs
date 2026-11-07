@@ -257,6 +257,18 @@ export function importMeld(input, opts = {}) {
   project.scenes = [];
   project.activeScene = undefined;
   if (!vEnabled) project.canvases = project.canvases.filter((c) => c.id === 'h');
+  // Scene transitions (D239): Meld keeps one per canvas. Its duration becomes a fade; a stinger effect (video file)
+  // is not supported yet, so an enabled stinger still imports as a fade and is reported. The easing curve is dropped.
+  for (const [cid, key] of [['h', 'sceneTransition'], ['v', 'verticalSceneTransition']]) {
+    const t = S[key];
+    const c = project.canvases.find((x) => x.id === cid);
+    if (!c || !t || typeof t !== 'object' || !num(t.duration)) continue;
+    const durationMs = Math.round(Math.min(10000, Math.max(0, t.duration)));
+    c.transition = { type: durationMs > 0 ? 'fade' : 'cut', durationMs };
+    if (Array.isArray(t.effects) && t.effects.some((e) => e && e.enabled === true && e.type === 'Stinger')) {
+      report.warnings.push(`canvas ${cid}: the Meld stinger transition is not supported yet; imported as a ${durationMs} ms fade`);
+    }
+  }
   project.origin = { importer: 'meld', id: 'session' };
 
   // ---- devices

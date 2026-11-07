@@ -94,11 +94,21 @@ export function validateProject(doc) {
     doc.canvases.forEach((c, i) => {
       const p = `.canvases[${i}]`;
       if (!isObj(c)) { err(p, 'must be an object'); return; }
-      noExtra(c, ['id', 'width', 'height', 'fps'], p); req(c, ['id', 'width', 'height', 'fps'], p);
+      noExtra(c, ['id', 'width', 'height', 'fps', 'transition'], p); req(c, ['id', 'width', 'height', 'fps'], p);
       if ('id' in c) { if (!CANVAS_IDS.includes(c.id)) err(`${p}.id`, 'must be "h" or "v"'); else if (canvasIds.has(c.id)) err(`${p}.id`, `duplicate canvas "${c.id}"`); else canvasIds.add(c.id); }
       if ('width' in c) num(c.width, `${p}.width`, 16, 8192, true);
       if ('height' in c) num(c.height, `${p}.height`, 16, 8192, true);
       if ('fps' in c) num(c.fps, `${p}.fps`, 1, 240, true);
+      // Scene transition of this canvas (D239): cut, or a fade of durationMs (Meld sceneTransition / verticalSceneTransition).
+      if ('transition' in c) {
+        const t = c.transition; const tp = `${p}.transition`;
+        if (!isObj(t)) err(tp, 'must be an object');
+        else {
+          noExtra(t, ['type', 'durationMs'], tp); req(t, ['type', 'durationMs'], tp);
+          if ('type' in t && !['cut', 'fade'].includes(t.type)) err(`${tp}.type`, 'must be "cut" or "fade"');
+          if ('durationMs' in t) num(t.durationMs, `${tp}.durationMs`, 0, 10000, true);
+        }
+      }
     });
   }
 

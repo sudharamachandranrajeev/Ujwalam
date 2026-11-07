@@ -47,7 +47,14 @@
         "id": { "$ref": "#/$defs/canvasId" },
         "width": { "type": "integer", "minimum": 16, "maximum": 8192 },
         "height": { "type": "integer", "minimum": 16, "maximum": 8192 },
-        "fps": { "type": "integer", "minimum": 1, "maximum": 240 }
+        "fps": { "type": "integer", "minimum": 1, "maximum": 240 },
+        "transition": {
+          "type": "object", "additionalProperties": false, "required": ["type", "durationMs"],
+          "properties": {
+            "type": { "enum": ["cut", "fade"] },
+            "durationMs": { "type": "integer", "minimum": 0, "maximum": 10000 }
+          }
+        }
       }
     },
     "device": {

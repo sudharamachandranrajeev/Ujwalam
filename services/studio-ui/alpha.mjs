@@ -70,6 +70,9 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
   const hFile = path.join(presetsDir, H_PRESET);
   if (!existsSync(hFile)) throw new ScenePresetError(`${H_PRESET} not found in the registry presets`);
   const base = createProject({ name: 'Alpha' });
+  // Scene transitions (D239), the Meld session's values (legacy/meld session backups 2026-09-29: sceneTransition 2006 ms,
+  // verticalSceneTransition 1000 ms; their stinger effects disabled, so Meld fades). Used only while flag `transitions` is on.
+  for (const c of base.canvases) c.transition = { type: 'fade', durationMs: c.id === 'h' ? 2006 : 1000 };
   const emptyScene = base.scenes[0].id;
   base.origin = { importer: 'alpha', id: devicesListed ? 'devices-listed' : 'no-devices' };
 
