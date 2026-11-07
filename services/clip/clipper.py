@@ -306,7 +306,7 @@ def merge_saves(rows, durations):
     items = []
     for r in rows:
         at = sig.parse_iso(r.get("at"))
-        v = next((f.get("path") for f in r.get("files", []) if f.get("canvas") == "v" and f.get("path")), None)
+        v = next((f.get("path") for f in r.get("files", []) if str(f.get("canvas", "")).lower() == "v" and f.get("path")), None)
         if not at or not v or v not in durations:
             continue
         t = at.timestamp()
@@ -348,7 +348,7 @@ def cmd_live_review(a):
     for r in rows:
         for fl in r.get("files", []):
             p = fl.get("path")
-            if fl.get("canvas") == "v" and p and p not in infos and os.path.isfile(p):
+            if str(fl.get("canvas", "")).lower() == "v" and p and p not in infos and os.path.isfile(p):
                 infos[p] = media_info(ffprobe, p)
     clips = merge_saves(rows, {p: i["duration"] for p, i in infos.items()})
     lay_doc = load_config("layouts", a.layouts_file)

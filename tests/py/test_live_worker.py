@@ -143,7 +143,7 @@ class MergeSavesTests(unittest.TestCase):
             {"at": "2026-11-07T10:00:45Z", "startBack": 30, "endBack": 5, "score": 4, "labels": ["Fury Kill"],
              "reason": "death", "files": [{"canvas": "v", "path": "v2"}]},
             {"at": "2026-11-07T10:05:00Z", "startBack": 20, "endBack": 3, "score": 5, "labels": ["Frenzy Kill"],
-             "reason": "quiet", "files": [{"canvas": "v", "path": "v3"}]},
+             "reason": "quiet", "files": [{"canvas": "V", "path": "v3"}]},  # the host writes upper case
             {"at": "2026-11-07T10:06:00Z", "startBack": 20, "endBack": 3, "score": 5, "labels": [], "reason": "quiet",
              "files": [{"canvas": "v", "path": "missing"}]},
         ]
