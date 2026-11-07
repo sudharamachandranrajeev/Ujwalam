@@ -2,6 +2,13 @@
 
 The pack version is `version` in `detectors.json`. It covers every file in this folder (`game.json`, `detectors.json`, `events.json`, `screens.json`, `capture-plan.json`). Validate with `npm run validate:games`.
 
+## 0.4.0 — 2026-11-07 (W1 match result, D237)
+
+Evidence: `docs/evidence/2026-11-07-match-result-detector.md`.
+
+- New detector W1 (role context, no weight, status unverified): VICTORY / DEFEAT in the centre ROI x 0.40–0.60, y 0.35–0.50, OCR, mp. The label is the result word. Used by `clipper.py montage` for the won-match reel.
+- New screen `match_result` (before `summary`).
+
 ## 0.3.0 — 2026-10-27 (P2b W0, pack split)
 
 Evidence: `docs/evidence/2026-10-27-p2b-w0-pack-split.md`.

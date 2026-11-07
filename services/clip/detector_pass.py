@@ -133,6 +133,8 @@ def _label(e, det):
         return e["medal"]["medal"]
     if d == "M4":
         return f"+{e['points']}"
+    if d == "W1":
+        return e["result"]
     if d == "X1":
         up = e["box"]["text"].upper()  # raw upper case: normalise() drops the "+" of "5+ MULTI-KILL"
         m = _MULTI.search(up)
@@ -172,7 +174,7 @@ def frame_hits(boxes, pack, names, settings, mode=None):
         role = dd.get("role", "positive")
         weight = dd.get("weight")
         clip_reason = True
-        if role != "positive":
+        if role == "negative":
             why.append("negative_role")
         if not _in_any_roi(e["box"]["g"], dd, slack if d not in ("M5", "B1") else g1_scan.KILLFEED_SLACK, mode):
             why.append("outside_roi")

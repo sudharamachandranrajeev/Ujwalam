@@ -588,6 +588,8 @@ def find_events(boxes, pack, names, name_min):
             ev.append(_k1_event(b, det, name_boxes))
         elif gt.partial_ratio("KILLCAM", t) >= 0.86:
             ev.append({"det": "N1", "box": b})
+        if "W1" in det and t in ("VICTORY", "DEFEAT"):  # match result word (D237): whole box, exact
+            ev.append({"det": "W1", "box": b, "result": t})
         if gt.partial_ratio("HELPME", t) >= 0.84 or gt.partial_ratio("WAITINGFORREVIVALFLIGHT", t) >= 0.8:
             ev.append({"det": "N2", "box": b})
     for b in name_boxes:

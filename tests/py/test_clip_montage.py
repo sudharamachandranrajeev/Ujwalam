@@ -93,5 +93,32 @@ class MontageTests(unittest.TestCase):
         self.assertEqual(argv.count("-i"), 2)
 
 
+def result(t, word="VICTORY"):
+    return {"t": float(t), "tEnd": float(t), "detector": "W1", "label": word, "signal": True, "role": "context"}
+
+
+class MatchReelTests(unittest.TestCase):
+    def test_won_match_takes_every_own_kill_and_the_result_screen(self):
+        hits = [kill(t) for t in (100, 200, 300)] + [result(358)] + [kill(t) for t in (500, 600)] + [result(942, "DEFEAT")]
+        rs = mont.match_reels(hits, RANKING, CFG)
+        self.assertEqual(len(rs), 1, "the lost match gives no reel")
+        r = rs[0]
+        self.assertEqual([p["kills"] for p in r["pieces"]], [1, 1, 1, 0])
+        self.assertEqual(r["pieces"][-1], {"start": 357.5, "end": 361.0, "kills": 0})
+        self.assertAlmostEqual(r["seconds"], 3 * 4.5 + 3.5)
+
+    def test_second_won_match_starts_after_the_first_result(self):
+        hits = [kill(100), result(358, "DEFEAT"), kill(400), kill(402), result(700)]
+        r = mont.match_reels(hits, RANKING, CFG)[0]
+        self.assertEqual(r["matchStart"], 358.0)
+        self.assertEqual(r["pieces"][0], {"start": 397.0, "end": 403.5, "kills": 2})
+
+    def test_won_match_without_kills_and_unsignalled_results_give_nothing(self):
+        self.assertEqual(mont.match_reels([result(358)], RANKING, CFG), [])
+        h = result(358)
+        h["signal"] = False
+        self.assertEqual(mont.match_reels([kill(100), h], RANKING, CFG), [])
+
+
 if __name__ == "__main__":
     unittest.main()

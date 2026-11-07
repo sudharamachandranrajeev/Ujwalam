@@ -2,7 +2,7 @@
   "$comment": "F6 kill montages (clip_montage.py, `clipper.py montage`): Shorts built from the own kills of streaks, dead time between kills cut out, pieces from different matches joined. Kill weights, minScore, sumKinds and the death rule come from data/clip/ranking.json (approved 2026-11-07). Values below chosen by the user 2026-11-07 (length 30-45 s inside 20-60 s, 3 s before and 1.5 s after each kill, hard cut with an 80 ms audio fade, matches may be joined); joinGapSec, chainGapSec, killDetectors, medalLeadSec and medalMatchSec set by the agent (proposed, unverified).",
   "version": "0.1.0",
   "status": "user-approved",
-  "approved": "user 2026-11-07: '30-45 s (Recommended)', '3 s before, 1.5 s after (Recommended)', 'Hard cut + audio fade (Recommended)', 'clips from different matches can be joined together'",
+  "approved": "user 2026-11-07: '30-45 s (Recommended)', '3 s before, 1.5 s after (Recommended)', 'Hard cut + audio fade (Recommended)', 'clips from different matches can be joined together'; user 2026-11-07 won-match reel: 'Every own kill (Recommended)', canvas 'V (Recommended)'",
   "checked": "2026-11-07",
   "preSec": 3.0,
   "postSec": 1.5,
@@ -13,13 +13,19 @@
   "minSec": 20.0,
   "maxSec": 60.0,
   "audioFadeMs": 80,
-  "killDetectors": ["M5", "B1"],
+  "killDetectors": [
+    "M5",
+    "B1"
+  ],
   "medalLeadSec": 0.5,
   "medalMatchSec": 3.0,
   "notes": {
     "medalMatchSec": "a medal counts as covered by an own-kill line no more than this before it; otherwise the medal is its own kill",
     "joinGapSec": "two pieces closer than this stay one piece (the gap is kept, not cut)",
     "chainGapSec": "kills and medals no more than this apart form one streak (same as live-clips quietSec)",
-    "killDetectors": "own-kill kill-feed lines (signal true); a streak medal with no own-kill line near it becomes a kill at medal t - medalLeadSec"
-  }
+    "killDetectors": "own-kill kill-feed lines (signal true); a streak medal with no own-kill line near it becomes a kill at medal t - medalLeadSec",
+    "resultLeadSec": "won-match reel (D237): the VICTORY screen piece starts this long before the W1 hit and ends resultHoldSec after its last frame (agent values, proposed)"
+  },
+  "resultLeadSec": 0.5,
+  "resultHoldSec": 3.0
 }

@@ -151,6 +151,23 @@
       ]
     },
     {
+      "id": "match_result",
+      "name": "Match result (VICTORY / DEFEAT)",
+      "kind": "end_screen",
+      "modes": [
+        "mp"
+      ],
+      "cues": [],
+      "detectors": [
+        "W1"
+      ],
+      "status": "unverified",
+      "note": "2026-11-07 practice (game area of the H canvas, 0.5 fps): one large result word, centre, about 2-4 s, at the end of each MP match. VICTORY at 358 s (x 0.416-0.584, y 0.372-0.476), DEFEAT at 942-944 s (x 0.417-0.582, y 0.371-0.477). Followed by the scoreboard, where a smaller VICTORY sits at the top (y < 0.11).",
+      "evidence": [
+        "docs/evidence/2026-11-07-match-result-detector.md"
+      ]
+    },
+    {
       "id": "summary",
       "name": "Match summary",
       "kind": "summary",

@@ -168,3 +168,39 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     argv += ["-filter_complex", ";".join(parts), "-map", "[vout]", "-map", "[aout]", *encoder_args, *audio_args,
              "-movflags", "+faststart", "-f", "mp4", out_name]
     return argv
+
+
+def match_reels(hits, ranking, cfg):
+    """Won-match highlights (user decision 2026-11-07, D237): for each VICTORY (detector W1, signal true), every own
+    kill of that match (the kill rule of step 1, streak or not), each [kill - preSec, kill + postSec] cut before a
+    death, plus the VICTORY screen itself; no 60 s cap. The match runs from the previous match result (W1, either
+    word) or the start of the recording. A won match with no own kill gives no reel."""
+    results = sorted((h for h in hits if h["detector"] == "W1" and h.get("signal") is True), key=lambda h: h["t"])
+    kills, medals = _kill_events(hits, ranking, cfg)
+    near, lead = float(cfg["medalMatchSec"]), float(cfg["medalLeadSec"])
+    for m in medals:  # a medal with no own-kill line before it is its own kill (as in streaks)
+        if not any(m["t"] - near <= k <= m["t"] for k in kills):
+            kills.append(m["t"] - lead)
+    kills.sort()
+    deaths = rank.death_spans(hits, ranking)
+    out, start = [], 0.0
+    for r in results:
+        t = float(r["t"])
+        if r.get("label") == "VICTORY":
+            ks = [k for k in kills if start < k <= t]
+            if ks:
+                ps = _pieces(ks, deaths, ranking, cfg)
+                end = float(r.get("tEnd") or t) + float(cfg["resultHoldSec"])
+                ps.append({"start": round(t - float(cfg["resultLeadSec"]), 3), "end": round(end, 3), "kills": 0})
+                ps.sort(key=lambda p: p["start"])
+                merged = []
+                for p in ps:  # the result piece may overlap the last kill piece
+                    if merged and p["start"] <= merged[-1]["end"]:
+                        merged[-1] = dict(merged[-1], end=max(merged[-1]["end"], p["end"]),
+                                          kills=merged[-1]["kills"] + p["kills"])
+                    else:
+                        merged.append(dict(p))
+                out.append({"pieces": merged, "seconds": round(_length(merged), 3), "score": float(len(ks)),
+                            "labels": ["VICTORY", f"{len(ks)} kill(s)"], "matchStart": start, "result": t})
+        start = float(r.get("tEnd") or t)
+    return out

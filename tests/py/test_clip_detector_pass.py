@@ -120,6 +120,15 @@ class WeightRuleTests(unittest.TestCase):
 
 
 class FrameRuleTests(unittest.TestCase):
+    def test_match_result_w1_context(self):
+        # D237: the centre VICTORY word is a context signal (never a weight); the scoreboard's top line is outside
+        h = [x for x in hits_of([box("VICTORY", 0.42, 0.37, 0.58, 0.47)]) if x["detector"] == "W1"]
+        self.assertEqual([(x["label"], x["signal"], x["role"], x["clipReason"]) for x in h],
+                         [("VICTORY", True, "context", False)])
+        h = [x for x in hits_of([box("VICTORY", 0.43, 0.03, 0.56, 0.10)]) if x["detector"] == "W1"]
+        self.assertEqual([x["why"] for x in h], [["outside_roi"]])
+        self.assertEqual([x for x in hits_of([box("VICTORY LAP", 0.42, 0.37, 0.58, 0.47)]) if x["detector"] == "W1"], [])
+
     def test_positive_medal_in_banner(self):
         h = hits_of([box("TRIPLE KILL", 0.44, 0.22, 0.56, 0.27)])
         m3 = [x for x in h if x["detector"] == "M3"]

@@ -1,7 +1,7 @@
 {
   "$schema": "../detector-pack.schema.json",
   "$comment": "CODM detector pack. All ROIs, texts and colours are UNVERIFIED until G1/G2 check them on corpus footage (source: docs/evidence/2026-10-27-g1-live-reference.md). Weights, windows and cooldowns are null: G3 proposes them from labelled data. No private names here; names come from data/profile.local.json at runtime. `version` is the pack version for every file in this folder; version history: CHANGELOG.md.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "engineVersion": "0.1.0",
   "game": "codm",
   "detectors": [
@@ -396,6 +396,43 @@
       "cooldownSec": null,
       "status": "unverified",
       "note": "User decision 2026-10-27: positive signal ONLY when the streamer name (IGN or any profile variant) is shown as the killer. Without the name there is no signal. Both cases are logged (matched true and false) as evidence records for tuning. Never an N1 event."
+    },
+    {
+      "id": "W1",
+      "name": "Match result",
+      "role": "context",
+      "modes": [
+        "mp"
+      ],
+      "screens": [
+        "match_result"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "result",
+          "label": "VICTORY / DEFEAT word, centre",
+          "x0": 0.4,
+          "y0": 0.35,
+          "x1": 0.6,
+          "y1": 0.5,
+          "status": "unverified",
+          "note": "2026-11-07 practice: VICTORY x 0.416-0.584, y 0.372-0.476 (1 frame at 0.5 fps); DEFEAT x 0.417-0.582, y 0.371-0.477 (2 frames). ROI approved by the user 2026-11-07."
+        }
+      ],
+      "patterns": [
+        "VICTORY",
+        "DEFEAT"
+      ],
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "User decision 2026-11-07: marks the end of a match and its result, for the won-match highlight (every own kill of a won match). Context only: never a clip signal or weight. The whole OCR box must read VICTORY or DEFEAT (the scoreboard top line and small text elsewhere stay out by the ROI)."
     },
     {
       "id": "N1",

@@ -427,9 +427,11 @@ def cmd_montage(a):
     os.makedirs(out, exist_ok=True)
     sts, _ = mont.streaks(hits, ranking, cfg)
     print(f"montage: {len(sts)} qualifying streak(s), {sum(len(s['kills']) for s in sts)} kill(s) in them")
+    reels = mont.match_reels(hits, ranking, cfg)  # won matches (W1 VICTORY), every own kill (D237)
+    print(f"montage: {len(reels)} won-match reel(s)")
+    jobs = [(f"M{i:02d}", m) for i, m in enumerate(plans, 1)] + [(f"W{i:02d}", m) for i, m in enumerate(reels, 1)]
     rows, failed = [], 0
-    for i, m in enumerate(plans, 1):
-        cid = f"M{i:02d}"
+    for cid, m in jobs:
         wd = os.path.join(out, "clips", cid)
         os.makedirs(wd, exist_ok=True)
         argv = mont.render_argv(ffmpeg, vrec, m["pieces"], frame, rnd.ENCODERS[encoder], rnd.AUDIO,
@@ -453,7 +455,8 @@ def cmd_montage(a):
         "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
         "failed": failed, "clips": rows,
     })
-    print(f"montage: {len(plans)} montage(s), {failed} failed; validate with: validate --out {out}")
+    print(f"montage: {len(plans)} montage(s), {len(reels)} won-match reel(s), {failed} failed; "
+          f"validate with: validate --out {out}")
     return 0
 
 
