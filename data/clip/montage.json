@@ -1,0 +1,25 @@
+{
+  "$comment": "F6 kill montages (clip_montage.py, `clipper.py montage`): Shorts built from the own kills of streaks, dead time between kills cut out, pieces from different matches joined. Kill weights, minScore, sumKinds and the death rule come from data/clip/ranking.json (approved 2026-11-07). Values below chosen by the user 2026-11-07 (length 30-45 s inside 20-60 s, 3 s before and 1.5 s after each kill, hard cut with an 80 ms audio fade, matches may be joined); joinGapSec, chainGapSec, killDetectors, medalLeadSec and medalMatchSec set by the agent (proposed, unverified).",
+  "version": "0.1.0",
+  "status": "user-approved",
+  "approved": "user 2026-11-07: '30-45 s (Recommended)', '3 s before, 1.5 s after (Recommended)', 'Hard cut + audio fade (Recommended)', 'clips from different matches can be joined together'",
+  "checked": "2026-11-07",
+  "preSec": 3.0,
+  "postSec": 1.5,
+  "joinGapSec": 4.0,
+  "chainGapSec": 12.0,
+  "targetMinSec": 30.0,
+  "targetMaxSec": 45.0,
+  "minSec": 20.0,
+  "maxSec": 60.0,
+  "audioFadeMs": 80,
+  "killDetectors": ["M5", "B1"],
+  "medalLeadSec": 0.5,
+  "medalMatchSec": 3.0,
+  "notes": {
+    "medalMatchSec": "a medal counts as covered by an own-kill line no more than this before it; otherwise the medal is its own kill",
+    "joinGapSec": "two pieces closer than this stay one piece (the gap is kept, not cut)",
+    "chainGapSec": "kills and medals no more than this apart form one streak (same as live-clips quietSec)",
+    "killDetectors": "own-kill kill-feed lines (signal true); a streak medal with no own-kill line near it becomes a kill at medal t - medalLeadSec"
+  }
+}

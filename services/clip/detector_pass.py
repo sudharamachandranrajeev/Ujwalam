@@ -596,13 +596,52 @@ class HeavyJobLock:
 
 # ---------------------------------------------------------------- pass
 
-def layout_for(recording, layout_path=None):
-    """g1_scan layout: an explicit file (game area inside the H canvas) or the full frame (default; UNVERIFIED for
-    the H canvas until the user's scene layout is checked)."""
+GAME_LAYER_ORIGIN = "scene-default-h/game"  # same lookup as services/studio-ui/launch.mjs liveClipsSpec
+
+
+def project_layout(project, rec_w, rec_h, canvas="h"):
+    """g1_scan layout of the game inside a Ujwalam canvas recording (D235): the game capture layer's placement on
+    that canvas (x, y, width, height in canvas px; crop in source px; source size from its device's format),
+    scaled to the recording size. Only the visible game area is scanned, so overlays around it (tickers, chat,
+    banners that may show the streamer's name) never reach a detector ROI. Raises ValueError when the layer, its
+    placement or the source size is missing, or the layer is rotated."""
+    cv = next((c for c in project.get("canvases") or [] if c.get("id") == canvas), None)
+    if not cv:
+        raise ValueError(f"project has no canvas {canvas}")
+    layer = next((l for s in project.get("scenes") or [] for l in s.get("layers") or []
+                  if l.get("type") == "capture" and (l.get("origin") or {}).get("id") == GAME_LAYER_ORIGIN), None)
+    if not layer:
+        raise ValueError(f"project has no game capture layer ({GAME_LAYER_ORIGIN})")
+    p = (layer.get("placements") or {}).get(canvas)
+    if not p or not p.get("width") or not p.get("height"):
+        raise ValueError(f"the game layer has no {canvas} placement")
+    if float(p.get("rotation") or 0) % 360:
+        raise ValueError("the game layer is rotated; give --layout")
+    dev = next((d for d in project.get("devices") or [] if d.get("id") == (layer.get("source") or {}).get("device")), None)
+    fmt = (dev or {}).get("format") or {}
+    sw, sh = float(fmt.get("width") or 0), float(fmt.get("height") or 0)
+    if sw <= 0 or sh <= 0:
+        raise ValueError("the game device has no format size; give --layout")
+    cr = p.get("crop") or {}
+    cl, ct, crr, cb = (float(cr.get(k) or 0) for k in ("left", "top", "right", "bottom"))
+    sx, sy = float(p["width"]) / (sw - cl - crr), float(p["height"]) / (sh - ct - cb)
+    kx, ky = rec_w / float(cv["width"]), rec_h / float(cv["height"])
+    x, y, w, h = float(p["x"]), float(p["y"]), float(p["width"]), float(p["height"])
+    game = [(x - cl * sx) * kx, (y - ct * sy) * ky, sw * sx * kx, sh * sy * ky]
+    vis = [max(0.0, x * kx), max(0.0, y * ky), min(rec_w, (x + w) * kx), min(rec_h, (y + h) * ky)]
+    return {"frame": [rec_w, rec_h], "game": [round(v, 2) for v in game], "visible": [round(v, 2) for v in vis]}
+
+
+def layout_for(recording, layout_path=None, project_path=None):
+    """g1_scan layout: an explicit file (game area inside the H canvas), the game layer of a Ujwalam project
+    (canvas recordings, D235), or the full frame (default; for clean game footage only)."""
     if layout_path:
         lay = g1_scan.load_layout(layout_path)
         return (lay["layout"] if "layout" in lay else lay), "file"
     w, h = g1_scan.probe_size(recording)
+    if project_path:
+        with open(project_path, encoding="utf-8") as f:
+            return project_layout(json.load(f), w, h), "project"
     return g1_scan.full_screen_layout(w, h, [0, 0, w, h]), "full-frame"
 
 

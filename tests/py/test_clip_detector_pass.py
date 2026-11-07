@@ -437,5 +437,49 @@ class CandidatesWithHitsTests(unittest.TestCase):
                          [("Triple Kill", 0.0, "c01"), ("Fury Kill", 0.0, None)])
 
 
+class ProjectLayoutTests(unittest.TestCase):
+    """D235: a canvas recording is scanned only inside the game layer, never over the overlays around it."""
+    PROJECT = {
+        "canvases": [{"id": "h", "width": 1920, "height": 1080}],
+        "devices": [{"id": "dev-g", "format": {"width": 1920, "height": 1080, "fps": 60}}],
+        "scenes": [{"id": "s", "layers": [
+            {"id": "cam", "type": "capture", "origin": {"id": "scene-default-h/facecam"}, "source": {"device": "dev-g"},
+             "placements": {"h": {"x": 0, "y": 0, "width": 10, "height": 10}}},
+            {"id": "game", "type": "capture", "origin": {"importer": "preset", "id": "scene-default-h/game"},
+             "source": {"device": "dev-g"},
+             "placements": {"h": {"visible": True, "x": 467.96, "y": 31.18, "width": 1417.8, "height": 977.84,
+                                  "crop": {"left": 177, "right": 177}}}}]}],
+    }
+
+    def test_cropped_game_layer(self):
+        lay = dp.project_layout(self.PROJECT, 1920, 1080)
+        self.assertEqual(lay["visible"], [467.96, 31.18, 1885.76, 1009.02])
+        g = lay["game"]  # the whole game frame, wider than what is shown (177 source px cut on each side)
+        self.assertAlmostEqual(g[0], 467.96 - 177 * 1417.8 / 1566, places=1)
+        self.assertAlmostEqual(g[2], 1920 * 1417.8 / 1566, places=1)
+        self.assertAlmostEqual(g[3], 977.84, places=1)
+
+    def test_scaled_recording(self):
+        a = dp.project_layout(self.PROJECT, 1920, 1080)
+        b = dp.project_layout(self.PROJECT, 1280, 720)
+        for i in range(4):
+            self.assertAlmostEqual(b["visible"][i], a["visible"][i] * 2 / 3, places=1)
+
+    def test_refusals(self):
+        import copy
+        p = copy.deepcopy(self.PROJECT)
+        p["scenes"][0]["layers"][1]["placements"]["h"]["rotation"] = 90
+        with self.assertRaises(ValueError):
+            dp.project_layout(p, 1920, 1080)
+        p = copy.deepcopy(self.PROJECT)
+        p["devices"][0]["format"] = {}
+        with self.assertRaises(ValueError):
+            dp.project_layout(p, 1920, 1080)
+        p = copy.deepcopy(self.PROJECT)
+        p["scenes"][0]["layers"].pop(1)
+        with self.assertRaises(ValueError):
+            dp.project_layout(p, 1920, 1080)
+
+
 if __name__ == "__main__":
     unittest.main()

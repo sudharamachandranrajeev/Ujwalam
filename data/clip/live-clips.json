@@ -7,7 +7,8 @@
   "repeatSec": 4.0,
   "quietSec": 12.0,
   "quietNote": "Dry run on the 2026-11-06 practice hits (3314 s, frames rebuilt from detector-hits.jsonl): quietSec 8 -> 37 saves, 10 overlapping (one streak split); 12 -> 31 saves, 4 overlapping, 1 force; 15 -> 30, 3, 3; 20 -> 30, 5, 5. Overlaps are merged in the review list.",
-  "preSec": 15.0,
+  "preSec": 17.0,
+  "preNote": "17 s (was 15, 2026-11-07): with postSec 3 a single-card save is 20 s, the user's minimum clip length (D236).",
   "postSec": 3.0,
   "replaySec": 60,
   "forceMarginSec": 5.0

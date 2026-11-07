@@ -2,7 +2,7 @@
 """F6 post-stream clipper (docs/plan/2026-11-03-f6-clip-pipeline-plan.md). Behind the feature flag `clip-pipeline`
 (data/flags.json, off by default): every subcommand exits 3 while the flag is off in the data dir.
 
-  detect      --recording FILE --out DIR [--game codm] [--detector-config F] [--profile F] [--layout F] [--fps F]
+  detect      --recording FILE --out DIR [--game codm] [--detector-config F] [--profile F] [--layout F | --project F] [--fps F]
               [--threads 1-4]
               -> DIR/detector-hits.jsonl + DIR/detector-pass.json: the game pack's detectors over the H recording
               (OCR venv; sample rate from data/clip/detector-pass.json; one heavy job at a time)
@@ -148,6 +148,14 @@ def _own_hits(a):
     return p
 
 
+def _dml_available():
+    try:
+        import onnxruntime
+        return "DmlExecutionProvider" in onnxruntime.get_available_providers()
+    except ImportError:
+        return False
+
+
 def cmd_detect(a):
     """Post-stream detector pass over the H recording -> DIR/detector-hits.jsonl + DIR/detector-pass.json."""
     import detector_pass as dp  # needs the OCR venv (numpy, cv2, rapidocr) only from here on
@@ -160,7 +168,15 @@ def cmd_detect(a):
         st["fps"] = float(a.fps)
     pack = game_pack.load_pack(dp.pack_path(st))
     names, have_profile = dp.load_names(a.profile or PROFILE_FILE, pack["nameMatch"]["profileKey"])
-    layout, lsrc = dp.layout_for(a.recording, a.layout)
+    try:
+        layout, lsrc = dp.layout_for(a.recording, a.layout, a.project)
+    except ValueError as e:
+        raise ClipError(f"--project: {e}")
+    print(f"detect: layout {lsrc}, game {layout['game']}, visible {layout['visible']}")
+    gpu = _dml_available()
+    if gpu:  # OCR on the GPU (D227): only when this Python has onnxruntime-directml (.venv-gpu)
+        import g1_scan
+        g1_scan.set_ocr_params({"EngineConfig.onnxruntime.use_dml": True})
     with dp.HeavyJobLock():
         summ = dp.run_pass(a.recording, a.out, st, pack, names, layout, threads=a.threads)
     doc = {
@@ -169,11 +185,11 @@ def cmd_detect(a):
         "game": gid, "packVersion": pack.get("version"),
         "config": {"version": cdoc.get("version"), "status": cdoc.get("status"), "fps": st["fps"],
                    "diffGate": st["diffGate"], "nameMin": st["nameMin"], "mergeGapSec": st["mergeGapSec"]},
-        "layout": {"source": lsrc, "status": "unverified" if lsrc == "full-frame" else "file",
-                   "game": layout["game"]},
+        "layout": {"source": lsrc, "status": "unverified" if lsrc == "full-frame" else lsrc,
+                   "game": layout["game"], "visible": layout["visible"]},
         "profileNames": len(names) if have_profile else 0,
         "detectorStatus": {d["id"]: d.get("status") for d in pack["detectors"]},
-        "threads": a.threads, **summ,
+        "threads": a.threads, "ocr": "gpu-directml" if gpu else "cpu", **summ,
     }
     write_json_atomic(os.path.join(a.out, dp.SUMMARY), doc)
     print(f"detect: {summ['hits']} hit(s), {summ['signalHits']} with signal, from {summ['ocrFrames']} OCR frames "
@@ -385,6 +401,62 @@ def cmd_live_review(a):
     return 0
 
 
+def cmd_montage(a):
+    """Kill montages (clip_montage.py, data/clip/montage.json) from the detector hits of the H recording, cut from the
+    V recording of the same session -> DIR/montage/clips/<id>/montage-v.mp4 + DIR/montage/render.json
+    (then `validate --out DIR/montage`)."""
+    import clip_montage as mont
+    ffmpeg, ffprobe = _tools(a)
+    hits_path = a.hits or os.path.join(a.out, "detector-hits.jsonl")
+    if not os.path.isfile(hits_path):
+        raise ClipError("no detector hits: run `detect` on this recording first (or give --hits)")
+    info = media_info(ffprobe, a.recording)
+    hits, _ = sig.read_hits(hits_path, info["duration"])
+    vrec = v_recording(a.recording, a.v_recording)
+    if not vrec:
+        raise ClipError("montage cuts the V canvas recording: none next to the H recording; give --v-recording")
+    vinfo = media_info(ffprobe, vrec)
+    if not vinfo["has_audio"]:
+        raise ClipError("the V recording has no audio stream")
+    ranking = load_config("ranking", a.ranking)
+    cfg = load_config("montage", a.montage_config)
+    frame = load_config("layouts", a.layouts_file)["output"]
+    plans = mont.plan_montages(hits, ranking, cfg, min(info["duration"], vinfo["duration"]))
+    encoder = rnd.pick_encoder(a.encoder)
+    out = os.path.join(a.out, "montage")
+    os.makedirs(out, exist_ok=True)
+    sts, _ = mont.streaks(hits, ranking, cfg)
+    print(f"montage: {len(sts)} qualifying streak(s), {sum(len(s['kills']) for s in sts)} kill(s) in them")
+    rows, failed = [], 0
+    for i, m in enumerate(plans, 1):
+        cid = f"M{i:02d}"
+        wd = os.path.join(out, "clips", cid)
+        os.makedirs(wd, exist_ok=True)
+        argv = mont.render_argv(ffmpeg, vrec, m["pieces"], frame, rnd.ENCODERS[encoder], rnd.AUDIO,
+                                int(cfg["audioFadeMs"]), "montage-v.mp4.part")
+        r = rnd.run_tool(argv, cwd=wd, timeout=1800)
+        files, errors = [], []
+        if r.returncode == 0:
+            os.replace(os.path.join(wd, "montage-v.mp4.part"), os.path.join(wd, "montage-v.mp4"))
+            files.append({"layout": "montage-v", "file": "montage-v.mp4", "geometry": "canvas"})
+            print(f"montage {cid}: {m['seconds']:.1f} s, {len(m['pieces'])} piece(s), score {m['score']:g}")
+        else:
+            errors.append({"layout": "montage-v", "error": r.stderr.strip()[-300:]})
+            failed += 1
+            eprint(f"montage {cid}: FAILED")
+        rows.append({"id": cid, "start": 0.0, "end": m["seconds"], "score": m["score"], "labels": m["labels"],
+                     "pieces": m["pieces"], "captions": {"backend": "none", "status": "off"}, "files": files,
+                     "errors": errors})
+    write_json_atomic(os.path.join(out, RENDER), {
+        "tool": "clipper.montage", "toolVersion": TOOL_VERSION, "createdAt": _now(),
+        "recording": os.path.basename(a.recording), "vRecording": os.path.basename(vrec), "encoder": encoder,
+        "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
+        "failed": failed, "clips": rows,
+    })
+    print(f"montage: {len(plans)} montage(s), {failed} failed; validate with: validate --out {out}")
+    return 0
+
+
 def cmd_run(a):
     steps = ((cmd_detect,) if a.detect else ()) + (cmd_candidates, cmd_render, cmd_validate)
     for step in steps:
@@ -439,6 +511,8 @@ def build_parser():
         sp.add_argument("--detector-config")
         sp.add_argument("--profile")
         sp.add_argument("--layout")
+        sp.add_argument("--project", type=os.path.abspath,
+                        help="Ujwalam project of a canvas recording: scan only its game layer's area (D235)")
         sp.add_argument("--fps", type=float)
         sp.add_argument("--threads", type=int, default=4, choices=range(1, 5), metavar="1-4")
 
@@ -450,6 +524,10 @@ def build_parser():
     s = sub.add_parser("run"); common(s); cand_args(s); render_args(s); s.add_argument("--no-decode", action="store_true")
     detect_args(s); s.add_argument("--detect", action="store_true")
     s.set_defaults(fn=cmd_run)
+    s = sub.add_parser("montage"); common(s)
+    s.add_argument("--hits"); s.add_argument("--montage-config")
+    s.add_argument("--v-recording", type=os.path.abspath); s.add_argument("--encoder", default="auto")
+    s.set_defaults(fn=cmd_montage)
     s = sub.add_parser("live-review"); common(s, recording=False)
     s.add_argument("--saves", required=True, type=os.path.abspath, help="live clipper session folder (saves.jsonl)")
     s.add_argument("--layouts"); s.add_argument("--encoder", default="auto")
