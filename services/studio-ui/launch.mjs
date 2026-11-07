@@ -79,6 +79,7 @@ import { createBots, loadBotConfig } from '../bots/index.mjs';
 import { resolveDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../project/device-roles.mjs';
+import { hudCoverage, loadHudZones } from '../project/hud-zones.mjs';
 import { loadProject } from '../project/store.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
 import { rpc } from './backends.mjs';
@@ -200,6 +201,24 @@ export function clipsEnv({ hostClipsToken, hostDiscovery, base = process.env }) 
   const env = {};
   for (const [k, v] of Object.entries(base)) if (!/^UJWALAM_.*(TOKEN|KEY)/i.test(k)) env[k] = v;
   return { ...env, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery };
+}
+
+/** HUD safe-zone warnings (L12/L13, warn only): overlays above the game capture that cover the game's HUD
+ *  (data/games/codm/hud-zones.json, unverified zones). Never throws; a missing file or project gives no warnings. */
+export function hudWarnings(projectFile, game = 'codm') {
+  try {
+    const { project } = loadProject(projectFile);
+    const zones = loadHudZones(game);
+    const out = [];
+    for (const s of project.scenes ?? []) {
+      for (const [canvas, origin, canvasSize] of [['h', 'scene-default-h/game', { width: 1920, height: 1080 }], ['v', 'scene-default-v/game', { width: 1080, height: 1920 }]]) {
+        for (const h of hudCoverage({ scene: s, canvas, gameOrigin: origin, zones, canvasSize })) {
+          out.push(`${canvas.toUpperCase()} layer "${h.name}" covers ${Math.round(h.cover * 100)} % of the game's ${h.zone} area (HUD zones unverified)`);
+        }
+      }
+    }
+    return out;
+  } catch { return []; }
 }
 
 /** Live clipper child (D226): the Python worker and its argv, or null with the reason. The worker reads the game
@@ -426,6 +445,7 @@ export async function alphaProject({ client, dataDir, args, hostCfg }) {
   const loaded = await loadFileIntoHost(client, r.file, { bases, skipUnavailable: true });
   console.log(`[studio] alpha project loaded into the host: ${JSON.stringify(loaded.built ?? {})}; not built: ${loaded.unavailable?.length ?? 0}`);
   for (const u of loaded.unavailable ?? []) console.log(`[studio]   not built: ${u.layer ?? u.audio}: ${u.code}: ${u.reason}`);
+  for (const w of hudWarnings(r.file)) console.log(`[studio] WARNING: ${w}`);
   // A preview that did not open at start (e.g. closed by hand on a reused host) is opened now. The host opens previews
   // only on a second display and never takes focus (D191); with one display it refuses and this says why.
   if (!isHeadless()) {

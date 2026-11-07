@@ -1,0 +1,14 @@
+{
+  "$comment": "HUD areas an overlay should not cover (end-list L12/L13, option a: warn only). Boxes are fractions of the full game source frame (before any layer crop), x0/y0 top-left, x1/y1 bottom-right. Measured by the agent on 2 frames of the 2026-11-06 practice H recording (t = 600 s and 1500 s, MP matches; frames kept local, not committed). Status unverified: one session, MP only, default control layout; the user's custom button layout may differ. BR and lobby screens are not covered.",
+  "game": "codm",
+  "version": "0.1.0",
+  "status": "unverified",
+  "checked": "2026-11-07",
+  "zones": [
+    { "id": "score-timer", "name": "Score, timer and medal banner (top centre)", "box": { "x0": 0.26, "y0": 0.0, "x1": 0.6, "y1": 0.26 } },
+    { "id": "minimap", "name": "Minimap (top right)", "box": { "x0": 0.76, "y0": 0.0, "x1": 0.92, "y1": 0.2 } },
+    { "id": "right-controls", "name": "Right-side buttons (scoreboard, chat, crouch, aim, fire, reload)", "box": { "x0": 0.79, "y0": 0.2, "x1": 0.92, "y1": 0.97 } },
+    { "id": "left-fire", "name": "Left fire button, weapon slots and movement buttons", "box": { "x0": 0.09, "y0": 0.38, "x1": 0.33, "y1": 0.85 } },
+    { "id": "bottom-centre", "name": "Kill feed, ammo and HP bar (bottom centre)", "box": { "x0": 0.33, "y0": 0.83, "x1": 0.67, "y1": 1.0 } }
+  ]
+}
