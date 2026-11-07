@@ -812,16 +812,7 @@ json::Value Studio::load_model(const json::Value &doc, const LoadOptions &o)
 			auto it = srcs.find(layer);
 			if (it != srcs.end())
 				return it->second;
-			const model::Source &spec = p.sources.at(layer);
-			obs_data_t *d = obs_data_create_from_json(spec.settings.dump().c_str());
-			std::string name = "ujw:" + layer;
-			obs_source_t *src = obs_source_create(spec.obs_type.c_str(), name.c_str(), d, nullptr);
-			obs_data_release(d);
-			if (!src)
-				throw Error(rpc::INTERNAL, "source create failed for layer " + layer + " (" + spec.obs_type + ")");
-			if (obs_source_get_output_flags(src) & OBS_SOURCE_AUDIO)
-				obs_source_set_audio_mixers(src, 0); // no audio.sources entry: no tracks
-			auto w = wrap(src, layer);
+			auto w = make_src(p.sources.at(layer), layer);
 			srcs[layer] = w;
 			return w;
 		};
@@ -901,6 +892,7 @@ json::Value Studio::load_model(const json::Value &doc, const LoadOptions &o)
 			   canvases_.size(), p.scenes.size(), srcs.size(), items, p.audio.size(), p.unavailable.size());
 		format_ = "project-v1";
 		model_doc_ = doc;
+		last_opts_ = o;
 		dirty_ = false;
 		json::Value r = get();
 		json::Value counts = json::Value::object();
@@ -918,6 +910,120 @@ json::Value Studio::load_model(const json::Value &doc, const LoadOptions &o)
 		teardown();
 		throw;
 	}
+}
+
+std::shared_ptr<Studio::Src> Studio::make_src(const model::Source &spec, const std::string &layer)
+{
+	obs_data_t *d = obs_data_create_from_json(spec.settings.dump().c_str());
+	std::string name = "ujw:" + layer;
+	obs_source_t *src = obs_source_create(spec.obs_type.c_str(), name.c_str(), d, nullptr);
+	obs_data_release(d);
+	if (!src)
+		throw Error(rpc::INTERNAL, "source create failed for layer " + layer + " (" + spec.obs_type + ")");
+	if (obs_source_get_output_flags(src) & OBS_SOURCE_AUDIO)
+		obs_source_set_audio_mixers(src, 0); // no audio.sources entry: no tracks
+	return wrap(src, layer);
+}
+
+// The source a layer owns, when any scene on any canvas still shows it.
+std::shared_ptr<Studio::Src> Studio::find_src(const std::string &owner)
+{
+	for (auto &s : scenes_)
+		for (auto &l : s.layers)
+			if (l.src && l.src->owner == owner)
+				return l.src;
+	return nullptr;
+}
+
+json::Value Studio::layer_add_model(const json::Value &doc, const std::string &sid, const std::string &lid)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	if (format_ != "project-v1")
+		throw Error(rpc::CONFLICT, "no project v1 is loaded");
+	if (!model::is_model(doc))
+		throw Error(rpc::INVALID_PARAMS, "project must be a project v1 document");
+	devices::List list;
+	model::Options mo = model_options(doc, last_opts_, list, flags_.allow_devices);
+	model::Plan p = model::build(doc, mo);
+	for (auto &u : p.unavailable.as_array())
+		if (const json::Value *l = u.find("layer"); l && l->is_string() && l->as_string() == lid)
+			throw Error(u.find("code")->as_string() == "forbidden" ? rpc::FORBIDDEN : rpc::UNAVAILABLE,
+				    "layer " + lid + " cannot be built: " + u.find("reason")->as_string());
+	auto ps = std::find_if(p.scenes.begin(), p.scenes.end(), [&](const model::Scene &x) { return x.id == sid; });
+	if (ps == p.scenes.end())
+		throw Error(rpc::INVALID_PARAMS, "no such scene in the project: " + sid);
+	// Check every canvas first, so a refusal changes nothing.
+	struct Todo {
+		Scene *s;
+		const model::Item *pi;
+		size_t at;
+	};
+	std::vector<Todo> todo;
+	for (auto &kv : ps->items) {
+		size_t at = 0;
+		for (auto &pi : kv.second) {
+			if (pi.layer != lid) {
+				at++;
+				continue;
+			}
+			Scene *s = scene(sid, kv.first);
+			if (!s)
+				throw Error(rpc::CONFLICT, "scene " + sid + " is not on canvas " + kv.first + ": create it first");
+			for (auto &x : s->layers)
+				if (x.id == lid)
+					throw Error(rpc::CONFLICT, "layer " + lid + " is already on canvas " + kv.first);
+			if (s->layers.size() >= 64)
+				throw Error(rpc::CONFLICT, "scene has 64 layers");
+			todo.push_back({s, &pi, at});
+		}
+	}
+	if (todo.empty())
+		throw Error(rpc::INVALID_PARAMS, "layer " + lid + " is not in scene " + sid + " of the project");
+	json::Value cvs = json::Value::array();
+	bool overlay = false;
+	for (auto &t : todo) {
+		const model::Item &pi = *t.pi;
+		Layer l;
+		l.id = pi.layer;
+		l.name = pi.name;
+		l.type = pi.type;
+		l.placement = pi.placement;
+		l.visible = pi.visible;
+		if (pi.type == "duplicate")
+			l.dup_of = pi.source_layer;
+		auto spec = p.sources.find(pi.source_layer);
+		if (spec == p.sources.end())
+			throw Error(rpc::UNAVAILABLE, "layer " + lid + ": source layer " + pi.source_layer + " is not built");
+		l.src = find_src(pi.source_layer);
+		if (!l.src)
+			l.src = make_src(spec->second, pi.source_layer);
+		overlay = overlay || spec->second.overlay;
+		l.effects = pi.effects;
+		try {
+			if (!l.effects.empty())
+				l.fx = fx::create_chain(l.src->src, "ujw:fx:" + t.s->canvas + ":" + pi.layer, l.effects, {});
+			add_item(*t.s, l);
+			apply_placement(l);
+		} catch (...) {
+			destroy_layer(l);
+			throw;
+		}
+		obs_sceneitem_set_visible(l.item, l.visible);
+		size_t at = std::min(t.at, t.s->layers.size());
+		t.s->layers.insert(t.s->layers.begin() + (ptrdiff_t)at, std::move(l));
+		apply_order(*t.s);
+		cvs.push(t.s->canvas);
+	}
+	if (overlay && !relay_)
+		make_relay(last_opts_);
+	model_doc_ = doc;
+	dirty_ = false;
+	hlog::info("layer added from the project: %s in %s", lid.c_str(), sid.c_str());
+	json::Value r = json::Value::object();
+	r.set("scene", sid);
+	r.set("layer", lid);
+	r.set("canvases", std::move(cvs));
+	return r;
 }
 
 json::Value Studio::canvases_json() const

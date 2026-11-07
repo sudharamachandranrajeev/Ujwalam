@@ -52,7 +52,8 @@ export function applyEdit(doc, method, params) {
 export const SYNCED_METHODS = new Set(['layers.setPlacement', 'layers.setVisible']);
 
 /** createProjectSync({ file, delayMs?, setTimer?, clearTimer?, log? })
- *  record(method, params): call after the host accepted the edit. flush(): write now. status(): { file, pending, saves, lastError }. */
+ *  record(method, params): call after the host accepted the edit. flush(): write now. reload(): flush, then re-read the
+ *  file on the next record. status(): { file, pending, saves, lastError }. */
 export function createProjectSync({ file, delayMs = 1000, setTimer = setTimeout, clearTimer = clearTimeout, log = () => {} }) {
   let doc = null;
   let timer = null;
@@ -97,6 +98,8 @@ export function createProjectSync({ file, delayMs = 1000, setTimer = setTimeout,
       return true;
     },
     flush,
+    /** The file was written by someone else (a structure edit, D240): write what is pending, then re-read it next time. */
+    reload() { flush(); doc = null; },
     status: () => ({ file, pending, saves, lastError }),
   };
 }

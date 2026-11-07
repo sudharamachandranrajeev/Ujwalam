@@ -72,6 +72,10 @@ public:
 	json::Value layers_list(const std::string &scene, const std::string &canvas) const;
 	json::Value layer_add(const std::string &scene, const std::string &canvas, const json::Value &layer, int64_t index);
 	json::Value layer_remove(const std::string &scene, const std::string &canvas, const std::string &layer);
+	// Project v1 (D240): builds layer `layer` of scene `scene` from `doc` (the project after the change, as the UI server
+	// saves it) with the options of the last load, on every canvas it has a placement on, sharing an existing source
+	// (duplicates, the other canvas). The doc becomes the host's model document.
+	json::Value layer_add_model(const json::Value &doc, const std::string &scene, const std::string &layer);
 	json::Value layer_set_visible(const std::string &scene, const std::string &canvas, const std::string &layer, bool visible);
 	json::Value layer_set_placement(const std::string &scene, const std::string &canvas, const std::string &layer,
 					const json::Value &patch);
@@ -162,6 +166,7 @@ private:
 	std::vector<Global> globals_;
 	std::string format_; // "project-v1" or "ujwalam-host-test"
 	json::Value model_doc_;
+	LoadOptions last_opts_; // of the last project v1 load (layer_add_model builds with them)
 	bool dirty_ = false;
 	obs_source_t *relay_ = nullptr; // overlay relay browser source (showing and active while it exists)
 	std::string relay_scope_;
@@ -181,6 +186,8 @@ private:
 	obs_source_t *create_source(const Scene &s, const std::string &layer_id, const std::string &type,
 				    const json::Value &settings);
 	std::shared_ptr<Src> wrap(obs_source_t *src, const std::string &owner);
+	std::shared_ptr<Src> make_src(const model::Source &spec, const std::string &layer);
+	std::shared_ptr<Src> find_src(const std::string &owner);
 	void add_item(Scene &s, Layer &l);
 	void apply_transform(const Scene &s, Layer &l);
 	void apply_placement(Layer &l);

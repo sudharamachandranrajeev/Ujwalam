@@ -35,6 +35,8 @@ import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, loadRules, planA
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
+import { addLayer, addScene, removeLayer, removeScene } from '../project/structure.mjs';
+import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 
@@ -123,6 +125,10 @@ export const PREVIEW_EDIT_FLAG = 'preview-edit';
 // Scene transitions (D239): while on, the host's per-canvas transition follows the project's canvases[].transition
 // (Meld import: fade of Meld's duration); off (default) = cut.
 export const TRANSITIONS_FLAG = 'transitions';
+// Scene and layer structure edits (D240): add/remove scenes and layers from the control page, saved into the project.
+export const SCENE_EDIT_FLAG = 'scene-edit';
+const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove'];
+const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay'], 'layer.remove': ['scene', 'layer'] };
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
 const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
@@ -390,6 +396,58 @@ export function createStudioServer(opts) {
   function remember(method, params, before) {
     if (before && history.record({ method, scene: params.scene, canvas: params.canvas, layer: params.layer, before, after: afterOf(method, params) })) broadcast('edits', history.state());
   }
+  // Structure edits (D240). Order: fresh host.status (refused while live, fail closed) -> pending layer edits written ->
+  // project file read -> pure change (services/project/structure.mjs, validated) -> host -> file saved. The host goes
+  // first so a refusal there saves nothing; a failed save leaves the host change live-only and says so. Undo history
+  // is cleared: its entries may name a layer or scene that is gone.
+  // What the add-layer form can offer (D240): ids and names from the project file only (shown on this local page).
+  function structureChoices(res) {
+    const on = !!flags && flags.isOn(SCENE_EDIT_FLAG);
+    const file = projectSync?.status?.().file;
+    if (!on || typeof file !== 'string') return json(res, 200, { on, available: false });
+    let doc;
+    try { projectSync.flush(); doc = loadProject(file).project; } catch { return json(res, 200, { on, available: false }); }
+    return json(res, 200, { on, available: true,
+      scenes: doc.scenes.map((s) => ({ id: s.id, name: s.name, active: s.id === doc.activeScene })),
+      layers: doc.scenes.flatMap((s) => s.layers.map((l) => ({ id: l.id, name: l.name, scene: s.id, sceneName: s.name, type: l.type }))),
+      devices: (doc.devices ?? []).filter((d) => d.kind === 'camera' || d.kind === 'capture-card').map((d) => ({ id: d.id, name: d.name })),
+      overlays: (doc.overlays ?? []).map((o) => ({ id: o.id, name: o.name })) });
+  }
+  async function structureEdit(res, body) {
+    if (!flags || !flags.isOn(SCENE_EDIT_FLAG)) return json(res, 404, { error: 'scene-edit-off' });
+    const file = projectSync?.status?.().file;
+    if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
+    if (!isPlain(body) || !STRUCTURE_OPS.includes(body.op) || Object.keys(body).some((k) => k !== 'op' && !STRUCTURE_KEYS[body.op].includes(k))) return json(res, 400, { error: 'bad-params' });
+    for (const k of ['name', 'scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'layer']) {
+      if (body[k] !== undefined && (typeof body[k] !== 'string' || body[k].length > (k === 'text' ? 2000 : 120))) return json(res, 400, { error: 'bad-params' });
+    }
+    let hs = null;
+    try { hs = await host.call('host.status', {}); } catch { hs = null; }
+    if (!hs || hs.live !== false) return json(res, 409, { error: hs ? 'live-locked' : 'host-unavailable' });
+    projectSync.reload();
+    let doc;
+    try { doc = loadProject(file).project; } catch { return json(res, 409, { error: 'project-unreadable' }); }
+    const { op } = body;
+    const r = op === 'scene.add' ? addScene(doc, body) : op === 'scene.remove' ? removeScene(doc, body)
+      : op === 'layer.add' ? addLayer(doc, body) : removeLayer(doc, body);
+    if (r.error) return json(res, 409, { error: r.error, ...(r.errors ? { detail: r.errors.map((e) => `${e.path}: ${e.message}`).join('; ').slice(0, 300) } : {}) });
+    const canvases = doc.canvases.map((c) => c.id.toUpperCase());
+    try {
+      if (op === 'scene.add') for (const canvas of canvases) await host.call('scenes.create', { scene: { id: r.scene.id, canvas, name: r.scene.name } });
+      else if (op === 'scene.remove') await host.call('scenes.remove', { scene: body.scene });
+      else if (op === 'layer.add') await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
+      else await host.call('layers.remove', { scene: body.scene, layer: body.layer });
+    } catch (e) {
+      return json(res, 502, { error: 'host-error', detail: String(e?.message ?? e?.code ?? 'error').slice(0, 160) });
+    }
+    let saved = true;
+    try { saveProject(file, r.project); } catch { saved = false; }
+    projectSync.reload(); // its cached document is older than the file now
+    history.clear();
+    broadcast('edits', history.state());
+    broadcast('layers', { source: 'structure', edit: { op, scene: r.scene?.id ?? body.scene, layer: r.layer?.id ?? body.layer ?? null } });
+    return json(res, 200, { ok: true, op, ...(r.scene ? { scene: { id: r.scene.id, name: r.scene.name } } : {}), ...(r.layer ? { layer: { id: r.layer.id, name: r.layer.name, type: r.layer.type } } : {}), saved });
+  }
   async function callHost(method, params) {
     const waits = method === 'project.load' ? limits.loadRetryMs : [];
     for (let i = 0; ; i++) {
@@ -441,6 +499,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/edits') return json(res, 200, history.state());
+    if (req.method === 'GET' && route === '/ui/api/project/structure') return structureChoices(res);
     if (req.method === 'GET' && route === '/ui/api/feedback') return json(res, 200, { moments: feedback.list() });
     if (route === '/ui/api/report-url') {
       if (!reportOn()) return json(res, 404, { error: 'report-button-off' });
@@ -498,6 +557,7 @@ export function createStudioServer(opts) {
       broadcast('layers', { source: undo ? 'undo' : 'redo', edit: { scene: e.scene, canvas: e.canvas ?? null, layer: e.layer } });
       return json(res, 200, { ok: true, method: e.method, scene: e.scene, layer: e.layer, edits: history.state(), ...(saved ? { saved: 'pending' } : {}) });
     }
+    if (route === '/ui/api/project/structure') return structureEdit(res, body);
     if (route === '/ui/api/host') {
       const spec = typeof body.method === 'string' && Object.hasOwn(HOST_CALLS, body.method) ? HOST_CALLS[body.method] : null;
       if (!spec) return json(res, 400, { error: 'unknown-method' });

@@ -25,6 +25,12 @@
     <section class="panel">
       <h2>Scenes</h2>
       <ul id="scene-list" class="list" aria-label="Scenes"></ul>
+      <div id="scene-edit" class="struct-edit" hidden>
+        <input id="scene-name" type="text" maxlength="120" placeholder="New scene name" aria-label="New scene name">
+        <button id="btn-scene-add" class="btn btn-quiet" type="button">Add scene</button>
+        <select id="scene-pick" aria-label="Scene to remove"></select>
+        <button id="btn-scene-remove" class="btn btn-quiet" type="button" title="Remove this scene (not one that is showing)">Remove scene</button>
+      </div>
     </section>
     <section class="panel grow">
       <h2>Layers</h2>
@@ -37,6 +43,20 @@
         <button id="tab-v" class="btn btn-quiet" type="button">V</button>
       </div>
       <ul id="layer-list" class="list" aria-label="Layers"></ul>
+      <div id="layer-edit" class="struct-edit" hidden>
+        <select id="layer-kind" aria-label="Kind of layer to add">
+          <option value="copy">Copy of a layer</option>
+          <option value="color">Colour</option>
+          <option value="text">Text</option>
+          <option value="capture">Camera or capture card</option>
+          <option value="overlay">Overlay</option>
+        </select>
+        <select id="layer-pick" aria-label="Layer, device or overlay"></select>
+        <input id="layer-value" type="text" maxlength="2000" aria-label="Colour or text">
+        <button id="btn-layer-add" class="btn btn-quiet" type="button">Add layer</button>
+        <button id="btn-layer-remove" class="btn btn-quiet" type="button" title="Remove the selected layer">Remove layer</button>
+        <p id="struct-note" class="muted" role="status"></p>
+      </div>
     </section>
   </aside>
 

@@ -46,6 +46,61 @@
       .catch(function (e) { showError(EDIT_ERRORS[e && e.message] || ('Error: ' + (e && e.message ? e.message : 'failed'))); Api.edits().then(renderEdits).catch(function () {}); });
   }
 
+  // ---- scene and layer structure edits (D240, flag scene-edit; saved into the project file, refused while live) ----
+  var STRUCT_ERRORS = { 'live-locked': 'Not while live.', 'host-unavailable': 'The studio host is not reachable.', 'scene-active': 'That scene is the project start scene; pick another first.', 'last-scene': 'The last scene cannot be removed.', 'layer-copied': 'Another layer is a copy of it; remove the copy first.', 'layer-has-audio': 'Its audio is in the mixer; it cannot be removed here.', 'bad-name': 'Type a scene name.', 'bad-color': 'Colour must look like #RRGGBB.', 'bad-text': 'Type the text.', 'no-project-file': 'No project file is open.', 'scene-edit-off': 'Turn on the scene-edit flag first.' };
+  var choices = null;
+  function renderStructure(on) {
+    $('scene-edit').hidden = !on; $('layer-edit').hidden = !on;
+    if (on) loadChoices(); else choices = null;
+  }
+  function loadChoices() {
+    return Api.structure().then(function (c) {
+      choices = c && c.available ? c : null;
+      if (!choices) { $('scene-edit').hidden = true; $('layer-edit').hidden = true; return; }
+      var sp = $('scene-pick'); clear(sp);
+      choices.scenes.forEach(function (x) { sp.appendChild(el('option', { value: x.id, text: x.name })); });
+      renderPick();
+    }).catch(function () { /* the form stays as it was */ });
+  }
+  function renderPick() {
+    var kind = $('layer-kind').value, sel = $('layer-pick'), v = $('layer-value'); clear(sel);
+    var items = !choices ? [] : kind === 'copy' ? choices.layers.map(function (l) { return { id: l.id, name: l.name + ' (' + l.sceneName + ')' }; })
+      : kind === 'capture' ? choices.devices : kind === 'overlay' ? choices.overlays : [];
+    items.forEach(function (x) { sel.appendChild(el('option', { value: x.id, text: x.name })); });
+    sel.hidden = !(kind === 'copy' || kind === 'capture' || kind === 'overlay');
+    v.hidden = !(kind === 'color' || kind === 'text');
+    v.placeholder = kind === 'color' ? '#RRGGBB' : 'Text';
+  }
+  function structureEdit(body) {
+    setText($('struct-note'), '');
+    return Api.structureEdit(body).then(function (r) {
+      setText($('struct-note'), r.saved ? 'Done and saved.' : 'Done, but the project file was not saved: it is live-only until the next save.');
+      return Promise.all([loadScenes(), loadChoices()]).then(function () { return true; });
+    }).catch(function (e) { setText($('struct-note'), STRUCT_ERRORS[e && e.message] || ('Not done: ' + ((e && (e.detail || e.message)) || 'failed'))); return false; });
+  }
+  function addLayerClick() {
+    var kind = $('layer-kind').value, body = { op: 'layer.add', scene: state.activeScene, kind: kind };
+    if (!state.activeScene) { setText($('struct-note'), 'Pick a scene first.'); return; }
+    if (kind === 'copy') body.of = $('layer-pick').value;
+    else if (kind === 'capture') body.device = $('layer-pick').value;
+    else if (kind === 'overlay') body.overlay = $('layer-pick').value;
+    else if (kind === 'color') body.color = $('layer-value').value.trim();
+    else body.text = $('layer-value').value;
+    structureEdit(body);
+  }
+  function removeLayerClick() {
+    var l = selectedLayer();
+    if (!l) { setText($('struct-note'), 'Select a layer first (click its name).'); return; }
+    if (!window.confirm('Remove layer "' + l.name + '" from this scene on every canvas?')) return;
+    structureEdit({ op: 'layer.remove', scene: state.activeScene, layer: l.id }).then(function (ok) { if (ok) { state.selected = null; renderInspector(); } });
+  }
+  function removeSceneClick() {
+    var sp = $('scene-pick'), opt = sp.options[sp.selectedIndex];
+    if (!opt) return;
+    if (!window.confirm('Remove scene "' + opt.text + '" and its layers?')) return;
+    structureEdit({ op: 'scene.remove', scene: opt.value });
+  }
+
   // ---- scenes and layers ----
   function renderScenes() {
     var ul = $('scene-list'); clear(ul);
@@ -289,6 +344,7 @@
     var botsOn = (list || []).some(function (f) { return f.id === 'bot-manager' && f.on; });
     $('bots').hidden = !botsOn;
     if (botsOn) loadBots(); else clear($('bot-list'));
+    renderStructure((list || []).some(function (f) { return f.id === 'scene-edit' && f.on; }));
     var reportOn = (list || []).some(function (f) { return f.id === 'report-button' && f.on; });
     $('report').hidden = !reportOn;
     (list || []).forEach(function (f) {
@@ -513,6 +569,11 @@
     $('confirm-cancel').addEventListener('click', cancelConfirm);
     $('btn-undo').addEventListener('click', function () { undoRedo(true); });
     $('btn-redo').addEventListener('click', function () { undoRedo(false); });
+    $('btn-scene-add').addEventListener('click', function () { structureEdit({ op: 'scene.add', name: $('scene-name').value }).then(function (ok) { if (ok) $('scene-name').value = ''; }); });
+    $('btn-scene-remove').addEventListener('click', removeSceneClick);
+    $('layer-kind').addEventListener('change', renderPick);
+    $('btn-layer-add').addEventListener('click', addLayerClick);
+    $('btn-layer-remove').addEventListener('click', removeLayerClick);
     document.addEventListener('keydown', function (e) {
       var t = e.target && e.target.tagName;
       if (!(e.ctrlKey || e.metaKey) || e.altKey || t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return; // text fields keep their own undo

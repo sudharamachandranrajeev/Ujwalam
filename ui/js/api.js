@@ -16,7 +16,7 @@
       return r.text().then(function (t) {
         var j = null;
         try { j = t ? JSON.parse(t) : null; } catch (e) { j = null; }
-        if (!r.ok) { var err = new Error((j && j.error) || t || ('http-' + r.status)); err.status = r.status; throw err; }
+        if (!r.ok) { var err = new Error((j && j.error) || t || ('http-' + r.status)); err.status = r.status; err.detail = j && typeof j.detail === 'string' ? j.detail : null; throw err; }
         return j;
       });
     });
@@ -49,6 +49,8 @@
     ytCheck: function (id) { return request('POST', '/ui/api/posts/youtube/check', { id: id }); },
     postOpen: function (id) { return request('POST', '/ui/api/posts/open', { id: id }); },
     edits: function () { return request('GET', '/ui/api/edits'); },
+    structure: function () { return request('GET', '/ui/api/project/structure'); },
+    structureEdit: function (body) { return request('POST', '/ui/api/project/structure', body); },
     undo: function () { return request('POST', '/ui/api/edits/undo', {}); },
     redo: function () { return request('POST', '/ui/api/edits/redo', {}); },
     events: function (onStatus, onState, onFlags, onEdits) {

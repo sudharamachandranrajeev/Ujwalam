@@ -409,6 +409,11 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Params q(p, {"scene", "canvas", "layer", "index"});
 		return a.studio->layer_add(q.str("scene", 64), canvas_opt(q), q.obj("layer"), q.int_or("index", -1, -1, 1000));
 	});
+	// D240: add a layer the UI server has put into the project document (project v1 only).
+	add("layers.addFromProject", [&a](const json::Value &p) {
+		Params q(p, {"project", "scene", "layer"});
+		return a.studio->layer_add_model(q.obj("project"), q.str("scene", 64), q.str("layer", 64));
+	});
 	add("layers.remove", [&a](const json::Value &p) {
 		Params q(p, {"scene", "canvas", "layer"});
 		return a.studio->layer_remove(q.str("scene", 64), canvas_opt(q), q.str("layer", 64));
