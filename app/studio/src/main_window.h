@@ -75,6 +75,8 @@ private:
 	void nudge(int dx, int dy);
 	void sendNudge();
 	void hostAction(const QString &method);
+	void loadEdits();             // undo / redo state (UI server history, D238)
+	void undoRedo(bool undo);
 	void confirm(const QJsonObject &pending);
 	void note(const QString &text);
 	QJsonObject layerArgs(const QJsonObject &extra = {}) const;
@@ -110,6 +112,8 @@ private:
 	QVBoxLayout *mixerBox_ = nullptr;
 	QMap<QString, QProgressBar *> meters_;
 	QPushButton *streamBtn_ = nullptr, *recordBtn_ = nullptr;
+	QPushButton *undoBtn_ = nullptr, *redoBtn_ = nullptr;
+	bool undoBusy_ = false;
 	QLabel *pillLive_ = nullptr, *pillRec_ = nullptr, *pillStats_ = nullptr, *pillHost_ = nullptr, *pillCore_ = nullptr;
 	QLabel *note_ = nullptr;
 	QList<PreviewSlot *> slots_;

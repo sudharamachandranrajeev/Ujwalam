@@ -265,6 +265,16 @@ QWidget *MainWindow::buildTop()
 	h->addWidget(streamBtn_);
 	h->addWidget(recordBtn_);
 	h->addSpacing(12);
+	// Undo / redo of layer edits (D238; inspector, layer list, preview mouse, effects): Ctrl+Z / Ctrl+Y too.
+	undoBtn_ = new QPushButton(QStringLiteral("Undo"), w);
+	redoBtn_ = new QPushButton(QStringLiteral("Redo"), w);
+	undoBtn_->setEnabled(false);
+	redoBtn_->setEnabled(false);
+	connect(undoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(true); });
+	connect(redoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(false); });
+	h->addWidget(undoBtn_);
+	h->addWidget(redoBtn_);
+	h->addSpacing(12);
 	for (QLabel *p : {pillLive_, pillRec_, pillStats_, pillHost_, pillCore_})
 		h->addWidget(p);
 	h->addStretch(1);
@@ -550,6 +560,12 @@ void MainWindow::start()
 			const QPoint d = k.second * (shift ? 10 : 1);
 			connect(sc, &QShortcut::activated, this, [this, d]() { nudge(d.x(), d.y()); });
 		}
+	}
+	// Text and number fields keep their own Ctrl+Z (they take the key before a window shortcut).
+	for (const bool undo : {true, false}) {
+		auto *sc = new QShortcut(undo ? QKeySequence::Undo : QKeySequence::Redo, this);
+		sc->setContext(Qt::WindowShortcut);
+		connect(sc, &QShortcut::activated, this, [this, undo]() { undoRedo(undo); });
 	}
 	loadScenes();
 	pollStatus();
@@ -1100,7 +1116,41 @@ void MainWindow::pollStatus()
 		recordBtn_->setEnabled(ready.value(QStringLiteral("record")).toBool());
 		streamBtn_->setText(live_ ? QStringLiteral("Stop stream") : QStringLiteral("Start stream"));
 		recordBtn_->setText(recording_ ? QStringLiteral("Stop recording") : QStringLiteral("Record"));
+		loadEdits();
 	});
+}
+
+void MainWindow::loadEdits()
+{
+	api_->get(QStringLiteral("ui/api/edits"), [this](bool ok, const QJsonObject &e, const QString &) {
+		if (!ok)
+			return;
+		const bool can = !live_ && !undoBusy_; // the UI server refuses undo while live (D238)
+		undoBtn_->setEnabled(can && e.value(QStringLiteral("undo")).toInt() > 0);
+		redoBtn_->setEnabled(can && e.value(QStringLiteral("redo")).toInt() > 0);
+		undoBtn_->setToolTip(e.value(QStringLiteral("nextUndo")).toString());
+		redoBtn_->setToolTip(e.value(QStringLiteral("nextRedo")).toString());
+	});
+}
+
+void MainWindow::undoRedo(bool undo)
+{
+	if (live_)
+		return note(QStringLiteral("Live: undo and redo are off. Use the inspector."));
+	if (undoBusy_)
+		return;
+	undoBusy_ = true;
+	api_->post(undo ? QStringLiteral("ui/api/edits/undo") : QStringLiteral("ui/api/edits/redo"), {},
+		   [this, undo](bool ok, const QJsonObject &b, const QString &err) {
+			   undoBusy_ = false;
+			   if (!ok)
+				   note((undo ? QStringLiteral("Nothing undone: ") : QStringLiteral("Nothing redone: ")) + err);
+			   else
+				   note((undo ? QStringLiteral("Undone: ") : QStringLiteral("Redone: ")) +
+					b.value(QStringLiteral("method")).toString() + QStringLiteral(" ") + b.value(QStringLiteral("layer")).toString());
+			   loadLayers();
+			   loadEdits();
+		   });
 }
 
 void MainWindow::hostAction(const QString &method)
