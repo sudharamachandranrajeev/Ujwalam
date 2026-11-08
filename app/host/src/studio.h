@@ -82,6 +82,8 @@ public:
 	json::Value layer_add_model(const json::Value &doc, const std::string &scene, const std::string &layer);
 	json::Value layer_order_model(const json::Value &doc, const std::string &scene);
 	json::Value layer_set_visible(const std::string &scene, const std::string &canvas, const std::string &layer, bool visible);
+	// Effect editor (D260): replaces a layer's effects on every canvas (project v1 layers only).
+	json::Value layer_set_effects(const std::string &scene, const std::string &layer, const json::Value &effects);
 	json::Value layer_set_placement(const std::string &scene, const std::string &canvas, const std::string &layer,
 					const json::Value &patch);
 	json::Value layer_move(const std::string &scene, const std::string &canvas, const std::string &layer, int64_t index,

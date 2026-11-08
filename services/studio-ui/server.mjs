@@ -100,6 +100,8 @@ export const HOST_CALLS = Object.freeze({
   // Scene switches, visibility and the mixer stay instant: they are the controls a live show needs.
   'layers.move': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, index: { type: 'int', min: 0, max: 255, required: true } }, liveConfirm: true, summary: 'Change the layer order while live' },
   'layers.setPlacement': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, placement: PLACEMENT }, liveConfirm: true, summary: 'Move or resize a layer while live' },
+  // Effect editor (D260, flag effect-editor): the whole effects list of a layer on every canvas (no canvas field).
+  'layers.setEffects': { schema: { scene: SCENE, layer: LAYER, effects: { type: 'effects', required: true } }, liveConfirm: true, flag: 'effect-editor', summary: 'Change a layer\'s effects while live' },
   // parent/x/y/width/height: the Qt shell embeds the preview in its window (decimal window handle, client pixels).
   'preview.open': { schema: { canvas: CANVAS, parent: { type: 'string', pattern: /^[1-9][0-9]{0,19}$/ }, x: { type: 'int', min: 0, max: 16384 }, y: { type: 'int', min: 0, max: 16384 }, width: { type: 'int', min: 160, max: 8192 }, height: { type: 'int', min: 90, max: 8192 } } },
   'preview.focus': { schema: { canvas: CANVAS } },
@@ -168,6 +170,10 @@ export function validate(schema, p) {
       case 'int': if (!Number.isSafeInteger(v) || v < (d.min ?? 0) || v > (d.max ?? 1e9)) return `bad field ${k}`; break;
       case 'num': if (typeof v !== 'number' || !Number.isFinite(v) || v < (d.min ?? 0) || v > (d.max ?? 1e9)) return `bad field ${k}`; break;
       case 'bool': if (typeof v !== 'boolean') return `bad field ${k}`; break;
+      // A layer's effects list (D260): shape and size only here; the host checks each effect in full (model.cpp)
+      // and the project file is validated again when it is saved.
+      case 'effects': if (!Array.isArray(v) || v.length > 6 || !v.every((e) => isPlain(e) && typeof e.type === 'string')
+        || JSON.stringify(v).length > 4096) return `bad field ${k}`; break;
       case 'enum': if (!d.values.includes(v)) return `bad field ${k}`; break;
       case 'object': {
         if (!isPlain(v) || Object.keys(v).length === 0) return `bad field ${k}`;
@@ -309,7 +315,8 @@ export function createStudioServer(opts) {
       at: now(),
       host: { kind: h.kind, available: hs !== null, blockedOnHost: h.kind === 'fake',
         ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing']) : {}),
-        ...(previewLast ? { previewEdit: previewLast } : {}) },
+        ...(previewLast ? { previewEdit: previewLast } : {}),
+        effectEditing: !!flags && flags.isOn('effect-editor') },
       core: { available: cs !== null, ...(cs ? { liveState: typeof cs.live?.liveState === 'string' ? cs.live.liveState : null, panic: cs.live?.panic === true } : {}) },
     };
   }
@@ -623,6 +630,7 @@ export function createStudioServer(opts) {
       const params = body.params ?? {};
       const bad = validate(spec.schema, params);
       if (bad) return json(res, 400, { error: bad });
+      if (spec.flag && !(flags && flags.isOn(spec.flag))) return json(res, 404, { error: `${spec.flag}-off` });
       if (spec.confirm || (live && spec.liveConfirm)) {
         // Stream and recording changes need a typed phrase; while live, the on-air phrase (also for layout changes).
         const phrase = (live || spec.confirm === 'onair') ? 'yes, on air' : 'yes';
@@ -751,6 +759,8 @@ export function createStudioServer(opts) {
           return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, forced: r.forced === true, bots: await bots.statusAll() });
         }
         if (p.kind === 'host') {
+          const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse
+          if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
           const before = await readBefore(p.method, p.params);
           const out = await callHost(p.method, p.params);
           remember(p.method, p.params, before);

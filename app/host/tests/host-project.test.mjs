@@ -770,3 +770,47 @@ test('project v1 corner pin draws the layer into its quad (D259)', async () => {
   near(px(1095, 495), B, 'right half bottom corner');
   await c.call('outputs.clear');
 });
+
+
+// Effect editor (D260): layers.setEffects replaces a layer's effects on every canvas; a refused list changes nothing.
+test('layers.setEffects replaces the effects live, keeps place, order and visibility; refusals change nothing (D260)', async () => {
+  const r = await loadIntoHost(c, PIN, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  const list = async () => Object.fromEntries((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.map((l) => [l.id, l]));
+  const before = await list();
+  await assert.rejects(c.call('layers.setEffects', { scene: 'main', layer: 'trap', effects: [{ type: 'blur', strength: 500 }] }), /strength/);
+  await assert.rejects(c.call('layers.setEffects', { scene: 'main', layer: 'nope', effects: [] }), /no such layer/);
+  await assert.rejects(c.call('layers.setEffects', { scene: 'main', layer: 'trap', canvas: 'H', effects: [] }));
+  assert.deepEqual((await list()).trap.effects, before.trap.effects, 'refused: unchanged');
+  const set = await c.call('layers.setEffects', { scene: 'main', layer: 'trap', effects: [] });
+  assert.deepEqual(set.canvases, ['H']);
+  const toner = { type: 'toner', shadows: '#00ff00', darktones: '#00ff00', midtones: '#00ff00', brights: '#00ff00', highlights: '#00ff00', amount: 1 };
+  await c.call('layers.setEffects', { scene: 'main', layer: 'half', effects: [toner] });
+  const after = await list();
+  assert.equal(after.trap.effects, undefined, 'an empty list removes the effects');
+  assert.deepEqual(after.half.effects, [toner]);
+  assert.deepEqual(Object.keys(after), Object.keys(before), 'order kept');
+  assert.deepEqual(after.half.placement, before.half.placement);
+  assert.equal(after.half.visible, true);
+  await c.call('outputs.configure', {
+    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
+    audio: { bitrate: 128, sampleRate: 48000 },
+    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: 'seteffects-h.mkv' } }]
+  });
+  await c.call('record.start', {});
+  await new Promise((res) => setTimeout(res, 2000));
+  await c.call('record.stop', {});
+  let st;
+  for (let i = 0; i < 60; i++) {
+    st = await c.call('outputs.status');
+    if (st.sinks.every((s) => s.state === 'stopped')) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  const px = frameRgb(st.sinks.find((s) => s.id === 'fh').path, 1280, 720);
+  near(px(120, 110), [255, 0, 0], 'pin removed: the whole box is the layer');
+  near(px(480, 110), [255, 0, 0], 'pin removed: top-right corner too');
+  near(px(800, 300), [0, 255, 0], 'pin replaced by a toner: the whole box, toned green');
+  near(px(1000, 300), [0, 255, 0], 'toned green on the right too');
+  near(px(50, 50), [255, 255, 255], 'background');
+  await c.call('outputs.clear');
+});

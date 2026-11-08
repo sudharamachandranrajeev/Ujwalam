@@ -10,6 +10,8 @@
 #include <QMainWindow>
 #include <QMap>
 
+#include <functional>
+
 class QLabel;
 class QListWidget;
 class QPushButton;
@@ -19,6 +21,8 @@ class QVBoxLayout;
 class QProgressBar;
 class QButtonGroup;
 class QTimer;
+class QFormLayout;
+class QGroupBox;
 
 // A native child widget the host draws a canvas preview into (P5a step 4): the host makes its preview a child
 // window of this widget's handle and resizes it when the slot changes size. If the host refuses (no canvas yet, host
@@ -64,6 +68,10 @@ private:
 	void renderInspector();
 	void renderMixer();
 	void applyInspector();
+	void renderEffects();    // effect editor (D260): the working list
+	void renderEffectForm(); // the selected effect's settings
+	void applyEffects();
+	void editEffects(const std::function<void(QJsonArray &, int &)> &change);
 	void nudge(int dx, int dy);
 	void sendNudge();
 	void hostAction(const QString &method);
@@ -81,6 +89,11 @@ private:
 	bool previewEditing_ = false; // host switch for preview editing = flag preview-edit (status host.previewEditing)
 	int nudgeDx_ = 0, nudgeDy_ = 0; // arrow-key nudge not sent yet (D254)
 	bool nudgeBusy_ = false;
+	// Effect editor (D260, flag effect-editor): a working copy of the selected layer's effects; Apply sends it whole.
+	bool effectEditing_ = false;
+	QJsonArray effEdit_;
+	QString effLayer_;     // the layer effEdit_ belongs to
+	bool effDirty_ = false; // changed since it was read from the host
 	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
 
 	QListWidget *sceneList_ = nullptr;
@@ -90,6 +103,9 @@ private:
 	QLabel *inspTitle_ = nullptr, *inspEmpty_ = nullptr;
 	QDoubleSpinBox *inX_ = nullptr, *inY_ = nullptr, *inW_ = nullptr, *inH_ = nullptr, *inRot_ = nullptr;
 	QSpinBox *crL_ = nullptr, *crT_ = nullptr, *crR_ = nullptr, *crB_ = nullptr;
+	QGroupBox *effBox_ = nullptr;
+	QListWidget *effList_ = nullptr;
+	QFormLayout *effForm_ = nullptr;
 	QVBoxLayout *mixerBox_ = nullptr;
 	QMap<QString, QProgressBar *> meters_;
 	QPushButton *streamBtn_ = nullptr, *recordBtn_ = nullptr;

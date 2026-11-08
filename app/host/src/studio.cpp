@@ -1498,6 +1498,79 @@ json::Value Studio::layer_set_placement(const std::string &sid, const std::strin
 	return r;
 }
 
+// Effect editor (D260): replaces the effects of layer `lid` in scene `sid` on every canvas (effects belong to the
+// layer, not to a placement). Each item gets a new wrapper chain (or none) and a new scene item at the same place in
+// the order, with the same visibility and placement; the old item and wrapper go after it is in. The list is checked
+// and every chain is built before anything changes, so a refusal changes nothing. Project v1 layers only. In memory
+// only (dirty), like setPlacement: the studio UI server saves it into the project file.
+json::Value Studio::layer_set_effects(const std::string &sid, const std::string &lid, const json::Value &effects)
+{
+	const std::vector<model::Effect> fxs = model::parse_effects(&effects, "layer " + lid);
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	struct Todo {
+		Scene *s;
+		Layer *l;
+		obs_source_t *fx;
+	};
+	std::vector<Todo> todo;
+	for (Scene *s : scenes_named(sid, ""))
+		for (auto &l : s->layers)
+			if (l.id == lid) {
+				if (l.placement.is_null())
+					throw Error(rpc::INVALID_PARAMS, "layer has no project placement");
+				todo.push_back({s, &l, nullptr});
+			}
+	if (todo.empty())
+		throw Error(rpc::INVALID_PARAMS, "no such layer");
+	try {
+		for (auto &t : todo)
+			if (!fxs.empty())
+				t.fx = fx::create_chain(t.l->src->src, "ujw:fx:" + t.s->canvas + ":" + lid, fxs, {});
+	} catch (...) {
+		for (auto &t : todo)
+			if (t.fx)
+				obs_source_release(t.fx);
+		throw;
+	}
+	json::Value done = json::Value::array();
+	for (size_t i = 0; i < todo.size(); i++) {
+		Todo &t = todo[i];
+		Layer &l = *t.l;
+		obs_sceneitem_t *old_item = l.item;
+		obs_source_t *old_fx = l.fx;
+		l.fx = t.fx;
+		t.fx = nullptr;
+		try {
+			add_item(*t.s, l);
+		} catch (...) {
+			if (l.fx)
+				obs_source_release(l.fx);
+			l.fx = old_fx;
+			l.item = old_item;
+			for (size_t j = i + 1; j < todo.size(); j++)
+				if (todo[j].fx)
+					obs_source_release(todo[j].fx);
+			throw;
+		}
+		l.effects = fxs;
+		obs_sceneitem_set_visible(l.item, false); // shown once placed, so no frame at the source's own size
+		apply_placement(l);
+		obs_sceneitem_remove(old_item);
+		if (old_fx)
+			obs_source_release(old_fx);
+		apply_order(*t.s);
+		obs_sceneitem_set_visible(l.item, l.visible);
+		done.push(t.s->canvas);
+	}
+	dirty_ = true;
+	json::Value r = json::Value::object();
+	r.set("scene", sid);
+	r.set("layer", lid);
+	r.set("effects", model::effects_json(fxs));
+	r.set("canvases", std::move(done));
+	return r;
+}
+
 bool Studio::preview_items(const std::string &cv, std::string &sid, std::vector<pedit::Item> &top_first) const
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);

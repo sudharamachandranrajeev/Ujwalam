@@ -2,6 +2,7 @@
 #include "main_window.h"
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QFrame>
@@ -10,8 +11,10 @@
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QProgressBar>
+#include <QRegularExpressionValidator>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
@@ -22,9 +25,93 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 namespace {
+
+// Effect editor (D260): every effect type the host knows (app/host/src/model.cpp, same ranges), its settings and the
+// values a new one starts with. Numbers are canvas px, 0..1 shares or degrees, as in data/schemas/project.schema.json.
+struct FxParam {
+	const char *key, *label;
+	bool colour;
+	double lo, hi, def, step;
+	int dec;
+	const char *cdef;
+};
+struct FxType {
+	const char *type, *label;
+	std::vector<FxParam> params;
+};
+
+FxParam fxNum(const char *k, const char *l, double lo, double hi, double def, double step, int dec)
+{
+	return {k, l, false, lo, hi, def, step, dec, ""};
+}
+FxParam fxCol(const char *k, const char *l, const char *def)
+{
+	return {k, l, true, 0, 0, 0, 0, 0, def};
+}
+
+const std::vector<FxType> &fxTypes()
+{
+	static const std::vector<FxType> t = {
+		{"blur", "Blur", {fxNum("strength", "Strength (source px)", 1, 100, 10, 1, 1)}},
+		{"rounded", "Rounded corners", {fxNum("radius", "Radius (source px)", 0, 500, 20, 1, 1)}},
+		{"chromaKey", "Chroma key", {fxCol("color", "Key colour", "#00ff00"), fxNum("similarity", "Similarity", 1, 1000, 400, 10, 0),
+					     fxNum("smoothness", "Smoothness", 1, 1000, 80, 10, 0)}},
+		{"shadow", "Shadow", {fxCol("color", "Colour", "#000000"), fxNum("opacity", "Opacity", 0, 1, 0.5, 0.05, 2),
+				      fxNum("size", "Softness (px)", 0, 200, 10, 1, 1), fxNum("distance", "Distance (px)", 0, 200, 10, 1, 1),
+				      fxNum("angle", "Light from (degrees)", -360, 360, 135, 5, 1)}},
+		{"glow", "Glow", {fxCol("color", "Colour", "#ffffff"), fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2),
+				  fxNum("size", "Size (px)", 0, 200, 15, 1, 1), fxNum("spread", "Spread", 0, 1, 0, 0.05, 2)}},
+		{"color", "Colour correction", {fxNum("brightness", "Brightness", -1, 1, 0, 0.05, 2), fxNum("contrast", "Contrast", -1, 1, 0, 0.05, 2),
+						fxNum("saturation", "Saturation", -1, 1, 0, 0.05, 2), fxNum("hue", "Hue (degrees)", -180, 180, 0, 5, 1)}},
+		{"toner", "Toner", {fxCol("shadows", "Shadows", "#000000"), fxCol("darktones", "Dark tones", "#404040"),
+				    fxCol("midtones", "Mid tones", "#808080"), fxCol("brights", "Brights", "#c0c0c0"),
+				    fxCol("highlights", "Highlights", "#ffffff"), fxNum("amount", "Amount", 0, 1, 1, 0.05, 2)}},
+		{"cornerPin", "Corner pin", {fxNum("topLeftX", "Top left x", 0, 1, 0, 0.01, 3), fxNum("topLeftY", "Top left y", 0, 1, 0, 0.01, 3),
+					     fxNum("topRightX", "Top right x", 0, 1, 1, 0.01, 3), fxNum("topRightY", "Top right y", 0, 1, 0, 0.01, 3),
+					     fxNum("bottomRightX", "Bottom right x", 0, 1, 1, 0.01, 3),
+					     fxNum("bottomRightY", "Bottom right y", 0, 1, 1, 0.01, 3),
+					     fxNum("bottomLeftX", "Bottom left x", 0, 1, 0, 0.01, 3),
+					     fxNum("bottomLeftY", "Bottom left y", 0, 1, 1, 0.01, 3)}},
+	};
+	return t;
+}
+
+const FxType *fxType(const QString &type)
+{
+	for (const auto &t : fxTypes())
+		if (type == QLatin1String(t.type))
+			return &t;
+	return nullptr;
+}
+
+QJsonObject fxDefault(const FxType &t)
+{
+	QJsonObject o;
+	o.insert(QStringLiteral("type"), QLatin1String(t.type));
+	for (const auto &p : t.params)
+		o.insert(QLatin1String(p.key), p.colour ? QJsonValue(QLatin1String(p.cdef)) : QJsonValue(p.def));
+	return o;
+}
+
+QString fxSummary(const QJsonObject &e)
+{
+	const QString type = e.value(QStringLiteral("type")).toString();
+	const FxType *t = fxType(type);
+	if (!t)
+		return type + QStringLiteral(" (not editable here)");
+	QStringList parts;
+	for (const auto &p : t->params) {
+		if (parts.size() == 3)
+			break;
+		const QJsonValue v = e.value(QLatin1String(p.key));
+		parts << (p.colour ? v.toString() : QString::number(v.toDouble(), 'g', 4));
+	}
+	return QStringLiteral("%1  %2").arg(QLatin1String(t->label), parts.join(QStringLiteral(", ")));
+}
 QJsonArray unwrap(const QJsonObject &body, const char *key)
 {
 	const QJsonValue r = body.value(QStringLiteral("result"));
@@ -359,6 +446,76 @@ QWidget *MainWindow::buildRight()
 	inspForm_->setVisible(false);
 	v->addWidget(insp);
 
+	effBox_ = new QGroupBox(QStringLiteral("Effects"), w);
+	auto *ev = new QVBoxLayout(effBox_);
+	effList_ = new QListWidget(effBox_);
+	effList_->setMaximumHeight(120);
+	ev->addWidget(effList_);
+	auto *erow = new QHBoxLayout();
+	auto *addType = new QComboBox(effBox_);
+	for (const auto &t : fxTypes())
+		addType->addItem(QLatin1String(t.label), QLatin1String(t.type));
+	auto *add = new QPushButton(QStringLiteral("Add"), effBox_);
+	auto *up = new QPushButton(QStringLiteral("Up"), effBox_);
+	auto *down = new QPushButton(QStringLiteral("Down"), effBox_);
+	auto *rm = new QPushButton(QStringLiteral("Remove"), effBox_);
+	erow->addWidget(addType, 1);
+	erow->addWidget(add);
+	erow->addWidget(up);
+	erow->addWidget(down);
+	erow->addWidget(rm);
+	ev->addLayout(erow);
+	auto *formHost = new QWidget(effBox_);
+	effForm_ = new QFormLayout(formHost);
+	ev->addWidget(formHost);
+	auto *ebtn = new QHBoxLayout();
+	auto *eapply = new QPushButton(QStringLiteral("Apply effects"), effBox_);
+	auto *erevert = new QPushButton(QStringLiteral("Revert"), effBox_);
+	ebtn->addWidget(eapply);
+	ebtn->addWidget(erevert);
+	ev->addLayout(ebtn);
+	effBox_->setVisible(false);
+	v->addWidget(effBox_);
+	connect(effList_, &QListWidget::currentRowChanged, this, [this](int) { renderEffectForm(); });
+	connect(add, &QPushButton::clicked, this, [this, addType]() {
+		const FxType *t = fxType(addType->currentData().toString());
+		if (!t)
+			return;
+		if (effEdit_.size() >= 6)
+			return note(QStringLiteral("A layer has at most 6 effects."));
+		editEffects([t](QJsonArray &a, int &row) {
+			a.append(fxDefault(*t));
+			row = (int)a.size() - 1;
+		});
+	});
+	connect(rm, &QPushButton::clicked, this, [this]() {
+		editEffects([](QJsonArray &a, int &row) {
+			if (row < 0 || row >= a.size())
+				return;
+			a.removeAt(row);
+			row = std::min(row, (int)a.size() - 1);
+		});
+	});
+	auto shift = [this](int by) {
+		editEffects([by](QJsonArray &a, int &row) {
+			const int to = row + by;
+			if (row < 0 || to < 0 || to >= a.size())
+				return;
+			const QJsonValue x = a.at(row);
+			a.replace(row, a.at(to));
+			a.replace(to, x);
+			row = to;
+		});
+	};
+	connect(up, &QPushButton::clicked, this, [shift]() { shift(-1); });
+	connect(down, &QPushButton::clicked, this, [shift]() { shift(1); });
+	connect(eapply, &QPushButton::clicked, this, &MainWindow::applyEffects);
+	connect(erevert, &QPushButton::clicked, this, [this]() {
+		effDirty_ = false;
+		effLayer_.clear();
+		renderInspector();
+	});
+
 	auto *mix = new QGroupBox(QStringLiteral("Audio mixer"), w);
 	auto *scroll = new QScrollArea(mix);
 	scroll->setWidgetResizable(true);
@@ -538,6 +695,13 @@ void MainWindow::renderInspector()
 	const QJsonObject p = l.value(QStringLiteral("placement")).toObject();
 	const bool editable = !l.isEmpty() && l.contains(QStringLiteral("placement"));
 	inspForm_->setVisible(editable);
+	effBox_->setVisible(editable && effectEditing_);
+	if (selected_ != effLayer_ || !effDirty_) { // a reload keeps unsent effect changes of the same layer
+		effLayer_ = selected_;
+		effEdit_ = l.value(QStringLiteral("effects")).toArray();
+		effDirty_ = false;
+		renderEffects();
+	}
 	inspEmpty_->setVisible(!editable);
 	if (!l.isEmpty() && !editable)
 		inspEmpty_->setText(l.value(QStringLiteral("name")).toString() + QStringLiteral(" has no editable placement."));
@@ -597,6 +761,109 @@ void MainWindow::applyInspector()
 		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
 			return confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air" (D233)
 		note(ok ? QStringLiteral("Applied.") : QStringLiteral("Not applied: ") + err);
+		loadLayers();
+	});
+}
+
+// ---- effect editor (D260) -------------------------------------------------------------------------------------------
+
+void MainWindow::editEffects(const std::function<void(QJsonArray &, int &)> &change)
+{
+	int row = effList_->currentRow();
+	change(effEdit_, row);
+	effDirty_ = true;
+	renderEffects();
+	if (row >= 0 && row < effList_->count())
+		effList_->setCurrentRow(row);
+}
+
+void MainWindow::renderEffects()
+{
+	const int keep = effList_->currentRow();
+	{
+		const QSignalBlocker block(effList_);
+		effList_->clear();
+		for (const auto &x : effEdit_)
+			effList_->addItem(fxSummary(x.toObject()));
+		if (effList_->count())
+			effList_->setCurrentRow(std::clamp(keep, 0, effList_->count() - 1));
+	}
+	renderEffectForm();
+}
+
+void MainWindow::renderEffectForm()
+{
+	while (effForm_->rowCount())
+		effForm_->removeRow(0);
+	const int row = effList_->currentRow();
+	if (row < 0 || row >= effEdit_.size()) {
+		effForm_->addRow(new QLabel(effEdit_.isEmpty() ? QStringLiteral("No effects. Pick one and press Add.") : QString()));
+		return;
+	}
+	const QJsonObject e = effEdit_.at(row).toObject();
+	const FxType *t = fxType(e.value(QStringLiteral("type")).toString());
+	if (!t) {
+		effForm_->addRow(new QLabel(QStringLiteral("This effect type has no settings here; it is kept as it is.")));
+		return;
+	}
+	auto set = [this, row](const QString &key, const QJsonValue &v) {
+		if (row >= effEdit_.size())
+			return;
+		QJsonObject o = effEdit_.at(row).toObject();
+		o.insert(key, v);
+		effEdit_.replace(row, o);
+		effDirty_ = true;
+		if (QListWidgetItem *it = effList_->item(row))
+			it->setText(fxSummary(o));
+	};
+	for (const auto &p : t->params) {
+		const QString key = QLatin1String(p.key);
+		if (p.colour) {
+			auto *line = new QLineEdit(e.value(key).toString(QLatin1String(p.cdef)));
+			line->setValidator(new QRegularExpressionValidator(QRegularExpression(QStringLiteral("^#[0-9a-fA-F]{6}$")), line));
+			line->setMaxLength(7);
+			auto *swatch = new QLabel();
+			swatch->setFixedSize(22, 22);
+			auto paint = [swatch](const QString &c) { swatch->setStyleSheet(QStringLiteral("background:%1;border:1px solid #888;").arg(c)); };
+			paint(line->text());
+			auto *rowBox = new QHBoxLayout();
+			rowBox->addWidget(line, 1);
+			rowBox->addWidget(swatch);
+			effForm_->addRow(QLatin1String(p.label), rowBox);
+			connect(line, &QLineEdit::textChanged, this, [line, set, paint, key](const QString &txt) {
+				if (!line->hasAcceptableInput())
+					return;
+				paint(txt);
+				set(key, txt.toLower());
+			});
+		} else {
+			auto *spin = new QDoubleSpinBox();
+			spin->setRange(p.lo, p.hi);
+			spin->setDecimals(p.dec);
+			spin->setSingleStep(p.step);
+			spin->setValue(e.value(key).toDouble(p.def));
+			effForm_->addRow(QLatin1String(p.label), spin);
+			connect(spin, &QDoubleSpinBox::valueChanged, this, [set, key](double v) { set(key, v); });
+		}
+	}
+}
+
+// The whole list goes to the host for every canvas of the scene (layers.setEffects); while live the UI server asks
+// for "yes, on air" first. The host checks each effect; the UI server saves the list into the project (undoable).
+void MainWindow::applyEffects()
+{
+	if (selected_.isEmpty() || activeScene_.isEmpty())
+		return;
+	QJsonObject x;
+	x.insert(QStringLiteral("scene"), activeScene_);
+	x.insert(QStringLiteral("layer"), selected_);
+	x.insert(QStringLiteral("effects"), effEdit_);
+	api_->host(QStringLiteral("layers.setEffects"), x, [this](bool ok, const QJsonObject &b, const QString &err) {
+		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
+			return confirm(b.value(QStringLiteral("pending")).toObject());
+		if (ok)
+			effDirty_ = false;
+		note(ok ? QStringLiteral("Effects applied.") : QStringLiteral("Effects not applied: ") + err);
 		loadLayers();
 	});
 }
@@ -793,6 +1060,10 @@ void MainWindow::pollStatus()
 		const QJsonObject h = s.value(QStringLiteral("host")).toObject(), c = s.value(QStringLiteral("core")).toObject();
 		live_ = h.value(QStringLiteral("live")).toBool();
 		previewEditing_ = h.value(QStringLiteral("previewEditing")).toBool();
+		if (const bool ee = h.value(QStringLiteral("effectEditing")).toBool(); ee != effectEditing_) {
+			effectEditing_ = ee;
+			renderInspector();
+		}
 		recording_ = h.value(QStringLiteral("recording")).toBool();
 		pillLive_->setText(live_ ? QStringLiteral("LIVE") : QStringLiteral("Offline"));
 		pillLive_->setStyleSheet(live_ ? QStringLiteral("background:#c62828;color:white;") : QString());

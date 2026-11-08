@@ -10,7 +10,7 @@
 // Reading `before` from a layers.list result: beforeOf(method, params, list) returns the layer's current value for
 // the keys the edit will change, or null when the layer is not in the list (then nothing is recorded).
 
-export const UNDOABLE = Object.freeze(['layers.setPlacement', 'layers.setVisible', 'layers.move']);
+export const UNDOABLE = Object.freeze(['layers.setPlacement', 'layers.setVisible', 'layers.move', 'layers.setEffects']);
 const PLACEMENT_DEFAULTS = { rotation: 0 };
 const CROP_KEYS = ['left', 'top', 'right', 'bottom'];
 
@@ -25,6 +25,7 @@ export function beforeOf(method, params, list) {
   const l = layers[index];
   if (method === 'layers.setVisible') return typeof l.visible === 'boolean' ? { visible: l.visible } : null;
   if (method === 'layers.move') return { index };
+  if (method === 'layers.setEffects') return { effects: Array.isArray(l.effects) ? structuredClone(l.effects) : [] };
   if (method !== 'layers.setPlacement' || !isObj(l.placement) || !isObj(params.placement)) return null;
   const cur = l.placement;
   const placement = {};
@@ -46,6 +47,7 @@ export function afterOf(method, params) {
   if (method === 'layers.setPlacement') return { placement: structuredClone(params.placement) };
   if (method === 'layers.setVisible') return { visible: params.visible };
   if (method === 'layers.move') return { index: params.index };
+  if (method === 'layers.setEffects') return { effects: structuredClone(params.effects) };
   return null;
 }
 
@@ -75,7 +77,7 @@ export function createEditHistory({ max = 50 } = {}) {
     /** Moves the newest undone edit back; call after the host applied its `after`. */
     commitRedo() { const e = undone.pop(); if (e) done.push(e); return e ?? null; },
     state() {
-      const label = (e) => (e ? `${e.method === 'layers.setPlacement' ? 'Move/resize' : e.method === 'layers.setVisible' ? (e.after.visible ? 'Show' : 'Hide') : 'Reorder'} ${e.layer}` : null);
+      const label = (e) => (e ? `${e.method === 'layers.setPlacement' ? 'Move/resize' : e.method === 'layers.setVisible' ? (e.after.visible ? 'Show' : 'Hide') : e.method === 'layers.setEffects' ? 'Effects' : 'Reorder'} ${e.layer}` : null);
       return { undo: done.length, redo: undone.length, nextUndo: label(done.at(-1)), nextRedo: label(undone.at(-1)) };
     },
     clear() { done = []; undone = []; },
