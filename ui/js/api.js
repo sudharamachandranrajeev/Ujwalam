@@ -31,6 +31,8 @@
     coreRequest: function (id, params) { return request('POST', '/ui/api/core/request', { id: id, params: params || {} }); },
     confirm: function (pendingId, text) { return request('POST', '/ui/api/confirm', { pendingId: pendingId, text: text }); },
     cancel: function (pendingId) { return request('POST', '/ui/api/cancel', { pendingId: pendingId }); },
+    readiness: function () { return request('GET', '/ui/api/readiness'); },
+    endAll: function () { return request('POST', '/ui/api/streams/end-all', {}); },
     flags: function () { return request('GET', '/ui/api/flags'); },
     setFlag: function (id, on) { return request('POST', '/ui/api/flags/set', { id: id, on: on }); },
     feedback: function () { return request('GET', '/ui/api/feedback'); },

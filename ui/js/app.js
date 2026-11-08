@@ -355,15 +355,46 @@
     var sb = $('btn-stream'), rb = $('btn-record');
     sb.disabled = !ready.stream; rb.disabled = !ready.record;
     setText(sb, h.live ? 'Stop stream' : 'Start stream');
+    $('btn-end-all').hidden = !h.live; // D299: stops every stream sink, the recording keeps running
     setText(rb, h.recording ? 'Stop recording' : 'Record');
     sb.title = ready.stream ? '' : 'Disabled until the stream output exists';
     rb.title = ready.record ? '' : 'Disabled until the record output exists';
   }
 
   // ---- confirmation (typed phrase; the server keeps the ids and hashes) ----
+  // ---- Ready to go live? (D299, flag readiness): one row per check; reads only ----
+  var READY_PILL = { pass: ['ok', 'ok'], warn: ['warn', 'warn'], fail: ['blocked', 'fail'] };
+  function renderReady(ul, r) {
+    clear(ul);
+    ((r && r.items) || []).forEach(function (i) {
+      var p = READY_PILL[i.status] || ['', i.status];
+      ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'pill ' + p[0], text: p[1] }),
+        el('span', { class: 'ready-text' }, [el('b', { text: i.title }), el('span', { text: i.message + (i.fix ? ' Fix: ' + i.fix : '') })])]));
+    });
+  }
+  function readyLine(r) { return r.counts.pass + ' ok, ' + r.counts.warn + ' warning(s), ' + r.counts.fail + ' problem(s)' + (r.ok ? '. Nothing blocks going live.' : '. Going live needs the problems fixed or a typed override.'); }
+  function loadReady() {
+    setText($('ready-summary'), 'Checking...');
+    $('btn-ready').disabled = true;
+    return Api.readiness().then(function (r) { renderReady($('ready-list'), r); setText($('ready-summary'), readyLine(r)); })
+      .catch(function (e) { setText($('ready-summary'), 'The check did not run: ' + (e && e.message ? e.message : 'error')); })
+      .then(function () { $('btn-ready').disabled = false; });
+  }
+  function endAllText(x) {
+    if (!x) return 'Done.';
+    var left = (x.sinks || []).filter(function (s) { return s.state !== 'stopped' && s.state !== 'idle'; });
+    return (x.allStopped ? 'All streams ended.' : 'Still closing: ' + left.map(function (s) { return s.id + ' (' + s.state + ')'; }).join(', ') + '.') + (x.recording ? ' The recording keeps running.' : '');
+  }
+
   function openConfirm(p) {
     state.pending = p;
-    setText($('confirm-summary'), p.summary);
+    var cr = $('confirm-ready');
+    if (p.readiness) {
+      // Go-live readiness: the check first (the summary's first paragraph is the action, the list is the check).
+      setText($('confirm-summary'), String(p.summary).split('\n\n')[0] + '. ' + readyLine(p.readiness));
+      renderReady(cr, p.readiness); cr.hidden = false;
+      if (!$('readiness').hidden) { renderReady($('ready-list'), p.readiness); setText($('ready-summary'), readyLine(p.readiness)); }
+    } else { clear(cr); cr.hidden = true; setText($('confirm-summary'), p.summary); }
     setText($('confirm-phrase'), p.phrase);
     setText($('confirm-msg'), p.step ? 'Step ' + p.step + ' of ' + p.of : '');
     $('confirm-input').value = '';
@@ -377,6 +408,8 @@
       if (r.verdict === 'wrong-phrase') { setText($('confirm-msg'), 'That is not the phrase. Type it exactly.'); return; }
       closeConfirm();
       if (r.verdict === 'confirm' && r.pending) openConfirm(r.pending);
+      else if (r.verdict === 'allow' && r.endAll) setText($('preview-note'), endAllText(r.endAll));
+      else if (r.verdict === 'allow' && r.override) setText($('preview-note'), 'Going live with the readiness override' + (r.overrideLogged ? ' (logged).' : ' (the log could not be written).'));
       else if (r.verdict === 'allow') { if (r.flags) renderFlags(r.flags); if (r.bots) renderBots(r.bots); setText($('preview-note'), 'Done.'); if (r.forced) setText($('bot-note'), 'The bot did not close when asked and was force-closed; unsaved bot changes may be lost.'); loadScenes().then(loadMixer).catch(function () {}); } else setText($('preview-note'), r.verdict === 'allow' ? 'Done.' : 'Result: ' + r.verdict + (r.reason ? ' (' + r.reason + ')' : ''));
     }).catch(function (e) { closeConfirm(); showError('Confirmation failed: ' + (e.message || 'error')); });
   }
@@ -432,6 +465,9 @@
     renderTransitionCard((list || []).some(function (f) { return f.id === 'transitions' && f.on; }));
     var reportOn = (list || []).some(function (f) { return f.id === 'report-button' && f.on; });
     $('report').hidden = !reportOn;
+    var readyOn = (list || []).some(function (f) { return f.id === 'readiness' && f.on; }); // D299
+    $('readiness').hidden = !readyOn;
+    if (!readyOn) { clear($('ready-list')); setText($('ready-summary'), ''); }
     (list || []).forEach(function (f) {
       var cb = el('input', { type: 'checkbox', id: 'flag-' + f.id, 'aria-label': f.id });
       cb.checked = !!f.on;
@@ -641,6 +677,8 @@
     $('feedback-close').addEventListener('click', function () { $('feedback').hidden = true; });
     $('fb-form').addEventListener('submit', saveFeedback);
     $('btn-stream').addEventListener('click', function () { hostAction(state.status && state.status.host.live ? 'stream.stop' : 'stream.start'); });
+    $('btn-end-all').addEventListener('click', function () { guard(Api.endAll().then(function (r) { if (r.verdict === 'confirm') openConfirm(r.pending); })); });
+    $('btn-ready').addEventListener('click', function () { loadReady(); });
     $('btn-record').addEventListener('click', function () { hostAction(state.status && state.status.host.recording ? 'record.stop' : 'record.start'); });
     ['h', 'v'].forEach(function (c) {
       $('btn-open-' + c).addEventListener('click', function () { guard(Api.host('preview.open', { canvas: c }).then(function (r) { setText($('preview-note'), (r.result && r.result.note) || 'Preview ' + c.toUpperCase() + ' opened' + (r.result && r.result.display ? ' on the ' + r.result.display : '') + '.'); })); });

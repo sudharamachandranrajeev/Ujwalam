@@ -19,6 +19,7 @@
     <button id="btn-posts" class="btn" type="button" title="Review post packages; optional private YouTube upload" hidden>Posts</button>
     <button id="btn-record"class="btn" type="button" disabled>Record</button>
     <button id="btn-stream" class="btn btn-live" type="button" disabled>Start stream</button>
+    <button id="btn-end-all" class="btn btn-live" type="button" hidden title="Stops both YouTube outputs, Twitch and Kick and closes their connections; the recording keeps running">End all streams</button>
   </header>
 
   <aside class="left">
@@ -124,6 +125,12 @@
     <section class="panel grow">
       <h2>Audio mixer</h2>
       <div id="mixer" class="mixer" aria-label="Audio mixer"></div>
+    </section>
+    <section id="readiness" class="panel" hidden>
+      <h2>Ready to go live?</h2>
+      <button id="btn-ready" class="btn" type="button" title="Checks stream keys, disk space, other streaming apps, bots, the host, the GPU and more. Reads only.">Check now</button>
+      <p id="ready-summary" class="muted" role="status"></p>
+      <ul id="ready-list" class="list ready-list" aria-label="Readiness checks"></ul>
     </section>
     <section id="bots" class="panel" hidden>
       <h2>Bots</h2>
@@ -252,6 +259,7 @@
   <div class="modal-card">
     <h3 id="confirm-title">Confirm</h3>
     <p id="confirm-summary"></p>
+    <ul id="confirm-ready" class="list ready-list" aria-label="Readiness checks" hidden></ul>
     <p>Type <code id="confirm-phrase"></code> to confirm.</p>
     <input id="confirm-input" type="text" autocomplete="off" spellcheck="false" maxlength="40">
     <p id="confirm-msg" class="muted" role="status"></p>

@@ -1,0 +1,47 @@
+{
+  "$comment": "Pre-stream readiness check (services/studio-ui/readiness.mjs, flag 'readiness', D299 proposed). Every threshold and name the check uses lives here, never in code. status 'proposed' = agent defaults derived as noted below, not yet approved by the user or tuned on a real stream.",
+  "version": "0.1.0",
+  "status": "proposed",
+  "checked": "2026-11-08",
+  "checkTimeoutMs": 4000,
+  "goLiveMaxAgeMs": 60000,
+  "disk": {
+    "failBelowGB": 22,
+    "warnBelowGB": 44,
+    "gbPerHour": 11,
+    "source": "derived 2026-11-08 from data/outputs/presets/youtube-1080p60.json: H recording 17000 kbps + V recording 7500 kbps (the practice plan records both) = 24.5 Mbps = about 11 GB per hour (gbPerHour, used to say how many hours are left). fail = less than 2 hours of H+V recording left, warn = less than 4 hours. The drive checked is the host's recordings folder (host.info recordingsDir), else the data folder."
+  },
+  "otherEncoders": {
+    "source": "process image names, checked 2026-11-08. Meld: tools/soak/stream-day.mjs already looks for MeldStudio*; the exact image name is UNVERIFIED (prefix match). OBS: obs64.exe is the OBS Studio 64-bit image (UNVERIFIED on this PC). A running streaming app can hold NVENC sessions and push to the same stream keys, so Meld and OBS fail (an explicit override can still go live); the others only warn.",
+    "apps": [
+      { "label": "Meld Studio", "prefixes": ["meldstudio"], "severity": "fail" },
+      { "label": "OBS Studio", "prefixes": ["obs64", "obs32"], "severity": "fail" },
+      { "label": "Streamlabs Desktop", "prefixes": ["streamlabs"], "severity": "warn" },
+      { "label": "XSplit", "prefixes": ["xsplit"], "severity": "warn" }
+    ]
+  },
+  "bots": {
+    "source": "ports come from the local profile (services/bots loadBotConfig, defaults ws://127.0.0.1:8093 Streamer.bot and :8083 Speaker.bot). A bot that does not answer only warns: the stream itself does not need it (chat feedback, alerts and the spoken test announcement do).",
+    "tcpTimeoutMs": 1000
+  },
+  "loopback": {
+    "maxAgeDays": 7,
+    "source": "AGENTS.md: never test outputs against real platforms until loopback ffprobe assertions pass. The full CI (tools/ci.mjs, step test-host) runs the host's loopback output tests with ffprobe; a full pass writes a stamp in the git folder (tools/ci-stamp.mjs). Older than maxAgeDays or none = warn."
+  },
+  "gpu": {
+    "adapterPattern": "NVIDIA",
+    "preference": 2,
+    "source": "D1 / AGENTS.md: pin the app to the NVIDIA GPU. host.info reports the libobs adapter name and the Windows graphics preference of the host exe (HKCU\\Software\\Microsoft\\DirectX\\UserGpuPreferences, GpuPreference=2 is 'High performance'). Adapter not NVIDIA = fail; NVIDIA but no preference stored = warn."
+  },
+  "audio": {
+    "method": "audio.status",
+    "failStates": ["missing", "failed", "error"],
+    "warnStates": ["silent", "unknown"],
+    "source": "UNVERIFIED: the host's per-source live audio state call is being added by another change (2026-11-08); its method name and fields are assumed here ({ sources: [{ id, name, state }] }). Until the host has it, the audio item says 'unknown' and only warns. Muted sources in the stream mix (mixer.list) warn."
+  },
+  "endAll": {
+    "waitMs": 6000,
+    "pollMs": 500,
+    "source": "how long 'End all streams' waits for every stream output to report stopped before it answers (the UI server's request timeout is 10 s)."
+  }
+}
