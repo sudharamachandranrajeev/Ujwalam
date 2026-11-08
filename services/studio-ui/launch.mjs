@@ -84,6 +84,7 @@ import { hudCoverage, loadHudZones } from '../project/hud-zones.mjs';
 import { loadProject } from '../project/store.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
 import { createRecordClips } from './record-clips.mjs';
+import { createPostChain } from '../posting/auto-chain.mjs';
 import { folderProblem, readSettings } from './user-settings.mjs';
 import { createMediaInfo } from '../project/media-info.mjs';
 import { rpc } from './backends.mjs';
@@ -935,7 +936,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (disc && alpha) {
       // Clips from each finished recording (D283, flag clip-pipeline): outputs.status every 5 s; the discovery file is
       // read each time, so a restarted host is followed.
-      recordClips = createRecordClips({ clipRoot: CLIP_ROOT, dataDir, log: (l) => console.log(`[studio] ${l}`) });
+      recordClips = createRecordClips({ clipRoot: CLIP_ROOT, dataDir, log: (l) => console.log(`[studio] ${l}`), postChain: createPostChain({ dataDir, log: (l) => console.log(`[studio] ${l}`) }) });
       const clipTick = async () => {
         if (stopping) return;
         try {

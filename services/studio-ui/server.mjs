@@ -31,6 +31,7 @@ import { BOTS, BOT_LABELS, GRACEFUL_MS, createBots } from '../bots/index.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
+import { QUEUE_NAME, createUploadQueue, readQueueSummary } from '../posting/auto-chain.mjs';
 import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, loadRules, planAuto } from '../posting/auto-post.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
@@ -396,6 +397,7 @@ export function createStudioServer(opts) {
         running: s.running ? { name: str(s.running.name, 120), kind: str(s.running.kind, 16) } : null,
         queued: Array.isArray(s.queued) ? s.queued.length : 0,
         asks: (Array.isArray(s.asks) ? s.asks : []).slice(0, 5).map((a) => ({ id: str(a.id, 160), name: str(a.name, 120), kind: str(a.kind, 16), minutes: Number.isFinite(a.minutes) ? a.minutes : null })),
+        posting: (() => { try { return readQueueSummary(opts.dataDir, flags); } catch { return null; } })(),
         last: l ? { name: str(l.name, 120), kind: str(l.kind, 16), result: str(l.result, 16), reason: str(l.reason, 200), clips: Number(l.clips) || 0, out: str(l.out, 400), folder: str(l.folder, 400) } : null };
     } catch { return base; }
   }
@@ -743,7 +745,14 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/bots') {
       try { return json(res, 200, { bots: await bots.statusAll() }); } catch { return json(res, 502, { error: 'bots-error' }); }
     }
-    if (req.method === 'GET' && route === '/ui/api/posts') return json(res, 200, { posts: posting.list() });
+    if (req.method === 'GET' && route === '/ui/api/posts') {
+      // D300: each post carries its auto-upload queue state; `queue` is the plain-language summary (e.g. not signed in to YouTube).
+      let qs = new Map(); let queue = null;
+      if (typeof opts.dataDir === 'string') {
+        try { qs = new Map(createUploadQueue(path.join(opts.dataDir, 'posting', QUEUE_NAME)).items().map((i) => [i.id, i])); queue = readQueueSummary(opts.dataDir, flags); } catch { /* the list still works */ }
+      }
+      return json(res, 200, { posts: posting.list().map((p) => { const q = qs.get(p.id); return q ? { ...p, queueState: q.state, queueAttempts: q.attempts, queueNextAt: q.nextAt, queueReason: q.reason } : p; }), queue });
+    }
     if (req.method === 'GET' && route === '/ui/api/posts/auto') {
       // Read-only: the auto-post mode and what a run would do now. Enabling stays a flag; nothing is changed here.
       try {
