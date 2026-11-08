@@ -14,6 +14,7 @@
 #include <QObject>
 #include <QPointer>
 #include <QRect>
+#include <QStringList>
 #include <QString>
 #include <QWidget>
 #include <functional>
@@ -126,5 +127,6 @@ private:
 	QJsonObject tour_;
 	QJsonArray steps_;
 	int idx_ = -1, total_ = 0, position_ = 0;
+	QStringList overlaps_; // ids of steps whose card was placed over its target (should stay empty)
 	bool active_ = false, offerNever_ = false;
 };

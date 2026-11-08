@@ -72,55 +72,97 @@ Bubble::Bubble(QWidget *host) : QWidget(host)
 
 QPoint Bubble::pointAt(const QRect &target, Side pref)
 {
-	layout()->invalidate();
-	layout()->activate();
-	const int w = width();
-	const int h = layout()->hasHeightForWidth() ? layout()->totalHeightForWidth(w) : layout()->sizeHint().height();
-	setFixedHeight(h);
+	// The card never covers its target: try below, above, left, right (the wanted side first), then the roomiest side
+	// with a narrower card. The card's outer edge sits a gap from the target; the arrow lives inside the card's margin.
+	if (!property("baseW").isValid())
+		setProperty("baseW", width());
+	const int w0 = property("baseW").toInt();
 	const QRect bounds = parentWidget()->rect().adjusted(6, 6, -6, -6);
 	const int gap = 4;
-	auto clampX = [&](int x) { return std::max(bounds.left(), std::min(x, bounds.right() - w + 1)); };
-	auto clampY = [&](int y) { return std::max(bounds.top(), std::min(y, bounds.bottom() - h + 1)); };
-	struct Cand {
-		Side s;
-		QPoint p;
-	};
-	// the card's outer edge touches the target (plus gap); the arrow lives inside the card's margin
-	const QPoint c = target.center();
-	const Cand cands[] = {{Right, QPoint(target.right() + gap, clampY(c.y() - h / 2))},
-			      {Below, QPoint(clampX(c.x() - w / 2), target.bottom() + gap)},
-			      {Left, QPoint(target.left() - gap - w, clampY(c.y() - h / 2))},
-			      {Above, QPoint(clampX(c.x() - w / 2), target.top() - gap - h)}};
-	const Cand *pick = nullptr;
 	const QList<QRect> avoid = avoid_ ? avoid_() : QList<QRect>();
-	auto fits = [&](const Cand &k) {
-		const QRect r(k.p, QSize(w, h));
-		for (const QRect &a : avoid)
-			if (r.adjusted(kArrow, kArrow, -kArrow, -kArrow).intersects(a))
-				return false;
-		return bounds.contains(r);
+	auto sized = [&](int w) {
+		setFixedWidth(w);
+		layout()->invalidate();
+		layout()->activate();
+		const int h = layout()->hasHeightForWidth() ? layout()->totalHeightForWidth(w) : layout()->sizeHint().height();
+		setFixedHeight(h);
+		return h;
 	};
-	if (pref != None)
-		for (const Cand &k : cands)
-			if (k.s == pref && fits(k))
-				pick = &k;
-	if (!pick)
-		for (const Cand &k : cands)
-			if (fits(k)) {
-				pick = &k;
+	auto rectFor = [&](Side s, int w, int h) {
+		const QPoint c = target.center();
+		auto cx = [&](int x) { return std::max(bounds.left(), std::min(x, bounds.right() - w + 1)); };
+		auto cy = [&](int y) { return std::max(bounds.top(), std::min(y, bounds.bottom() - h + 1)); };
+		switch (s) {
+		case Below: return QRect(QPoint(cx(c.x() - w / 2), target.bottom() + 1 + gap), QSize(w, h));
+		case Above: return QRect(QPoint(cx(c.x() - w / 2), target.top() - gap - h), QSize(w, h));
+		case Left: return QRect(QPoint(target.left() - gap - w, cy(c.y() - h / 2)), QSize(w, h));
+		default: return QRect(QPoint(target.right() + 1 + gap, cy(c.y() - h / 2)), QSize(w, h));
+		}
+	};
+	auto free = [&](Side s) {
+		switch (s) {
+		case Below: return bounds.bottom() - target.bottom();
+		case Above: return target.top() - bounds.top();
+		case Left: return target.left() - bounds.left();
+		default: return bounds.right() - target.right();
+		}
+	};
+	auto ok = [&](const QRect &r, bool useAvoid) {
+		if (!bounds.contains(r) || r.intersects(target))
+			return false;
+		if (useAvoid)
+			for (const QRect &a : avoid)
+				if (r.adjusted(kArrow, kArrow, -kArrow, -kArrow).intersects(a))
+					return false;
+		return true;
+	};
+	QList<Side> order = {Below, Above, Left, Right};
+	if (pref != None) {
+		order.removeAll(pref);
+		order.prepend(pref);
+	}
+	const int h0 = sized(w0);
+	Side pickSide = None;
+	QRect pick;
+	for (const bool useAvoid : {true, false}) {
+		for (const Side sd : order) {
+			const QRect r = rectFor(sd, w0, h0);
+			if (ok(r, useAvoid)) {
+				pickSide = sd;
+				pick = r;
 				break;
 			}
-	QPoint at;
-	if (pick) {
-		side_ = pick->s;
-		at = pick->p;
-		const QPoint tip = (side_ == Right || side_ == Left) ? QPoint(0, target.center().y() - at.y()) : QPoint(target.center().x() - at.x(), 0);
-		const int lo = kArrow + 18, hiX = w - kArrow - 18, hiY = h - kArrow - 18;
-		along_ = (side_ == Right || side_ == Left) ? std::max(lo, std::min(tip.y(), hiY)) : std::max(lo, std::min(tip.x(), hiX));
-	} else { // nothing fits beside it (a big target): over its middle, no arrow
-		side_ = None;
-		at = QPoint(clampX(c.x() - w / 2), clampY(c.y() - h / 2));
+		}
+		if (pickSide != None)
+			break;
 	}
+	if (pickSide == None) { // nothing fits at full width: the roomiest side, a narrower card
+		QList<Side> by = order;
+		std::sort(by.begin(), by.end(), [&](Side a, Side b) { return free(a) > free(b); });
+		for (const Side sd : by) {
+			const bool wide = sd == Left || sd == Right;
+			const int w = wide ? std::max(180, std::min(w0, free(sd) - gap - 1)) : std::min(w0, bounds.width());
+			const int h = sized(w);
+			const QRect r = rectFor(sd, w, h);
+			if (ok(r, false)) {
+				pickSide = sd;
+				pick = r;
+				break;
+			}
+		}
+		if (pickSide == None) { // a target that fills the window: best effort, clamped
+			pickSide = by.first();
+			const int h = sized(std::min(w0, bounds.width()));
+			pick = rectFor(pickSide, width(), h);
+			pick.moveTo(std::max(bounds.left(), pick.x()), std::max(bounds.top(), pick.y()));
+		}
+	}
+	side_ = pickSide;
+	const QPoint at = pick.topLeft();
+	const int w = width(), h = height();
+	const QPoint tip = (side_ == Right || side_ == Left) ? QPoint(0, target.center().y() - at.y()) : QPoint(target.center().x() - at.x(), 0);
+	const int lo = kArrow + 18, hiX = std::max(lo, w - kArrow - 18), hiY = std::max(lo, h - kArrow - 18);
+	along_ = (side_ == Right || side_ == Left) ? std::max(lo, std::min(tip.y(), hiY)) : std::max(lo, std::min(tip.x(), hiX));
 	move(at);
 	update();
 	return at;
@@ -344,6 +386,7 @@ int Coach::step(int from, int dir) const
 
 bool Coach::start(const QJsonObject &tour, bool offerNever)
 {
+	overlaps_.clear();
 	if (active_) {
 		active_ = false;
 		dim_->hide();
@@ -394,6 +437,9 @@ void Coach::show(int idx, bool animate)
 				  : side == QStringLiteral("above") ? Bubble::Above : side == QStringLiteral("below") ? Bubble::Below : Bubble::None;
 	const QPoint from = card_->pos();
 	const QPoint dest = card_->pointAt(r, want);
+	const QString sid = s.value(QStringLiteral("id")).toString();
+	if (!r.isEmpty() && QRect(dest, card_->size()).intersects(r) && !overlaps_.contains(sid))
+		overlaps_ << sid;
 	dim_->raise();
 	card_->raise();
 	if (animate && motion::enabled(card_)) {
@@ -492,6 +538,7 @@ QJsonObject Coach::probe() const
 	o.insert(QStringLiteral("neverOffered"), offerNever_);
 	o.insert(QStringLiteral("neverTicked"), never_->isChecked());
 	o.insert(QStringLiteral("arrow"), int(card_->arrowSide()));
+	o.insert(QStringLiteral("overlaps"), QJsonArray::fromStringList(overlaps_));
 	o.insert(QStringLiteral("hole"), QJsonObject{{QStringLiteral("x"), r.x()}, {QStringLiteral("y"), r.y()}, {QStringLiteral("w"), r.width()}, {QStringLiteral("h"), r.height()}});
 	return o;
 }

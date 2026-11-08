@@ -370,7 +370,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('add buttons (D292): a + above the scene list and the layer list opens the add windows; no flag needed', async () => {
     const p = await probe([], 6500, 'add-button:layer', null, {}, { project: true });
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['add-button:layer', true]]);
-    assert.deepEqual(p.addButtons, { scene: { enabled: true, tip: 'Add scene', text: '+' }, layer: { enabled: true, tip: 'Add layer', text: '+' } });
+    assert.deepEqual(p.addButtons, { scene: { enabled: true, tip: 'Add scene', icon: true }, layer: { enabled: true, tip: 'Add layer', icon: true } });
     assert.equal(p.addDialog.kind, 'layer');
     assert.match(p.addDialog.title, /^Add layer to "Gameplay"$/);
     const by = Object.fromEntries(p.addDialog.kinds.map((k) => [k.kind, k]));
@@ -423,7 +423,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('while live (D292): the + buttons and every structure menu item are greyed with "Not while live"; Show/Hide and Move stay on', async () => {
     const p = await probe([], 6500, 'select-layer:game,layer-menu:show,add-button:layer,layer-menu:duplicate', null, {}, { project: true, live: true });
     assert.equal(p.live, true);
-    assert.deepEqual(p.addButtons, { scene: { enabled: false, tip: 'Not while live', text: '+' }, layer: { enabled: false, tip: 'Not while live', text: '+' } });
+    assert.deepEqual(p.addButtons, { scene: { enabled: false, tip: 'Not while live', icon: true }, layer: { enabled: false, tip: 'Not while live', icon: true } });
     const by = Object.fromEntries(p.menu.items.map((i) => [i.id, i]));
     for (const id of ['add', 'duplicate', 'rename', 'delete']) assert.deepEqual([id, by[id].enabled, by[id].tip], [id, false, 'Not while live']);
     for (const id of ['visible', 'up', 'copylook', 'look']) assert.equal(by[id].enabled, true, id);
@@ -468,6 +468,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const p = await probe([], 15500, acts);
     assert.equal(p.actions[0].done, true);
     assert.equal(p.guide.coach.active, false, 'the last Done closes it');
+    assert.deepEqual(p.guide.coach.overlaps, [], 'on no step does the card cover the control it points at');
     assert.equal(guideFile(p.dataDir).tourDone, true);
     assert.equal(p.guide.tourDone, true);
   });
@@ -486,6 +487,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const c = p.guide.coach;
     assert.deepEqual([c.tour, c.of, c.step, c.next, c.neverOffered], ['clips', 6, 6, 'Done', false]);
     assert.equal(c.anchor, 'settings');
+    assert.deepEqual(c.overlaps, [], 'the card never covers its target');
     assert.equal(p.guide.tourDone, false);
   });
   test('guide: the help panel opens with its two sections; Show me runs the related tour; Replay runs the welcome tour', async () => {

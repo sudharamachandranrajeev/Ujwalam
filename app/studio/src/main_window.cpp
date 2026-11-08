@@ -640,7 +640,9 @@ QWidget *MainWindow::buildLeft()
 	shdr->addStretch(1);
 	addSceneBtn_ = new QToolButton(w);
 	addSceneBtn_->setObjectName(QStringLiteral("addMini"));
-	addSceneBtn_->setText(QStringLiteral("+"));
+	addSceneBtn_->setIcon(icons::make(QStringLiteral("plus"), QColor(theme::kText), 14));
+	addSceneBtn_->setIconSize(QSize(14, 14));
+	addSceneBtn_->setStyleSheet(QStringLiteral("QToolButton { padding: 0; }")); // the app style's side padding would squeeze the icon to a dot
 	addSceneBtn_->setAccessibleName(QStringLiteral("Add scene"));
 	addSceneBtn_->setAutoRaise(false);
 	addSceneBtn_->setFixedSize(28, 24);
@@ -685,7 +687,9 @@ QWidget *MainWindow::buildLeft()
 	hdr->addStretch(1);
 	addLayerBtn_ = new QToolButton(w);
 	addLayerBtn_->setObjectName(QStringLiteral("addMini"));
-	addLayerBtn_->setText(QStringLiteral("+"));
+	addLayerBtn_->setIcon(icons::make(QStringLiteral("plus"), QColor(theme::kText), 14));
+	addLayerBtn_->setIconSize(QSize(14, 14));
+	addLayerBtn_->setStyleSheet(QStringLiteral("QToolButton { padding: 0; }")); // the app style's side padding would squeeze the icon to a dot
 	addLayerBtn_->setAccessibleName(QStringLiteral("Add layer"));
 	addLayerBtn_->setAutoRaise(false);
 	addLayerBtn_->setFixedSize(28, 24);
@@ -3481,8 +3485,8 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("menu"), lastMenu_);
 	QJsonObject addBtns;
 	if (addSceneBtn_ && addLayerBtn_) {
-		addBtns.insert(QStringLiteral("scene"), QJsonObject{{QStringLiteral("enabled"), addSceneBtn_->isEnabled()}, {QStringLiteral("tip"), addSceneBtn_->toolTip()}, {QStringLiteral("text"), addSceneBtn_->text()}});
-		addBtns.insert(QStringLiteral("layer"), QJsonObject{{QStringLiteral("enabled"), addLayerBtn_->isEnabled()}, {QStringLiteral("tip"), addLayerBtn_->toolTip()}, {QStringLiteral("text"), addLayerBtn_->text()}});
+		addBtns.insert(QStringLiteral("scene"), QJsonObject{{QStringLiteral("enabled"), addSceneBtn_->isEnabled()}, {QStringLiteral("tip"), addSceneBtn_->toolTip()}, {QStringLiteral("icon"), !addSceneBtn_->icon().isNull()}});
+		addBtns.insert(QStringLiteral("layer"), QJsonObject{{QStringLiteral("enabled"), addLayerBtn_->isEnabled()}, {QStringLiteral("tip"), addLayerBtn_->toolTip()}, {QStringLiteral("icon"), !addLayerBtn_->icon().isNull()}});
 	}
 	o.insert(QStringLiteral("addButtons"), addBtns);
 	if (auto *d = qobject_cast<addui::AddLayerDialog *>(addDlg_.data()))
