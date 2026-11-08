@@ -24,6 +24,7 @@ import { createSystemPipeServer } from './pipe.mjs';
 import path from 'node:path';
 import { createStallTracer } from '../diag/stall-tracer.mjs';
 import { createFlags } from '../../flags/index.mjs';
+import { createAudienceCounters } from '../counters.mjs';
 import { createHostLink, createLiveMarkers, loadLiveMarkerConfig } from '../live-markers.mjs';
 
 export const STALL_FILE = 'stalls.jsonl';
@@ -67,7 +68,8 @@ function startLiveMarkers({ core, dataDir, opts, out }) {
 
 /** opts: { dataDir?, port?, systemPipe? (false = no system pipe), mock?, url?, allowRemote? (E8-15: ws:// to a non-loopback host), credential?, noFixtures?, noStreamerbot?, env?, limits?, chatIntervalMs?, seed?, out?(line),
  *          stallTracer?: false | { thresholdMs?, maxBytes?, tickMs?, watchdog? }, core?: createEventCore overrides,
- *          hostToken?, hostDiscovery?, liveMarkers?: false | { host?, flags? } (test seams) } */
+ *          hostToken?, hostDiscovery?, liveMarkers?: false | { host?, flags? },
+ *          counters?: false | { flags?, config? } (test seams) } */
 export async function startService(opts = {}) {
   const out = opts.out ?? (() => {});
   if (opts.url !== undefined) checkUrl(opts.url, { allowRemote: opts.allowRemote === true }); // before anything starts
@@ -146,17 +148,27 @@ export async function startService(opts = {}) {
     sb.start();
   }
   const liveMarkers = startLiveMarkers({ core, dataDir, opts, out });
+  // Audience counters (D250, flag 'live-counters'): read-only GetGlobal polls; any failure leaves them off.
+  let counters = null;
+  if (sb && opts.counters !== false) {
+    try {
+      const flags = opts.counters?.flags ?? createFlags({ dataDir });
+      counters = createAudienceCounters({ core, readGlobal: (n) => sb.readGlobal(n), flags, config: opts.counters?.config, log: out });
+      counters.start();
+    } catch (e) { out(`[serve] warn: audience counters not started (${String(e?.message ?? 'error').slice(0, 80)})`); counters = null; }
+  }
 
   let stopped = false;
   return {
     core, api, tokens, dataDir, port: addr.port, apiFile: file, dataDirProtection, dataDirCreated: created,
     systemPipe: pipe, systemFile: sysFile,
-    mockStreamerbot: mockSb, streamerbot: () => sb, liveMarkers, stallTracer: tracer, stallFile: tracer ? path.join(dataDir, STALL_FILE) : null,
+    mockStreamerbot: mockSb, streamerbot: () => sb, liveMarkers, counters, stallTracer: tracer, stallFile: tracer ? path.join(dataDir, STALL_FILE) : null,
     async stop() {
       if (stopped) return;
       stopped = true;
       if (chatTimer) clearInterval(chatTimer);
       liveMarkers?.stop();
+      counters?.stop();
       sb?.stop();
       if (mockSb) await mockSb.close();
       core.audit.recordSystem({ subtype: 'api-stop', source: 'api', verdict: 'ok' });

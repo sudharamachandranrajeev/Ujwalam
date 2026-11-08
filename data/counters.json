@@ -1,0 +1,10 @@
+{
+  "$comment": "Audience counters (D250, flag live-counters). Ujwalam only READS these Streamer.bot global variables (persisted) with GetGlobal; a Streamer.bot action owned by the user keeps them up to date. Live follow alerts add 1 between reads. Variable names are the user's choice in Streamer.bot; these are the suggested defaults.",
+  "version": 1,
+  "pollMs": 60000,
+  "variables": {
+    "twitch": { "followers": "ujwalam_twitch_followers" },
+    "youtube": { "subscribers": "ujwalam_youtube_subscribers" },
+    "kick": { "followers": "ujwalam_kick_followers" }
+  }
+}

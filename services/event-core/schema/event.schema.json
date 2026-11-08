@@ -18,7 +18,8 @@
     { "$ref": "#/$defs/systemDisconnected" },
     { "$ref": "#/$defs/systemLivestate" },
     { "$ref": "#/$defs/systemPanic" },
-    { "$ref": "#/$defs/systemRefused" }
+    { "$ref": "#/$defs/systemRefused" },
+    { "$ref": "#/$defs/systemCounter" }
   ],
   "$defs": {
     "str": { "type": "string", "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*$" },
@@ -284,6 +285,20 @@
             "kind": { "const": "system.refused" },
             "action": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 64 },
             "reason": { "$ref": "#/$defs/str", "minLength": 1, "maxLength": 200 }
+          }
+        }
+      ],
+      "unevaluatedProperties": false
+    },
+    "systemCounter": {
+      "allOf": [
+        { "$ref": "#/$defs/envelope" },
+        {
+          "required": ["counter", "value"],
+          "properties": {
+            "kind": { "const": "system.counter" },
+            "counter": { "enum": ["followers", "subscribers"] },
+            "value": { "type": "integer", "minimum": 0, "maximum": 1000000000 }
           }
         }
       ],

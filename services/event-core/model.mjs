@@ -90,6 +90,12 @@ export const KIND_FIELDS = {
   },
   'system.livestate': { live: { t: 'bool', req: true } },
   'system.panic': { reason: { t: 'str', max: CAPS.reason } },
+  // Audience counter (D250): the latest follower/subscriber count of one platform (event platform), read from a
+  // Streamer.bot global or raised by a live follow alert. No user: it is a total, not a person.
+  'system.counter': {
+    counter: { t: 'enum', values: ['followers', 'subscribers'], req: true },
+    value: { t: 'int', min: 0, max: 1000000000, req: true },
+  },
   'system.refused': { action: { t: 'str', min: 1, max: 64, req: true }, reason: { t: 'str', min: 1, max: CAPS.reason, req: true } },
 };
 export const KINDS = Object.keys(KIND_FIELDS);

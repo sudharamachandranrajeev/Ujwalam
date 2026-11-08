@@ -312,8 +312,21 @@ export function createStreamerbotConnector(opts) {
     return { status: res.status === 'ok' ? 'ok' : 'error' };
   }
 
+  /** Read-only (D250): one persisted Streamer.bot global variable via GetGlobal. Resolves the value, or null when it is
+   *  missing, not connected or the answer is not ok. The answer shape ({ variable: { value } } or { value }) is
+   *  UNVERIFIED against a real Streamer.bot. Never writes anything. */
+  async function readGlobal(name) {
+    if (typeof name !== 'string' || !/^[A-Za-z0-9_.-]{1,64}$/.test(name)) throw new RangeError('bad variable name');
+    if (state !== 'connected' || !ws) return null;
+    let res;
+    try { res = await request(ws, { request: 'GetGlobal', id: nid('get'), variable: name, persisted: true }, actionTimeoutMs); } catch { return null; }
+    if (!res || res.status !== 'ok') return null;
+    const v = res.variable && typeof res.variable === 'object' ? res.variable.value : res.value;
+    return v === undefined ? null : v;
+  }
+
   return {
-    start, stop, sendChat,
+    start, stop, sendChat, readGlobal,
     state: () => state,
     url: () => url,
     stats: () => ({ ...counts, skipped: { ...counts.skipped }, byKey: { ...counts.byKey }, state }),

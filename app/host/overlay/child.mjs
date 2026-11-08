@@ -43,7 +43,7 @@ const token = process.env.UJWALAM_EVENT_CORE_API_TOKEN ?? '';
 delete process.env.UJWALAM_EVENT_CORE_API_TOKEN;
 if (eventsUrl && !/^[0-9a-f]{64}$/.test(token)) { warn('--events-url needs UJWALAM_EVENT_CORE_API_TOKEN'); process.exit(64); }
 
-const bus = eventsUrl ? createRemoteBus({ url: eventsUrl, token, kinds: ['chat.', 'alert.'], log: warn }) : undefined;
+const bus = eventsUrl ? createRemoteBus({ url: eventsUrl, token, kinds: ['chat.', 'alert.', 'system.counter'], log: warn }) : undefined;
 // Effects pass Agent A's guards (data/effects/guards.json: budget, cooldowns, regions, flash limit; D76-D83).
 // Overlay feature flags (D196): read from the data dir the profile names, the same one the studio writes. No data dir
 // (no profile, or a studio run with an explicit --data-dir): every overlay flag reads as off.

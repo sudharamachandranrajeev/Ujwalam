@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Ujwalam audience counter (D250). Authored here, not part of the legacy overlays.
+     Query: platform= twitch|youtube|kick   counter= followers|subscribers   label= text before the number
+            noun= text after the number (e.g. label=Twitch&noun=Followers -> "Twitch 339 Followers")
+     Reads /_ujwalam/counters.json every 5 s. Shows nothing while flag live-counters is off or before the first read.
+     A change pulses once (scale only, 300 ms): no flashes. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Audience counter</title>
+<link rel="stylesheet" href="../../brand/fonts.css">
+<link rel="stylesheet" href="../../brand/tokens.css">
+<link rel="stylesheet" href="../../kit/overlay-base.css">
+<style>
+  .counter {
+    position: absolute; inset: 0; box-sizing: border-box;
+    display: flex; align-items: center; justify-content: center;
+    white-space: nowrap; overflow: hidden;
+    color: var(--ink);
+    font-family: var(--font-display);
+    font-style: italic;
+    text-shadow: var(--text-outline);
+    opacity: 0;
+    transition: opacity 400ms ease-out;
+  }
+  .counter.is-on { opacity: 1; }
+  .counter.is-bump { animation: bump 300ms ease-out; }
+  @keyframes bump { 0% { transform: scale(1); } 40% { transform: scale(1.08); } 100% { transform: scale(1); } }
+</style>
+</head>
+<body>
+<div class="counter" id="counter" aria-live="polite"></div>
+<script src="counter.js"></script>
+<script>
+  (function () {
+    'use strict';
+    var p = UjwCounter.parseParams(location.search);
+    if (!p) return;
+    UjwCounter.run(p, document, window, 5000);
+  })();
+</script>
+</body>
+</html>

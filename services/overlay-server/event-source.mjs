@@ -77,7 +77,14 @@ export function createRemoteBus(opts) {
   }
 
   return {
-    subscribe({ handler }) { handlers.add(handler); return () => handlers.delete(handler); },
+    // Like the in-process bus, `kinds` (prefixes) limits what a handler sees (D250: system.counter must not reach the
+    // chat handlers); none = every event the stream carries.
+    subscribe({ kinds, handler }) {
+      const prefixes = kinds == null ? [] : [].concat(kinds);
+      const h = prefixes.length ? (ev) => { if (prefixes.some((p) => ev.kind.startsWith(p))) handler(ev); } : handler;
+      handlers.add(h);
+      return () => handlers.delete(h);
+    },
     start() { if (stopped) { stopped = false; run(); } },
     stop() { stopped = true; abort?.abort(); },
     stats: () => ({ ...state }),

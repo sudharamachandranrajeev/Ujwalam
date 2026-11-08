@@ -8,6 +8,7 @@
 //   /overlays/ujwalam-<name>/...                pages authored in this repo (opts.ownOverlays), looked up before <root>/overlays;
 //                                               only folders named ujwalam-* are taken from there, so they never shadow a legacy page
 //   /_ujwalam/flags.json                        live state of the overlay feature flags (opts.flagsJson), read-only
+//   /_ujwalam/counters.json                     latest audience counts while flag live-counters is on (opts.countersJson, D250)
 // Only the top-level folders in `allowDirs` are served; nothing else under <root> is reachable.
 //
 // Refused: any method but GET and HEAD (405), a Host that is not 127.0.0.1:<port> or localhost:<port> (421),
@@ -45,8 +46,9 @@ function safeSegments(decoded) {
 
 /** Live feature-flag state for overlay pages (D196): GET returns { <id>: true|false } for the overlay flags only. */
 export const FLAGS_PATH = '/_ujwalam/flags.json';
+export const COUNTERS_PATH = '/_ujwalam/counters.json';
 
-/** opts: { root, allowDirs?: string[], extraMounts?: { '/_ujwalam': absDir }, ownOverlays?: absDir, flagsJson?: () => object,
+/** opts: { root, allowDirs?: string[], extraMounts?: { '/_ujwalam': absDir }, ownOverlays?: absDir, flagsJson?: () => object, countersJson?: () => object,
  *  port, csp?: string|false }. root is the folder that holds overlays/, brand/ and kit/. Returns { server, port, listen(), close() }. */
 export function createStaticServer(opts) {
   const root = realpathSync(opts.root);
@@ -82,9 +84,10 @@ export function createStaticServer(opts) {
     if (!decoded.startsWith('/')) return send(res, 400);
     const parts = safeSegments(decoded);
     if (!parts) return send(res, 400);
-    if (decoded === FLAGS_PATH && typeof opts.flagsJson === 'function') {
+    const jsonFn = decoded === FLAGS_PATH ? opts.flagsJson : decoded === COUNTERS_PATH ? opts.countersJson : null;
+    if (typeof jsonFn === 'function') {
       let body;
-      try { body = JSON.stringify(opts.flagsJson()); } catch { body = '{}'; } // a failed read reads as "all off"
+      try { body = JSON.stringify(jsonFn()); } catch { body = '{}'; } // a failed read reads as "all off"
       res.writeHead(200, { 'Content-Type': MIME['.json'], 'Content-Length': Buffer.byteLength(body), 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer' });
       return res.end(req.method === 'HEAD' ? undefined : body);
     }

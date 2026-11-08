@@ -43,6 +43,7 @@ const INPUTS = {
   'system.livestate': { live: true },
   'system.panic': { reason: 'test' },
   'system.refused': { action: 'scene.switch', reason: 'audit-unavailable' },
+  'system.counter': { counter: 'followers', value: 339 },
 };
 function input(kind, extra = {}) {
   const sys = kind.startsWith('system.');
@@ -57,7 +58,7 @@ const both = (ev) => ({ hand: validateEvent(ev).ok, schema: schemaOk(ev) });
 
 test('INPUTS covers every kind', () => {
   assert.deepEqual(Object.keys(INPUTS).sort(), [...KINDS].sort());
-  assert.equal(KINDS.length, 15);
+  assert.equal(KINDS.length, 16);
 });
 
 test('schema and validator both accept a built event of every kind', () => {

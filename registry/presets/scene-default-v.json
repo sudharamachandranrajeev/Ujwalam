@@ -1,6 +1,6 @@
 {
   "id": "scene-default-v",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default V (current vertical stream layout)",
@@ -193,32 +193,32 @@
         "z": 5,
         "name": "YouTube subscriber counter",
         "type": "browser",
-        "overlay": "blood-moon-hud/index.html",
-        "query": "goal=0&counters=1&cam=0",
+        "overlay": "ujwalam-counter/index.html",
+        "query": "platform=youtube&counter=subscribers&label=YouTube&noun=Sub",
         "rect": {
           "x": 0.56285,
           "y": 0.72375,
           "w": 0.43715,
-          "h": 0.16885
+          "h": 0.03
         },
         "geometry": "meld-clamped",
-        "note": "Meld duplicate named for the YouTube subscriber widget; its box is a container and ran 4.3 percentage points past the right edge (clamped). Legacy HUD draws both counters in one part and has no per-platform switch; a page option is needed (gap)."
+        "note": "Live count (D250, flag live-counters): page ujwalam-counter reads the latest count from the overlay server; the count comes from a Streamer.bot global the user keeps (data/counters.json), plus live follows. Empty while the flag is off or before the first read; the legacy HUD showed fixed numbers. Box height 0.03 (one text line at the top of the Meld widget container, as in the user vertical target layout 2026-11-07)."
       },
       {
         "key": "twitch-followers",
         "z": 6,
         "name": "Twitch follower counter",
         "type": "browser",
-        "overlay": "blood-moon-hud/index.html",
-        "query": "goal=0&counters=1&cam=0",
+        "overlay": "ujwalam-counter/index.html",
+        "query": "platform=twitch&counter=followers&label=Twitch&noun=Followers",
         "rect": {
           "x": 0,
           "y": 0.72311,
           "w": 0.50494,
-          "h": 0.15625
+          "h": 0.03
         },
         "geometry": "meld-clamped",
-        "note": "Meld duplicate named for the Twitch widget; its box ran 3.5 percentage points past the left edge (clamped). Same per-platform gap as the YouTube counter. Overlaps the YouTube counter by about 6 percentage points."
+        "note": "Live count (D250, flag live-counters): page ujwalam-counter reads the latest count from the overlay server; the count comes from a Streamer.bot global the user keeps (data/counters.json), plus live follows. Empty while the flag is off or before the first read; the legacy HUD showed fixed numbers. Box height 0.03 (one text line at the top of the Meld widget container, as in the user vertical target layout 2026-11-07)."
       },
       {
         "key": "support-cta",

@@ -18,7 +18,7 @@ if (eventsUrl && !/^[0-9a-f]{64}$/.test(token)) {
   console.error('overlay-server: --events-url needs UJWALAM_EVENT_CORE_API_TOKEN (64 hex) in the environment');
   process.exit(2);
 }
-const bus = eventsUrl ? createRemoteBus({ url: eventsUrl, token, kinds: ['chat.', 'alert.'], log: (l) => console.warn(`overlay-server: ${l}`) }) : undefined;
+const bus = eventsUrl ? createRemoteBus({ url: eventsUrl, token, kinds: ['chat.', 'alert.', 'system.counter'], log: (l) => console.warn(`overlay-server: ${l}`) }) : undefined;
 const s = createOverlayServer({ root, bus, guards: !process.argv.includes('--no-guards'), staticPort: Number(arg('port', 8787)), feedPort: Number(arg('feed-port', 8788)) });
 const { staticPort, feedPort } = await s.start();
 console.log(`overlay-server: overlays at http://127.0.0.1:${staticPort}/overlays/<name>/index.html, feed ws://127.0.0.1:${feedPort}/ (effects) and /display`);

@@ -27,6 +27,24 @@ const RELAY_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'relay
 export const OWN_OVERLAYS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), 'pages');
 /** Feature flags an overlay page may read live at /_ujwalam/flags.json (D196). Nothing else about flags reaches a page. */
 export const OVERLAY_FLAGS = Object.freeze(['test-broadcast']);
+/** Audience counters (D250): the latest `system.counter` value per platform and counter, served read-only at
+ *  /_ujwalam/counters.json while the flag is on ({ on: false } otherwise, so the counter pages show nothing). */
+export const COUNTERS_FLAG = 'live-counters';
+export function createCounterCache() {
+  const latest = {};
+  return {
+    onEvent(ev) {
+      if (!ev || ev.kind !== 'system.counter' || !['twitch', 'youtube', 'kick'].includes(ev.platform)) return;
+      if (!['followers', 'subscribers'].includes(ev.counter) || !Number.isInteger(ev.value) || ev.value < 0) return;
+      (latest[ev.platform] ??= {})[ev.counter] = ev.value;
+    },
+    json(flags) {
+      let on = false;
+      try { on = flags?.isOn(COUNTERS_FLAG) === true; } catch { on = false; }
+      return on ? { on: true, counters: structuredClone(latest) } : { on: false };
+    },
+  };
+}
 /** Gates chat-fired effects (pages at /effects/<name>) and the cam-pop rule; read by the server, never sent to a page. */
 export const CHAT_EFFECTS_FLAG = 'chat-effects';
 
@@ -69,12 +87,15 @@ export function createOverlayServer(opts) {
     guards.setDeliver((e) => bridge.deliverEffect(e.name));
     if (guards.config.rules?.campop) rule = createCamPopRule({ config: guards.config.rules.campop, fire: (e) => (chatFx() ? bridge.publishEffect(e.name, { source: e.source }) : { ok: false, reason: 'flag-off' }), now: opts.now });
   }
-  const stat = createStaticServer({ root: opts.root, port: opts.staticPort ?? 0, csp: opts.csp, extraMounts: { '/_ujwalam': RELAY_DIR }, ownOverlays: OWN_OVERLAYS_DIR, flagsJson: () => overlayFlagState(opts.flags) });
+  const counters = createCounterCache();
+  const stat = createStaticServer({ root: opts.root, port: opts.staticPort ?? 0, csp: opts.csp, extraMounts: { '/_ujwalam': RELAY_DIR }, ownOverlays: OWN_OVERLAYS_DIR, flagsJson: () => overlayFlagState(opts.flags), countersJson: () => counters.json(opts.flags) });
   const feed = createFeedServer({ bridge, port: opts.feedPort ?? 0, allowedOrigins: opts.extraOrigins ?? [] });
   let detach = null;
   let detachRule = null;
+  let detachCounters = null;
   return {
     bridge,
+    counters,
     guards,
     rule,
     get staticPort() { return stat.port; },
@@ -84,10 +105,11 @@ export function createOverlayServer(opts) {
       for (const host of ['127.0.0.1', 'localhost']) feed.allowOrigin(`http://${host}:${stat.port}`);
       await feed.listen();
       if (opts.bus) detach = bridge.attach(opts.bus);
+      if (opts.bus) detachCounters = opts.bus.subscribe({ name: 'counter-cache', kinds: ['system.counter'], handler: (e) => counters.onEvent(e) });
       if (opts.bus && rule) { detachRule = opts.bus.subscribe({ name: 'campop-rule', kinds: ['chat.'], handler: () => rule.onChat() }); rule.start(); }
       opts.bus?.start?.();
       return { staticPort: stat.port, feedPort: feed.port };
     },
-    async stop() { opts.bus?.stop?.(); detach?.(); detachRule?.(); rule?.stop(); guards?.stop(); await feed.close(); await stat.close(); },
+    async stop() { opts.bus?.stop?.(); detach?.(); detachRule?.(); detachCounters?.(); rule?.stop(); guards?.stop(); await feed.close(); await stat.close(); },
   };
 }

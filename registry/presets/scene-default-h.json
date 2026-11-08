@@ -1,6 +1,6 @@
 {
   "id": "scene-default-h",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default H (current stream layout)",
@@ -129,8 +129,8 @@
         "z": 6,
         "name": "Twitch follower counter",
         "type": "browser",
-        "overlay": "blood-moon-hud/index.html",
-        "query": "goal=0&counters=1&cam=0",
+        "overlay": "ujwalam-counter/index.html",
+        "query": "platform=twitch&counter=followers&label=Twitch&noun=Followers",
         "rect": {
           "x": 0.259,
           "y": 0,
@@ -138,7 +138,7 @@
           "h": 0.03
         },
         "geometry": "spec",
-        "note": "Legacy HUD draws both counters in one part and has no per-platform switch; a page option is needed (gap, see evidence)."
+        "note": "Live count (D250, flag live-counters): page ujwalam-counter reads the latest count from the overlay server; the count comes from a Streamer.bot global the user keeps (data/counters.json), plus live follows. Empty while the flag is off or before the first read; the legacy HUD showed fixed numbers."
       },
       {
         "key": "subscribe-cta",
@@ -172,8 +172,8 @@
         "z": 8,
         "name": "YouTube subscriber counter",
         "type": "browser",
-        "overlay": "blood-moon-hud/index.html",
-        "query": "goal=0&counters=1&cam=0",
+        "overlay": "ujwalam-counter/index.html",
+        "query": "platform=youtube&counter=subscribers&label=YouTube&noun=Sub",
         "rect": {
           "x": 0.764,
           "y": 0,
@@ -181,7 +181,7 @@
           "h": 0.026
         },
         "geometry": "spec",
-        "note": "Same gap as the Twitch counter."
+        "note": "Live count (D250, flag live-counters): page ujwalam-counter reads the latest count from the overlay server; the count comes from a Streamer.bot global the user keeps (data/counters.json), plus live follows. Empty while the flag is off or before the first read; the legacy HUD showed fixed numbers."
       },
       {
         "key": "social-ticker",

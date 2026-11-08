@@ -59,7 +59,9 @@ export const SAMPLES = {
 
 /**
  * opts: { port = 0, password = null, enforce = true, helloDelayMs = 0 }
- * Returns { url, port, emit(envelope|sampleKey), replay(script), doActions, subscriptions(), clientCount(), kill(), close() }.
+ * Returns { url, port, emit(envelope|sampleKey), replay(script), doActions, subscriptions(), clientCount(), kill(), close(),
+ *   setGlobal(name, value), globalReads }. GetGlobal answers { variable: { name, value }, status: 'ok' } for a set name,
+ *   an error otherwise (the real answer shape is UNVERIFIED; D250).
  * kill() destroys all client sockets (simulates a crash) and keeps listening; close() stops the server.
  */
 export function startMockStreamerbot(opts = {}) {
@@ -67,6 +69,8 @@ export function startMockStreamerbot(opts = {}) {
   const clients = new Set();
   const doActions = [];
   const authLog = [];
+  const globals = new Map();
+  const globalReads = [];
 
   function onMessage(c, text) {
     let m;
@@ -91,6 +95,10 @@ export function startMockStreamerbot(opts = {}) {
       c.send({ id: m.id, status: 'ok', events: m.events ?? {} });
     } else if (m.request === 'GetInfo') {
       c.send({ id: m.id, status: 'ok', info: { name: MOCK_NAME, version: '0.0.0-mock', os: 'windows' } });
+    } else if (m.request === 'GetGlobal') {
+      globalReads.push({ variable: m.variable ?? null, persisted: m.persisted ?? null });
+      if (globals.has(m.variable)) c.send({ id: m.id, status: 'ok', variable: { name: m.variable, value: globals.get(m.variable) } });
+      else c.send({ id: m.id, status: 'error', error: 'variable not found' });
     } else if (m.request === 'DoAction') {
       doActions.push({ action: m.action ?? null, args: m.args ?? null }); // recorded, never forwarded
       c.send({ id: m.id, status: 'ok' });
@@ -170,7 +178,8 @@ export function startMockStreamerbot(opts = {}) {
       const port = server.address().port;
       const handle = {
         port, url: `ws://127.0.0.1:${port}/`,
-        emit, replay, doActions, authLog,
+        emit, replay, doActions, authLog, globalReads,
+        setGlobal: (name, value) => { globals.set(name, value); },
         subscriptions: () => [...clients].map((c) => [...c.subs]),
         clientCount: () => clients.size,
         kill() { for (const c of clients) c.sock.destroy(); clients.clear(); },
