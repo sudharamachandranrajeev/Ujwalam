@@ -2,6 +2,13 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.7 — 2026-11-08
+
+- New look: dark violet panels with rounded corners and a purple accent, after the reference video.
+- The top bar fits the screen again (text was cut off at 125 % scaling). Rarely used tools are in the new More menu: Import Meld session, Feedback notes, Posts, Report a problem.
+- The audio mixer sits under the previews as cards side by side. Frame stats and service status are in the bar at the bottom.
+- The updater's `-ClipMaker` no longer saves clip choices you did not give.
+
 ## 0.1.0-alpha.6 — 2026-11-08
 
 - New Settings in the studio window: what to do after you record and after you stream live: ask me each time, make clips when it stops, find the best moments while it runs and edit them into clips when it stops, or no clips.

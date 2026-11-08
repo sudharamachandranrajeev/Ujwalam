@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 6,
+  "current": 7,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -17,6 +17,7 @@
     { "n": 3, "date": "2026-11-08", "title": "Native Qt studio window by default" },
     { "n": 4, "date": "2026-11-08", "title": "Overlays back on for installs from 3 Nov" },
     { "n": 5, "date": "2026-11-08", "title": "Previews inside the studio, one close, record and clip" },
-    { "n": 6, "date": "2026-11-08", "title": "Clips settings in plain words" }
+    { "n": 6, "date": "2026-11-08", "title": "Clips settings in plain words" },
+    { "n": 7, "date": "2026-11-08", "title": "New studio look" }
   ]
 }
