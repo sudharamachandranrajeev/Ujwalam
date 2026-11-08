@@ -94,6 +94,7 @@ private:
 	// Ujwalam started (the server checks).
 	void loadBots();
 	void openImport();   // Meld session import -> host check -> typed confirm -> project.load (the page's flow)
+	void openPosts();    // flag posting (P16a): review clip packages; YouTube private upload needs "yes, upload"
 	void report();       // flag report-button (D199): prefilled GitHub issue link opened in the user's browser
 	void openFeedback(); // post-stream notes on feedback moments (D150), the browser page's form
 	void botAction(const QString &bot, bool start);
@@ -125,7 +126,7 @@ private:
 	bool sceneEditOn_ = false, transitionsOn_ = false, botsOn_ = false;
 	int botPoll_ = 0; // bot status reads the process list: every 5th status poll (10 s), and after each action
 	QGroupBox *botBox_ = nullptr;
-	QPushButton *reportBtn_ = nullptr;
+	QPushButton *reportBtn_ = nullptr, *postsBtn_ = nullptr;
 	QVBoxLayout *botRows_ = nullptr;
 	QJsonObject structure_;   // GET /ui/api/project/structure
 	QJsonObject transitions_; // GET /ui/api/project/transitions

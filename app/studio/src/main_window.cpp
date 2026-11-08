@@ -291,6 +291,11 @@ QWidget *MainWindow::buildTop()
 	fbBtn->setToolTip(QStringLiteral("Add a note to each feedback moment (feedback hotkey while streaming)."));
 	connect(fbBtn, &QPushButton::clicked, this, &MainWindow::openFeedback);
 	h->addWidget(fbBtn);
+	postsBtn_ = new QPushButton(QStringLiteral("Posts"), w);
+	postsBtn_->setToolTip(QStringLiteral("Review clip packages. Nothing is uploaded without a typed confirmation."));
+	postsBtn_->setVisible(false);
+	connect(postsBtn_, &QPushButton::clicked, this, &MainWindow::openPosts);
+	h->addWidget(postsBtn_);
 	reportBtn_ = new QPushButton(QStringLiteral("Report a problem"), w);
 	reportBtn_->setToolTip(QStringLiteral("Opens a prefilled GitHub issue in your browser; you review it before submitting."));
 	reportBtn_->setVisible(false);
@@ -1330,6 +1335,11 @@ void MainWindow::loadFlags()
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("report-button"))
 				rep = x.toObject().value(QStringLiteral("on")).toBool();
 		reportBtn_->setVisible(rep);
+		bool po = false;
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("posting"))
+				po = x.toObject().value(QStringLiteral("on")).toBool();
+		postsBtn_->setVisible(po);
 		if (bo != botsOn_) {
 			botsOn_ = bo;
 			botBox_->setVisible(bo);
@@ -1453,6 +1463,273 @@ void MainWindow::openImport()
 		skip->setVisible(plan.value(QStringLiteral("unavailable")).toInt() > 0);
 		load->setEnabled(!plan.isEmpty());
 	});
+	dlg->show();
+}
+
+// Posts (P16a, flag posting): the browser page's review form. Edit, approve and reject change local files only.
+// YouTube upload is private, needs the package approved, a CLI sign-in, and the typed phrase in the request;
+// the server refuses it while live. The clip itself is watched from its folder (Open folder).
+void MainWindow::openPosts()
+{
+	auto *dlg = new QDialog(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setWindowTitle(QStringLiteral("Posts"));
+	dlg->resize(760, 620);
+	auto *v = new QVBoxLayout(dlg);
+	auto *info = new QLabel(QStringLiteral("Loading..."), dlg);
+	info->setWordWrap(true);
+	auto *autoInfo = new QLabel(dlg);
+	autoInfo->setWordWrap(true);
+	auto *list = new QListWidget(dlg);
+	list->setMaximumHeight(170);
+	auto *form = new QWidget(dlg);
+	auto *ff = new QFormLayout(form);
+	ff->setContentsMargins(0, 0, 0, 0);
+	auto *meta = new QLabel(form);
+	meta->setWordWrap(true);
+	auto *limits = new QLabel(form);
+	limits->setWordWrap(true);
+	auto *title = new QLineEdit(form);
+	auto *desc = new QPlainTextEdit(form);
+	auto *tags = new QLineEdit(form);
+	auto *hash = new QLineEdit(form);
+	tags->setPlaceholderText(QStringLiteral("comma separated"));
+	hash->setPlaceholderText(QStringLiteral("comma separated"));
+	auto *row = new QHBoxLayout();
+	auto *saveB = new QPushButton(QStringLiteral("Save"), form);
+	auto *approveB = new QPushButton(QStringLiteral("Approve"), form);
+	auto *rejectB = new QPushButton(QStringLiteral("Reject"), form);
+	auto *openB = new QPushButton(QStringLiteral("Open folder"), form);
+	for (QPushButton *b : {saveB, approveB, rejectB, openB})
+		row->addWidget(b);
+	auto *yt = new QGroupBox(QStringLiteral("YouTube (private upload)"), form);
+	auto *yv = new QVBoxLayout(yt);
+	auto *ytInfo = new QLabel(yt);
+	ytInfo->setWordWrap(true);
+	auto *ytConfirm = new QLineEdit(yt);
+	auto *yrow = new QHBoxLayout();
+	auto *upB = new QPushButton(QStringLiteral("Upload as private"), yt);
+	auto *chkB = new QPushButton(QStringLiteral("Check status"), yt);
+	yrow->addWidget(ytConfirm, 1);
+	yrow->addWidget(upB);
+	yrow->addWidget(chkB);
+	yv->addWidget(ytInfo);
+	yv->addLayout(yrow);
+	ff->addRow(meta);
+	ff->addRow(limits);
+	ff->addRow(QStringLiteral("Title"), title);
+	ff->addRow(QStringLiteral("Description"), desc);
+	ff->addRow(QStringLiteral("Tags"), tags);
+	ff->addRow(QStringLiteral("Hashtags"), hash);
+	ff->addRow(row);
+	ff->addRow(yt);
+	form->setVisible(false);
+	v->addWidget(info);
+	v->addWidget(autoInfo);
+	v->addWidget(list);
+	v->addWidget(form, 1);
+
+	struct State {
+		QJsonArray posts;
+		QString sel;
+		bool signedIn = false, busy = false;
+		QString phrase = QStringLiteral("yes, upload");
+	};
+	auto st = std::make_shared<State>();
+	QPointer<QDialog> guard(dlg);
+	const auto selPost = [st]() {
+		for (const auto &x : st->posts)
+			if (x.toObject().value(QStringLiteral("id")).toString() == st->sel)
+				return x.toObject();
+		return QJsonObject();
+	};
+	const auto join = [](const QJsonArray &a) {
+		QStringList out;
+		for (const auto &x : a)
+			out << x.toString();
+		return out.join(QStringLiteral(", "));
+	};
+	const auto csv = [](const QString &s) {
+		QJsonArray out;
+		for (const QString &x : s.split(QLatin1Char(',')))
+			if (!x.trimmed().isEmpty())
+				out.append(x.trimmed());
+		return out;
+	};
+	const auto renderYt = [=]() {
+		const QJsonObject p = selPost();
+		const bool isYt = p.value(QStringLiteral("target")).toString().startsWith(QStringLiteral("youtube"));
+		yt->setVisible(isYt);
+		if (!isYt)
+			return;
+		const QString status = p.value(QStringLiteral("status")).toString();
+		const bool uploaded = status == QStringLiteral("uploaded");
+		ytInfo->setText(uploaded ? QStringLiteral("Uploaded as private video %1. Use Check status to see if YouTube finished processing.").arg(p.value(QStringLiteral("videoId")).toString(QStringLiteral("?")))
+				: !st->signedIn ? QStringLiteral("Not signed in. Run in a terminal: node services/posting/cli.mjs youtube signin")
+				: status == QStringLiteral("approved") ? QStringLiteral("Approved. Ready to upload as private. Type: %1").arg(st->phrase)
+								       : QStringLiteral("Approve the package first."));
+		ytConfirm->setPlaceholderText(st->phrase);
+		upB->setEnabled(!st->busy && !uploaded && st->signedIn && status == QStringLiteral("approved"));
+		chkB->setEnabled(!st->busy && uploaded);
+		ytConfirm->setEnabled(!uploaded);
+	};
+	const auto fill = [=]() {
+		const QJsonObject p = selPost();
+		form->setVisible(!p.isEmpty());
+		if (p.isEmpty())
+			return;
+		meta->setText(QStringLiteral("%1  %2  %3-%4 s  privacy %5  status %6")
+				      .arg(p.value(QStringLiteral("target")).toString(), p.value(QStringLiteral("layout")).toString(),
+					   p.value(QStringLiteral("startSec")).toVariant().toString(), p.value(QStringLiteral("endSec")).toVariant().toString(),
+					   p.value(QStringLiteral("privacy")).toString(), p.value(QStringLiteral("status")).toString()));
+		title->setText(p.value(QStringLiteral("title")).toString());
+		desc->setPlainText(p.value(QStringLiteral("description")).toString());
+		tags->setText(join(p.value(QStringLiteral("tags")).toArray()));
+		hash->setText(join(p.value(QStringLiteral("hashtags")).toArray()));
+		const QJsonObject lim = p.value(QStringLiteral("limits")).toObject();
+		QStringList bits;
+		for (const auto &x : lim.value(QStringLiteral("checks")).toArray()) {
+			const QJsonObject c = x.toObject();
+			bits << QStringLiteral("%1 %2/%3%4%5").arg(c.value(QStringLiteral("field")).toString(), c.value(QStringLiteral("value")).toVariant().toString(),
+								 c.value(QStringLiteral("max")).toVariant().toString(),
+								 c.value(QStringLiteral("unit")).toString().isEmpty() ? QString() : QStringLiteral(" ") + c.value(QStringLiteral("unit")).toString(),
+								 c.value(QStringLiteral("ok")).toBool() ? QString() : QStringLiteral(" OVER"));
+		}
+		const QJsonArray un = p.value(QStringLiteral("unresolved")).toArray();
+		if (!un.isEmpty())
+			bits << QStringLiteral("unresolved: ") + join(un);
+		limits->setText((bits.isEmpty() ? QStringLiteral("no limits checked") : bits.join(QStringLiteral("  "))) +
+				(lim.value(QStringLiteral("status")).toString() == QStringLiteral("unverified") ? QStringLiteral("  (limits UNVERIFIED)") : QString()));
+		renderYt();
+	};
+	const auto render = [=]() {
+		const QSignalBlocker block(list);
+		list->clear();
+		for (const auto &x : st->posts) {
+			const QJsonObject p = x.toObject();
+			const bool flagged = (p.value(QStringLiteral("limits")).toObject().value(QStringLiteral("ok")) == QJsonValue(false)) ||
+					     !p.value(QStringLiteral("unresolved")).toArray().isEmpty();
+			auto *it = new QListWidgetItem(p.value(QStringLiteral("clipId")).toString() + QStringLiteral("  ") + p.value(QStringLiteral("target")).toString() +
+							 QStringLiteral("   ") + p.value(QStringLiteral("status")).toString() + (flagged ? QStringLiteral(" / check") : QString()),
+						 list);
+			it->setData(Qt::UserRole, p.value(QStringLiteral("id")).toString());
+			if (p.value(QStringLiteral("id")).toString() == st->sel)
+				list->setCurrentItem(it);
+		}
+		info->setText(st->posts.isEmpty() ? QStringLiteral("No packages yet. Make them with services/posting/cli.mjs after a stream.")
+						   : QStringLiteral("%1 package(s). Private drafts only; approving marks a package. Upload to YouTube is separate and needs a typed confirmation.").arg(st->posts.size()));
+		fill();
+	};
+	const auto reload = [=]() {
+		api_->get(QStringLiteral("ui/api/posts"), [=](bool ok, const QJsonObject &r, const QString &err) {
+			if (!guard)
+				return;
+			if (!ok)
+				return info->setText(QStringLiteral("Posts unavailable: ") + err);
+			st->posts = r.value(QStringLiteral("posts")).toArray();
+			render();
+		});
+	};
+	connect(list, &QListWidget::currentItemChanged, dlg, [=](QListWidgetItem *it) {
+		st->sel = it ? it->data(Qt::UserRole).toString() : QString();
+		ytConfirm->clear();
+		fill();
+	});
+	// Edit / approve / reject: local files only; the reply carries the updated package.
+	const auto postAction = [=](const QString &route, const QJsonObject &body) {
+		api_->post(route, body, [=](bool ok, const QJsonObject &r, const QString &err) {
+			if (!guard)
+				return;
+			if (!ok)
+				return info->setText(QStringLiteral("Not done: ") + err);
+			const QJsonObject np = r.value(QStringLiteral("post")).toObject();
+			for (int i = 0; i < st->posts.size(); i++)
+				if (st->posts.at(i).toObject().value(QStringLiteral("id")) == np.value(QStringLiteral("id")))
+					st->posts.replace(i, np);
+			render();
+			info->setText(QStringLiteral("Saved."));
+		});
+	};
+	connect(saveB, &QPushButton::clicked, dlg, [=]() {
+		QJsonObject b;
+		b.insert(QStringLiteral("id"), st->sel);
+		b.insert(QStringLiteral("title"), title->text());
+		b.insert(QStringLiteral("description"), desc->toPlainText());
+		b.insert(QStringLiteral("tags"), csv(tags->text()));
+		b.insert(QStringLiteral("hashtags"), csv(hash->text()));
+		postAction(QStringLiteral("ui/api/posts/edit"), b);
+	});
+	for (const auto &[btn, status] : {std::pair{approveB, "approved"}, std::pair{rejectB, "rejected"}}) {
+		const QString s = QString::fromLatin1(status);
+		connect(btn, &QPushButton::clicked, dlg, [=]() {
+			QJsonObject b;
+			b.insert(QStringLiteral("id"), st->sel);
+			b.insert(QStringLiteral("status"), s);
+			postAction(QStringLiteral("ui/api/posts/status"), b);
+		});
+	}
+	connect(openB, &QPushButton::clicked, dlg, [=]() {
+		QJsonObject b;
+		b.insert(QStringLiteral("id"), st->sel);
+		api_->post(QStringLiteral("ui/api/posts/open"), b, [=](bool ok, const QJsonObject &, const QString &err) {
+			if (guard && !ok)
+				info->setText(QStringLiteral("Could not open the folder: ") + err);
+		});
+	});
+	// Upload / check: one call at a time; the list is re-read afterwards (status and video id come from the server).
+	const auto ytAction = [=](bool upload) {
+		if (st->busy || st->sel.isEmpty())
+			return;
+		st->busy = true;
+		renderYt();
+		QJsonObject b;
+		b.insert(QStringLiteral("id"), st->sel);
+		if (upload)
+			b.insert(QStringLiteral("confirm"), ytConfirm->text());
+		info->setText(upload ? QStringLiteral("Uploading... this can take a while. Keep this window open.") : QStringLiteral("Checking..."));
+		api_->post(upload ? QStringLiteral("ui/api/posts/youtube/upload") : QStringLiteral("ui/api/posts/youtube/check"), b,
+			   [=](bool ok, const QJsonObject &r, const QString &err) {
+				   if (!guard)
+					   return;
+				   st->busy = false;
+				   if (!ok)
+					   info->setText(QStringLiteral("Not done: ") + err);
+				   else if (upload) {
+					   ytConfirm->clear();
+					   info->setText(QStringLiteral("Uploaded as private video %1.").arg(r.value(QStringLiteral("videoId")).toString()));
+				   } else
+					   info->setText(QStringLiteral("Video %1: %2").arg(r.value(QStringLiteral("videoId")).toString(),
+										      r.value(QStringLiteral("found")).toBool()
+											      ? QStringLiteral("upload %1, processing %2, privacy %3")
+													.arg(r.value(QStringLiteral("uploadStatus")).toString(QStringLiteral("?")),
+													     r.value(QStringLiteral("processingStatus")).toString(QStringLiteral("?")),
+													     r.value(QStringLiteral("privacyStatus")).toString(QStringLiteral("?")))
+											      : QStringLiteral("not found")));
+				   reload();
+			   });
+	};
+	connect(upB, &QPushButton::clicked, dlg, [=]() { ytAction(true); });
+	connect(chkB, &QPushButton::clicked, dlg, [=]() { ytAction(false); });
+	// Auto-post mode (F7): read-only line.
+	api_->get(QStringLiteral("ui/api/posts/auto"), [=](bool ok, const QJsonObject &r, const QString &) {
+		if (!guard || !ok)
+			return;
+		const QJsonObject m = r.value(QStringLiteral("mode")).toObject();
+		autoInfo->setText(QStringLiteral("Auto-post: %1, %2 rule(s), %3. %4 planned action(s).")
+					  .arg(m.value(QStringLiteral("enabled")).toBool() ? QStringLiteral("ON") : QStringLiteral("off (review-first)"))
+					  .arg(m.value(QStringLiteral("ruleCount")).toInt())
+					  .arg(m.value(QStringLiteral("autoUpload")).toBool() ? QStringLiteral("approve and upload (private)") : QStringLiteral("approve only"))
+					  .arg(r.value(QStringLiteral("plan")).toArray().size()));
+	});
+	api_->get(QStringLiteral("ui/api/posts/youtube/status"), [=](bool ok, const QJsonObject &r, const QString &) {
+		if (!guard)
+			return;
+		st->signedIn = ok && r.value(QStringLiteral("signedIn")).toBool();
+		if (ok && r.value(QStringLiteral("phrase")).isString())
+			st->phrase = r.value(QStringLiteral("phrase")).toString();
+		renderYt();
+	});
+	reload();
 	dlg->show();
 }
 
