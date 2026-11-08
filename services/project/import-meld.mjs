@@ -326,7 +326,6 @@ export function importMeld(input, opts = {}) {
     if (rot !== 0) p.rotation = Math.max(-360, Math.min(360, rot));
     if (num(l.opacity) && l.opacity !== 1) p.opacity = Math.max(0, Math.min(1, l.opacity));
     if (flips) ignore('flip (negative scale)');
-    if (isObj(l.radii) && Object.values(l.radii).some((r) => r)) ignore('rounded corners (radii)');
     if (num(l.fitmentMode) && l.fitmentMode !== 0) ignore('fitmentMode other than 0');
     // Video device fill mode (2): scaled uniformly, then clipped to the rectangle. Centre crop in source pixels.
     if (c.type === 'capture' && l.fitmentMode === 2 && num(l.implicitWidth) && num(l.implicitHeight) && l.implicitWidth > 0 && l.implicitHeight > 0
@@ -343,17 +342,36 @@ export function importMeld(input, opts = {}) {
   // Layer effects (D246): an enabled Meld ChromaKey becomes chromaKey. Meld's colour distance is not OBS's: the mapping
   // similarity = (threshold + feather) * 1000, smoothness = feather * 250 was fitted on three real green-screen videos
   // (docs/evidence/2026-11-08-chroma-key.md); it is UNVERIFIED for other footage. Other effect types are reported.
+  // GaussianBlur and corner radii (D247): Meld sizes (width, height, radii) are canvas pixels and scaleX is canvas pixels
+  // per source pixel (the same reading the fill-mode crop above uses), while the project's blur strength and corner
+  // radius are source pixels. Radii are clamped to half the shorter side, as Meld draws them, then divided by the
+  // scale. blurriness is read as canvas pixels too: strength = blurriness / scale. Both readings are UNVERIFIED against
+  // a Meld render (docs/evidence/2026-11-08-meld-blur-radii.md). Rounding goes last: Meld masks the finished layer.
   const effectsFor = (l) => {
     const out = [];
+    const sc = num(l.scaleX) && Math.abs(l.scaleX) > 1e-6 ? Math.abs(l.scaleX) : 1;
     for (const e of Array.isArray(l.effects) ? l.effects : []) {
       if (!isObj(e) || e.enabled !== true) continue;
       const k = typeof e.keyColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(e.keyColor) ? e.keyColor.toLowerCase() : null;
-      if (e.type === 'ChromaKey' && k && out.length < 4) {
+      if (out.length >= 3) ignore(`effect ${clip(String(e.type), 40)} (more than 3 effects)`);
+      else if (e.type === 'ChromaKey' && k) {
         const v01 = (v) => (num(v) ? Math.max(0, Math.min(1, v)) : 0);
         const to = (v) => Math.max(1, Math.min(1000, Math.round(v)));
         out.push({ type: 'chromaKey', color: k, similarity: to((v01(e.threshold) + v01(e.feather)) * 1000), smoothness: to(v01(e.feather) * 250) });
         if (num(e.tolerance) && e.tolerance !== 0) ignore('ChromaKey tolerance');
+      } else if (e.type === 'GaussianBlur' && num(e.blurriness) && e.blurriness > 0) {
+        out.push({ type: 'blur', strength: Math.max(1, Math.min(100, Math.round((e.blurriness / sc) * 10) / 10)) });
+        if (e.showOriginalOnTop === true) ignore('GaussianBlur showOriginalOnTop');
       } else ignore(`effect ${clip(String(e.type), 40)}`);
+    }
+    if (isObj(l.radii)) {
+      const r = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].map((c) => (num(l.radii[c]) && l.radii[c] > 0 ? l.radii[c] : 0));
+      const big = Math.max(...r);
+      if (big > 0) {
+        if (r.some((x) => Math.abs(x - big) > 0.5)) ignore('radii that differ per corner (largest kept)');
+        const half = num(l.width) && num(l.height) && l.width > 0 && l.height > 0 ? Math.min(l.width, l.height) / 2 : big;
+        out.push({ type: 'rounded', radius: Math.min(500, Math.round((Math.min(big, half) / sc) * 10) / 10) });
+      }
     }
     return out;
   };

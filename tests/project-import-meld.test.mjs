@@ -455,3 +455,34 @@ test('layer effects (D246): an enabled Meld ChromaKey imports as chromaKey with 
   assert.equal(validateProject(bad).ok, false);
   assert.equal(schemaCheck(bad), false);
 });
+
+test('blur and corner radii (D247): canvas-pixel Meld values become source-pixel blur and rounded, rounding last', () => {
+  const s = session();
+  const items = [];
+  (function walk(o) { if (o && typeof o === 'object') { if (o.id === 'H-L-MEDIA' || o.id === 'V-L-MEDIA') items.push(o); Object.values(o).forEach(walk); } })(s);
+  const h = items.find((x) => x.id === 'H-L-MEDIA');
+  Object.assign(h, { width: 400, height: 300, scaleX: 0.5, scaleY: 0.5 });
+  h.radii = { topLeft: 40, topRight: 40, bottomLeft: 40, bottomRight: 40 };
+  h.effects = [{ type: 'GaussianBlur', enabled: true, blurriness: 31.25, dimensions: 1, repeatEdge: 0, showOriginalOnTop: false }];
+  const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
+  const layer = () => p.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
+  assert.deepEqual(layer().effects, [{ type: 'blur', strength: 62.5 }, { type: 'rounded', radius: 80 }]);
+  assert.equal(r.ignored['effect GaussianBlur'], undefined);
+  assert.equal(r.ignored['rounded corners (radii)'], undefined, 'radii are no longer skipped');
+  assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
+  assert.equal(validateProject(p).ok, true);
+
+  // a radius over half the shorter side is drawn as half by Meld; uneven corners keep the largest and are reported
+  h.radii = { topLeft: 900, topRight: 10, bottomLeft: 10, bottomRight: 10 };
+  h.effects = [];
+  const two = importMeld(s, { id: 'meld-test' });
+  const l2 = two.project.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
+  assert.deepEqual(l2.effects, [{ type: 'rounded', radius: 300 }]);
+  assert.equal(two.report.ignored['radii that differ per corner (largest kept)'], 1);
+
+  // all-zero radii and a zero blur import nothing
+  h.radii = { topLeft: 0, topRight: 0, bottomLeft: 0, bottomRight: 0 };
+  h.effects = [{ type: 'GaussianBlur', enabled: true, blurriness: 0 }];
+  const three = importMeld(s, { id: 'meld-test' });
+  assert.equal(three.project.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA')).effects, undefined);
+});
