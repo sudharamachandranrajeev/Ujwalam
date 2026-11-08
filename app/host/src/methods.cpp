@@ -574,6 +574,22 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Params q(p, {"id", "cue"});
 		return a.studio->mixer_set_cue(q.str("id", 130), q.boolean("cue"));
 	});
+	// mixer.setTracks {id, tracks: [project track id]} (D273): the whole list; [] takes the source out of every track.
+	add("mixer.setTracks", [&a](const json::Value &p) {
+		Params q(p, {"id", "tracks"});
+		const json::Value *t = q.arr_opt("tracks");
+		if (!t || t->size() > 6)
+			throw Error(rpc::INVALID_PARAMS, "tracks: up to 6 track ids");
+		std::vector<std::string> ids;
+		for (auto &v : t->as_array()) {
+			if (!v.is_string() || v.as_string().empty() || v.as_string().size() > 64)
+				throw Error(rpc::INVALID_PARAMS, "tracks: track id strings");
+			if (std::find(ids.begin(), ids.end(), v.as_string()) != ids.end())
+				throw Error(rpc::INVALID_PARAMS, "tracks: each track once");
+			ids.push_back(v.as_string());
+		}
+		return a.studio->mixer_set_tracks(q.str("id", 130), ids);
+	});
 
 	// ---- outputs (O1: loopback targets only)
 	add("outputs.configure", [&a](const json::Value &p) { return a.outputs->configure(p); });

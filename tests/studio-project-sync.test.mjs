@@ -53,3 +53,15 @@ test('createProjectSync debounces and refuses to save an invalid project', () =>
     assert.equal(readFileSync(file, 'utf8'), '{"not":"a project"}', 'file untouched');
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('mixer.setTracks saves the routing into audio.sources by audioSource; unknown source or track changes nothing (D273)', () => {
+  const d = { ...doc(), audio: { tracks: [{ id: 't1' }, { id: 't2' }], sources: [{ id: 'mic', tracks: ['t1'] }] } };
+  assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'mic', tracks: ['t1', 't2'] }), 1);
+  assert.deepEqual(d.audio.sources[0].tracks, ['t1', 't2']);
+  assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'mic', tracks: [] }), 1);
+  assert.deepEqual(d.audio.sources[0].tracks, []);
+  assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'nope', tracks: ['t1'] }), 0);
+  assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'mic', tracks: ['t9'] }), 0);
+  assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: undefined, tracks: undefined }), 0);
+  assert.deepEqual(d.audio.sources[0].tracks, []);
+});

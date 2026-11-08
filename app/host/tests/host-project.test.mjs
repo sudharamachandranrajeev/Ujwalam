@@ -258,6 +258,17 @@ test('project v1 render: H and V placements, duplicate item, shared source, laye
   assert.ok(Math.abs(clips[0].volumeDb + 6) < 0.01);
   assert.equal(clips[0].mixers, 2, 'track t2 is mixer bit 1');
   assert.equal(clips[0].name, 'Clip audio', 'mixer row named by the project audio source name');
+  // track routing (D273): the whole list as project track ids; mixers follow; a bad list changes nothing
+  assert.deepEqual(mx.tracks, [{ id: 't1', name: 'Track 1' }, { id: 't2', name: 'Track 2' }]);
+  assert.deepEqual(clips[0].tracks, ['t2']);
+  let rt = await c.call('mixer.setTracks', { id: clips[0].id, tracks: ['t1', 't2'] });
+  assert.deepEqual([rt.audioSource, rt.mixers, rt.tracks], ['aud-clip', 3, ['t1', 't2']]);
+  rt = await c.call('mixer.setTracks', { id: clips[0].id, tracks: [] });
+  assert.equal(rt.mixers, 0, 'out of every track');
+  for (const bad of [['t9'], ['t1', 't1'], 't1']) await assert.rejects(c.call('mixer.setTracks', { id: clips[0].id, tracks: bad }), JSON.stringify(bad));
+  assert.equal((await c.call('mixer.list')).sources.find((s) => s.audioSource === 'aud-clip').mixers, 0, 'a refused list changes nothing');
+  rt = await c.call('mixer.setTracks', { id: clips[0].id, tracks: ['t2'] });
+  assert.equal((await c.call('mixer.list')).sources.find((s) => s.audioSource === 'aud-clip').mixers, 2, 'back as loaded');
 
   // inspector (P5a): partial placement patch merges into the project placement; bad patches change nothing
   const box0 = lh.layers.find((l) => l.id === 'box').placement;

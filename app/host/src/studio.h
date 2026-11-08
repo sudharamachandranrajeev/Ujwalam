@@ -113,6 +113,9 @@ public:
 	json::Value mixer_set_volume(const std::string &id, const double *mul, const double *db);
 	json::Value mixer_set_mute(const std::string &id, bool muted);
 	json::Value mixer_set_cue(const std::string &id, bool cue);
+	// Track routing (D273): the project audio.tracks this source goes to (bit n of its mixers = track n; every output
+	// encodes track 1). Project v1 sources with an audio.sources entry only.
+	json::Value mixer_set_tracks(const std::string &id, const std::vector<std::string> &tracks);
 
 	// Canvas video for encoders: "H" -> obs_get_video(), "V" -> V canvas video. nullptr if absent.
 	video_t *canvas_video(const std::string &canvas) const;

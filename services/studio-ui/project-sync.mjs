@@ -5,6 +5,7 @@
 //   layers.setPlacement -> scenes[].layers[].placements[canvas] (x, y, width, height, rotation, crop merged per key)
 //   layers.setVisible   -> placements[canvas].visible (and layer.visible, see below)
 //   layers.setEffects   -> scenes[].layers[].effects (the whole list; empty removes it; D260)
+//   mixer.setTracks     -> audio.sources[audioSource].tracks (D273; params = the host's answer: audioSource, tracks)
 // layers.move is NOT saved here: the host orders layers per canvas, the project has one order shared by H and V.
 // The order is saved by the structure route instead (op layer.move, D243), which reorders the host from the project.
 // Saves are debounced (one write per burst of edits) and go through saveProject (validate, temp file, .bak, rename).
@@ -18,6 +19,13 @@ const CROP_KEYS = ['left', 'top', 'right', 'bottom'];
 
 // Pure: apply one accepted host edit to a project document (mutates doc). Returns the number of placements changed.
 export function applyEdit(doc, method, params) {
+  if (method === 'mixer.setTracks') {
+    const src = doc.audio?.sources?.find((a) => a.id === params.audioSource);
+    const known = new Set((doc.audio?.tracks ?? []).map((t) => t.id));
+    if (!src || !Array.isArray(params.tracks) || !params.tracks.every((t) => known.has(t))) return 0;
+    src.tracks = [...params.tracks];
+    return 1;
+  }
   const scene = (doc.scenes ?? []).find((s) => s.id === params.scene);
   const layer = scene?.layers?.find((l) => l.id === params.layer);
   if (!layer || !layer.placements) return 0;
@@ -57,7 +65,7 @@ export function applyEdit(doc, method, params) {
   return changed;
 }
 
-export const SYNCED_METHODS = new Set(['layers.setPlacement', 'layers.setVisible', 'layers.setEffects']);
+export const SYNCED_METHODS = new Set(['layers.setPlacement', 'layers.setVisible', 'layers.setEffects', 'mixer.setTracks']);
 
 /** createProjectSync({ file, delayMs?, setTimer?, clearTimer?, log? })
  *  record(method, params): call after the host accepted the edit. flush(): write now. reload(): flush, then re-read the

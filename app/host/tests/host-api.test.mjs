@@ -208,7 +208,7 @@ test('clips token: frames.grab, replay.save, replay.status, marker.add (clip) an
     'devices.list', 'overlay.status', 'overlay.stats', 'effect.fire', 'scenes.list', 'scenes.create', 'scenes.remove',
     'scenes.activate', 'layers.list', 'layers.add', 'layers.remove', 'layers.setVisible', 'layers.setPlacement', 'layers.move',
     'preview.open', 'preview.focus', 'preview.close', 'preview.list', 'mixer.list', 'mixer.setVolume', 'mixer.setMute',
-    'mixer.setCue', 'outputs.configure', 'outputs.clear', 'outputs.status', 'outputs.start', 'outputs.stop', 'stream.start',
+    'mixer.setCue', 'mixer.setTracks', 'outputs.configure', 'outputs.clear', 'outputs.status', 'outputs.start', 'outputs.stop', 'stream.start',
     'stream.stop', 'record.start', 'record.stop', 'replay.start', 'replay.stop', 'panic.now', 'panic.status', 'panic.clear',
     'feedback.capture', 'feedback.status', 'hotkeys.status', 'hotkeys.trigger', 'encoders.probe'];
   for (const method of others) {

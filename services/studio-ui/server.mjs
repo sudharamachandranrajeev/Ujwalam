@@ -111,6 +111,9 @@ export const HOST_CALLS = Object.freeze({
   'mixer.setMute': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, muted: { type: 'bool', required: true } } },
   // CUE (headphone monitoring, Meld's per-channel button): not a stream change, applied at once.
   'mixer.setCue': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, cue: { type: 'bool', required: true } } },
+  // Track routing (D273, flag mixer-routing): which project audio tracks a source goes to. Every output encodes track 1,
+  // so this changes what the stream and recording hear: instant offline, "yes, on air" while live. Saved to the project.
+  'mixer.setTracks': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, tracks: { type: 'ids', max: 6, required: true } }, liveConfirm: true, flag: 'mixer-routing', summary: 'Change which tracks a sound goes to while live' },
   'stream.start': { schema: {}, confirm: 'onair', summary: 'Start the stream' },
   'stream.stop': { schema: {}, confirm: 'live', summary: 'Stop the stream' },
   'record.start': { schema: {}, confirm: 'live', summary: 'Start recording' },
@@ -175,6 +178,9 @@ export function validate(schema, p) {
       case 'effects': if (!Array.isArray(v) || v.length > 6 || !v.every((e) => isPlain(e) && typeof e.type === 'string')
         || JSON.stringify(v).length > 4096) return `bad field ${k}`; break;
       case 'enum': if (!d.values.includes(v)) return `bad field ${k}`; break;
+      // A list of distinct ids (track routing, D273).
+      case 'ids': if (!Array.isArray(v) || v.length > (d.max ?? 6) || new Set(v).size !== v.length
+        || !v.every((x) => typeof x === 'string' && ID.test(x))) return `bad field ${k}`; break;
       case 'object': {
         if (!isPlain(v) || Object.keys(v).length === 0) return `bad field ${k}`;
         const e = validate(d.schema, v);
@@ -409,6 +415,10 @@ export function createStudioServer(opts) {
   // Host call with a retry on CONFLICT (-32009) for project.load.
   // Undo history (D238): the layer's value before an edit, read from the host just before the call. A failed read
   // only means the edit is not undoable; the edit itself goes ahead.
+  // What the project file records for an accepted edit: the request, except track routing, which is keyed by the
+  // project audio source the host resolved (a mixer id names a scene/layer or a device, D273).
+  const syncParams = (method, params, result) => method === 'mixer.setTracks'
+    ? { audioSource: result?.audioSource, tracks: result?.tracks } : params;
   async function readBefore(method, params) {
     if (!UNDOABLE.includes(method)) return null;
     try { return beforeOf(method, params, await host.call('layers.list', { scene: params.scene, ...(params.canvas ? { canvas: params.canvas } : {}) })); } catch { return null; }
@@ -643,7 +653,7 @@ export function createStudioServer(opts) {
       try { result = await host.call(body.method, params) ?? null; } catch (e) { return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
       remember(body.method, params, before);
       // P5b autosave: only after the host accepted the edit; the real host only (the fake has no project file).
-      const saved = projectSync && host.describe().kind === 'host' ? projectSync.record(body.method, params) : false;
+      const saved = projectSync && host.describe().kind === 'host' ? projectSync.record(body.method, syncParams(body.method, params, result)) : false;
       return json(res, 200, saved ? { result, saved: 'pending' } : { result });
     }
     if (route === '/ui/api/bots/start' || route === '/ui/api/bots/stop') {
@@ -765,7 +775,7 @@ export function createStudioServer(opts) {
           const out = await callHost(p.method, p.params);
           remember(p.method, p.params, before);
           // A layout change confirmed while live autosaves like an instant one (P5b).
-          const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, p.params) : false;
+          const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}) });
         }
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });

@@ -1125,6 +1125,7 @@ void MainWindow::loadMixer()
 		if (!ok)
 			return note(QStringLiteral("Mixer: ") + err);
 		mixer_ = unwrap(b, "sources");
+		mixerTracks_ = unwrap(b, "tracks");
 		renderMixer();
 	});
 }
@@ -1138,11 +1139,15 @@ void MainWindow::renderMixer()
 		delete it;
 	}
 	meters_.clear();
+	routeButtons_ = 0;
 	QStringList offMix;
 	int row = 0;
+	const bool routing = mixerRoutingOn_ && !mixerTracks_.isEmpty();
 	for (const auto &x : mixer_) {
 		const QJsonObject m = x.toObject();
-		if (m.contains(QStringLiteral("mixers")) && m.value(QStringLiteral("mixers")).toInt() == 0) {
+		// With track routing on, a sound with a project audio entry stays listed on no track, so it can be put back.
+		const bool routable = routing && m.value(QStringLiteral("audioSource")).isString();
+		if (!routable && m.contains(QStringLiteral("mixers")) && m.value(QStringLiteral("mixers")).toInt() == 0) {
 			offMix << m.value(QStringLiteral("name")).toString();
 			continue;
 		}
@@ -1186,6 +1191,34 @@ void MainWindow::renderMixer()
 		top->addWidget(cue);
 		top->addWidget(mute);
 		g->addLayout(top);
+		if (routable) { // track routing (D273): one button per project track; track 1 is what every output encodes
+			auto *tr = new QHBoxLayout();
+			tr->addWidget(new QLabel(QStringLiteral("Tracks:")));
+			QStringList on;
+			for (const auto &t : m.value(QStringLiteral("tracks")).toArray())
+				on << t.toString();
+			for (int n = 0; n < mixerTracks_.size(); n++) {
+				const QJsonObject t = mixerTracks_.at(n).toObject();
+				const QString tid = t.value(QStringLiteral("id")).toString();
+				auto *b = new QPushButton(t.value(QStringLiteral("name")).toString());
+				b->setCheckable(true);
+				b->setChecked(on.contains(tid));
+				b->setToolTip(n == 0 ? QStringLiteral("Track 1: what the stream and the recording hear") : QStringLiteral("Not used by the outputs yet"));
+				connect(b, &QPushButton::clicked, this, [this, id, on, tid](bool checked) {
+					QStringList next;
+					for (const auto &t : mixerTracks_) { // keep the project's track order
+						const QString x = t.toObject().value(QStringLiteral("id")).toString();
+						if (x == tid ? checked : on.contains(x))
+							next << x;
+					}
+					setTracks(id, next);
+				});
+				tr->addWidget(b);
+				routeButtons_++;
+			}
+			tr->addStretch(1);
+			g->addLayout(tr);
+		}
 		auto *meter = new QProgressBar();
 		meter->setRange(0, 100);
 		meter->setTextVisible(false);
@@ -1217,6 +1250,20 @@ void MainWindow::renderMixer()
 		n->setWordWrap(true);
 		mixerBox_->insertWidget(row++, n);
 	}
+}
+
+void MainWindow::setTracks(const QString &id, const QStringList &tracks)
+{
+	QJsonObject p;
+	p.insert(QStringLiteral("id"), id);
+	p.insert(QStringLiteral("tracks"), QJsonArray::fromStringList(tracks));
+	api_->host(QStringLiteral("mixer.setTracks"), p, [this](bool ok, const QJsonObject &b, const QString &err) {
+		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
+			confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air"
+		else
+			note(ok ? QStringLiteral("Tracks changed.") : QStringLiteral("Tracks not changed: ") + err);
+		loadMixer();
+	});
 }
 
 void MainWindow::pollMeters()
@@ -1330,6 +1377,14 @@ void MainWindow::loadFlags()
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("bot-manager"))
 				bo = x.toObject().value(QStringLiteral("on")).toBool();
+		bool mr = false;
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("mixer-routing"))
+				mr = x.toObject().value(QStringLiteral("on")).toBool();
+		if (mr != mixerRoutingOn_) {
+			mixerRoutingOn_ = mr;
+			loadMixer();
+		}
 		bool rep = false;
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("report-button"))
@@ -2120,6 +2175,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("scenes"), sceneList_->count());
 	o.insert(QStringLiteral("layers"), layerList_->count());
 	o.insert(QStringLiteral("mixer"), (int)meters_.size());
+	o.insert(QStringLiteral("trackButtons"), routeButtons_);
 	o.insert(QStringLiteral("botButtons"), (int)botBox_->findChildren<QPushButton *>().size());
 	o.insert(QStringLiteral("addLayerChoices"), addPick_->count()); // kind "copy": every layer in the project
 	o.insert(QStringLiteral("transitionVideos"), trFile_->count());

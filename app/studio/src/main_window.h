@@ -110,6 +110,10 @@ private:
 	QString activeScene_;
 	QString selected_;
 	QJsonArray scenes_, layers_, mixer_;
+	QJsonArray mixerTracks_;     // mixer.list tracks: the project audio tracks [{id, name}] (D273)
+	bool mixerRoutingOn_ = false; // flag mixer-routing: a button per track on each mixer strip
+	int routeButtons_ = 0;        // track buttons shown (headless probe)
+	void setTracks(const QString &id, const QStringList &tracks);
 	bool live_ = false, recording_ = false, meterBusy_ = false;
 	bool previewEditing_ = false; // host switch for preview editing = flag preview-edit (status host.previewEditing)
 	int nudgeDx_ = 0, nudgeDy_ = 0; // arrow-key nudge not sent yet (D254)

@@ -75,6 +75,21 @@ enum obs_monitoring_type monitoring_type(const std::string &m)
 	return OBS_MONITORING_TYPE_NONE;
 }
 
+// Project v1 audio.tracks as (id, name) in order: bit n of a source's mixers is track n. Empty for the test format.
+std::vector<std::pair<std::string, std::string>> project_tracks(const json::Value &doc)
+{
+	std::vector<std::pair<std::string, std::string>> t;
+	const json::Value *au = doc.find("audio");
+	const json::Value *tr = au ? au->find("tracks") : nullptr;
+	if (tr && tr->is_array())
+		for (auto &x : tr->as_array()) {
+			const json::Value *id = x.find("id"), *nm = x.find("name");
+			if (id && id->is_string() && t.size() < 32)
+				t.emplace_back(id->as_string(), nm && nm->is_string() ? nm->as_string() : id->as_string());
+		}
+	return t;
+}
+
 } // namespace
 
 // Per-source audio meter (libobs volmeter, log fader). Values in dBFS, max over channels.
@@ -1804,6 +1819,7 @@ json::Value Studio::mixer_list() const
 	std::lock_guard<std::recursive_mutex> lk(m_);
 	json::Value a = json::Value::array();
 	std::set<const Src *> seen;
+	const auto tracks = project_tracks(model_doc_);
 	auto entry = [&](const Src &src, const std::string &id, const std::string &scene, const std::string &layer,
 			 const std::string &name, const std::string &cv) {
 		json::Value o = json::Value::object();
@@ -1817,7 +1833,13 @@ json::Value Studio::mixer_list() const
 		o.set("volume", (double)mul);
 		o.set("volumeDb", mul > 0 ? (double)obs_mul_to_db(mul) : json::Value());
 		o.set("muted", obs_source_muted(src.src));
-		o.set("mixers", obs_source_get_audio_mixers(src.src));
+		const uint32_t mix = obs_source_get_audio_mixers(src.src);
+		o.set("mixers", mix);
+		json::Value ts = json::Value::array(); // the mixers as project track ids
+		for (size_t n = 0; n < tracks.size(); n++)
+			if (mix & (1u << n))
+				ts.push(tracks[n].first);
+		o.set("tracks", std::move(ts));
 		o.set("cue", obs_source_get_monitoring_type(src.src) != OBS_MONITORING_TYPE_NONE);
 		// libobs holds back monitoring of a source with video until its frame is shown: CUE on such a source is late.
 		o.set("cueDelayed", (obs_source_get_output_flags(src.src) & OBS_SOURCE_VIDEO) != 0);
@@ -1841,6 +1863,14 @@ json::Value Studio::mixer_list() const
 					      l.src->audio_name.empty() ? l.name : l.src->audio_name, s.canvas);
 	json::Value r = json::Value::object();
 	r.set("sources", std::move(a));
+	json::Value tl = json::Value::array();
+	for (auto &t : tracks) {
+		json::Value o = json::Value::object();
+		o.set("id", t.first);
+		o.set("name", t.second);
+		tl.push(std::move(o));
+	}
+	r.set("tracks", std::move(tl));
 	return r;
 }
 
@@ -1888,6 +1918,44 @@ json::Value Studio::mixer_set_cue(const std::string &id, bool cue)
 	r.set("id", id);
 	r.set("cue", obs_source_get_monitoring_type(s->src) != OBS_MONITORING_TYPE_NONE);
 	r.set("cueDelayed", cue && (obs_source_get_output_flags(s->src) & OBS_SOURCE_VIDEO) != 0);
+	return r;
+}
+
+// Track routing (D273). The project file is the record: the UI server saves the change into audio.sources[].tracks
+// (keyed by the audioSource returned here). A CUE that is on follows the routing like mixer_set_cue sets it.
+json::Value Studio::mixer_set_tracks(const std::string &id, const std::vector<std::string> &tracks)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	if (format_ != "project-v1")
+		throw Error(rpc::CONFLICT, "track routing needs a project v1 model");
+	auto s = find_audio(id);
+	if (s->audio_id.empty())
+		throw Error(rpc::INVALID_PARAMS, "this source has no project audio entry (layer sound off)");
+	const auto defs = project_tracks(model_doc_);
+	uint32_t mask = 0;
+	for (auto &t : tracks) {
+		size_t n = 0;
+		while (n < defs.size() && defs[n].first != t)
+			n++;
+		if (n == defs.size())
+			throw Error(rpc::INVALID_PARAMS, "unknown track " + t);
+		mask |= 1u << n;
+	}
+	obs_source_set_audio_mixers(s->src, mask);
+	if (obs_source_get_monitoring_type(s->src) != OBS_MONITORING_TYPE_NONE)
+		obs_source_set_monitoring_type(s->src, mask ? OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT
+							     : OBS_MONITORING_TYPE_MONITOR_ONLY);
+	dirty_ = true;
+	const uint32_t now = obs_source_get_audio_mixers(s->src);
+	json::Value ts = json::Value::array();
+	for (size_t n = 0; n < defs.size(); n++)
+		if (now & (1u << n))
+			ts.push(defs[n].first);
+	json::Value r = json::Value::object();
+	r.set("id", id);
+	r.set("audioSource", s->audio_id);
+	r.set("mixers", now);
+	r.set("tracks", std::move(ts));
 	return r;
 }
 

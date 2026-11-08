@@ -96,12 +96,14 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.ok(p.layers > 0, 'the active scene\'s layers are listed');
     assert.equal(p.undoEnabled, false, 'empty history');
     assert.equal(p.live, false);
+    assert.equal(p.trackButtons, 0, 'no track routing buttons while mixer-routing is off');
   });
 
-  test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons', async () => {
-    const p = await probe(['scene-edit', 'transitions', 'bot-manager', 'report-button', 'posting']);
+  test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons; mixer track buttons', async () => {
+    const p = await probe(['scene-edit', 'transitions', 'bot-manager', 'report-button', 'posting', 'mixer-routing']);
     for (const id of ['scene-edit', 'transitions', 'bot-manager', 'report-button', 'posting']) assert.equal(p.flags.find((f) => f.id === id)?.on, true, id);
     assert.deepEqual(p.shown, { structure: true, transitions: true, bots: true, report: true, posts: true });
     assert.equal(p.botButtons, 4, 'Start and Stop for Streamer.bot and Speaker.bot');
+    assert.equal(p.trackButtons, 6, 'mixer-routing: a button per project track (2) on each of the 3 fake mixer strips (D273)');
   });
 });

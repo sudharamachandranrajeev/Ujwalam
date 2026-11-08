@@ -106,7 +106,8 @@ export function createFakeHost({ outputsReady = false } = {}) {
     'scene-2': [{ id: 'text', name: 'Title card', visible: true, placement: { visible: true, x: 0, y: 0, width: 1920, height: 1080 } }],
     'scene-3': [{ id: 'cam', name: 'Camera', visible: true, placement: { visible: true, x: 0, y: 0, width: 1080, height: 608 } }],
   };
-  const mixer = [{ id: 'scene-1/cam', name: 'Camera', volumeDb: 0, muted: false, cue: false }, { id: 'scene-1/game', name: 'Game', volumeDb: -6, muted: false, cue: true }, { id: 'scene-2/text', name: 'Music', volumeDb: -18, muted: true, cue: false }];
+  const mixer = [{ id: 'scene-1/cam', name: 'Camera', volumeDb: 0, muted: false, cue: false, audioSource: 'aud-cam', tracks: ['t1'] }, { id: 'scene-1/game', name: 'Game', volumeDb: -6, muted: false, cue: true, audioSource: 'aud-game', tracks: ['t1', 't2'] }, { id: 'scene-2/text', name: 'Music', volumeDb: -18, muted: true, cue: false, audioSource: 'aud-music', tracks: ['t1'] }];
+  const TRACKS = [{ id: 't1', name: 'Stream' }, { id: 't2', name: 'Recording' }];
   const active = { H: 'scene-1', V: 'scene-3' };
   const state = { live: false, recording: false };
   const noise = () => randomBytes(1)[0] / 255;
@@ -135,7 +136,13 @@ export function createFakeHost({ outputsReady = false } = {}) {
           return { ok: true };
         }
         case 'preview.open': case 'preview.focus': return { ok: true, fake: true, note: 'BLOCKED-ON-HOST: no native preview window exists in the fake backend' };
-        case 'mixer.list': return { sources: mixer.map((m) => ({ ...m, peakDb: null })) };
+        case 'mixer.list': return { sources: mixer.map((m) => ({ ...m, mixers: TRACKS.reduce((b, t, n) => (m.tracks.includes(t.id) ? b | (1 << n) : b), 0), peakDb: null })), tracks: TRACKS };
+        case 'mixer.setTracks': {
+          const m = need(mixer.find((x) => x.id === p.id), 'source');
+          if (!p.tracks.every((t) => TRACKS.some((x) => x.id === t))) throw new Error('unknown track');
+          m.tracks = TRACKS.filter((t) => p.tracks.includes(t.id)).map((t) => t.id);
+          return { id: m.id, audioSource: m.audioSource, tracks: m.tracks };
+        }
         case 'mixer.setVolume': need(mixer.find((m) => m.id === p.id), 'source').volumeDb = p.db; return { ok: true };
         case 'mixer.setMute': need(mixer.find((m) => m.id === p.id), 'source').muted = p.muted; return { ok: true };
         case 'mixer.setCue': need(mixer.find((m) => m.id === p.id), 'source').cue = p.cue; return { id: p.id, cue: p.cue, cueDelayed: false };
