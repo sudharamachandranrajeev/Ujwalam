@@ -126,7 +126,7 @@ private:
 
 	// graphics thread
 	obs_weak_source_t *target_ = nullptr;
-	obs_source_t *target_raw_ = nullptr; // identity only (compared, never dereferenced)
+	obs_source_t *target_raw_ = nullptr; // identity only (compared, never dereferenced; only while target_ is not expired)
 	int64_t target_used_ms_ = 0;
 	uint32_t want_accum_ = 0, want_ = 0;
 	float smooth_accum_ = 0;

@@ -102,6 +102,27 @@ function fakeWorker(seconds, mode = 'normal') {
   return new Promise((res, rej) => p.once('exit', (code) => (code === 0 ? res(JSON.parse(out.trim().split('\n').pop())) : rej(new Error(`fake worker ${code}: ${err}`)))));
 }
 
+// Polls face.status until ok(st) holds; fails with the last status after `ms`. No fixed sleeps for readiness.
+async function waitStatus(ok, what, ms = 5000) {
+  const t0 = Date.now();
+  let st;
+  for (;;) {
+    st = await c.call('face.status');
+    if (ok(st)) return st;
+    if (Date.now() - t0 > ms) assert.fail(`${what}: not reached in ${ms} ms: ${JSON.stringify(st)}`);
+    await new Promise((res) => setTimeout(res, 20));
+  }
+}
+
+// Loads a project and waits until the face link has settled on its camera: a new target generation (every load
+// makes new sources) with a target set. Only then may a worker start, so it sees frames of this project's camera.
+async function loadSettled(project) {
+  const g0 = (await c.call('face.status')).generation;
+  const r = await loadIntoHost(c, project, { bases: { media } });
+  await waitStatus((st) => st.generation !== g0 && st.target !== '', 'face target settled after project.load');
+  return r;
+}
+
 const place = (x, y, w = 320, hh = 180) => ({ h: { visible: true, x, y, width: w, height: hh } });
 const doc = (layers) => ({
   version: 1, id: 'face-check', name: 'Face check', activeScene: 'main',
@@ -175,10 +196,11 @@ test('face.status: the link is on; no worker means nothing is captured and the l
 const pyOk = existsSync(PY);
 
 test('personMask with a synthetic mask: remove, replace colour, blur; stale mask fades to the plain layer', { skip: !pyOk && `no face Python at ${PY}` }, async () => {
-  const r = await loadIntoHost(c, MASKS, { bases: { media } });
+  const r = await loadSettled(MASKS);
   assert.deepEqual(r.unavailable, []);
+  const a = await c.call('face.status');
   const worker = fakeWorker(6);
-  await new Promise((res) => setTimeout(res, 1500));
+  await waitStatus((st) => st.maskUpdates - a.maskUpdates >= 10, 'masks flowing');
   const px = frameRgb(await recordFrame('face-mask.mkv'), 1280, 720);
   const st = await c.call('face.status');
   const sum = await worker;
@@ -200,10 +222,11 @@ test('personMask with a synthetic mask: remove, replace colour, blur; stale mask
 });
 
 test('autoFrame and faceSticker with synthetic face points', { skip: !pyOk && `no face Python at ${PY}` }, async () => {
-  const r = await loadIntoHost(c, TRACK, { bases: { media } });
+  const r = await loadSettled(TRACK);
   assert.deepEqual(r.unavailable, []);
+  const a = await c.call('face.status');
   const worker = fakeWorker(6);
-  await new Promise((res) => setTimeout(res, 1500));
+  await waitStatus((st) => st.results - a.results >= 10, 'face results flowing');
   const px = frameRgb(await recordFrame('face-track.mkv'), 1280, 720);
   await worker;
   // face box centre (0.75, 0.75), zoom 2: the crop is the bottom right quadrant (yellow) stretched over the layer
@@ -226,93 +249,109 @@ const delta = (a, b) => ({
   invalid: b.rejected.invalid - a.rejected.invalid, unsent: b.rejected.unsent - a.rejected.unsent,
   generation: b.rejected.generation - a.rejected.generation, torn: b.rejected.torn - a.rejected.torn
 });
+// Counters for assertion messages: the delta plus each side's target, generation, worker and last reject.
+const brief = (s) => ({ target: s.target, generation: s.generation, workerAlive: s.workerAlive, framesSent: s.framesSent,
+  results: s.results, last: s.rejected.last });
+const why = (a, b, sum) => JSON.stringify({ sum, d: delta(a, b), a: brief(a), b: brief(b) });
 
 test('link key: a worker with the wrong key never attaches (no frame leaves the host)', { skip: !pyOk && `no face Python at ${PY}` }, async () => {
-  await loadIntoHost(c, MASKS, { bases: { media } });
-  await sleep(1200); // any earlier worker's heartbeat is stale
+  await loadSettled(MASKS);
+  await waitStatus((st) => !st.workerAlive, 'no earlier worker alive');
   const a = await c.call('face.status');
   const sum = await fakeWorker(2.5, 'badkey');
   const b = await c.call('face.status');
   assert.equal(sum.error, 'no face link', 'the worker refused the mapping');
-  assert.equal(b.workerAlive, false);
-  assert.equal(delta(a, b).framesSent, 0, 'no camera frame went out');
+  assert.equal(b.workerAlive, false, why(a, b, sum));
+  assert.equal(delta(a, b).framesSent, 0, `no camera frame went out: ${why(a, b, sum)}`);
 });
 
 test('bad values (NaN, Inf, 1e30, wrong landmark count, feature out of range) are refused; the layers draw plainly', { skip: !pyOk && `no face Python at ${PY}` }, async () => {
-  await loadIntoHost(c, TRACK, { bases: { media } });
+  await loadSettled(TRACK);
   for (const mode of ['inf', 'huge', 'count', 'feats']) {
     const a = await c.call('face.status');
     const sum = await fakeWorker(2.5, mode);
     const b = await c.call('face.status');
     const d = delta(a, b);
-    assert.ok(sum.frames > 5, `${mode}: the worker answered: ${JSON.stringify(sum)}`);
-    assert.equal(d.results, 0, `${mode}: no result used: ${JSON.stringify(d)}`);
-    assert.ok(d.invalid > 5, `${mode}: refused as invalid: ${JSON.stringify(d)} (${b.rejected.last})`);
+    assert.ok(sum.frames > 5, `${mode}: the worker answered: ${why(a, b, sum)}`);
+    assert.equal(d.results, 0, `${mode}: no result used: ${why(a, b, sum)}`);
+    assert.ok(d.invalid > 5, `${mode}: refused as invalid: ${why(a, b, sum)}`);
   }
+  const n0 = await c.call('face.status');
   const worker = fakeWorker(5, 'nan');
-  await sleep(1500);
+  await waitStatus((st) => st.rejected.invalid - n0.rejected.invalid >= 10, 'NaN results arriving (and refused)');
   const px = frameRgb(await recordFrame('face-nan.mkv'), 1280, 720);
   const st = await c.call('face.status');
   await worker;
-  assert.equal(st.rejected.last, 'landmark value');
+  assert.equal(st.rejected.last, 'landmark value', JSON.stringify(st));
   near(px(40 + 20, 300 + 20), [255, 0, 0], 'NaN landmarks: autoFrame shows the whole layer (red top left), no crop');
   near(px(400 + 150, 300 + 80), [255, 0, 0], 'NaN landmarks: no sticker (the red quadrant shows where it would sit)');
 });
 
 test('provenance: results for unsent frames or another target generation are refused', { skip: !pyOk && `no face Python at ${PY}` }, async () => {
-  await loadIntoHost(c, MASKS, { bases: { media } });
+  await loadSettled(MASKS);
   for (const [mode, key] of [['unsent', 'unsent'], ['oldgen', 'generation']]) {
     const a = await c.call('face.status');
     const sum = await fakeWorker(2.5, mode);
     const b = await c.call('face.status');
     const d = delta(a, b);
-    assert.ok(sum.frames > 5, `${mode}: ${JSON.stringify(sum)}`);
-    assert.equal(d.results, 0, `${mode}: ${JSON.stringify(d)}`);
-    assert.ok(d[key] > 5, `${mode}: counted as ${key}: ${JSON.stringify(d)}`);
+    assert.ok(sum.frames > 5, `${mode}: ${why(a, b, sum)}`);
+    assert.equal(d.results, 0, `${mode}: ${why(a, b, sum)}`);
+    assert.ok(d[key] > 5, `${mode}: counted as ${key}: ${why(a, b, sum)}`);
   }
 });
 
 test('generation: a new target camera gets a new generation', async () => {
-  await loadIntoHost(c, MASKS, { bases: { media } });
-  await sleep(1500);
+  await loadSettled(MASKS);
   const g1 = (await c.call('face.status')).generation;
-  await loadIntoHost(c, TRACK, { bases: { media } }); // another image source; the old target idles out after 1 s
-  await sleep(2500);
-  const st = await c.call('face.status');
+  await loadIntoHost(c, TRACK, { bases: { media } }); // another image source: the old one is gone, a new target
+  const st = await waitStatus((x) => x.generation !== g1 && x.target !== '', 'a new target after the load');
   assert.ok(st.generation > g1, `generation ${g1} -> ${st.generation}`);
 });
 
+// Regression (2026-11-08 flake): the old target was kept by raw pointer until it idled out (1 s), and a new source
+// allocated at the freed address inherited the dead target: no frame was ever captured for it. A destroyed target is
+// now dropped at once, so every load settles on its camera far below the 1 s idle-out.
+test('a destroyed target is dropped at once: every load settles on the new camera (no 1 s wait, no stuck target)', async () => {
+  for (let i = 0; i < 20; i++) {
+    const g0 = (await c.call('face.status')).generation;
+    await loadIntoHost(c, i % 2 ? TRACK : MASKS, { bases: { media } });
+    await waitStatus((st) => st.generation !== g0 && st.target !== '', `load ${i}: new target`, 500);
+  }
+});
+
 test('freshness is the host clock: a worker timestamp in the future does not keep a mask alive', { skip: !pyOk && `no face Python at ${PY}` }, async () => {
-  await loadIntoHost(c, MASKS, { bases: { media } });
+  await loadSettled(MASKS);
   const a = await c.call('face.status');
   const sum = await fakeWorker(2.5, 'future');
   const b = await c.call('face.status');
-  assert.ok(sum.frames > 5 && delta(a, b).results > 5, 'future timestamps are only an echo: the results are used');
+  assert.ok(sum.frames > 5 && delta(a, b).results > 5, `future timestamps are only an echo: the results are used: ${why(a, b, sum)}`);
   await sleep(1500); // worker gone > hold + fade
   const px = frameRgb(await recordFrame('face-future.mkv'), 1280, 720);
   near(px(40 + 260, 40 + 90), [255, 0, 0], 'future ts: the mask still went stale (plain layer)');
 });
 
 test('mask valid flag: results without a mask do not refresh the old mask', { skip: !pyOk && `no face Python at ${PY}` }, async () => {
-  await loadIntoHost(c, MASKS, { bases: { media } });
+  await loadSettled(MASKS);
   const a = await c.call('face.status');
   const worker = fakeWorker(6, 'nomask'); // a mask for the first 20 frames only, then results without one
-  await sleep(2500);
+  // 30 results: past the 20 masked frames by 10 or more, so the last mask is >= 0.3 s old now and older than hold +
+  // fade (0.8 s) at the frame read 0.8 s into the recording
+  await waitStatus((st) => st.results - a.results >= 30, 'maskless results flowing');
   const px = frameRgb(await recordFrame('face-nomask.mkv'), 1280, 720);
   const b = await c.call('face.status');
-  await worker;
+  const sum = await worker;
   const d = delta(a, b);
-  assert.ok(d.maskUpdates > 0 && d.maskUpdates <= 20, `mask updates only from frames with a mask: ${JSON.stringify(d)}`);
-  assert.ok(d.results > d.maskUpdates + 10, `results kept coming: ${JSON.stringify(d)}`);
+  assert.ok(d.maskUpdates > 0 && d.maskUpdates <= 20, `mask updates only from frames with a mask: ${why(a, b, sum)}`);
+  assert.ok(d.results > d.maskUpdates + 10, `results kept coming: ${why(a, b, sum)}`);
   near(px(40 + 260, 40 + 90), [255, 0, 0], 'no new mask: the old one aged out (plain layer)');
 });
 
 test('seqlock: snapshots taken while the result block changes are never used', { skip: !pyOk && `no face Python at ${PY}` }, async () => {
-  await loadIntoHost(c, MASKS, { bases: { media } });
+  await loadSettled(MASKS);
   const a = await c.call('face.status');
-  await fakeWorker(3, 'torn');
+  const sum = await fakeWorker(3, 'torn');
   const b = await c.call('face.status');
   const d = delta(a, b);
-  assert.ok(d.torn > 10, `torn snapshots counted: ${JSON.stringify(d)}`);
-  assert.ok(d.results <= 1, `only the one good result before the churn: ${JSON.stringify(d)}`);
+  assert.ok(d.torn > 10, `torn snapshots counted: ${why(a, b, sum)}`);
+  assert.ok(d.results <= 1, `only the one good result before the churn: ${why(a, b, sum)}`);
 });
