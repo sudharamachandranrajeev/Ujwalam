@@ -309,6 +309,7 @@ def media_info(ffprobe, path):
         "pix_fmt": v.get("pix_fmt") if v else None,
         "acodec": a.get("codec_name") if a else None,
         "has_audio": a is not None,
+        "audio_tracks": sum(1 for s in j.get("streams", []) if s.get("codec_type") == "audio"),
         "size": int(j.get("format", {}).get("size") or 0),
     }
 

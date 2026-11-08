@@ -90,14 +90,15 @@ def layout_graph(layout, iw, ih, ow, oh):
 
 
 def render_argv(ffmpeg, src, start, dur, graph, encoder, out_name, has_audio, captions=None):
-    """argv for one variant. captions: a bare ASS file name in the working folder, or None."""
+    """argv for one variant. captions: a bare ASS file name in the working folder, or None. Every audio track of the
+    source is kept as its own track in source order (`-map 0:a`, track 1 = the studio mix); none is dropped."""
     tail = ",subtitles=" + captions if captions else ""
     graph = graph.replace("[vout]", "[vpre]", 1) + f";[vpre]format=yuv420p{tail}[vout]"
     argv = [ffmpeg, "-v", "error", "-nostdin", "-y", "-threads", str(FFMPEG_THREADS), "-filter_threads", "2",
             "-ss", f"{start:.3f}", "-t", f"{dur:.3f}", "-i", src]
     if not has_audio:
         argv += ["-f", "lavfi", "-t", f"{dur:.3f}", "-i", "anullsrc=r=48000:cl=stereo"]
-    argv += ["-filter_complex", graph, "-map", "[vout]", "-map", "0:a:0" if has_audio else "1:a:0",
+    argv += ["-filter_complex", graph, "-map", "[vout]", "-map", "0:a" if has_audio else "1:a:0",
              "-fpsmax", "60", *ENCODERS[encoder], *AUDIO, "-movflags", "+faststart", "-shortest", "-f", "mp4",
              out_name]
     return argv
