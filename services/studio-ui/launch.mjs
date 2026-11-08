@@ -260,14 +260,12 @@ export function coreServeArgs({ dataDir, mock = false, sbWs = {} }) {
 /** The cmd.exe line that opens url in the default browser, or null if url is not a plain loopback http URL.
  *  Only [A-Za-z0-9:/.?=_-] are allowed, so nothing in it is special to cmd (no & | ^ % " < >). */
 /** Where the Qt shell exe and its Qt DLLs are (pure; tested). Development: the built exe in out/studio/build and the
- *  Qt kit's bin. Installed package: <root>/bin/ujwalam-studio.exe with the OBS runtime's Qt 6.8.3 DLLs and the
- *  qwindows platform plugin (obs/bin/64bit, obs/bin/64bit/platforms). null when neither exe exists. */
+ *  Qt kit's bin. Installed package: <root>/studio/ujwalam-studio.exe, self-contained (its Qt DLLs beside it and
+ *  platforms/ below it, found by Qt itself; D277). null when neither exe exists. */
 export function studioShellPaths({ root = REPO, devExe = STUDIO_EXE, devQtDir = null, exists = existsSync } = {}) {
   if (devExe && exists(devExe)) return { exe: devExe, qtBin: devQtDir ? path.join(devQtDir, 'bin') : null, qtPlugins: null };
-  const exe = path.join(root, 'bin', 'ujwalam-studio.exe');
-  if (!exists(exe)) return null;
-  const qtBin = path.join(root, 'obs', 'bin', '64bit');
-  return { exe, qtBin, qtPlugins: path.join(qtBin, 'platforms') };
+  const exe = path.join(root, 'studio', 'ujwalam-studio.exe');
+  return exists(exe) ? { exe, qtBin: null, qtPlugins: null } : null;
 }
 
 /** Qt shell spawn spec (pure; tested). null when the exe is missing. env: the launcher's environment without any

@@ -551,13 +551,13 @@ test('Qt shell spawn spec: URL and launch key by env only, every token/key varia
   assert.equal(shellSpawnSpec({ uiPort: 0, launchKey: 'k', exe: 'C:/studio.exe', exists: () => true }), null, 'bad port');
 });
 
-test('Qt shell paths: dev build first, else the packaged exe with the OBS runtime Qt DLLs and platform plugin', () => {
+test('Qt shell paths: dev build first, else the self-contained packaged exe in studio/ (D277)', () => {
   const root = path.join('C:', 'inst');
   const dev = path.join('C:', 'repo', 'out', 'studio', 'build', 'ujwalam-studio.exe');
-  const pkg = path.join(root, 'bin', 'ujwalam-studio.exe');
+  const pkg = path.join(root, 'studio', 'ujwalam-studio.exe');
   assert.deepEqual(studioShellPaths({ root, devExe: dev, devQtDir: 'C:/qt', exists: (f) => f === dev }), { exe: dev, qtBin: path.join('C:/qt', 'bin'), qtPlugins: null });
   assert.deepEqual(studioShellPaths({ root, devExe: dev, exists: (f) => f === pkg }),
-    { exe: pkg, qtBin: path.join(root, 'obs', 'bin', '64bit'), qtPlugins: path.join(root, 'obs', 'bin', '64bit', 'platforms') });
+    { exe: pkg, qtBin: null, qtPlugins: null });
   assert.equal(studioShellPaths({ root, devExe: dev, exists: () => false }), null);
 });
 

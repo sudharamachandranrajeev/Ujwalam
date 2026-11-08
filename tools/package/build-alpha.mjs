@@ -27,7 +27,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from '../../app/host/lib/config.mjs';
-import { EXE as STUDIO_EXE } from '../../app/studio/tools/build.mjs';
+import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
+
+// The studio shell ships self-contained in studio/ (D277): its exe, the Qt 6.8.3 kit DLLs it imports and the platform
+// plugins (qwindows for the window, qoffscreen for headless probes). Qt finds <exe dir>/platforms by itself; the
+// runtime's Qt (OBS's build) is never used for it. [package path, path under the kit]
+export const STUDIO_QT = Object.freeze([
+  ['studio/Qt6Core.dll', 'bin/Qt6Core.dll'], ['studio/Qt6Gui.dll', 'bin/Qt6Gui.dll'],
+  ['studio/Qt6Widgets.dll', 'bin/Qt6Widgets.dll'], ['studio/Qt6Network.dll', 'bin/Qt6Network.dll'],
+  ['studio/platforms/qwindows.dll', 'plugins/platforms/qwindows.dll'], ['studio/platforms/qoffscreen.dll', 'plugins/platforms/qoffscreen.dll'],
+]);
 import {
   allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
@@ -79,8 +88,8 @@ const COMPONENTS = [
   [/^obs-browser-page\.exe$/i, 'OBS Studio 32.1.2 (obs-browser)', 'GPL-2.0-or-later'],
   [/^(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)-\d+\.dll$/i, 'FFmpeg (OBS build)', 'GPL-3.0-or-later (verified 2026-11-05: build string has --enable-gpl --enable-version3, no --enable-nonfree; docs/evidence/2026-11-05-licence-verification.md)'],
   [/^libx264-\d+\.dll$/i, 'x264', 'GPL-2.0-or-later'],
-  [/^qwindows\.dll$/i, 'Qt 6.8.3 platform plugin (studio shell)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
-  [/^Qt6[A-Za-z]+\.dll$/i, 'Qt 6.8.3 (imported by the studio shell, obs-browser and obs-frontend-api)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
+  [/^q(windows|offscreen)\.dll$/i, 'Qt 6.8.3 platform plugins (studio shell, studio/platforms/)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
+  [/^Qt6[A-Za-z]+\.dll$/i, 'Qt 6.8.3 (obs/: OBS build, imported by obs-browser and obs-frontend-api; studio/: Qt kit build for the studio shell)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
   [/^(libcef\.dll|chrome_elf\.dll|.*\.pak|icudtl\.dat|v8_context_snapshot\.bin)$/i, 'Chromium Embedded Framework (CEF) and Chromium', 'BSD-3-Clause (CEF) plus Chromium third-party licences: UNVERIFIED, credits file not in the runtime'],
   [/^(libEGL|libGLESv2)\.dll$/i, 'ANGLE (part of CEF)', 'BSD-3-Clause: UNVERIFIED'],
   [/^zlib\.dll$/i, 'zlib', 'Zlib'],
@@ -105,7 +114,7 @@ function sourceOffer({ version, commit, obs }) {
     'Corresponding source:',
     `- Ujwalam: commit ${commit} of the Ujwalam repository. The Node.js services in this package are the`,
     '  complete source of those parts; the host exe (bin/ujwalam-host.exe) is built from app/host/ and the studio exe',
-    '  (bin/ujwalam-studio.exe) from app/studio/ at that commit.',
+    '  (studio/ujwalam-studio.exe) from app/studio/ at that commit.',
     `- OBS Studio ${obs.version}: ${obs.source}`,
     '  Except obs-nvenc.dll, which is modified: OBS Studio 32.1.2 sources with upstream commit',
     '  bd96ff53ddfc0787dd7b17344252ff6f6afb31d5 ("obs-nvenc: Fix resource destruction order") applied. The diff,',
@@ -190,6 +199,10 @@ export async function buildAlpha(opts = {}) {
   if (!existsSync(hostExe)) throw new Error(`host exe not found: ${hostExe} (build it: npm run build:host)`);
   const studioExe = path.resolve(opts.studioExe ?? STUDIO_EXE);
   if (!existsSync(studioExe)) throw new Error(`studio exe not found: ${studioExe} (build it: npm run build:studio)`);
+  const qtKit = opts.qtDir ? path.resolve(opts.qtDir) : studioQtDir();
+  const studioQt = STUDIO_QT.map(([dest, rel]) => ({ dest, src: qtKit ? path.join(qtKit, ...rel.split('/')) : null }));
+  const noQt = studioQt.filter((f) => !f.src || !existsSync(f.src)).map((f) => f.dest);
+  if (noQt.length) throw new Error(`studio Qt files not found in the Qt kit (--qt-dir, UJWALAM_QT_DIR or app/studio/studio.local.json qtDir): ${noQt.join(', ')}`);
   const profile = path.resolve(opts.profile ?? path.join(REPO, 'data', 'profile.local.json'));
   if (!existsSync(profile)) throw new Error('private-term scan needs a profile (--profile or data/profile.local.json); failing closed');
   const outDir = path.resolve(opts.outDir ?? path.join(REPO, 'out', 'dist'));
@@ -207,7 +220,7 @@ export async function buildAlpha(opts = {}) {
   const repoRel = repoFiles(REPO);
   const imp = importProblems(REPO, repoRel);
   if (imp.length) throw new Error(`import closure:\n  ${imp.join('\n  ')}`);
-  const obs = selectObsRuntime(runtime, { hostExe, studioExe, disabled: disabledModules(REPO) });
+  const obs = selectObsRuntime(runtime, { hostExe, disabled: disabledModules(REPO) });
   // The shipped obs-nvenc.dll must be the patched build (official 32.1.2 crashes on encoder destroy; ADR
   // docs/adr/2026-11-05-obs-nvenc-destroy-order.md). Fail closed: fix with `node tools/obs-patch/build-obs-nvenc.mjs --install`.
   const nvenc = obs.files.some((f) => /(^|\/)obs-nvenc\.dll$/i.test(f.dest)) ? runtimeNvencState(runtime) : { state: 'not shipped' };
@@ -230,7 +243,8 @@ export async function buildAlpha(opts = {}) {
   try {
     for (const r of repoRel) put(r, 'repo', { src: path.join(REPO, ...r.split('/')) });
     put('bin/ujwalam-host.exe', 'host', { src: hostExe });
-    put('bin/ujwalam-studio.exe', 'host', { src: studioExe });
+    put('studio/ujwalam-studio.exe', 'host', { src: studioExe });
+    for (const f of studioQt) put(f.dest, 'obs', { src: f.src });
     for (const f of obs.files) put(f.dest, 'obs', { src: f.src });
     // Re-check the bytes actually staged (the runtime file could change between the check above and the copy);
     // release.json records this staged file's state and hash.
@@ -268,7 +282,7 @@ export async function buildAlpha(opts = {}) {
     put('notices/SOURCE-OFFER.txt', 'generated', { text: sourceOffer({ version, commit, obs: rel.obsRuntime }) });
     const tp = ['Third-party components in this package (OBS runtime subset). Licence status as recorded; UNVERIFIED items need checking before any distribution.', ''];
     const byComp = new Map();
-    for (const f of [...obs.files.map((x) => x.dest)]) {
+    for (const f of [...obs.files.map((x) => x.dest), ...studioQt.map((x) => x.dest)]) {
       const base = f.split('/').pop();
       if (!/\.(dll|exe|pak|dat|bin)$/i.test(base)) continue;
       const [, comp, lic] = componentOf(base);
@@ -333,7 +347,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const a = parseArgs(process.argv.slice(2));
     const s = await buildAlpha({
-      n: a.n !== undefined ? Number(a.n) : undefined, hostExe: a['host-exe'], studioExe: a['studio-exe'], runtime: a.runtime, outDir: a['out-dir'],
+      n: a.n !== undefined ? Number(a.n) : undefined, hostExe: a['host-exe'], studioExe: a['studio-exe'], qtDir: a['qt-dir'], runtime: a.runtime, outDir: a['out-dir'],
       profile: a.profile, force: a.force === true, keepStaging: a['keep-staging'] === true,
     });
     console.log(JSON.stringify({ ...s, zip: path.basename(s.zip) }, null, 2));

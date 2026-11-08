@@ -70,8 +70,8 @@ test('forbidden paths: legacy, local files, Microsoft fonts, any font, private e
     '.env', 'node_modules/ajv/x.js', 'host.local.json', 'data/labels/a.json', 'data/games/codm/x.json', 'logs/host.log', 'bin/ujwalam-host.pdb'];
   for (const p of bad) assert.ok(forbiddenProblems([p], { fontNames }).length > 0, p);
   for (const p of ['ui/corbel-colours.css']) assert.deepEqual(forbiddenProblems([p], { fontNames }), [], 'a css file that merely starts with the name is not a font');
-  assert.deepEqual(allowProblems(['bin/ujwalam-host.exe', 'bin/ujwalam-studio.exe', 'obs/bin/64bit/platforms/qwindows.dll', 'obs/bin/64bit/obs.dll', 'obs/obs-plugins/64bit/locales/en-US.pak', 'notices/GPL-2.0.txt', 'Install-Ujwalam.ps1']), []);
-  assert.equal(allowProblems(['tests/x.test.mjs', 'random.txt', 'bin/other.exe', 'obs/cef/x.dll', 'obs/bin/64bit/platforms/qminimal.dll', 'obs/bin/64bit/imageformats/qjpeg.dll']).length, 6);
+  assert.deepEqual(allowProblems(['bin/ujwalam-host.exe', 'studio/ujwalam-studio.exe', 'studio/Qt6Core.dll', 'studio/Qt6Network.dll', 'studio/platforms/qwindows.dll', 'studio/platforms/qoffscreen.dll', 'obs/bin/64bit/obs.dll', 'obs/obs-plugins/64bit/locales/en-US.pak', 'notices/GPL-2.0.txt', 'Install-Ujwalam.ps1']), []);
+  assert.equal(allowProblems(['tests/x.test.mjs', 'random.txt', 'bin/other.exe', 'obs/cef/x.dll', 'obs/bin/64bit/platforms/qminimal.dll', 'obs/bin/64bit/imageformats/qjpeg.dll', 'obs/bin/64bit/platforms/qwindows.dll', 'bin/ujwalam-studio.exe', 'studio/Qt6Svg.dll', 'studio/platforms/qminimal.dll']).length, 10);
 });
 
 test('release info and changelog excerpt for the current alpha and alpha.1; node version check', () => {
@@ -211,7 +211,7 @@ test('full build (real host exe + OBS runtime)', { skip: process.env.UJWALAM_PAC
     const names = readZip(r.zip).map((e) => e.name.replace(/^[^/]+\//, ''));
     assert.deepEqual(allowProblems(names), []);
     assert.deepEqual(forbiddenProblems(names, { fontNames: ['Corbel', 'Consolas'] }), []);
-    for (const n of ['bin/ujwalam-host.exe', 'bin/ujwalam-studio.exe', 'obs/bin/64bit/platforms/qwindows.dll', 'obs/bin/64bit/Qt6Network.dll', 'obs/bin/64bit/Qt6Widgets.dll', 'Install-Ujwalam.ps1', 'Ujwalam.cmd', 'SHA256SUMS.txt', 'notices/GPL-2.0.txt', 'notices/SOURCE-OFFER.txt']) assert.ok(names.includes(n), n);
+    for (const n of ['bin/ujwalam-host.exe', 'studio/ujwalam-studio.exe', 'studio/platforms/qwindows.dll', 'studio/platforms/qoffscreen.dll', 'studio/Qt6Network.dll', 'studio/Qt6Widgets.dll', 'Install-Ujwalam.ps1', 'Ujwalam.cmd', 'SHA256SUMS.txt', 'notices/GPL-2.0.txt', 'notices/SOURCE-OFFER.txt']) assert.ok(names.includes(n), n);
   } finally { rmSync(out, { recursive: true, force: true }); }
 });
 
