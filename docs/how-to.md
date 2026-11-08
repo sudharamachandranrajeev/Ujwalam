@@ -92,6 +92,14 @@ grey and say "Not while live"); the project file is saved at once.
 
 Show / Hide, Move and Paste look still work while live; they ask for "yes, on air" as before.
 
+## 6b. Help, tips and the welcome tour
+
+- The round **?** button at the top of the window opens the help panel. It has two sections, "How clips are made" and "Posting your clips". Each has a **Show me** button that points at the real controls. The panel also says what posting does today: nothing is sent unless you type your yes.
+- **Replay the welcome tour** is at the bottom of the help panel and in Settings > Help & tips.
+- The first time you open the studio, a short tour walks through the window. Skip it any time. Tick "Don't show this again" to keep it away.
+- Small tips appear the first time something happens (a recording stops, a clip run starts, you go live). A tip hides itself after about 8 seconds; hover it to keep it. Use "Don't show this again" on a tip to silence that one.
+- Settings > Help & tips: switch tips off, reset every "Don't show this again", or replay the tour. These choices are saved in settings.json and can be changed while live.
+
 ## 7. Recording and replay
 
 - **Record** on the control page writes an `.mkv` file (it survives a crash). Files go to the host data folder

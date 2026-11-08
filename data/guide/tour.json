@@ -6,9 +6,9 @@
       "id": "welcome",
       "title": "Welcome tour",
       "steps": [
-        { "id": "scenes", "anchor": "scenes", "title": "Scenes", "text": "A scene is one complete look for your stream: where your game, camera and graphics sit. Double-click a scene to switch to it." },
+        { "id": "scenes", "anchor": "scenes", "title": "Scenes", "text": "A scene is one complete look for your stream: where your game, camera and graphics sit. Double-click a scene to switch to it. The + button adds one; right-click a scene to copy or rename it." },
         { "id": "layers", "anchor": "layers", "title": "Layers", "text": "Layers are the things inside a scene: the game, your camera, text and pictures. Pick one to move or resize it. H and V choose which of the two pictures you are editing." },
-        { "id": "layer-menu", "anchor": "layerAdd", "title": "Add and copy layers", "text": "Add a layer here. Duplicate a layer, or right-click it, to copy, rename or remove it." },
+        { "id": "layer-menu", "anchor": "layerAdd", "title": "Add and copy layers", "text": "The + button adds a layer. Right-click a layer to copy, rename or remove it." },
         { "id": "preview-h", "anchor": "previewH", "title": "Horizontal picture (H)", "text": "This is the wide picture for YouTube and your recordings. What you see here is what your viewers get." },
         { "id": "preview-v", "anchor": "previewV", "title": "Vertical picture (V)", "text": "This is the tall picture for vertical videos. Keep the important parts inside it so nothing gets cut off." },
         { "id": "look", "anchor": "look", "title": "Look", "text": "Select a layer, then use Look to round its corners, add a shadow or a filter. Move the sliders and watch the previews." },

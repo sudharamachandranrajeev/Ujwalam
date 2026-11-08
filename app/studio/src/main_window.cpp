@@ -433,6 +433,8 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 		mixW = mixW->parentWidget();
 	guide_->anchor(QStringLiteral("scenes"), {sceneList_});
 	guide_->anchor(QStringLiteral("layers"), {layerList_});
+	guide_->anchor(QStringLiteral("sceneAdd"), {addSceneBtn_});
+	guide_->anchor(QStringLiteral("layerAdd"), {addLayerBtn_});
 	guide_->anchor(QStringLiteral("previewH"), {slots_.value(0) ? slots_.value(0)->parentWidget() : nullptr});
 	guide_->anchor(QStringLiteral("previewV"), {slots_.value(1) ? slots_.value(1)->parentWidget() : nullptr});
 	guide_->anchor(QStringLiteral("look"), {look_});

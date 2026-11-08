@@ -448,24 +448,23 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual([p.guide.tips, p.guide.tourDone, p.guide.dismissed], [true, false, []]);
     assert.equal(p.guide.coach.active, false);
     assert.equal(p.guide.help.open, false);
-    for (const a of ['scenes', 'layers', 'previewH', 'previewV', 'mixer', 'ctlStream', 'ctlRecord', 'ctlClip', 'ctlMark', 'chips', 'chipClips', 'taskChip', 'myClips', 'settings', 'more', 'help']) assert.ok(p.guide.anchors.includes(a), a);
-    assert.ok(!p.guide.anchors.includes('layerAdd'), 'not registered yet (ui/layer-menu): that step is skipped');
+    for (const a of ['scenes', 'layers', 'previewH', 'previewV', 'mixer', 'ctlStream', 'ctlRecord', 'ctlClip', 'ctlMark', 'chips', 'chipClips', 'taskChip', 'myClips', 'settings', 'more', 'help', 'layerAdd', 'sceneAdd']) assert.ok(p.guide.anchors.includes(a), a);
   });
-  test('guide: the welcome tour starts, steps forward and back, and skips the step whose anchor is missing', async () => {
+  test('guide: the welcome tour starts, steps forward and back, and skips a step whose anchor is missing', async () => {
     const p = await probe([], 7000, 'guide-tour:start,guide-tour:next,guide-tour:next,guide-tour:back');
     assert.deepEqual(done(p), [['guide-tour:start', true], ['guide-tour:next', true], ['guide-tour:next', true], ['guide-tour:back', true]]);
     const c = p.guide.coach;
     assert.equal(c.active, true);
     assert.equal(c.tour, 'welcome');
     assert.equal(c.step, 2, 'forward twice, back once');
-    assert.ok(c.of >= 12 && c.of < 16, `steps shown: ${c.of} (the layer-menu step has no anchor yet, so 15 of the 16, or fewer if the Look panel is hidden)`);
+    assert.ok(c.of >= 12 && c.of <= 16, `steps shown: ${c.of} (16, or fewer if a part is hidden)`);
     assert.equal(c.count, `STEP 2 OF ${c.of}`);
     assert.equal(c.stepId, 'layers');
     assert.equal(c.neverOffered, true);
     assert.ok(c.hole.w > 5 && c.hole.h > 5, 'a spotlight on the step widget');
   });
   test('guide: the whole welcome tour, to Done, marks it done in settings.json', async () => {
-    const acts = ['guide-tour:start', ...Array(15).fill('guide-tour:next')].join(',');
+    const acts = ['guide-tour:start', ...Array(17).fill('guide-tour:next')].join(',');
     const p = await probe([], 15500, acts);
     assert.equal(p.actions[0].done, true);
     assert.equal(p.guide.coach.active, false, 'the last Done closes it');
