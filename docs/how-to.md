@@ -23,6 +23,7 @@ Anything marked UNVERIFIED was read from the code but not run end to end on a re
    `%LOCALAPPDATA%\Ujwalam\data\profile.local.json` and fill in your own values. Without this file nothing starts.
    The file stays on your PC.
 2. Start the "Ujwalam (alpha)" shortcut, or run `%LOCALAPPDATA%\Ujwalam\Ujwalam.cmd`.
+   The studio window (Qt) opens by default. `Ujwalam.cmd --shell browser` opens the web control page instead.
 3. Useful flags (add them after `Ujwalam.cmd`):
    - `--allow-devices` opens the capture devices (game capture, facecam, microphone).
    - `--live` configures the real stream targets. Streaming still only starts after the "yes, on air" step below.

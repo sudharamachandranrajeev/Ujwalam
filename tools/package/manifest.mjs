@@ -11,7 +11,9 @@
 //     Exactly the runtime files the host can load: the import closure (normal + delay-load tables, tools/package/pe.mjs)
 //     of the host exe, its helper exes, the d3d11 graphics module and every libobs module it does not disable, plus
 //     the CEF data files when obs-browser ships (en-US locale only), data/libobs and data/obs-plugins/<shipped module>.
-//     Never: .pdb, the Qt frontend (obs64.exe), Qt plugin folders, disabled modules, data/obs-studio, scripting.
+//     With studioExe: also the Qt studio shell's import closure (Qt 6.8.3 DLLs of the runtime) and the qwindows
+//     platform plugin (obs/bin/64bit/platforms/qwindows.dll).
+//     Never: .pdb, the Qt frontend (obs64.exe), other Qt plugins, disabled modules, data/obs-studio, scripting.
 //   allowProblems(paths) / forbiddenProblems(paths, { fontNames }) -> [msg]   (package-relative paths, '/' separators)
 //   fontNamesFromLicenceDoc(text)   -> ['Corbel', 'Consolas', ...]   bold names on "fonts" lines of docs/licence-headers.md
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
@@ -112,7 +114,7 @@ export function disabledModules(repo) {
   return names;
 }
 
-export function selectObsRuntime(runtime, { hostExe, disabled, cefLocales = ['en-US'] }) {
+export function selectObsRuntime(runtime, { hostExe, studioExe = null, disabled, cefLocales = ['en-US'] }) {
   const bin = path.join(runtime, 'bin', '64bit');
   const plug = path.join(runtime, 'obs-plugins', '64bit');
   if (!existsSync(path.join(bin, 'obs.dll'))) throw new Error('package: obs.dll not found under <runtime>/bin/64bit');
@@ -158,6 +160,14 @@ export function selectObsRuntime(runtime, { hostExe, disabled, cefLocales = ['en
   // libobs LoadLibrary()s libobs-winrt at startup (no import entry); without it the host logs "LoadLibrary failed".
   enqueue('libobs-winrt.dll', 'loaded by name by libobs (WinRT helpers)');
   for (const m of shipped) enqueue(`${m}.dll`, 'libobs module');
+  if (studioExe) {
+    // The Qt studio shell (bin/ujwalam-studio.exe) uses the runtime's Qt DLLs; Qt loads the platform plugin by path.
+    queue.push(studioExe);
+    const qpa = path.join(bin, 'platforms', 'qwindows.dll');
+    if (!existsSync(qpa)) throw new Error('package: Qt platform plugin platforms/qwindows.dll missing from the runtime');
+    add(qpa, 'obs/bin/64bit/platforms/qwindows.dll', 'Qt platform plugin (studio shell)');
+    queue.push(qpa);
+  }
   if (browser) {
     for (const n of ['obs-browser-page.exe', 'libEGL.dll', 'libGLESv2.dll']) enqueue(n, 'CEF (obs-browser)');
   }
@@ -202,7 +212,7 @@ export function selectObsRuntime(runtime, { hostExe, disabled, cefLocales = ['en
     if (rel.startsWith('obs-plugins/') && dis.has(base)) return 'disabled module';
     if (rel.startsWith('data/obs-plugins/') && dis.has(rel.split('/')[2])) return 'data of a disabled module';
     if (/^obs-plugins\/64bit\/locales\//.test(rel)) return 'CEF locale other than en-US';
-    if (/^bin\/64bit\/(platforms|imageformats|styles|iconengines)\//.test(rel)) return 'Qt plugin folder (no Qt UI in the host)';
+    if (/^bin\/64bit\/(platforms|imageformats|styles|iconengines)\//.test(rel)) return 'Qt plugin (only qwindows ships, for the studio shell)';
     if (/^data\/(obs-studio|obs-scripting)\//.test(rel)) return 'OBS frontend / scripting data';
     if (/obs-virtualcam-module/i.test(rel)) return 'virtual camera filter (not used)';
     return 'not imported by anything the host loads';
@@ -228,8 +238,9 @@ export function allowProblems(paths) {
     || dirPrefixes.some((d) => p.startsWith(d))
     || REPO_GLOB_DIRS.some(([d, re]) => p.startsWith(`${d}/`) && re.test(p))
     || /^notices\/[A-Za-z0-9._-]+$/.test(p)
-    || new RegExp(`^bin/(ujwalam-host\\.exe|${HELPER_EXES.map((h) => h.replace(/[.-]/g, '\\$&')).join('|')})$`).test(p)
+    || new RegExp(`^bin/(ujwalam-host\\.exe|ujwalam-studio\\.exe|${HELPER_EXES.map((h) => h.replace(/[.-]/g, '\\$&')).join('|')})$`).test(p)
     || /^obs\/bin\/64bit\/[^/]+\.(dll|exe)$/i.test(p)
+    || p === 'obs/bin/64bit/platforms/qwindows.dll'
     || /^obs\/obs-plugins\/64bit\/([^/]+\.(dll|exe|pak|dat|bin)|locales\/[A-Za-z-]+\.pak)$/i.test(p)
     || /^obs\/data\/(libobs|obs-plugins)\/[^]+$/.test(p);
   return paths.filter((p) => !ok(p)).map((p) => `not on the allowlist: ${p}`);
@@ -243,7 +254,7 @@ const FORBIDDEN = [
   [/(^|\/)docs\//i, 'docs/ (only notices and README ship)'],
   [/(^|\/)evidence\/private(\/|$)/i, 'docs/evidence/private'],
   [/(^|\/)feedback\//i, 'feedback/ (live feedback captures)'],
-  [/(^|\/)out\//i, 'out/ (build output; only the built host exe ships, as bin/ujwalam-host.exe)'],
+  [/(^|\/)out\//i, 'out/ (build output; only the built host and studio exes ship, in bin/)'],
   [/(^|\/)(recordings|replay|markers|logs|projects\/_old)\//i, 'user data folder'],
   [/(^|\/)(\.git|\.claude|\.venv|node_modules|secrets|session file)(\/|$)/i, 'repo-internal or secret folder'],
   [/(^|\/)(\.env[^/]*|\.agent-lock|host\.local\.json|flags\.local\.json|host-config\.json|outputs-params\.json|system\.json|host\.json)$/i, 'local state or secret file'],

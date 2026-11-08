@@ -4,6 +4,7 @@
 //   node tools/package/build-alpha.mjs [--n N] [--host-exe FILE] [--runtime DIR] [--out-dir DIR] [--profile FILE]
 //                                      [--force] [--keep-staging]
 //   N         --n, else data/release/alpha.json "current"; data/release/CHANGELOG-alpha.md needs a "## <version>" section.
+//   studio exe  --studio-exe, else out/studio/build/ujwalam-studio.exe (npm run build:studio); required.
 //   host exe  --host-exe, else app/host/lib/config.mjs (UJWALAM_HOST_EXE / host.local.json "exe" / out/host/build).
 //   runtime   --runtime, else the configured OBS runtime (UJWALAM_OBS_RUNTIME / host.local.json "obsRuntime").
 //   profile   --profile, else data/profile.local.json: the private-term scan (tools/git-hooks/private-scan.mjs
@@ -26,6 +27,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from '../../app/host/lib/config.mjs';
+import { EXE as STUDIO_EXE } from '../../app/studio/tools/build.mjs';
 import {
   allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
@@ -77,7 +79,8 @@ const COMPONENTS = [
   [/^obs-browser-page\.exe$/i, 'OBS Studio 32.1.2 (obs-browser)', 'GPL-2.0-or-later'],
   [/^(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)-\d+\.dll$/i, 'FFmpeg (OBS build)', 'GPL-3.0-or-later (verified 2026-11-05: build string has --enable-gpl --enable-version3, no --enable-nonfree; docs/evidence/2026-11-05-licence-verification.md)'],
   [/^libx264-\d+\.dll$/i, 'x264', 'GPL-2.0-or-later'],
-  [/^Qt6[A-Za-z]+\.dll$/i, 'Qt 6.8.3 (imported by obs-browser and obs-frontend-api)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
+  [/^qwindows\.dll$/i, 'Qt 6.8.3 platform plugin (studio shell)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
+  [/^Qt6[A-Za-z]+\.dll$/i, 'Qt 6.8.3 (imported by the studio shell, obs-browser and obs-frontend-api)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
   [/^(libcef\.dll|chrome_elf\.dll|.*\.pak|icudtl\.dat|v8_context_snapshot\.bin)$/i, 'Chromium Embedded Framework (CEF) and Chromium', 'BSD-3-Clause (CEF) plus Chromium third-party licences: UNVERIFIED, credits file not in the runtime'],
   [/^(libEGL|libGLESv2)\.dll$/i, 'ANGLE (part of CEF)', 'BSD-3-Clause: UNVERIFIED'],
   [/^zlib\.dll$/i, 'zlib', 'Zlib'],
@@ -101,7 +104,8 @@ function sourceOffer({ version, commit, obs }) {
     '',
     'Corresponding source:',
     `- Ujwalam: commit ${commit} of the Ujwalam repository. The Node.js services in this package are the`,
-    '  complete source of those parts; the host exe (bin/ujwalam-host.exe) is built from app/host/ at that commit.',
+    '  complete source of those parts; the host exe (bin/ujwalam-host.exe) is built from app/host/ and the studio exe',
+    '  (bin/ujwalam-studio.exe) from app/studio/ at that commit.',
     `- OBS Studio ${obs.version}: ${obs.source}`,
     '  Except obs-nvenc.dll, which is modified: OBS Studio 32.1.2 sources with upstream commit',
     '  bd96ff53ddfc0787dd7b17344252ff6f6afb31d5 ("obs-nvenc: Fix resource destruction order") applied. The diff,',
@@ -135,6 +139,7 @@ function readme({ version, nodeMin }) {
     '     %LOCALAPPDATA%\\Ujwalam\\data\\profile.local.json and fill in your values. Without it nothing starts.',
     '',
     'Run: the "Ujwalam (alpha)" shortcut, or %LOCALAPPDATA%\\Ujwalam\\Ujwalam.cmd [flags]',
+    '  The studio window (Qt) opens by default.  --shell browser   open the web control page instead',
     '  --allow-devices   open the capture devices (game capture, facecam, mic)',
     '  --live            configure the real stream targets (streaming starts only after "yes, on air")',
     '  --mock --no-open --stop-on-stdin   smoke test without Streamer.bot or a browser',
@@ -183,6 +188,8 @@ export async function buildAlpha(opts = {}) {
   const runtime = opts.runtime ? path.resolve(opts.runtime) : cfg.runtime;
   if (!runtime || !existsSync(runtime)) throw new Error('OBS runtime dir not found (--runtime, UJWALAM_OBS_RUNTIME or host.local.json obsRuntime)');
   if (!existsSync(hostExe)) throw new Error(`host exe not found: ${hostExe} (build it: npm run build:host)`);
+  const studioExe = path.resolve(opts.studioExe ?? STUDIO_EXE);
+  if (!existsSync(studioExe)) throw new Error(`studio exe not found: ${studioExe} (build it: npm run build:studio)`);
   const profile = path.resolve(opts.profile ?? path.join(REPO, 'data', 'profile.local.json'));
   if (!existsSync(profile)) throw new Error('private-term scan needs a profile (--profile or data/profile.local.json); failing closed');
   const outDir = path.resolve(opts.outDir ?? path.join(REPO, 'out', 'dist'));
@@ -200,7 +207,7 @@ export async function buildAlpha(opts = {}) {
   const repoRel = repoFiles(REPO);
   const imp = importProblems(REPO, repoRel);
   if (imp.length) throw new Error(`import closure:\n  ${imp.join('\n  ')}`);
-  const obs = selectObsRuntime(runtime, { hostExe, disabled: disabledModules(REPO) });
+  const obs = selectObsRuntime(runtime, { hostExe, studioExe, disabled: disabledModules(REPO) });
   // The shipped obs-nvenc.dll must be the patched build (official 32.1.2 crashes on encoder destroy; ADR
   // docs/adr/2026-11-05-obs-nvenc-destroy-order.md). Fail closed: fix with `node tools/obs-patch/build-obs-nvenc.mjs --install`.
   const nvenc = obs.files.some((f) => /(^|\/)obs-nvenc\.dll$/i.test(f.dest)) ? runtimeNvencState(runtime) : { state: 'not shipped' };
@@ -223,6 +230,7 @@ export async function buildAlpha(opts = {}) {
   try {
     for (const r of repoRel) put(r, 'repo', { src: path.join(REPO, ...r.split('/')) });
     put('bin/ujwalam-host.exe', 'host', { src: hostExe });
+    put('bin/ujwalam-studio.exe', 'host', { src: studioExe });
     for (const f of obs.files) put(f.dest, 'obs', { src: f.src });
     // Re-check the bytes actually staged (the runtime file could change between the check above and the copy);
     // release.json records this staged file's state and hash.
@@ -236,7 +244,7 @@ export async function buildAlpha(opts = {}) {
     const hostSha = sha256(readFileSync(hostExe));
     const release = {
       product: rel.product, version, n, date: build.date, title: build.title, nodeMin: rel.nodeMin,
-      vcRuntimeMin: vcRuntimeMin(path.dirname(hostExe)), commit, hostExeSha256: hostSha, obsRuntime: rel.obsRuntime,
+      vcRuntimeMin: vcRuntimeMin(path.dirname(hostExe)), commit, hostExeSha256: hostSha, studioExeSha256: sha256(readFileSync(studioExe)), obsRuntime: rel.obsRuntime,
       obsModules: obs.modules.shipped, systemDlls: obs.systemDlls,
       obsPatches: nvenc.sha ? [{ file: 'obs-nvenc.dll', state: nvenc.state, sha256: nvenc.sha, upstreamCommit: readManifest().patch.upstreamCommit }] : [],
     };
@@ -325,7 +333,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const a = parseArgs(process.argv.slice(2));
     const s = await buildAlpha({
-      n: a.n !== undefined ? Number(a.n) : undefined, hostExe: a['host-exe'], runtime: a.runtime, outDir: a['out-dir'],
+      n: a.n !== undefined ? Number(a.n) : undefined, hostExe: a['host-exe'], studioExe: a['studio-exe'], runtime: a.runtime, outDir: a['out-dir'],
       profile: a.profile, force: a.force === true, keepStaging: a['keep-staging'] === true,
     });
     console.log(JSON.stringify({ ...s, zip: path.basename(s.zip) }, null, 2));

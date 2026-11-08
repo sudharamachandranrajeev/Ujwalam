@@ -22,7 +22,11 @@ export const CONFIGURE_HINT = [
 ].join('\n');
 
 // A step is { name, cmd, args } (run in the repo root) or { name, run(root) -> Promise<{ok, output}> }.
-const npmRun = (name, script) => ({ name, cmd: 'npm', args: ['run', script, '--silent'], shell: true });
+// `alongside: '<step>'` (D276): a light CPU step that runs in a side lane while that (GPU-bound) step runs, in order
+// with the other side steps of the same anchor. The next main step starts only after the anchor and its whole side
+// lane finished, so never more than one heavy job plus light checks. Without its anchor in the run it runs in order.
+const npmRun = (name, script, extra = {}) => ({ name, cmd: 'npm', args: ['run', script, '--silent'], shell: true, ...extra });
+const SIDE = { alongside: 'test-host' };
 
 function hasOnPath(exe) {
   const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [exe], { encoding: 'utf8', windowsHide: true });
@@ -83,16 +87,18 @@ export const STEPS = [
   // sub-millisecond ingest p95 read 0.14-0.16 ms in CI against 0.02 ms run alone (2026-11-07), a false regression.
   { ...npmRun('bench', 'bench'), advisory: /^bench: (advisory \((?:noisy|v1 window): .*\))\r?$/m },
   npmRun('test', 'test'),
-  // Host suite after the main tests, never in parallel with them: it starts libobs and NVENC (one heavy GPU job, D100).
+  // Host suite after the main tests, never in parallel with them: it starts libobs and NVENC (one heavy GPU job, D100;
+  // its own files run two at a time since D276: 422 s -> 215 s, 108/108 pass).
+  // The CPU-only Python, OCR and data checks run beside it (D276); test-capture encodes with NVENC, so it waits.
   npmRun('test-host', 'test:host'),
-  npmRun('test-py', 'test:py'),
-  { name: 'test-ocr', run: testOcrStep },
+  npmRun('test-py', 'test:py', SIDE),
+  { name: 'test-ocr', run: testOcrStep, ...SIDE },
   npmRun('test-capture', 'test:capture'),
-  npmRun('validate-registry', 'validate:registry'),
-  npmRun('validate-outputs', 'validate:outputs'),
-  npmRun('validate-games', 'validate:games'),
-  { name: 'private-scan', cmd: process.execPath, args: ['tools/git-hooks/private-scan.mjs', 'scan-worktree'] },
-  npmRun('legacy-verify', 'legacy:verify'),
+  npmRun('validate-registry', 'validate:registry', SIDE),
+  npmRun('validate-outputs', 'validate:outputs', SIDE),
+  npmRun('validate-games', 'validate:games', SIDE),
+  { name: 'private-scan', cmd: process.execPath, args: ['tools/git-hooks/private-scan.mjs', 'scan-worktree'], ...SIDE },
+  npmRun('legacy-verify', 'legacy:verify', SIDE),
   // Last: no test mock or soak helper may outlive the run. Fails and names the pid when one does.
   { name: 'stray-mocks', run: async () => { const s = scanStrays(); return { ok: s.length === 0, output: `${strayReport(s)}
 ` }; } },
@@ -155,44 +161,56 @@ function runCommand(step, root) {
   });
 }
 
-/** Run steps in order. Returns [{name, ok, seconds, output}]. Never throws on a step failure. */
+/** Run steps in order (side lanes beside their anchor, D276). Returns [{name, ok, seconds, output}] in the given
+ *  order. Never throws on a step failure. */
 export async function runSteps(steps, { root = HERE, log = () => {}, tail = 30 } = {}) {
-  const results = [];
+  const byName = new Map();
+  const names = new Set(steps.map((s) => s.name));
+  const side = (anchor) => steps.filter((s) => s.alongside === anchor.name);
+  const runChain = async (chain) => { for (const step of chain) byName.set(step.name, await runOne(step, { root, log, tail })); };
   for (const step of steps) {
-    const t0 = performance.now();
-    let res;
-    try {
-      res = step.run ? await step.run(root) : await runCommand(step, root);
-    } catch (e) {
-      res = { ok: false, output: `step crashed: ${e.message}\n` };
-    }
-    const seconds = (performance.now() - t0) / 1000;
-    const adv = res.ok && step.advisory ? step.advisory.exec(res.output) : null;
-    results.push({ name: step.name, ok: res.ok, seconds, output: res.output, advisory: adv ? adv[1] : null });
-    log(`${step.name.padEnd(18)} ${res.ok ? (adv ? 'ADVISORY' : 'PASS') : 'FAIL'}  ${seconds.toFixed(1)}s${adv ? `  ${adv[1]}` : ''}`);
-    if (adv) {
-      const regs = res.output.split(/\r?\n/).filter((l) => /advisory regression:/.test(l));
-      if (regs.length) log(regs.slice(0, tail).map((l) => `    | ${l}`).join('\n'));
-    }
-    if (!res.ok) {
-      const lines = res.output.trimEnd().split(/\r?\n/);
-      // TAP "not ok" lines name the failing tests; the tail alone often shows only the summary.
-      // Each one is followed by its YAML block; its first `error:` line says why (one line, cut at 200 chars).
-      const notOk = [];
-      lines.forEach((l, i) => {
-        if (!/^\s*not ok \d+ /.test(l)) return;
-        let why = '';
-        for (let j = i + 1; j < Math.min(lines.length, i + 40) && !/^\s*(not )?ok \d+ /.test(lines[j]); j++) {
-          const m = /^\s+error: (.*)$/.exec(lines[j]);
-          if (m) { why = m[1].trim().slice(0, 200); break; }
-        }
-        notOk.push(why ? `${l.trim()}  => ${why}` : l.trim());
-      });
-      if (notOk.length) log([`    | failing (${notOk.length}):`, ...notOk.slice(0, 200).map((l) => `    | ${l}`)].join('\n'));
-      log(lines.slice(-tail).map((l) => `    | ${l}`).join('\n'));
-    }
+    if (step.alongside && names.has(step.alongside)) continue;
+    const lane = runChain(side(step));
+    byName.set(step.name, await runOne(step, { root, log, tail }));
+    await lane;
   }
-  return results;
+  return steps.map((s) => byName.get(s.name));
+}
+
+async function runOne(step, { root, log, tail }) {
+  const t0 = performance.now();
+  let res;
+  try {
+    res = step.run ? await step.run(root) : await runCommand(step, root);
+  } catch (e) {
+    res = { ok: false, output: `step crashed: ${e.message}\n` };
+  }
+  const seconds = (performance.now() - t0) / 1000;
+  const adv = res.ok && step.advisory ? step.advisory.exec(res.output) : null;
+  const result = { name: step.name, ok: res.ok, seconds, output: res.output, advisory: adv ? adv[1] : null };
+  log(`${step.name.padEnd(18)} ${res.ok ? (adv ? 'ADVISORY' : 'PASS') : 'FAIL'}  ${seconds.toFixed(1)}s${adv ? `  ${adv[1]}` : ''}`);
+  if (adv) {
+    const regs = res.output.split(/\r?\n/).filter((l) => /advisory regression:/.test(l));
+    if (regs.length) log(regs.slice(0, tail).map((l) => `    | ${l}`).join('\n'));
+  }
+  if (!res.ok) {
+    const lines = res.output.trimEnd().split(/\r?\n/);
+    // TAP "not ok" lines name the failing tests; the tail alone often shows only the summary.
+    // Each one is followed by its YAML block; its first `error:` line says why (one line, cut at 200 chars).
+    const notOk = [];
+    lines.forEach((l, i) => {
+      if (!/^\s*not ok \d+ /.test(l)) return;
+      let why = '';
+      for (let j = i + 1; j < Math.min(lines.length, i + 40) && !/^\s*(not )?ok \d+ /.test(lines[j]); j++) {
+        const m = /^\s+error: (.*)$/.exec(lines[j]);
+        if (m) { why = m[1].trim().slice(0, 200); break; }
+      }
+      notOk.push(why ? `${l.trim()}  => ${why}` : l.trim());
+    });
+    if (notOk.length) log([`    | failing (${notOk.length}):`, ...notOk.slice(0, 200).map((l) => `    | ${l}`)].join('\n'));
+    log(lines.slice(-tail).map((l) => `    | ${l}`).join('\n'));
+  }
+  return result;
 }
 
 /** Pick steps by name (comma list). Unknown names throw. Order stays the canonical order. */
@@ -228,9 +246,10 @@ async function main() {
   steps = plan.run;
   for (const s of plan.skipped) console.log(notRunLine(s));
   const treeAtStart = full ? tryTree(root) : null;
+  const t0 = performance.now();
   const results = await runSteps(steps, { root, log: (l) => console.log(l), tail });
   const failed = results.filter((r) => !r.ok);
-  const total = results.reduce((a, r) => a + r.seconds, 0);
+  const total = (performance.now() - t0) / 1000; // wall time: side lanes overlap (D276)
   console.log(`\n${summaryLines({ results, skipped: plan.skipped, cloud, seconds: total }).join('\n')}`);
   if (full && !failed.length) {
     const treeAtEnd = tryTree(root);

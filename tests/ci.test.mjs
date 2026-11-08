@@ -56,6 +56,28 @@ test('runSteps continues after a failure, reports every step, keeps output', asy
   assert.ok(lines.some((l) => l.includes('| boom')));
 });
 
+test('side lanes (D276): alongside steps run beside their anchor, the next main step waits for them, order kept', async () => {
+  const ev = [];
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const step = (name, ms, extra = {}) => ({ name, ...extra, run: async () => { ev.push(`${name}+`); await sleep(ms); ev.push(`${name}-`); return { ok: name !== 'bad', output: '' }; } });
+  const res = await runSteps([
+    step('a', 5), step('heavy', 120), step('s1', 20, { alongside: 'heavy' }), step('next', 5), step('bad', 30, { alongside: 'heavy' }),
+    step('last', 5),
+  ], { log: () => {} });
+  assert.deepEqual(res.map((r) => [r.name, r.ok]), [['a', true], ['heavy', true], ['s1', true], ['next', true], ['bad', false], ['last', true]]);
+  assert.ok(ev.indexOf('s1+') < ev.indexOf('heavy-'), 'side step starts while the anchor runs');
+  assert.ok(ev.indexOf('s1-') < ev.indexOf('bad+'), 'side steps run one after another');
+  assert.ok(ev.indexOf('next+') > Math.max(ev.indexOf('heavy-'), ev.indexOf('bad-')), 'next main step waits for anchor and lane');
+  // Anchor not selected: the step runs in order on the main lane.
+  ev.length = 0;
+  await runSteps([step('s1', 5, { alongside: 'heavy' }), step('next', 5)], { log: () => {} });
+  assert.deepEqual(ev, ['s1+', 's1-', 'next+', 'next-']);
+  const side = STEPS.filter((s) => s.alongside).map((s) => s.name);
+  assert.deepEqual(side, ['test-py', 'test-ocr', 'validate-registry', 'validate-outputs', 'validate-games', 'private-scan', 'legacy-verify']);
+  assert.ok(STEPS.filter((s) => s.alongside).every((s) => s.alongside === 'test-host'), 'only beside the GPU host suite');
+  assert.ok(!STEPS.find((s) => s.name === 'test-capture').alongside, 'test-capture encodes with NVENC: main lane');
+});
+
 test('a failed step lists its TAP "not ok" tests with the first error line', async () => {
   const tap = ['ok 1 - fine', 'not ok 2 - breaks', '  ---', "  error: 'expected 1, got 2'", '  ...', 'not ok 3 - silent', 'ok 4 - fine'].join('\\n');
   const lines = [];

@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, clipsEnv, coreEnv, liveClipsSpec, shellSpawnSpec, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, clipsEnv, coreEnv, liveClipsSpec, shellChoice, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -526,17 +526,39 @@ test('open browser: cmd line is start "" "<url>" for a loopback URL; anything el
   for (const bad of ['http://127.0.0.1:5000/x&calc', 'http://127.0.0.1:5000/"x', 'https://example.com/', 'http://127.0.0.1:5000/%PATH%', null]) assert.equal(startCommandLine(bad), null, String(bad));
 });
 
+test('shell choice (D277): the Qt shell by default, --shell browser opts out, anything else refused', () => {
+  assert.equal(shellChoice({}), 'qt');
+  assert.equal(shellChoice({ shell: 'qt' }), 'qt');
+  assert.equal(shellChoice({ shell: 'browser' }), 'browser');
+  assert.equal(shellChoice({ shell: true }), null, '--shell with no value');
+  assert.equal(shellChoice({ shell: 'web' }), null);
+});
+
 test('Qt shell spawn spec: URL and launch key by env only, every token/key variable stripped, Qt bin first on PATH', () => {
   const env = { Path: 'C:/x', UJWALAM_HOST_TOKEN: 'h', UJWALAM_EVENT_CORE_API_TOKEN: 'a', UJWALAM_HOST_MARKERS_TOKEN: 'm', UJWALAM_UI_LAUNCH_KEY: 'old', OTHER: '1' };
-  const s = shellSpawnSpec({ uiPort: 5000, launchKey: 'K'.repeat(40), exe: 'C:/studio.exe', qtDir: 'C:/qt', env, exists: () => true });
+  const s = shellSpawnSpec({ uiPort: 5000, launchKey: 'K'.repeat(40), exe: 'C:/studio.exe', qtBin: path.join('C:/qt', 'bin'), env, exists: () => true });
   assert.equal(s.cmd, 'C:/studio.exe');
   assert.equal(s.env.UJWALAM_UI_URL, 'http://127.0.0.1:5000/');
   assert.equal(s.env.UJWALAM_UI_LAUNCH_KEY, 'K'.repeat(40));
   for (const k of ['UJWALAM_HOST_TOKEN', 'UJWALAM_EVENT_CORE_API_TOKEN', 'UJWALAM_HOST_MARKERS_TOKEN']) assert.equal(k in s.env, false, k);
   assert.equal(s.env.OTHER, '1');
   assert.ok(s.env.Path.startsWith(path.join('C:/qt', 'bin')));
+  assert.equal('QT_QPA_PLATFORM_PLUGIN_PATH' in s.env, false, 'dev kit finds its own plugins');
+  const p = shellSpawnSpec({ uiPort: 5000, launchKey: 'k', exe: 'C:/u/bin/s.exe', qtBin: 'C:/u/obs/bin/64bit', qtPlugins: 'C:/u/obs/bin/64bit/platforms', env: { PATH: 'C:/x' }, exists: () => true });
+  assert.ok(p.env.PATH.startsWith(`C:/u/obs/bin/64bit${path.delimiter}`), 'packaged: OBS Qt folder itself, no /bin appended');
+  assert.equal(p.env.QT_QPA_PLATFORM_PLUGIN_PATH, 'C:/u/obs/bin/64bit/platforms');
   assert.equal(shellSpawnSpec({ uiPort: 5000, launchKey: 'k', exe: 'C:/none.exe', exists: () => false }), null, 'not built');
   assert.equal(shellSpawnSpec({ uiPort: 0, launchKey: 'k', exe: 'C:/studio.exe', exists: () => true }), null, 'bad port');
+});
+
+test('Qt shell paths: dev build first, else the packaged exe with the OBS runtime Qt DLLs and platform plugin', () => {
+  const root = path.join('C:', 'inst');
+  const dev = path.join('C:', 'repo', 'out', 'studio', 'build', 'ujwalam-studio.exe');
+  const pkg = path.join(root, 'bin', 'ujwalam-studio.exe');
+  assert.deepEqual(studioShellPaths({ root, devExe: dev, devQtDir: 'C:/qt', exists: (f) => f === dev }), { exe: dev, qtBin: path.join('C:/qt', 'bin'), qtPlugins: null });
+  assert.deepEqual(studioShellPaths({ root, devExe: dev, exists: (f) => f === pkg }),
+    { exe: pkg, qtBin: path.join(root, 'obs', 'bin', '64bit'), qtPlugins: path.join(root, 'obs', 'bin', '64bit', 'platforms') });
+  assert.equal(studioShellPaths({ root, devExe: dev, exists: () => false }), null);
 });
 
 test('live clipper spec: H game capture layer, GPU venv first, no spec for a placeholder game layer', () => {

@@ -4,10 +4,11 @@
 //                                           [--alpha [--rebuild-alpha] [--profile FILE] [--live] [--feedback-dir DIR]
 //                                                    [--hotkey-panic C] [--hotkey-feedback C] [--hotkey-marker C]]
 //
-// --shell qt (P5a): open the Qt studio shell (out/studio/build/ujwalam-studio.exe, npm run build:studio) instead of the
-// browser. It gets the UI URL and the one-time launch key by environment only (shellSpawnSpec), no host or event-core
-// token. Closing its window does not stop the studio (a stream keeps running); Ctrl-C here stops everything. When the
-// shell is not built the browser opens as before.
+// --shell qt|browser (P5a; qt is the default since D277): the Qt studio shell (out/studio/build/ujwalam-studio.exe,
+// npm run build:studio) opens instead of the browser. It gets the UI URL and the one-time launch key by environment
+// only (shellSpawnSpec), no host or event-core token. Closing its window does not stop the studio (a stream keeps
+// running); Ctrl-C here stops everything. When the shell is not built the browser opens as before. --shell browser
+// opens the web control page instead.
 // Tokens: the launcher makes the event-core api/system tokens and a host token, passes them to the children by
 // environment (never argv, never printed). The UI server gets only the api token, never the system token. The browser
 // is opened on /login?k=<one-time launch key>; the key is not printed.
@@ -164,6 +165,12 @@ export function writeHostConfig(dataDir, cfg) {
   return file;
 }
 
+/** Which window opens (D277): the Qt shell unless --shell browser. null for an unknown value. */
+export function shellChoice(args) {
+  const v = args.shell === undefined ? 'qt' : args.shell;
+  return v === 'qt' || v === 'browser' ? v : null;
+}
+
 function parseArgs(argv) {
   const out = {};
   for (let i = 0; i < argv.length; i++) {
@@ -252,15 +259,27 @@ export function coreServeArgs({ dataDir, mock = false, sbWs = {} }) {
 
 /** The cmd.exe line that opens url in the default browser, or null if url is not a plain loopback http URL.
  *  Only [A-Za-z0-9:/.?=_-] are allowed, so nothing in it is special to cmd (no & | ^ % " < >). */
+/** Where the Qt shell exe and its Qt DLLs are (pure; tested). Development: the built exe in out/studio/build and the
+ *  Qt kit's bin. Installed package: <root>/bin/ujwalam-studio.exe with the OBS runtime's Qt 6.8.3 DLLs and the
+ *  qwindows platform plugin (obs/bin/64bit, obs/bin/64bit/platforms). null when neither exe exists. */
+export function studioShellPaths({ root = REPO, devExe = STUDIO_EXE, devQtDir = null, exists = existsSync } = {}) {
+  if (devExe && exists(devExe)) return { exe: devExe, qtBin: devQtDir ? path.join(devQtDir, 'bin') : null, qtPlugins: null };
+  const exe = path.join(root, 'bin', 'ujwalam-studio.exe');
+  if (!exists(exe)) return null;
+  const qtBin = path.join(root, 'obs', 'bin', '64bit');
+  return { exe, qtBin, qtPlugins: path.join(qtBin, 'platforms') };
+}
+
 /** Qt shell spawn spec (pure; tested). null when the exe is missing. env: the launcher's environment without any
- *  UJWALAM_*TOKEN* or *_KEY variable, plus the UI URL, the one-time launch key and the Qt kit's bin first on PATH
- *  (development build; a packaged build carries its Qt DLLs next to the exe). */
-export function shellSpawnSpec({ uiPort, launchKey, exe, qtDir = null, env = process.env, exists = existsSync }) {
+ *  UJWALAM_*TOKEN* or *_KEY variable, plus the UI URL, the one-time launch key, qtBin (the folder holding the Qt
+ *  DLLs) first on PATH and, when given, QT_QPA_PLATFORM_PLUGIN_PATH = qtPlugins (packaged build). */
+export function shellSpawnSpec({ uiPort, launchKey, exe, qtBin = null, qtPlugins = null, env = process.env, exists = existsSync }) {
   if (!exe || !exists(exe) || !Number.isInteger(uiPort) || uiPort < 1 || uiPort > 65535) return null;
   const clean = {};
   for (const [k, v] of Object.entries(env)) if (!/^UJWALAM_.*(TOKEN|KEY)/i.test(k)) clean[k] = v;
   const pathKey = Object.keys(clean).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
-  if (qtDir) clean[pathKey] = `${path.join(qtDir, 'bin')}${path.delimiter}${clean[pathKey] ?? ''}`;
+  if (qtBin) clean[pathKey] = `${qtBin}${path.delimiter}${clean[pathKey] ?? ''}`;
+  if (qtPlugins) clean.QT_QPA_PLATFORM_PLUGIN_PATH = qtPlugins;
   return { cmd: exe, env: { ...clean, UJWALAM_UI_URL: `http://127.0.0.1:${uiPort}/`, UJWALAM_UI_LAUNCH_KEY: launchKey } };
 }
 
@@ -647,6 +666,8 @@ function superviseHost(o) {
 export async function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv);
   const alpha = args.alpha === true;
+  const shellMode = shellChoice(args);
+  if (!shellMode) { console.log('[studio] --shell takes qt (the default) or browser'); return 2; }
   let dataDir;
   try { dataDir = resolveDataDir({ dataDir: typeof args['data-dir'] === 'string' ? args['data-dir'] : undefined }); } catch (e) { console.log(`[studio] ${e.message}`); return 1; }
   if (args.live === true && !alpha) { console.log('[studio] --live is for the alpha session only (npm run alpha -- --live)'); return 2; }
@@ -857,13 +878,14 @@ export async function main(argv = process.argv.slice(2)) {
   console.log(`[studio] UI at http://127.0.0.1:${uiPort}/ (the login key is one-time and not printed). Ctrl-C stops everything.`);
   // Headless (D191): no browser. One exception for scripted runs (F2 real-host test): UJWALAM_BROWSER naming this
   // Node runs that script (windowsHide, no window) with the login URL, so it can drive the page API like the browser.
-  const wantShell = args.shell === 'qt';
-  const shellSpec = wantShell ? shellSpawnSpec({ uiPort, launchKey, exe: STUDIO_EXE, qtDir: studioQtDir() }) : null;
-  if (wantShell && !shellSpec) console.log('[studio] --shell qt: the Qt shell is not built (npm run build:studio); opening the browser instead');
+  const wantShell = shellMode === 'qt';
+  const shellPaths = wantShell ? studioShellPaths({ devQtDir: studioQtDir() }) : null;
+  const shellSpec = shellPaths ? shellSpawnSpec({ uiPort, launchKey, ...shellPaths }) : null;
+  if (wantShell && !shellSpec) console.log('[studio] the Qt studio shell is not built (npm run build:studio); opening the browser instead');
   if (args['no-open'] !== true && shellSpec && !isHeadless()) {
     const shell = spawn(shellSpec.cmd, [], {
       stdio: 'ignore', env: shellSpec.env,
-      windowsHide: false // GUI window: the Qt studio window the user asked for (--shell qt); a GUI exe, no console
+      windowsHide: false // GUI window: the Qt studio window (default, D277); a GUI exe, no console
     });
     shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
     shell.on('exit', (code) => { if (!stopping) console.log(`[studio] Qt shell closed (exit ${code}); the studio keeps running. Ctrl-C stops everything.`); });
