@@ -97,3 +97,32 @@ test('fonts: Windows family names only; no Corbel or Consolas (not redistributab
   }
   assert.deepEqual(readdirSync(dir).filter((f) => !f.endsWith('.json')), []);
 });
+
+// Round controls (setControl in main_window.cpp, QPushButton#round in theme.cpp): every icon needs >= 3:1 against its face,
+// enabled and disabled. Disabled faces are the field colour (danger: transparent over the card = panel); the disabled icon
+// is the muted token (icons::make third colour), not the faded alpha that vanished on light themes.
+test('round control icons keep >= 3:1 against their face in every state, all themes', () => {
+  for (const { file, t } of themes) {
+    const c = t.colors;
+    const g = t.gradients?.accent;
+    const primaryFaces = g ? [g.from, g.to] : [c.accent];
+    const check = (ink, face, what) => assert.ok(contrast(ink, face) >= 3, `${file}: ${what} ${ink} on ${face} ${contrast(ink, face).toFixed(2)}`);
+    for (const f of primaryFaces) check(c.onAccent, f, 'primary enabled');
+    check(c.onAccent, c.danger, 'primary or danger active');
+    check(c.text, c.field, 'plain enabled');
+    check(c.danger, c.panel, 'danger enabled (transparent over card)');
+    check(c.danger, c.field, 'danger enabled over field');
+    check(c.muted, c.field, 'disabled');
+    check(c.muted, c.panel, 'disabled danger (transparent over card)');
+  }
+});
+
+// The preview surface is dark in every theme (PreviewSlot in main_window.cpp), so its message uses fixed colours.
+test('text on the preview surface keeps >= 4.5:1 (fixed light on fixed dark, same in every theme)', () => {
+  const src = readFileSync(path.resolve(dir, '..', '..', 'app', 'studio', 'src', 'main_window.cpp'), 'utf8');
+  const surface = /pal\.setColor\(QPalette::Window, QColor\((\d+), (\d+), (\d+)\)\)/.exec(src);
+  const ink = /QLabel \{ color: (#[0-9a-f]{6}); background: transparent; \}/.exec(src);
+  assert.ok(surface && ink, 'preview surface colour and message colour are set in PreviewSlot');
+  const face = '#' + [1, 2, 3].map((i) => Number(surface[i]).toString(16).padStart(2, '0')).join('');
+  assert.ok(contrast(ink[1], face) >= 4.5, `preview message ${ink[1]} on ${face} ${contrast(ink[1], face).toFixed(2)}`);
+});

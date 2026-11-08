@@ -473,7 +473,7 @@ void refreshIcons()
 			const QString role = b->property("role").toString();
 			const bool primary = role == QStringLiteral("primary"), danger = role == QStringLiteral("danger");
 			const QColor c = (primary || (danger && active)) ? color(QStringLiteral("onAccent")) : danger ? color(QStringLiteral("danger")) : ink;
-			b->setIcon(icons::make(state.left(state.size() - 1), c, std::max(14, b->iconSize().width())));
+			b->setIcon(icons::make(state.left(state.size() - 1), c, std::max(14, b->iconSize().width()), color(QStringLiteral("muted"))));
 		}
 	}
 }

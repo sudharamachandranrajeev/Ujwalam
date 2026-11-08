@@ -296,6 +296,8 @@ PreviewSlot::PreviewSlot(ApiClient *api, QString canvas, QWidget *parent)
 	pal.setColor(QPalette::WindowText, QColor(200, 200, 200));
 	setPalette(pal);
 	auto *l = new QVBoxLayout(this);
+	// The preview surface stays dark in every theme, so its message keeps a fixed light colour (not a theme token).
+	msg_->setStyleSheet(QStringLiteral("QLabel { color: #c8c8c8; background: transparent; }"));
 	msg_->setAlignment(Qt::AlignCenter);
 	msg_->setWordWrap(true);
 	l->addWidget(msg_);
@@ -535,7 +537,7 @@ void MainWindow::setControl(QPushButton *b, const QString &icon, const QString &
 	if (b->property("iconState").toString() == state && b->accessibleName() == caption)
 		return; // nothing changed: no new picture every status poll
 	const QColor ink = (primary || (danger && active)) ? theme::color(QStringLiteral("onAccent")) : danger ? theme::color(QStringLiteral("danger")) : theme::color(QStringLiteral("text"));
-	b->setIcon(icons::make(icon, ink, 24));
+	b->setIcon(icons::make(icon, ink, 24, theme::color(QStringLiteral("muted")))); // disabled: muted on the field face (>= 3:1, tested)
 	b->setProperty("iconState", state);
 	b->setAccessibleName(caption);
 	if (auto *cap = qobject_cast<QLabel *>(b->property("captionLabel").value<QObject *>()))

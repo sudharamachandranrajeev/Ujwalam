@@ -1,40 +1,40 @@
 [
   {
     "depthWidgets": 52,
-    "full": 6.7897940000000006,
-    "reduced": 3.8691649999999997,
+    "full": 9.212466,
+    "reduced": 5.588243,
     "theme": "neon-arcade",
     "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
     "eligible": 52
   },
   {
     "depthWidgets": 52,
-    "full": 8.014329,
-    "reduced": 3.5647800000000003,
+    "full": 10.570322,
+    "reduced": 4.967263,
     "theme": "retro-wave",
     "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
     "eligible": 52
   },
   {
     "depthWidgets": 52,
-    "full": 7.920333,
-    "reduced": 3.6144380000000003,
+    "full": 12.09218,
+    "reduced": 5.747362000000001,
     "theme": "studio-light",
     "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
     "eligible": 52
   },
   {
     "depthWidgets": 52,
-    "full": 7.040633000000001,
-    "reduced": 4.0234309999999995,
+    "full": 9.161862,
+    "reduced": 6.7987530000000005,
     "theme": "tactical",
     "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
     "eligible": 52
   },
   {
     "depthWidgets": 11,
-    "full": 6.785402,
-    "reduced": 3.462781,
+    "full": 10.380377000000001,
+    "reduced": 5.921504,
     "theme": "violet-night",
     "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
     "eligible": 11
