@@ -5,7 +5,7 @@
 //   layers.setPlacement -> scenes[].layers[].placements[canvas] (x, y, width, height, rotation, crop merged per key)
 //   layers.setVisible   -> placements[canvas].visible (and layer.visible, see below)
 //   layers.setEffects   -> scenes[].layers[].effects (the whole list; empty removes it; D260)
-//   mixer.setTracks     -> audio.sources[audioSource].tracks (D273; params = the host's answer: audioSource, tracks)
+//   mixer.setTracks     -> audio.sources[audioSource].tracks and .monitoring (D273; params = the host's answer)
 // layers.move is NOT saved here: the host orders layers per canvas, the project has one order shared by H and V.
 // The order is saved by the structure route instead (op layer.move, D243), which reorders the host from the project.
 // Saves are debounced (one write per burst of edits) and go through saveProject (validate, temp file, .bak, rename).
@@ -24,6 +24,8 @@ export function applyEdit(doc, method, params) {
     const known = new Set((doc.audio?.tracks ?? []).map((t) => t.id));
     if (!src || !Array.isArray(params.tracks) || !params.tracks.every((t) => known.has(t))) return 0;
     src.tracks = [...params.tracks];
+    // The host flips a CUE that is on with the routing (monitor-only is never in the output mix): record what it does.
+    if (['off', 'monitor-only', 'monitor-and-output'].includes(params.monitoring)) src.monitoring = params.monitoring;
     return 1;
   }
   const scene = (doc.scenes ?? []).find((s) => s.id === params.scene);

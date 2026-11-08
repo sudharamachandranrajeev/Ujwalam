@@ -418,7 +418,7 @@ export function createStudioServer(opts) {
   // What the project file records for an accepted edit: the request, except track routing, which is keyed by the
   // project audio source the host resolved (a mixer id names a scene/layer or a device, D273).
   const syncParams = (method, params, result) => method === 'mixer.setTracks'
-    ? { audioSource: result?.audioSource, tracks: result?.tracks } : params;
+    ? { audioSource: result?.audioSource, tracks: result?.tracks, monitoring: result?.monitoring } : params;
   async function readBefore(method, params) {
     if (!UNDOABLE.includes(method)) return null;
     try { return beforeOf(method, params, await host.call('layers.list', { scene: params.scene, ...(params.canvas ? { canvas: params.canvas } : {}) })); } catch { return null; }

@@ -1209,6 +1209,7 @@ void MainWindow::renderMixer()
 		top->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(m.value(QStringLiteral("name")).toString().toHtmlEscaped())), 1);
 		const bool muted = m.value(QStringLiteral("muted")).toBool();
 		auto *mute = new QPushButton(muted ? QStringLiteral("Unmute") : QStringLiteral("Mute"));
+		mute->setObjectName(QStringLiteral("mute"));
 		mute->setCheckable(true);
 		mute->setChecked(muted);
 		connect(mute, &QPushButton::clicked, this, [this, id](bool on) {
@@ -1251,6 +1252,7 @@ void MainWindow::renderMixer()
 				const QJsonObject t = mixerTracks_.at(n).toObject();
 				const QString tid = t.value(QStringLiteral("id")).toString();
 				auto *b = new QPushButton(t.value(QStringLiteral("name")).toString());
+				b->setObjectName(QStringLiteral("track:") + tid);
 				b->setCheckable(true);
 				b->setChecked(on.contains(tid));
 				b->setToolTip(n == 0 ? QStringLiteral("Track 1: what the stream and the recording hear") : QStringLiteral("Not used by the outputs yet"));
@@ -1304,14 +1306,24 @@ void MainWindow::renderMixer()
 
 void MainWindow::setTracks(const QString &id, const QStringList &tracks)
 {
+	if (routeBusy_) { // the buttons show the routing before the change on its way: building on them would drop it
+		note(QStringLiteral("A track change is still on its way; try again in a moment."));
+		return loadMixer();
+	}
+	routeBusy_ = true;
 	QJsonObject p;
 	p.insert(QStringLiteral("id"), id);
 	p.insert(QStringLiteral("tracks"), QJsonArray::fromStringList(tracks));
 	api_->host(QStringLiteral("mixer.setTracks"), p, [this](bool ok, const QJsonObject &b, const QString &err) {
+		routeBusy_ = false;
 		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
-			confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air"
+			confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air"; reloads the mixer after
+		else if (!ok)
+			note(QStringLiteral("Tracks not changed: ") + err);
 		else
-			note(ok ? QStringLiteral("Tracks changed.") : QStringLiteral("Tracks not changed: ") + err);
+			note(b.value(QStringLiteral("saved")).toString() == QStringLiteral("pending")
+				     ? QStringLiteral("Tracks changed.")
+				     : QStringLiteral("Tracks changed, live only: not saved to the project file."));
 		loadMixer();
 	});
 }
@@ -2277,6 +2289,7 @@ void MainWindow::confirm(const QJsonObject &pending)
 			note(QStringLiteral("The bot did not close when asked and was force-closed; unsaved bot changes may be lost."));
 		pollStatus();
 		loadScenes();
+		loadMixer(); // a confirmed track change (D273)
 		if (botsOn_)
 			loadBots();
 	});
@@ -2311,4 +2324,50 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("live"), live_);
 	o.insert(QStringLiteral("note"), note_->text());
 	return o;
+}
+
+bool MainWindow::probeAction(const QString &action)
+{
+	const QStringList p = action.split(QLatin1Char(':'));
+	auto buttons = [this](int strip) { // the mixer strip's buttons (the layout ends with a stretch)
+		QList<QPushButton *> out;
+		if (strip >= 0 && strip < mixerBox_->count() - 1)
+			if (QWidget *w = mixerBox_->itemAt(strip)->widget())
+				out = w->findChildren<QPushButton *>();
+		return out;
+	};
+	if (p.size() == 2 && p[0] == QStringLiteral("flag-off")) {
+		for (int i = 0; i < flagList_->count(); i++)
+			if (flagList_->item(i)->data(Qt::UserRole).toString() == p[1]) {
+				flagList_->item(i)->setCheckState(Qt::Unchecked); // itemChanged -> setFlag, as a click does
+				return true;
+			}
+		return false;
+	}
+	if (p.size() == 1 && p[0] == QStringLiteral("undo")) {
+		if (!undoBtn_->isEnabled())
+			return false;
+		undoBtn_->click();
+		return true;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("mute")) {
+		for (QPushButton *b : buttons(p[1].toInt()))
+			if (b->objectName() == QStringLiteral("mute")) {
+				b->click();
+				return true;
+			}
+		return false;
+	}
+	if (p.size() == 3 && p[0] == QStringLiteral("track")) {
+		QList<QPushButton *> t;
+		for (QPushButton *b : buttons(p[1].toInt()))
+			if (b->objectName().startsWith(QStringLiteral("track:")))
+				t << b;
+		const int k = p[2].toInt();
+		if (k < 0 || k >= t.size())
+			return false;
+		t[k]->click();
+		return true;
+	}
+	return false;
 }

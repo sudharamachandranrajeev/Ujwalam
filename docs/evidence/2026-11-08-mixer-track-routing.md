@@ -30,6 +30,17 @@ UNVERIFIED on a real stream.
 - `node --test tests/studio-qt-shell.test.mjs`: 5 pass. Probe: `trackButtons` 0 with the flag off, 6 with it on
   (2 tracks on each of the fake host's 3 strips).
 
+## Review follow-up (independent review of b448c64 and bd599ae, same day)
+- No bugs found in thread safety, NaN handling, JSON types or input checks.
+- Preview snapping "any edge or centre to any target" is intended (D272 says so).
+- Fixed: the host's answer now carries `monitoring` too. With a CUE on, the host flips monitor-only and
+  monitor-and-output with the routing (libobs: monitor-only is never in the output mix), and the project file now
+  records that, so a restart loads what was heard. Tests: host answer `monitoring: 'off'` for a source without CUE;
+  `aud-game` (sample: monitor-only) saved as monitor-and-output after routing; unknown values not written.
+- Fixed: the Qt shell takes one routing change at a time (a second click before the answer would have built on
+  the old list and dropped the first change), reloads the mixer after a typed confirm, and says when a change was
+  live only (not saved to the project file).
+
 ## To check by hand
 Flag `mixer-routing` on (type `yes`). In the studio window's mixer, each sound shows "Tracks:" and a button per
 track. Untick track 1 on a sound: it leaves the stream and recording mix; the project file's `audio.sources` entry

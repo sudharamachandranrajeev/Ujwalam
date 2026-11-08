@@ -53,7 +53,8 @@ function stubHost() {
       if (m === 'mixer.setTracks') {
         if (p.id !== 'scene-main/layer-game') throw Object.assign(new Error('no such layer'), { code: -32602 });
         st.tracks['aud-game'] = [...p.tracks];
-        return { id: p.id, audioSource: 'aud-game', mixers: p.tracks.length, tracks: p.tracks };
+        // aud-game has CUE on (sample: monitor-only): the host flips it with the routing.
+        return { id: p.id, audioSource: 'aud-game', mixers: p.tracks.length, tracks: p.tracks, monitoring: p.tracks.length ? 'monitor-and-output' : 'monitor-only' };
       }
       return {};
     },
@@ -83,7 +84,8 @@ async function setup() {
   return { srv, host, flags, file, post, status };
 }
 
-const tracksOf = (file, id) => JSON.parse(readFileSync(file, 'utf8')).audio.sources.find((a) => a.id === id).tracks;
+const sourceOf = (file, id) => JSON.parse(readFileSync(file, 'utf8')).audio.sources.find((a) => a.id === id);
+const tracksOf = (file, id) => sourceOf(file, id).tracks;
 const routed = (c) => c.host.st.calls.filter(([m]) => m === 'mixer.setTracks');
 
 test('mixer routing: off by default; on: sent to the host and saved under the project audio source', async () => {
@@ -101,6 +103,7 @@ test('mixer routing: off by default; on: sent to the host and saved under the pr
     assert.equal(on.body.saved, 'pending');
     assert.deepEqual(routed(c)[0][1], params);
     await until(() => JSON.stringify(tracksOf(c.file, 'aud-game')) === '["track1","track2"]', 'saved into audio.sources');
+    assert.equal(sourceOf(c.file, 'aud-game').monitoring, 'monitor-and-output', 'the host\'s monitoring answer is saved too');
     assert.deepEqual(tracksOf(c.file, 'aud-mic'), ['track1', 'track2'], 'other sources untouched');
 
     const none = await c.post('/ui/api/host', { method: 'mixer.setTracks', params: { id: params.id, tracks: [] } });

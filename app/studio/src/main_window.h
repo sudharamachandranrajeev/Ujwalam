@@ -56,6 +56,9 @@ public:
 	void start(); // first loads after login
 	// Headless probe (tests only, UJWALAM_STUDIO_PROBE_MS): what the panels show now, as plain data. Never shown.
 	QJsonObject probe() const;
+	// Probe action (tests only, UJWALAM_STUDIO_PROBE_ACTIONS, D275): clicks the real widget so its own handler runs.
+	// flag-off:<id> | mute:<strip> | track:<strip>:<n> | undo. false: no such widget. Never types a confirm phrase.
+	bool probeAction(const QString &action);
 
 private:
 	QWidget *buildLeft();
@@ -114,6 +117,7 @@ private:
 	QJsonArray mixerTracks_;     // mixer.list tracks: the project audio tracks [{id, name}] (D273)
 	bool mixerRoutingOn_ = false; // flag mixer-routing: a button per track on each mixer strip
 	int routeButtons_ = 0;        // track buttons shown (headless probe)
+	bool routeBusy_ = false;      // a routing change is on its way: further track clicks wait for the answer
 	void setTracks(const QString &id, const QStringList &tracks);
 	bool live_ = false, recording_ = false, meterBusy_ = false;
 	bool previewEditing_ = false; // host switch for preview editing = flag preview-edit (status host.previewEditing)

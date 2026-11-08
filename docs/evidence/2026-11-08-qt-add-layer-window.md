@@ -20,7 +20,7 @@ probe cannot open dialogs). The server route it calls has its own suite (D240).
 - `node tools/lint.mjs`: 0 findings.
 
 ## To check by hand
-Flags `scene-edit` on. "Add layer..." opens the window. Pick Image, type part of a file name in Search: the list
+Flag `scene-edit` on. "Add layer..." opens the window. Pick Image, type part of a file name in Search: the list
 narrows. Double-click a file: the layer appears in the scene and the window closes. Pick Colour, Pick colour...,
 Add: a colour layer is added.
 

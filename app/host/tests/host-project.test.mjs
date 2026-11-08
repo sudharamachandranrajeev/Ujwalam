@@ -262,7 +262,7 @@ test('project v1 render: H and V placements, duplicate item, shared source, laye
   assert.deepEqual(mx.tracks, [{ id: 't1', name: 'Track 1' }, { id: 't2', name: 'Track 2' }]);
   assert.deepEqual(clips[0].tracks, ['t2']);
   let rt = await c.call('mixer.setTracks', { id: clips[0].id, tracks: ['t1', 't2'] });
-  assert.deepEqual([rt.audioSource, rt.mixers, rt.tracks], ['aud-clip', 3, ['t1', 't2']]);
+  assert.deepEqual([rt.audioSource, rt.mixers, rt.tracks, rt.monitoring], ['aud-clip', 3, ['t1', 't2'], 'off']);
   rt = await c.call('mixer.setTracks', { id: clips[0].id, tracks: [] });
   assert.equal(rt.mixers, 0, 'out of every track');
   for (const bad of [['t9'], ['t1', 't1'], 't1']) await assert.rejects(c.call('mixer.setTracks', { id: clips[0].id, tracks: bad }), JSON.stringify(bad));

@@ -58,8 +58,11 @@ test('mixer.setTracks saves the routing into audio.sources by audioSource; unkno
   const d = { ...doc(), audio: { tracks: [{ id: 't1' }, { id: 't2' }], sources: [{ id: 'mic', tracks: ['t1'] }] } };
   assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'mic', tracks: ['t1', 't2'] }), 1);
   assert.deepEqual(d.audio.sources[0].tracks, ['t1', 't2']);
-  assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'mic', tracks: [] }), 1);
+  assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'mic', tracks: [], monitoring: 'monitor-only' }), 1);
   assert.deepEqual(d.audio.sources[0].tracks, []);
+  assert.equal(d.audio.sources[0].monitoring, 'monitor-only', 'the host\'s monitoring answer is recorded');
+  applyEdit(d, 'mixer.setTracks', { audioSource: 'mic', tracks: [], monitoring: 'loud' });
+  assert.equal(d.audio.sources[0].monitoring, 'monitor-only', 'an unknown monitoring value is not written');
   assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'nope', tracks: ['t1'] }), 0);
   assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: 'mic', tracks: ['t9'] }), 0);
   assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: undefined, tracks: undefined }), 0);

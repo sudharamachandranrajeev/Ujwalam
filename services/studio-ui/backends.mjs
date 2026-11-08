@@ -141,7 +141,7 @@ export function createFakeHost({ outputsReady = false } = {}) {
           const m = need(mixer.find((x) => x.id === p.id), 'source');
           if (!p.tracks.every((t) => TRACKS.some((x) => x.id === t))) throw new Error('unknown track');
           m.tracks = TRACKS.filter((t) => p.tracks.includes(t.id)).map((t) => t.id);
-          return { id: m.id, audioSource: m.audioSource, tracks: m.tracks };
+          return { id: m.id, audioSource: m.audioSource, tracks: m.tracks, monitoring: m.cue ? (m.tracks.length ? 'monitor-and-output' : 'monitor-only') : 'off' };
         }
         case 'mixer.setVolume': need(mixer.find((m) => m.id === p.id), 'source').volumeDb = p.db; return { ok: true };
         case 'mixer.setMute': need(mixer.find((m) => m.id === p.id), 'source').muted = p.muted; return { ok: true };

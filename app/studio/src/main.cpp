@@ -15,6 +15,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <algorithm>
+#include <memory>
 #include <cstdio>
 
 static QString takeEnv(const char *name)
@@ -52,8 +53,20 @@ int main(int argc, char **argv)
 		const int probeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS");
 		if (headless && probeMs > 0) {
 			win.start();
-			QTimer::singleShot(std::min(probeMs, 60000), &app, [&]() {
-				std::printf("studio probe: %s\n", QJsonDocument(win.probe()).toJson(QJsonDocument::Compact).constData());
+			// Actions (D275): one every 700 ms from 2.5 s (after the first loads and a status poll), each a real click.
+			auto actions = std::make_shared<QJsonArray>();
+			const QStringList todo = qEnvironmentVariable("UJWALAM_STUDIO_PROBE_ACTIONS").split(QLatin1Char(','), Qt::SkipEmptyParts);
+			for (int i = 0; i < todo.size() && i < 20; i++)
+				QTimer::singleShot(2500 + 700 * i, &app, [&win, actions, a = todo[i].trimmed()]() {
+					QJsonObject o;
+					o.insert(QStringLiteral("action"), a);
+					o.insert(QStringLiteral("done"), win.probeAction(a));
+					actions->append(o);
+				});
+			QTimer::singleShot(std::min(probeMs, 60000), &app, [&, actions]() {
+				QJsonObject o = win.probe();
+				o.insert(QStringLiteral("actions"), *actions);
+				std::printf("studio probe: %s\n", QJsonDocument(o).toJson(QJsonDocument::Compact).constData());
 				std::fflush(stdout);
 				app.exit(0);
 			});

@@ -67,7 +67,7 @@ describe('Qt studio shell (headless smoke)', { skip }, () => {
 describe('Qt studio shell panels (headless probe)', { skip }, () => {
   const dirs = [];
   after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
-  async function probe(on, ms = 5000) {
+  async function probe(on, ms = 5000, actions = '') {
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-qtp-')); dirs.push(dataDir);
     const flags = createFlags({ dataDir });
     for (const id of on) flags.set(id, true);
@@ -78,11 +78,11 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags, bots: createFakeBots(), limits: { statusPollMs: 50 } });
     const { port } = await srv.listen();
     try {
-      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms) });
+      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms), UJWALAM_STUDIO_PROBE_ACTIONS: actions });
       assert.equal(r.code, 0, r.err);
       const m = /^studio probe: (.+)$/m.exec(r.out);
       assert.ok(m, `no probe line: ${r.out} ${r.err}`);
-      return JSON.parse(m[1]);
+      return { ...JSON.parse(m[1]), fake, store: flags };
     } finally { srv.close(); }
   }
 
@@ -105,5 +105,15 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(p.shown, { structure: true, transitions: true, bots: true, report: true, posts: true });
     assert.equal(p.botButtons, 4, 'Start and Stop for Streamer.bot and Speaker.bot');
     assert.equal(p.trackButtons, 6, 'mixer-routing: a button per project track (2) on each of the 3 fake mixer strips (D273)');
+  });
+  test('probe actions click the real widgets: Mute, a track button, a flag off; undo with no history does nothing (D275)', async () => {
+    const p = await probe(['mixer-routing', 'scene-edit'], 7000, 'mute:0,track:0:1,flag-off:scene-edit,undo');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['mute:0', true], ['track:0:1', true], ['flag-off:scene-edit', true], ['undo', false]]);
+    const cam = (await p.fake.call('mixer.list')).sources.find((s) => s.id === 'scene-1/cam');
+    assert.equal(cam.muted, true, 'Mute clicked: mixer.setMute reached the host');
+    assert.deepEqual(cam.tracks, ['t1', 't2'], 'second track clicked: mixer.setTracks with both tracks');
+    assert.equal(p.store.isOn('scene-edit'), false, 'flag unticked: off at once, no phrase');
+    assert.equal(p.shown.structure, false, 'the structure box follows the flag');
+    assert.equal(p.trackButtons, 6);
   });
 });

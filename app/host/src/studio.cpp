@@ -1922,7 +1922,8 @@ json::Value Studio::mixer_set_cue(const std::string &id, bool cue)
 }
 
 // Track routing (D273). The project file is the record: the UI server saves the change into audio.sources[].tracks
-// (keyed by the audioSource returned here). A CUE that is on follows the routing like mixer_set_cue sets it.
+// and .monitoring (keyed by the audioSource returned here). A CUE that is on follows the routing like mixer_set_cue
+// sets it: monitor-and-output on a track, monitor-only on none (libobs: monitor-only is never in the output mix).
 json::Value Studio::mixer_set_tracks(const std::string &id, const std::vector<std::string> &tracks)
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);
@@ -1956,6 +1957,10 @@ json::Value Studio::mixer_set_tracks(const std::string &id, const std::vector<st
 	r.set("audioSource", s->audio_id);
 	r.set("mixers", now);
 	r.set("tracks", std::move(ts));
+	const enum obs_monitoring_type mt = obs_source_get_monitoring_type(s->src);
+	r.set("monitoring", mt == OBS_MONITORING_TYPE_MONITOR_ONLY		 ? "monitor-only"
+			    : mt == OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT ? "monitor-and-output"
+									     : "off");
 	return r;
 }
 
