@@ -108,7 +108,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.previews.length, 2);
     for (const m of p.previews) assert.doesNotMatch(m, /bad field/, m);
     assert.equal(p.clips, 'Clips: ready', 'D284: no clip runs yet, the default choice is "ask me"');
-    assert.deepEqual(p.clipSettings, { recording: 'ask', live: 'ask' });
+    assert.deepEqual(p.clipSettings, { recording: 'ask', live: 'ask', matchGate: { top3: true, minKills: null } });
   });
 
   test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons; mixer track buttons', async () => {
@@ -144,7 +144,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.clipAsks, 1, 'the question is listed until the launcher picks up the answer');
     assert.equal(p.clips, 'Make clips? (1)');
     const saved = JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8'));
-    assert.deepEqual(saved.clips, { recording: 'after', live: 'while' });
+    assert.deepEqual(saved.clips, { recording: 'after', live: 'while', matchGate: { top3: true, minKills: null } });
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'clips', 'answer.json'), 'utf8')), { id: ask.id, make: true, remember: false });
   });
 
