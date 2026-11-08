@@ -114,7 +114,6 @@ bool Guide::eventFilter(QObject *o, QEvent *e)
 
 void Guide::refresh()
 {
-
 	coach_->refresh();
 	hints_->refresh();
 	help_->refresh();
