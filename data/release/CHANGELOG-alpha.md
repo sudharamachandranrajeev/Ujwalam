@@ -2,6 +2,15 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.8 — 2026-11-08
+
+- Look panel: select a layer to change its look: rounded corners, filters (sharpen, vignette, film grain, pixelate, posterize, black and white, sepia), camera (mirror, flip, circle or rounded shape with a ring), blend (opacity, add, multiply, screen and more, gradient fade) and shadow and glow. No hidden switch needed; while live, changes wait for Apply and "yes, on air".
+- Settings has pages: Clips, Folders, Layer effects ("Show layer effects from the scene") and Advanced (animations: follow Windows, always or off; developer switches).
+- Round Start stream, Record, Save clip and Mark moment buttons; slimmer toolbar with icons; scene cards.
+- Task bar: long jobs (clip making, imports, uploads) show progress at the bottom without getting in the way, with a short note when they finish.
+- Stats cards for the session, GPU, CPU and frame rate.
+- Match filter: only matches where you are in the top 3 (or, once you set it, with enough kills) become clips. Matches it cannot read keep their clips.
+- First stream scene follows your horizontal and vertical layouts (start once with a rebuild to pick it up).
 ## 0.1.0-alpha.7 — 2026-11-08
 
 - New look: dark violet panels with rounded corners and a purple accent, after the reference video.
