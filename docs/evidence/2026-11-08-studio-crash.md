@@ -115,8 +115,8 @@ Runs of 2026-11-08 in the worktree, after the fix:
   - Launcher logs are pruned.
 - `npm run lint`: 0 findings.
 - Studio build (`node app/studio/tools/build.mjs`): ok. It builds `ujwalam-studio.exe` and `ujwalam-start.exe`.
-- The host was not rebuilt. `crash.cpp` changes only add settings whose defaults keep the old names; it compiles in the
-  studio build. Host build UNVERIFIED.
+- Host: the `crash.cpp` changes only add settings whose defaults keep the old names. The commit hook's quick CI
+  rebuilt the host (`build-host PASS`, 8/8 checks passed); the host crash tests were not run separately.
 
 ## UNVERIFIED
 
