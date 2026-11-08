@@ -139,3 +139,19 @@ before the user turns it on.
 - Kill-feed count against the game's own number.
 - Matches with no top-3 screen (modes without one) keep their clips unless `minKills` is on and the kills are read.
 - `montage` is not gated (it has its own won-match rule, D237).
+
+## 6. Full rerun with the final kill rule (2026-11-08, main session)
+
+Same three commands as section 3 on `practice-h-20261108-132438.mkv` (scratch data dir, pack 0.5.0, 4 threads):
+
+```
+detect: 299 s, ocr 297, skipped 3, 523 s elapsed
+detect: 220 hit(s), 58 with signal, from 472 OCR frames at 1.0 fps in 777.41 s
+candidates: 2 from 220 events (markers 0, chat off, audio off, detectors 220)
+gate: match 1 0-2 s: KEPT (match end seen but top-3 screen not read: clips kept)
+gate: match 2 2-475 s: KEPT (in the top 3 (#1))
+```
+
+`matches.json` match 2: `ownKills` **45**, `killsSource` killfeed. The hand count from the private key log was about
+45 (43 sure, 3 unsure); the offline replay gave 46. The kill-feed count now matches the hand count on this one practice
+match. Still UNVERIFIED against the game's own number (not captured) and on real MP matches.
