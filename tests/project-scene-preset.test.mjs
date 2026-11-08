@@ -138,3 +138,31 @@ test('loading twice creates two distinct scenes with distinct ids', () => {
   assert.equal(new Set(ids).size, ids.length);
   assert.equal(r2.project.scenes.length, r1.project.scenes.length + 1);
 });
+
+// First stream scene (2026-11-08): geometry against the user's horizontal target layout (fractions of the canvas,
+// boxes measured from the target picture to about 1-2 percent).
+test('H target layout: boxes, order, goal bar off, rounded game and mascot behind flags', () => {
+  const L = (k) => preset.params.layers.find((l) => l.key === k);
+  const within = (k, x0, x1, y0, y1) => {
+    const r = L(k).rect;
+    assert.ok(r.x >= x0 - 0.02 && r.x + r.w <= x1 + 0.02 && r.y >= y0 - 0.02 && r.y + r.h <= y1 + 0.02, `${k} inside its target box`);
+  };
+  within('game', 0.245, 0.985, 0.03, 0.93); // rounded inset frame, right three quarters
+  within('twitch-followers', 0.26, 0.5, 0, 0.05); // top, left of centre
+  within('youtube-subscribers', 0.75, 0.98, 0, 0.05); // top right
+  within('subscribe-cta', 0.53, 0.71, 0, 0.11); // top centre
+  within('wordmark', 0, 0.22, 0.1, 0.21); // left column under the goal bar
+  within('events', 0, 0.2, 0.2, 0.55); // follow-alert stack
+  within('social-ticker', 0, 1, 0.94, 1);
+  within('character', 0.85, 1, 0.77, 1); // bottom right
+  assert.equal(L('goal').visible, false, 'goal bar left out for now (user 2026-11-08)');
+  assert.deepEqual(L('game').effects, [{ type: 'rounded', radius: 64 }]);
+  assert.equal(L('game').effectsFlag, 'layer-effects');
+  assert.ok(L('character').z > L('game').z && L('character').z > L('social-ticker').z);
+  const roles = { 'game-capture': 'dev-cap', facecam: 'dev-cam' };
+  const on = loadScenePreset(base(), preset, { profile, roles, flags: { 'layer-effects': true } });
+  assert.deepEqual(on.project.scenes.at(-1).layers[1].effects, [{ type: 'rounded', radius: 64 }]);
+  const off = loadScenePreset(base(), preset, { profile, roles });
+  assert.equal(off.project.scenes.at(-1).layers[1].effects, undefined, 'flag off: square frame');
+  assert.equal(off.project.scenes.at(-1).layers[5].placements.h.visible, false);
+});

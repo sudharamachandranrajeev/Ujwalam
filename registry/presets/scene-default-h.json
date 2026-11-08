@@ -1,6 +1,6 @@
 {
   "id": "scene-default-h",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default H (current stream layout)",
@@ -46,7 +46,14 @@
           "right": 177
         },
         "geometry": "meld",
-        "note": "Rounded frame in Meld (corner radius not carried). Crop, not stretch: see the evidence file."
+        "note": "Rounded frame in Meld. Crop, not stretch: see the evidence file. Rounded corners (radius 64 source px, about 58 canvas px at scale 0.905, from the user horizontal target layout 2026-11-07) with feature flag layer-effects; radius proposed, UNVERIFIED.",
+        "effects": [
+          {
+            "type": "rounded",
+            "radius": 64
+          }
+        ],
+        "effectsFlag": "layer-effects"
       },
       {
         "key": "facecam",
@@ -125,7 +132,9 @@
           "w": 0.235,
           "h": 0.057
         },
-        "geometry": "spec"
+        "geometry": "spec",
+        "visible": false,
+        "note": "Left out for now (user 2026-11-08): hidden; the layer stays so it can be switched on. Geometry from the target layout (top left, above the wordmark)."
       },
       {
         "key": "twitch-followers",
@@ -212,13 +221,14 @@
           "rel": "{brand.character}"
         },
         "rect": {
-          "x": 0.927,
+          "x": 0.855,
           "y": 0.777,
-          "w": 0.073,
+          "w": 0.145,
           "h": 0.223
         },
         "geometry": "spec",
-        "note": "Static asset or the Chat Engage caricature is still to be confirmed."
+        "note": "Mascot, bottom right over the game frame corner (user horizontal target layout 2026-11-07; box measured to about 1 percent). Shown at its true shape inside the box. Brand asset, local only: without the profile key the layer is a transparent placeholder (layer off).",
+        "fit": "contain"
       },
       {
         "key": "effects",
