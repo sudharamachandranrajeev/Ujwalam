@@ -78,9 +78,9 @@ Clips folder (Settings > Clips folder) holds finished, validated videos only:
   names in the clips folder, uploads.json has 3 rows, report has audio tracks 1/1 and loudness.
 - `node --test tests/record-clips.test.mjs`: 12/12 pass (run folder in app data, --publish, --montage only with V,
   --drop-used-saves, countClips from published.json, last.folder).
-- `node tools/ci.mjs --quick`: lint, validate-registry, validate-outputs, validate-games, private-scan,
-  legacy-verify PASS; build and build-host FAIL only because the worktree has no native build configuration
-  (app/spike/build, app/host/host.local.json); no native code changed.
+- `node tools/ci.mjs --quick` (the pre-commit hook): 8/8 PASS (build, lint, build-host, validate-registry,
+  validate-outputs, validate-games, private-scan, legacy-verify), after configuring the native builds in this worktree
+  (app/spike/build and out/host/build, gitignored; no native code changed). Full CI not run (by instruction).
 
 ## Real run (practice recording 2026-11-08 18:55:25, 25 min)
 
