@@ -54,13 +54,34 @@ const uiProblems = (ui) => {
   if (!ui || typeof ui !== 'object' || Array.isArray(ui)) return ['ui must be an object'];
   const out = [];
   for (const [k, v] of Object.entries(ui)) {
-    if (k !== 'motion') out.push(`unknown ui setting ${k}`);
+    if (k === 'theme' || k === 'effects') out.push(...themeProblems(k, v)); // D293
+    else if (k !== 'motion') out.push(`unknown ui setting ${k}`);
     else if (!UI_MOTION.includes(v)) out.push(`ui.motion must be one of ${UI_MOTION.join(', ')}`);
   }
   return out;
 };
-const uiRead = (j) => (j?.ui && typeof j.ui === 'object' && UI_MOTION.includes(j.ui.motion) ? { ui: { motion: j.ui.motion } } : {});
+const uiRead = (j) => {
+  const ui = { ...(j?.ui && typeof j.ui === 'object' && UI_MOTION.includes(j.ui.motion) ? { motion: j.ui.motion } : {}), ...themeRead(j?.ui) }; // D293
+  return Object.keys(ui).length ? { ui } : {};
+};
 // --- end ui settings ----------------------------------------------------------------------------------------------
+
+// --- theme settings (D293) ----------------------------------------------------------------------------------------
+// ui.theme: id of the studio theme (data/themes/<id>.json, or a custom theme file the user added): lower-case letters,
+// digits and dashes. Not checked against the installed list here: the window falls back to "violet-night" when the
+// theme is missing. ui.effects: "full" (shadow, glow and extrusion as the theme says) | "reduced" (none).
+// Present in the file and in readSettings() only once the user has chosen.
+export const UI_EFFECTS = Object.freeze(['full', 'reduced']);
+export const THEME_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const themeProblems = (k, v) => {
+  if (k === 'theme') return typeof v === 'string' && v.length <= 40 && THEME_ID.test(v) ? [] : ['ui.theme must be a theme id (lower-case letters, digits and dashes, up to 40 characters)'];
+  return UI_EFFECTS.includes(v) ? [] : [`ui.effects must be one of ${UI_EFFECTS.join(', ')}`];
+};
+const themeRead = (ui) => ({
+  ...(typeof ui?.theme === 'string' && ui.theme.length <= 40 && THEME_ID.test(ui.theme) ? { theme: ui.theme } : {}),
+  ...(UI_EFFECTS.includes(ui?.effects) ? { effects: ui.effects } : {}),
+});
+// --- end theme settings -------------------------------------------------------------------------------------------
 
 const inside = (dir, root) => { const r = path.relative(path.resolve(root), path.resolve(dir)); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
 

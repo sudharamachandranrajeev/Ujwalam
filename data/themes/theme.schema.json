@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schemas/theme.schema.json",
+  "title": "Ujwalam studio theme pack (D293)",
+  "description": "A whole-UI theme as data: colours, type, geometry, depth (shadow, glow, extrusion per element class), motion, background and icon weight. Fonts are Windows family names only (nothing is bundled). Add your own file beside the built-in ones; the id must match the file name.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "topic", "version", "dark", "colors", "typography", "geometry", "depth", "motion", "background", "icons"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$", "maxLength": 40 },
+    "name": { "type": "string", "minLength": 1, "maxLength": 40 },
+    "topic": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "version": { "type": "integer", "minimum": 1 },
+    "dark": { "type": "boolean", "description": "true for a dark palette (sets the Qt palette base)" },
+    "colors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bg", "panel", "field", "border", "text", "muted", "accent", "accentHi", "danger", "ok", "onAccent", "disabled"],
+      "properties": {
+        "bg": { "$ref": "#/$defs/hex" },
+        "panel": { "$ref": "#/$defs/hex" },
+        "field": { "$ref": "#/$defs/hex" },
+        "border": { "$ref": "#/$defs/hex" },
+        "text": { "$ref": "#/$defs/hex" },
+        "muted": { "$ref": "#/$defs/hex" },
+        "accent": { "$ref": "#/$defs/hex" },
+        "accentHi": { "$ref": "#/$defs/hex" },
+        "danger": { "$ref": "#/$defs/hex" },
+        "ok": { "$ref": "#/$defs/hex" },
+        "onAccent": { "$ref": "#/$defs/hex", "description": "text and icons on accent and danger fills" },
+        "disabled": { "$ref": "#/$defs/hex" }
+      }
+    },
+    "gradients": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "window": { "$ref": "#/$defs/gradient", "description": "window backdrop" },
+        "accent": { "$ref": "#/$defs/gradient", "description": "fill of primary buttons and round primary controls" }
+      }
+    },
+    "typography": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "baseSize", "captionSize", "titleSize", "headingWeight", "letterSpacing", "captionLetterSpacing", "captionCaps"],
+      "properties": {
+        "family": { "type": "string", "minLength": 1, "maxLength": 60 },
+        "fallbacks": { "type": "array", "maxItems": 4, "items": { "type": "string", "minLength": 1, "maxLength": 60 } },
+        "baseSize": { "type": "number", "minimum": 8, "maximum": 14, "description": "points" },
+        "captionSize": { "type": "number", "minimum": 6, "maximum": 12 },
+        "titleSize": { "type": "number", "minimum": 10, "maximum": 24 },
+        "headingWeight": { "type": "integer", "minimum": 300, "maximum": 900 },
+        "letterSpacing": { "type": "number", "minimum": -0.5, "maximum": 2, "description": "pixels added between letters (QFont absolute spacing)" },
+        "captionLetterSpacing": { "type": "number", "minimum": 0, "maximum": 4 },
+        "captionCaps": { "type": "boolean" }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["radius", "spacing", "borderWidth", "controlHeight", "roundControl"],
+      "properties": {
+        "radius": {
+          "type": "object", "additionalProperties": false, "required": ["small", "medium", "large"],
+          "properties": { "small": { "$ref": "#/$defs/px" }, "medium": { "$ref": "#/$defs/px" }, "large": { "$ref": "#/$defs/px" } }
+        },
+        "spacing": {
+          "type": "object", "additionalProperties": false, "required": ["small", "medium", "large"],
+          "properties": { "small": { "$ref": "#/$defs/px" }, "medium": { "$ref": "#/$defs/px" }, "large": { "$ref": "#/$defs/px" } }
+        },
+        "borderWidth": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "controlHeight": { "type": "integer", "minimum": 14, "maximum": 40 },
+        "roundControl": { "type": "integer", "minimum": 36, "maximum": 72 }
+      }
+    },
+    "depth": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["card", "button", "primaryButton", "roundControl", "toast", "menu", "taskPanel"],
+      "description": "Per element class. An empty object means no effect. Shadows belong on floating things, glow on primary or active things, extrusion on round controls and primary buttons.",
+      "properties": {
+        "card": { "$ref": "#/$defs/depthClass" },
+        "button": { "$ref": "#/$defs/depthClass" },
+        "primaryButton": { "$ref": "#/$defs/depthClass" },
+        "roundControl": { "$ref": "#/$defs/depthClass" },
+        "toast": { "$ref": "#/$defs/depthClass" },
+        "menu": { "$ref": "#/$defs/depthClass" },
+        "taskPanel": { "$ref": "#/$defs/depthClass" }
+      }
+    },
+    "motion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fastMs", "normalMs", "slowMs", "easing", "hoverLift", "pressSink"],
+      "properties": {
+        "fastMs": { "type": "integer", "minimum": 0, "maximum": 400 },
+        "normalMs": { "type": "integer", "minimum": 0, "maximum": 600 },
+        "slowMs": { "type": "integer", "minimum": 0, "maximum": 600 },
+        "easing": { "enum": ["linear", "outQuad", "outCubic", "outExpo", "outBack", "inOutQuad", "inOutCubic"] },
+        "hoverLift": { "type": "number", "minimum": 0, "maximum": 4, "description": "pixels a button with depth rises on hover" },
+        "pressSink": { "type": "number", "minimum": 0, "maximum": 4, "description": "pixels it sinks while pressed" }
+      }
+    },
+    "background": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "pattern", "patternColor", "patternOpacity", "patternSpacing"],
+      "properties": {
+        "kind": { "enum": ["solid", "gradient", "pattern"], "description": "gradient uses gradients.window; pattern draws on top of it. Drawn by Qt: no image files." },
+        "pattern": { "enum": ["none", "grid", "dots", "scanlines", "diagonal"] },
+        "patternColor": { "$ref": "#/$defs/hex" },
+        "patternOpacity": { "type": "number", "minimum": 0, "maximum": 0.15 },
+        "patternSpacing": { "type": "integer", "minimum": 3, "maximum": 80 }
+      }
+    },
+    "icons": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stroke"],
+      "properties": { "stroke": { "type": "number", "minimum": 1.2, "maximum": 3, "description": "line weight on the 24 x 24 icon grid" } }
+    }
+  },
+  "$defs": {
+    "hex": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+    "px": { "type": "integer", "minimum": 0, "maximum": 40 },
+    "colorRef": { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|accent|accentHi|danger|ok|text|muted|border|auto)$", "description": "hex, a colour token, or auto (accent, danger while the control is active)" },
+    "gradient": {
+      "type": "object", "additionalProperties": false, "required": ["from", "to", "angle"],
+      "properties": { "from": { "$ref": "#/$defs/hex" }, "to": { "$ref": "#/$defs/hex" }, "angle": { "type": "integer", "minimum": 0, "maximum": 359, "description": "0 = left to right, 90 = top to bottom" } }
+    },
+    "depthClass": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "shadow": {
+          "type": "object", "additionalProperties": false, "required": ["blur", "offsetX", "offsetY", "color", "opacity"],
+          "properties": {
+            "blur": { "type": "integer", "minimum": 0, "maximum": 40 },
+            "offsetX": { "type": "integer", "minimum": -12, "maximum": 12 },
+            "offsetY": { "type": "integer", "minimum": -12, "maximum": 12 },
+            "color": { "$ref": "#/$defs/colorRef" },
+            "opacity": { "type": "number", "minimum": 0, "maximum": 1 }
+          }
+        },
+        "glow": {
+          "type": "object", "additionalProperties": false, "required": ["blur", "color", "opacity", "when"],
+          "properties": {
+            "blur": { "type": "integer", "minimum": 0, "maximum": 40 },
+            "color": { "$ref": "#/$defs/colorRef" },
+            "opacity": { "type": "number", "minimum": 0, "maximum": 0.8 },
+            "when": { "enum": ["always", "active", "hover", "focus"], "description": "always only on primary or floating elements; active = live, recording or checked" }
+          }
+        },
+        "extrusion": {
+          "type": "object", "additionalProperties": false, "required": ["depth", "color"],
+          "properties": {
+            "depth": { "type": "integer", "minimum": 1, "maximum": 6, "description": "pixels of 3D edge under the element" },
+            "color": { "$ref": "#/$defs/colorRef" },
+            "color2": { "$ref": "#/$defs/colorRef", "description": "far end of the edge: a bevel or chrome gradient" }
+          }
+        }
+      }
+    }
+  }
+}

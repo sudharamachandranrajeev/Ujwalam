@@ -6,6 +6,8 @@
 // one display it opens there. UJWALAM_HEADLESS=1: no window at all; the shell
 // logs in, lists the scenes, prints one line ("studio smoke: ok, <n> scene(s)") and exits (tests).
 #include "api_client.h"
+#include "depth.h"
+#include "interaction.h"
 #include "main_window.h"
 #include "motion.h"
 #include "theme.h"
@@ -39,6 +41,7 @@ int main(int argc, char **argv)
 	QApplication::setApplicationName(QStringLiteral("Ujwalam Studio"));
 	theme::apply(app);
 	motion::installHover(app); // hover glow on buttons and cards (D287)
+	interaction::install(app); // depth effects, captions, backdrops, popup fades (D293)
 	const QString url = takeEnv("UJWALAM_UI_URL");
 	const QString key = takeEnv("UJWALAM_UI_LAUNCH_KEY");
 
@@ -55,6 +58,16 @@ int main(int argc, char **argv)
 			code = 77;
 			QTimer::singleShot(0, &app, [&app]() { app.exit(77); });
 			return;
+		}
+		// The saved theme and effects choice (settings.json ui.theme / ui.effects, D293) is applied before the window
+		// shows, so it never flashes the default look. UJWALAM_THEME / UJWALAM_EFFECTS (tests) win.
+		api.get(QStringLiteral("ui/api/settings"), [&](bool okS, const QJsonObject &sb, const QString &) {
+		if (okS) {
+			const QJsonObject ui = sb.value(QStringLiteral("settings")).toObject().value(QStringLiteral("ui")).toObject();
+			if (qEnvironmentVariable("UJWALAM_THEME").isEmpty() && !ui.value(QStringLiteral("theme")).toString().isEmpty())
+				theme::setCurrent(ui.value(QStringLiteral("theme")).toString());
+			if (qEnvironmentVariable("UJWALAM_EFFECTS").isEmpty() && !ui.value(QStringLiteral("effects")).toString().isEmpty())
+				theme::setEffects(ui.value(QStringLiteral("effects")).toString());
 		}
 		// Probe (tests): run the window's loads and polls without showing it, then print what its panels show.
 		const int probeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS");
@@ -95,6 +108,16 @@ int main(int argc, char **argv)
 						o.insert(QStringLiteral("settingsShot"), sw->grab().save(shot.left(shot.size() - 4) + QStringLiteral("-settings.png"), "PNG"));
 					}
 				}
+				if (qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_BENCH") > 0) { // repaint cost of the depth effects (D293)
+					QJsonObject bench;
+					bench.insert(QStringLiteral("theme"), theme::currentId());
+					bench.insert(QStringLiteral("depthWidgets"), depth::count());
+					bench.insert(QStringLiteral("full"), depth::measurePaint(&win, 100));
+					theme::setEffects(QStringLiteral("reduced"));
+					bench.insert(QStringLiteral("reduced"), depth::measurePaint(&win, 100));
+					bench.insert(QStringLiteral("unit"), QStringLiteral("ms per full-window paint, 1600x900, effect caches dropped each time"));
+					o.insert(QStringLiteral("bench"), bench);
+				}
 				std::printf("studio probe: %s\n", QJsonDocument(o).toJson(QJsonDocument::Compact).constData());
 				std::fflush(stdout);
 				app.exit(0);
@@ -121,6 +144,7 @@ int main(int argc, char **argv)
 		win.setAttribute(Qt::WA_ShowWithoutActivating, true);
 		win.show();
 		win.start();
+		});
 	});
 	const int r = app.exec();
 	return code ? code : r;

@@ -51,13 +51,13 @@ void Sparkline::paintEvent(QPaintEvent *)
 	fill.lineTo(line.pointAtPercent(0).x(), r.bottom());
 	fill.closeSubpath();
 	QLinearGradient g(0, r.top(), 0, r.bottom());
-	QColor top(theme::kAccent), bot(theme::kAccent);
+	QColor top(theme::color(QStringLiteral("accent"))), bot(theme::color(QStringLiteral("accent")));
 	top.setAlphaF(0.35f);
 	bot.setAlphaF(0.0f);
 	g.setColorAt(0, top);
 	g.setColorAt(1, bot);
 	p.fillPath(fill, g);
-	p.setPen(QPen(QColor(theme::kAccentHi), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+	p.setPen(QPen(theme::color(QStringLiteral("accentHi")), 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 	p.setBrush(Qt::NoBrush);
 	p.drawPath(line);
 }

@@ -1,0 +1,170 @@
+{
+  "$schema": "./theme.schema.json",
+  "id": "tactical",
+  "name": "Tactical",
+  "topic": "Military and FPS briefing room: olive and sand, stencil-style caps, hard bevelled steel edges on the main controls, almost no glow.",
+  "version": 1,
+  "dark": true,
+  "colors": {
+    "bg": "#1a1d14",
+    "panel": "#23271b",
+    "field": "#2d3224",
+    "border": "#444a33",
+    "text": "#ebe5cf",
+    "muted": "#aaa58c",
+    "accent": "#c8b560",
+    "accentHi": "#e0cf7e",
+    "danger": "#ee6a50",
+    "ok": "#8fbf5a",
+    "onAccent": "#1a1d14",
+    "disabled": "#767a62"
+  },
+  "gradients": {
+    "window": {
+      "from": "#1a1d14",
+      "to": "#14160f",
+      "angle": 90
+    },
+    "accent": {
+      "from": "#d3c06a",
+      "to": "#b9a650",
+      "angle": 90
+    }
+  },
+  "typography": {
+    "family": "Bahnschrift",
+    "fallbacks": [
+      "Segoe UI"
+    ],
+    "baseSize": 10,
+    "captionSize": 8.5,
+    "titleSize": 15,
+    "headingWeight": 700,
+    "letterSpacing": 0.2,
+    "captionLetterSpacing": 2.2,
+    "captionCaps": true
+  },
+  "geometry": {
+    "radius": {
+      "small": 2,
+      "medium": 3,
+      "large": 4
+    },
+    "spacing": {
+      "small": 4,
+      "medium": 8,
+      "large": 12
+    },
+    "borderWidth": 2,
+    "controlHeight": 18,
+    "roundControl": 52
+  },
+  "depth": {
+    "card": {
+      "shadow": {
+        "blur": 14,
+        "offsetX": 0,
+        "offsetY": 4,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "extrusion": {
+        "depth": 2,
+        "color": "#0e100a"
+      }
+    },
+    "button": {
+      "extrusion": {
+        "depth": 2,
+        "color": "#0e100a"
+      }
+    },
+    "primaryButton": {
+      "shadow": {
+        "blur": 6,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#000000",
+        "opacity": 0.4
+      },
+      "extrusion": {
+        "depth": 3,
+        "color": "#6f6330",
+        "color2": "#4a4220"
+      }
+    },
+    "roundControl": {
+      "shadow": {
+        "blur": 10,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 10,
+        "color": "auto",
+        "opacity": 0.3,
+        "when": "active"
+      },
+      "extrusion": {
+        "depth": 4,
+        "color": "#0e100a",
+        "color2": "#3a3f2a"
+      }
+    },
+    "toast": {
+      "shadow": {
+        "blur": 16,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.55
+      },
+      "extrusion": {
+        "depth": 2,
+        "color": "#0e100a"
+      }
+    },
+    "menu": {
+      "shadow": {
+        "blur": 14,
+        "offsetX": 0,
+        "offsetY": 4,
+        "color": "#000000",
+        "opacity": 0.55
+      }
+    },
+    "taskPanel": {
+      "shadow": {
+        "blur": 18,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.55
+      },
+      "extrusion": {
+        "depth": 2,
+        "color": "#0e100a"
+      }
+    }
+  },
+  "motion": {
+    "fastMs": 80,
+    "normalMs": 120,
+    "slowMs": 180,
+    "easing": "outQuad",
+    "hoverLift": 1,
+    "pressSink": 2
+  },
+  "background": {
+    "kind": "pattern",
+    "pattern": "diagonal",
+    "patternColor": "#c8b560",
+    "patternOpacity": 0.035,
+    "patternSpacing": 14
+  },
+  "icons": {
+    "stroke": 2.4
+  }
+}

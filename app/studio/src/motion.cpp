@@ -5,6 +5,8 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QEvent>
+#include <QFocusEvent>
+#include <QMouseEvent>
 #include <QFrame>
 #include <QLabel>
 #include <QPainter>
@@ -80,8 +82,10 @@ QVariantAnimation *run(QWidget *context, const QVariant &from, const QVariant &t
 	auto *a = new QVariantAnimation(context);
 	a->setStartValue(from);
 	a->setEndValue(to);
-	a->setDuration(ms);
-	a->setEasingCurve(curve);
+	// The call sites ask for the studio's standard timing (OutCubic, 180 ms); the theme pack decides what that means
+	// (D293): its normal duration and its easing replace them, other durations scale with them.
+	a->setDuration(curve == QEasingCurve::OutCubic ? int(ms * (theme::duration(QStringLiteral("normal")) / 180.0) + 0.5) : ms);
+	a->setEasingCurve(curve == QEasingCurve::OutCubic ? theme::easing() : curve);
 	QObject::connect(a, &QVariantAnimation::valueChanged, context, [step](const QVariant &v) { step(v); });
 	QObject::connect(a, &QVariantAnimation::finished, context, [a, done]() {
 		if (done)
@@ -94,7 +98,8 @@ QVariantAnimation *run(QWidget *context, const QVariant &from, const QVariant &t
 
 namespace {
 
-// The glow itself: paints a rounded tint over its parent, strength t (0..1). Never takes the mouse.
+// The feedback overlay: paints over its parent, never takes the mouse. Hover tints it with the accent (brighten),
+// a press darkens it, keyboard focus draws a ring. Strength 0..1 each, animated with the theme's timing.
 class Glow : public QWidget {
 public:
 	explicit Glow(QWidget *parent, int radius) : QWidget(parent), radius_(radius)
@@ -115,12 +120,28 @@ public:
 		switch (e->type()) {
 		case QEvent::Enter:
 			if (p->isEnabled())
-				to(1.0);
+				to(hover_, 1.0, hoverAnim_);
 			break;
 		case QEvent::Leave:
 		case QEvent::Hide:
 		case QEvent::EnabledChange:
-			to(0.0);
+			to(hover_, 0.0, hoverAnim_);
+			to(press_, 0.0, pressAnim_);
+			break;
+		case QEvent::MouseButtonPress:
+			if (p->isEnabled() && static_cast<QMouseEvent *>(e)->button() == Qt::LeftButton)
+				to(press_, 1.0, pressAnim_);
+			break;
+		case QEvent::MouseButtonRelease:
+			to(press_, 0.0, pressAnim_);
+			break;
+		case QEvent::FocusIn:
+			// a ring for keyboard focus only: a mouse click already shows the pressed state
+			if (static_cast<QFocusEvent *>(e)->reason() != Qt::MouseFocusReason)
+				to(focus_, 1.0, focusAnim_);
+			break;
+		case QEvent::FocusOut:
+			to(focus_, 0.0, focusAnim_);
 			break;
 		case QEvent::Resize:
 			setGeometry(p->rect());
@@ -136,31 +157,54 @@ protected:
 	{
 		QPainter p(this);
 		p.setRenderHint(QPainter::Antialiasing);
-		QColor fill(theme::kAccentHi);
-		fill.setAlphaF(0.20 * t_);
-		QColor edge(theme::kAccent);
-		edge.setAlphaF(0.95 * t_);
-		p.setBrush(fill);
-		p.setPen(QPen(edge, 1));
-		p.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5), radius_, radius_);
+		const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
+		if (hover_ > 0.001) {
+			QColor fill = theme::color(QStringLiteral("accentHi"));
+			fill.setAlphaF(0.20 * hover_);
+			QColor edge = theme::color(QStringLiteral("accent"));
+			edge.setAlphaF(0.95 * hover_);
+			p.setBrush(fill);
+			p.setPen(QPen(edge, 1));
+			p.drawRoundedRect(r, radius_, radius_);
+		}
+		if (press_ > 0.001) {
+			p.setBrush(QColor(0, 0, 0, int(70 * press_)));
+			p.setPen(Qt::NoPen);
+			p.drawRoundedRect(r, radius_, radius_);
+		}
+		if (focus_ > 0.001) {
+			QColor ring = theme::color(QStringLiteral("accentHi"));
+			ring.setAlphaF(0.9 * focus_);
+			p.setBrush(Qt::NoBrush);
+			p.setPen(QPen(ring, 2));
+			p.drawRoundedRect(r.adjusted(1, 1, -1, -1), std::max(0, radius_ - 1), std::max(0, radius_ - 1));
+		}
 	}
 
 private:
-	void to(qreal target)
+	void to(qreal &v, qreal target, QPointer<QVariantAnimation> &slot)
 	{
-		if (anim_)
-			anim_->stop();
-		const qreal from = t_;
+		if (qFuzzyCompare(v + 1.0, target + 1.0))
+			return;
+		if (slot)
+			slot->stop();
+		const qreal from = v;
 		if (target > 0)
 			raise(), show();
-		anim_ = run(parentWidget(), from, target, 180, QEasingCurve::OutCubic, [this](const QVariant &v) { t_ = v.toReal(); update(); },
-			    [this, target]() { if (target <= 0) hide(); });
-		if (!anim_ && target <= 0)
+		qreal *vp = &v;
+		slot = run(parentWidget(), from, target, 180, QEasingCurve::OutCubic, [this, vp](const QVariant &x) { *vp = x.toReal(); update(); },
+			   [this]() { settle(); });
+		if (!slot)
+			settle();
+	}
+	void settle()
+	{
+		if (hover_ <= 0 && press_ <= 0 && focus_ <= 0)
 			hide();
 	}
 	int radius_;
-	qreal t_ = 0;
-	QPointer<QVariantAnimation> anim_;
+	qreal hover_ = 0, press_ = 0, focus_ = 0;
+	QPointer<QVariantAnimation> hoverAnim_, pressAnim_, focusAnim_;
 };
 
 class HoverFilter : public QObject {
@@ -177,9 +221,9 @@ public:
 		if (w->objectName() == QStringLiteral("round"))
 			radius = std::min(w->width(), w->height()) / 2; // the round control buttons (D290)
 		else if (qobject_cast<QAbstractButton *>(w) && (w->inherits("QPushButton") || w->inherits("QToolButton")))
-			radius = 8;
+			radius = theme::radius(theme::Radius::Medium);
 		else if (w->objectName() == QStringLiteral("strip") || w->objectName() == QStringLiteral("taskRow"))
-			radius = 10;
+			radius = theme::radius(theme::Radius::Medium) + 2;
 		if (radius && !w->property("noGlow").toBool())
 			new Glow(w, radius);
 		return false;
@@ -200,23 +244,35 @@ void setChip(QLabel *l, bool on, const QColor &fill)
 		return;
 	const bool first = !cur.isValid();
 	l->setProperty("chipOn", on);
-	auto apply = [l, fill](qreal t) {
+	// The fill is a theme colour (or not): remember which token, so a theme switch can colour the chip again.
+	QString token;
+	for (const char *k : {"danger", "accent", "ok"})
+		if (fill == theme::color(QLatin1String(k)))
+			token = QLatin1String(k);
+	l->setProperty("chipToken", token);
+	l->setProperty("chipFill", fill);
+	auto paint = [l](qreal t) {
 		l->setProperty("chipT", t);
 		if (t <= 0.001) {
 			l->setStyleSheet(QString());
 			return;
 		}
+		const QString token = l->property("chipToken").toString();
+		const QColor f = token.isEmpty() ? l->property("chipFill").value<QColor>() : theme::color(token);
 		l->setStyleSheet(QStringLiteral("background:%1;border-color:%2;color:%3;")
-					 .arg(mix(QColor(theme::kField), fill, t).name(), mix(QColor(theme::kBorder), fill, t).name(), mix(QColor(theme::kText), QColor(Qt::white), t).name()));
+					 .arg(mix(theme::color(QStringLiteral("field")), f, t).name(), mix(theme::color(QStringLiteral("border")), f, t).name(),
+					      mix(theme::color(QStringLiteral("text")), theme::color(QStringLiteral("onAccent")), t).name()));
 	};
+	if (first) // one connection per chip: a theme switch paints it again at its current strength
+		QObject::connect(theme::notifier(), &theme::Notifier::changed, l, [l, paint]() { paint(l->property("chipT").toReal()); });
 	if (auto *old = l->findChild<QVariantAnimation *>(QStringLiteral("chipAnim")))
 		old->stop(), old->deleteLater();
 	const qreal from = l->property("chipT").toReal(), to = on ? 1.0 : 0.0;
 	if (first || !enabled(l)) {
-		apply(to);
+		paint(to);
 		return;
 	}
-	auto *a = run(l, from, to, 220, QEasingCurve::OutCubic, [apply](const QVariant &v) { apply(v.toReal()); });
+	auto *a = run(l, from, to, 220, QEasingCurve::OutCubic, [paint](const QVariant &v) { paint(v.toReal()); });
 	if (a)
 		a->setObjectName(QStringLiteral("chipAnim"));
 }

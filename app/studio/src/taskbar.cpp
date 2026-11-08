@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "taskbar.h"
+#include "depth.h"
 #include "motion.h"
 #include "theme.h"
 
@@ -23,12 +24,12 @@ namespace {
 QColor stateColour(const QString &s)
 {
 	if (s == QStringLiteral("done"))
-		return QColor(theme::kOk);
+		return theme::color(QStringLiteral("ok"));
 	if (s == QStringLiteral("failed"))
-		return QColor(theme::kDanger);
+		return theme::color(QStringLiteral("danger"));
 	if (s == QStringLiteral("waiting"))
-		return QColor(theme::kMuted);
-	return QColor(theme::kAccent);
+		return theme::color(QStringLiteral("muted"));
+	return theme::color(QStringLiteral("accent"));
 }
 // 0..1, or -1 when the amount of work is unknown.
 double fractionOf(const QJsonObject &t)
@@ -103,7 +104,7 @@ void SmoothBar::paintEvent(QPaintEvent *)
 	const QRectF r(rect());
 	const qreal rad = r.height() / 2;
 	p.setPen(Qt::NoPen);
-	p.setBrush(QColor(theme::kBorder));
+	p.setBrush(theme::color(QStringLiteral("border")));
 	p.drawRoundedRect(r, rad, rad);
 	p.setBrush(stateColour(state_));
 	if (indeterminate_) {
@@ -198,7 +199,7 @@ void TaskChip::paintEvent(QPaintEvent *)
 {
 	QPainter p(this);
 	p.setRenderHint(QPainter::Antialiasing);
-	QColor c(theme::kAccentHi);
+	QColor c(theme::color(QStringLiteral("accentHi")));
 	c.setAlphaF(pulse_);
 	p.setPen(Qt::NoPen);
 	p.setBrush(c);
@@ -256,8 +257,8 @@ void TaskRow::setTask(const QJsonObject &t)
 	else
 		s = QStringLiteral("Working...");
 	state_->setText(s);
-	state_->setStyleSheet(st == QStringLiteral("failed") ? QStringLiteral("color:%1;").arg(QLatin1String(theme::kDanger))
-			      : st == QStringLiteral("done")  ? QStringLiteral("color:%1;").arg(QLatin1String(theme::kOk))
+	state_->setStyleSheet(st == QStringLiteral("failed") ? QStringLiteral("color:%1;").arg(theme::hex(QStringLiteral("danger")))
+			      : st == QStringLiteral("done")  ? QStringLiteral("color:%1;").arg(theme::hex(QStringLiteral("ok")))
 							      : QString());
 	const QString n = t.value(QStringLiteral("note")).toString();
 	note_->setText(n);
@@ -285,7 +286,7 @@ Toast::Toast(const QString &title, const QString &note, bool failed, QWidget *pa
 	if (!note.isEmpty()) {
 		auto *n = new QLabel(note, this);
 		n->setWordWrap(true);
-		n->setStyleSheet(QStringLiteral("color:%1;background:transparent;").arg(QLatin1String(theme::kMuted)));
+		n->setStyleSheet(QStringLiteral("color:%1;background:transparent;").arg(theme::hex(QStringLiteral("muted"))));
 		v->addWidget(n);
 	}
 	h->addLayout(v, 1);
@@ -466,9 +467,11 @@ void TaskBar::setPanelOpen(bool open)
 			motion::run(panel_, 0.0, 1.0, 220, QEasingCurve::OutCubic, [this, fx, end](const QVariant &v) {
 				fx->setOpacity(v.toReal());
 				panel_->move(end + QPoint(0, int(24 * (1.0 - v.toReal()))));
-			}, [this]() { panel_->setGraphicsEffect(nullptr); });
-		} else
+			}, [this]() { panel_->setGraphicsEffect(nullptr); depth::attach(panel_, QString()); }); // the fade is done: the theme's depth effect again
+		} else {
 			panel_->move(end);
+			depth::attach(panel_, QString());
+		}
 		for (Toast *t : toasts_)
 			t->raise();
 		layoutToasts(false);
@@ -511,7 +514,7 @@ void TaskBar::toast(const QString &title, const QString &note, bool failed)
 		motion::run(t, 0.0, 1.0, 240, QEasingCurve::OutCubic, [t, fx, end](const QVariant &v) {
 			fx->setOpacity(v.toReal());
 			t->move(end + QPoint(int(40 * (1.0 - v.toReal())), 0));
-		}, [t]() { t->setGraphicsEffect(nullptr); });
+		}, [t]() { t->setGraphicsEffect(nullptr); depth::attach(t, QString()); });
 	}
 	QTimer::singleShot(4000, t, [this, t]() { closeToast(t); });
 }

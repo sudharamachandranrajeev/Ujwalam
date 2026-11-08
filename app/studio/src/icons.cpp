@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "icons.h"
+#include "theme.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -11,7 +12,7 @@ namespace {
 
 void draw(QPainter &p, const QString &n, const QColor &c)
 {
-	QPen pen(c, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+	QPen pen(c, theme::iconStroke(), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
 	p.setPen(pen);
 	p.setBrush(Qt::NoBrush);
 	if (n == QLatin1String("play")) {
