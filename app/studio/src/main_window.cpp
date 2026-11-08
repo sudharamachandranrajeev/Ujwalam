@@ -12,7 +12,10 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
+#include <QDialog>
 #include <QListWidget>
+#include <QPlainTextEdit>
+#include <QPointer>
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QRegularExpressionValidator>
@@ -28,6 +31,7 @@
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
+#include <memory>
 #include <cmath>
 
 namespace {
@@ -276,6 +280,10 @@ QWidget *MainWindow::buildTop()
 	connect(redoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(false); });
 	h->addWidget(undoBtn_);
 	h->addWidget(redoBtn_);
+	auto *fbBtn = new QPushButton(QStringLiteral("Feedback notes"), w);
+	fbBtn->setToolTip(QStringLiteral("Add a note to each feedback moment (feedback hotkey while streaming)."));
+	connect(fbBtn, &QPushButton::clicked, this, &MainWindow::openFeedback);
+	h->addWidget(fbBtn);
 	h->addSpacing(12);
 	for (QLabel *p : {pillLive_, pillRec_, pillStats_, pillHost_, pillCore_})
 		h->addWidget(p);
@@ -1367,6 +1375,113 @@ void MainWindow::loadBots()
 		hint->setWordWrap(true);
 		botRows_->addWidget(hint);
 	});
+}
+
+// Feedback notes (D150): pick a moment, write a note with tag and severity, Save. Notes stay in the gitignored
+// feedback folder; the server checks every field.
+void MainWindow::openFeedback()
+{
+	auto *dlg = new QDialog(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setWindowTitle(QStringLiteral("Feedback notes"));
+	dlg->resize(560, 460);
+	auto *v = new QVBoxLayout(dlg);
+	auto *info = new QLabel(QStringLiteral("Loading..."), dlg);
+	info->setWordWrap(true);
+	auto *list = new QListWidget(dlg);
+	auto *meta = new QLabel(dlg);
+	meta->setWordWrap(true);
+	auto *text = new QPlainTextEdit(dlg);
+	text->setPlaceholderText(QStringLiteral("What happened (up to 2000 characters)"));
+	auto *tag = new QComboBox(dlg);
+	for (const char *t : {"bug", "annoying", "wish", "works-well"})
+		tag->addItem(QString::fromLatin1(t));
+	auto *sev = new QComboBox(dlg);
+	for (const char *s : {"high", "medium", "low"})
+		sev->addItem(QString::fromLatin1(s));
+	auto *save = new QPushButton(QStringLiteral("Save note"), dlg);
+	auto *form = new QWidget(dlg);
+	auto *ff = new QFormLayout(form);
+	ff->setContentsMargins(0, 0, 0, 0);
+	ff->addRow(meta);
+	ff->addRow(QStringLiteral("Note"), text);
+	ff->addRow(QStringLiteral("Tag"), tag);
+	ff->addRow(QStringLiteral("Severity"), sev);
+	ff->addRow(save);
+	form->setVisible(false);
+	v->addWidget(info);
+	v->addWidget(list, 1);
+	v->addWidget(form);
+	auto moments = std::make_shared<QJsonArray>();
+	auto render = [list, info, moments]() {
+		const QString sel = list->currentItem() ? list->currentItem()->data(Qt::UserRole).toString() : QString();
+		const QSignalBlocker block(list);
+		list->clear();
+		for (const auto &x : *moments) {
+			const QJsonObject m = x.toObject(), n = m.value(QStringLiteral("note")).toObject();
+			const QString id = m.value(QStringLiteral("id")).toString();
+			const QString t = n.value(QStringLiteral("tag")).toString();
+			auto *it = new QListWidgetItem(id + QStringLiteral("  ") + m.value(QStringLiteral("scene")).toString() + QStringLiteral("   ") +
+							 (t.isEmpty() ? QStringLiteral("no note") : t + QStringLiteral("/") + n.value(QStringLiteral("severity")).toString(QStringLiteral("-"))),
+						 list);
+			it->setData(Qt::UserRole, id);
+			if (id == sel)
+				list->setCurrentItem(it);
+		}
+		info->setText(moments->isEmpty() ? QStringLiteral("No feedback moments yet. Press the feedback hotkey while streaming.")
+						: QStringLiteral("%1 moment(s). Pick one to add a note.").arg(moments->size()));
+	};
+	connect(list, &QListWidget::currentItemChanged, dlg, [=](QListWidgetItem *it) {
+		form->setVisible(it != nullptr);
+		if (!it)
+			return;
+		for (const auto &x : *moments) {
+			const QJsonObject m = x.toObject();
+			if (m.value(QStringLiteral("id")).toString() != it->data(Qt::UserRole).toString())
+				continue;
+			QStringList stats;
+			const QJsonObject s = m.value(QStringLiteral("stats")).toObject();
+			for (auto k = s.begin(); k != s.end(); ++k)
+				stats << k.key() + QStringLiteral("=") + k.value().toVariant().toString();
+			const QJsonValue ts = m.value(QStringLiteral("timestamp"));
+			meta->setText((ts.isNull() || ts.isUndefined() ? QString() : ts.toVariant().toString() + QStringLiteral("  ")) +
+				      m.value(QStringLiteral("scene")).toString() + QStringLiteral("  ") + stats.join(QLatin1Char(' ')));
+			const QJsonObject n = m.value(QStringLiteral("note")).toObject();
+			text->setPlainText(n.value(QStringLiteral("text")).toString());
+			tag->setCurrentText(n.value(QStringLiteral("tag")).toString(QStringLiteral("bug")));
+			sev->setCurrentText(n.value(QStringLiteral("severity")).toString(QStringLiteral("medium")));
+		}
+	});
+	QPointer<QDialog> guard(dlg);
+	connect(save, &QPushButton::clicked, dlg, [=]() {
+		if (!list->currentItem())
+			return;
+		if (text->toPlainText().size() > 2000)
+			return info->setText(QStringLiteral("The note is over 2000 characters."));
+		QJsonObject b;
+		b.insert(QStringLiteral("id"), list->currentItem()->data(Qt::UserRole).toString());
+		b.insert(QStringLiteral("text"), text->toPlainText());
+		b.insert(QStringLiteral("tag"), tag->currentText());
+		b.insert(QStringLiteral("severity"), sev->currentText());
+		api_->post(QStringLiteral("ui/api/feedback/note"), b, [=](bool ok, const QJsonObject &r, const QString &err) {
+			if (!guard)
+				return; // closed meanwhile
+			if (!ok)
+				return info->setText(QStringLiteral("Save failed: ") + err);
+			*moments = r.value(QStringLiteral("moments")).toArray();
+			render();
+			info->setText(QStringLiteral("Saved."));
+		});
+	});
+	api_->get(QStringLiteral("ui/api/feedback"), [=](bool ok, const QJsonObject &r, const QString &err) {
+		if (!guard)
+			return;
+		if (!ok)
+			return info->setText(QStringLiteral("Feedback unavailable: ") + err);
+		*moments = r.value(QStringLiteral("moments")).toArray();
+		render();
+	});
+	dlg->show();
 }
 
 void MainWindow::botAction(const QString &bot, bool start)
