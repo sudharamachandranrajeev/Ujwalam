@@ -95,6 +95,7 @@ private:
 	// Streamer.bot / Speaker.bot start and stop (BM, flag bot-manager): typed "yes" each; stop ends only a copy
 	// Ujwalam started (the server checks).
 	void loadBots();
+	void openAddLayer(); // Meld-style add-layer window (D274): kinds with what they are, a searchable pick list
 	void openImport();   // Meld session import -> host check -> typed confirm -> project.load (the page's flow)
 	void openPosts();    // flag posting (P16a): review clip packages; YouTube private upload needs "yes, upload"
 	void report();       // flag report-button (D199): prefilled GitHub issue link opened in the user's browser

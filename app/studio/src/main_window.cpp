@@ -2,6 +2,7 @@
 #include "main_window.h"
 
 #include <QCheckBox>
+#include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
@@ -158,6 +159,66 @@ int meterValue(const QJsonValue &peak)
 		return 0;
 	return std::max(0, std::min(100, (int)std::lround((peak.toDouble() + 60.0) / 60.0 * 100.0)));
 }
+// Layer kinds the structure route adds (D240): label, kind, what it is (the add-layer window shows it).
+struct LayerKind {
+	const char *label, *kind, *about;
+};
+const LayerKind kLayerKinds[] = {
+	{"Copy of layer", "copy", "The same source again, placed on its own. A camera or capture card shown twice is opened once."},
+	{"Colour", "color", "A solid colour fill."},
+	{"Text", "text", "A line of text."},
+	{"Capture device", "capture", "A camera or capture card from the project's devices."},
+	{"Overlay", "overlay", "A page from the project's overlays (alerts, chat, counters)."},
+	{"Image", "image", "A picture from the stream assets folder."},
+	{"Video", "media", "A video from the stream assets folder."},
+};
+
+// What a kind can be made from: (shown text, value) from GET /ui/api/project/structure. Empty for colour and text.
+QList<QPair<QString, QString>> addChoices(const QJsonObject &st, const QString &kind)
+{
+	QList<QPair<QString, QString>> out;
+	if (kind == QStringLiteral("copy")) {
+		for (const auto &x : st.value(QStringLiteral("layers")).toArray()) {
+			const QJsonObject l = x.toObject();
+			out.append({l.value(QStringLiteral("sceneName")).toString() + QStringLiteral(" / ") + l.value(QStringLiteral("name")).toString(),
+				    l.value(QStringLiteral("id")).toString()});
+		}
+	} else if (kind == QStringLiteral("capture") || kind == QStringLiteral("overlay")) {
+		for (const auto &x : st.value(kind == QStringLiteral("capture") ? QStringLiteral("devices") : QStringLiteral("overlays")).toArray()) {
+			const QJsonObject d = x.toObject();
+			out.append({d.value(QStringLiteral("name")).toString(), d.value(QStringLiteral("id")).toString()});
+		}
+	} else if (kind == QStringLiteral("image") || kind == QStringLiteral("media")) {
+		for (const auto &x : st.value(QStringLiteral("assets")).toArray()) {
+			const QJsonObject a = x.toObject();
+			if (a.value(QStringLiteral("kind")).toString() == kind)
+				out.append({a.value(QStringLiteral("rel")).toString(), a.value(QStringLiteral("rel")).toString()});
+		}
+	}
+	return out;
+}
+
+// The structure route's layer.add body; err is set (and says what) when something is missing.
+QJsonObject layerAddBody(const QString &scene, const QString &kind, const QString &pick, const QString &text, QString &err)
+{
+	QJsonObject b;
+	b.insert(QStringLiteral("op"), QStringLiteral("layer.add"));
+	b.insert(QStringLiteral("scene"), scene);
+	b.insert(QStringLiteral("kind"), kind);
+	if (kind == QStringLiteral("color") || kind == QStringLiteral("text")) {
+		if (text.trimmed().isEmpty())
+			err = kind == QStringLiteral("color") ? QStringLiteral("Type a colour as #RRGGBB.") : QStringLiteral("Type the text.");
+		b.insert(kind, kind == QStringLiteral("color") ? text.trimmed() : text);
+	} else {
+		if (pick.isEmpty())
+			err = QStringLiteral("Nothing to pick for this kind.");
+		const QString key = kind == QStringLiteral("copy") ? QStringLiteral("of") : kind == QStringLiteral("capture") ? QStringLiteral("device")
+				: kind == QStringLiteral("overlay") ? QStringLiteral("overlay") : QStringLiteral("file");
+		b.insert(key, pick);
+	}
+	return b;
+}
+
 } // namespace
 
 PreviewSlot::PreviewSlot(ApiClient *api, QString canvas, QWidget *parent)
@@ -407,9 +468,8 @@ QWidget *MainWindow::buildLeft()
 	sv->addLayout(srow);
 	auto *arow = new QHBoxLayout();
 	addKind_ = new QComboBox(structBox_);
-	for (const auto &k : {std::pair{"Copy of layer", "copy"}, {"Colour", "color"}, {"Text", "text"}, {"Capture device", "capture"},
-			      {"Overlay", "overlay"}, {"Image", "image"}, {"Video", "media"}})
-		addKind_->addItem(QString::fromLatin1(k.first), QString::fromLatin1(k.second));
+	for (const auto &k : kLayerKinds)
+		addKind_->addItem(QString::fromLatin1(k.label), QString::fromLatin1(k.kind));
 	addPick_ = new QComboBox(structBox_);
 	addText_ = new QLineEdit(structBox_);
 	addText_->setMaxLength(2000);
@@ -419,6 +479,10 @@ QWidget *MainWindow::buildLeft()
 	arow->addWidget(addText_, 1);
 	arow->addWidget(addLayer);
 	sv->addLayout(arow);
+	auto *browse = new QPushButton(QStringLiteral("Add layer..."), structBox_);
+	browse->setToolTip(QStringLiteral("Choose what to add, with a short note on each kind and a searchable list"));
+	srow->addWidget(browse);
+	connect(browse, &QPushButton::clicked, this, &MainWindow::openAddLayer);
 	structBox_->setVisible(false);
 	v->addWidget(structBox_);
 	connect(addKind_, &QComboBox::currentIndexChanged, this, [this]() { renderAddPick(); });
@@ -456,24 +520,10 @@ QWidget *MainWindow::buildLeft()
 		structureEdit(b);
 	});
 	connect(addLayer, &QPushButton::clicked, this, [this]() {
-		const QString kind = addKind_->currentData().toString();
-		QJsonObject b;
-		b.insert(QStringLiteral("op"), QStringLiteral("layer.add"));
-		b.insert(QStringLiteral("scene"), activeScene_);
-		b.insert(QStringLiteral("kind"), kind);
-		if (kind == QStringLiteral("color") || kind == QStringLiteral("text")) {
-			const QString t = addText_->text();
-			if (t.trimmed().isEmpty())
-				return note(kind == QStringLiteral("color") ? QStringLiteral("Type a colour as #RRGGBB.") : QStringLiteral("Type the text."));
-			b.insert(kind, kind == QStringLiteral("color") ? t.trimmed() : t);
-		} else {
-			const QString pick = addPick_->currentData().toString();
-			if (pick.isEmpty())
-				return note(QStringLiteral("Nothing to pick for this kind."));
-			const QString key = kind == QStringLiteral("copy") ? QStringLiteral("of") : kind == QStringLiteral("capture") ? QStringLiteral("device")
-					: kind == QStringLiteral("overlay") ? QStringLiteral("overlay") : QStringLiteral("file");
-			b.insert(key, pick);
-		}
+		QString err;
+		const QJsonObject b = layerAddBody(activeScene_, addKind_->currentData().toString(), addPick_->currentData().toString(), addText_->text(), err);
+		if (!err.isEmpty())
+			return note(err);
 		structureEdit(b);
 	});
 	renderAddPick();
@@ -1957,26 +2007,104 @@ void MainWindow::renderAddPick()
 	addPick_->setVisible(!typed);
 	addText_->setPlaceholderText(kind == QStringLiteral("color") ? QStringLiteral("#RRGGBB") : QStringLiteral("Text"));
 	addPick_->clear();
-	if (typed)
-		return;
-	if (kind == QStringLiteral("copy")) {
-		for (const auto &x : structure_.value(QStringLiteral("layers")).toArray()) {
-			const QJsonObject l = x.toObject();
-			addPick_->addItem(l.value(QStringLiteral("sceneName")).toString() + QStringLiteral(" / ") + l.value(QStringLiteral("name")).toString(),
-					  l.value(QStringLiteral("id")).toString());
-		}
-	} else if (kind == QStringLiteral("capture") || kind == QStringLiteral("overlay")) {
-		for (const auto &x : structure_.value(kind == QStringLiteral("capture") ? QStringLiteral("devices") : QStringLiteral("overlays")).toArray()) {
-			const QJsonObject d = x.toObject();
-			addPick_->addItem(d.value(QStringLiteral("name")).toString(), d.value(QStringLiteral("id")).toString());
-		}
-	} else {
-		for (const auto &x : structure_.value(QStringLiteral("assets")).toArray()) {
-			const QJsonObject a = x.toObject();
-			if (a.value(QStringLiteral("kind")).toString() == kind)
-				addPick_->addItem(a.value(QStringLiteral("rel")).toString(), a.value(QStringLiteral("rel")).toString());
-		}
+	for (const auto &c : addChoices(structure_, kind))
+		addPick_->addItem(c.first, c.second);
+}
+
+// Meld-style add-layer window (D274): the kinds on the left with what each one is, on the right a searchable list of
+// what it can be made from (or a text / colour field), Add (or a double-click) sends the same layer.add as the row.
+// User-opened only; closes after a successful send.
+void MainWindow::openAddLayer()
+{
+	if (live_)
+		return note(QStringLiteral("Live: scenes and layers cannot be added or removed."));
+	auto *dlg = new QDialog(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setWindowTitle(QStringLiteral("Add layer to \"%1\"").arg(activeScene_));
+	auto *h = new QHBoxLayout(dlg);
+	auto *kinds = new QListWidget(dlg);
+	for (const auto &k : kLayerKinds) {
+		auto *it = new QListWidgetItem(QString::fromLatin1(k.label), kinds);
+		it->setData(Qt::UserRole, QString::fromLatin1(k.kind));
+		it->setToolTip(QString::fromLatin1(k.about));
 	}
+	kinds->setMaximumWidth(170);
+	h->addWidget(kinds);
+	auto *right = new QVBoxLayout();
+	auto *about = new QLabel(dlg);
+	about->setWordWrap(true);
+	auto *search = new QLineEdit(dlg);
+	search->setPlaceholderText(QStringLiteral("Search"));
+	search->setClearButtonEnabled(true);
+	auto *choices = new QListWidget(dlg);
+	auto *text = new QLineEdit(dlg);
+	text->setMaxLength(2000);
+	auto *colour = new QPushButton(QStringLiteral("Pick colour..."), dlg);
+	auto *row = new QHBoxLayout();
+	auto *add = new QPushButton(QStringLiteral("Add"), dlg);
+	auto *cancel = new QPushButton(QStringLiteral("Close"), dlg);
+	add->setDefault(true);
+	row->addStretch(1);
+	row->addWidget(add);
+	row->addWidget(cancel);
+	right->addWidget(about);
+	right->addWidget(search);
+	right->addWidget(choices, 1);
+	right->addWidget(text);
+	right->addWidget(colour);
+	right->addStretch(0);
+	right->addLayout(row);
+	h->addLayout(right, 1);
+	auto fill = [this, kinds, about, search, choices, text, colour]() {
+		const QListWidgetItem *k = kinds->currentItem();
+		const QString kind = k ? k->data(Qt::UserRole).toString() : QString();
+		const bool typed = kind == QStringLiteral("color") || kind == QStringLiteral("text");
+		about->setText(k ? k->toolTip() : QString());
+		search->setVisible(!typed);
+		choices->setVisible(!typed);
+		text->setVisible(typed);
+		colour->setVisible(kind == QStringLiteral("color"));
+		text->setPlaceholderText(kind == QStringLiteral("color") ? QStringLiteral("#RRGGBB") : QStringLiteral("Text"));
+		choices->clear();
+		search->clear();
+		for (const auto &c : addChoices(structure_, kind)) {
+			auto *it = new QListWidgetItem(c.first, choices);
+			it->setData(Qt::UserRole, c.second);
+		}
+		if (!typed && choices->count() == 0)
+			new QListWidgetItem(QStringLiteral("(nothing to pick: the project has none)"), choices);
+		choices->setCurrentRow(0);
+	};
+	connect(kinds, &QListWidget::currentRowChanged, dlg, fill);
+	connect(search, &QLineEdit::textChanged, dlg, [choices](const QString &q) {
+		for (int i = 0; i < choices->count(); i++)
+			choices->item(i)->setHidden(!q.isEmpty() && !choices->item(i)->text().contains(q, Qt::CaseInsensitive));
+	});
+	connect(colour, &QPushButton::clicked, dlg, [dlg, text]() {
+		const QColor c = QColorDialog::getColor(QColor(text->text().trimmed()), dlg, QStringLiteral("Layer colour"));
+		if (c.isValid())
+			text->setText(c.name(QColor::HexRgb));
+	});
+	const QPointer<QDialog> guard(dlg);
+	auto send = [this, guard, kinds, choices, text]() {
+		if (!guard)
+			return;
+		const QListWidgetItem *k = kinds->currentItem();
+		const QListWidgetItem *c = choices->currentItem();
+		QString err;
+		const QJsonObject b = layerAddBody(activeScene_, k ? k->data(Qt::UserRole).toString() : QString(),
+						   c && !c->isHidden() ? c->data(Qt::UserRole).toString() : QString(), text->text(), err);
+		if (!k || !err.isEmpty())
+			return note(k ? err : QStringLiteral("Pick a kind first."));
+		structureEdit(b);
+		guard->close();
+	};
+	connect(add, &QPushButton::clicked, dlg, send);
+	connect(choices, &QListWidget::itemDoubleClicked, dlg, [send](QListWidgetItem *) { send(); });
+	connect(cancel, &QPushButton::clicked, dlg, &QDialog::close);
+	kinds->setCurrentRow(0);
+	dlg->resize(620, 380);
+	dlg->show();
 }
 
 void MainWindow::structureEdit(const QJsonObject &body)
