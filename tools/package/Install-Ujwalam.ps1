@@ -103,9 +103,12 @@ function Test-Folder([string]$name, [string]$dir) {
   $inst = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
   if ($full.StartsWith($inst, [StringComparison]::OrdinalIgnoreCase) -and -not $full.StartsWith((Join-Path $inst 'data\'), [StringComparison]::OrdinalIgnoreCase)) { Fail "$name may not be inside the install folder" 2 }
 }
-$settingsGiven = $PSBoundParameters.ContainsKey('ClipsWhenRecording') -or $PSBoundParameters.ContainsKey('ClipsWhenLive') -or
-  $PSBoundParameters.ContainsKey('RecordingsFolder') -or $PSBoundParameters.ContainsKey('ClipsFolder') -or $PSBoundParameters.ContainsKey('ClipMaker')
-if ($settingsGiven) {
+# Only the settings passed are written: -ClipMaker alone leaves settings.json alone (no file = the studio's first-run
+# welcome still asks how to make clips).
+$appSettingsGiven = $PSBoundParameters.ContainsKey('ClipsWhenRecording') -or $PSBoundParameters.ContainsKey('ClipsWhenLive') -or
+  $PSBoundParameters.ContainsKey('RecordingsFolder') -or $PSBoundParameters.ContainsKey('ClipsFolder')
+$settingsGiven = $appSettingsGiven -or $PSBoundParameters.ContainsKey('ClipMaker')
+if ($appSettingsGiven) {
   Test-Folder 'RecordingsFolder' $RecordingsFolder
   Test-Folder 'ClipsFolder' $ClipsFolder
   $sf = Join-Path $InstallRoot 'data\core\settings.json'
@@ -123,14 +126,14 @@ if ($settingsGiven) {
   $s['folders'] = $folders
   Write-JsonFile $sf $s
   Say "settings: clips when recording $($clips['recording']), when live $($clips['live']); recordings $(if ($folders['recordings']) { $folders['recordings'] } else { 'default' }); clips $(if ($folders['clips']) { $folders['clips'] } else { 'default' })"
-  if ($PSBoundParameters.ContainsKey('ClipMaker')) {
-    if ($ClipMaker -and -not (Test-Path -LiteralPath (Join-Path $ClipMaker 'services\clip\clipper.py'))) { Fail "ClipMaker: no services\clip\clipper.py in $ClipMaker" 2 }
-    $uf = Join-Path $InstallRoot 'data\ujwalam.json'
-    $u = Read-JsonFile $uf
-    if ($ClipMaker) { $u['clipRoot'] = $ClipMaker } elseif ($u.Contains('clipRoot')) { $u.Remove('clipRoot') }
-    Write-JsonFile $uf $u
-    Say "clip maker: $(if ($ClipMaker) { $ClipMaker } else { 'not set' })"
-  }
+}
+if ($PSBoundParameters.ContainsKey('ClipMaker')) {
+  if ($ClipMaker -and -not (Test-Path -LiteralPath (Join-Path $ClipMaker 'services\clip\clipper.py'))) { Fail "ClipMaker: no services\clip\clipper.py in $ClipMaker" 2 }
+  $uf = Join-Path $InstallRoot 'data\ujwalam.json'
+  $u = Read-JsonFile $uf
+  if ($ClipMaker) { $u['clipRoot'] = $ClipMaker } elseif ($u.Contains('clipRoot')) { $u.Remove('clipRoot') }
+  Write-JsonFile $uf $u
+  Say "clip maker: $(if ($ClipMaker) { $ClipMaker } else { 'not set' })"
 }
 if ($SettingsOnly) {
   if (-not $settingsGiven) { Fail 'SettingsOnly needs at least one setting' 2 }

@@ -226,6 +226,13 @@ test('Install-Ujwalam.ps1 -SettingsOnly: clip choices and folders merged into da
     const p = fakePackage(root, '0.1.0-alpha.1');
     const ir = path.join(root, 'Ujwalam');
     const sf = path.join(ir, 'data', 'core', 'settings.json');
+    const maker0 = path.join(root, 'maker');
+    mkdirSync(path.join(maker0, 'services', 'clip'), { recursive: true });
+    writeFileSync(path.join(maker0, 'services', 'clip', 'clipper.py'), '');
+    let r0 = install(p, root, '-SettingsOnly', '-ClipMaker', maker0);
+    if (r0.code === 6) return;
+    assert.equal(r0.code, 0, r0.out);
+    assert.ok(!existsSync(sf), 'clip maker alone: no settings file, so the first-run welcome still asks');
     mkdirSync(path.dirname(sf), { recursive: true });
     writeFileSync(sf, JSON.stringify({ clips: { recording: 'off', live: 'off' }, folders: { recordings: 'E:\\Rec', clips: null }, keep: 1 }));
     const maker = path.join(root, 'maker');
