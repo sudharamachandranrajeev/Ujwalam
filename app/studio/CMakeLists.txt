@@ -40,6 +40,11 @@ add_executable(ujwalam-studio WIN32
 	src/motion.h
 	src/stats_cards.cpp
 	src/stats_cards.h
+	src/studio_log.cpp
+	src/studio_log.h
+	# the host's crash reporter, shared (text report only; 2026-11-08 studio crash)
+	../host/src/crash.cpp
+	../host/src/crash.h
 	src/taskbar.cpp
 	src/taskbar.h
 	src/theme.cpp
@@ -51,8 +56,18 @@ list(FILTER UJW_THEME_FILES EXCLUDE REGEX "\.schema\.json$")
 qt_add_resources(ujwalam-studio themes PREFIX "/themes" BASE "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes" FILES ${UJW_THEME_FILES})
 target_link_libraries(ujwalam-studio PRIVATE Qt6::Widgets Qt6::Network)
 if(WIN32)
-	target_link_libraries(ujwalam-studio PRIVATE user32)
+	target_link_libraries(ujwalam-studio PRIVATE user32 dbghelp)
 endif()
 if(MSVC)
 	target_compile_options(ujwalam-studio PRIVATE /W4 /permissive- /utf-8)
+endif()
+
+# ujwalam-start.exe (2026-11-08): the shortcuts' target. Starts the launcher with no console window, its output in a log
+# file (src/start_stub.cpp). Win32 only, no Qt.
+if(WIN32)
+	add_executable(ujwalam-start WIN32 src/start_stub.cpp)
+	target_link_libraries(ujwalam-start PRIVATE shell32 user32)
+	if(MSVC)
+		target_compile_options(ujwalam-start PRIVATE /W4 /permissive- /utf-8)
+	endif()
 endif()

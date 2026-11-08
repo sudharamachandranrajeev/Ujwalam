@@ -10,7 +10,7 @@ export function watchParent(onGone, { env = process.env, stdin = process.stdin }
   if (env[PARENT_PIPE_ENV] !== '1') return false;
   let fired = false;
   const gone = () => { if (!fired) { fired = true; onGone(); } };
-  stdin.on('data', () => {}); // the launcher never writes; data is ignored
+  stdin.on('data', () => {}); // ignored here; the UI server alone reads its control lines (studio-ui/cli.mjs controlLine)
   stdin.once('end', gone);
   stdin.once('close', gone);
   stdin.once('error', gone);

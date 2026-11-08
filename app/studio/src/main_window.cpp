@@ -3472,6 +3472,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("clipAsks"), clips_.value(QStringLiteral("asks")).toArray().size());
 	o.insert(QStringLiteral("clipSettings"), clips_.value(QStringLiteral("settings")));
 	o.insert(QStringLiteral("tasks"), tasks_->probe());
+	o.insert(QStringLiteral("windowShown"), isVisible()); // UJWALAM_STUDIO_PROBE_SHOW: animations ran (2026-11-08 crash test)
 	o.insert(QStringLiteral("guide"), guide_->probe());
 	o.insert(QStringLiteral("stats"), QJsonObject{{QStringLiteral("samples"), stats_->samples()}, {QStringLiteral("session"), stats_->sessionText()}});
 	o.insert(QStringLiteral("motion"), motion::systemAnimations());

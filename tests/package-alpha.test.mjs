@@ -7,14 +7,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { START_EXE } from '../app/studio/tools/build.mjs';
 import { changelogExcerpt, releaseInfo } from '../tools/package/build-alpha.mjs';
 import { allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
 import { peInfo } from '../tools/package/pe.mjs';
-import { installedSpec, nodeOk } from '../tools/package/run-installed.mjs';
+import { installedSpec, nodeOk, pruneLaunchLogs } from '../tools/package/run-installed.mjs';
 import { extractEntry, readZip, writeZip } from '../tools/package/zip.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -153,9 +154,12 @@ function fakePackage(root, version) {
   mkdirSync(path.join(pkg, 'tools', 'package'), { recursive: true });
   copyFileSync(path.join(REPO, 'tools', 'package', 'Install-Ujwalam.ps1'), path.join(pkg, 'Install-Ujwalam.ps1'));
   copyFileSync(path.join(REPO, 'tools', 'package', 'Ujwalam.cmd'), path.join(pkg, 'Ujwalam.cmd'));
+  // The real start stub when it is built (npm run build:studio); otherwise a stand-in file the installer only copies.
+  if (existsSync(START_EXE)) copyFileSync(START_EXE, path.join(pkg, 'ujwalam-start.exe'));
+  else writeFileSync(path.join(pkg, 'ujwalam-start.exe'), 'stand-in\n');
   writeFileSync(path.join(pkg, 'release.json'), JSON.stringify({ version, nodeMin: '22.13.0' }));
   writeFileSync(path.join(pkg, 'tools', 'package', 'run-installed.mjs'), `// ${version}\nconsole.log('fake ${version}');\n`);
-  const rels = ['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'release.json', 'tools/package/run-installed.mjs'];
+  const rels = ['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'release.json', 'tools/package/run-installed.mjs'];
   writeFileSync(path.join(pkg, 'SHA256SUMS.txt'), rels.map((r) => `${sha(readFileSync(path.join(pkg, r)))}  ${r}\n`).join(''));
   return pkg;
 }
@@ -176,14 +180,16 @@ test('Install-Ujwalam.ps1 on a fake package: install, shortcuts, tamper refused,
     assert.equal(r.code, 0, r.out);
     assert.equal(readFileSync(path.join(ir, 'current.txt'), 'utf8'), '0.1.0-alpha.1\r\n');
     assert.ok(!existsSync(path.join(ir, 'previous.txt')));
-    for (const f of ['0.1.0-alpha.1/release.json', 'Ujwalam.cmd', 'data']) assert.ok(existsSync(path.join(ir, f)), f);
+    for (const f of ['0.1.0-alpha.1/release.json', 'Ujwalam.cmd', 'ujwalam-start.exe', 'data']) assert.ok(existsSync(path.join(ir, f)), f);
     for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha).lnk')), d);
     for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha, LIVE).lnk')), `${d} LIVE (D281)`);
-    // Arguments: devices on both (D282), stream targets only on LIVE (read back through the shell COM object)
-    const args = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      `$s = New-Object -ComObject WScript.Shell; foreach ($n in 'Ujwalam (alpha).lnk','Ujwalam (alpha, LIVE).lnk') { $s.CreateShortcut((Join-Path '${path.join(root, 'start')}' $n)).Arguments }`],
+    // Arguments: devices on both (D282), stream targets only on LIVE (read back through the shell COM object).
+    // Target: the windowless ujwalam-start.exe, not Ujwalam.cmd, so no console window opens (D191; 2026-11-08).
+    const lnks = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `$s = New-Object -ComObject WScript.Shell; foreach ($n in 'Ujwalam (alpha).lnk','Ujwalam (alpha, LIVE).lnk') { $l = $s.CreateShortcut((Join-Path '${path.join(root, 'start')}' $n)); $l.Arguments; $l.TargetPath }`],
     { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
-    assert.deepEqual(args, ['--allow-devices', '--live --allow-devices']);
+    assert.deepEqual([lnks[0], lnks[2]], ['--allow-devices', '--live --allow-devices']);
+    for (const target of [lnks[1], lnks[3]]) assert.equal(target.toLowerCase(), path.join(ir, 'ujwalam-start.exe').toLowerCase());
     // The root launcher follows current.txt to that version's launcher and on to its run-installed.mjs.
     let run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8', windowsHide: true });
     assert.equal(run.stdout.trim(), 'fake 0.1.0-alpha.1');
@@ -264,7 +270,7 @@ test('full build (real host exe + OBS runtime)', { skip: process.env.UJWALAM_PAC
     const names = readZip(r.zip).map((e) => e.name.replace(/^[^/]+\//, ''));
     assert.deepEqual(allowProblems(names), []);
     assert.deepEqual(forbiddenProblems(names, { fontNames: ['Corbel', 'Consolas'] }), []);
-    for (const n of ['bin/ujwalam-host.exe', 'studio/ujwalam-studio.exe', 'studio/platforms/qwindows.dll', 'studio/platforms/qoffscreen.dll', 'studio/Qt6Network.dll', 'studio/Qt6Widgets.dll', 'Install-Ujwalam.ps1', 'Ujwalam.cmd', 'SHA256SUMS.txt', 'notices/GPL-2.0.txt', 'notices/SOURCE-OFFER.txt']) assert.ok(names.includes(n), n);
+    for (const n of ['bin/ujwalam-host.exe', 'studio/ujwalam-studio.exe', 'studio/platforms/qwindows.dll', 'studio/platforms/qoffscreen.dll', 'studio/Qt6Network.dll', 'studio/Qt6Widgets.dll', 'Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'SHA256SUMS.txt', 'notices/GPL-2.0.txt', 'notices/SOURCE-OFFER.txt']) assert.ok(names.includes(n), n);
   } finally { rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -274,6 +280,58 @@ test('packager fails closed without the studio exe, naming npm run build:studio'
   try {
     await assert.rejects(buildAlpha({ hostExe: process.execPath, runtime: dir, studioExe: path.join(dir, 'none.exe'), outDir: dir, log: () => {} }), /studio exe not found: .*npm run build:studio/);
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ujwalam-start.exe (the shortcuts\' target): runs current.txt\'s run-installed.mjs with no console, output to data\\core\\logs\\launcher-*.log, arguments and exit code passed through', {
+  skip: (process.platform !== 'win32' || !existsSync(START_EXE)) && 'start stub not built (npm run build:studio)', timeout: 60_000,
+}, () => {
+  const root = tmp('start');
+  try {
+    const ir = path.join(root, 'Ujwalam');
+    const data = path.join(root, 'data');
+    const v = '0.1.0-alpha.7';
+    mkdirSync(path.join(ir, v, 'tools', 'package'), { recursive: true });
+    copyFileSync(START_EXE, path.join(ir, 'ujwalam-start.exe'));
+    writeFileSync(path.join(ir, 'current.txt'), `${v}\r\n`);
+    writeFileSync(path.join(ir, v, 'tools', 'package', 'run-installed.mjs'),
+      'console.log(JSON.stringify({ argv: process.argv.slice(2), noConsole: process.env.UJWALAM_NO_CONSOLE, log: process.env.UJWALAM_LAUNCH_LOG, cwd: process.cwd() }));\nconsole.error("to stderr");\nprocess.exit(7);\n');
+    const env = { ...process.env, UJWALAM_DATA_ROOT: data };
+    const run = (exe, args = []) => spawnSync(exe, args, { encoding: 'utf8', windowsHide: true, env, timeout: 30_000 });
+    const logs = () => readdirSync(path.join(data, 'core', 'logs')).filter((n) => /^launcher-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-p\d+\.log$/.test(n));
+
+    const r = run(path.join(ir, 'ujwalam-start.exe'), ['--live', '--allow-devices']);
+    assert.equal(r.status, 7, 'the launcher\'s exit code');
+    assert.equal(r.stdout, '', 'nothing on its own stdout: a GUI exe');
+    assert.equal(logs().length, 1);
+    const logFile = path.join(data, 'core', 'logs', logs()[0]);
+    const text = readFileSync(logFile, 'utf8');
+    const seen = JSON.parse(text.split(/\r?\n/).find((l) => l.startsWith('{')));
+    assert.deepEqual(seen.argv, ['--live', '--allow-devices']);
+    assert.equal(seen.noConsole, '1');
+    assert.equal(seen.log.toLowerCase(), logFile.toLowerCase());
+    assert.equal(seen.cwd.toLowerCase(), path.join(ir, v).toLowerCase());
+    assert.match(text, /^to stderr$/m);
+    assert.match(text, /\[ujwalam-start\] launcher ended \(exit 7\)/);
+
+    rmSync(path.join(ir, v, 'tools', 'package', 'run-installed.mjs'));
+    assert.equal(run(path.join(ir, 'ujwalam-start.exe')).status, 3, 'missing version folder');
+    writeFileSync(path.join(ir, 'current.txt'), '..\\..\\x\r\n');
+    assert.equal(run(path.join(ir, 'ujwalam-start.exe')).status, 3, 'current.txt must name a version');
+    assert.ok(logs().some((n) => /not a version/.test(readFileSync(path.join(data, 'core', 'logs', n), 'utf8'))));
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
+test('launcher logs: the newest 10 launcher-*.log files are kept, other files untouched', () => {
+  const d = tmp('launchlogs');
+  try {
+    for (let i = 0; i < 13; i++) writeFileSync(path.join(d, `launcher-2026-11-${String(i + 1).padStart(2, '0')}T10-00-00-p${100 + i}.log`), 'x');
+    writeFileSync(path.join(d, 'host-2026-11-01T10-00-00.log'), 'x');
+    const removed = pruneLaunchLogs(d);
+    assert.deepEqual(removed, ['launcher-2026-11-01T10-00-00-p100.log', 'launcher-2026-11-02T10-00-00-p101.log', 'launcher-2026-11-03T10-00-00-p102.log']);
+    assert.equal(readdirSync(d).filter((n) => n.startsWith('launcher-')).length, 10);
+    assert.ok(existsSync(path.join(d, 'host-2026-11-01T10-00-00.log')));
+    assert.deepEqual(pruneLaunchLogs(path.join(d, 'none')), []);
+  } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
 test('HOW-TO.md ships in the zip: allowlisted top file, built from docs/how-to.md by the packager', () => {

@@ -10,6 +10,7 @@
 #include "interaction.h"
 #include "main_window.h"
 #include "motion.h"
+#include "studio_log.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -35,9 +36,23 @@ static QString takeEnv(const char *name)
 int main(int argc, char **argv)
 {
 	const bool headless = qEnvironmentVariable("UJWALAM_HEADLESS") == QStringLiteral("1");
+	// Log file and crash report in <data dir>/logs when the launcher names it (studio_log.h, 2026-11-08 crash).
+	const studiolog::Status logs = studiolog::install(qEnvironmentVariable("UJWALAM_STUDIO_VERSION", QStringLiteral("dev")));
+	// Tests only: crash on purpose to prove the report is written. Never outside a headless run.
+	if (headless && !qEnvironmentVariable("UJWALAM_STUDIO_TEST_CRASH").isEmpty()) {
+		if (!logs.crash) {
+			std::fprintf(stderr, "studio: UJWALAM_STUDIO_TEST_CRASH needs UJWALAM_STUDIO_LOG_DIR\n");
+			return 65;
+		}
+		studiolog::testCrash(qEnvironmentVariable("UJWALAM_STUDIO_TEST_CRASH"));
+		std::fprintf(stderr, "studio: unknown UJWALAM_STUDIO_TEST_CRASH kind\n");
+		return 65;
+	}
 	if (headless)
 		qputenv("QT_QPA_PLATFORM", "offscreen");
 	QApplication app(argc, argv);
+	if (logs.crash && !studiolog::reassert())
+		qWarning("crash reporter: Qt start-up had replaced the unhandled-exception filter; ours is back on top");
 	QApplication::setApplicationName(QStringLiteral("Ujwalam Studio"));
 	theme::apply(app);
 	motion::installHover(app); // hover glow on buttons and cards (D287)
@@ -72,6 +87,14 @@ int main(int argc, char **argv)
 		// Probe (tests): run the window's loads and polls without showing it, then print what its panels show.
 		const int probeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS");
 		if (headless && probeMs > 0) {
+			// UJWALAM_STUDIO_PROBE_SHOW=1 (tests): the window is "shown" on the offscreen platform (nothing reaches the
+			// screen, nothing takes focus), so code that only runs for a visible widget runs too: the animations of the
+			// task bar, the chips and the toasts (motion::enabled needs isVisible). The 2026-11-08 crash hid there.
+			if (qEnvironmentVariable("UJWALAM_STUDIO_PROBE_SHOW") == QStringLiteral("1")) {
+				win.setAttribute(Qt::WA_ShowWithoutActivating, true);
+				win.resize(1600, 900);
+				win.show();
+			}
 			win.start();
 			// Actions (D275): one every 700 ms from 2.5 s (after the first loads and a status poll), each a real click.
 			auto actions = std::make_shared<QJsonArray>();
@@ -149,5 +172,6 @@ int main(int argc, char **argv)
 		});
 	});
 	const int r = app.exec();
+	qInfo("studio exiting with code %d", code ? code : r);
 	return code ? code : r;
 }

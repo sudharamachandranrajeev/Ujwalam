@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QMap>
 #include <QObject>
+#include <QPointer>
 #include <QSet>
 #include <QVector>
 #include <QWidget>
@@ -39,7 +40,10 @@ private:
 	QString state_ = QStringLiteral("running");
 	double value_ = 0, target_ = 0, phase_ = 0;
 	bool indeterminate_ = false;
-	QVariantAnimation *glide_ = nullptr, *sweep_ = nullptr;
+	// glide_ deletes itself when it ends (motion::run): a QPointer, never a raw pointer. A raw one here was the
+	// 2026-11-08 studio crash (stop() on the freed animation at the next status poll).
+	QPointer<QVariantAnimation> glide_;
+	QVariantAnimation *sweep_ = nullptr; // owned: deleted only by sync()
 };
 
 class TaskChip : public QWidget {
@@ -122,6 +126,7 @@ private:
 	QSet<QString> dismissed_;
 	QJsonArray tasks_;
 	QVector<Toast *> toasts_;
+	QPointer<QVariantAnimation> panelAnim_; // the list's slide (self-deleting); a new slide stops the old one
 	bool open_ = false, first_ = true;
 	int running_ = 0, waiting_ = 0, shown_ = 0;
 };

@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, clipsEnv, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, shellChoice, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, clipsEnv, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, releaseVersion, shellChoice, shellExitRecord, shellRelaunchAllowed, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -600,6 +600,56 @@ test('Qt shell spawn spec: URL and launch key by env only, every token/key varia
   assert.equal(shellSpawnSpec({ uiPort: 0, launchKey: 'k', exe: 'C:/studio.exe', exists: () => true }), null, 'bad port');
 });
 
+test('Qt shell spawn spec: the log folder and the version for the studio log and crash report (2026-11-08 crash)', () => {
+  const s = shellSpawnSpec({ uiPort: 5000, launchKey: 'K'.repeat(40), exe: 'C:/studio.exe', logsDir: 'C:/d/core/logs', version: '0.1.0-alpha.9', env: { PATH: 'C:/x', UJWALAM_STUDIO_LOG_DIR: 'old' }, exists: () => true });
+  assert.equal(s.env.UJWALAM_STUDIO_LOG_DIR, 'C:/d/core/logs');
+  assert.equal(s.env.UJWALAM_STUDIO_VERSION, '0.1.0-alpha.9');
+  const n = shellSpawnSpec({ uiPort: 5000, launchKey: 'K'.repeat(40), exe: 'C:/studio.exe', env: { PATH: 'C:/x' }, exists: () => true });
+  assert.equal('UJWALAM_STUDIO_LOG_DIR' in n.env, false, 'no folder: the studio writes nothing');
+  assert.equal(releaseVersion(path.join(os.tmpdir(), 'no-such-release.json')), 'dev');
+});
+
+test('Qt shell exit record: code as hex, crash flag, the crash report written since the start (studio-exits.jsonl)', () => {
+  const startedAt = Date.parse('2026-11-08T18:54:00.000Z');
+  const now = Date.parse('2026-11-08T19:20:35.000Z');
+  const reports = ['studio-crash-2026-11-08T12-00-00-000Z-p1.txt', 'studio-crash-2026-11-08T19-20-34-900Z-p7.txt'];
+  const r = shellExitRecord({ code: 3221225477, startedAt, now, reports });
+  assert.deepEqual(r, { at: '2026-11-08T19:20:35.000Z', code: 3221225477, codeHex: '0xc0000005', signal: null, crash: true, upMs: now - startedAt, report: 'studio-crash-2026-11-08T19-20-34-900Z-p7.txt' });
+  const ok = shellExitRecord({ code: 0, startedAt, now, reports: reports.slice(0, 1) });
+  assert.deepEqual([ok.crash, ok.codeHex, ok.report], [false, '0x00000000', null], 'an older report is not this run\'s');
+  assert.equal(shellExitRecord({ code: -1073741819, startedAt, now }).codeHex, '0xc0000005', 'a negative NTSTATUS reads the same');
+  assert.deepEqual([shellExitRecord({ code: null, signal: 'SIGTERM', startedAt, now }).code, shellExitRecord({ code: null, signal: 'SIGTERM', startedAt, now }).crash], [null, true]);
+});
+test('Qt shell relaunch after a crash: at most 3 times in 10 min; older crashes do not count', () => {
+  const t = 1_000_000_000;
+  assert.equal(shellRelaunchAllowed([t], t), true);
+  assert.equal(shellRelaunchAllowed([t - 3000, t - 2000, t], t), true, 'third crash: reopened');
+  assert.equal(shellRelaunchAllowed([t - 3000, t - 2000, t - 1000, t], t), false, 'fourth crash in 10 min: not reopened');
+  assert.equal(shellRelaunchAllowed([t - 11 * 60_000, t - 2000, t - 1000, t], t), true, 'one of them is older than 10 min');
+});
+
+test('UI server control line: only "rearm <64 hex>" is understood; the new key logs in once, the old one never again', async () => {
+  const { controlLine } = await import('../services/studio-ui/cli.mjs');
+  const k2 = 'b'.repeat(64);
+  assert.deepEqual(controlLine(`rearm ${k2}\r`), { rearm: k2 });
+  for (const bad of ['rearm short', `rearm ${'B'.repeat(64)}`, `rearm ${k2} x`, 'stop', '', `REARM ${k2}`]) assert.equal(controlLine(bad), null, bad);
+  const { createStudioServer } = await import('../services/studio-ui/server.mjs');
+  const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
+  const host = { describe: () => ({ kind: 'fake', available: true }), call: async () => ({}) };
+  const k1 = 'a'.repeat(64);
+  const srv = createStudioServer({ uiRoot: path.resolve('ui'), core, host, launchKey: k1, limits: { statusPollMs: 60_000 } });
+  const { port } = await srv.listen();
+  const login = async (k) => (await fetch(`http://127.0.0.1:${port}/login?k=${k}`, { redirect: 'manual' })).status;
+  try {
+    assert.equal(await login(k1), 302, 'first window logs in');
+    assert.equal(await login(k1), 401, 'single use');
+    assert.equal(srv.rearmLaunchKey('short'), false);
+    assert.equal(srv.rearmLaunchKey(k2), true);
+    assert.equal(await login(k1), 401, 'the old key stays dead');
+    assert.equal(await login(k2), 302, 'the reopened window logs in with the new key');
+    assert.equal(await login(k2), 401, 'the new key is single use too');
+  } finally { await srv.close(); }
+});
 test('Qt shell paths: dev build first, else the self-contained packaged exe in studio/ (D277)', () => {
   const root = path.join('C:', 'inst');
   const dev = path.join('C:', 'repo', 'out', 'studio', 'build', 'ujwalam-studio.exe');

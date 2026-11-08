@@ -42,6 +42,11 @@ struct Config {
 	std::string version;     // host version (App::version)
 	std::string log_file;    // base name of this run's host log, named in the report
 	std::string runtime_dir; // OBS runtime (bin/64bit and obs-plugins/64bit are searched for PDBs)
+	// The studio shell uses the same reporter (2026-11-08, docs/evidence/2026-11-08-studio-crash.md): its reports are
+	// studio-crash-*.txt in its own logs folder, its lines say "ujwalam-studio". The host keeps the defaults.
+	std::string file_prefix = "crash-";  // report file name prefix; also counted for kMaxReports
+	std::string program = "ujwalam-host"; // names the program in the report and the stderr line
+	std::string log_label = "host log";   // "<label>: <log_file>" line in the report
 };
 
 struct Status {

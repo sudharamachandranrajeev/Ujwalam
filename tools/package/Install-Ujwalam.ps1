@@ -10,8 +10,10 @@
   2. Verifies every file against SHA256SUMS.txt (missing, changed or extra files stop the install).
   3. Copies the build to <InstallRoot>\<version> (default %LOCALAPPDATA%\Ujwalam), verifies the copy again, then
      points current.txt at it; the version it replaces is kept and named in previous.txt.
-  4. Copies Ujwalam.cmd to <InstallRoot>\Ujwalam.cmd (it runs the version in current.txt) and creates Start-menu and
-     desktop shortcuts to it. User data stays in <InstallRoot>\data and is never touched.
+  4. Copies ujwalam-start.exe and Ujwalam.cmd to <InstallRoot> (both run the version in current.txt) and creates
+     Start-menu and desktop shortcuts to ujwalam-start.exe, which starts Ujwalam with no console window and writes the
+     launcher's output to <InstallRoot>\data\core\logs\launcher-*.log (D191; Ujwalam.cmd stays for a terminal).
+     User data stays in <InstallRoot>\data and is never touched.
   -Rollback swaps current.txt and previous.txt (both folders must exist). Nothing is ever deleted.
 
 .PARAMETER InstallRoot   Default %LOCALAPPDATA%\Ujwalam.
@@ -240,6 +242,8 @@ $cur = Read-Pointer $currentFile
 if ($cur -and $cur -ne $version) { Write-Pointer $previousFile $cur }
 Write-Pointer $currentFile $version
 Copy-Item -LiteralPath (Join-Path $pkg 'Ujwalam.cmd') -Destination (Join-Path $InstallRoot 'Ujwalam.cmd') -Force
+# The shortcuts' target: a windowless exe that runs the version in current.txt (no console window, D191; 2026-11-08).
+Copy-Item -LiteralPath (Join-Path $pkg 'ujwalam-start.exe') -Destination (Join-Path $InstallRoot 'ujwalam-start.exe') -Force
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'data') | Out-Null
 Say "installed: current $version$(if ($cur -and $cur -ne $version) { ", previous $cur (Install-Ujwalam.ps1 -Rollback switches back)" })"
 
@@ -251,14 +255,14 @@ if (-not $NoShortcuts) {
   foreach ($dir in @($StartMenuDir, $DesktopDir)) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $lnk = $shell.CreateShortcut((Join-Path $dir $ShortcutName))
-    $lnk.TargetPath = Join-Path $InstallRoot 'Ujwalam.cmd'
+    $lnk.TargetPath = Join-Path $InstallRoot 'ujwalam-start.exe'
     $lnk.Arguments = '--allow-devices' # capture card, facecam, mic (user, 2026-11-08, D282)
     $lnk.WorkingDirectory = $InstallRoot
     $lnk.Description = 'Ujwalam alpha with devices (runs the version in current.txt)'
     $lnk.Save()
     Say "shortcut: $(Join-Path $dir $ShortcutName)"
     $lnk = $shell.CreateShortcut((Join-Path $dir $LiveShortcutName))
-    $lnk.TargetPath = Join-Path $InstallRoot 'Ujwalam.cmd'
+    $lnk.TargetPath = Join-Path $InstallRoot 'ujwalam-start.exe'
     $lnk.Arguments = '--live --allow-devices'
     $lnk.WorkingDirectory = $InstallRoot
     $lnk.Description = 'Ujwalam alpha, stream targets set up (going live still needs Start stream and the typed yes, on air)'
@@ -271,5 +275,5 @@ if (-not $NoShortcuts) {
 $keep = @($version, (Read-Pointer $previousFile)) | Where-Object { $_ }
 $older = Get-ChildItem -LiteralPath $InstallRoot -Directory | Where-Object { $_.Name -match '^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+' -and $keep -notcontains $_.Name }
 if ($older) { Say "older folders you may remove by hand: $(($older | ForEach-Object { $_.Name }) -join ', ')" }
-Say 'done. Start Ujwalam from the shortcut, or run Ujwalam.cmd in the install folder.'
+Say 'done. Start Ujwalam from the shortcut (no console window; close the studio window to stop), or run Ujwalam.cmd in the install folder from a terminal.'
 exit 0

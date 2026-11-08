@@ -33,7 +33,10 @@ wchar_t g_dir[MAX_PATH * 2]; // logs folder, with a trailing backslash
 size_t g_dir_len = 0;
 char g_version[64];
 char g_log_name[260];
-char g_file_name[96]; // crash-<time>-p<pid>.txt
+char g_prefix[32];    // report file name prefix (Config::file_prefix)
+char g_program[32];   // "ujwalam-host" or "ujwalam-studio" (Config::program)
+char g_log_label[32]; // "host log" (Config::log_label)
+char g_file_name[128]; // <prefix><time>-p<pid>.txt
 wchar_t g_sympath[4096];
 DWORD g_pid = 0, g_main_tid = 0, g_reporter_tid = 0;
 bool g_writing = false, g_symbols = false;
@@ -220,7 +223,7 @@ void sec_open()
 	Out &o = g_out;
 	o.file = INVALID_HANDLE_VALUE;
 	o.n = 0;
-	put(o, "crash-");
+	put(o, g_prefix);
 	put_time(o, g_slot.at, true);
 	put(o, "-p");
 	put_dec(o, g_pid);
@@ -247,7 +250,8 @@ void sec_stderr()
 	if (!g_err || g_err == INVALID_HANDLE_VALUE)
 		return;
 	Out e; // stack; file stays invalid, written by hand below
-	put(e, "ujwalam-host: CRASH (");
+	put(e, g_program);
+	put(e, ": CRASH (");
 	put(e, kind_name(g_slot.kind));
 	if (g_slot.has_rec) {
 		put(e, " ");
@@ -263,7 +267,9 @@ void sec_stderr()
 	} else if (!g_writing) {
 		put(e, "; report not written: ");
 		put_dec(e, kMaxReports);
-		put(e, " crash-*.txt files are already in logs/ (move them away to get new reports)");
+		put(e, " ");
+		put(e, g_prefix);
+		put(e, "*.txt files are already in logs/ (move them away to get new reports)");
 	} else {
 		put(e, "; report file could not be created");
 	}
@@ -275,7 +281,8 @@ void sec_stderr()
 void sec_header()
 {
 	Out &o = g_out;
-	put(o, "ujwalam-host crash report (text only: no memory dump, no register values, no memory contents)");
+	put(o, g_program);
+	put(o, " crash report (text only: no memory dump, no register values, no memory contents)");
 	endl(o);
 	put(o, "version: ");
 	put(o, g_version);
@@ -304,7 +311,8 @@ void sec_header()
 		put(o, (g_slot.rec.ExceptionFlags & EXCEPTION_NONCONTINUABLE) ? "noncontinuable" : "continuable");
 		endl(o);
 	}
-	put(o, "host log: ");
+	put(o, g_log_label);
+	put(o, ": ");
 	put(o, g_log_name[0] ? g_log_name : "-");
 	endl(o);
 	flush(o);
@@ -573,6 +581,9 @@ Status install(const Config &c)
 	g_main_tid = GetCurrentThreadId();
 	copy_cut(g_version, sizeof(g_version), c.version);
 	copy_cut(g_log_name, sizeof(g_log_name), c.log_file);
+	copy_cut(g_prefix, sizeof(g_prefix), c.file_prefix.empty() ? std::string("crash-") : c.file_prefix);
+	copy_cut(g_program, sizeof(g_program), c.program.empty() ? std::string("ujwalam-host") : c.program);
+	copy_cut(g_log_label, sizeof(g_log_label), c.log_label.empty() ? std::string("log") : c.log_label);
 	g_err = GetStdHandle(STD_ERROR_HANDLE);
 
 	std::wstring dir = widen(c.logs_dir);
@@ -587,7 +598,7 @@ Status install(const Config &c)
 		g_dir[dir.size()] = 0;
 		g_dir_len = dir.size();
 		WIN32_FIND_DATAW fd;
-		HANDLE h = FindFirstFileW((dir + L"crash-*.txt").c_str(), &fd);
+		HANDLE h = FindFirstFileW((dir + widen(g_prefix) + L"*.txt").c_str(), &fd);
 		if (h != INVALID_HANDLE_VALUE) {
 			do {
 				if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
