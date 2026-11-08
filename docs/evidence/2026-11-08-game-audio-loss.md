@@ -146,3 +146,72 @@ Timing flakes under parallel load, not caused by this change (UNVERIFIED against
   destroy blocks at exit is inferred from the source code and the 18-36 log, and the guard then ends the process.
 - Layer audio (the capture card's dshow audio, media files) is reported in `mixer.list` but never restarted.
 - The Qt studio shell does not show the warning yet (control page only).
+
+## Second opinion (Codex) and fixes (2026-11-08, branch fix/audio-review)
+
+A Codex review of D297/D299 raised six points. Each was checked against the code and the obs-studio 32.1.2 source
+(`plugins/win-wasapi/win-wasapi.cpp`, `libobs/obs-source.c`, `libobs/obs-output.c`, `plugins/obs-ffmpeg/obs-ffmpeg-mux.c`,
+`libobs/util/pipe-windows.c`).
+
+1. **Watchdog thread without COM (HIGH): real in the code, fixed; the failure on the real device is UNVERIFIED.**
+   `WASAPISource::WASAPISource` calls `CoCreateInstance(MMDeviceEnumerator)` on the creating thread and throws on
+   failure; `CreateWASAPISource` catches it and returns nullptr; `obs_source_create` still returns a source
+   ("allow the source to be created even if creation fails"), so the old code parked the working-but-dead source and
+   put a permanently silent one in its place. Whether `CoCreateInstance` really failed there depends on whether some
+   other thread kept an implicit MTA alive at that moment (the RTWQ and WASAPI capture threads are MTA), so the
+   CO_E_NOTINITIALIZED on the laptop is UNVERIFIED; the dependence on it was the bug. Fixes: the watchdog thread
+   enters the MTA (`CoInitializeEx(COINIT_MULTITHREADED)`, balanced `CoUninitialize` when it stops); the RPC worker
+   threads do the same (they create sources on `project.load`, same dependence). Creating on the watchdog thread is
+   appropriate: libobs allows `obs_source_create` from any thread, and the WASAPI source uses its COM pointers from
+   its own MTA threads, so an MTA creator is a better fit than the STA main thread. `recreate_global` now treats a
+   source with no plugin data (`obs_obj_get_data` null) as a failed create: it is released, the old source stays, the
+   event is `recreate-failed` and the attempt counts. Attempts are at most one per `noDataMs`. A restarted source
+   stays `missing` (state, warning, `ok: false`) until the new one delivers packets; only then is it `recovered`.
+2. **Parked sources unbounded across reloads (MEDIUM): real, fixed.** `parked_` lives for the process; the per-load
+   counters reset. New `data/audio/health.json` `maxParked` (12; host config `audioHealth.maxParked`, 1..1000,
+   required when enabled). At the limit the watchdog stops restarting: event `gave-up` "<Name> audio missing: too many
+   restarts in this run; restart Ujwalam after the stream", log line, `watchdog.parkedFull: true`.
+3. **Source-level config lost on restart (MEDIUM): real, fixed (defensive: the host sets none of these today).** The
+   replacement now gets the old source's sync offset, balance, flags (force mono) and filters
+   (`obs_source_copy_filters`: duplicates with the same names and enabled state), plus volume, mute, tracks and
+   monitoring as before, before it goes on the output channel.
+4. **Readiness probes without a timeout (MEDIUM): real, fixed.** The real host client has a 3 s socket idle timeout
+   (`backends.mjs rpc`), but the probes depended on it. `host.status`, `outputs.status`, `host.info` and `core.status`
+   now have `checkTimeoutMs` each, and `createReadiness` gives a run a deadline (`2 x checkTimeoutMs + 1 s`); a run
+   past it rejects (TIMEOUT, the go-live gate answers 503) and is dropped, so the next call starts a new one.
+5. **Unreadable audio state only warned (MEDIUM): real, fixed.** While the host answers, audio state that cannot be
+   read (no `audioHealth` and `audio.status` missing, failing or timing out, or a custom audio check that throws) is a
+   `fail` (the override phrase still goes live). Host down: the host item fails, audio stays a warning.
+6. **Shutdown guard vs recording finalize: not an issue; no change.** Order in `main.cpp`: `outputs->stop_all(5000)`
+   (stop; force-stop what is still active after 5 s), then `outputs.reset()` releases every output, and only then
+   `obsrt::shutdown` arms the 20 s guard. `obs_output_release` destroys synchronously: `obs_output_destroy` waits for
+   `stopping_event` and the end-data-capture thread, then `ffmpeg_mux_destroy` calls `os_process_pipe_destroy`, which
+   closes the pipe and waits (INFINITE) for `obs-ffmpeg-mux.exe` to exit, i.e. for the trailer to be written; a
+   normal stop does the same in `deactivate()` before `obs_output_end_data_capture`. So the recording file is
+   finalized before the guard exists. Even if the host were terminated, the mux child is not in a job object
+   (`pipe-windows.c` has none), gets EOF on its stdin and finishes the file itself. A forced stop after 5 s can drop
+   the last buffered packets (existing behaviour, not the guard).
+
+Tests (headless, built host, no device):
+
+```
+node app/host/tools/build.mjs                                                   -> built
+UJWALAM_HEADLESS=1 node --test --test-timeout=300000 app/host/tests/host-audio-health.test.mjs app/host/tests/host-api.test.mjs app/host/tests/host-structure.test.mjs app/host/tests/host-project.test.mjs
+                                                                                -> 48 pass, 0 fail
+node --test tests/studio-ui-readiness.test.mjs                                  -> 29 pass, 0 fail
+node --test tests/studio-ui-alpha.test.mjs                                      -> 36 pass, 0 fail
+UJWALAM_HEADLESS=1 node --test tests/studio-ui-server.test.mjs                  -> 32 pass, 0 fail
+node tools/ci.mjs --quick                                                       -> ci: 8/8 passed
+```
+
+New in `host-audio-health.test.mjs`: the fake source now fails its create on a thread with no explicit COM apartment
+(implicit MTA counts as none), as win-wasapi does; the restart test therefore proves the watchdog's MTA (checked the
+other way: with the `CoInitializeEx` call replaced by `E_FAIL` the restart test fails, no recovery). Test hooks
+`audio.testCreate {mode: ok|fail|silent}` and `audio.testConfig` cover a failed create (two `recreate-failed`, one per
+`noDataMs`, nothing parked), a silent replacement (state stays `missing`, warning stays, no `recovered`, then
+`gave-up`), the parked limit (2) and the carried-over sync offset, balance, mono flag and gain filter.
+`studio-ui-readiness.test.mjs`: hung / failing / throwing audio state fails while the host is up, host down warns,
+hung first probes finish within the timeout, and a run past its deadline rejects and does not block the next.
+
+Still UNVERIFIED: whether the real `CoCreateInstance` failed on the watchdog thread on the laptop (implicit MTA);
+restarts against a real dead WASAPI source; `maxParked` 12 is an agent default.

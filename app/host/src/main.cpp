@@ -489,6 +489,7 @@ int wmain(int argc, wchar_t **wargv)
 			Studio::AudioHealthCfg hc;
 			hc.no_data_ms = ah.no_data_ms;
 			hc.max_recreates = ah.max_recreates;
+			hc.max_parked = ah.max_parked;
 			hc.recreate = ah.enabled;
 			app.studio->set_audio_health(hc);
 			if (app.test_hooks)
@@ -497,9 +498,10 @@ int wmain(int argc, wchar_t **wargv)
 				Studio *st = app.studio.get();
 				app.audio_watch = std::make_unique<ahealth::Ticker>(ah.check_interval_ms, [st]() { st->audio_watch_tick(); });
 			}
-			hlog::info("audio health: %s (no data %u ms, check %u ms, max %u restarts per source; shutdown guard %u ms)",
+			hlog::info("audio health: %s (no data %u ms, check %u ms, max %u restarts per source, %u parked per run; "
+				   "shutdown guard %u ms)",
 				   ah.enabled ? "watchdog on" : (ah.no_data_ms ? "report only" : "off"), ah.no_data_ms,
-				   ah.check_interval_ms, ah.max_recreates, ah.shutdown_guard_ms);
+				   ah.check_interval_ms, ah.max_recreates, ah.max_parked, ah.shutdown_guard_ms);
 		}
 		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir, app.allow_live,
 							app.twitch_bandwidth_test);

@@ -36,7 +36,11 @@ private:
 
 // --test-hooks only: registers source type "ujw_test_audio", an audio-only input that sends 10 ms packets of
 // silence (48 kHz stereo float) from its own thread, opening no device. obs_source_update with {"stall": true}
-// stops the packets of that one instance (a dead device); a newly created instance always sends.
+// stops the packets of that one instance (a dead device). Like win-wasapi, a create on a thread with no explicit COM
+// apartment fails (the plugin returns no data). set_test_create_mode: what the next creates do: Ok (sends), Fail (the
+// create fails as a WASAPI constructor that throws), Silent (created, sends nothing: a replacement that never works).
+enum class TestCreate { Ok = 0, Fail = 1, Silent = 2 };
 void register_test_audio_type();
+void set_test_create_mode(TestCreate m);
 
 } // namespace ahealth

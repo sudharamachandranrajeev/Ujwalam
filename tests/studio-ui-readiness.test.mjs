@@ -13,7 +13,7 @@ import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { createFlags } from '../services/flags/index.mjs';
 import {
-  ITEMS, OVERRIDE_LOG, OVERRIDE_PHRASE, createReadiness, credentialFacts, loadReadinessConfig, logOverride, planTargets,
+  ITEMS, OVERRIDE_LOG, OVERRIDE_PHRASE, createReadiness, readinessDeadlineMs, credentialFacts, loadReadinessConfig, logOverride, planTargets,
   readinessSummary, runReadiness, schemeOf,
 } from '../services/studio-ui/readiness.mjs';
 
@@ -39,7 +39,9 @@ const LIVE_SINKS = [
 const store = (values) => (ref) => ({ get: async () => (Object.hasOwn(values, ref) ? values[ref] : null) });
 const GOOD_STORE = { 'Ujwalam/stream/twitch-server': 'rtmps://ingest.example/app', 'Ujwalam/stream/kick-server': 'rtmps://kick.example/app' };
 
-function fakeHost({ kind = 'host', sinks = LIVE_SINKS, info = {}, audio, methods = {} } = {}) {
+// audio: the audio.status answer (default one working source); null = a host without the method.
+const OK_AUDIO = { sources: [{ id: 'audio:mic', name: 'Mic', state: 'ok' }] };
+function fakeHost({ kind = 'host', sinks = LIVE_SINKS, info = {}, audio = OK_AUDIO, methods = {} } = {}) {
   return {
     calls: [],
     describe: () => ({ kind }),
@@ -51,7 +53,7 @@ function fakeHost({ kind = 'host', sinks = LIVE_SINKS, info = {}, audio, methods
       if (m === 'host.info') return { adapter: 'NVIDIA GeForce RTX 4050 Laptop GPU', gpuPreference: { set: true, gpuPreference: 2 }, recordingsDir: 'C:\\rec', ...info };
       if (m === 'mixer.list') return { sources: [{ id: 'a', name: 'Mic', muted: false, mixers: 1 }] };
       if (m === 'audio.status') {
-        if (audio === undefined) throw Object.assign(new Error('Method not found'), { code: 'RPC_-32601' });
+        if (audio === null) throw Object.assign(new Error('Method not found'), { code: 'RPC_-32601' });
         return audio;
       }
       throw Object.assign(new Error('Method not found'), { code: 'RPC_-32601' });
@@ -187,10 +189,11 @@ describe('runReadiness', () => {
     assert.match(c.message, /missing/);
   });
 
-  test('audio: host without the state call = unknown (warn); a missing source fails; a muted mix source warns; pluggable', async () => {
-    const u = byId(await runReadiness(deps()), 'audio');
-    assert.equal(u.status, 'warn');
+  test('audio: host up without the state call = unreadable (fail); a missing source fails; a muted mix source warns; pluggable', async () => {
+    const u = byId(await runReadiness(deps({ hostOpts: { audio: null } })), 'audio');
+    assert.equal(u.status, 'fail', 'audio state that cannot be read while the host is up blocks without the override');
     assert.equal(u.unknown, true);
+    assert.match(u.message, /could not be read: the host cannot report it/);
     const f = byId(await runReadiness(deps({ hostOpts: { audio: { sources: [{ id: 'mic', name: 'Mic', state: 'missing' }] } } })), 'audio');
     assert.equal(f.status, 'fail');
     const m = byId(await runReadiness(deps({ hostOpts: { audio: { sources: [{ id: 'mic', name: 'Mic', state: 'live' }] }, methods: { 'mixer.list': () => ({ sources: [{ name: 'Game', muted: true, mixers: 1 }] }) } } })), 'audio');
@@ -198,6 +201,38 @@ describe('runReadiness', () => {
     assert.match(m.message, /Muted in the stream mix: Game/);
     const p = byId(await runReadiness(deps({ audioCheck: async () => ({ status: 'pass', message: 'plugged' }) })), 'audio');
     assert.deepEqual([p.status, p.message, p.title], ['pass', 'plugged', 'Audio sources']);
+  });
+
+  test('audio state unavailable while the host is up fails (hung, failing or throwing); host down stays a warning', async () => {
+    const quick = { ...CONFIG, checkTimeoutMs: 100 };
+    const hung = await runReadiness(deps({ config: quick, hostOpts: { methods: { 'audio.status': () => new Promise(() => {}) } } }));
+    assert.deepEqual([byId(hung, 'audio').status, byId(hung, 'audio').unknown], ['fail', true]);
+    assert.match(byId(hung, 'audio').message, /did not finish in time/);
+    assert.equal(hung.ok, false);
+    const err = byId(await runReadiness(deps({ hostOpts: { methods: { 'audio.status': () => { throw Object.assign(new Error('x'), { code: 'TIMEOUT' }); } } } })), 'audio');
+    assert.equal(err.status, 'fail');
+    assert.match(err.message, /the host did not answer/);
+    const thrown = byId(await runReadiness(deps({ audioCheck: async () => { throw new Error('boom'); } })), 'audio');
+    assert.equal(thrown.status, 'fail');
+    // the host itself is down: the host item fails; audio says "unknown" (warn), it does not fail twice
+    const down = await runReadiness(deps({ hostOpts: { methods: { 'host.status': () => { throw new Error('ECONNREFUSED'); } } } }));
+    assert.equal(byId(down, 'host').status, 'fail');
+    assert.equal(byId(down, 'audio').status, 'warn');
+    // host.status answers audioHealth: no extra call
+    const d = deps({ hostOpts: { audio: null, methods: { 'host.status': () => ({ live: false, audioHealth: { sources: [{ id: 'audio:game', name: 'Game', state: 'ok' }] } }) } } });
+    assert.equal(byId(await runReadiness(d), 'audio').status, 'pass');
+    assert.ok(!d.host.calls.includes('audio.status'));
+  });
+
+  test('the first host probes are bounded: a hung host.status / outputs.status / host.info answers within the timeout', async () => {
+    const never = () => new Promise(() => {});
+    const d = deps({ config: { ...CONFIG, checkTimeoutMs: 100 }, hostOpts: { methods: { 'host.status': never, 'outputs.status': never, 'host.info': never } } });
+    d.core = { describe: () => ({ available: true }), call: never };
+    const t0 = Date.now();
+    const r = await runReadiness(d);
+    assert.ok(Date.now() - t0 < 1500, `took ${Date.now() - t0} ms`);
+    assert.match(byId(r, 'host').message, /does not answer/);
+    assert.equal(byId(r, 'host').status, 'fail');
   });
 
   test('GPU: not NVIDIA fails; NVIDIA without the Windows preference warns', async () => {
@@ -243,6 +278,18 @@ describe('helpers', () => {
     assert.equal(n, 1);
     t += 500; await rd.run({ maxAgeMs: 1000 }); assert.equal(n, 1);
     t += 5000; await rd.run({ maxAgeMs: 1000 }); assert.equal(n, 2);
+  });
+  test('createReadiness: a run past its deadline rejects and is dropped; the next call starts a new run', async () => {
+    let n = 0;
+    const d = deps({ config: { ...CONFIG, checkTimeoutMs: 100 } });
+    d.listProcesses = () => { n++; return new Promise(() => {}); };
+    d.deadlineMs = 30; // shorter than one check: the run cannot finish in time
+    const rd = createReadiness(d);
+    await assert.rejects(rd.run(), (e) => e.code === 'TIMEOUT');
+    await assert.rejects(rd.run(), (e) => e.code === 'TIMEOUT');
+    assert.equal(n, 2, 'the stuck run did not block the next one');
+    assert.equal(rd.last(), null);
+    assert.equal(readinessDeadlineMs({ checkTimeoutMs: 4000 }), 9000);
   });
 });
 

@@ -538,6 +538,46 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 			throw Error(rpc::FORBIDDEN, "audio.testStall needs a host started with --test-hooks");
 		return a.studio->test_audio_stall(q.str("id", 64), q.bool_or("stall", true));
 	});
+	// audio.testCreate {mode: ok|fail|silent}: what the next ujw_test_audio creates do (a restart whose create fails,
+	// or a replacement that never sends). audio.testConfig {id, syncOffsetMs?, balance?, forceMono?, gainFilterDb?}:
+	// sets source-level settings on a test global and returns them (the watchdog must carry them over). --test-hooks.
+	add("audio.testCreate", [&a](const json::Value &p) {
+		Params q(p, {"mode"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "audio.testCreate needs a host started with --test-hooks");
+		const std::string m = q.str("mode", 8);
+		if (m != "ok" && m != "fail" && m != "silent")
+			throw Error(rpc::INVALID_PARAMS, "mode must be ok, fail or silent");
+		ahealth::set_test_create_mode(m == "fail" ? ahealth::TestCreate::Fail
+					      : m == "silent" ? ahealth::TestCreate::Silent
+							      : ahealth::TestCreate::Ok);
+		json::Value r = json::Value::object();
+		r.set("mode", m);
+		return r;
+	});
+	add("audio.testConfig", [&a](const json::Value &p) {
+		Params q(p, {"id", "syncOffsetMs", "balance", "forceMono", "gainFilterDb"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "audio.testConfig needs a host started with --test-hooks");
+		json::Value set = json::Value::object();
+		if (q.has("syncOffsetMs"))
+			set.set("syncOffsetMs", q.int_or("syncOffsetMs", 0, -10000, 10000));
+		if (q.has("balance")) {
+			const json::Value *b = p.find("balance");
+			if (!b->is_number() || b->as_double() < 0 || b->as_double() > 1)
+				throw Error(rpc::INVALID_PARAMS, "balance must be a number 0..1");
+			set.set("balance", b->as_double());
+		}
+		if (q.has("forceMono"))
+			set.set("forceMono", q.bool_or("forceMono", false));
+		if (q.has("gainFilterDb")) {
+			const json::Value *b = p.find("gainFilterDb");
+			if (!b->is_number() || b->as_double() < -30 || b->as_double() > 30)
+				throw Error(rpc::INVALID_PARAMS, "gainFilterDb must be a number -30..30");
+			set.set("gainFilterDb", b->as_double());
+		}
+		return a.studio->test_audio_config(q.str("id", 64), set);
+	});
 	// preview.editSim {canvas, width, height, steps: [{event: down|move|up|cancel, x, y, shift?, alt?}]}: runs the
 	// window procedure's editor calls for a preview of width x height client px, without a window (headless tests).
 	// Returns the selection after each step and the edit seq. --test-hooks only.

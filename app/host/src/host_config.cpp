@@ -56,7 +56,7 @@ bool parse_host_config(const json::Value &doc, HostConfig &cfg, std::string &err
 	if (!only(doc, {"$comment", "replay", "hotkeys", "feedbackDir", "markersDir", "eventCore", "monitoringDevice", "audio", "audioHealth"}, "host config", err))
 		return false;
 	if (const json::Value *h = doc.find("audioHealth")) {
-		if (!only(*h, {"enabled", "noDataMs", "checkIntervalMs", "maxRecreates", "shutdownGuardMs"}, "audioHealth", err))
+		if (!only(*h, {"enabled", "noDataMs", "checkIntervalMs", "maxRecreates", "maxParked", "shutdownGuardMs"}, "audioHealth", err))
 			return false;
 		auto &ah = cfg.audio_health;
 		if (const json::Value *e = h->find("enabled")) {
@@ -67,15 +67,16 @@ bool parse_host_config(const json::Value &doc, HostConfig &cfg, std::string &err
 			ah.enabled = e->as_bool();
 		}
 		// Required when enabled: the values come from the data file, the host has no built-in numbers.
-		for (const char *k : {"noDataMs", "checkIntervalMs", "maxRecreates"})
+		for (const char *k : {"noDataMs", "checkIntervalMs", "maxRecreates", "maxParked"})
 			if (ah.enabled && !h->find(k)) {
 				err = std::string("audioHealth.") + k + " is required when enabled";
 				return false;
 			}
-		int64_t nd = 0, ci = 0, mr = 0, sg = 0;
+		int64_t nd = 0, ci = 0, mr = 0, mp = 0, sg = 0;
 		if (!int_in(h->find("noDataMs"), 500, 600000, nd, "audioHealth.noDataMs", err) ||
 		    !int_in(h->find("checkIntervalMs"), 100, 60000, ci, "audioHealth.checkIntervalMs", err) ||
 		    !int_in(h->find("maxRecreates"), 0, 100, mr, "audioHealth.maxRecreates", err) ||
+		    !int_in(h->find("maxParked"), 1, 1000, mp, "audioHealth.maxParked", err) ||
 		    !int_in(h->find("shutdownGuardMs"), 0, 600000, sg, "audioHealth.shutdownGuardMs", err))
 			return false;
 		if (sg && sg < 1000) {
@@ -85,6 +86,7 @@ bool parse_host_config(const json::Value &doc, HostConfig &cfg, std::string &err
 		ah.no_data_ms = (uint32_t)nd;
 		ah.check_interval_ms = (uint32_t)ci;
 		ah.max_recreates = (uint32_t)mr;
+		ah.max_parked = (uint32_t)mp;
 		ah.shutdown_guard_ms = (uint32_t)sg;
 	}
 	if (const json::Value *r = doc.find("replay")) {
