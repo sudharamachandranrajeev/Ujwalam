@@ -215,6 +215,38 @@
       return loadLayers().then(function () { renderInspector(); setText($('insp-note'), 'Applied.'); });
     }));
   }
+  // ---- arrow-key nudges (P5, D254, flag preview-edit): the selected layer moves 1 canvas px per press, 10 with Shift.
+  // Presses made while a move is on its way add up and go as one layers.setPlacement (one undo step). Off while live:
+  // each press would need the typed "yes, on air", so the inspector is the way to move a layer then.
+  var NUDGE_KEYS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+  var nudge = { dx: 0, dy: 0, busy: false };
+  function nudgeStep(key, shift) { var d = NUDGE_KEYS[key]; if (!d) return null; var n = shift ? 10 : 1; return [d[0] * n, d[1] * n]; }
+  function nudgeKey(e) {
+    var t = e.target && e.target.tagName;
+    if (!state.previewEdit || e.ctrlKey || e.metaKey || e.altKey || t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return;
+    if (!$('confirm').hidden) return;
+    var step = nudgeStep(e.key, e.shiftKey), l = selectedLayer();
+    if (!step || !l || !l.placement) return;
+    e.preventDefault();
+    if (state.status && state.status.host && state.status.host.live) { setText($('insp-note'), 'Live: arrow keys are off. Use the inspector.'); return; }
+    nudge.dx += step[0]; nudge.dy += step[1];
+    sendNudge();
+  }
+  function sendNudge() {
+    if (nudge.busy || (!nudge.dx && !nudge.dy)) return;
+    var l = selectedLayer(); if (!l || !l.placement) { nudge.dx = nudge.dy = 0; return; }
+    var patch = {};
+    if (nudge.dx) patch.x = Math.round(((l.placement.x || 0) + nudge.dx) * 100) / 100;
+    if (nudge.dy) patch.y = Math.round(((l.placement.y || 0) + nudge.dy) * 100) / 100;
+    nudge.dx = nudge.dy = 0; nudge.busy = true;
+    Api.host('layers.setPlacement', layerArgs({ layer: l.id, placement: patch }))
+      .then(function (res) {
+        if (res && res.verdict === 'confirm') { if (res.pending) Api.cancel(res.pending.pendingId).catch(function () {}); setText($('insp-note'), 'Live: arrow keys are off. Use the inspector.'); return; }
+        return loadLayers();
+      })
+      .catch(function (e) { showError('Error: ' + (e && e.message ? e.message : 'failed')); })
+      .then(function () { nudge.busy = false; sendNudge(); });
+  }
   // With scene editing on, a move changes the project order (shared by H and V, saved) and the host follows it on
   // every canvas (D243). While live, or for a layer outside the project, it is the host's live-only move.
   function move(l, from, to) {
@@ -396,6 +428,7 @@
     $('bots').hidden = !botsOn;
     if (botsOn) loadBots(); else clear($('bot-list'));
     renderStructure((list || []).some(function (f) { return f.id === 'scene-edit' && f.on; }));
+    state.previewEdit = (list || []).some(function (f) { return f.id === 'preview-edit' && f.on; }); // arrow-key nudges (D254)
     renderTransitionCard((list || []).some(function (f) { return f.id === 'transitions' && f.on; }));
     var reportOn = (list || []).some(function (f) { return f.id === 'report-button' && f.on; });
     $('report').hidden = !reportOn;
@@ -629,6 +662,7 @@
     $('tr-canvas').addEventListener('change', showTransition);
     $('tr-type').addEventListener('change', trFields);
     $('btn-tr-save').addEventListener('click', saveTransition);
+    document.addEventListener('keydown', nudgeKey);
     document.addEventListener('keydown', function (e) {
       var t = e.target && e.target.tagName;
       if (!(e.ctrlKey || e.metaKey) || e.altKey || t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return; // text fields keep their own undo
