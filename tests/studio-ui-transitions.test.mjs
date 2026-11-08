@@ -44,3 +44,71 @@ test('flag off: cut on both canvases; on: the project fades; a host that drifts 
     await until(() => tr.H.type === 'cut' && tr.V.type === 'cut', 'cut again when off');
   } finally { await srv.close(); }
 });
+
+test('stinger (D242): the transition form saves the project; the poll applies it; a refused stinger cuts and is not retried', async () => {
+  const { mkdirSync, readFileSync, writeFileSync } = await import('node:fs');
+  const http = (await import('node:http')).default;
+  const { createProject, saveProject } = await import('../services/project/index.mjs');
+  const { createProjectSync } = await import('../services/studio-ui/project-sync.mjs');
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-st-'));
+  const assets = path.join(dir, 'assets');
+  mkdirSync(assets);
+  writeFileSync(path.join(assets, 'wipe.webm'), '');
+  const file = path.join(dir, 'p.project.json');
+  saveProject(file, createProject({ name: 'T', fps: 30 }));
+  const tr = { H: { type: 'cut', durationMs: 0, available: true }, V: { type: 'cut', durationMs: 0, available: true } };
+  const sets = [];
+  const state = { refuse: false, live: false };
+  const host = {
+    describe: () => ({ kind: 'host', available: true }),
+    call: async (m, p) => {
+      if (m === 'host.status') return { live: state.live, recording: false, transitions: structuredClone(tr) };
+      if (m === 'transitions.set') {
+        sets.push(p);
+        if (p.type === 'stinger' && state.refuse) throw Object.assign(new Error('stinger: file not found'), { code: 'RPC_-32004' });
+        tr[p.canvas] = { type: p.type, durationMs: p.durationMs ?? 0, available: true, ...(p.type === 'stinger' ? { file: `${p.file.base}:${p.file.rel}`, pointMs: p.pointMs } : {}) };
+        return tr;
+      }
+      return {};
+    },
+  };
+  const flags = createFlags({ dataDir: dir });
+  flags.set(TRANSITIONS_FLAG, true);
+  const KEY = 'k'.repeat(48);
+  const core = { describe: () => ({ available: false }), call: async () => { throw new Error('x'); } };
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, flags, projectSync: createProjectSync({ file }), assetsDir: assets, limits: { statusPollMs: 20 } });
+  const { port } = await srv.listen();
+  const req = (method, url, headers, body) => new Promise((resolve, reject) => {
+    const h = { host: `127.0.0.1:${port}`, ...headers };
+    if (body !== undefined) h['content-length'] = Buffer.byteLength(body);
+    const r = http.request({ host: '127.0.0.1', port, method, path: url, headers: h }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => { const t = Buffer.concat(chunks).toString('utf8'); let b = null; try { b = JSON.parse(t); } catch { b = t; } resolve({ status: res.statusCode, body: b }); });
+    });
+    r.on('error', reject);
+    r.end(body);
+  });
+  try {
+    const cookie = await new Promise((resolve) => http.get({ host: '127.0.0.1', port, path: `/login?k=${KEY}` }, (res) => { res.resume(); resolve(res.headers['set-cookie'][0].split(';')[0]); }));
+    const csrf = (await req('GET', '/ui/api/session', { cookie })).body.csrf;
+    const post = (body) => req('POST', '/ui/api/project/transition', { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf }, JSON.stringify(body));
+    const ch = (await req('GET', '/ui/api/project/transitions', { cookie })).body;
+    assert.deepEqual(ch.videos, ['wipe.webm']);
+    assert.equal((await post({ canvas: 'h', type: 'stinger', file: 'other.webm', pointMs: 500 })).body.error, 'unknown-asset');
+    assert.equal((await post({ canvas: 'h', type: 'fade' })).status, 400);
+    let r = await post({ canvas: 'h', type: 'stinger', file: 'wipe.webm', pointMs: 500 });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).canvases[0].transition, { type: 'stinger', durationMs: 0, file: { base: 'media', rel: 'wipe.webm' }, pointMs: 500 });
+    await until(() => tr.H.type === 'stinger' && tr.H.pointMs === 500, 'stinger applied to the host');
+    state.refuse = true;
+    r = await post({ canvas: 'v', type: 'stinger', file: 'wipe.webm', pointMs: 300 });
+    assert.equal(r.status, 200);
+    await until(() => sets.some((p) => p.canvas === 'V' && p.type === 'stinger'), 'stinger asked for on V');
+    await sleep(150);
+    assert.equal(sets.filter((p) => p.canvas === 'V' && p.type === 'stinger').length, 1, 'a refused stinger is not asked for again');
+    assert.equal(tr.V.type, 'cut');
+    state.live = true;
+    assert.equal((await post({ canvas: 'h', type: 'cut' })).body.error, 'live-locked');
+  } finally { await srv.close(); }
+});

@@ -238,9 +238,18 @@ test('alpha project: an existing file is loaded unchanged; --rebuild-alpha moves
 test('alpha bases: profile assets dir from paths.profile_assets, else the overlay root', () => {
   const ov = tmp('ov');
   const pa = tmp('pa');
-  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov }), { profile: ov });
-  assert.deepEqual(alphaBases({ profile: { paths: { profile_assets: pa } }, overlayRoot: ov }), { profile: pa });
-  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: path.join(ov, 'missing') }), {});
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: null }), { profile: ov });
+  assert.deepEqual(alphaBases({ profile: { paths: { profile_assets: pa } }, overlayRoot: ov, assetsDefault: null }), { profile: pa });
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: path.join(ov, 'missing'), assetsDefault: null }), {});
+});
+
+test('alpha bases: media = paths.stream_assets, else the default folder when it exists (D241)', () => {
+  const ov = tmp('ov2');
+  const sa = tmp('sa');
+  const def = tmp('def');
+  assert.deepEqual(alphaBases({ profile: { paths: { stream_assets: sa } }, overlayRoot: ov, assetsDefault: def }), { profile: ov, media: sa });
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: def }), { profile: ov, media: def });
+  assert.deepEqual(alphaBases({ profile: { paths: { stream_assets: 'relative' } }, overlayRoot: ov, assetsDefault: path.join(def, 'missing') }), { profile: ov });
 });
 
 // ---- launcher wiring
@@ -396,7 +405,9 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
   mkdirSync(path.join(ov, 'overlays'), { recursive: true });
   const rec = path.join(root, 'record.json');
   const profile = path.join(root, 'profile.json');
-  writeFileSync(profile, JSON.stringify(PROFILE));
+  const assets = path.join(root, 'assets');
+  mkdirSync(assets, { recursive: true });
+  writeFileSync(profile, JSON.stringify({ ...PROFILE, paths: { ...PROFILE.paths, stream_assets: assets } }));
   const env = {
     UJWALAM_OBS_RUNTIME: root, UJWALAM_HOST_DATA: path.join(root, 'host'), UJWALAM_OVERLAY_ROOT: ov,
     UJWALAM_FAKE_HOST_RECORD: rec, UJWALAM_FAKE_HOST_DEVICES: path.join(FIX, 'project', 'devices-list.fixture.json'),
@@ -446,7 +457,7 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(h.load.skipUnavailable, true);
     assert.equal(h.load.captureLayers, 0);
     assert.ok(h.load.browserLayers > 0 && h.load.browserUrls === h.load.browserLayers && h.load.urlsOk, JSON.stringify(h.load));
-    assert.deepEqual(h.load.bases, ['profile']);
+    assert.deepEqual(h.load.bases, ['media', 'profile'], 'the stream assets folder from the profile is the media base');
     assert.match(r.out, /alpha project built/);
     assert.match(r.out, /overlay server: ready; event feed: on; child has the event token: yes; browser layers allowed/);
     assert.match(r.out, /overlay feed after 0 s: 3 overlay page\(s\) connected, 7 chat and 2 event frame\(s\) delivered, 0 effect\(s\)/);

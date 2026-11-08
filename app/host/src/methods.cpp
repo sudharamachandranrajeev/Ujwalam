@@ -395,8 +395,10 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 	// Scene transitions (D239): per canvas, cut or fade (0-10000 ms). The UI server keeps them equal to flag
 	// `transitions` and the project's canvases[].transition; host.status reports them.
 	add("transitions.set", [&a](const json::Value &p) {
-		Params q(p, {"canvas", "type", "durationMs"});
-		return a.studio->transition_set(q.str("canvas", 8), q.str("type", 8), q.int_or("durationMs", 0, 0, 10000));
+		Params q(p, {"canvas", "type", "durationMs", "file", "pointMs"});
+		const json::Value *file = q.has("file") ? &q.obj("file") : nullptr;
+		return a.studio->transition_set(q.str("canvas", 8), q.str("type", 8), q.int_or("durationMs", 0, 0, 10000), file,
+						q.int_or("pointMs", 0, 0, 10000));
 	});
 	add("transitions.get", [&a](const json::Value &) { return a.studio->transitions(); });
 

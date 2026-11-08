@@ -50,6 +50,8 @@
     postOpen: function (id) { return request('POST', '/ui/api/posts/open', { id: id }); },
     edits: function () { return request('GET', '/ui/api/edits'); },
     structure: function () { return request('GET', '/ui/api/project/structure'); },
+    transitions: function () { return request('GET', '/ui/api/project/transitions'); },
+    setTransition: function (body) { return request('POST', '/ui/api/project/transition', body); },
     structureEdit: function (body) { return request('POST', '/ui/api/project/structure', body); },
     undo: function () { return request('POST', '/ui/api/edits/undo', {}); },
     redo: function () { return request('POST', '/ui/api/edits/redo', {}); },

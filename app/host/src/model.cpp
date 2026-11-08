@@ -782,4 +782,15 @@ json::Value to_json(const Plan &p)
 	return r;
 }
 
+std::string resolve_path_ref(const json::Value &ref, const std::map<std::string, std::string> &bases, const std::string &what)
+{
+	Options o;
+	o.bases = bases;
+	Unavail u;
+	std::string f = resolve_file(ref, o, what, u);
+	if (f.empty())
+		throw Error(rpc::UNAVAILABLE, what + ": " + u.reason);
+	return f;
+}
+
 } // namespace model

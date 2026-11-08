@@ -383,7 +383,7 @@ test('Spark Element (Meld HTML overlay) imports as a browser layer sized from th
   assert.ok(!r.skipped.some((x) => /unknown layer kind/.test(x.reason) && x.kind === 'Spark Element'));
 });
 
-test('scene transitions (D239): Meld durations become per-canvas fades; an enabled stinger is reported, not guessed', () => {
+test('scene transitions (D239): Meld durations become per-canvas fades; an enabled stinger without a video is reported, not guessed', () => {
   const s = session();
   s.session.sceneTransition = { duration: 2006, effects: [{ type: 'Stinger', enabled: false }] };
   s.session.verticalSceneTransition = { duration: 1000, effects: [{ type: 'Stinger', enabled: true }] };
@@ -397,4 +397,33 @@ test('scene transitions (D239): Meld durations become per-canvas fades; an enabl
   const bad = structuredClone(p);
   bad.canvases[0].transition = { type: 'wipe', durationMs: 20000 };
   assert.equal(validateProject(bad).ok, false);
+});
+
+test('stinger transitions (D242): an enabled Meld stinger with a local video imports with its cut point under the media base', () => {
+  const s = session();
+  s.session.sceneTransition = { duration: 2006, effects: [{ type: 'Stinger', enabled: true, source: 'file:///D:/Media/Stingers/wipe.webm', midPointMs: 1750.4, audioEnabled: false }] };
+  s.session.verticalSceneTransition = { duration: 1000, effects: [{ type: 'Stinger', enabled: true, source: 'https://example.com/x.webm' }] };
+  const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
+  const h = p.canvases.find((c) => c.id === 'h').transition;
+  assert.equal(h.type, 'stinger');
+  assert.equal(h.pointMs, 1750);
+  assert.equal(h.file.base, 'media');
+  assert.ok(h.file.rel.endsWith('wipe.webm'), h.file.rel);
+  assert.equal(r.bases.media.length > 0, true);
+  assert.deepEqual(p.canvases.find((c) => c.id === 'v').transition, { type: 'fade', durationMs: 1000 }, 'a remote stinger stays a fade');
+  assert.ok(r.warnings.some((w) => w.includes('canvas v') && w.includes('not a local')));
+  assert.ok(r.warnings.some((w) => w.includes('canvas h') && w.includes('track matte')));
+  assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
+  assert.equal(validateProject(p).ok, true, JSON.stringify(validateProject(p).errors));
+  const bad = structuredClone(p);
+  bad.canvases[1].transition = { type: 'fade', durationMs: 10, pointMs: 5 };
+  assert.equal(validateProject(bad).ok, false, 'pointMs only for a stinger');
+  assert.equal(schemaCheck(bad), false);
+  delete bad.canvases[0].transition.file;
+  bad.canvases[1].transition = { type: 'cut', durationMs: 0 };
+  assert.equal(validateProject(bad).ok, false, 'a stinger needs its file');  // the layers' media are on D:, so a stinger on C: cannot share their base
+  s.session.sceneTransition.effects[0].source = 'file:///C:/Media/Stingers/wipe.webm';
+  const other = importMeld(s, { id: 'meld-test' });
+  assert.deepEqual(other.project.canvases.find((c) => c.id === 'h').transition, { type: 'fade', durationMs: 2006 });
+  assert.ok(other.report.warnings.some((w) => w.includes('canvas h') && w.includes('another drive')));
 });

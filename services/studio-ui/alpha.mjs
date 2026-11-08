@@ -12,9 +12,11 @@
 //     device is opened once. Roles come from services/project/device-roles.mjs; unbound roles stay transparent
 //     placeholders (scene-preset.mjs, D112). A bound mic becomes an audio source on track 1, the bound game capture
 //     layer's own audio too; monitoring off.
-//   alphaBases({ profile, overlayRoot }) -> pathRef bases for project.load (profile: image files of the presets).
-import { existsSync, mkdirSync, readFileSync, renameSync } from 'node:fs';
+//   alphaBases({ profile, overlayRoot }) -> pathRef bases for project.load (profile: image files of the presets;
+//     media: the user's stream assets folder, streamAssetsDir, when it exists, D241).
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createProject, newId, projectFile, saveProject, validateProject } from '../project/index.mjs';
 import { loadScenePreset, ScenePresetError } from '../project/scene-preset.mjs';
 
@@ -34,10 +36,24 @@ export function readProfile(file) {
 // Image layers in the presets use base "profile": paths.profile_assets from the local profile when it is an
 // absolute directory, else the overlay root (legacy/: overlays/, brand/, kit/). Missing -> no base (the host then
 // lists the image layers as unavailable).
-export function alphaBases({ profile = {}, overlayRoot } = {}) {
+export function alphaBases({ profile = {}, overlayRoot, assetsDefault } = {}) {
   const pa = profile?.paths?.profile_assets;
   const dir = typeof pa === 'string' && path.isAbsolute(pa) ? pa : overlayRoot;
-  return dir && path.isAbsolute(dir) && existsSync(dir) ? { profile: path.resolve(dir) } : {};
+  const out = dir && path.isAbsolute(dir) && existsSync(dir) ? { profile: path.resolve(dir) } : {};
+  const media = streamAssetsDir(profile, assetsDefault);
+  if (media) out.media = media;
+  return out;
+}
+
+// The user's own stream assets (images, videos; D241): profile paths.stream_assets, else <repo>/data/stream assets
+// (gitignored). null when neither is an existing folder.
+export const STREAM_ASSETS_DEFAULT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'stream assets');
+export function streamAssetsDir(profile, fallback = STREAM_ASSETS_DEFAULT) {
+  const p = profile?.paths?.stream_assets;
+  for (const d of [typeof p === 'string' && path.isAbsolute(p) ? p : null, fallback]) {
+    try { if (d && statSync(d).isDirectory()) return path.resolve(d); } catch { /* try the next */ }
+  }
+  return null;
 }
 
 function mergeInto(project, hSceneId, vSceneId) {

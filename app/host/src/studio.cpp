@@ -10,6 +10,7 @@
 #include <obs-audio-controls.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -187,43 +188,108 @@ static void route_channel(const std::string &id, obs_canvas_t *vc, obs_source_t 
 }
 
 // Channel 0 of a canvas is its transition (created on first use, sized to the canvas); the scene is the transition's
-// child. animate: a scene switch fades when the canvas's transition is a fade with a duration; otherwise it cuts. A
-// transition that cannot be created (no obs-transitions module) falls back to routing the scene directly (cuts).
+// child. animate: a scene switch fades (fade with a duration) or plays the stinger (stinger); otherwise it cuts. The
+// fade transition also does the cuts; while the type is stinger the stinger transition is on the channel instead
+// (swapped with obs_transition_swap_begin/end, as the OBS frontend does). A transition that cannot be created (no
+// obs-transitions module) falls back to routing the scene directly (cuts).
+static void swap_to(const std::string &id, obs_canvas_t *vc, obs_source_t *&routed, obs_source_t *next)
+{
+	if (routed == next)
+		return;
+	if (routed && next) {
+		obs_transition_swap_begin(next, routed);
+		route_channel(id, vc, next);
+		obs_transition_swap_end(next, routed);
+	} else {
+		route_channel(id, vc, next);
+	}
+	routed = next;
+}
+
 void Studio::set_channel(Canvas &c, Scene *s, bool animate)
 {
 	obs_source_t *src = s ? obs_scene_get_source(s->scene) : nullptr;
 	if (!c.tr && src) {
 		std::string name = "ujw:transition:" + c.id;
 		c.tr = obs_source_create_private("fade_transition", name.c_str(), nullptr);
-		if (c.tr) {
+		if (c.tr)
 			obs_transition_set_size(c.tr, c.w, c.h);
-			route_channel(c.id, c.vc, c.tr);
-		} else {
+		else
 			hlog::warn("canvas %s: fade_transition unavailable; scene switches cut", c.id.c_str());
-		}
 	}
 	if (!c.tr) {
 		route_channel(c.id, c.vc, src);
-	} else if (animate && src && c.tr_type == "fade" && c.tr_ms > 0 && !c.active.empty() && (!s || c.active != s->id)) {
+		c.active = s ? s->id : "";
+		return;
+	}
+	obs_source_t *want = c.tr_type == "stinger" && c.st ? c.st : c.tr;
+	swap_to(c.id, c.vc, c.routed, want);
+	bool change = animate && src && !c.active.empty() && (!s || c.active != s->id);
+	if (change && want == c.st) {
+		if (!obs_transition_start(c.st, OBS_TRANSITION_MODE_AUTO, 0, src))
+			obs_transition_set(c.st, src);
+	} else if (change && c.tr_type == "fade" && c.tr_ms > 0) {
 		if (!obs_transition_start(c.tr, OBS_TRANSITION_MODE_AUTO, c.tr_ms, src))
 			obs_transition_set(c.tr, src);
 	} else {
-		obs_transition_set(c.tr, src);
+		obs_transition_set(want, src);
 	}
 	c.active = s ? s->id : "";
 }
 
-json::Value Studio::transition_set(const std::string &cv, const std::string &type, int64_t ms)
+json::Value Studio::transition_set(const std::string &cv, const std::string &type, int64_t ms, const json::Value *file,
+				   int64_t point_ms)
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);
-	if (type != "cut" && type != "fade")
-		throw Error(rpc::INVALID_PARAMS, "type must be cut or fade");
+	if (type != "cut" && type != "fade" && type != "stinger")
+		throw Error(rpc::INVALID_PARAMS, "type must be cut, fade or stinger");
 	Canvas *c = canvas(norm_canvas(cv));
 	if (!c)
 		throw Error(rpc::INVALID_PARAMS, "unknown canvas");
+	if (type == "stinger") {
+		if (!file || !file->is_object())
+			throw Error(rpc::INVALID_PARAMS, "a stinger needs file {base, rel}");
+		std::string path = model::resolve_path_ref(*file, last_opts_.bases, "stinger");
+		std::string ext = path.size() > 4 ? path.substr(path.find_last_of('.') == std::string::npos ? path.size() : path.find_last_of('.')) : "";
+		std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return (char)std::tolower(ch); });
+		if (ext != ".webm" && ext != ".mp4" && ext != ".mov" && ext != ".mkv")
+			throw Error(rpc::INVALID_PARAMS, "stinger file must be .webm, .mp4, .mov or .mkv");
+		std::string ref = file->find("base")->as_string() + ":" + file->find("rel")->as_string();
+		obs_data_t *d = obs_data_create();
+		obs_data_set_string(d, "path", path.c_str());
+		obs_data_set_int(d, "tp_type", 0); // transition point in milliseconds
+		obs_data_set_int(d, "transition_point", point_ms);
+		obs_data_set_int(d, "audio_monitoring", 0); // stinger audio goes to the stream mix only
+		obs_data_set_int(d, "audio_fade_style", 0); // scene audio fades out, then in
+		if (!c->st) {
+			std::string name = "ujw:stinger:" + c->id;
+			c->st = obs_source_create_private("obs_stinger_transition", name.c_str(), d);
+			if (c->st)
+				obs_transition_set_size(c->st, c->w, c->h);
+		} else if (ref != c->st_ref || (uint32_t)point_ms != c->st_point) {
+			obs_source_update(c->st, d);
+		}
+		obs_data_release(d);
+		if (!c->st)
+			throw Error(rpc::UNAVAILABLE, "obs_stinger_transition unavailable (obs-transitions module)");
+		c->st_ref = ref;
+		c->st_point = (uint32_t)point_ms;
+		c->tr_ms = 0;
+	} else {
+		c->tr_ms = type == "fade" ? (uint32_t)ms : 0;
+	}
 	c->tr_type = type;
-	c->tr_ms = type == "fade" ? (uint32_t)ms : 0;
-	hlog::info("transition %s: %s %u ms", c->id.c_str(), c->tr_type.c_str(), c->tr_ms);
+	if (c->tr && c->routed) { // put the right transition on the channel now, showing the same scene
+		Scene *cur = c->active.empty() ? nullptr : scene(c->active, c->id);
+		set_channel(*c, cur, false);
+	}
+	if (type != "stinger" && c->st) { // not needed any more (the call above took it off the channel)
+		obs_source_release(c->st);
+		c->st = nullptr;
+		c->st_ref.clear();
+		c->st_point = 0;
+	}
+	hlog::info("transition %s: %s %u ms", c->id.c_str(), c->tr_type.c_str(), type == "stinger" ? c->st_point : c->tr_ms);
 	return transitions();
 }
 
@@ -235,6 +301,10 @@ json::Value Studio::transitions() const
 		json::Value o = json::Value::object();
 		o.set("type", c.tr_type);
 		o.set("durationMs", (int64_t)c.tr_ms);
+		if (c.tr_type == "stinger") {
+			o.set("file", c.st_ref);
+			o.set("pointMs", (int64_t)c.st_point);
+		}
 		o.set("available", c.tr != nullptr); // false before the first scene, or without obs-transitions
 		r.set(c.id, std::move(o));
 	}
@@ -323,10 +393,14 @@ void Studio::teardown()
 	drop_relay();
 	for (auto &c : canvases_) {
 		set_channel(c, nullptr);
-		if (c.tr) { // off the output before the release, then the transition drops its scene references
+		if (c.tr || c.st) { // off the output before the release, then the transitions drop their scene references
 			route_channel(c.id, c.vc, nullptr);
-			obs_source_release(c.tr);
-			c.tr = nullptr;
+			c.routed = nullptr;
+			if (c.tr)
+				obs_source_release(c.tr);
+			if (c.st)
+				obs_source_release(c.st);
+			c.tr = c.st = nullptr;
 		}
 	}
 	for (auto &g : globals_)

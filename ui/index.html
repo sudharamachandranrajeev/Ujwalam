@@ -32,6 +32,18 @@
         <button id="btn-scene-remove" class="btn btn-quiet" type="button" title="Remove this scene (not one that is showing)">Remove scene</button>
       </div>
     </section>
+    <section id="transition-edit" class="panel" hidden>
+      <h2>Transition</h2>
+      <div class="struct-edit">
+        <select id="tr-canvas" aria-label="Canvas"><option value="h">H</option><option value="v">V</option></select>
+        <select id="tr-type" aria-label="Transition type"><option value="cut">Cut</option><option value="fade">Fade</option><option value="stinger">Stinger video</option></select>
+        <input id="tr-ms" type="number" min="0" max="10000" step="1" aria-label="Fade length in milliseconds" title="Fade length (ms)">
+        <select id="tr-file" aria-label="Stinger video (stream assets)"></select>
+        <input id="tr-point" type="number" min="0" max="10000" step="1" aria-label="Stinger cut point in milliseconds" title="When the scene changes under the stinger (ms)">
+        <button id="btn-tr-save" class="btn btn-quiet" type="button">Save</button>
+        <p id="tr-note" class="muted" role="status"></p>
+      </div>
+    </section>
     <section class="panel grow">
       <h2>Layers</h2>
       <div class="tabs">
@@ -50,6 +62,8 @@
           <option value="text">Text</option>
           <option value="capture">Camera or capture card</option>
           <option value="overlay">Overlay</option>
+          <option value="image">Image (stream assets)</option>
+          <option value="media">Video (stream assets)</option>
         </select>
         <select id="layer-pick" aria-label="Layer, device or overlay"></select>
         <input id="layer-value" type="text" maxlength="2000" aria-label="Colour or text">

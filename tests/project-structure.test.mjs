@@ -2,7 +2,7 @@
 // Scene and layer structure edits (P5b, D240): the pure project changes (services/project/structure.mjs) and the UI
 // server route (/ui/api/project/structure: flag, live lock, host first, then the file; undo history cleared).
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,7 @@ import { createFlags } from '../services/flags/index.mjs';
 import { createProject, saveProject, validateProject } from '../services/project/index.mjs';
 import { addLayer, addScene, removeLayer, removeScene } from '../services/project/structure.mjs';
 import { createProjectSync } from '../services/studio-ui/project-sync.mjs';
+import { listAssets } from '../services/studio-ui/assets.mjs';
 import { SCENE_EDIT_FLAG, createStudioServer } from '../services/studio-ui/server.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
@@ -58,8 +59,15 @@ test('addLayer: copy points at the real layer with its placements; colour, text,
   const o = addLayer(doc, { scene: s, kind: 'overlay', overlay: 'alerts' });
   assert.deepEqual(o.layer.source, { overlay: 'alerts', width: 1920, height: 1080 });
   assert.deepEqual(o.layer.placements.v, { visible: true, x: 0, y: 0, width: 1080, height: 608 });
+  const img = addLayer(doc, { scene: s, kind: 'image', file: 'logos/main logo.png' });
+  assert.deepEqual(img.layer.source, { file: { base: 'media', rel: 'logos/main logo.png' } });
+  assert.equal(img.layer.name, 'main logo');
+  assert.deepEqual(addLayer(doc, { scene: s, kind: 'media', file: 'intro.mp4' }).layer.source, { file: { base: 'media', rel: 'intro.mp4' }, loop: true });
+  assert.equal(addLayer(doc, { scene: s, kind: 'image', file: '../x.png' }).error, 'bad-file');
+  assert.equal(addLayer(doc, { scene: s, kind: 'image', file: 'C:/x.png' }).error, 'bad-file');
   assert.equal(addLayer(doc, { scene: s, kind: 'color', color: 'red' }).error, 'bad-color');
-  assert.equal(addLayer(doc, { scene: s, kind: 'image' }).error, 'bad-kind');
+  assert.equal(addLayer(doc, { scene: s, kind: 'wipe' }).error, 'bad-kind');
+  assert.equal(addLayer(doc, { scene: s, kind: 'image' }).error, 'bad-file');
   assert.equal(addLayer(doc, { scene: s, kind: 'copy', of: 'zz' }).error, 'unknown-layer');
 });
 
@@ -149,5 +157,47 @@ test('server: flag gate, live lock, host first then the file; a host refusal sav
     r = await post({ op: 'scene.remove', scene: sid });
     assert.equal(r.status, 200);
     assert.equal(disk().scenes.length, 1);
+  } finally { await srv.close(); }
+});
+
+test('listAssets: images and videos only, relative with forward slashes, hidden names and depth limit respected', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-assets-'));
+  mkdirSync(path.join(d, 'a', 'b', 'c', 'd', 'e'), { recursive: true });
+  mkdirSync(path.join(d, '.hidden'));
+  for (const f of ['x.PNG', 'notes.txt', 'clip.webm', 'a/y.jpg', 'a/b/c/d/deep.png', 'a/b/c/d/e/too-deep.png', '.hidden/z.png', '.dot.png']) writeFileSync(path.join(d, f), '');
+  assert.deepEqual(listAssets(d), [{ rel: 'a/b/c/d/deep.png', kind: 'image' }, { rel: 'a/y.jpg', kind: 'image' }, { rel: 'clip.webm', kind: 'media' }, { rel: 'x.PNG', kind: 'image' }]);
+  assert.equal(listAssets(d, { max: 2 }).length, 2);
+  assert.deepEqual(listAssets(path.join(d, 'missing')), []);
+  assert.deepEqual(listAssets(null), []);
+});
+
+test('server: an asset layer must name a file the listing offers', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-struct2-'));
+  const assets = path.join(dir, 'assets');
+  mkdirSync(assets);
+  writeFileSync(path.join(assets, 'logo.png'), '');
+  const file = path.join(dir, 'p.project.json');
+  saveProject(file, base());
+  const calls = [];
+  const host = { describe: () => ({ kind: 'host', available: true }), call: async (m, p) => { if (m === 'host.status') return { live: false }; if (m === 'layers.addFromProject') calls.push(p.layer); return {}; } };
+  const flags = createFlags({ dataDir: dir });
+  flags.set(SCENE_EDIT_FLAG, true);
+  const core = { describe: () => ({ available: false }), call: async () => { throw new Error('x'); } };
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, flags, projectSync: createProjectSync({ file }), assetsDir: assets, limits: { statusPollMs: 50 } });
+  const { port } = await srv.listen();
+  try {
+    const cookie = await new Promise((resolve) => http.get({ host: '127.0.0.1', port, path: `/login?k=${KEY}` }, (res) => { res.resume(); resolve(res.headers['set-cookie'][0].split(';')[0]); }));
+    const csrf = (await raw(port, { url: '/ui/api/session', headers: { cookie } })).body.csrf;
+    const post = (body) => raw(port, { method: 'POST', url: '/ui/api/project/structure', body: JSON.stringify(body),
+      headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
+    const ch = (await raw(port, { url: '/ui/api/project/structure', headers: { cookie } })).body;
+    assert.deepEqual(ch.assets, [{ rel: 'logo.png', kind: 'image' }]);
+    const scene = ch.scenes[0].id;
+    assert.equal((await post({ op: 'layer.add', scene, kind: 'image', file: 'other.png' })).body.error, 'unknown-asset');
+    assert.equal((await post({ op: 'layer.add', scene, kind: 'media', file: 'logo.png' })).body.error, 'unknown-asset', 'kind must match');
+    const r = await post({ op: 'layer.add', scene, kind: 'image', file: 'logo.png' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(calls.length, 1);
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).scenes[0].layers.at(-1).source, { file: { base: 'media', rel: 'logo.png' } });
   } finally { await srv.close(); }
 });

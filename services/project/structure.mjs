@@ -12,14 +12,16 @@
 //       text    { text }     centred box
 //       capture { device }   a device of the project, full canvas
 //       overlay { overlay }  an overlay of the project, a browser layer the size of each canvas
+//       image   { file }     a still image under pathRef base "media" (the user's stream assets, D241), full canvas
+//       media   { file }     a video under base "media", looping, full canvas
 //     New layers go on top, on every canvas of the project.
 //   removeLayer(doc, { scene, layer })           -> { project }      refused while a copy or an audio source uses it
 // Layer ids are unique across the project (validateProject), new ids come from newId.
 
-import { newId, validateProject } from './index.mjs';
+import { newId, relPathProblem, validateProject } from './index.mjs';
 
 const COLOR = /^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$/;
-const KINDS = ['copy', 'color', 'text', 'capture', 'overlay'];
+const KINDS = ['copy', 'color', 'text', 'capture', 'overlay', 'image', 'media'];
 
 const label = (v) => (typeof v === 'string' && v.trim().length >= 1 && v.trim().length <= 120 ? v.trim() : null);
 
@@ -95,6 +97,10 @@ export function addLayer(doc, p = {}) {
     const d = (doc.devices ?? []).find((x) => x.id === p.device);
     if (!d || d.kind === 'microphone' || d.kind === 'audio-output') return { error: 'unknown-device' };
     layer = { id: newId('capture'), type: 'capture', name: d.name, source: { device: d.id }, placements };
+  } else if (p.kind === 'image' || p.kind === 'media') {
+    if (relPathProblem(p.file)) return { error: 'bad-file' };
+    const name = label(p.file.split('/').pop().replace(/\.[^.]+$/, '').slice(0, 120)) ?? (p.kind === 'image' ? 'Image' : 'Video');
+    layer = { id: newId(p.kind), type: p.kind, name, source: { file: { base: 'media', rel: p.file }, ...(p.kind === 'media' ? { loop: true } : {}) }, placements };
   } else {
     const o = (doc.overlays ?? []).find((x) => x.id === p.overlay);
     if (!o) return { error: 'unknown-overlay' };

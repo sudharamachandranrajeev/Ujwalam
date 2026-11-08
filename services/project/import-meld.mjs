@@ -245,6 +245,22 @@ export function importMeld(input, opts = {}) {
     }
   }
 
+  // ---- stinger transitions (D242): an enabled Meld stinger whose video is a local file joins the media base
+  const stingers = {};
+  for (const [cid, key] of [['h', 'sceneTransition'], ['v', 'verticalSceneTransition']]) {
+    const t = S[key];
+    const e = t && typeof t === 'object' && Array.isArray(t.effects) ? t.effects.find((x) => x && x.enabled === true && x.type === 'Stinger') : null;
+    if (!e) continue;
+    const src = typeof e.source === 'string' ? e.source : '';
+    const p = src.startsWith('file:') ? fileUrlToPath(src) : (/^[A-Za-z]:[\\/]/.test(src) ? src.replace(/\\/g, '/') : null);
+    if (!p || !/\.(webm|mp4|mov|mkv)$/i.test(p)) { report.warnings.push(`canvas ${cid}: the Meld stinger video is not a local .webm/.mp4/.mov/.mkv file; imported as a fade`); continue; }
+    // One media base holds every media path: a stinger on another drive than the layers' media cannot join it.
+    if (commonDir([...mediaPaths, p]) === '') { report.warnings.push(`canvas ${cid}: the Meld stinger video is on another drive than the other media files; imported as a fade`); continue; }
+    mediaPaths.push(p);
+    stingers[cid] = { p, pointMs: Math.round(Math.min(10000, Math.max(0, num(e.midPointMs) ? e.midPointMs : 0))) };
+    report.warnings.push(`canvas ${cid}: Meld stinger imported (video and cut point); its track matte and audio switch are not imported`);
+  }
+
   // ---- bases: where relative paths point
   const mediaRoot = commonDir(mediaPaths);
   const overlayRoot = commonDir(overlayFilePaths);
@@ -257,17 +273,16 @@ export function importMeld(input, opts = {}) {
   project.scenes = [];
   project.activeScene = undefined;
   if (!vEnabled) project.canvases = project.canvases.filter((c) => c.id === 'h');
-  // Scene transitions (D239): Meld keeps one per canvas. Its duration becomes a fade; a stinger effect (video file)
-  // is not supported yet, so an enabled stinger still imports as a fade and is reported. The easing curve is dropped.
+  // Scene transitions (D239): Meld keeps one per canvas. Its duration becomes a fade; an enabled stinger with a local
+  // video becomes a stinger (D242, collected above). The easing curve is dropped.
   for (const [cid, key] of [['h', 'sceneTransition'], ['v', 'verticalSceneTransition']]) {
     const t = S[key];
     const c = project.canvases.find((x) => x.id === cid);
     if (!c || !t || typeof t !== 'object' || !num(t.duration)) continue;
     const durationMs = Math.round(Math.min(10000, Math.max(0, t.duration)));
     c.transition = { type: durationMs > 0 ? 'fade' : 'cut', durationMs };
-    if (Array.isArray(t.effects) && t.effects.some((e) => e && e.enabled === true && e.type === 'Stinger')) {
-      report.warnings.push(`canvas ${cid}: the Meld stinger transition is not supported yet; imported as a ${durationMs} ms fade`);
-    }
+    const st = stingers[cid];
+    if (st) c.transition = { type: 'stinger', durationMs, file: { base: 'media', rel: relUnder(mediaRoot, st.p) }, pointMs: st.pointMs };
   }
   project.origin = { importer: 'meld', id: 'session' };
 

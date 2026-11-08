@@ -47,7 +47,7 @@
   }
 
   // ---- scene and layer structure edits (D240, flag scene-edit; saved into the project file, refused while live) ----
-  var STRUCT_ERRORS = { 'live-locked': 'Not while live.', 'host-unavailable': 'The studio host is not reachable.', 'scene-active': 'That scene is the project start scene; pick another first.', 'last-scene': 'The last scene cannot be removed.', 'layer-copied': 'Another layer is a copy of it; remove the copy first.', 'layer-has-audio': 'Its audio is in the mixer; it cannot be removed here.', 'bad-name': 'Type a scene name.', 'bad-color': 'Colour must look like #RRGGBB.', 'bad-text': 'Type the text.', 'no-project-file': 'No project file is open.', 'scene-edit-off': 'Turn on the scene-edit flag first.' };
+  var STRUCT_ERRORS = { 'live-locked': 'Not while live.', 'host-unavailable': 'The studio host is not reachable.', 'scene-active': 'That scene is the project start scene; pick another first.', 'last-scene': 'The last scene cannot be removed.', 'layer-copied': 'Another layer is a copy of it; remove the copy first.', 'layer-has-audio': 'Its audio is in the mixer; it cannot be removed here.', 'bad-name': 'Type a scene name.', 'bad-color': 'Colour must look like #RRGGBB.', 'bad-text': 'Type the text.', 'no-project-file': 'No project file is open.', 'scene-edit-off': 'Turn on the scene-edit flag first.', 'unknown-asset': 'That file is no longer in the stream assets folder.' };
   var choices = null;
   function renderStructure(on) {
     $('scene-edit').hidden = !on; $('layer-edit').hidden = !on;
@@ -65,9 +65,10 @@
   function renderPick() {
     var kind = $('layer-kind').value, sel = $('layer-pick'), v = $('layer-value'); clear(sel);
     var items = !choices ? [] : kind === 'copy' ? choices.layers.map(function (l) { return { id: l.id, name: l.name + ' (' + l.sceneName + ')' }; })
-      : kind === 'capture' ? choices.devices : kind === 'overlay' ? choices.overlays : [];
+      : kind === 'capture' ? choices.devices : kind === 'overlay' ? choices.overlays
+      : (kind === 'image' || kind === 'media') ? (choices.assets || []).filter(function (a) { return a.kind === kind; }).map(function (a) { return { id: a.rel, name: a.rel }; }) : [];
     items.forEach(function (x) { sel.appendChild(el('option', { value: x.id, text: x.name })); });
-    sel.hidden = !(kind === 'copy' || kind === 'capture' || kind === 'overlay');
+    sel.hidden = !(kind === 'copy' || kind === 'capture' || kind === 'overlay' || kind === 'image' || kind === 'media');
     v.hidden = !(kind === 'color' || kind === 'text');
     v.placeholder = kind === 'color' ? '#RRGGBB' : 'Text';
   }
@@ -84,6 +85,7 @@
     if (kind === 'copy') body.of = $('layer-pick').value;
     else if (kind === 'capture') body.device = $('layer-pick').value;
     else if (kind === 'overlay') body.overlay = $('layer-pick').value;
+    else if (kind === 'image' || kind === 'media') body.file = $('layer-pick').value;
     else if (kind === 'color') body.color = $('layer-value').value.trim();
     else body.text = $('layer-value').value;
     structureEdit(body);
@@ -99,6 +101,42 @@
     if (!opt) return;
     if (!window.confirm('Remove scene "' + opt.text + '" and its layers?')) return;
     structureEdit({ op: 'scene.remove', scene: opt.value });
+  }
+
+  // ---- transition per canvas (D242, flag transitions): saved into the project; the server applies it to the host ----
+  var trChoices = null;
+  var TR_ERRORS = { 'live-locked': 'Not while live.', 'unknown-asset': 'That video is no longer in the stream assets folder.', 'transitions-off': 'Turn on the transitions flag first.', 'no-project-file': 'No project file is open.' };
+  function renderTransitionCard(on) {
+    $('transition-edit').hidden = !on;
+    if (!on) { trChoices = null; return; }
+    Api.transitions().then(function (c) {
+      trChoices = c && c.available ? c : null;
+      if (!trChoices) { $('transition-edit').hidden = true; return; }
+      var f = $('tr-file'); clear(f);
+      trChoices.videos.forEach(function (v) { f.appendChild(el('option', { value: v, text: v })); });
+      showTransition();
+    }).catch(function () { /* stays as it was */ });
+  }
+  function showTransition() {
+    if (!trChoices) return;
+    var cv = $('tr-canvas').value, c = trChoices.canvases.filter(function (x) { return x.id === cv; })[0];
+    var t = (c && c.transition) || { type: 'cut', durationMs: 0 };
+    $('tr-type').value = t.type;
+    $('tr-ms').value = String(t.durationMs || 0);
+    $('tr-point').value = String(t.pointMs || 0);
+    if (t.file && t.file.rel) $('tr-file').value = t.file.rel;
+    trFields();
+  }
+  function trFields() {
+    var ty = $('tr-type').value;
+    $('tr-ms').hidden = ty !== 'fade'; $('tr-file').hidden = ty !== 'stinger'; $('tr-point').hidden = ty !== 'stinger';
+  }
+  function saveTransition() {
+    var ty = $('tr-type').value, body = { canvas: $('tr-canvas').value, type: ty };
+    if (ty === 'fade') body.durationMs = Math.round(Number($('tr-ms').value));
+    if (ty === 'stinger') { body.file = $('tr-file').value; body.pointMs = Math.round(Number($('tr-point').value)); }
+    Api.setTransition(body).then(function () { setText($('tr-note'), 'Saved; scene switches use it within a second.'); renderTransitionCard(true); })
+      .catch(function (e) { setText($('tr-note'), TR_ERRORS[e && e.message] || ('Not saved: ' + ((e && (e.detail || e.message)) || 'failed'))); });
   }
 
   // ---- scenes and layers ----
@@ -345,6 +383,7 @@
     $('bots').hidden = !botsOn;
     if (botsOn) loadBots(); else clear($('bot-list'));
     renderStructure((list || []).some(function (f) { return f.id === 'scene-edit' && f.on; }));
+    renderTransitionCard((list || []).some(function (f) { return f.id === 'transitions' && f.on; }));
     var reportOn = (list || []).some(function (f) { return f.id === 'report-button' && f.on; });
     $('report').hidden = !reportOn;
     (list || []).forEach(function (f) {
@@ -574,6 +613,9 @@
     $('layer-kind').addEventListener('change', renderPick);
     $('btn-layer-add').addEventListener('click', addLayerClick);
     $('btn-layer-remove').addEventListener('click', removeLayerClick);
+    $('tr-canvas').addEventListener('change', showTransition);
+    $('tr-type').addEventListener('change', trFields);
+    $('btn-tr-save').addEventListener('click', saveTransition);
     document.addEventListener('keydown', function (e) {
       var t = e.target && e.target.tagName;
       if (!(e.ctrlKey || e.metaKey) || e.altKey || t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return; // text fields keep their own undo

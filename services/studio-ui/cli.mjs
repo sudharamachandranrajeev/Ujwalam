@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveDataDir } from '../event-core/config.mjs';
 import { createCoreClient, createFakeBots, createHostRouter } from './backends.mjs';
 import { createProjectSync } from './project-sync.mjs';
+import { readProfile, streamAssetsDir } from './alpha.mjs';
 import { createStudioServer } from './server.mjs';
 import { watchParent } from '../common/parent-pipe.mjs';
 
@@ -38,7 +39,9 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   const releaseFile = typeof args.release === 'string' ? path.resolve(args.release) : undefined;
   // --project: the project file the host loaded; layer edits are autosaved into it (P5b, project-sync.mjs).
   const projectSync = typeof args.project === 'string' ? createProjectSync({ file: path.resolve(args.project), log: (m) => out(`[studio-ui] ${m}`) }) : null;
-  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, projectSync, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
+  // D241: the stream assets folder for image/video layers (the same one launch.mjs gives the host as base "media").
+  const assetsDir = projectSync ? streamAssetsDir(profileFile ? readProfile(profileFile) : {}) : null;
+  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, projectSync, assetsDir, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
   const { port } = await srv.listen();
   out(`[studio-ui] listening on http://127.0.0.1:${port}/ (no token printed)`);
   if (host.describe().kind === 'fake') out('[studio-ui] BLOCKED-ON-HOST: no libobs host found, using the in-memory fake backend');

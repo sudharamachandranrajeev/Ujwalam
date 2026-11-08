@@ -51,9 +51,14 @@
         "transition": {
           "type": "object", "additionalProperties": false, "required": ["type", "durationMs"],
           "properties": {
-            "type": { "enum": ["cut", "fade"] },
-            "durationMs": { "type": "integer", "minimum": 0, "maximum": 10000 }
-          }
+            "type": { "enum": ["cut", "fade", "stinger"] },
+            "durationMs": { "type": "integer", "minimum": 0, "maximum": 10000 },
+            "file": { "$ref": "#/$defs/pathRef", "$comment": "stinger only (D242): the video played over the switch" },
+            "pointMs": { "type": "integer", "minimum": 0, "maximum": 10000, "$comment": "stinger only: when the scene changes under it" }
+          },
+          "if": { "properties": { "type": { "const": "stinger" } } },
+          "then": { "properties": { "file": true, "pointMs": true }, "required": ["file", "pointMs"] },
+          "else": { "properties": { "file": false, "pointMs": false } }
         }
       }
     },

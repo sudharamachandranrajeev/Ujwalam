@@ -112,5 +112,8 @@ json::Value to_json(const Plan &p);
 
 // True if the document is a project v1 model (not the host test format).
 bool is_model(const json::Value &doc);
+// A pathRef {base, rel} as an absolute file inside its base directory (symlinks resolved, must stay inside).
+// Throws rpc::Error: INVALID_PARAMS for a bad ref, UNAVAILABLE when the base is not given or the file is missing.
+std::string resolve_path_ref(const json::Value &ref, const std::map<std::string, std::string> &bases, const std::string &what);
 
 } // namespace model

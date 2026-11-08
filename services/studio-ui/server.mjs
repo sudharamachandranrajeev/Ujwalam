@@ -36,6 +36,7 @@ import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs
 import { createFeedback } from './feedback.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
 import { addLayer, addScene, removeLayer, removeScene } from '../project/structure.mjs';
+import { listAssets } from './assets.mjs';
 import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
@@ -128,7 +129,7 @@ export const TRANSITIONS_FLAG = 'transitions';
 // Scene and layer structure edits (D240): add/remove scenes and layers from the control page, saved into the project.
 export const SCENE_EDIT_FLAG = 'scene-edit';
 const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove'];
-const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay'], 'layer.remove': ['scene', 'layer'] };
+const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'] };
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
 const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
@@ -192,6 +193,8 @@ export function createStudioServer(opts) {
   const { core, host } = opts;
   // P5b autosave of layer edits into the project file (project-sync.mjs); null: edits stay live-only.
   const projectSync = opts.projectSync ?? null;
+  // The user's stream assets folder (D241; base "media" of the alpha load); null: no image or video layers.
+  const assetsDir = typeof opts.assetsDir === 'string' ? opts.assetsDir : null;
   // Undo / redo of layer edits (P5b, D238): in memory, newest 50; inspector, layer-list and preview-mouse edits.
   const history = opts.history ?? createEditHistory();
   // Feature flags (D149) and the post-stream feedback form (D150). opts.flags / opts.feedback are test seams.
@@ -335,16 +338,26 @@ export function createStudioServer(opts) {
     return projTr.value;
   }
   // Keeps host.status.transitions equal to what flag + project want; a mismatch is set again on the next poll.
+  // A stinger the host refused (file missing, module absent) is not asked for again until the project changes it; the
+  // canvas cuts meanwhile (D242).
+  const trRefused = {};
+  const trKey = (t) => JSON.stringify([t.type, t.durationMs, t.file ?? null, t.pointMs ?? null]);
   async function transitionSync(hs) {
     if (!isPlain(hs.transitions)) return; // older host or fake: nothing to sync
     const on = !!flags && flags.isOn(TRANSITIONS_FLAG);
     const want = on ? projectTransitions() : {};
     for (const [hid, cur] of Object.entries(hs.transitions)) {
       const t = want[hid.toLowerCase()];
-      const type = t && (t.type === 'fade' || t.type === 'cut') ? t.type : 'cut';
-      const durationMs = type === 'fade' && Number.isInteger(t.durationMs) ? Math.min(10000, Math.max(0, t.durationMs)) : 0;
-      if (cur?.type === type && cur?.durationMs === durationMs) continue;
-      try { await host.call('transitions.set', { canvas: hid, type, durationMs }); } catch { /* next poll */ }
+      let p = { type: 'cut', durationMs: 0 };
+      if (t?.type === 'fade' && Number.isInteger(t.durationMs)) p = { type: 'fade', durationMs: Math.min(10000, Math.max(0, t.durationMs)) };
+      else if (t?.type === 'stinger' && isPlain(t.file) && typeof t.file.base === 'string' && typeof t.file.rel === 'string' && Number.isInteger(t.pointMs)) {
+        p = { type: 'stinger', durationMs: 0, file: { base: t.file.base, rel: t.file.rel }, pointMs: Math.min(10000, Math.max(0, t.pointMs)) };
+      }
+      if (p.type === 'stinger' && trRefused[hid] === trKey(p)) p = { type: 'cut', durationMs: 0 };
+      const same = cur?.type === p.type && cur?.durationMs === p.durationMs
+        && (p.type !== 'stinger' || (cur?.file === `${p.file.base}:${p.file.rel}` && cur?.pointMs === p.pointMs));
+      if (same) continue;
+      try { await host.call('transitions.set', { canvas: hid, ...p }); } catch { if (p.type === 'stinger') trRefused[hid] = trKey(p); }
     }
   }
   async function previewSync(hs) {
@@ -400,6 +413,42 @@ export function createStudioServer(opts) {
   // project file read -> pure change (services/project/structure.mjs, validated) -> host -> file saved. The host goes
   // first so a refusal there saves nothing; a failed save leaves the host change live-only and says so. Undo history
   // is cleared: its entries may name a layer or scene that is gone.
+  // Transitions form (D242, flag transitions): each canvas's project transition, and the videos a stinger may use (the
+  // stream assets folder, base "media").
+  function transitionChoices(res) {
+    const on = !!flags && flags.isOn(TRANSITIONS_FLAG);
+    const file = projectSync?.status?.().file;
+    if (!on || typeof file !== 'string') return json(res, 200, { on, available: false });
+    let doc;
+    try { projectSync.flush(); doc = loadProject(file).project; } catch { return json(res, 200, { on, available: false }); }
+    return json(res, 200, { on, available: true, canvases: doc.canvases.map((c) => ({ id: c.id, transition: c.transition ?? { type: 'cut', durationMs: 0 } })),
+      videos: listAssets(assetsDir).filter((a) => a.kind === 'media').map((a) => a.rel) });
+  }
+  // Sets one canvas's project transition (refused while live); the status poll then applies it to the host.
+  async function transitionEdit(res, body) {
+    if (!flags || !flags.isOn(TRANSITIONS_FLAG)) return json(res, 404, { error: 'transitions-off' });
+    const file = projectSync?.status?.().file;
+    if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
+    const keys = ['canvas', 'type', 'durationMs', 'file', 'pointMs'];
+    if (!isPlain(body) || Object.keys(body).some((k) => !keys.includes(k)) || !['h', 'v'].includes(body.canvas) || !['cut', 'fade', 'stinger'].includes(body.type)) return json(res, 400, { error: 'bad-params' });
+    const ms = (v) => Number.isInteger(v) && v >= 0 && v <= 10000;
+    if (body.type === 'fade' && !ms(body.durationMs)) return json(res, 400, { error: 'bad-params' });
+    if (body.type === 'stinger' && (!ms(body.pointMs) || typeof body.file !== 'string')) return json(res, 400, { error: 'bad-params' });
+    if (body.type === 'stinger' && !listAssets(assetsDir).some((a) => a.kind === 'media' && a.rel === body.file)) return json(res, 409, { error: 'unknown-asset' });
+    let hs = null;
+    try { hs = await host.call('host.status', {}); } catch { hs = null; }
+    if (!hs || hs.live !== false) return json(res, 409, { error: hs ? 'live-locked' : 'host-unavailable' });
+    projectSync.reload();
+    let doc;
+    try { doc = loadProject(file).project; } catch { return json(res, 409, { error: 'project-unreadable' }); }
+    const c = doc.canvases.find((x) => x.id === body.canvas);
+    if (!c) return json(res, 409, { error: 'unknown-canvas' });
+    c.transition = body.type === 'stinger' ? { type: 'stinger', durationMs: 0, file: { base: 'media', rel: body.file }, pointMs: body.pointMs }
+      : { type: body.type, durationMs: body.type === 'fade' ? body.durationMs : 0 };
+    try { saveProject(file, doc); } catch { return json(res, 409, { error: 'not-saved' }); }
+    projectSync.reload();
+    return json(res, 200, { ok: true, canvas: c.id, transition: c.transition });
+  }
   // What the add-layer form can offer (D240): ids and names from the project file only (shown on this local page).
   function structureChoices(res) {
     const on = !!flags && flags.isOn(SCENE_EDIT_FLAG);
@@ -411,15 +460,21 @@ export function createStudioServer(opts) {
       scenes: doc.scenes.map((s) => ({ id: s.id, name: s.name, active: s.id === doc.activeScene })),
       layers: doc.scenes.flatMap((s) => s.layers.map((l) => ({ id: l.id, name: l.name, scene: s.id, sceneName: s.name, type: l.type }))),
       devices: (doc.devices ?? []).filter((d) => d.kind === 'camera' || d.kind === 'capture-card').map((d) => ({ id: d.id, name: d.name })),
-      overlays: (doc.overlays ?? []).map((o) => ({ id: o.id, name: o.name })) });
+      overlays: (doc.overlays ?? []).map((o) => ({ id: o.id, name: o.name })),
+      assets: listAssets(assetsDir) });
   }
   async function structureEdit(res, body) {
     if (!flags || !flags.isOn(SCENE_EDIT_FLAG)) return json(res, 404, { error: 'scene-edit-off' });
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
     if (!isPlain(body) || !STRUCTURE_OPS.includes(body.op) || Object.keys(body).some((k) => k !== 'op' && !STRUCTURE_KEYS[body.op].includes(k))) return json(res, 400, { error: 'bad-params' });
-    for (const k of ['name', 'scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'layer']) {
-      if (body[k] !== undefined && (typeof body[k] !== 'string' || body[k].length > (k === 'text' ? 2000 : 120))) return json(res, 400, { error: 'bad-params' });
+    for (const k of ['name', 'scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'layer', 'file']) {
+      if (body[k] !== undefined && (typeof body[k] !== 'string' || body[k].length > (k === 'text' ? 2000 : k === 'file' ? 260 : 120))) return json(res, 400, { error: 'bad-params' });
+    }
+    // An asset layer may only name a file the assets listing offers right now (never a path the page made up).
+    if (body.kind === 'image' || body.kind === 'media') {
+      const hit = listAssets(assetsDir).find((a) => a.rel === body.file);
+      if (!hit || hit.kind !== body.kind) return json(res, 409, { error: 'unknown-asset' });
     }
     let hs = null;
     try { hs = await host.call('host.status', {}); } catch { hs = null; }
@@ -500,6 +555,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/edits') return json(res, 200, history.state());
     if (req.method === 'GET' && route === '/ui/api/project/structure') return structureChoices(res);
+    if (req.method === 'GET' && route === '/ui/api/project/transitions') return transitionChoices(res);
     if (req.method === 'GET' && route === '/ui/api/feedback') return json(res, 200, { moments: feedback.list() });
     if (route === '/ui/api/report-url') {
       if (!reportOn()) return json(res, 404, { error: 'report-button-off' });
@@ -558,6 +614,7 @@ export function createStudioServer(opts) {
       return json(res, 200, { ok: true, method: e.method, scene: e.scene, layer: e.layer, edits: history.state(), ...(saved ? { saved: 'pending' } : {}) });
     }
     if (route === '/ui/api/project/structure') return structureEdit(res, body);
+    if (route === '/ui/api/project/transition') return transitionEdit(res, body);
     if (route === '/ui/api/host') {
       const spec = typeof body.method === 'string' && Object.hasOwn(HOST_CALLS, body.method) ? HOST_CALLS[body.method] : null;
       if (!spec) return json(res, 400, { error: 'unknown-method' });

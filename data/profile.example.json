@@ -27,7 +27,8 @@
     "event_core_data": "<event-core-data>",
     "meld_session": "<meld-session-file>",
     "streamerbot_exe": "<streamerbot-exe>",
-    "speakerbot_exe": "<speakerbot-exe>"
+    "speakerbot_exe": "<speakerbot-exe>",
+    "stream_assets": "<stream-assets-folder-or-remove-for-data/stream assets>"
   },
   "bots": {
     "streamerbot_ws": "<streamerbot-ws-or-remove-for-default>",

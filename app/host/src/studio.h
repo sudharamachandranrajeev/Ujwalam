@@ -66,7 +66,10 @@ public:
 	json::Value scene_remove(const std::string &scene, const std::string &canvas);
 	json::Value scene_activate(const std::string &scene, const std::string &canvas);
 	// transitions.set / transitions.get (D239): per canvas {type: cut|fade, durationMs}.
-	json::Value transition_set(const std::string &canvas, const std::string &type, int64_t ms);
+	// type cut | fade (ms = duration) | stinger (file = pathRef {base, rel} of a video, resolved with the last load's
+	// bases; point_ms = when the scene changes under it; the stinger's own length is the duration; D242).
+	json::Value transition_set(const std::string &canvas, const std::string &type, int64_t ms, const json::Value *file = nullptr,
+				   int64_t point_ms = 0);
 	json::Value transitions() const;
 
 	json::Value layers_list(const std::string &scene, const std::string &canvas) const;
@@ -150,9 +153,13 @@ private:
 		// Scene transition (D239): channel 0 holds a fade transition whose child is the active scene. type "cut"
 		// (default) switches at once; "fade" over ms. The UI server sets it (transitions.set) from the project file
 		// while flag `transitions` is on.
-		obs_source_t *tr = nullptr;
+		obs_source_t *tr = nullptr; // fade (also used for cuts)
+		obs_source_t *st = nullptr; // stinger, while the type is stinger
+		obs_source_t *routed = nullptr; // the transition on channel 0
 		std::string tr_type = "cut";
 		uint32_t tr_ms = 0;
+		std::string st_ref; // "base:rel" of the stinger file
+		uint32_t st_point = 0;
 	};
 	struct Global { // project v1 audio device source on a main-canvas output channel
 		std::shared_ptr<Src> src;
