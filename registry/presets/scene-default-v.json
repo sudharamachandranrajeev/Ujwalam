@@ -1,6 +1,6 @@
 {
   "id": "scene-default-v",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default V (current vertical stream layout)",
@@ -189,6 +189,26 @@
         "effectsFlag": "layer-effects"
       },
       {
+        "key": "character",
+        "z": 4.5,
+        "name": "Character cutout",
+        "type": "image",
+        "file": {
+          "base": "profile",
+          "rel": "{brand.character}"
+        },
+        "rect": {
+          "x": 0.62,
+          "y": 0.835,
+          "w": 0.38,
+          "h": 0.125
+        },
+        "fit": "contain",
+        "flag": "layer-effects",
+        "geometry": "spec",
+        "note": "Mascot under the wordmark, bottom right (user vertical target layout 2026-11-07; measured to about 2 percent). Brand asset, local only; without the profile key it is a transparent placeholder. New in 0.4.0, shown only with feature flag layer-effects."
+      },
+      {
         "key": "youtube-subscribers",
         "z": 5,
         "name": "YouTube subscriber counter",
@@ -362,7 +382,8 @@
       "links.discord",
       "assets.subscribe_cta",
       "assets.support_cta",
-      "assets.confetti_cta"
+      "assets.confetti_cta",
+      "brand.character"
     ]
   },
   "themeOverrides": {},

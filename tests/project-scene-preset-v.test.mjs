@@ -28,7 +28,7 @@ test('V preset: registry validates, targets the v canvas, similar to Default H',
 
 test('V preset: z unique 0..13 (z13 = test-broadcast banner, z0.5 = blurred game backdrop) plus cam-pop rule z14, rects inside the canvas, crop not stretch', () => {
   const zs = presetV.params.layers.map((l) => l.z).sort((a, b) => a - b);
-  assert.deepEqual(zs, [0, 0.5, 1, 2, 3, 3.5, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]); // z3.5 = confetti prompt (D248)
+  assert.deepEqual(zs, [0, 0.5, 1, 2, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 11, 12, 13]); // z3.5 = confetti prompt (D248)
   assert.equal(presetV.params.rules[0].z, 14);
   for (const l of presetV.params.layers) {
     for (const k of ['x', 'y', 'w', 'h']) assert.ok(l.rect[k] >= 0 && l.rect[k] <= 1, `${l.key}.${k}`);
@@ -52,7 +52,7 @@ test('V preset loads into the v canvas with roles bound and validates', () => {
   assert.equal(validateProject(r.project).ok, true);
   const sc = r.project.scenes.at(-1);
   assert.equal(sc.name, 'Default V');
-  assert.equal(sc.layers.length, 16);
+  assert.equal(sc.layers.length, 17);
   assert.ok(sc.layers.every((l) => Object.keys(l.placements).join() === 'v'));
   const byKey = (k) => sc.layers.find((l) => l.id === r.layerIds[k]);
   assert.deepEqual(byKey('game').source, { device: 'dev-cap' });
@@ -163,4 +163,20 @@ test('wordmark (D248): a video wordmark is keyed under layer-effects; a still is
   assert.equal(wm(vid, {}).effects, undefined, 'flag off: no key');
   assert.equal(wm(vid, {}).placements.v.visible, true, 'effectsFlag keeps the layer itself');
   assert.equal(wm(profile, { 'layer-effects': true }).effects, undefined, 'a PNG wordmark keeps its colours');
+});
+
+// First stream scene (2026-11-08): V geometry against the user's vertical target layout.
+test('V target layout: bands top to bottom, mascot bottom right behind layer-effects', () => {
+  const L = (k) => presetV.params.layers.find((l) => l.key === k);
+  assert.ok(L('subscribe-cta').rect.x < 0.1 && L('subscribe-cta').rect.y < 0.05, 'subscribe pill top left');
+  assert.ok(L('confetti-cta').rect.x > 0.7, 'confetti prompt top right');
+  const g = L('game').rect;
+  assert.ok(g.y > 0.2 && g.y + g.h < 0.76, 'game band in the middle');
+  assert.ok(L('twitch-followers').rect.y >= g.y + g.h - 0.03 && L('youtube-subscribers').rect.y >= g.y + g.h - 0.03, 'counters under the game');
+  const c = L('character');
+  assert.ok(c.rect.x >= 0.55 && c.rect.y >= 0.8 && c.rect.y + c.rect.h <= L('social-ticker').rect.y + 0.03, 'mascot bottom right above the ticker');
+  assert.equal(c.flag, 'layer-effects');
+  assert.ok(presetV.params.placeholders.includes('brand.character'));
+  const off = loadScenePreset(base(), presetV, { profile, roles: { 'game-capture': 'dev-cap', facecam: 'dev-cam' } });
+  assert.equal(off.project.scenes.at(-1).layers.find((l) => l.id === off.layerIds.character).placements.v.visible, false);
 });
