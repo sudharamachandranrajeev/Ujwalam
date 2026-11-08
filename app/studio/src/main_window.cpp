@@ -640,7 +640,9 @@ QWidget *MainWindow::buildLeft()
 	shdr->addStretch(1);
 	addSceneBtn_ = new QToolButton(w);
 	addSceneBtn_->setObjectName(QStringLiteral("addMini"));
-	addSceneBtn_->setIcon(icons::make(QStringLiteral("plus"), QColor(theme::kText), 14));
+	const auto plusScene = [btn = addSceneBtn_]() { btn->setIcon(icons::make(QStringLiteral("plus"), theme::color(QStringLiteral("text")), 14)); };
+	plusScene();
+	connect(theme::notifier(), &theme::Notifier::changed, addSceneBtn_, plusScene);
 	addSceneBtn_->setIconSize(QSize(14, 14));
 	addSceneBtn_->setStyleSheet(QStringLiteral("QToolButton { padding: 0; }")); // the app style's side padding would squeeze the icon to a dot
 	addSceneBtn_->setAccessibleName(QStringLiteral("Add scene"));
@@ -687,7 +689,9 @@ QWidget *MainWindow::buildLeft()
 	hdr->addStretch(1);
 	addLayerBtn_ = new QToolButton(w);
 	addLayerBtn_->setObjectName(QStringLiteral("addMini"));
-	addLayerBtn_->setIcon(icons::make(QStringLiteral("plus"), QColor(theme::kText), 14));
+	const auto plusLayer = [btn = addLayerBtn_]() { btn->setIcon(icons::make(QStringLiteral("plus"), theme::color(QStringLiteral("text")), 14)); };
+	plusLayer();
+	connect(theme::notifier(), &theme::Notifier::changed, addLayerBtn_, plusLayer);
 	addLayerBtn_->setIconSize(QSize(14, 14));
 	addLayerBtn_->setStyleSheet(QStringLiteral("QToolButton { padding: 0; }")); // the app style's side padding would squeeze the icon to a dot
 	addLayerBtn_->setAccessibleName(QStringLiteral("Add layer"));

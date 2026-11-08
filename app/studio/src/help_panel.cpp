@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "help_panel.h"
+#include "theme.h"
 #include "motion.h"
 
 #include <QGraphicsOpacityEffect>
@@ -195,11 +196,16 @@ HelpPanel::HelpPanel(QWidget *host, AnchorResolver resolve) : QFrame(host), host
 {
 	setObjectName(QStringLiteral("guideHelp"));
 	setFocusPolicy(Qt::NoFocus);
-	setStyleSheet(guidecol::css() +
-		      QStringLiteral("QFrame#guideHelp { background: %1; border: 1px solid %2; border-radius: 16px; }"
-				     "QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }"
-				     "QLabel#guideSection { font-size: 11pt; font-weight: 600; }")
-			      .arg(guidecol::panel().name(), guidecol::border().name()));
+	const auto restyle = [this]() {
+		setStyleSheet(guidecol::css() +
+			      QStringLiteral("QFrame#guideHelp { background: %1; border: 1px solid %2; border-radius: 16px; }"
+					     "QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }"
+					     "QLabel#guideSection { font-size: 11pt; font-weight: 600; }")
+				      .arg(guidecol::panel().name(), guidecol::border().name()));
+		update();
+	};
+	restyle();
+	connect(theme::notifier(), &theme::Notifier::changed, this, restyle);
 	auto *outer = new QVBoxLayout(this);
 	outer->setContentsMargins(16, 12, 10, 14);
 	outer->setSpacing(8);

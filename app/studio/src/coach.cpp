@@ -15,16 +15,16 @@
 #include <QVariantAnimation>
 #include <algorithm>
 
-// ---- colours: the one place that knows where they come from (swap to theme::color(name) when ui/themes merges) ----
+// ---- colours: the one place that knows where they come from: the active theme (D293) ----
 namespace guidecol {
-QColor panel() { return QColor(theme::kPanel); }
-QColor border() { return QColor(theme::kBorder); }
-QColor text() { return QColor(theme::kText); }
-QColor muted() { return QColor(theme::kMuted); }
-QColor accent() { return QColor(theme::kAccent); }
-QColor accentHi() { return QColor(theme::kAccentHi); }
-QColor field() { return QColor(theme::kField); }
-QColor ok() { return QColor(theme::kOk); }
+QColor panel() { return theme::color(QStringLiteral("panel")); }
+QColor border() { return theme::color(QStringLiteral("border")); }
+QColor text() { return theme::color(QStringLiteral("text")); }
+QColor muted() { return theme::color(QStringLiteral("muted")); }
+QColor accent() { return theme::color(QStringLiteral("accent")); }
+QColor accentHi() { return theme::color(QStringLiteral("accentHi")); }
+QColor field() { return theme::color(QStringLiteral("field")); }
+QColor ok() { return theme::color(QStringLiteral("ok")); }
 
 QString css()
 {
@@ -39,7 +39,7 @@ QString css()
 		       "QPushButton#guideBtn:hover { background: %6; border-color: %7; }"
 		       "QPushButton#guideBtn:pressed { background: %8; }"
 		       "QPushButton#guideBtn:disabled { color: %2; background: transparent; border-color: transparent; }"
-		       "QPushButton#guideBtn[role=\"primary\"] { background: %8; color: white; border-color: %8; }"
+		       "QPushButton#guideBtn[role=\"primary\"] { background: %8; color: %10; border-color: %8; }"
 		       "QPushButton#guideBtn[role=\"primary\"]:hover { background: %7; border-color: %7; }"
 		       "QPushButton#guideBtn[role=\"primary\"]:pressed { background: %9; border-color: %9; }"
 		       "QPushButton#guideBtn[role=\"quiet\"] { background: transparent; border-color: transparent; color: %2; }"
@@ -52,7 +52,7 @@ QString css()
 		       "QCheckBox#guideCheck::indicator { width: 14px; height: 14px; border-radius: 4px; border: 1px solid %5; background: %4; }"
 		       "QCheckBox#guideCheck::indicator:hover { border-color: %7; }"
 		       "QCheckBox#guideCheck::indicator:checked { background: %8; border-color: %8; }")
-		.arg(t, m, t, f, b, hov, ah, a, accent().darker(125).name());
+		.arg(t, m, t, f, b, hov, ah, a, accent().darker(125).name(), theme::hex(QStringLiteral("onAccent")));
 }
 } // namespace guidecol
 
@@ -63,6 +63,10 @@ Bubble::Bubble(QWidget *host) : QWidget(host)
 	setFocusPolicy(Qt::NoFocus);
 	setAttribute(Qt::WA_StyledBackground, false);
 	setStyleSheet(guidecol::css());
+	connect(theme::notifier(), &theme::Notifier::changed, this, [this]() { // a theme switch recolours the card
+		setStyleSheet(guidecol::css());
+		update();
+	});
 	auto *l = new QVBoxLayout(this);
 	l->setContentsMargins(kArrow + 16, kArrow + 12, kArrow + 16, kArrow + 12);
 	l->setSpacing(8);
