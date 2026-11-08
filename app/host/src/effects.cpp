@@ -3,12 +3,13 @@
 #include "effects.h"
 #include "log.h"
 #include "rpc_server.h"
-#include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect
+#include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 namespace fx {
 
@@ -17,6 +18,17 @@ namespace {
 const char *WRAP_ID = "ujw_effects_wrap";
 const char *BLUR_ID = "ujw_gaussian_blur";
 const char *ROUND_ID = "ujw_rounded_corners";
+const char *SHADOW_ID = "ujw_shadow";
+
+// Canvas px a shadow or glow reaches past the layer's box on every side: its offset plus its blur (size = 3 sigma).
+double outset_of(const model::Effect &e)
+{
+	if (e.type == "shadow")
+		return std::ceil(e.distance + e.size);
+	if (e.type == "glow")
+		return std::ceil(e.size);
+	return 0;
+}
 
 gs_effect_t *make_effect(const char *src, const char *file)
 {
@@ -36,6 +48,7 @@ struct Wrap {
 	obs_source_t *self = nullptr;
 	obs_source_t *target = nullptr; // strong reference, set once by create_chain before the wrapper is shown
 	std::atomic<int> l{0}, t{0}, r{0}, b{0};
+	std::vector<obs_source_t *> outsets; // ujw_shadow filters in chain order (owned by the filter list; never removed)
 };
 
 void wrap_update(void *data, obs_data_t *s)
@@ -131,12 +144,126 @@ const char *wrap_name(void *)
 constexpr int MAX_HALVINGS = 3; // factor up to 8
 constexpr int MAX_TAPS = 20;    // per side; must match the loop bound in ujw_gaussian_blur.effect
 
-struct Blur {
-	obs_source_t *ctx = nullptr;
+// Separable Gaussian on a texture: halves it 0-3 times (sigma / factor <= 6.5), then two passes of at most MAX_TAPS
+// per side. Used by the blur filter (on the layer) and the shadow filter (on its offset copy). Graphics thread only.
+struct Gauss {
 	gs_effect_t *effect = nullptr;
 	gs_eparam_t *p_image = nullptr, *p_texel = nullptr, *p_inv2s2 = nullptr, *p_radius = nullptr;
-	gs_texrender_t *levels[MAX_HALVINGS + 1] = {}; // [0] full size, [k] 1/2^k
+	gs_texrender_t *levels[MAX_HALVINGS + 1] = {}; // [k] 1/2^k ([0] unused)
 	gs_texrender_t *ping = nullptr, *pong = nullptr;
+};
+
+void gauss_create(Gauss &g)
+{
+	g.effect = make_effect(ujw_gaussian_blur_effect, "ujw_gaussian_blur.effect");
+	if (g.effect) {
+		g.p_image = gs_effect_get_param_by_name(g.effect, "image");
+		g.p_texel = gs_effect_get_param_by_name(g.effect, "texel");
+		g.p_inv2s2 = gs_effect_get_param_by_name(g.effect, "inv2s2");
+		g.p_radius = gs_effect_get_param_by_name(g.effect, "radius");
+	}
+	obs_enter_graphics();
+	for (auto &t : g.levels)
+		t = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	g.ping = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	g.pong = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	obs_leave_graphics();
+}
+
+void gauss_destroy(Gauss &g)
+{
+	obs_enter_graphics();
+	for (auto &t : g.levels)
+		gs_texrender_destroy(t);
+	gs_texrender_destroy(g.ping);
+	gs_texrender_destroy(g.pong);
+	gs_effect_destroy(g.effect);
+	obs_leave_graphics();
+}
+
+// One pass: draw `src` stretched to w x h into `tr` with technique `tech`. Framebuffer sRGB is on (caller), so the
+// sRGB texture views make the averaging happen in linear light.
+gs_texture_t *gauss_pass(Gauss &g, gs_texrender_t *tr, gs_texture_t *src, uint32_t w, uint32_t h, const char *tech,
+			 float tx, float ty, float inv2s2, float radius)
+{
+	gs_texrender_reset(tr);
+	if (!src || !gs_texrender_begin(tr, w, h))
+		return nullptr;
+	gs_ortho(0.0f, (float)w, 0.0f, (float)h, -100.0f, 100.0f);
+	gs_effect_set_texture_srgb(g.p_image, src);
+	struct vec2 texel;
+	vec2_set(&texel, tx, ty);
+	gs_effect_set_vec2(g.p_texel, &texel);
+	gs_effect_set_float(g.p_inv2s2, inv2s2);
+	gs_effect_set_float(g.p_radius, radius);
+	while (gs_effect_loop(g.effect, tech))
+		gs_draw_sprite(src, 0, w, h);
+	gs_texrender_end(tr);
+	return gs_texrender_get_texture(tr);
+}
+
+// Blurs tex (w x h) with sigma in texels of tex. The caller has set blend ONE/ZERO. Returns the blurred texture (at
+// the reduced size; draw it stretched) or tex itself for sigma < 0.5.
+gs_texture_t *gauss_run(Gauss &g, gs_texture_t *tex, uint32_t w, uint32_t h, double sigma)
+{
+	if (!tex || !g.effect || sigma < 0.5)
+		return tex;
+	int halvings = 0;
+	while (halvings < MAX_HALVINGS && sigma / (double)(1 << halvings) > 6.5)
+		halvings++;
+	const double s = sigma / (double)(1 << halvings); // sigma in texels at the blur size
+	const int radius = std::min(MAX_TAPS, (int)std::ceil(3.0 * s));
+	const bool prev_srgb = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(true);
+	for (int k = 1; k <= halvings && tex; k++) {
+		w = std::max(1u, w / 2);
+		h = std::max(1u, h / 2);
+		tex = gauss_pass(g, g.levels[k], tex, w, h, "Draw", 0, 0, 0, 0);
+	}
+	if (tex && radius >= 1) {
+		const float inv2s2 = (float)(1.0 / (2.0 * s * s));
+		tex = gauss_pass(g, g.ping, tex, w, h, "Blur", 1.0f / (float)w, 0.0f, inv2s2, (float)radius);
+		tex = gauss_pass(g, g.pong, tex, w, h, "Blur", 0.0f, 1.0f / (float)h, inv2s2, (float)radius);
+	}
+	gs_enable_framebuffer_srgb(prev_srgb);
+	return tex;
+}
+
+// Draws the filter's target (the wrapper and the filters before this one) into tr at cx x cy, cleared to transparent.
+// The caller has set blend ONE/ZERO.
+gs_texture_t *render_target(gs_texrender_t *tr, obs_source_t *target, obs_source_t *parent, uint32_t cx, uint32_t cy)
+{
+	gs_texrender_reset(tr);
+	if (!gs_texrender_begin(tr, cx, cy))
+		return nullptr;
+	struct vec4 clear;
+	vec4_zero(&clear);
+	gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
+	gs_ortho(0.0f, (float)cx, 0.0f, (float)cy, -100.0f, 100.0f);
+	uint32_t pf = obs_source_get_output_flags(target);
+	if (target == parent && !(pf & OBS_SOURCE_CUSTOM_DRAW) && !(pf & OBS_SOURCE_ASYNC))
+		obs_source_default_render(target);
+	else
+		obs_source_video_render(target);
+	gs_texrender_end(tr);
+	return gs_texrender_get_texture(tr);
+}
+
+// Draws tex at w x h with the blur effect's plain copy (sRGB-correct).
+void draw_copy(Gauss &g, gs_texture_t *tex, uint32_t w, uint32_t h)
+{
+	const bool prev_srgb = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(true);
+	gs_effect_set_texture_srgb(g.p_image, tex);
+	while (gs_effect_loop(g.effect, "Draw"))
+		gs_draw_sprite(tex, 0, w, h);
+	gs_enable_framebuffer_srgb(prev_srgb);
+}
+
+struct Blur {
+	obs_source_t *ctx = nullptr;
+	Gauss g;
+	gs_texrender_t *base = nullptr;
 	double strength = 10; // written by update (video thread, deferred), read by render (graphics thread)
 	bool processed = false;
 	gs_texture_t *result = nullptr;
@@ -151,18 +278,9 @@ void *blur_create(obs_data_t *s, obs_source_t *src)
 {
 	auto *b = new Blur();
 	b->ctx = src;
-	b->effect = make_effect(ujw_gaussian_blur_effect, "ujw_gaussian_blur.effect");
-	if (b->effect) {
-		b->p_image = gs_effect_get_param_by_name(b->effect, "image");
-		b->p_texel = gs_effect_get_param_by_name(b->effect, "texel");
-		b->p_inv2s2 = gs_effect_get_param_by_name(b->effect, "inv2s2");
-		b->p_radius = gs_effect_get_param_by_name(b->effect, "radius");
-	}
+	gauss_create(b->g);
 	obs_enter_graphics();
-	for (auto &t : b->levels)
-		t = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-	b->ping = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
-	b->pong = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	b->base = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 	obs_leave_graphics();
 	blur_update(b, s);
 	return b;
@@ -171,12 +289,9 @@ void *blur_create(obs_data_t *s, obs_source_t *src)
 void blur_destroy(void *data)
 {
 	auto *b = static_cast<Blur *>(data);
+	gauss_destroy(b->g);
 	obs_enter_graphics();
-	for (auto &t : b->levels)
-		gs_texrender_destroy(t);
-	gs_texrender_destroy(b->ping);
-	gs_texrender_destroy(b->pong);
-	gs_effect_destroy(b->effect);
+	gs_texrender_destroy(b->base);
 	obs_leave_graphics();
 	delete b;
 }
@@ -186,92 +301,25 @@ void blur_tick(void *data, float)
 	static_cast<Blur *>(data)->processed = false;
 }
 
-// One pass: draw `src` stretched to w x h into `tr` with technique `tech`. Framebuffer sRGB is on (caller), so the
-// sRGB texture views make the averaging happen in linear light.
-gs_texture_t *blur_pass(Blur *b, gs_texrender_t *tr, gs_texture_t *src, uint32_t w, uint32_t h, const char *tech,
-			float tx, float ty, float inv2s2, float radius)
-{
-	gs_texrender_reset(tr);
-	if (!src || !gs_texrender_begin(tr, w, h))
-		return nullptr;
-	gs_ortho(0.0f, (float)w, 0.0f, (float)h, -100.0f, 100.0f);
-	gs_effect_set_texture_srgb(b->p_image, src);
-	struct vec2 texel;
-	vec2_set(&texel, tx, ty);
-	gs_effect_set_vec2(b->p_texel, &texel);
-	gs_effect_set_float(b->p_inv2s2, inv2s2);
-	gs_effect_set_float(b->p_radius, radius);
-	while (gs_effect_loop(b->effect, tech))
-		gs_draw_sprite(src, 0, w, h);
-	gs_texrender_end(tr);
-	return gs_texrender_get_texture(tr);
-}
-
-gs_texture_t *blur_process(Blur *b, obs_source_t *target, obs_source_t *parent, uint32_t cx, uint32_t cy)
-{
-	const double sigma = b->strength * 0.5; // source pixels
-	int halvings = 0;
-	while (halvings < MAX_HALVINGS && sigma / (double)(1 << halvings) > 6.5)
-		halvings++;
-	const double s = sigma / (double)(1 << halvings); // sigma in texels at the blur size
-	const int radius = std::min(MAX_TAPS, (int)std::ceil(3.0 * s));
-
-	gs_blend_state_push();
-	gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
-	gs_texture_t *tex = nullptr;
-	gs_texrender_reset(b->levels[0]);
-	if (gs_texrender_begin(b->levels[0], cx, cy)) {
-		struct vec4 clear;
-		vec4_zero(&clear);
-		gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
-		gs_ortho(0.0f, (float)cx, 0.0f, (float)cy, -100.0f, 100.0f);
-		uint32_t pf = obs_source_get_output_flags(target);
-		if (target == parent && !(pf & OBS_SOURCE_CUSTOM_DRAW) && !(pf & OBS_SOURCE_ASYNC))
-			obs_source_default_render(target);
-		else
-			obs_source_video_render(target);
-		gs_texrender_end(b->levels[0]);
-		tex = gs_texrender_get_texture(b->levels[0]);
-	}
-	const bool prev_srgb = gs_framebuffer_srgb_enabled();
-	gs_enable_framebuffer_srgb(true);
-	uint32_t w = cx, h = cy;
-	for (int k = 1; k <= halvings && tex; k++) {
-		w = std::max(1u, w / 2);
-		h = std::max(1u, h / 2);
-		tex = blur_pass(b, b->levels[k], tex, w, h, "Draw", 0, 0, 0, 0);
-	}
-	if (tex && radius >= 1) {
-		const float inv2s2 = (float)(1.0 / (2.0 * s * s));
-		tex = blur_pass(b, b->ping, tex, w, h, "Blur", 1.0f / (float)w, 0.0f, inv2s2, (float)radius);
-		tex = blur_pass(b, b->pong, tex, w, h, "Blur", 0.0f, 1.0f / (float)h, inv2s2, (float)radius);
-	}
-	gs_enable_framebuffer_srgb(prev_srgb);
-	gs_blend_state_pop();
-	return tex;
-}
-
 void blur_render(void *data, gs_effect_t *)
 {
 	auto *b = static_cast<Blur *>(data);
 	obs_source_t *target = obs_filter_get_target(b->ctx), *parent = obs_filter_get_parent(b->ctx);
 	uint32_t cx = target ? obs_source_get_base_width(target) : 0, cy = target ? obs_source_get_base_height(target) : 0;
-	if (!b->effect || !target || !parent || !cx || !cy) {
+	if (!b->g.effect || !target || !parent || !cx || !cy) {
 		obs_source_skip_video_filter(b->ctx);
 		return;
 	}
 	if (!b->processed) { // once per frame, however many times the item is drawn
-		b->result = blur_process(b, target, parent, cx, cy);
+		gs_blend_state_push();
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+		gs_texture_t *tex = render_target(b->base, target, parent, cx, cy);
+		b->result = gauss_run(b->g, tex, cx, cy, b->strength * 0.5); // sigma in source pixels
+		gs_blend_state_pop();
 		b->processed = true;
 	}
-	if (!b->result)
-		return;
-	const bool prev_srgb = gs_framebuffer_srgb_enabled();
-	gs_enable_framebuffer_srgb(true);
-	gs_effect_set_texture_srgb(b->p_image, b->result);
-	while (gs_effect_loop(b->effect, "Draw"))
-		gs_draw_sprite(b->result, 0, cx, cy);
-	gs_enable_framebuffer_srgb(prev_srgb);
+	if (b->result)
+		draw_copy(b->g, b->result, cx, cy);
 }
 
 const char *blur_name(void *)
@@ -339,6 +387,166 @@ const char *round_name(void *)
 	return "Ujwalam rounded corners";
 }
 
+// --- ujw_shadow ---------------------------------------------------------------------------------------------------
+// Drop shadow and outer glow (D257): a blurred copy of the layer's alpha in one colour, offset, under the layer. The
+// filter's output is larger than its input by `pad` on every side, so the shadow is not cut at the layer's edge.
+// Settings are in canvas pixels of the layer as placed (box_w x box_h, set by Studio through set_box): the filter
+// turns them into its input's pixels each frame, so a shadow looks the same whatever the source resolution.
+
+struct Shadow {
+	obs_source_t *ctx = nullptr;
+	Gauss g;
+	gs_effect_t *effect = nullptr;
+	gs_eparam_t *p_image = nullptr, *p_color = nullptr, *p_spread = nullptr;
+	gs_texrender_t *base = nullptr, *moved = nullptr;
+	// written by update / set_box (any thread), read by get_width and render (graphics thread)
+	std::atomic<float> r{0}, gr{0}, b{0}, opacity{1}, sigma{0}, dx{0}, dy{0}, spread{0}, pad{0}, box_w{0}, box_h{0};
+	bool processed = false;
+	gs_texture_t *pic = nullptr, *mask = nullptr;
+};
+
+float srgb_to_linear(float c)
+{
+	return c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+}
+
+void shadow_update(void *data, obs_data_t *s)
+{
+	auto *sh = static_cast<Shadow *>(data);
+	const uint32_t c = (uint32_t)obs_data_get_int(s, "color");
+	sh->r = srgb_to_linear((float)((c >> 16) & 0xff) / 255.0f);
+	sh->gr = srgb_to_linear((float)((c >> 8) & 0xff) / 255.0f);
+	sh->b = srgb_to_linear((float)(c & 0xff) / 255.0f);
+	sh->opacity = (float)std::clamp(obs_data_get_double(s, "opacity"), 0.0, 1.0);
+	sh->sigma = (float)std::clamp(obs_data_get_double(s, "sigma"), 0.0, 100.0);
+	sh->dx = (float)std::clamp(obs_data_get_double(s, "dx"), -400.0, 400.0);
+	sh->dy = (float)std::clamp(obs_data_get_double(s, "dy"), -400.0, 400.0);
+	sh->spread = (float)std::clamp(obs_data_get_double(s, "spread"), 0.0, 1.0);
+	sh->pad = (float)std::clamp(obs_data_get_double(s, "pad"), 0.0, 800.0);
+}
+
+void *shadow_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *sh = new Shadow();
+	sh->ctx = src;
+	gauss_create(sh->g);
+	sh->effect = make_effect(ujw_shadow_effect, "ujw_shadow.effect");
+	if (sh->effect) {
+		sh->p_image = gs_effect_get_param_by_name(sh->effect, "image");
+		sh->p_color = gs_effect_get_param_by_name(sh->effect, "color");
+		sh->p_spread = gs_effect_get_param_by_name(sh->effect, "spread");
+	}
+	obs_enter_graphics();
+	sh->base = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	sh->moved = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	obs_leave_graphics();
+	shadow_update(sh, s);
+	return sh;
+}
+
+void shadow_destroy(void *data)
+{
+	auto *sh = static_cast<Shadow *>(data);
+	gauss_destroy(sh->g);
+	obs_enter_graphics();
+	gs_texrender_destroy(sh->base);
+	gs_texrender_destroy(sh->moved);
+	gs_effect_destroy(sh->effect);
+	obs_leave_graphics();
+	delete sh;
+}
+
+void shadow_tick(void *data, float)
+{
+	static_cast<Shadow *>(data)->processed = false;
+}
+
+// Input size, input px per canvas px on each axis, and the padding in input px.
+struct ShadowGeom {
+	uint32_t tw = 0, th = 0, padx = 0, pady = 0;
+	double kx = 1, ky = 1;
+};
+
+ShadowGeom shadow_geom(Shadow *sh)
+{
+	ShadowGeom g;
+	obs_source_t *target = obs_filter_get_target(sh->ctx);
+	g.tw = target ? obs_source_get_base_width(target) : 0;
+	g.th = target ? obs_source_get_base_height(target) : 0;
+	const double bw = sh->box_w, bh = sh->box_h;
+	g.kx = bw > 0 && g.tw ? (double)g.tw / bw : 1;
+	g.ky = bh > 0 && g.th ? (double)g.th / bh : 1;
+	g.padx = (uint32_t)std::ceil(sh->pad * g.kx);
+	g.pady = (uint32_t)std::ceil(sh->pad * g.ky);
+	return g;
+}
+
+uint32_t shadow_width(void *data)
+{
+	ShadowGeom g = shadow_geom(static_cast<Shadow *>(data));
+	return g.tw ? g.tw + 2 * g.padx : 0;
+}
+
+uint32_t shadow_height(void *data)
+{
+	ShadowGeom g = shadow_geom(static_cast<Shadow *>(data));
+	return g.th ? g.th + 2 * g.pady : 0;
+}
+
+void shadow_render(void *data, gs_effect_t *)
+{
+	auto *sh = static_cast<Shadow *>(data);
+	obs_source_t *target = obs_filter_get_target(sh->ctx), *parent = obs_filter_get_parent(sh->ctx);
+	const ShadowGeom geo = shadow_geom(sh);
+	if (!sh->effect || !sh->g.effect || !target || !parent || !geo.tw || !geo.th) {
+		obs_source_skip_video_filter(sh->ctx);
+		return;
+	}
+	const uint32_t W = geo.tw + 2 * geo.padx, H = geo.th + 2 * geo.pady;
+	if (!sh->processed) { // once per frame, however many times the item is drawn
+		gs_blend_state_push();
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+		sh->pic = render_target(sh->base, target, parent, geo.tw, geo.th);
+		sh->mask = nullptr;
+		gs_texrender_reset(sh->moved);
+		if (sh->pic && gs_texrender_begin(sh->moved, W, H)) { // the layer moved by the offset inside the padded size
+			struct vec4 clear;
+			vec4_zero(&clear);
+			gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
+			gs_ortho(0.0f, (float)W, 0.0f, (float)H, -100.0f, 100.0f);
+			gs_matrix_push();
+			gs_matrix_translate3f((float)(geo.padx + sh->dx * geo.kx), (float)(geo.pady + sh->dy * geo.ky), 0.0f);
+			draw_copy(sh->g, sh->pic, geo.tw, geo.th);
+			gs_matrix_pop();
+			gs_texrender_end(sh->moved);
+			sh->mask = gauss_run(sh->g, gs_texrender_get_texture(sh->moved), W, H, sh->sigma * geo.kx);
+		}
+		gs_blend_state_pop();
+		sh->processed = true;
+	}
+	if (!sh->mask || !sh->pic)
+		return;
+	const bool prev_srgb = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(true);
+	struct vec4 col;
+	vec4_set(&col, sh->r, sh->gr, sh->b, sh->opacity);
+	gs_effect_set_texture(sh->p_image, sh->mask);
+	gs_effect_set_vec4(sh->p_color, &col);
+	gs_effect_set_float(sh->p_spread, sh->spread);
+	while (gs_effect_loop(sh->effect, "Draw"))
+		gs_draw_sprite(sh->mask, 0, W, H);
+	gs_enable_framebuffer_srgb(prev_srgb);
+	gs_matrix_push();
+	gs_matrix_translate3f((float)geo.padx, (float)geo.pady, 0.0f);
+	draw_copy(sh->g, sh->pic, geo.tw, geo.th);
+	gs_matrix_pop();
+}
+
+const char *shadow_name(void *)
+{
+	return "Ujwalam shadow / glow";
+}
+
 } // namespace
 
 void register_types()
@@ -381,7 +589,21 @@ void register_types()
 	r.update = round_update;
 	r.video_render = round_render;
 	obs_register_source(&r);
-	hlog::info("effect source types registered: %s, %s, %s", WRAP_ID, BLUR_ID, ROUND_ID);
+
+	struct obs_source_info sh = {};
+	sh.id = SHADOW_ID;
+	sh.type = OBS_SOURCE_TYPE_FILTER;
+	sh.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB;
+	sh.get_name = shadow_name;
+	sh.create = shadow_create;
+	sh.destroy = shadow_destroy;
+	sh.update = shadow_update;
+	sh.get_width = shadow_width;
+	sh.get_height = shadow_height;
+	sh.video_tick = shadow_tick;
+	sh.video_render = shadow_render;
+	obs_register_source(&sh);
+	hlog::info("effect source types registered: %s, %s, %s, %s", WRAP_ID, BLUR_ID, ROUND_ID, SHADOW_ID);
 }
 
 obs_source_t *create_chain(obs_source_t *target, const std::string &name, const std::vector<model::Effect> &effects,
@@ -414,6 +636,18 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 			obs_data_set_int(s, "key_color", (long long)(0xff000000u | (b << 16) | (g << 8) | r));
 			obs_data_set_int(s, "similarity", e.similarity);
 			obs_data_set_int(s, "smoothness", e.smoothness);
+		} else if (e.type == "shadow" || e.type == "glow") { // D257; canvas px, see ujw_shadow above
+			id = SHADOW_ID;
+			obs_data_set_int(s, "color", (long long)e.color);
+			obs_data_set_double(s, "opacity", e.opacity);
+			obs_data_set_double(s, "sigma", e.size / 3.0);
+			obs_data_set_double(s, "spread", e.type == "glow" ? e.spread : 0.0);
+			if (e.type == "shadow") { // angle: where the light comes from (0 = from the right, 90 = from above)
+				const double a = e.angle * 3.14159265358979323846 / 180.0;
+				obs_data_set_double(s, "dx", -std::cos(a) * e.distance);
+				obs_data_set_double(s, "dy", std::sin(a) * e.distance);
+			}
+			obs_data_set_double(s, "pad", outset_of(e));
 		}
 		std::string fname = name + ":" + e.type + ":" + std::to_string(n++);
 		obs_source_t *f = id ? obs_source_create_private(id, fname.c_str(), s) : nullptr;
@@ -423,6 +657,8 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 			throw rpc::Error(rpc::INTERNAL, "effect filter create failed (" + e.type + ") for " + name);
 		}
 		obs_source_filter_add(wrap, f); // takes its own reference
+		if (id == SHADOW_ID)
+			static_cast<Wrap *>(obs_obj_get_data(wrap))->outsets.push_back(f);
 		obs_source_release(f);
 	}
 	return wrap;
@@ -437,6 +673,34 @@ void set_crop(obs_source_t *wrap, const Crop &crop)
 	obs_data_set_int(d, "crop_bottom", crop.bottom);
 	obs_source_update(wrap, d);
 	obs_data_release(d);
+}
+
+double outset(const std::vector<model::Effect> &effects)
+{
+	double p = 0;
+	for (auto &e : effects)
+		p += outset_of(e);
+	return p;
+}
+
+void set_box(obs_source_t *wrap, double w, double h, const std::vector<model::Effect> &effects)
+{
+	auto *wr = wrap ? static_cast<Wrap *>(obs_obj_get_data(wrap)) : nullptr;
+	if (!wr)
+		return;
+	size_t i = 0;
+	for (auto &e : effects) {
+		if (e.type != "shadow" && e.type != "glow")
+			continue;
+		if (i < wr->outsets.size()) // each shadow sees the box grown by the shadows before it
+			if (auto *sh = static_cast<Shadow *>(obs_obj_get_data(wr->outsets[i++]))) {
+				sh->box_w = (float)w;
+				sh->box_h = (float)h;
+			}
+		const double p = outset_of(e);
+		w += 2 * p;
+		h += 2 * p;
+	}
 }
 
 } // namespace fx

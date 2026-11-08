@@ -188,9 +188,10 @@ export function validateProject(doc) {
     }
   };
   // Per-layer visual effects (host filters, applied in list order): blur {strength 1..100}, rounded {radius 0..500},
-  // chromaKey {color #RRGGBB, similarity 1..1000, smoothness 1..1000} (D246).
+  // chromaKey {color #RRGGBB, similarity 1..1000, smoothness 1..1000} (D246), shadow {color, opacity 0..1, size 0..200,
+  // distance 0..200, angle -360..360} and glow {color, opacity 0..1, size 0..200, spread 0..1} in canvas px (D257).
   const effectsOk = (list, p) => {
-    if (!arr(list, p, 4)) return;
+    if (!arr(list, p, 6)) return;
     list.forEach((e, i) => {
       const ep = `${p}[${i}]`;
       if (!isObj(e)) { err(ep, 'must be an object'); return; }
@@ -204,8 +205,14 @@ export function validateProject(doc) {
         noExtra(e, ['type', 'color', 'similarity', 'smoothness'], ep); req(e, ['color', 'similarity', 'smoothness'], ep);
         if ('color' in e && (typeof e.color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(e.color))) err(`${ep}.color`, 'must be #RRGGBB');
         for (const k of ['similarity', 'smoothness']) if (k in e) num(e[k], `${ep}.${k}`, 1, 1000, true);
+      } else if (e.type === 'shadow' || e.type === 'glow') {
+        const keys = e.type === 'shadow' ? ['color', 'opacity', 'size', 'distance', 'angle'] : ['color', 'opacity', 'size', 'spread'];
+        noExtra(e, ['type', ...keys], ep); req(e, keys, ep);
+        if ('color' in e && (typeof e.color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(e.color))) err(`${ep}.color`, 'must be #RRGGBB');
+        const range = { opacity: [0, 1], size: [0, 200], distance: [0, 200], angle: [-360, 360], spread: [0, 1] };
+        for (const k of keys.slice(1)) if (k in e) num(e[k], `${ep}.${k}`, ...range[k]);
       } else {
-        err(`${ep}.type`, 'must be one of blur, rounded, chromaKey');
+        err(`${ep}.type`, 'must be one of blur, rounded, chromaKey, shadow, glow');
       }
     });
   };

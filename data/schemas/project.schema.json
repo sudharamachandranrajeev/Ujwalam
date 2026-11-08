@@ -117,7 +117,7 @@
       }
     },
     "effect": {
-      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside. chromaKey (D246): pixels near color become transparent (OBS chroma key: similarity and smoothness 1..1000, OBS defaults 400 and 80).",
+      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside. chromaKey (D246): pixels near color become transparent (OBS chroma key: similarity and smoothness 1..1000, OBS defaults 400 and 80). shadow and glow (D257): a blurred copy of the layer's alpha in one colour under the layer, reaching past its box; canvas px: size = blur reach (sigma = size / 3), distance = offset, angle = where the light comes from (0 right, 90 above); glow spread 0..1 hardens the edge.",
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["type", "strength"],
           "properties": { "type": { "const": "blur" }, "strength": { "type": "number", "minimum": 1, "maximum": 100 } } },
@@ -125,7 +125,15 @@
           "properties": { "type": { "const": "rounded" }, "radius": { "type": "number", "minimum": 0, "maximum": 500 } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "color", "similarity", "smoothness"],
           "properties": { "type": { "const": "chromaKey" }, "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-            "similarity": { "type": "integer", "minimum": 1, "maximum": 1000 }, "smoothness": { "type": "integer", "minimum": 1, "maximum": 1000 } } }
+            "similarity": { "type": "integer", "minimum": 1, "maximum": 1000 }, "smoothness": { "type": "integer", "minimum": 1, "maximum": 1000 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "color", "opacity", "size", "distance", "angle"],
+          "properties": { "type": { "const": "shadow" }, "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "opacity": { "type": "number", "minimum": 0, "maximum": 1 }, "size": { "type": "number", "minimum": 0, "maximum": 200 },
+            "distance": { "type": "number", "minimum": 0, "maximum": 200 }, "angle": { "type": "number", "minimum": -360, "maximum": 360 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "color", "opacity", "size", "spread"],
+          "properties": { "type": { "const": "glow" }, "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "opacity": { "type": "number", "minimum": 0, "maximum": 1 }, "size": { "type": "number", "minimum": 0, "maximum": 200 },
+            "spread": { "type": "number", "minimum": 0, "maximum": 1 } } }
       ]
     },
     "layer": {
@@ -142,7 +150,7 @@
           "type": "object", "additionalProperties": false, "minProperties": 1,
           "properties": { "h": { "$ref": "#/$defs/placement" }, "v": { "$ref": "#/$defs/placement" } }
         },
-        "effects": { "type": "array", "maxItems": 4, "items": { "$ref": "#/$defs/effect" } },
+        "effects": { "type": "array", "maxItems": 6, "items": { "$ref": "#/$defs/effect" } },
         "origin": { "$ref": "#/$defs/origin" }
       },
       "allOf": [

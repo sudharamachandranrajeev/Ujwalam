@@ -57,11 +57,15 @@ struct Source {
 //   blur:    value = strength 1..100 (Gaussian sigma = strength * 0.5 source pixels, after the placement crop)
 //   rounded: value = corner radius 0..500 source pixels (after the placement crop); transparent outside
 //   chromaKey (D246): color = 0xRRGGBB keyed out; similarity, smoothness 1..1000 (OBS chroma_key_filter_v2)
+//   shadow (D257): color, opacity 0..1, size 0..200 (blur reach, canvas px; sigma = size / 3), distance 0..200 canvas
+//           px, angle -360..360 degrees (where the light comes from: 0 right, 90 above; shadow on the other side)
+//   glow (D257): color, opacity 0..1, size 0..200 canvas px, spread 0..1 (alpha lifted before the colour: harder edge)
 struct Effect {
-	std::string type; // "blur" | "rounded" | "chromaKey"
+	std::string type; // "blur" | "rounded" | "chromaKey" | "shadow" | "glow"
 	double value = 0;
 	uint32_t color = 0;
 	int64_t similarity = 400, smoothness = 80;
+	double opacity = 1, size = 0, distance = 0, angle = 0, spread = 0;
 };
 
 struct Item {

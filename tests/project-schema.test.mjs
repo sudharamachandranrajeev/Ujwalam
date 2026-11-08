@@ -57,7 +57,10 @@ const BAD = [
   ['blur with a radius key', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blur', strength: 5, radius: 4 }]; }, true],
   ['rounded radius negative', (d) => { d.scenes[0].layers[3].effects = [{ type: 'rounded', radius: -1 }]; }, true],
   ['rounded radius above 500', (d) => { d.scenes[0].layers[3].effects = [{ type: 'rounded', radius: 501 }]; }, true],
-  ['five effects', (d) => { d.scenes[0].layers[3].effects = Array.from({ length: 5 }, () => ({ type: 'rounded', radius: 4 })); }, true],
+  ['seven effects', (d) => { d.scenes[0].layers[3].effects = Array.from({ length: 7 }, () => ({ type: 'rounded', radius: 4 })); }, true],
+  ['shadow distance above 200', (d) => { d.scenes[0].layers[3].effects = [{ type: 'shadow', color: '#000000', opacity: 0.5, size: 10, distance: 201, angle: 45 }]; }, true],
+  ['glow without spread', (d) => { d.scenes[0].layers[3].effects = [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10 }]; }, true],
+  ['glow with an angle', (d) => { d.scenes[0].layers[3].effects = [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10, spread: 0.1, angle: 3 }]; }, true],
   ['effect not an object', (d) => { d.scenes[0].layers[3].effects = ['blur']; }, true],
   // semantic only
   ['duplicate of a missing layer', (d) => { d.scenes[1].layers.push(dupLayer('layer-d1', 'layer-nope')); }, false],

@@ -358,14 +358,20 @@ export function importMeld(input, opts = {}) {
   // per source pixel (the same reading the fill-mode crop above uses), while the project's blur strength and corner
   // radius are source pixels. Radii are clamped to half the shorter side, as Meld draws them, then divided by the
   // scale. blurriness is read as canvas pixels too: strength = blurriness / scale. Both readings are UNVERIFIED against
-  // a Meld render (docs/evidence/2026-11-08-meld-blur-radii.md). Rounding goes last: Meld masks the finished layer.
+  // a Meld render (docs/evidence/2026-11-08-meld-blur-radii.md). Rounding goes after them: Meld masks the finished layer.
+  // DropShadow and GlowStyles (D257) go last, so the rounded shape casts them. Their sizes are read as canvas px, as the
+  // project's shadow and glow are: shadow {angle, distance, size, opacity 0..100, color}, glow {size, choke -> spread,
+  // opacity 0..1, color} for edgeStyle 0 (read as the outer glow; other edge styles are reported). Angle as in
+  // Photoshop (where the light comes from). All UNVERIFIED against a Meld render (docs/evidence/2026-11-08-shadow-glow.md).
   const effectsFor = (l) => {
-    const out = [];
+    const out = [], post = [];
+    const hex = (c) => (typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c.toLowerCase() : null);
+    const clampTo = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round((num(v) ? v : 0) * 100) / 100));
     const sc = num(l.scaleX) && Math.abs(l.scaleX) > 1e-6 ? Math.abs(l.scaleX) : 1;
     for (const e of Array.isArray(l.effects) ? l.effects : []) {
       if (!isObj(e) || e.enabled !== true) continue;
       const k = typeof e.keyColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(e.keyColor) ? e.keyColor.toLowerCase() : null;
-      if (out.length >= 3) ignore(`effect ${clip(String(e.type), 40)} (more than 3 effects)`);
+      if (out.length + post.length >= 5) ignore(`effect ${clip(String(e.type), 40)} (more than 5 effects)`);
       else if (e.type === 'ChromaKey' && k) {
         const v01 = (v) => (num(v) ? Math.max(0, Math.min(1, v)) : 0);
         const to = (v) => Math.max(1, Math.min(1000, Math.round(v)));
@@ -374,7 +380,14 @@ export function importMeld(input, opts = {}) {
       } else if (e.type === 'GaussianBlur' && num(e.blurriness) && e.blurriness > 0) {
         out.push({ type: 'blur', strength: Math.max(1, Math.min(100, Math.round((e.blurriness / sc) * 10) / 10)) });
         if (e.showOriginalOnTop === true) ignore('GaussianBlur showOriginalOnTop');
-      } else ignore(`effect ${clip(String(e.type), 40)}`);
+      } else if (e.type === 'DropShadow' && hex(e.color)) {
+        post.push({ type: 'shadow', color: hex(e.color), opacity: clampTo(num(e.opacity) ? e.opacity / 100 : 1, 0, 1),
+          size: clampTo(e.size, 0, 200), distance: clampTo(e.distance, 0, 200), angle: clampTo(e.angle, -360, 360) });
+      } else if (e.type === 'GlowStyles' && hex(e.color) && (e.edgeStyle ?? 0) === 0) {
+        post.push({ type: 'glow', color: hex(e.color), opacity: clampTo(num(e.opacity) ? e.opacity : 1, 0, 1),
+          size: clampTo(e.size, 0, 200), spread: clampTo(e.choke, 0, 1) });
+      } else if (e.type === 'GlowStyles' && hex(e.color)) ignore(`GlowStyles edgeStyle ${clip(String(e.edgeStyle), 10)}`);
+      else ignore(`effect ${clip(String(e.type), 40)}`);
     }
     if (isObj(l.radii)) {
       const r = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].map((c) => (num(l.radii[c]) && l.radii[c] > 0 ? l.radii[c] : 0));
@@ -385,7 +398,7 @@ export function importMeld(input, opts = {}) {
         out.push({ type: 'rounded', radius: Math.min(500, Math.round((Math.min(big, half) / sc) * 10) / 10) });
       }
     }
-    return out;
+    return [...out, ...post];
   };
   const sourceFor = (c) => {
     const l = c.meld;

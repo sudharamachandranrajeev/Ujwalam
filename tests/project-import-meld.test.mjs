@@ -509,3 +509,27 @@ test('blur and corner radii (D247): canvas-pixel Meld values become source-pixel
   const three = importMeld(s, { id: 'meld-test' });
   assert.equal(three.project.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA')).effects, undefined);
 });
+
+test('shadow and glow (D257): Meld DropShadow and outer GlowStyles import after the rounding; other glows are reported', () => {
+  const s = session();
+  const items = [];
+  (function walk(o) { if (o && typeof o === 'object') { if (o.id === 'H-L-MEDIA' || o.id === 'V-L-MEDIA') items.push(o); Object.values(o).forEach(walk); } })(s);
+  const h = items.find((x) => x.id === 'H-L-MEDIA');
+  h.radii = { topLeft: 10, topRight: 10, bottomLeft: 10, bottomRight: 10 };
+  h.effects = [
+    { type: 'DropShadow', enabled: true, angle: 55, color: '#000000', distance: 24.40070343017578, opacity: 50, size: 26.082168579101562, version: 2 },
+    { type: 'GlowStyles', enabled: true, choke: 0.15000000596046448, color: '#71CDD8', edgeStyle: 0, opacity: 1, size: 33, version: 2 },
+    { type: 'GlowStyles', enabled: true, choke: 0, color: '#ffffff', edgeStyle: 1, opacity: 1, size: 10, version: 2 },
+    { type: 'DropShadow', enabled: false, angle: 135, color: '#000000', distance: 5, opacity: 50, size: 0 },
+    { type: 'GaussianBlur', enabled: true, blurriness: 4 },
+  ];
+  const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
+  const layer = p.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
+  assert.deepEqual(layer.effects.map((e) => e.type), ['blur', 'rounded', 'shadow', 'glow'], 'blur, then rounding, then shadow and glow');
+  assert.deepEqual(layer.effects[2], { type: 'shadow', color: '#000000', opacity: 0.5, size: 26.08, distance: 24.4, angle: 55 });
+  assert.deepEqual(layer.effects[3], { type: 'glow', color: '#71cdd8', opacity: 1, size: 33, spread: 0.15 });
+  assert.equal(r.ignored['GlowStyles edgeStyle 1'], 1);
+  assert.equal(r.ignored['effect DropShadow'], undefined);
+  assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
+  assert.equal(validateProject(p).ok, true);
+});

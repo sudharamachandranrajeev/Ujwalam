@@ -180,8 +180,8 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 	std::vector<Effect> r;
 	if (!e)
 		return r;
-	if (!e->is_array() || e->size() > 4)
-		throw Error(rpc::INVALID_PARAMS, what + ": effects must be an array (max 4)");
+	if (!e->is_array() || e->size() > 6)
+		throw Error(rpc::INVALID_PARAMS, what + ": effects must be an array (max 6)");
 	for (auto &x : e->as_array()) {
 		const std::string w = what + ".effects";
 		if (!x.is_object())
@@ -205,8 +205,26 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 			fx.color = (uint32_t)std::stoul(c.substr(1), nullptr, 16);
 			fx.similarity = chk::get_int(x, "similarity", 0, 1, 1000, w);
 			fx.smoothness = chk::get_int(x, "smoothness", 0, 1, 1000, w);
+		} else if (fx.type == "shadow" || fx.type == "glow") { // D257
+			const bool shadow = fx.type == "shadow";
+			if (shadow) {
+				chk::only_keys(x, {"type", "color", "opacity", "size", "distance", "angle"}, w);
+				chk::require(x, {"color", "opacity", "size", "distance", "angle"}, w);
+				fx.distance = chk::get_num(x, "distance", 0, 0, 200, w);
+				fx.angle = chk::get_num(x, "angle", 0, -360, 360, w);
+			} else {
+				chk::only_keys(x, {"type", "color", "opacity", "size", "spread"}, w);
+				chk::require(x, {"color", "opacity", "size", "spread"}, w);
+				fx.spread = chk::get_num(x, "spread", 0, 0, 1, w);
+			}
+			const std::string c = chk::get_str(x, "color", "", 7, w);
+			if (c.size() != 7 || c[0] != '#' || c.find_first_not_of("0123456789abcdefABCDEF", 1) != std::string::npos)
+				throw Error(rpc::INVALID_PARAMS, w + ": color must be #RRGGBB");
+			fx.color = (uint32_t)std::stoul(c.substr(1), nullptr, 16);
+			fx.opacity = chk::get_num(x, "opacity", 1, 0, 1, w);
+			fx.size = chk::get_num(x, "size", 0, 0, 200, w);
 		} else {
-			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded or chromaKey");
+			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow or glow");
 		}
 		r.push_back(fx);
 	}
@@ -225,6 +243,18 @@ json::Value effects_json(const std::vector<Effect> &e)
 			o.set("color", std::string(hex));
 			o.set("similarity", fx.similarity);
 			o.set("smoothness", fx.smoothness);
+		} else if (fx.type == "shadow" || fx.type == "glow") {
+			char hex[8];
+			snprintf(hex, sizeof hex, "#%06x", (unsigned)(fx.color & 0xffffff));
+			o.set("color", std::string(hex));
+			o.set("opacity", fx.opacity);
+			o.set("size", fx.size);
+			if (fx.type == "shadow") {
+				o.set("distance", fx.distance);
+				o.set("angle", fx.angle);
+			} else {
+				o.set("spread", fx.spread);
+			}
 		} else {
 			o.set(fx.type == "blur" ? "strength" : "radius", fx.value);
 		}

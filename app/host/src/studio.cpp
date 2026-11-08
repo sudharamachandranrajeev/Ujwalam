@@ -604,8 +604,13 @@ void Studio::apply_placement(Layer &l)
 	double w = get_num(p, "width", 0, 0, 16384, "placement"), h = get_num(p, "height", 0, 0, 16384, "placement");
 	obs_sceneitem_set_alignment(l.item, 0); // OBS_ALIGN_CENTER
 	obs_sceneitem_set_bounds_type(l.item, OBS_BOUNDS_STRETCH);
+	// Shadow / glow (D257) draw past the box: the wrapper's output is larger by `out` canvas px on every side, so the
+	// bounds grow by the same and the picture keeps its place and size (the centre does not move).
+	const double out = l.fx ? fx::outset(l.effects) : 0;
+	if (l.fx)
+		fx::set_box(l.fx, std::max(w, 1.0), std::max(h, 1.0), l.effects);
 	struct vec2 b;
-	vec2_set(&b, (float)std::max(w, 1.0), (float)std::max(h, 1.0));
+	vec2_set(&b, (float)(std::max(w, 1.0) + 2 * out), (float)(std::max(h, 1.0) + 2 * out));
 	obs_sceneitem_set_bounds(l.item, &b);
 	obs_sceneitem_set_bounds_alignment(l.item, 0);
 	struct vec2 pos;

@@ -11,6 +11,8 @@
 //                        runs a separable two-pass Gaussian at that size (<= 20 taps per side) and draws the result
 //                        upscaled (bilinear). sigma = strength * 0.5 source pixels.
 //   ujw_rounded_corners  filter: alpha mask outside a rounded rectangle, radius in source pixels.
+//   ujw_shadow           filter (D257): drop shadow / outer glow under the layer, in canvas pixels; its output is
+//                        larger than its input by the shadow's reach (outset), so nothing is cut at the box edge.
 // Shaders: app/host/data/effects/*.effect, embedded into the exe by CMakeLists.txt (no runtime file lookup).
 #pragma once
 
@@ -36,5 +38,11 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 
 // Crop of the wrapper's target (source pixels); applied on the next video tick.
 void set_crop(obs_source_t *wrap, const Crop &crop);
+
+// Shadow / glow (D257): canvas px the effects reach past the layer's box on every side (0 without them). The item's
+// bounds grow by this much so the picture keeps its place and size.
+double outset(const std::vector<model::Effect> &effects);
+// The layer's box in canvas px (placement width x height), for the shadow filters' unit conversion.
+void set_box(obs_source_t *wrap, double w, double h, const std::vector<model::Effect> &effects);
 
 } // namespace fx

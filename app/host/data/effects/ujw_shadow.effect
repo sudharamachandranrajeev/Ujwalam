@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: the shadow / glow pass of the ujw_shadow filter (src/effects.cpp). Embedded into the host exe at build
+// time (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+//   Draw: `image` is the blurred, offset copy of the layer; only its alpha is used. spread (0..1, Meld "choke")
+//         lifts the alpha before the colour is applied, so the edge of the shadow or glow is harder and reaches
+//         further. color.rgb is linear (the framebuffer is sRGB), color.a the effect's opacity.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 color;
+uniform float spread;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSShadow(VertData v_in) : TARGET
+{
+	float a = image.Sample(clampSampler, v_in.uv).a;
+	a = saturate(a / max(1.0 - spread, 0.01));
+	return float4(color.rgb, color.a * a);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSShadow(v_in);
+	}
+}
