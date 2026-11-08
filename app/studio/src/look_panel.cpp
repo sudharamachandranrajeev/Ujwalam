@@ -100,7 +100,7 @@ QLabel *caption(const QString &text, QWidget *parent)
 
 QString swatchStyle(const QString &col)
 {
-	return QStringLiteral("QPushButton#swatch { background: %1; border: 1px solid #5d5972; border-radius: 6px; }").arg(col);
+	return QStringLiteral("QPushButton#swatch { background: %1; border: 1px solid %2; border-radius: 6px; }").arg(col, theme::hex(QStringLiteral("disabled")));
 }
 
 } // namespace
