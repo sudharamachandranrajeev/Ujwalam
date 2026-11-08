@@ -11,7 +11,9 @@
 // canvas clears the selection; one selection per canvas). Drag inside the box moves it; a corner handle resizes it
 // with the aspect ratio kept (Shift: free). Moves and unrotated resizes snap to the canvas edges and centre within
 // 8 screen px (Alt: no snap). The round handle 24 screen px above the top edge turns the layer about its centre
-// (Shift: 15 degree steps); a turn changes only `rotation` (D255).
+// (Shift: 15 degree steps); a turn changes only `rotation` (D255). Alt + drag on an edge crops that side (D256): the
+// box edge follows the cursor and the source is cut by the same share, so the picture keeps its scale; the opposite
+// edge stays put. Needs the source size (a source that reports 0 x 0 has no crop gesture).
 //
 // Edit path: while dragging, every mouse move applies the rectangle through Backend::apply, which is
 // Studio::layer_set_placement, the code behind the RPC layers.setPlacement (no round trip to the UI per move). The
@@ -37,6 +39,8 @@ namespace pedit {
 
 struct Rect {
 	double x = 0, y = 0, w = 0, h = 0, rot = 0; // canvas px; degrees about the centre
+	double cl = 0, ct = 0, cr = 0, cb = 0;       // placement crop: left, top, right, bottom in source px
+	double sw = 0, sh = 0;                       // source size in px (0: unknown)
 };
 struct Item {
 	std::string id;
@@ -60,12 +64,14 @@ void corners(const Rect &r, double out[4][2]); // canvas px, same order as hit_c
 // The rotate handle: off canvas px above the middle of the top edge, in the layer's own frame (turns with it).
 void rotate_handle(const Rect &r, double off, double &x, double &y);
 bool hit_rotate(const Rect &r, double cx, double cy, double off, double tol);
+// Edge 0..3 (left, top, right, bottom, in the layer's own frame) within tol canvas px, or -1.
+int hit_edge(const Rect &r, double cx, double cy, double tol);
 
-enum class Mode { None, Move, Resize, Rotate };
+enum class Mode { None, Move, Resize, Rotate, Crop };
 struct DragIn {
 	Rect start;
 	Mode mode = Mode::None;
-	int corner = -1;           // Resize only
+	int corner = -1;           // Resize: the corner; Crop: the edge (hit_edge)
 	double sx = 0, sy = 0;     // press point, canvas px
 	double cx = 0, cy = 0;     // current point, canvas px
 	bool free_aspect = false;  // Shift (Rotate: 15 degree steps)
@@ -147,7 +153,7 @@ private:
 };
 
 json::Value rect_json(const Rect &r);
-// What a gesture changes: rotation (0.1 degree) for Rotate, else rect_json.
+// What a gesture changes: rotation (0.1 degree) for Rotate; rect_json plus the whole crop for Crop; else rect_json.
 json::Value patch_json(const Rect &r, Mode mode);
 
 } // namespace pedit

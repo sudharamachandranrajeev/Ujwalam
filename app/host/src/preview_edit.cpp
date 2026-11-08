@@ -69,7 +69,8 @@ Rect clamp_round(Rect r)
 
 bool same(const Rect &a, const Rect &b)
 {
-	return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h && a.rot == b.rot;
+	return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h && a.rot == b.rot && a.cl == b.cl && a.ct == b.ct &&
+	       a.cr == b.cr && a.cb == b.cb;
 }
 
 } // namespace
@@ -154,6 +155,23 @@ bool hit_rotate(const Rect &r, double cx, double cy, double off, double tol)
 	return std::hypot(cx - hx, cy - hy) <= tol;
 }
 
+int hit_edge(const Rect &r, double cx, double cy, double tol)
+{
+	double lx, ly;
+	rot_inv(r.rot, cx - (r.x + r.w / 2), cy - (r.y + r.h / 2), lx, ly);
+	const double hw = r.w / 2, hh = r.h / 2;
+	const double dist[4] = {lx + hw, ly + hh, lx - hw, ly - hh};
+	const bool along[4] = {std::fabs(ly) <= hh, std::fabs(lx) <= hw, std::fabs(ly) <= hh, std::fabs(lx) <= hw};
+	int best = -1;
+	double bd = tol;
+	for (int e = 0; e < 4; e++)
+		if (along[e] && std::fabs(dist[e]) <= bd) {
+			bd = std::fabs(dist[e]);
+			best = e;
+		}
+	return best;
+}
+
 Rect drag(const DragIn &d)
 {
 	Rect r = d.start;
@@ -187,6 +205,34 @@ Rect drag(const DragIn &d)
 			r.x += snap_shift(vx, tx, 3, d.snap_tol);
 			r.y += snap_shift(vy, ty, 3, d.snap_tol);
 		}
+		return clamp_round(r);
+	}
+	if (d.mode == Mode::Crop) {
+		const Rect &s = d.start;
+		const int e = d.corner;
+		const bool horiz = e == 0 || e == 2;
+		const double vis = horiz ? s.sw - s.cl - s.cr : s.sh - s.ct - s.cb; // shown source px on that axis
+		const double size = horiz ? s.w : s.h;
+		if (e < 0 || e > 3 || s.sw <= 0 || s.sh <= 0 || vis < 1 || size <= 0)
+			return r;
+		const double k = vis / size; // source px per canvas px: kept, so the picture never stretches
+		double lx, ly;
+		rot_inv(s.rot, dx, dy, lx, ly);
+		double in = e == 0 ? lx : e == 1 ? ly : e == 2 ? -lx : -ly; // inward, canvas px
+		in = std::clamp(in, -1e9, size - 1);                       // the box keeps at least 1 px
+		double &c = e == 0 ? r.cl : e == 1 ? r.ct : e == 2 ? r.cr : r.cb;
+		const double c0 = c;
+		c = std::clamp(std::round(c0 + in * k), 0.0, c0 + vis - 1); // whole source px; at least 1 px stays
+		in = (c - c0) / k;                                           // the box edge goes where the cut is
+		const double hx = e == 0 ? in / 2 : e == 2 ? -in / 2 : 0, hy = e == 1 ? in / 2 : e == 3 ? -in / 2 : 0;
+		double wx, wy;
+		rot_fwd(s.rot, hx, hy, wx, wy);
+		if (horiz)
+			r.w = s.w - in;
+		else
+			r.h = s.h - in;
+		r.x = s.x + s.w / 2 + wx - r.w / 2;
+		r.y = s.y + s.h / 2 + wy - r.h / 2;
 		return clamp_round(r);
 	}
 	if (d.mode != Mode::Resize || d.corner < 0 || d.corner > 3)
@@ -233,6 +279,15 @@ json::Value rect_json(const Rect &r)
 
 json::Value patch_json(const Rect &r, Mode mode)
 {
+	if (mode == Mode::Crop) {
+		json::Value o = rect_json(r), c = json::Value::object();
+		c.set("left", (int64_t)std::llround(r.cl));
+		c.set("top", (int64_t)std::llround(r.ct));
+		c.set("right", (int64_t)std::llround(r.cr));
+		c.set("bottom", (int64_t)std::llround(r.cb));
+		o.set("crop", std::move(c));
+		return o;
+	}
 	if (mode != Mode::Rotate)
 		return rect_json(r);
 	json::Value o = json::Value::object();
@@ -256,7 +311,7 @@ bool Editor::enabled() const
 	return enabled_;
 }
 
-bool Editor::down(const std::string &canvas, const View &v, double sx, double sy, Mods)
+bool Editor::down(const std::string &canvas, const View &v, double sx, double sy, Mods m)
 {
 	Sel cur;
 	{
@@ -283,13 +338,14 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 			if (it.id == cur.layer) {
 				bool turn = hit_rotate(it.r, cx, cy, kRotateOff * v.canvas_per_px(), tol);
 				int k = turn ? -1 : hit_corner(it.r, cx, cy, tol);
-				if (turn || k >= 0 || contains(it.r, cx, cy)) {
+				int edge = !turn && k < 0 && m.alt && it.r.sw > 0 && it.r.sh > 0 ? hit_edge(it.r, cx, cy, tol) : -1;
+				if (turn || k >= 0 || edge >= 0 || contains(it.r, cx, cy)) {
 					next.has = true;
 					next.scene = scene;
 					next.layer = it.id;
 					next.r = it.r;
-					next.mode = turn ? Mode::Rotate : k >= 0 ? Mode::Resize : Mode::Move;
-					next.corner = k;
+					next.mode = turn ? Mode::Rotate : k >= 0 ? Mode::Resize : edge >= 0 ? Mode::Crop : Mode::Move;
+					next.corner = k >= 0 ? k : edge;
 				}
 				break;
 			}
@@ -489,6 +545,7 @@ json::Value Editor::selection_json(const std::string &canvas) const
 	o.set("mode", s.mode == Mode::Move     ? "move"
 		      : s.mode == Mode::Resize ? "resize"
 		      : s.mode == Mode::Rotate ? "rotate"
+		      : s.mode == Mode::Crop   ? "crop"
 					       : "none");
 	return o;
 }

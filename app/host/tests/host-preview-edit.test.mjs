@@ -156,6 +156,35 @@ test('rotate handle turns the layer about its centre (Shift: 15 degree steps); t
   assert.equal((await placement('box')).rotation, 0);
 });
 
+test('Alt + edge drag crops that side: the box edge follows, the scale stays, the opposite edge stays put (D256)', async () => {
+  const L = (await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.find((l) => l.id === 'box');
+  const b = L.placement;
+  assert.ok(L.width > 0 && L.height > 0, `source size known: ${L.width}x${L.height}`);
+  const k = L.width / b.width; // source px per canvas px (no crop yet)
+  const seq0 = (await c.call('host.status')).previewEditSeq;
+  const my = b.y + b.height / 2;
+  await sim([at('down', b.x + b.width / 2, my), at('up', b.x + b.width / 2, my)]); // select it
+  let r = await sim([at('down', b.x, my, { alt: true }), at('move', b.x + 40, my + 6, { alt: true }), at('up', b.x + 40, my + 6, { alt: true })]);
+  assert.equal(r.steps[0].mode, 'crop');
+  let p = await placement('box');
+  const left = Math.round(40 * k);
+  assert.deepEqual(p.crop, { left, top: 0, right: 0, bottom: 0 }, 'cut by the same share as the box edge moved');
+  assert.equal(p.x + p.width, b.x + b.width, 'right edge stays put');
+  assert.deepEqual([p.y, p.height], [b.y, b.height], 'a side crop leaves the height alone');
+  assert.ok(Math.abs(p.x - (b.x + left / k)) <= 1, `left edge follows the cut: ${p.x}`);
+  const e = (await c.call('preview.edits', { since: seq0 })).edits;
+  assert.equal(e.length, 1);
+  assert.deepEqual(e[0].before.crop, { left: 0, top: 0, right: 0, bottom: 0 }, 'undo puts the crop back');
+  // dragged back out past the source edge: the crop stops at 0 and the box at the full picture
+  r = await sim([at('down', p.x, my, { alt: true }), at('move', p.x - 200, my, { alt: true }), at('up', p.x - 200, my, { alt: true })]);
+  p = await placement('box');
+  assert.equal(p.crop.left, 0);
+  assert.deepEqual([p.x, p.width], [b.x, b.width]);
+  // without Alt the same press is a move, not a crop
+  r = await sim([at('down', p.x + 2, my), at('up', p.x + 2, my)]);
+  assert.equal(r.steps[0].mode, 'move');
+});
+
 test('lost capture puts the layer back; switching the flag off clears the selection and ignores the mouse', async () => {
   const before = await placement('box');
   const seq0 = (await c.call('host.status')).previewEditSeq;

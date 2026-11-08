@@ -1521,6 +1521,20 @@ bool Studio::preview_items(const std::string &cv, std::string &sid, std::vector<
 		item.r.w = num("width");
 		item.r.h = num("height");
 		item.r.rot = num("rotation");
+		if (const json::Value *cr = p.find("crop"); cr && cr->is_object()) {
+			auto side = [cr](const char *k) {
+				const json::Value *v = cr->find(k);
+				return v && v->is_number() ? v->as_double() : 0.0;
+			};
+			item.r.cl = side("left");
+			item.r.ct = side("top");
+			item.r.cr = side("right");
+			item.r.cb = side("bottom");
+		}
+		if (l.src && l.src->src) { // the crop gesture needs the source size (D256); 0 x 0 (not loaded yet): none
+			item.r.sw = obs_source_get_width(l.src->src);
+			item.r.sh = obs_source_get_height(l.src->src);
+		}
 		if (item.r.w <= 0 || item.r.h <= 0)
 			continue;
 		// A browser page covering (nearly) the whole canvas is a transparent effect / atmosphere layer: a click
