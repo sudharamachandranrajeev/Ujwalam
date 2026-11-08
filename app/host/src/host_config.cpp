@@ -53,8 +53,40 @@ bool int_in(const json::Value *v, int64_t lo, int64_t hi, int64_t &dst, const ch
 
 bool parse_host_config(const json::Value &doc, HostConfig &cfg, std::string &err)
 {
-	if (!only(doc, {"$comment", "replay", "hotkeys", "feedbackDir", "markersDir", "eventCore", "monitoringDevice", "audio"}, "host config", err))
+	if (!only(doc, {"$comment", "replay", "hotkeys", "feedbackDir", "markersDir", "eventCore", "monitoringDevice", "audio", "audioHealth"}, "host config", err))
 		return false;
+	if (const json::Value *h = doc.find("audioHealth")) {
+		if (!only(*h, {"enabled", "noDataMs", "checkIntervalMs", "maxRecreates", "shutdownGuardMs"}, "audioHealth", err))
+			return false;
+		auto &ah = cfg.audio_health;
+		if (const json::Value *e = h->find("enabled")) {
+			if (!e->is_bool()) {
+				err = "audioHealth.enabled must be true or false";
+				return false;
+			}
+			ah.enabled = e->as_bool();
+		}
+		// Required when enabled: the values come from the data file, the host has no built-in numbers.
+		for (const char *k : {"noDataMs", "checkIntervalMs", "maxRecreates"})
+			if (ah.enabled && !h->find(k)) {
+				err = std::string("audioHealth.") + k + " is required when enabled";
+				return false;
+			}
+		int64_t nd = 0, ci = 0, mr = 0, sg = 0;
+		if (!int_in(h->find("noDataMs"), 500, 600000, nd, "audioHealth.noDataMs", err) ||
+		    !int_in(h->find("checkIntervalMs"), 100, 60000, ci, "audioHealth.checkIntervalMs", err) ||
+		    !int_in(h->find("maxRecreates"), 0, 100, mr, "audioHealth.maxRecreates", err) ||
+		    !int_in(h->find("shutdownGuardMs"), 0, 600000, sg, "audioHealth.shutdownGuardMs", err))
+			return false;
+		if (sg && sg < 1000) {
+			err = "audioHealth.shutdownGuardMs must be 0 (off) or at least 1000";
+			return false;
+		}
+		ah.no_data_ms = (uint32_t)nd;
+		ah.check_interval_ms = (uint32_t)ci;
+		ah.max_recreates = (uint32_t)mr;
+		ah.shutdown_guard_ms = (uint32_t)sg;
+	}
 	if (const json::Value *r = doc.find("replay")) {
 		if (!only(*r, {"seconds", "autoStart", "fallbackKbps"}, "replay", err))
 			return false;

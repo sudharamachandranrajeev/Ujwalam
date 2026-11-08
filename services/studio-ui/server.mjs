@@ -212,6 +212,19 @@ const normPhrase = (s) => String(s).trim().toLowerCase().replace(/\s+/g, ' ');
 /** opts: { uiRoot, core, host, launchKey, port?, limits?, now? }
  *  core:  { call(method, params) -> Promise, describe() -> { available } }   (event core; may be unavailable)
  *  host:  { call(method, params) -> Promise, describe() -> { kind: 'host'|'fake', available, blockedOnHost? } } */
+/** host.status audioHealth -> the page's readiness view (pure; tested): ok, warnings and per source state only. */
+export function audioReadiness(ah) {
+  const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
+  const sources = (Array.isArray(ah?.sources) ? ah.sources : []).slice(0, 16).map((s) => ({
+    id: str(s.id, 80), name: str(s.name, 64), state: str(s.state, 16),
+    receiving: typeof s.receiving === 'boolean' ? s.receiving : null,
+    lastDataMs: Number.isFinite(s.lastDataMs) ? s.lastDataMs : null,
+    recreates: Number.isInteger(s.recreates) ? s.recreates : 0,
+  }));
+  const warnings = (Array.isArray(ah?.warnings) ? ah.warnings : []).filter((w) => typeof w === 'string').slice(0, 16).map((w) => w.slice(0, 96));
+  return { ok: warnings.length === 0, warnings, sources };
+}
+
 export function createStudioServer(opts) {
   const limits = { ...LIMITS, ...(opts.limits ?? {}) };
   const now = opts.now ?? Date.now;
@@ -384,6 +397,7 @@ export function createStudioServer(opts) {
       at: now(),
       host: { kind: h.kind, available: hs !== null, blockedOnHost: h.kind === 'fake',
         ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing', 'uptimeMs']) : {}),
+        ...(hs && hs.audioHealth ? { audioHealth: audioReadiness(hs.audioHealth) } : {}),
         ...(previewLast ? { previewEdit: previewLast } : {}),
         effectEditing: !!flags && flags.isOn('effect-editor') },
       clips: clipStatus(),
@@ -744,7 +758,16 @@ export function createStudioServer(opts) {
       if (spec.confirm || (live && spec.liveConfirm)) {
         // Stream and recording changes need a typed phrase; while live, the on-air phrase (also for layout changes).
         const phrase = (live || spec.confirm === 'onair') ? 'yes, on air' : 'yes';
-        const id = addPending({ kind: 'host', summary: spec.summary, phrase, method: body.method, params });
+        // Pre-stream / pre-recording audio readiness (D297 proposed): a device sound that delivers nothing is named
+        // in the confirmation, so "Game audio missing" is seen before going live. Never blocks the start.
+        let summary = spec.summary;
+        if (body.method === 'stream.start' || body.method === 'record.start') {
+          let hs = null;
+          try { hs = await host.call('host.status', {}); } catch { hs = null; }
+          const w = hs && hs.audioHealth ? audioReadiness(hs.audioHealth).warnings : [];
+          if (w.length) summary = `${summary}. WARNING: ${w.join(', ')}`;
+        }
+        const id = addPending({ kind: 'host', summary, phrase, method: body.method, params });
         if (!id) return json(res, 429, { error: 'too-many-pending' });
         return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
       }

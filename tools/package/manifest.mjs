@@ -32,6 +32,7 @@ export const REPO_FILES = Object.freeze([
   'LICENSE',
   'app/host/projects/test-card.project.json',
   'data/flags.json',
+  'data/audio/health.json', // audio health watchdog values (launch.mjs loadAudioHealth; D297 proposed)
   'data/guide/tour.json', 'data/guide/hints.json', // tips and tours in the studio window (D294 proposed)
   // F6 live markers (services/event-core/live-markers.mjs): shared ranking rules + live-only values
   'data/clip/ranking.json', 'data/clip/live-markers.json',

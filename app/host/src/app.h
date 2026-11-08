@@ -2,6 +2,7 @@
 // ujwalam-host: the process-wide objects the RPC methods act on.
 #pragma once
 
+#include "audio_health.h"
 #include "host_config.h"
 #include "face.h"
 #include "frames.h"
@@ -43,6 +44,7 @@ struct App {
 	std::unique_ptr<Hotkeys> hotkeys; // global hotkeys (hotkeys.h)
 	std::unique_ptr<Frames> frames;   // frames.grab readback (frames.h)
 	std::unique_ptr<face::Link> face; // face AI link (face.h, D295 proposed); also published through face::get()
+	std::unique_ptr<ahealth::Ticker> audio_watch; // audio health watchdog (audio_health.h); null when not configured
 
 	void *shutdown_event = nullptr; // HANDLE; set by host.shutdown or Ctrl+C
 	std::atomic<bool> shutting_down{false};

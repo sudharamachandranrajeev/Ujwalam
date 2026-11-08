@@ -8,6 +8,7 @@
 #include "rpc_server.h"
 
 #include <obs-audio-controls.h>
+#include <util/platform.h>
 
 #include <algorithm>
 #include <cctype>
@@ -92,10 +93,18 @@ std::vector<std::pair<std::string, std::string>> project_tracks(const json::Valu
 
 } // namespace
 
-// Per-source audio meter (libobs volmeter, log fader). Values in dBFS, max over channels.
+// Per-source audio meter (libobs volmeter, log fader). Values in dBFS, max over channels. last_ns: os_gettime_ns of
+// the newest audio packet the source delivered (libobs calls capture callbacks for every packet, muted or not; a
+// healthy WASAPI source sends packets, silent ones included, about every 10 ms). 0 = none yet.
 struct Studio::Meter {
 	obs_volmeter_t *vm = nullptr;
+	obs_source_t *src = nullptr;
 	std::atomic<float> peak{-INFINITY}, magnitude{-INFINITY};
+	std::atomic<uint64_t> last_ns{0};
+	static void on_audio(void *p, obs_source_t *, const struct audio_data *, bool)
+	{
+		static_cast<Meter *>(p)->last_ns = os_gettime_ns();
+	}
 	static void cb(void *p, const float mag[MAX_AUDIO_CHANNELS], const float pk[MAX_AUDIO_CHANNELS],
 		       const float[MAX_AUDIO_CHANNELS])
 	{
@@ -108,14 +117,16 @@ struct Studio::Meter {
 		m->magnitude = a;
 		m->peak = b;
 	}
-	explicit Meter(obs_source_t *src)
+	explicit Meter(obs_source_t *s) : src(s)
 	{
 		vm = obs_volmeter_create(OBS_FADER_LOG);
 		obs_volmeter_attach_source(vm, src);
 		obs_volmeter_add_callback(vm, cb, this);
+		obs_source_add_audio_capture_callback(src, on_audio, this);
 	}
 	~Meter()
 	{
+		obs_source_remove_audio_capture_callback(src, on_audio, this);
 		obs_volmeter_remove_callback(vm, cb, this);
 		obs_volmeter_detach_source(vm);
 		obs_volmeter_destroy(vm);
@@ -143,6 +154,9 @@ std::string Studio::norm_canvas(const std::string &c)
 Studio::~Studio()
 {
 	teardown();
+	// Device audio sources replaced by the audio watchdog go last: the destroy of one whose capture died can block
+	// libobs's destruction thread (obs_runtime.h shutdown guard).
+	parked_.clear();
 }
 
 Studio::Canvas *Studio::canvas(const std::string &id)
@@ -446,6 +460,7 @@ std::shared_ptr<Studio::Src> Studio::wrap(obs_source_t *src, const std::string &
 	auto s = std::make_shared<Src>();
 	s->src = src;
 	s->owner = owner;
+	s->created_ns = os_gettime_ns();
 	if (obs_source_get_output_flags(src) & OBS_SOURCE_AUDIO)
 		s->meter = std::make_shared<Meter>(src);
 	return s;
@@ -1818,9 +1833,227 @@ int Studio::audio_peak_db(const std::string &audio_id, float &peak_db) const
 	return 0;
 }
 
+// ---- audio health (D297 proposed). Device audio globals only: a layer's audio (capture card dshow, media) is
+// reported in mixer.list (receiving, lastDataMs) but never recreated here.
+namespace {
+constexpr size_t kAudioEvents = 32;
+
+int64_t ms_since(uint64_t now, uint64_t then)
+{
+	return then && now > then ? (int64_t)((now - then) / 1000000) : 0;
+}
+} // namespace
+
+void Studio::set_audio_health(const AudioHealthCfg &c)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	health_ = c;
+}
+
+// state: ok (a packet within no_data_ms), starting (none yet, still inside the start-up grace), missing, inactive
+// (not on any output), unknown (no_data_ms not configured). last_ms: ms since the newest packet, -1 = never.
+std::string Studio::audio_state(const Global &g, uint64_t now, int64_t &last_ms) const
+{
+	const uint64_t last = g.src->meter ? g.src->meter->last_ns.load() : 0;
+	last_ms = last ? ms_since(now, last) : -1;
+	if (!obs_source_active(g.src->src))
+		return "inactive";
+	if (!health_.no_data_ms)
+		return "unknown";
+	const uint64_t ref = std::max(last, g.src->created_ns);
+	if (ms_since(now, ref) < (int64_t)health_.no_data_ms)
+		return last ? "ok" : "starting";
+	return "missing";
+}
+
+void Studio::audio_event(const char *kind, const Global &g, const std::string &text)
+{
+	json::Value e = json::Value::object();
+	e.set("seq", ++audio_seq_);
+	e.set("at", hlog::utc_now());
+	e.set("kind", kind);
+	e.set("id", "audio:" + g.src->audio_id);
+	e.set("name", g.src->audio_name);
+	e.set("text", text);
+	audio_events_.push_back(std::move(e));
+	if (audio_events_.size() > kAudioEvents)
+		audio_events_.erase(audio_events_.begin());
+}
+
+bool Studio::recreate_global(Global &g)
+{
+	auto old = g.src;
+	obs_source_t *o = old->src;
+	const std::string type = obs_source_get_id(o), name = obs_source_get_name(o);
+	obs_data_t *st = obs_source_get_settings(o);
+	const float vol = obs_source_get_volume(o);
+	const bool muted = obs_source_muted(o);
+	const uint32_t mix = obs_source_get_audio_mixers(o);
+	const enum obs_monitoring_type mon = obs_source_get_monitoring_type(o);
+	obs_source_t *n = obs_source_create(type.c_str(), (name + ":new").c_str(), st, nullptr);
+	obs_data_release(st);
+	if (!n) {
+		hlog::error("audio watchdog: could not create a new %s for %s; the old source stays", type.c_str(),
+			    name.c_str());
+		return false;
+	}
+	// Park the old source: off its channel, out of every track, monitoring off, renamed. It is not released here:
+	// destroying a WASAPI source whose work queue died never returns and would block libobs's destruction thread.
+	obs_set_output_source(g.channel, nullptr);
+	obs_source_set_monitoring_type(o, OBS_MONITORING_TYPE_NONE);
+	obs_source_set_audio_mixers(o, 0);
+	obs_source_set_muted(o, true);
+	obs_source_set_name(o, (name + ":stale-" + std::to_string(g.recreates + 1)).c_str());
+	old->meter.reset();
+	parked_.push_back(old);
+	obs_source_set_name(n, name.c_str());
+	auto w = wrap(n, "");
+	w->audio_id = old->audio_id;
+	w->audio_name = old->audio_name;
+	obs_source_set_volume(n, vol);
+	obs_source_set_muted(n, muted);
+	obs_source_set_audio_mixers(n, mix);
+	obs_source_set_monitoring_type(n, mon);
+	obs_set_output_source(g.channel, n);
+	g.src = w;
+	return true;
+}
+
+void Studio::audio_watch_tick()
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	if (!health_.no_data_ms)
+		return;
+	const uint64_t now = os_gettime_ns();
+	for (auto &g : globals_) {
+		int64_t last_ms = 0;
+		const std::string state = audio_state(g, now, last_ms);
+		if (state == "ok") {
+			if (g.missing) {
+				hlog::info("audio watchdog: %s audio is back (source %s)", g.src->audio_name.c_str(),
+					   obs_source_get_name(g.src->src));
+				audio_event("recovered", g, g.src->audio_name + " audio is back");
+			}
+			g.missing = g.gave_up = false;
+			continue;
+		}
+		if (state != "missing")
+			continue;
+		const std::string what = g.src->audio_name + " audio missing";
+		if (!g.missing) {
+			g.missing = true;
+			hlog::warn("audio watchdog: %s: no audio data for %lld ms (source %s, last packet %s)", what.c_str(),
+				   (long long)ms_since(now, std::max(g.src->meter ? g.src->meter->last_ns.load() : 0, g.src->created_ns)),
+				   obs_source_get_name(g.src->src), last_ms < 0 ? "never" : (std::to_string(last_ms) + " ms ago").c_str());
+			audio_event("missing", g, what);
+		}
+		if (!health_.recreate)
+			continue;
+		if (g.recreates < health_.max_recreates) {
+			const std::string old_name = obs_source_get_name(g.src->src);
+			if (recreate_global(g)) {
+				g.recreates++;
+				hlog::warn("audio watchdog: recreated %s (%s, attempt %u of %u; the old source is parked)",
+					   old_name.c_str(), obs_source_get_id(g.src->src), g.recreates, health_.max_recreates);
+				audio_event("recreated", g,
+					    what + ": restarted the source (attempt " + std::to_string(g.recreates) + " of " +
+						    std::to_string(health_.max_recreates) + ")");
+			}
+		} else if (!g.gave_up) {
+			g.gave_up = true;
+			hlog::error("audio watchdog: %s after %u restarts; not trying again until the project is loaded again",
+				    what.c_str(), g.recreates);
+			audio_event("gave-up", g, what + ": restarts did not help; check the device");
+		}
+	}
+}
+
+json::Value Studio::audio_health() const
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	const uint64_t now = os_gettime_ns();
+	json::Value srcs = json::Value::array(), warns = json::Value::array();
+	bool ok = true;
+	for (auto &g : globals_) {
+		int64_t last_ms = 0;
+		const std::string state = audio_state(g, now, last_ms);
+		json::Value o = json::Value::object();
+		o.set("id", "audio:" + g.src->audio_id);
+		o.set("audioSource", g.src->audio_id);
+		o.set("name", g.src->audio_name);
+		o.set("type", obs_source_get_id(g.src->src));
+		o.set("state", state);
+		o.set("receiving", state == "unknown" || state == "inactive" ? json::Value() : json::Value(state == "ok"));
+		o.set("lastDataMs", last_ms < 0 ? json::Value() : json::Value(last_ms));
+		o.set("recreates", (uint64_t)g.recreates);
+		if (state == "missing") {
+			ok = false;
+			warns.push(g.src->audio_name + " audio missing");
+		}
+		srcs.push(std::move(o));
+	}
+	json::Value r = json::Value::object();
+	r.set("ok", ok);
+	r.set("sources", std::move(srcs));
+	r.set("warnings", std::move(warns));
+	json::Value w = json::Value::object();
+	w.set("noDataMs", health_.no_data_ms ? json::Value((uint64_t)health_.no_data_ms) : json::Value());
+	w.set("recreate", health_.recreate);
+	w.set("maxRecreates", (uint64_t)health_.max_recreates);
+	w.set("parked", (uint64_t)parked_.size());
+	r.set("watchdog", std::move(w));
+	r.set("seq", audio_seq_);
+	json::Value ev = json::Value::array();
+	for (auto &e : audio_events_)
+		ev.push(e);
+	r.set("events", std::move(ev));
+	return r;
+}
+
+json::Value Studio::test_audio_add(const std::string &id, const std::string &name)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	for (auto &g : globals_)
+		if (g.src->audio_id == id)
+			throw Error(rpc::CONFLICT, "audio source exists");
+	uint32_t channel = 1;
+	for (auto &g : globals_)
+		channel = std::max(channel, g.channel + 1);
+	if (channel >= MAX_CHANNELS)
+		throw Error(rpc::CONFLICT, "no free output channel");
+	obs_source_t *src = obs_source_create("ujw_test_audio", ("ujw:audio:" + id).c_str(), nullptr, nullptr);
+	if (!src)
+		throw Error(rpc::INTERNAL, "ujw_test_audio is not registered (--test-hooks)");
+	auto w = wrap(src, "");
+	w->audio_id = id;
+	w->audio_name = name;
+	obs_set_output_source(channel, src);
+	globals_.push_back({w, channel});
+	return audio_health();
+}
+
+json::Value Studio::test_audio_stall(const std::string &id, bool stall)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	for (auto &g : globals_)
+		if (g.src->audio_id == id) {
+			obs_data_t *d = obs_data_create();
+			obs_data_set_bool(d, "stall", stall);
+			obs_source_update(g.src->src, d);
+			obs_data_release(d);
+			json::Value r = json::Value::object();
+			r.set("id", "audio:" + id);
+			r.set("stall", stall);
+			r.set("source", obs_source_get_name(g.src->src));
+			return r;
+		}
+	throw Error(rpc::INVALID_PARAMS, "no such audio source");
+}
+
 json::Value Studio::mixer_list() const
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);
+	const uint64_t now_ns = os_gettime_ns();
 	json::Value a = json::Value::array();
 	std::set<const Src *> seen;
 	const auto tracks = project_tracks(model_doc_);
@@ -1851,6 +2084,13 @@ json::Value Studio::mixer_list() const
 		float pk = src.meter->peak, mg = src.meter->magnitude;
 		o.set("peakDb", std::isfinite(pk) ? json::Value((double)pk) : json::Value());
 		o.set("magnitudeDb", std::isfinite(mg) ? json::Value((double)mg) : json::Value());
+		// Readiness (D297 proposed): is the source delivering audio packets at all (silence counts; a dead device
+		// sends none). null when no audioHealth.noDataMs is configured.
+		const uint64_t last = src.meter->last_ns.load();
+		o.set("lastDataMs", last ? json::Value(ms_since(now_ns, last)) : json::Value());
+		o.set("receiving", health_.no_data_ms
+					   ? json::Value(last != 0 && ms_since(now_ns, last) < (int64_t)health_.no_data_ms)
+					   : json::Value());
 		a.push(std::move(o));
 	};
 	// Project audio sources first (named by their project name, e.g. "Mic", "Game"), device sources before layer

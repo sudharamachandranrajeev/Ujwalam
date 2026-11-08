@@ -9,6 +9,7 @@
 #include <windows.h>
 
 #include <filesystem>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -16,6 +17,44 @@ namespace obsrt {
 
 static std::vector<std::string> g_disabled;
 static uint32_t g_adapter = 0;
+static HMODULE g_rtwq = nullptr; // RTWorkQ.dll while the RtwqStartup reference is held
+
+// RtwqStartup/RtwqShutdown are reference counted per process. Taken before any module loads (win-wasapi checks
+// GetModuleHandle(L"RTWorkQ.dll") when a source is created) and given back after obs_shutdown.
+static void rtwq_startup()
+{
+	HMODULE m = LoadLibraryW(L"RTWorkQ.dll");
+	if (!m) {
+		hlog::warn("RTWorkQ.dll not loadable (error %lu): WASAPI capture uses its own threads", GetLastError());
+		return;
+	}
+	using Fn = HRESULT(STDAPICALLTYPE *)();
+	auto fn = reinterpret_cast<Fn>(GetProcAddress(m, "RtwqStartup"));
+	HRESULT hr = fn ? fn() : E_NOTIMPL;
+	if (FAILED(hr)) {
+		hlog::warn("RtwqStartup failed (0x%08lX): the work queue platform is not held by the host", (unsigned long)hr);
+		FreeLibrary(m);
+		return;
+	}
+	g_rtwq = m;
+	hlog::info("RTWQ platform held for the process lifetime (RtwqStartup)");
+}
+
+static void rtwq_shutdown()
+{
+	if (!g_rtwq)
+		return;
+	using Fn = HRESULT(STDAPICALLTYPE *)();
+	if (auto fn = reinterpret_cast<Fn>(GetProcAddress(g_rtwq, "RtwqShutdown")))
+		fn();
+	FreeLibrary(g_rtwq);
+	g_rtwq = nullptr;
+}
+
+bool rtwq_held()
+{
+	return g_rtwq != nullptr;
+}
 
 static std::string slash(const fs::path &p)
 {
@@ -70,6 +109,7 @@ bool start(const Options &o, std::string &err)
 	hlog::info("ujwalam-host | libobs %s | runtime=%s module-config=%s", obs_get_version_string(),
 		   runtime.generic_string().c_str(), fs::u8path(o.config_dir).generic_string().c_str());
 
+	rtwq_startup();
 	if (!obs_startup("en-US", fs::u8path(o.config_dir).generic_string().c_str(), nullptr)) {
 		err = "obs_startup failed";
 		return false;
@@ -128,12 +168,33 @@ bool start(const Options &o, std::string &err)
 	return true;
 }
 
-void shutdown()
+void shutdown(uint32_t guard_ms)
 {
 	obs_set_output_source(0, nullptr);
 	hlog::info("obs_shutdown begin");
+	// Guard: libobs destroys sources on one destruction thread and obs_shutdown waits for it. A source whose destroy
+	// never returns (seen 2026-11-08: a WASAPI source left on a dead RTWQ queue waits forever in its Stop) would keep
+	// the process alive with nothing to do.
+	HANDLE done = guard_ms ? CreateEventW(nullptr, TRUE, FALSE, nullptr) : nullptr;
+	std::thread guard;
+	if (done)
+		guard = std::thread([done, guard_ms]() {
+			if (WaitForSingleObject(done, guard_ms) == WAIT_OBJECT_0)
+				return;
+			hlog::error("obs_shutdown did not return in %u ms (a source's destroy is stuck); ending the process "
+				    "with exit code %d",
+				    guard_ms, kShutdownGuardExit);
+			hlog::close_file();
+			TerminateProcess(GetCurrentProcess(), kShutdownGuardExit);
+		});
 	obs_shutdown();
+	if (done) {
+		SetEvent(done);
+		guard.join();
+		CloseHandle(done);
+	}
 	hlog::info("obs_shutdown returned; leaks=%ld", bnum_allocs());
+	rtwq_shutdown();
 }
 
 bool reset_main_video(uint32_t w, uint32_t h, uint32_t fps, std::string &err)

@@ -336,6 +336,16 @@
     setText($('st-fps'), fmt(h.fps));
     setText($('st-cpu'), fmt(h.cpuPct, '%'));
     setText($('st-gpu'), fmt(h.gpuPct, '%'));
+    // Audio readiness (D297 proposed): a device sound that delivers nothing ("Game audio missing"), before going live.
+    var ah = h.audioHealth;
+    var ap = $('st-audio');
+    if (ap) {
+      ap.hidden = !ah;
+      if (ah) {
+        pill(ap, ah.ok ? 'Audio: OK' : ah.warnings.join(', '), ah.ok ? 'ok' : 'warn');
+        ap.title = (ah.sources || []).map(function (x) { return x.name + ': ' + (x.receiving === true ? 'receiving' : x.state) + (x.recreates ? ' (restarted ' + x.recreates + 'x)' : ''); }).join('; ');
+      }
+    }
     pill($('st-core'), c.available ? 'Event core: up' : 'Event core: down', c.available ? 'ok' : 'warn');
     pill($('st-host'), h.blockedOnHost ? 'BLOCKED-ON-HOST (fake)' : (h.available ? 'Host: up' : 'Host: down'), h.blockedOnHost ? 'blocked' : (h.available ? 'ok' : 'warn'));
     var banner = $('banner');

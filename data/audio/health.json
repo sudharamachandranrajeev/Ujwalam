@@ -1,0 +1,11 @@
+{
+  "$comment": "Audio health watchdog values (D297 proposed). services/studio-ui/launch.mjs copies enabled..shutdownGuardMs into the host config key audioHealth (app/host/src/host_config.h). enabled false = report only (control page warning, no source restart).",
+  "source": "docs/evidence/2026-11-08-game-audio-loss.md: win-wasapi retries a lost device every 3000 ms (RECONNECT_INTERVAL, obs-studio 32.1.2 plugins/win-wasapi/win-wasapi.cpp); noDataMs gives that one retry plus 2 s before the host steps in. shutdownGuardMs: a clean obs_shutdown took under 1 s in the 2026-11-08 host logs.",
+  "status": "unverified",
+  "checked": "2026-11-08",
+  "enabled": true,
+  "noDataMs": 5000,
+  "checkIntervalMs": 1000,
+  "maxRecreates": 3,
+  "shutdownGuardMs": 20000
+}
