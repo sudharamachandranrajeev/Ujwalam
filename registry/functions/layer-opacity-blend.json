@@ -1,0 +1,69 @@
+{
+  "id": "layer-opacity-blend",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "compositing",
+  "name": "Layer opacity and blend mode",
+  "description": "Layer opacity 0..1 and the libobs blend modes add, subtract, multiply, screen, lighten and darken (obs_sceneitem_set_blending_mode, D291 proposed); at most one blend mode per layer. Overlay and difference need a backdrop read that libobs scene items do not offer; not built.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "opacity"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "opacity",
+                "blendAdd",
+                "blendSubtract",
+                "blendMultiply",
+                "blendScreen",
+                "blendLighten",
+                "blendDarken"
+              ]
+            },
+            "opacity": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "opacity",
+        "opacity": 1
+      }
+    },
+    "safeRanges": {
+      "opacity": [
+        0,
+        1
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.2"
+}

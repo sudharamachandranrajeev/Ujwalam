@@ -1,0 +1,32 @@
+{
+  "id": "fx-lut-look",
+  "version": "0.1.0",
+  "function": "layer-lut",
+  "functionVersion": "^0.1.0",
+  "name": "Colour look (LUT file)",
+  "params": {
+    "effect": {
+      "type": "lut",
+      "amount": 1
+    }
+  },
+  "themeOverrides": {},
+  "family": "layer-filters",
+  "tags": {
+    "motion": "none",
+    "intensity": "medium",
+    "mood": "neutral",
+    "colourUse": "multi",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "fx-black-and-white",
+    "fx-sepia"
+  ]
+}

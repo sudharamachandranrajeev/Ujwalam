@@ -648,6 +648,9 @@ void Studio::apply_placement(Layer &l)
 	} else if (p.find("crop")) {
 		obs_sceneitem_set_crop(l.item, &cr);
 	}
+	// Compositing (D291): a blend effect sets the item's blending mode (normal otherwise). The item is placed before it
+	// is shown (load, layer add, setEffects staging), so the mode never changes on a visible picture.
+	obs_sceneitem_set_blending_mode(l.item, fx::blending(l.effects));
 	if (w <= 0 || h <= 0)
 		l.visible = false; // a zero-size rectangle shows nothing
 }
@@ -1524,8 +1527,9 @@ json::Value Studio::layer_set_placement(const std::string &sid, const std::strin
 // UI server saves it into the project file.
 json::Value Studio::layer_set_effects(const std::string &sid, const std::string &lid, const json::Value &effects)
 {
-	const std::vector<model::Effect> fxs = model::parse_effects(&effects, "layer " + lid);
 	std::lock_guard<std::recursive_mutex> lk(m_);
+	// lut / imageMask files (D291) resolve against the bases of the last load; a missing file refuses the list
+	const std::vector<model::Effect> fxs = model::parse_effects(&effects, "layer " + lid, &last_opts_.bases);
 	struct Todo {
 		Scene *s;
 		Layer *l;

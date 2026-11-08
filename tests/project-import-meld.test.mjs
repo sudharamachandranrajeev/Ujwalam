@@ -108,8 +108,10 @@ test('skipped list: every unmapped kind is listed with a reason and a Meld id, n
   assert.match(r.skipped.find((s) => s.layer === 'H-L-DUP3').detail, /itself a duplicator/);
   assert.equal(Object.values(r.skippedByKind).reduce((a, b) => a + b, 0), 8);
   assert.equal(r.ignored.effects, undefined, 'an effect that is not enabled does nothing in Meld: not imported, not reported (D246)');
-  assert.ok(!importMeld(session()).project.scenes.some((x) => x.layers.some((l) => l.effects)), 'no effects imported');
-  assert.equal(r.ignored['flip (negative scale)'], 1);
+  const withFx = importMeld(session()).project.scenes.flatMap((x) => x.layers).filter((l) => l.effects);
+  assert.deepEqual(withFx.map((l) => [l.origin.id, l.effects]), [['H-L-CAM+V-L-CAM', [{ type: 'mirror' }]]],
+    'only the camera mirror (rotation 180 with scaleY < 0, D291); disabled effects import nothing');
+  assert.equal(r.ignored['flip (negative scale)'], undefined, 'a negative scale is no longer dropped (D291)');
   assert.ok(r.warnings.some((w) => /different stacking order on V/.test(w)));
 });
 
@@ -292,7 +294,13 @@ test('rotation: 180 with both axes flipped or none stays 180; other angles are k
   assert.equal(by['R-45'], 45);
   assert.equal(by['R-MIRROR'], undefined);
   assert.equal(by['R-90FLIP'], 90);
-  assert.equal(report.ignored['flip (negative scale)'] >= 2, true);
+  const fx = Object.fromEntries(project.scenes[1].layers.map((l) => [l.origin.id, l.effects]));
+  assert.equal(fx['R-NONE'], undefined);
+  assert.deepEqual(fx['R-BOTH'], [{ type: 'mirror' }, { type: 'flip' }], 'both axes flipped: mirror and flip, rotation 180 kept (together the same picture)');
+  assert.equal(fx['R-45'], undefined);
+  assert.deepEqual(fx['R-MIRROR'], [{ type: 'mirror' }], '180 with scaleY < 0 is a left-right mirror (D291)');
+  assert.deepEqual(fx['R-90FLIP'], [{ type: 'mirror' }], 'scaleX < 0 keeps its rotation and mirrors the picture');
+  assert.equal(report.ignored['flip (negative scale)'], undefined);
 });
 
 test('video device fill mode crops the centre in source pixels instead of stretching', () => {
@@ -470,11 +478,11 @@ test('layer effects (D246): an enabled Meld ChromaKey imports as chromaKey with 
   const layer = p.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
   assert.deepEqual(layer.effects, [{ type: 'chromaKey', color: '#00ff00', similarity: 440, smoothness: 103 }]);
   assert.equal(r.ignored['effect GaussianBlur'], 1);
-  assert.equal(r.ignored['V effects that differ from H (H kept)'], 1, 'the V copy has no key');
+  assert.equal(r.ignored['V effects that differ from H (H kept)'], 2, 'the V copy has no key; the camera V copy has no mirror (fixture)');
   assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
   assert.equal(validateProject(p).ok, true);
   const bad = structuredClone(p);
-  bad.scenes.flatMap((x) => x.layers).find((l) => l.effects).effects[0].color = '#00ff0';
+  bad.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA')).effects[0].color = '#00ff0';
   assert.equal(validateProject(bad).ok, false);
   assert.equal(schemaCheck(bad), false);
 });

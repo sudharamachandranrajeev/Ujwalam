@@ -1,0 +1,30 @@
+{
+  "id": "cam-flip",
+  "version": "0.1.0",
+  "function": "layer-mirror",
+  "functionVersion": "^0.1.0",
+  "name": "Flip upside down",
+  "params": {
+    "effect": {
+      "type": "flip"
+    }
+  },
+  "themeOverrides": {},
+  "family": "camera",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "cam-mirror"
+  ]
+}

@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_flip (src/effects.cpp "ujw_pass", D291). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Mirror and flip: p.x > 0.5 mirrors the picture left-right, p.y > 0.5 turns it upside down.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 p;
+
+sampler_state pointSampler {
+	Filter   = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSFlip(VertData v_in) : TARGET
+{
+	float2 uv = v_in.uv;
+	if (p.x > 0.5)
+		uv.x = 1.0 - uv.x;
+	if (p.y > 0.5)
+		uv.y = 1.0 - uv.y;
+	return image.Sample(pointSampler, uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSFlip(v_in);
+	}
+}

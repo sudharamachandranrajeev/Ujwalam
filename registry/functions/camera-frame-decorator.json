@@ -4,11 +4,76 @@
   "category": "effects",
   "family": "frame-effects",
   "name": "Camera frame decorator",
-  "description": "Follows a layer's live geometry. Planned; behaviour not yet specified.",
+  "description": "Shape mask for a camera (or any) layer: circle/ellipse (\"circleMask\") or rounded rectangle (\"roundMask\", radius 0..50 % of the shorter side), with feather and a border ring drawn inside the edge (width 0..25 % of the shorter side, colour) (ujw_shape_mask.effect, D291 proposed). Follows the layer's live size because it is an effect on the layer. Glow or shadow around the ring: add the D257 glow/shadow effect after it. The animated Cam-Pop frame preset (HTML layer following the camera geometry) stays planned on this function.",
   "params": {
-    "schema": {},
-    "defaults": {},
-    "safeRanges": {}
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "feather",
+            "borderWidth",
+            "borderColor"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "circleMask",
+                "roundMask"
+              ]
+            },
+            "radius": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 50
+            },
+            "feather": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 25
+            },
+            "borderWidth": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 25
+            },
+            "borderColor": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "circleMask",
+        "feather": 1,
+        "borderWidth": 3,
+        "borderColor": "#ffffff"
+      }
+    },
+    "safeRanges": {
+      "radius": [
+        0,
+        50
+      ],
+      "feather": [
+        0,
+        25
+      ],
+      "borderWidth": [
+        0,
+        25
+      ]
+    }
   },
   "canvases": [
     "H",
@@ -19,6 +84,7 @@
   "maxConcurrent": 0,
   "flashesPerSec": 0,
   "budgetCost": 0,
-  "status": "planned",
-  "planSection": "4.2"
+  "status": "in-progress",
+  "planSection": "4.2",
+  "format": "native-shader"
 }

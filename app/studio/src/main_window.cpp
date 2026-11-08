@@ -109,6 +109,28 @@ const std::vector<FxType> &fxTypes()
 					     fxNum("bottomRightY", "Bottom right y", 0, 1, 1, 0.01, 3),
 					     fxNum("bottomLeftX", "Bottom left x", 0, 1, 0, 0.01, 3),
 					     fxNum("bottomLeftY", "Bottom left y", 0, 1, 1, 0.01, 3)}, "shape"},
+		// D291. lut and imageMask need a file field (not in this table yet): they are kept as they are, not editable here.
+		{"sharpen", "Sharpen", {fxNum("amount", "Amount", 0, 1, 0.2, 0.05, 2)}, "filter"},
+		{"vignette", "Vignette", {fxNum("amount", "Amount", 0, 1, 0.5, 0.05, 2), fxNum("size", "Clear centre", 0, 1, 0.4, 0.05, 2),
+					  fxNum("softness", "Softness", 0, 1, 0.5, 0.05, 2), fxCol("color", "Colour", "#000000")}, "filter"},
+		{"grain", "Film grain", {fxNum("amount", "Amount", 0, 1, 0.15, 0.05, 2), fxNum("size", "Grain size (px)", 1, 10, 1, 1, 0)}, "filter"},
+		{"pixelate", "Pixelate", {fxNum("size", "Block size (px)", 2, 200, 16, 1, 0)}, "filter"},
+		{"posterize", "Posterize", {fxNum("levels", "Levels", 2, 32, 6, 1, 0)}, "filter"},
+		{"mirror", "Mirror", {}, "camera"},
+		{"flip", "Flip upside down", {}, "camera"},
+		{"circleMask", "Circle mask", {fxNum("feather", "Soft edge (%)", 0, 25, 0, 0.5, 1), fxNum("borderWidth", "Border (%)", 0, 25, 0, 0.5, 1),
+					       fxCol("borderColor", "Border colour", "#ffffff")}, "camera"},
+		{"roundMask", "Rounded mask", {fxNum("radius", "Corner (%)", 0, 50, 12, 1, 1), fxNum("feather", "Soft edge (%)", 0, 25, 0, 0.5, 1),
+					       fxNum("borderWidth", "Border (%)", 0, 25, 0, 0.5, 1), fxCol("borderColor", "Border colour", "#ffffff")}, "camera"},
+		{"opacity", "Opacity", {fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2)}, "compositing"},
+		{"blendAdd", "Blend: add", {fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2)}, "compositing"},
+		{"blendSubtract", "Blend: subtract", {fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2)}, "compositing"},
+		{"blendMultiply", "Blend: multiply", {fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2)}, "compositing"},
+		{"blendScreen", "Blend: screen", {fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2)}, "compositing"},
+		{"blendLighten", "Blend: lighten", {fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2)}, "compositing"},
+		{"blendDarken", "Blend: darken", {fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2)}, "compositing"},
+		{"gradientMask", "Gradient fade", {fxNum("angle", "Direction (degrees)", -360, 360, 90, 5, 1), fxNum("start", "Fade starts", 0, 1, 0.6, 0.05, 2),
+						   fxNum("end", "Fade ends", 0, 1, 1, 0.05, 2)}, "compositing"},
 	};
 	return t;
 }

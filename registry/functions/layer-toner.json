@@ -1,0 +1,91 @@
+{
+  "id": "layer-toner",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "layer-filters",
+  "name": "Layer toner",
+  "description": "Maps the layer's brightness onto five colours (shadows to highlights) with an amount (D258). Black and white and sepia are presets of it.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "shadows",
+            "darktones",
+            "midtones",
+            "brights",
+            "highlights",
+            "amount"
+          ],
+          "properties": {
+            "type": {
+              "const": "toner"
+            },
+            "shadows": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "darktones": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "midtones": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "brights": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "highlights": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "toner",
+        "shadows": "#000000",
+        "darktones": "#404040",
+        "midtones": "#808080",
+        "brights": "#c0c0c0",
+        "highlights": "#ffffff",
+        "amount": 1
+      }
+    },
+    "safeRanges": {
+      "amount": [
+        0,
+        1
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.2"
+}

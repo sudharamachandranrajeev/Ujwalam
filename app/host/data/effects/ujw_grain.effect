@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_grain (src/effects.cpp "ujw_pass", D291). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Film grain: zero-mean noise, the same on R, G and B. p.x = amount 0..1, p.y = grain size in input px (1..10),
+// p.z = frame counter (changes the pattern every frame), p.w = per-layer seed. Each grain cell is independent and
+// averages to zero, so the mean of any area stays the same from frame to frame: grain does not flash (fx test, D291).
+// Alpha is kept.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 size;
+uniform float4 p;
+
+sampler_state clampSampler {
+	Filter   = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+// "Hash without sine" (Dave Hoskins, MIT licence): the same on every GPU, no sin() precision loss.
+float hash13(float3 q)
+{
+	q = frac(q * 0.1031);
+	q += dot(q, q.zyx + 31.32);
+	return frac((q.x + q.y) * q.z);
+}
+
+float4 PSGrain(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(clampSampler, v_in.uv);
+	float2 cell = floor(v_in.uv * size / max(p.y, 1.0));
+	float n = hash13(float3(cell, p.z + p.w)) - 0.5;
+	rgba.rgb = saturate(rgba.rgb + n * p.x * 0.5);
+	return rgba;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSGrain(v_in);
+	}
+}

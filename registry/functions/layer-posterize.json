@@ -1,0 +1,61 @@
+{
+  "id": "layer-posterize",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "layer-filters",
+  "name": "Layer posterize",
+  "description": "Rounds each colour channel to 2..32 levels (ujw_posterize.effect, D291 proposed).",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "levels"
+          ],
+          "properties": {
+            "type": {
+              "const": "posterize"
+            },
+            "levels": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 32
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "posterize",
+        "levels": 6
+      }
+    },
+    "safeRanges": {
+      "levels": [
+        2,
+        32
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.2"
+}

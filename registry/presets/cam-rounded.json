@@ -1,0 +1,35 @@
+{
+  "id": "cam-rounded",
+  "version": "0.1.0",
+  "function": "camera-frame-decorator",
+  "functionVersion": "^0.1.0",
+  "name": "Rounded cam",
+  "params": {
+    "effect": {
+      "type": "roundMask",
+      "radius": 12,
+      "feather": 1,
+      "borderWidth": 0,
+      "borderColor": "#ffffff"
+    }
+  },
+  "themeOverrides": {},
+  "family": "frame-effects",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "cam-circle-ring",
+    "cam-mirror"
+  ]
+}

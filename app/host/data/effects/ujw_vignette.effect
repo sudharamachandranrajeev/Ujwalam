@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_vignette (src/effects.cpp "ujw_pass", D291). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Vignette: the colour is mixed in towards the edges. r = distance from the centre in the frame's own shape, 0 at the
+// centre and 1 at a corner. p.x = amount 0..1, p.y = size (r where the darkening starts) 0..1, p.z = softness 0..1
+// (how much further r goes before the full amount). Alpha is kept.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 p;
+uniform float4 color;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSVignette(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(clampSampler, v_in.uv);
+	float r = length((v_in.uv - 0.5) * 2.0) * 0.70710678;
+	float v = smoothstep(p.y, p.y + max(p.z, 0.001), r) * p.x;
+	rgba.rgb = lerp(rgba.rgb, color.rgb, v);
+	return rgba;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSVignette(v_in);
+	}
+}

@@ -1,0 +1,32 @@
+{
+  "id": "comp-multiply-overlay",
+  "version": "0.1.0",
+  "function": "layer-opacity-blend",
+  "functionVersion": "^0.1.0",
+  "name": "Multiply overlay",
+  "params": {
+    "effect": {
+      "type": "blendMultiply",
+      "opacity": 1
+    }
+  },
+  "themeOverrides": {},
+  "family": "compositing",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "comp-screen-light",
+    "comp-half-opacity"
+  ]
+}

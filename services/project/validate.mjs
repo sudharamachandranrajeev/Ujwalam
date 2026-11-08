@@ -14,6 +14,25 @@ const DEVICE_KINDS = ['capture-card', 'camera', 'microphone', 'audio-output'];
 const LAYER_TYPES = ['capture', 'browser', 'image', 'media', 'text', 'color', 'duplicate'];
 const MONITORING = ['off', 'monitor-only', 'monitor-and-output'];
 const PATH_BASES = ['data', 'media', 'overlays', 'profile'];
+// D291 layer effects: key -> [min, max] or [min, max, 'int'], 'color' (#RRGGBB), 'file' (pathRef), 'bool', or
+// [[allowed values]]. All keys are required. Same ranges as app/host/src/model.cpp and data/schemas/project.schema.json.
+const BLEND = ['blendAdd', 'blendSubtract', 'blendMultiply', 'blendScreen', 'blendLighten', 'blendDarken'];
+const FX291 = {
+  sharpen: { amount: [0, 1] },
+  vignette: { amount: [0, 1], size: [0, 1], softness: [0, 1], color: 'color' },
+  grain: { amount: [0, 1], size: [1, 10] },
+  pixelate: { size: [2, 200] },
+  posterize: { levels: [2, 32, 'int'] },
+  lut: { file: 'file', amount: [0, 1] },
+  mirror: {},
+  flip: {},
+  circleMask: { feather: [0, 25], borderWidth: [0, 25], borderColor: 'color' },
+  roundMask: { radius: [0, 50], feather: [0, 25], borderWidth: [0, 25], borderColor: 'color' },
+  opacity: { opacity: [0, 1] },
+  ...Object.fromEntries(BLEND.map((b) => [b, { opacity: [0, 1] }])),
+  gradientMask: { angle: [-360, 360], start: [0, 1], end: [0, 1] },
+  imageMask: { file: 'file', channel: [['luma', 'alpha']], invert: 'bool', feather: [0, 100] },
+};
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -245,8 +264,23 @@ export function validateProject(doc) {
         noExtra(e, ['type', ...tones, 'amount'], ep); req(e, [...tones, 'amount'], ep);
         for (const k of tones) if (k in e && (typeof e[k] !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(e[k]))) err(`${ep}.${k}`, 'must be #RRGGBB');
         if ('amount' in e) num(e.amount, `${ep}.amount`, 0, 1);
+      } else if (FX291[e.type]) { // D291 filters, camera and compositing (same ranges as app/host/src/model.cpp)
+        const spec = FX291[e.type];
+        const keys = Object.keys(spec);
+        noExtra(e, ['type', ...keys], ep); req(e, keys, ep);
+        for (const k of keys) {
+          if (!(k in e)) continue;
+          const s = spec[k];
+          if (s === 'color') { if (typeof e[k] !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(e[k])) err(`${ep}.${k}`, 'must be #RRGGBB'); }
+          else if (s === 'file') pathRefOk(e[k], `${ep}.${k}`);
+          else if (s === 'bool') { if (typeof e[k] !== 'boolean') err(`${ep}.${k}`, 'must be true or false'); }
+          else if (Array.isArray(s[0])) { if (!s[0].includes(e[k])) err(`${ep}.${k}`, `must be one of ${s[0].join(', ')}`); }
+          else num(e[k], `${ep}.${k}`, s[0], s[1], s[2] === 'int');
+        }
+        if (e.type === 'lut' && isObj(e.file) && typeof e.file.rel === 'string' && !/\.(cube|png)$/i.test(e.file.rel)) err(`${ep}.file`, 'lut file must be .cube or .png');
+        if (BLEND.includes(e.type) && list.slice(0, i).some((x) => isObj(x) && BLEND.includes(x.type))) err(ep, 'at most one blend effect per layer');
       } else {
-        err(`${ep}.type`, 'must be one of blur, rounded, chromaKey, shadow, glow, color, toner, cornerPin, blinds');
+        err(`${ep}.type`, `must be one of blur, rounded, chromaKey, shadow, glow, color, toner, cornerPin, blinds, ${Object.keys(FX291).join(', ')}`);
       }
     });
   };

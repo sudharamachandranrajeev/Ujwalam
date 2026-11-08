@@ -117,7 +117,7 @@
       }
     },
     "effect": {
-      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside. chromaKey (D246): pixels near color become transparent (OBS chroma key: similarity and smoothness 1..1000, OBS defaults 400 and 80). shadow and glow (D257): a blurred copy of the layer's alpha in one colour under the layer, reaching past its box; canvas px: size = blur reach (sigma = size / 3), distance = offset, angle = where the light comes from (0 right, 90 above); glow spread 0..1 hardens the edge. color (D258): OBS colour correction, brightness/contrast/saturation -1..1 (0 = unchanged), hue -180..180 degrees. toner (D258): five colours picked by luma (shadows 0, darktones 0.25, midtones 0.5, brights 0.75, highlights 1), mixed with the original by amount. cornerPin (D259): the layer is drawn into the quad of its four corners, each 0..1 of the layer's frame (y down); outside the quad is transparent. blinds (D262): venetian blinds, the first completion 0..1 share of every slat hidden; slats stacked along angle (degrees, y down), width 1..100 % of the layer's larger side, feather 0..100 source px.",
+      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside. chromaKey (D246): pixels near color become transparent (OBS chroma key: similarity and smoothness 1..1000, OBS defaults 400 and 80). shadow and glow (D257): a blurred copy of the layer's alpha in one colour under the layer, reaching past its box; canvas px: size = blur reach (sigma = size / 3), distance = offset, angle = where the light comes from (0 right, 90 above); glow spread 0..1 hardens the edge. color (D258): OBS colour correction, brightness/contrast/saturation -1..1 (0 = unchanged), hue -180..180 degrees. toner (D258): five colours picked by luma (shadows 0, darktones 0.25, midtones 0.5, brights 0.75, highlights 1), mixed with the original by amount. cornerPin (D259): the layer is drawn into the quad of its four corners, each 0..1 of the layer's frame (y down); outside the quad is transparent. blinds (D262): venetian blinds, the first completion 0..1 share of every slat hidden; slats stacked along angle (degrees, y down), width 1..100 % of the layer's larger side, feather 0..100 source px. D291: sharpen (OBS sharpness 0..1); vignette (colour mixed in towards the edges: amount, size = where it starts 0 centre..1 corner, softness); grain (zero-mean noise, size 1..10 source px, seeded per layer, new every frame); pixelate (cell 2..200 source px); posterize (2..32 levels); lut (OBS LUT filter, .cube or 512 x 512 .png, amount); mirror (left-right) and flip (upside down); circleMask (ellipse filling the frame) and roundMask (radius 0..50 % of the shorter side) with feather and borderWidth 0..25 % of the shorter side and a borderColor ring inside the edge; opacity; blendAdd, blendSubtract, blendMultiply, blendScreen, blendLighten, blendDarken (the scene item's blending mode plus opacity; at most one per layer, checked by the validator); gradientMask (fade along angle, 0 = left to right, y down: kept up to start, gone from end, 0..1 of the frame); imageMask (alpha from an image's luma or alpha, invert, feather 0..100 mask px).",
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["type", "strength"],
           "properties": { "type": { "const": "blur" }, "strength": { "type": "number", "minimum": 1, "maximum": 100 } } },
@@ -149,7 +149,36 @@
             "bottomRightY": { "type": "number", "minimum": 0, "maximum": 1 }, "bottomLeftX": { "type": "number", "minimum": 0, "maximum": 1 }, "bottomLeftY": { "type": "number", "minimum": 0, "maximum": 1 } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "completion", "angle", "width", "feather"],
           "properties": { "type": { "const": "blinds" }, "completion": { "type": "number", "minimum": 0, "maximum": 1 }, "angle": { "type": "number", "minimum": -360, "maximum": 360 },
-            "width": { "type": "number", "minimum": 1, "maximum": 100 }, "feather": { "type": "number", "minimum": 0, "maximum": 100 } } }
+            "width": { "type": "number", "minimum": 1, "maximum": 100 }, "feather": { "type": "number", "minimum": 0, "maximum": 100 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "amount"],
+          "properties": { "type": { "const": "sharpen" }, "amount": { "type": "number", "minimum": 0, "maximum": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "amount", "size", "softness", "color"],
+          "properties": { "type": { "const": "vignette" }, "amount": { "type": "number", "minimum": 0, "maximum": 1 }, "size": { "type": "number", "minimum": 0, "maximum": 1 },
+            "softness": { "type": "number", "minimum": 0, "maximum": 1 }, "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "amount", "size"],
+          "properties": { "type": { "const": "grain" }, "amount": { "type": "number", "minimum": 0, "maximum": 1 }, "size": { "type": "number", "minimum": 1, "maximum": 10 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "size"],
+          "properties": { "type": { "const": "pixelate" }, "size": { "type": "number", "minimum": 2, "maximum": 200 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "levels"],
+          "properties": { "type": { "const": "posterize" }, "levels": { "type": "integer", "minimum": 2, "maximum": 32 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "file", "amount"],
+          "properties": { "type": { "const": "lut" }, "file": { "$ref": "#/$defs/pathRef" }, "amount": { "type": "number", "minimum": 0, "maximum": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type"], "properties": { "type": { "enum": ["mirror", "flip"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "feather", "borderWidth", "borderColor"],
+          "properties": { "type": { "const": "circleMask" }, "feather": { "type": "number", "minimum": 0, "maximum": 25 },
+            "borderWidth": { "type": "number", "minimum": 0, "maximum": 25 }, "borderColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "radius", "feather", "borderWidth", "borderColor"],
+          "properties": { "type": { "const": "roundMask" }, "radius": { "type": "number", "minimum": 0, "maximum": 50 }, "feather": { "type": "number", "minimum": 0, "maximum": 25 },
+            "borderWidth": { "type": "number", "minimum": 0, "maximum": 25 }, "borderColor": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "opacity"],
+          "properties": { "type": { "enum": ["opacity", "blendAdd", "blendSubtract", "blendMultiply", "blendScreen", "blendLighten", "blendDarken"] },
+            "opacity": { "type": "number", "minimum": 0, "maximum": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "angle", "start", "end"],
+          "properties": { "type": { "const": "gradientMask" }, "angle": { "type": "number", "minimum": -360, "maximum": 360 },
+            "start": { "type": "number", "minimum": 0, "maximum": 1 }, "end": { "type": "number", "minimum": 0, "maximum": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "file", "channel", "invert", "feather"],
+          "properties": { "type": { "const": "imageMask" }, "file": { "$ref": "#/$defs/pathRef" }, "channel": { "enum": ["luma", "alpha"] },
+            "invert": { "type": "boolean" }, "feather": { "type": "number", "minimum": 0, "maximum": 100 } } }
       ]
     },
     "layer": {

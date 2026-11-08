@@ -1,0 +1,33 @@
+{
+  "id": "comp-image-mask",
+  "version": "0.1.0",
+  "function": "layer-image-mask",
+  "functionVersion": "^0.1.0",
+  "name": "Image mask (file)",
+  "params": {
+    "effect": {
+      "type": "imageMask",
+      "channel": "luma",
+      "invert": false,
+      "feather": 4
+    }
+  },
+  "themeOverrides": {},
+  "family": "compositing",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "comp-fade-bottom"
+  ]
+}

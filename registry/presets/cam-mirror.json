@@ -1,0 +1,31 @@
+{
+  "id": "cam-mirror",
+  "version": "0.1.0",
+  "function": "layer-mirror",
+  "functionVersion": "^0.1.0",
+  "name": "Mirror cam",
+  "params": {
+    "effect": {
+      "type": "mirror"
+    }
+  },
+  "themeOverrides": {},
+  "family": "camera",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "cam-circle-ring",
+    "cam-rounded"
+  ]
+}

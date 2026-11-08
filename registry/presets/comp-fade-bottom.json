@@ -1,0 +1,34 @@
+{
+  "id": "comp-fade-bottom",
+  "version": "0.1.0",
+  "function": "layer-gradient-mask",
+  "functionVersion": "^0.1.0",
+  "name": "Gradient fade bottom",
+  "params": {
+    "effect": {
+      "type": "gradientMask",
+      "angle": 90,
+      "start": 0.6,
+      "end": 1
+    }
+  },
+  "themeOverrides": {},
+  "family": "compositing",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "calm",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "comp-half-opacity",
+    "comp-image-mask"
+  ]
+}

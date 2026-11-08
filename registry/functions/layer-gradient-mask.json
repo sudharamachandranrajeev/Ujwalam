@@ -1,0 +1,83 @@
+{
+  "id": "layer-gradient-mask",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "compositing",
+  "name": "Layer gradient fade mask",
+  "description": "Fades a layer out along an angle: fully shown before start, gone after end (0..1 across the layer) (ujw_gradient_mask.effect, D291 proposed).",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "angle",
+            "start",
+            "end"
+          ],
+          "properties": {
+            "type": {
+              "const": "gradientMask"
+            },
+            "angle": {
+              "type": "number",
+              "minimum": -360,
+              "maximum": 360
+            },
+            "start": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "end": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "gradientMask",
+        "angle": 90,
+        "start": 0.6,
+        "end": 1
+      }
+    },
+    "safeRanges": {
+      "angle": [
+        -360,
+        360
+      ],
+      "start": [
+        0,
+        1
+      ],
+      "end": [
+        0,
+        1
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.2"
+}

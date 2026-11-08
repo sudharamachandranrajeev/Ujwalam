@@ -1,0 +1,83 @@
+{
+  "id": "layer-image-mask",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "compositing",
+  "name": "Layer image mask",
+  "description": "Masks a layer with an image file by its brightness or alpha, with invert and feather 0..100 px (ujw_image_mask, D291 proposed). A missing file is a plan warning; the layer shows without it.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "file",
+            "channel",
+            "invert",
+            "feather"
+          ],
+          "properties": {
+            "type": {
+              "const": "imageMask"
+            },
+            "file": {
+              "type": "object",
+              "description": "project file ref {base, rel}; chosen when the preset is applied",
+              "required": [
+                "base",
+                "rel"
+              ]
+            },
+            "channel": {
+              "enum": [
+                "luma",
+                "alpha"
+              ]
+            },
+            "invert": {
+              "type": "boolean"
+            },
+            "feather": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "imageMask",
+        "channel": "luma",
+        "invert": false,
+        "feather": 0
+      }
+    },
+    "safeRanges": {
+      "feather": [
+        0,
+        100
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.2"
+}

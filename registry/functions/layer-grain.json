@@ -1,0 +1,72 @@
+{
+  "id": "layer-grain",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "layer-filters",
+  "name": "Layer film grain",
+  "description": "Seeded film grain: zero-mean noise that changes every frame, cell size 1..10 px (ujw_grain.effect, D291 proposed). Measured 0 flashes/s at amount 1 on a full canvas.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "amount",
+            "size"
+          ],
+          "properties": {
+            "type": {
+              "const": "grain"
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "size": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 10
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "grain",
+        "amount": 0.2,
+        "size": 2
+      }
+    },
+    "safeRanges": {
+      "amount": [
+        0,
+        1
+      ],
+      "size": [
+        1,
+        10
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.2"
+}

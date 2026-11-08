@@ -66,8 +66,23 @@ struct Source {
 //                  width 1..100 (slat width, % of the layer's larger side; kept in value), feather 0..100 source px
 //                  (kept in size)
 //   cornerPin (D259): pin = topLeft, topRight, bottomRight, bottomLeft corners, x then y, each 0..1 of the layer frame
+// D291 filters, camera and compositing (shares of the frame are of the layer after the placement crop):
+//   sharpen: amount 0..1 (OBS sharpness_filter_v2)
+//   vignette: amount 0..1, size 0..1 (where it starts: 0 centre, 1 corner), softness 0..1, color
+//   grain: amount 0..1, size 1..10 source px (grain cell); seeded per layer, new pattern every frame, zero mean
+//   pixelate: size 2..200 source px (cell)          posterize: levels 2..32 (kept in value)
+//   lut: file (pathRef, .cube or 512 x 512 .png; resolved into path), amount 0..1 (OBS clut_filter)
+//   mirror (left-right), flip (upside down): no settings
+//   circleMask: ellipse filling the frame; roundMask: rounded rectangle, radius 0..50 % of the shorter side (value);
+//               both feather 0..25 and borderWidth 0..25 (% of the shorter side), borderColor (kept in color)
+//   opacity: opacity 0..1
+//   blendAdd, blendSubtract, blendMultiply, blendScreen, blendLighten, blendDarken: opacity 0..1 and the scene item's
+//               blending mode (at most one blend effect per layer)
+//   gradientMask: angle -360..360 (direction of the fade, 0 = left to right, y down), start, end 0..1
+//   imageMask: file (pathRef image), channel "luma" | "alpha", invert, feather 0..100 mask px
 struct Effect {
 	std::string type; // "blur" | "rounded" | "chromaKey" | "shadow" | "glow" | "color" | "toner" | "cornerPin" | "blinds"
+	                  // | D291 types above
 	double value = 0;
 	uint32_t color = 0;
 	int64_t similarity = 400, smoothness = 80;
@@ -77,7 +92,15 @@ struct Effect {
 	double amount = 1;
 	double completion = 0;
 	double pin[8] = {0, 0, 1, 0, 1, 1, 0, 1};
+	double softness = 0, feather = 0, border = 0, start = 0, end = 1; // D291
+	bool invert = false;
+	std::string channel;    // imageMask: "luma" | "alpha"
+	json::Value file;       // lut, imageMask: the pathRef as given (effects_json returns it, never the resolved path)
+	std::string path;       // its absolute file, when parse_effects was given the bases
 };
+
+// Blend effect types (D291), in the order of libobs's enum obs_blending_type after OBS_BLEND_NORMAL.
+bool is_blend(const std::string &type);
 
 struct Item {
 	std::string layer, name, type;
@@ -88,7 +111,12 @@ struct Item {
 };
 
 // Parses and checks a layer's "effects" array (absent: empty). Throws rpc::Error(INVALID_PARAMS).
-std::vector<Effect> parse_effects(const json::Value *effects, const std::string &what);
+// File effects (lut, imageMask, D291): with `bases` each file is resolved into Effect::path. A file that cannot be
+// resolved throws rpc::Error(UNAVAILABLE), or, when `warnings` is given, drops that effect and adds a warning
+// {layer, effect, reason} (a project load shows the layer without it). Without `bases` nothing is resolved (path
+// stays empty) and fx::create_chain refuses the effect.
+std::vector<Effect> parse_effects(const json::Value *effects, const std::string &what,
+				  const std::map<std::string, std::string> *bases = nullptr, json::Value *warnings = nullptr);
 json::Value effects_json(const std::vector<Effect> &e);
 
 struct Scene {

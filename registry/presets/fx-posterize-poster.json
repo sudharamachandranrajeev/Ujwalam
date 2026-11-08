@@ -1,0 +1,32 @@
+{
+  "id": "fx-posterize-poster",
+  "version": "0.1.0",
+  "function": "layer-posterize",
+  "functionVersion": "^0.1.0",
+  "name": "Poster look",
+  "params": {
+    "effect": {
+      "type": "posterize",
+      "levels": 5
+    }
+  },
+  "themeOverrides": {},
+  "family": "layer-filters",
+  "tags": {
+    "motion": "none",
+    "intensity": "medium",
+    "mood": "playful",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "fx-pixelate-censor",
+    "fx-black-and-white"
+  ]
+}
