@@ -101,7 +101,9 @@ add_executable(ujwalam-host
   src/hotkeys.cpp
   src/panic.cpp
   src/moments.cpp
-  src/crash.cpp)
+  src/crash.cpp
+  src/ujwalam-host.rc
+  src/ujwalam-host.manifest)
 set_target_properties(ujwalam-host PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)
 target_compile_definitions(ujwalam-host PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN _CRT_SECURE_NO_WARNINGS)
 target_compile_options(ujwalam-host PRIVATE /W3 /utf-8 /wd4244 /wd4267 /EHsc)
