@@ -77,3 +77,18 @@ Licence evidence (checked 2026-10-27):
 - The legacy `ch_ppocr_mobile_v2.0_cls` model has no Hugging Face card; its licence rests on the PaddleOCR repository licence and RapidOCR's notice.
 
 Redistribution (Apache-2.0 section 4): include the Apache-2.0 text, keep the attribution, and mark the files as converted. RapidOCR's suggested notice: "Converted from an official PaddleOCR model to the indicated inference format and packaged for use with RapidOCR. The upstream model weights are copyright Baidu and/or the applicable PaddleOCR rights holders and are licensed under the Apache License, Version 2.0." No upstream `NOTICE` file was identified for these models.
+
+### Face AI models (flag face-ai, D295 proposed)
+
+Manifest: `data/models/face-ai.json` (committed). Files: fetched by `services/face/fetch_models.py` into `data/models/face/` (gitignored, SHA-256 checked); none is committed or shipped yet. Runtime: `onnxruntime-directml` 1.24.4 (MIT) and OpenCV in the project's `.venv-gpu`. Checked 2026-11-08.
+
+| id (default) | File (bytes) | SHA-256 | Source | Licence |
+|---|---|---|---|---|
+| selfie-landscape (yes) | `selfie_segmentation_landscape.onnx` (462,338) | `7a0adcfdb1715d3b0ff0f61486d8a181c33f4a208343a5abfccbc6540e872d24` | Hugging Face `onnx-community`, rev `2497d5bec26c626c7b3c4edc6e1fefc21b64f6c3` (MediaPipe selfie segmentation, converted) | Apache-2.0 |
+| selfie-square | `selfie_segmentation.onnx` (462,352) | `3241ac4ad8aa35bdaf33946776db29f7c283a413aa0b0dacb9483594b4531aad` | Hugging Face `onnx-community`, rev `be49485c8e027524be38591817fc5cd31bd9d00e` | Apache-2.0 |
+| modnet-fp16 | `modnet_fp16.onnx` (12,984,781) | `25f165da9bfd30830a575f1f0490f1acd995975cb349bc02f3d79332e1fe5cf6` | Hugging Face `Xenova/modnet`, rev `fa2fa546052fba4c08921230a26cc69a333fca12` | Apache-2.0 (repo); weights licence UNVERIFIED |
+| rvm-mobilenetv3 | `rvm_mobilenetv3_fp32.onnx` (14,975,696) | `88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828` | GitHub `PeterL1n/RobustVideoMatting` release v1.0.0 | GPL-3.0 (compatible with this project; bench only) |
+| yunet (yes) | `face_detection_yunet_2023mar.onnx` (232,589) | `8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4` | Hugging Face `opencv/face_detection_yunet`, rev `3cc26e7f1014a5ee5d74a42acee58bafc9d0a310` | MIT (repo `LICENSE` SHA-256 `c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958`) |
+| facemesh-468 (yes) | `face_landmark_detector.onnx` (312,873) + `face_landmark_detector.data` (2,396,848, SHA-256 `7b4be428f66b16768aecb31954848ec9512eb444f13eaf6fc4690acc981d9732`) | `ebd4d22b162cfb3f8113fa48908859a4413c45a82a9ae0bd8a1e5a56f1fb9c5f` | Qualcomm AI Hub `mediapipe_face-onnx-float.zip` v0.66.0 (2,605,273 B, SHA-256 `f6d60fdf53ccf6fa2ce1f3b103fcc468b6860b4e707223a0a6d6733b35e0c630`); MediaPipe face mesh via MediaPipePyTorch | Apache-2.0 |
+
+Redistribution: not done yet. Before any model ships (installer, P17): include the Apache-2.0 / MIT texts and attribution; a GPL-3.0 model (RVM) only with this GPL-3.0 project's source offer. Test image used locally only (never committed): NASA astronaut photo (public domain) from scikit-image v0.24.0, SHA-256 `88431cd9653ccd539741b555fb0a46b61558b301d4110412b5bc28b5e3ea6cb5`.

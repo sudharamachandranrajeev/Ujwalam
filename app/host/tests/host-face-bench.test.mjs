@@ -43,7 +43,7 @@ before(async () => {
   if (!RUN) return;
   mkdirSync(OUT, { recursive: true });
   media = mkdtempSync(path.join(OUT, 'facebench-media-'));
-  ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-t', '10', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', path.join(media, 'cam.mp4')]);
+  ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-t', '10', '-c:v', 'mpeg4', '-q:v', '3', '-pix_fmt', 'yuv420p', path.join(media, 'cam.mp4')]);
   h = await launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), project: path.join(HOST_DIR, 'projects', 'test-card.project.json') });
   c = h.client;
 });
