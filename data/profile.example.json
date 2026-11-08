@@ -38,6 +38,11 @@
     "wordmark": "<brand-wordmark-file>",
     "character": "<brand-character-file>"
   },
+  "assets": {
+    "subscribe_cta": "<subscribe-button-video-file>",
+    "support_cta": "<support-video-file>",
+    "confetti_cta": "<confetti-video-file>"
+  },
   "handles": {
     "twitch": "<twitch-handle>",
     "youtube": "<youtube-handle>",

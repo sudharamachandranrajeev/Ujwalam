@@ -50,6 +50,16 @@
         "character": { "type": "string" }
       }
     },
+    "assets": {
+      "type": "object",
+      "description": "File names in the stream assets folder used by scene presets ({assets.*} placeholders, D251).",
+      "additionalProperties": false,
+      "properties": {
+        "subscribe_cta": { "type": "string" },
+        "support_cta": { "type": "string" },
+        "confetti_cta": { "type": "string" }
+      }
+    },
     "handles": {
       "type": "object",
       "description": "Display handles shown on stream by scene presets ({handles.*} placeholders).",
