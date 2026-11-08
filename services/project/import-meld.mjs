@@ -31,7 +31,7 @@ export const MAPPING = {
   'layer x, y, width, height (final displayed rectangle)': 'VERIFIED against implicit size x scale; UNVERIFIED in a render',
   'layer rotation, visible, opacity, isLocked': 'VERIFIED present; UNVERIFIED in a render',
   'rotation 180 with one negative scale (webcam mirror): rotation dropped, mirror reported as ignored': 'UNVERIFIED in a render (rotation 180 with one flipped axis is a pure mirror; the project placement has no flip, so the mirror is lost and reported)',
-  'Video device fitmentMode 2 (fill): centre crop in source pixels from implicit size and scale': 'UNVERIFIED (offsetX/offsetY ignored; fit mode 2 read as cover)',
+  'fitmentMode 2 (fill) on video device, media and duplicate layers: centre crop in source pixels from implicit size and scale (D253)': 'UNVERIFIED (offsetX/offsetY ignored; fit mode 2 read as cover)',
   'Group: children flattened in place when the group has scale 1, rotation 0, offset 0': 'UNVERIFIED in a render (child x/y are canvas coordinates in every real group seen; visible, opacity and lock are inherited)',
   'Game capture, Display capture: no host source kind, reported as skipped': 'VERIFIED (app/host layer types: color, test_pattern, media, image, dshow_video, wasapi_input, browser)',
   'childItems order: index 0 is the TOP layer': 'UNVERIFIED in a render; statistical support (2026-11-05): large layers sit at the higher index in 332 of 493 large-vs-small top-level pairs, background-named layers are never first, overlay-named layers never last. Project z-order is bottom first.',
@@ -79,6 +79,9 @@ function relUnder(root, p) {
   const rl = root.split('/').filter(Boolean).length;
   return p.split('/').filter(Boolean).slice(rl).join('/');
 }
+
+// layers whose source pixels are their picture, so a fill crop in source pixels is right (D253)
+const FILL_CROP_TYPES = new Set(['capture', 'image', 'media', 'duplicate']);
 
 export function importMeld(input, opts = {}) {
   const fps = opts.fps ?? 60;
@@ -326,16 +329,25 @@ export function importMeld(input, opts = {}) {
     if (rot !== 0) p.rotation = Math.max(-360, Math.min(360, rot));
     if (num(l.opacity) && l.opacity !== 1) p.opacity = Math.max(0, Math.min(1, l.opacity));
     if (flips) ignore('flip (negative scale)');
-    if (num(l.fitmentMode) && l.fitmentMode !== 0) ignore('fitmentMode other than 0');
-    // Video device fill mode (2): scaled uniformly, then clipped to the rectangle. Centre crop in source pixels.
-    if (c.type === 'capture' && l.fitmentMode === 2 && num(l.implicitWidth) && num(l.implicitHeight) && l.implicitWidth > 0 && l.implicitHeight > 0
-      && num(l.scaleX) && num(l.scaleY) && Math.abs(l.scaleX) > 0 && Math.abs(l.scaleY) > 0) {
-      const cx = Math.max(0, l.implicitWidth - l.width / Math.abs(l.scaleX));
-      const cy = Math.max(0, l.implicitHeight - l.height / Math.abs(l.scaleY));
-      if (cx >= 1 || cy >= 1) {
+    // Fit modes (D253). Meld fill (2): scaled uniformly, then clipped to the rectangle; fit (1): scaled to fit. When the
+    // scaled picture (implicit size x scale) is the box, either mode looks like a stretch and needs nothing. Fill with a
+    // larger picture becomes a centre crop in source pixels, for every layer whose source size is its picture (video
+    // devices, media, duplicates; D253 widened this from video devices, real sessions: 2-4 media and 12-14 duplicate
+    // layers per session). Anything else (no picture size, a smaller picture, browsers, text) is reported.
+    const fm = num(l.fitmentMode) ? l.fitmentMode : 0;
+    if (fm !== 0) {
+      const sized = num(l.implicitWidth) && num(l.implicitHeight) && l.implicitWidth > 16 && l.implicitHeight > 16
+        && num(l.scaleX) && num(l.scaleY) && Math.abs(l.scaleX) > 0 && Math.abs(l.scaleY) > 0;
+      const ew = sized ? l.implicitWidth * Math.abs(l.scaleX) : 0, eh = sized ? l.implicitHeight * Math.abs(l.scaleY) : 0;
+      const cx = sized ? Math.max(0, l.implicitWidth - l.width / Math.abs(l.scaleX)) : 0;
+      const cy = sized ? Math.max(0, l.implicitHeight - l.height / Math.abs(l.scaleY)) : 0;
+      if (sized && Math.abs(ew - l.width) < 1.5 && Math.abs(eh - l.height) < 1.5) { /* picture = box: nothing to do */ }
+      else if (fm === 2 && sized && FILL_CROP_TYPES.has(c.type) && ew >= l.width - 1.5 && eh >= l.height - 1.5 && (cx >= 1 || cy >= 1)) {
         p.crop = { left: Math.round(cx / 2), top: Math.round(cy / 2), right: Math.round(cx / 2), bottom: Math.round(cy / 2) };
-        ignore('offsetX/offsetY of a filled video device');
-      }
+        if ((num(l.offsetX) && Math.abs(l.offsetX) >= 0.5) || (num(l.offsetY) && Math.abs(l.offsetY) >= 0.5)) ignore('offsetX/offsetY of a filled layer (centre crop kept)');
+      } else if (!sized) ignore(`fitmentMode ${fm} without a known picture size`);
+      else if (!FILL_CROP_TYPES.has(c.type)) ignore(`fitmentMode ${fm} on a ${c.type} layer`);
+      else ignore(`fitmentMode ${fm} with a picture that does not cover the box`);
     }
     return p;
   };

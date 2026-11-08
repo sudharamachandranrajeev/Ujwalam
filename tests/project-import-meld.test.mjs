@@ -309,6 +309,29 @@ test('video device fill mode crops the centre in source pixels instead of stretc
   assert.equal(validateProject(project).ok, true);
 });
 
+test('fill mode on media and duplicates crops too; a picture equal to the box needs nothing; the rest is reported (D253)', () => {
+  const s = session();
+  const kids = s.session.scenes[1].childItems;
+  // media: 1280x720 at 0.5 = 640x360 shown in a 300x360 box -> 680 source px cut, 340 each side
+  kids.push(extraLayer('F-MEDIA', 'Media source', { mediaSource: 'file:///D:/media-root/clips/a.mp4', width: 300, height: 360, scaleX: 0.5, scaleY: 0.5, implicitWidth: 1280, implicitHeight: 720, fitmentMode: 2 }));
+  // the same at fit (1) with picture = box: no crop, no report
+  kids.push(extraLayer('F-SAME', 'Media source', { mediaSource: 'file:///D:/media-root/clips/b.mp4', width: 640, height: 360, scaleX: 0.5, scaleY: 0.5, implicitWidth: 1280, implicitHeight: 720, fitmentMode: 1 }));
+  // no picture size (Meld writes 16x16 before the file loads): reported
+  kids.push(extraLayer('F-NOSIZE', 'Media source', { mediaSource: 'file:///D:/media-root/clips/c.mp4', width: 300, height: 300, scaleX: 1, scaleY: 1, implicitWidth: 16, implicitHeight: 16, fitmentMode: 2 }));
+  // text at fill with a larger picture: reported, not cropped
+  kids.push(extraLayer('F-TEXT', 'Text', { text: 'hi', width: 100, height: 50, scaleX: 1, scaleY: 1, implicitWidth: 200, implicitHeight: 50, fitmentMode: 2 }));
+  const { project, report } = importMeld(s);
+  const L = (id) => project.scenes[1].layers.find((x) => x.origin.id === id);
+  assert.deepEqual(L('F-MEDIA').placements.h.crop, { left: 340, top: 0, right: 340, bottom: 0 });
+  assert.equal(L('F-SAME').placements.h.crop, undefined);
+  assert.equal(L('F-NOSIZE').placements.h.crop, undefined);
+  assert.equal(L('F-TEXT').placements.h.crop, undefined);
+  assert.equal(report.ignored['fitmentMode 2 without a known picture size'], 1);
+  assert.equal(report.ignored['fitmentMode 2 on a text layer'], 1);
+  assert.equal(report.ignored['fitmentMode 1 without a known picture size'], undefined);
+  assert.equal(validateProject(project).ok, true);
+});
+
 test('group: children are flattened in place with inherited visibility, opacity and lock; counts stay right', () => {
   const s = session();
   const grp = extraLayer('G-OK', 'Group', {
