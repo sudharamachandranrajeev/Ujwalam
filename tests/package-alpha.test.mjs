@@ -220,6 +220,35 @@ test('Install-Ujwalam.ps1 on a fake package: install, shortcuts, tamper refused,
   } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
 });
 
+test('Install-Ujwalam.ps1 -SettingsOnly: clip choices and folders merged into data\\core\\settings.json, clip maker into ujwalam.json, nothing installed (D284)', { timeout: 60_000 }, () => {
+  const root = tmp('settings');
+  try {
+    const p = fakePackage(root, '0.1.0-alpha.1');
+    const ir = path.join(root, 'Ujwalam');
+    const sf = path.join(ir, 'data', 'core', 'settings.json');
+    mkdirSync(path.dirname(sf), { recursive: true });
+    writeFileSync(sf, JSON.stringify({ clips: { recording: 'off', live: 'off' }, folders: { recordings: 'E:\\Rec', clips: null }, keep: 1 }));
+    const maker = path.join(root, 'maker');
+    mkdirSync(path.join(maker, 'services', 'clip'), { recursive: true });
+    writeFileSync(path.join(maker, 'services', 'clip', 'clipper.py'), '');
+    let r = install(p, root, '-SettingsOnly', '-ClipsWhenLive', 'while', '-ClipsFolder', 'D:\\Clips', '-ClipMaker', maker);
+    if (r.code === 6) return;
+    assert.equal(r.code, 0, r.out);
+    const s = JSON.parse(readFileSync(sf, 'utf8'));
+    assert.deepEqual(s.clips, { recording: 'off', live: 'while' }, 'only the given choice changes');
+    assert.deepEqual(s.folders, { recordings: 'E:\\Rec', clips: 'D:\\Clips' });
+    assert.equal(s.keep, 1, 'other settings kept');
+    assert.equal(JSON.parse(readFileSync(path.join(ir, 'data', 'ujwalam.json'), 'utf8')).clipRoot, maker);
+    assert.ok(!existsSync(path.join(ir, 'current.txt')), 'nothing installed');
+    r = install(p, root, '-SettingsOnly', '-ClipsFolder', 'relative\\clips');
+    assert.equal(r.code, 2, r.out);
+    r = install(p, root, '-SettingsOnly', '-RecordingsFolder', path.join(ir, '0.1.0-alpha.1', 'rec'));
+    assert.equal(r.code, 2, 'not inside the install folder');
+    r = install(p, root, '-SettingsOnly');
+    assert.equal(r.code, 2, 'needs a setting');
+  } finally { rmSync(root, { recursive: true, force: true, maxRetries: 3 }); }
+});
+
 test('full build (real host exe + OBS runtime)', { skip: process.env.UJWALAM_PACKAGE_E2E !== '1' && 'set UJWALAM_PACKAGE_E2E=1 (needs out/host/build and the OBS runtime)', timeout: 600_000 }, async () => {
   const { buildAlpha } = await import('../tools/package/build-alpha.mjs');
   const out = tmp('build');

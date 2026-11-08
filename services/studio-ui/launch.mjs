@@ -83,7 +83,8 @@ import { loadDevicePresets, matchRoles, overrideProblems } from '../project/devi
 import { hudCoverage, loadHudZones } from '../project/hud-zones.mjs';
 import { loadProject } from '../project/store.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
-import { CLIP_FLAG, createRecordClips } from './record-clips.mjs';
+import { createRecordClips } from './record-clips.mjs';
+import { folderProblem, readSettings } from './user-settings.mjs';
 import { createMediaInfo } from '../project/media-info.mjs';
 import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
@@ -758,6 +759,17 @@ export async function main(argv = process.argv.slice(2)) {
     const alt = path.join(REPO, 'out', 'host', 'build-c', 'ujwalam-host.exe');
     try { if (existsSync(alt) && (!existsSync(hostCfg.exe) || statSync(alt).mtimeMs > statSync(hostCfg.exe).mtimeMs)) hostCfg.exe = alt; } catch { /* keep the default */ }
   }
+  // Recordings folder from Settings (D284), used from this start on; the default stays <host data>/recordings.
+  if (hostCfg) {
+    const rf = readSettings(dataDir).folders.recordings;
+    let corpus = null;
+    try { corpus = readProfile(typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'))?.paths?.clips_corpus ?? null; } catch { corpus = null; }
+    const why = rf ? folderProblem(rf, { forbidden: [REPO, corpus] }) : null;
+    if (why) console.log(`[studio] WARNING: recordings folder from Settings not used: it ${why}; using ${hostCfg.recordings}`);
+    else if (rf) {
+      try { mkdirSync(rf, { recursive: true }); hostCfg.recordings = rf; console.log(`[studio] recordings folder (Settings): ${rf}`); } catch (e) { console.log(`[studio] WARNING: recordings folder from Settings not usable (${e.message}); using ${hostCfg.recordings}`); }
+    }
+  }
   const hostExe = hostCfg?.exe;
   const hostDiscovery = path.join(dataDir, 'host.json');
   if (args['fake-host'] !== true && hostExe && existsSync(hostExe) && hostCfg.runtime) {
@@ -839,11 +851,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (disc && alpha) {
       // Clips from each finished recording (D283, flag clip-pipeline): outputs.status every 5 s; the discovery file is
       // read each time, so a restarted host is followed.
-      recordClips = createRecordClips({
-        clipRoot: CLIP_ROOT, dataDir,
-        flagOn: () => { try { return createFlags({ dataDir }).isOn(CLIP_FLAG); } catch { return false; } },
-        log: (l) => console.log(`[studio] ${l}`),
-      });
+      recordClips = createRecordClips({ clipRoot: CLIP_ROOT, dataDir, log: (l) => console.log(`[studio] ${l}`) });
       const clipTick = async () => {
         if (stopping) return;
         try {

@@ -5,7 +5,7 @@
 // Skipped when the shell is not built (npm run build:studio) or no Qt kit is configured.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -71,8 +71,9 @@ describe('Qt studio shell (headless smoke)', { skip }, () => {
 describe('Qt studio shell panels (headless probe)', { skip }, () => {
   const dirs = [];
   after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
-  async function probe(on, ms = 5000, actions = '') {
+  async function probe(on, ms = 5000, actions = '', prepare = null) {
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-qtp-')); dirs.push(dataDir);
+    if (prepare) prepare(dataDir);
     const flags = createFlags({ dataDir });
     for (const id of on) flags.set(id, true);
     const fake = createFakeHost({});
@@ -87,7 +88,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
       assert.equal(r.code, 0, r.err);
       const m = /^studio probe: (.+)$/m.exec(r.out);
       assert.ok(m, `no probe line: ${r.out} ${r.err}`);
-      return { ...JSON.parse(m[1]), fake, store: flags, calls };
+      return { ...JSON.parse(m[1]), fake, store: flags, calls, dataDir };
     } finally { srv.close(); }
   }
 
@@ -105,7 +106,8 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     // D280: the slots asked for canvas h and v (the server's enum); an upper-case id was refused as "bad field canvas".
     assert.equal(p.previews.length, 2);
     for (const m of p.previews) assert.doesNotMatch(m, /bad field/, m);
-    assert.equal(p.clips, 'Clips: off (flag clip-pipeline)', 'D283: the clip state is shown');
+    assert.equal(p.clips, 'Clips: ready', 'D284: no clip runs yet, the default choice is "ask me"');
+    assert.deepEqual(p.clipSettings, { recording: 'ask', live: 'ask' });
   });
 
   test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons; mixer track buttons', async () => {
@@ -130,6 +132,19 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['clip', true], ['mark', true]]);
     assert.ok(p.calls.some(([m]) => m === 'replay.save'), 'replay.save called');
     assert.ok(p.calls.some(([m, q]) => m === 'marker.add' && q?.source === 'api'), 'marker.add {source: api} called');
+  });
+  test('clip choices (D284): Settings saves the modes; a "make clips?" question is answered from the window', async () => {
+    const ask = { id: 'practice-h-1-1', name: 'practice-h-1', kind: 'recording', minutes: 8 };
+    const p = await probe([], 6000, 'clip-modes:after:while,answer:yes', (d) => {
+      mkdirSync(path.join(d, 'clips'), { recursive: true });
+      writeFileSync(path.join(d, 'clips', 'status.json'), JSON.stringify({ state: 'idle', available: true, asks: [ask], queued: [], last: null }));
+    });
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['clip-modes:after:while', true], ['answer:yes', true]]);
+    assert.equal(p.clipAsks, 1, 'the question is listed until the launcher picks up the answer');
+    assert.equal(p.clips, 'Make clips? (1)');
+    const saved = JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8'));
+    assert.deepEqual(saved.clips, { recording: 'after', live: 'while' });
+    assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'clips', 'answer.json'), 'utf8')), { id: ask.id, make: true, remember: false });
   });
   test('typed confirms (D279): a flag ticked on asks for the phrase; a wrong phrase asks again, "yes" turns it on, Cancel leaves it off', async () => {
     const p = await probe([], 9000, 'flag-on:transitions,type:nope,type:yes,flag-on:bot-manager,cancel,type:yes');

@@ -2,6 +2,15 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.6 — 2026-11-08
+
+- New Settings in the studio window: what to do after you record and after you stream live: ask me each time, make clips when it stops, find the best moments while it runs and edit them into clips when it stops, or no clips.
+- Choose where recordings are saved (used from the next start) and where finished clips are saved.
+- The first start asks once how you want clips made. "Ask me each time" shows a "Make clips from it?" question after each recording, with "do this every time".
+- New My clips button opens the clips folder. The Clips label says what is happening in plain words.
+- The updater (`Install-Ujwalam.ps1`) can set the same choices and folders: `-ClipsWhenRecording`, `-ClipsWhenLive`, `-RecordingsFolder`, `-ClipsFolder`, `-ClipMaker`, and `-SettingsOnly` to change settings without installing.
+- Clips are never made while you are live; a clip run that is going when a stream starts waits until it ends.
+
 ## 0.1.0-alpha.5 — 2026-11-08
 
 - Fix: the H and V previews show inside the studio window; no separate preview windows open.

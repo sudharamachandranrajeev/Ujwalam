@@ -20,6 +20,16 @@
 .PARAMETER NoShortcuts   Skip the shortcuts.
 .PARAMETER StartMenuDir  Default: the user's Start menu Programs folder.
 .PARAMETER DesktopDir    Default: the user's desktop.
+.PARAMETER ClipsWhenRecording  Clips after a recording: ask (ask each time), after (make clips when it stops),
+                         while (find moments while recording, edit them into clips when it stops) or off.
+.PARAMETER ClipsWhenLive       The same for a live stream.
+.PARAMETER RecordingsFolder    Where recordings are saved ('' = the default). Used from the next start.
+.PARAMETER ClipsFolder         Where finished clips are saved ('' = the default).
+.PARAMETER ClipMaker           Folder that holds services\clip and its Python venv (the zip ships no Python);
+                         written to data\ujwalam.json as clipRoot ('' removes it).
+.PARAMETER SettingsOnly  Only apply the settings above; install nothing.
+  The settings are the same ones as Settings in the studio window (data\core\settings.json, D284). Only the settings
+  you pass are changed; everything else in the data folder is left as it is.
 #>
 [CmdletBinding()]
 param(
@@ -28,7 +38,13 @@ param(
   [switch]$Force,
   [switch]$NoShortcuts,
   [string]$StartMenuDir,
-  [string]$DesktopDir
+  [string]$DesktopDir,
+  [ValidateSet('ask', 'after', 'while', 'off')][string]$ClipsWhenRecording,
+  [ValidateSet('ask', 'after', 'while', 'off')][string]$ClipsWhenLive,
+  [string]$RecordingsFolder,
+  [string]$ClipsFolder,
+  [string]$ClipMaker,
+  [switch]$SettingsOnly
 )
 
 Set-StrictMode -Version 2
@@ -65,6 +81,62 @@ function Write-Pointer([string]$f, [string]$v) {
 }
 
 # ---- rollback ------------------------------------------------------------------------------------------------------
+# ---- settings (D284) ------------------------------------------------------------------------------------------------
+function Read-JsonFile([string]$f) {
+  $h = [ordered]@{}
+  if (Test-Path -LiteralPath $f) {
+    $o = Get-Content -LiteralPath $f -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($p in $o.PSObject.Properties) { $h[$p.Name] = $p.Value }
+  }
+  return $h
+}
+function Write-JsonFile([string]$f, $h) {
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $f) | Out-Null
+  $tmp = "$f.tmp"
+  [IO.File]::WriteAllText($tmp, ($h | ConvertTo-Json -Depth 5), (New-Object Text.UTF8Encoding($false)))
+  Move-Item -LiteralPath $tmp -Destination $f -Force
+}
+function Test-Folder([string]$name, [string]$dir) {
+  if ($dir -eq '') { return }
+  if (-not [IO.Path]::IsPathRooted($dir) -or $dir.StartsWith('\\')) { Fail "$name must be a full path on this PC (like D:\Videos\Ujwalam)" 2 }
+  $full = [IO.Path]::GetFullPath($dir).TrimEnd('\') + '\'
+  $inst = [IO.Path]::GetFullPath($InstallRoot).TrimEnd('\') + '\'
+  if ($full.StartsWith($inst, [StringComparison]::OrdinalIgnoreCase) -and -not $full.StartsWith((Join-Path $inst 'data\'), [StringComparison]::OrdinalIgnoreCase)) { Fail "$name may not be inside the install folder" 2 }
+}
+$settingsGiven = $PSBoundParameters.ContainsKey('ClipsWhenRecording') -or $PSBoundParameters.ContainsKey('ClipsWhenLive') -or
+  $PSBoundParameters.ContainsKey('RecordingsFolder') -or $PSBoundParameters.ContainsKey('ClipsFolder') -or $PSBoundParameters.ContainsKey('ClipMaker')
+if ($settingsGiven) {
+  Test-Folder 'RecordingsFolder' $RecordingsFolder
+  Test-Folder 'ClipsFolder' $ClipsFolder
+  $sf = Join-Path $InstallRoot 'data\core\settings.json'
+  $s = Read-JsonFile $sf
+  $clips = [ordered]@{ recording = 'ask'; live = 'ask' }
+  if ($s.Contains('clips') -and $s['clips']) { foreach ($p in $s['clips'].PSObject.Properties) { $clips[$p.Name] = $p.Value } }
+  $folders = [ordered]@{ recordings = $null; clips = $null }
+  if ($s.Contains('folders') -and $s['folders']) { foreach ($p in $s['folders'].PSObject.Properties) { $folders[$p.Name] = $p.Value } }
+  if ($PSBoundParameters.ContainsKey('ClipsWhenRecording')) { $clips['recording'] = $ClipsWhenRecording }
+  if ($PSBoundParameters.ContainsKey('ClipsWhenLive')) { $clips['live'] = $ClipsWhenLive }
+  if ($PSBoundParameters.ContainsKey('RecordingsFolder')) { $folders['recordings'] = $(if ($RecordingsFolder) { $RecordingsFolder } else { $null }) }
+  if ($PSBoundParameters.ContainsKey('ClipsFolder')) { $folders['clips'] = $(if ($ClipsFolder) { $ClipsFolder } else { $null }) }
+  $s['$comment'] = 'Ujwalam settings (Settings in the studio window). D284.'
+  $s['clips'] = $clips
+  $s['folders'] = $folders
+  Write-JsonFile $sf $s
+  Say "settings: clips when recording $($clips['recording']), when live $($clips['live']); recordings $(if ($folders['recordings']) { $folders['recordings'] } else { 'default' }); clips $(if ($folders['clips']) { $folders['clips'] } else { 'default' })"
+  if ($PSBoundParameters.ContainsKey('ClipMaker')) {
+    if ($ClipMaker -and -not (Test-Path -LiteralPath (Join-Path $ClipMaker 'services\clip\clipper.py'))) { Fail "ClipMaker: no services\clip\clipper.py in $ClipMaker" 2 }
+    $uf = Join-Path $InstallRoot 'data\ujwalam.json'
+    $u = Read-JsonFile $uf
+    if ($ClipMaker) { $u['clipRoot'] = $ClipMaker } elseif ($u.Contains('clipRoot')) { $u.Remove('clipRoot') }
+    Write-JsonFile $uf $u
+    Say "clip maker: $(if ($ClipMaker) { $ClipMaker } else { 'not set' })"
+  }
+}
+if ($SettingsOnly) {
+  if (-not $settingsGiven) { Fail 'SettingsOnly needs at least one setting' 2 }
+  exit 0
+}
+
 if ($Rollback) {
   $cur = Read-Pointer $currentFile
   $prev = Read-Pointer $previousFile

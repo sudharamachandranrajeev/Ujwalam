@@ -49,7 +49,7 @@ import clip_signals as sig  # noqa: E402
 import clip_validate as val  # noqa: E402
 import game_pack  # noqa: E402
 from clip_common import (  # noqa: E402
-    EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, corpus_dir, eprint, find_tool, flag_on, load_config,
+    EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, clips_allowed, corpus_dir, eprint, find_tool, flag_on, load_config,
     load_json, lower_own_priority, media_info, resolve_data_dir, write_json_atomic,
 )
 
@@ -348,6 +348,12 @@ def merge_saves(rows, durations):
     return clips
 
 
+def saves_between(rows, since=None, until=None):
+    """The saves of one recording or stream (D284): "at" within [since, until]. Both sides are ISO UTC with
+    milliseconds and a Z (live_worker and the launcher), so string order is time order."""
+    return [r for r in rows if (not since or str(r.get("at", "")) >= since) and (not until or str(r.get("at", "")) <= until)]
+
+
 def cmd_live_review(a):
     ffmpeg, ffprobe = _tools(a)
     path = os.path.join(a.saves, "saves.jsonl")
@@ -360,6 +366,7 @@ def cmd_live_review(a):
                     rows.append(json.loads(line))
                 except ValueError:
                     eprint("live-review: skipped a bad saves.jsonl line")
+    rows = saves_between(rows, a.since, a.until)
     infos = {}
     for r in rows:
         for fl in r.get("files", []):
@@ -547,6 +554,8 @@ def build_parser():
     s.set_defaults(fn=cmd_montage)
     s = sub.add_parser("live-review"); common(s, recording=False)
     s.add_argument("--saves", required=True, type=os.path.abspath, help="live clipper session folder (saves.jsonl)")
+    s.add_argument("--since", help="ISO UTC time: saves at or after it only")
+    s.add_argument("--until", help="ISO UTC time: saves at or before it only")
     s.add_argument("--layouts"); s.add_argument("--encoder", default="auto")
     s.set_defaults(fn=cmd_live_review)
     return p
@@ -556,8 +565,8 @@ def main(argv=None):
     a = build_parser().parse_args(argv)
     try:
         data_dir = resolve_data_dir(a.data_dir)
-        if not flag_on(data_dir, FLAG):
-            eprint(f"clipper: the '{FLAG}' feature flag is off (switch it on from the control page)")
+        if not clips_allowed(data_dir):
+            eprint(f"clipper: clips are off (Settings > Clips, or the '{FLAG}' flag)")
             return EXIT_FLAG_OFF
         a.out = os.path.abspath(a.out)
         check_out_dir(a.out, corpus_dir())

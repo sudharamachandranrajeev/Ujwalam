@@ -16,6 +16,9 @@
 #include <QLineEdit>
 #include <QDesktopServices>
 #include <QDialog>
+#include <QDialogButtonBox>
+#include <QDir>
+#include <QFileDialog>
 #include <QListWidget>
 #include <QPlainTextEdit>
 #include <QPointer>
@@ -385,6 +388,19 @@ QWidget *MainWindow::buildTop()
 	h->addWidget(recordBtn_);
 	h->addWidget(clipBtn_);
 	h->addWidget(markBtn_);
+	clipsFolderBtn_ = new QPushButton(QStringLiteral("My clips"), w);
+	clipsFolderBtn_->setToolTip(QStringLiteral("Open the folder with your finished clips."));
+	connect(clipsFolderBtn_, &QPushButton::clicked, this, [this]() {
+		api_->post(QStringLiteral("ui/api/clips/open"), {}, [this](bool ok, const QJsonObject &, const QString &err) {
+			if (!ok)
+				note(QStringLiteral("Could not open the clips folder: ") + err);
+		});
+	});
+	settingsBtn_ = new QPushButton(QStringLiteral("Settings"), w);
+	settingsBtn_->setToolTip(QStringLiteral("Clips and save folders."));
+	connect(settingsBtn_, &QPushButton::clicked, this, [this]() { openSettings(false); });
+	h->addWidget(clipsFolderBtn_);
+	h->addWidget(settingsBtn_);
 	h->addSpacing(12);
 	// Undo / redo of layer edits (D238; inspector, layer list, preview mouse, effects): Ctrl+Z / Ctrl+Y too.
 	undoBtn_ = new QPushButton(QStringLiteral("Undo"), w);
@@ -1431,23 +1447,7 @@ void MainWindow::pollStatus()
 				   : h.value(QStringLiteral("available")).toBool()   ? QStringLiteral("Host: up")
 										     : QStringLiteral("Host: down"));
 		pillCore_->setText(c.value(QStringLiteral("available")).toBool() ? QStringLiteral("Event core: up") : QStringLiteral("Event core: down"));
-		// Clips from finished recordings (D283): what runs, what waits, the last result and where it is.
-		const QJsonObject cl = s.value(QStringLiteral("clips")).toObject(), last = cl.value(QStringLiteral("last")).toObject();
-		QString ct;
-		if (!cl.value(QStringLiteral("on")).toBool())
-			ct = QStringLiteral("Clips: off (flag clip-pipeline)");
-		else if (!cl.value(QStringLiteral("running")).toString().isEmpty())
-			ct = QStringLiteral("Clips: making from ") + cl.value(QStringLiteral("running")).toString();
-		else if (cl.value(QStringLiteral("queued")).toInt() > 0)
-			ct = QStringLiteral("Clips: %1 recording(s) waiting").arg(cl.value(QStringLiteral("queued")).toInt());
-		else if (last.value(QStringLiteral("result")).toString() == QStringLiteral("done"))
-			ct = QStringLiteral("Clips: %1 ready").arg(last.value(QStringLiteral("clips")).toInt());
-		else if (!last.isEmpty())
-			ct = QStringLiteral("Clips: last run ") + last.value(QStringLiteral("result")).toString();
-		else
-			ct = QStringLiteral("Clips: on, waiting for a recording");
-		pillClips_->setText(ct);
-		pillClips_->setToolTip(last.value(QStringLiteral("out")).toString());
+		updateClips(s.value(QStringLiteral("clips")).toObject());
 		// A layer moved or resized with the mouse on the embedded preview (D230): select it, reload layers + inspector.
 		const QJsonObject pe = h.value(QStringLiteral("previewEdit")).toObject();
 		if (!pe.isEmpty()) {
@@ -2327,6 +2327,205 @@ void MainWindow::undoRedo(bool undo)
 		   });
 }
 
+// ---- clips and settings (D284) ---------------------------------------------------------------------------------
+
+namespace {
+struct ModeText {
+	const char *id, *recording, *live;
+};
+const ModeText kModes[] = {
+	{"ask", "Ask me each time I stop recording", "Ask me each time a stream ends"},
+	{"after", "Make clips automatically when I stop recording", "Make clips automatically when the stream ends"},
+	{"while", "Find the best moments while I record, then edit them into clips", "Find the best moments while I'm live, then edit them into clips"},
+	{"off", "Don't make clips", "Don't make clips"},
+};
+QString modeWords(const QString &id, bool live)
+{
+	for (const ModeText &m : kModes)
+		if (id == QLatin1String(m.id))
+			return QString::fromUtf8(live ? m.live : m.recording);
+	return id;
+}
+} // namespace
+
+// The Clips label in the top bar, in plain words, and the questions that need an answer.
+void MainWindow::updateClips(const QJsonObject &cl)
+{
+	clips_ = cl;
+	const QJsonObject last = cl.value(QStringLiteral("last")).toObject(), set = cl.value(QStringLiteral("settings")).toObject();
+	const QJsonObject run = cl.value(QStringLiteral("running")).toObject();
+	const bool allOff = set.value(QStringLiteral("recording")).toString() == QStringLiteral("off") &&
+			    set.value(QStringLiteral("live")).toString() == QStringLiteral("off");
+	QString t;
+	if (cl.isEmpty())
+		t = QStringLiteral("Clips: -");
+	else if (!run.isEmpty())
+		t = QStringLiteral("Making clips...");
+	else if (!cl.value(QStringLiteral("asks")).toArray().isEmpty())
+		t = QStringLiteral("Make clips? (%1)").arg(cl.value(QStringLiteral("asks")).toArray().size());
+	else if (cl.value(QStringLiteral("queued")).toInt() > 0)
+		t = QStringLiteral("Clips waiting: %1").arg(cl.value(QStringLiteral("queued")).toInt());
+	else if (allOff)
+		t = QStringLiteral("Clips: off");
+	else if (cl.value(QStringLiteral("available")).isBool() && !cl.value(QStringLiteral("available")).toBool())
+		t = QStringLiteral("Clips: not set up");
+	else if (last.value(QStringLiteral("result")).toString() == QStringLiteral("done"))
+		t = QStringLiteral("%1 new clip(s)").arg(last.value(QStringLiteral("clips")).toInt());
+	else if (last.value(QStringLiteral("result")).toString() == QStringLiteral("failed"))
+		t = QStringLiteral("Clips: last try failed");
+	else
+		t = QStringLiteral("Clips: ready");
+	pillClips_->setText(t);
+	QString tip = QStringLiteral("Recording: ") + modeWords(set.value(QStringLiteral("recording")).toString(), false) +
+		      QStringLiteral("\nLive: ") + modeWords(set.value(QStringLiteral("live")).toString(), true) +
+		      QStringLiteral("\nClips folder: ") + cl.value(QStringLiteral("folder")).toString();
+	if (!cl.value(QStringLiteral("reason")).toString().isEmpty())
+		tip += QStringLiteral("\n") + cl.value(QStringLiteral("reason")).toString();
+	if (!last.value(QStringLiteral("reason")).toString().isEmpty())
+		tip += QStringLiteral("\nLast time: ") + last.value(QStringLiteral("reason")).toString();
+	pillClips_->setToolTip(tip);
+	if (!isVisible())
+		return; // the headless probe answers with probe actions; questions only on a shown window
+	if (!firstRunAsked_ && cl.contains(QStringLiteral("settingsSaved")) && !cl.value(QStringLiteral("settingsSaved")).toBool()) {
+		firstRunAsked_ = true;
+		QTimer::singleShot(0, this, [this]() { openSettings(true); });
+		return;
+	}
+	for (const QJsonValue &v : cl.value(QStringLiteral("asks")).toArray()) {
+		const QJsonObject a = v.toObject();
+		if (asked_.contains(a.value(QStringLiteral("id")).toString()))
+			continue;
+		asked_ << a.value(QStringLiteral("id")).toString();
+		askClips(a);
+		break;
+	}
+}
+
+// "Make clips from it?" after a recording or stream (setting: Ask me each time). Not modal: the studio keeps working.
+void MainWindow::askClips(const QJsonObject &ask)
+{
+	const bool live = ask.value(QStringLiteral("kind")).toString() == QStringLiteral("live");
+	const int min = ask.value(QStringLiteral("minutes")).toInt(-1);
+	auto *box = new QMessageBox(QMessageBox::Question, QStringLiteral("Make clips?"),
+				    (live ? QStringLiteral("Your stream has ended") : QStringLiteral("Your recording has stopped")) +
+					    (min >= 0 ? QStringLiteral(" (%1 min).").arg(min) : QStringLiteral(".")) +
+					    QStringLiteral("\n\nShould Ujwalam find the best moments and make clips from it?"),
+				    QMessageBox::NoButton, this);
+	auto *yes = box->addButton(QStringLiteral("Make clips"), QMessageBox::YesRole);
+	box->addButton(QStringLiteral("Not now"), QMessageBox::NoRole);
+	auto *remember = new QCheckBox(live ? QStringLiteral("Do this every time a stream ends") : QStringLiteral("Do this every time I stop recording"));
+	box->setCheckBox(remember);
+	box->setAttribute(Qt::WA_DeleteOnClose);
+	const QString id = ask.value(QStringLiteral("id")).toString();
+	connect(box, &QMessageBox::finished, this, [=]() { answerClips(id, box->clickedButton() == yes, remember->isChecked()); });
+	box->open();
+}
+
+void MainWindow::answerClips(const QString &id, bool make, bool remember)
+{
+	QJsonObject b;
+	b.insert(QStringLiteral("id"), id);
+	b.insert(QStringLiteral("make"), make);
+	b.insert(QStringLiteral("remember"), remember);
+	api_->post(QStringLiteral("ui/api/clips/answer"), b, [this, make](bool ok, const QJsonObject &, const QString &err) {
+		note(!ok ? QStringLiteral("Answer not saved: ") + err
+			 : make ? QStringLiteral("Making clips. You can keep working; the Clips label shows when they are ready.")
+				: QStringLiteral("No clips made."));
+	});
+}
+
+void MainWindow::saveSettings(const QJsonObject &body)
+{
+	api_->post(QStringLiteral("ui/api/settings"), body, [this](bool ok, const QJsonObject &r, const QString &err) {
+		if (!ok)
+			return note(QStringLiteral("Settings not saved: ") + err);
+		Q_UNUSED(r);
+		note(QStringLiteral("Settings saved."));
+		pollStatus();
+	});
+}
+
+void MainWindow::openSettings(bool firstRun)
+{
+	api_->get(QStringLiteral("ui/api/settings"), [this, firstRun](bool ok, const QJsonObject &b, const QString &err) {
+		if (!ok)
+			return note(QStringLiteral("Settings not available: ") + err);
+		const QJsonObject st = b.value(QStringLiteral("settings")).toObject(), cl = b.value(QStringLiteral("clips")).toObject();
+		const QJsonObject c = st.value(QStringLiteral("clips")).toObject(), f = st.value(QStringLiteral("folders")).toObject();
+		QDialog dlg(this);
+		dlg.setWindowTitle(firstRun ? QStringLiteral("Welcome: clips") : QStringLiteral("Settings"));
+		auto *v = new QVBoxLayout(&dlg);
+		if (firstRun) {
+			auto *intro = new QLabel(QStringLiteral("Ujwalam can find the best moments in your recordings and streams and edit them into short clips.\nHow should it do that? You can change this later in Settings."), &dlg);
+			intro->setWordWrap(true);
+			v->addWidget(intro);
+		}
+		auto *clipBox = new QGroupBox(QStringLiteral("Clips"), &dlg);
+		auto *cf = new QFormLayout(clipBox);
+		auto mk = [&](bool live, const QString &cur) {
+			auto *cb = new QComboBox(clipBox);
+			for (const ModeText &m : kModes)
+				cb->addItem(QString::fromUtf8(live ? m.live : m.recording), QString::fromLatin1(m.id));
+			cb->setCurrentIndex(std::max(0, cb->findData(cur)));
+			return cb;
+		};
+		QComboBox *rec = mk(false, c.value(QStringLiteral("recording")).toString());
+		QComboBox *liv = mk(true, c.value(QStringLiteral("live")).toString());
+		cf->addRow(QStringLiteral("When I record:"), rec);
+		cf->addRow(QStringLiteral("When I stream live:"), liv);
+		if (cl.value(QStringLiteral("available")).isBool() && !cl.value(QStringLiteral("available")).toBool()) {
+			auto *warn = new QLabel(QStringLiteral("Clips can't be made on this PC yet: ") + cl.value(QStringLiteral("reason")).toString(), clipBox);
+			warn->setWordWrap(true);
+			cf->addRow(warn);
+		}
+		v->addWidget(clipBox);
+		auto *dirBox = new QGroupBox(QStringLiteral("Where files are saved"), &dlg);
+		auto *df = new QFormLayout(dirBox);
+		auto folderRow = [&](const QString &cur, const QString &placeholder) {
+			auto *row = new QWidget(dirBox);
+			auto *h = new QHBoxLayout(row);
+			h->setContentsMargins(0, 0, 0, 0);
+			auto *edit = new QLineEdit(cur, row);
+			edit->setPlaceholderText(placeholder);
+			auto *pick = new QPushButton(QStringLiteral("Choose..."), row);
+			auto *reset = new QPushButton(QStringLiteral("Default"), row);
+			h->addWidget(edit, 1);
+			h->addWidget(pick);
+			h->addWidget(reset);
+			connect(pick, &QPushButton::clicked, &dlg, [edit, &dlg]() {
+				const QString d = QFileDialog::getExistingDirectory(&dlg, QStringLiteral("Choose a folder"), edit->text());
+				if (!d.isEmpty())
+					edit->setText(QDir::toNativeSeparators(d));
+			});
+			connect(reset, &QPushButton::clicked, edit, &QLineEdit::clear);
+			return std::make_pair(row, edit);
+		};
+		auto recRow = folderRow(f.value(QStringLiteral("recordings")).toString(), QStringLiteral("Default (Ujwalam's data folder)"));
+		auto clipRow = folderRow(f.value(QStringLiteral("clips")).toString(), cl.value(QStringLiteral("folder")).toString());
+		df->addRow(QStringLiteral("Recordings:"), recRow.first);
+		df->addRow(QStringLiteral("Finished clips:"), clipRow.first);
+		auto *hint = new QLabel(QStringLiteral("A new recordings folder is used from the next time you start Ujwalam."), dirBox);
+		hint->setWordWrap(true);
+		df->addRow(hint);
+		v->addWidget(dirBox);
+		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
+		connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
+		connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+		v->addWidget(bb);
+		dlg.resize(620, dlg.sizeHint().height());
+		if (dlg.exec() != QDialog::Accepted) {
+			if (firstRun) // nothing chosen: keep "ask each time", and stop asking at every start
+				saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), QStringLiteral("ask")}, {QStringLiteral("live"), QStringLiteral("ask")}}}});
+			return;
+		}
+		const auto dir = [](QLineEdit *e) { return e->text().trimmed().isEmpty() ? QJsonValue() : QJsonValue(e->text().trimmed()); };
+		QJsonObject body;
+		body.insert(QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), rec->currentData().toString()}, {QStringLiteral("live"), liv->currentData().toString()}});
+		body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
+		saveSettings(body);
+	});
+}
+
 void MainWindow::hostAction(const QString &method)
 {
 	api_->host(method, {}, [this](bool ok, const QJsonObject &b, const QString &err) {
@@ -2407,6 +2606,8 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("live"), live_);
 	o.insert(QStringLiteral("note"), note_->text());
 	o.insert(QStringLiteral("clips"), pillClips_->text());
+	o.insert(QStringLiteral("clipAsks"), clips_.value(QStringLiteral("asks")).toArray().size());
+	o.insert(QStringLiteral("clipSettings"), clips_.value(QStringLiteral("settings")));
 	return o;
 }
 
@@ -2448,6 +2649,17 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		dlg->setTextValue(QUrl::fromPercentEncoding(action.mid(5).toUtf8()));
 		dlg->accept();
+		return true;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("answer")) { // D284: answer the first open "make clips?" question
+		const QJsonArray asks = clips_.value(QStringLiteral("asks")).toArray();
+		if (asks.isEmpty())
+			return false;
+		answerClips(asks.first().toObject().value(QStringLiteral("id")).toString(), p[1] == QStringLiteral("yes"), false);
+		return true;
+	}
+	if (p.size() == 3 && p[0] == QStringLiteral("clip-modes")) { // D284: Settings > Clips, saved as the dialog does
+		saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), p[1]}, {QStringLiteral("live"), p[2]}}}});
 		return true;
 	}
 	if (p.size() == 1 && (p[0] == QStringLiteral("clip") || p[0] == QStringLiteral("mark"))) { // D281

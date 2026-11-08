@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 5,
+  "current": 6,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -16,6 +16,7 @@
     { "n": 2, "date": "2026-11-03", "title": "Live-test guard, Twitch bandwidth test, 1080p60 live plan" },
     { "n": 3, "date": "2026-11-08", "title": "Native Qt studio window by default" },
     { "n": 4, "date": "2026-11-08", "title": "Overlays back on for installs from 3 Nov" },
-    { "n": 5, "date": "2026-11-08", "title": "Previews inside the studio, one close, record and clip" }
+    { "n": 5, "date": "2026-11-08", "title": "Previews inside the studio, one close, record and clip" },
+    { "n": 6, "date": "2026-11-08", "title": "Clips settings in plain words" }
   ]
 }

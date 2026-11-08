@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 # No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
 NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
@@ -80,6 +81,47 @@ def flag_definitions(defs_file=FLAGS_FILE):
             raise ClipError(f"flags: bad entry {f['id']}")
         out[f["id"]] = f["default"]
     return out
+
+
+SETTINGS_FILE = "settings.json"
+CLIP_MODES = ("ask", "after", "while", "off")
+WORKER_FILE = os.path.join("clips", "live-worker.json")
+WORKER_FRESH_SEC = 30.0
+
+
+def clip_settings(data_dir):
+    """The user's clip choices from <data>/settings.json (D284): {"recording": mode, "live": mode}; "ask" when unset."""
+    out = {"recording": "ask", "live": "ask"}
+    if not data_dir:
+        return out
+    try:
+        j = load_json(os.path.join(data_dir, SETTINGS_FILE))
+    except (OSError, ClipError):
+        return out
+    c = j.get("clips") if isinstance(j, dict) else None
+    if isinstance(c, dict):
+        for k in out:
+            if c.get(k) in CLIP_MODES:
+                out[k] = c[k]
+    return out
+
+
+def clips_allowed(data_dir):
+    """The clipper may run when the developer flag is on or the user chose any clip mode other than off (D284)."""
+    return flag_on(data_dir, FLAG) or any(v != "off" for v in clip_settings(data_dir).values())
+
+
+def worker_wanted(data_dir, now=None):
+    """True while the launcher asks the live clipper to watch (the user chose "while recording" or "while live" and
+    that is happening now): <data>/clips/live-worker.json {"on": true, "atMs": ...}, ignored when older than 30 s."""
+    try:
+        j = load_json(os.path.join(data_dir, WORKER_FILE))
+    except (OSError, ClipError):
+        return False
+    if not isinstance(j, dict) or j.get("on") is not True or not isinstance(j.get("atMs"), (int, float)):
+        return False
+    now = time.time() if now is None else now
+    return abs(now - j["atMs"] / 1000.0) <= WORKER_FRESH_SEC
 
 
 def flag_on(data_dir, flag_id=FLAG, defs_file=FLAGS_FILE):

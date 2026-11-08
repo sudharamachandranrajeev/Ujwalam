@@ -387,6 +387,8 @@ class EndToEndTests(unittest.TestCase):
         _write(os.path.join(cls.data_on, cc.LOCAL_FLAGS), json.dumps({"flags": {"clip-pipeline": True}}))
         cls.data_off = os.path.join(d, "data-off")
         os.makedirs(cls.data_off)
+        # D284: with no settings file the user is asked (allowed); clips refused only when every choice is off
+        _write(os.path.join(cls.data_off, "settings.json"), json.dumps({"clips": {"recording": "off", "live": "off"}}))
 
     @classmethod
     def tearDownClass(cls):

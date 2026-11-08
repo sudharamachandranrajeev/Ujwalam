@@ -23,7 +23,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { createReadStream, existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -40,6 +40,10 @@ import { listAssets } from './assets.mjs';
 import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
+import { clipsFolder, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
+
+// The app folder (repo or install): settings folders may not point into it (D284).
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export const LOOPBACK = '127.0.0.1';
 export const COOKIE = 'ujwalam_ui';
@@ -311,17 +315,42 @@ export function createStudioServer(opts) {
     });
   }
 
-  // Clips from finished recordings (D283): <dataDir>/clips/status.json, written by the launcher.
+  // Clips (D283, D284): the launcher's <dataDir>/clips/status.json plus the user's settings. Names, counts and the
+  // clips folder only.
   function clipStatus() {
     if (typeof opts.dataDir !== 'string') return null;
+    const st = readSettings(opts.dataDir);
+    const base = { settings: st.clips, settingsSaved: st.exists, folder: clipsFolder(opts.dataDir, st), available: null, reason: null, state: 'idle', running: null, queued: 0, asks: [], last: null };
     try {
       const s = JSON.parse(readFileSync(path.join(opts.dataDir, 'clips', 'status.json'), 'utf8'));
-      const base = (j) => (j && typeof j.h === 'string' ? path.basename(j.h) : null);
+      const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
       const l = s.last && typeof s.last === 'object' ? s.last : null;
-      return { on: flags ? flags.isOn('clip-pipeline') : s.on === true, state: String(s.state ?? 'idle').slice(0, 16), running: base(s.running),
+      return { ...base, available: s.available === true, reason: str(s.reason, 200), state: str(s.state, 16) ?? 'idle',
+        running: s.running ? { name: str(s.running.name, 120), kind: str(s.running.kind, 16) } : null,
         queued: Array.isArray(s.queued) ? s.queued.length : 0,
-        last: l ? { recording: String(l.recording ?? '').slice(0, 120), result: String(l.result ?? '').slice(0, 16), clips: Number(l.clips) || 0, out: typeof l.out === 'string' ? l.out.slice(0, 400) : null } : null };
-    } catch { return { on: flags ? flags.isOn('clip-pipeline') : false, state: 'idle', running: null, queued: 0, last: null }; }
+        asks: (Array.isArray(s.asks) ? s.asks : []).slice(0, 5).map((a) => ({ id: str(a.id, 160), name: str(a.name, 120), kind: str(a.kind, 16), minutes: Number.isFinite(a.minutes) ? a.minutes : null })),
+        last: l ? { name: str(l.name, 120), kind: str(l.kind, 16), result: str(l.result, 16), reason: str(l.reason, 200), clips: Number(l.clips) || 0, out: str(l.out, 400) } : null };
+    } catch { return base; }
+  }
+
+  // Settings (D284): clip choices and folders. Refused while live (a change would load the GPU or move files mid-show).
+  async function settingsRoute(res, body) {
+    if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+    if (live) return json(res, 409, { error: 'live', detail: 'Change settings after the stream.' });
+    const problems = settingsProblems(body, { forbidden: [REPO_ROOT] });
+    if (problems.length) return json(res, 400, { error: 'bad-settings', detail: problems.join('; ').slice(0, 400) });
+    try { return json(res, 200, { settings: writeSettings(opts.dataDir, body) }); } catch (e) { return json(res, 500, { error: 'not-saved', detail: String(e.message).slice(0, 200) }); }
+  }
+  // The answer to "make clips from it?": the launcher picks it up (record-clips.mjs).
+  function clipAnswer(res, body) {
+    if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+    const keys = ['id', 'make', 'remember'];
+    if (typeof body.id !== 'string' || body.id.length > 160 || typeof body.make !== 'boolean' || (body.remember !== undefined && typeof body.remember !== 'boolean') || Object.keys(body).some((k) => !keys.includes(k))) return json(res, 400, { error: 'bad-params' });
+    const dir = path.join(opts.dataDir, 'clips');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'answer.json.tmp'), JSON.stringify({ id: body.id, make: body.make, remember: body.remember === true }));
+    renameSync(path.join(dir, 'answer.json.tmp'), path.join(dir, 'answer.json'));
+    return json(res, 200, { ok: true });
   }
 
   // ---- status snapshot (text-free: counts, flags and numbers only; never chat text) ----
@@ -590,6 +619,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/status') return json(res, 200, lastSnapshot ?? await snapshot());
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
+    if (req.method === 'GET' && route === '/ui/api/settings') return json(res, 200, typeof opts.dataDir === 'string' ? { settings: readSettings(opts.dataDir), clips: clipStatus() } : { settings: null });
     if (req.method === 'GET' && route === '/ui/api/edits') return json(res, 200, history.state());
     if (req.method === 'GET' && route === '/ui/api/project/structure') return structureChoices(res);
     if (req.method === 'GET' && route === '/ui/api/project/transitions') return transitionChoices(res);
@@ -649,6 +679,14 @@ export function createStudioServer(opts) {
       broadcast('edits', history.state());
       broadcast('layers', { source: undo ? 'undo' : 'redo', edit: { scene: e.scene, canvas: e.canvas ?? null, layer: e.layer } });
       return json(res, 200, { ok: true, method: e.method, scene: e.scene, layer: e.layer, edits: history.state(), ...(saved ? { saved: 'pending' } : {}) });
+    }
+    if (route === '/ui/api/settings') return settingsRoute(res, body);
+    if (route === '/ui/api/clips/answer') return clipAnswer(res, body);
+    if (route === '/ui/api/clips/open') {
+      if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+      const dir = clipsFolder(opts.dataDir);
+      mkdirSync(dir, { recursive: true });
+      return openFolder(dir) ? json(res, 200, { ok: true }) : json(res, 502, { error: 'open-failed' });
     }
     if (route === '/ui/api/project/structure') return structureEdit(res, body);
     if (route === '/ui/api/project/transition') return transitionEdit(res, body);

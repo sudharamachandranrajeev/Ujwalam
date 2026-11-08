@@ -218,7 +218,7 @@ def main(argv=None):
     while not gone.is_set():  # a save in progress finishes first
         start = time.monotonic()
         if start >= next_flag:
-            was, on = on, cc.flag_on(a.data_dir, FLAG)
+            was, on = on, cc.flag_on(a.data_dir, FLAG) or cc.worker_wanted(a.data_dir)
             next_flag = start + FLAG_EVERY_SEC
             if was != on:
                 cc.eprint(f"live-clips: {'on' if on else 'off'}")

@@ -81,7 +81,31 @@ The state is kept per PC in the event-core data folder (`flags.local.json`).
 
 ## 8. Clips and the posting review
 
-The clip pipeline and posting are off by default. Turn on `clip-pipeline` and `posting` on the control page first.
+### Clips from your recordings and streams
+
+Open **Settings** in the studio window. Two choices, one for recording and one for streaming live:
+
+- **Ask me each time**: after you stop, Ujwalam asks "Make clips from it?". Tick "do this every time" to stop asking.
+- **Make clips automatically when I stop**: the whole recording is searched for its best moments and edited into
+  clips after it stops.
+- **Find the best moments while I record (or stream), then edit them into clips**: moments are picked while it runs;
+  the clips are made after it stops.
+- **Don't make clips.**
+
+A recording made during a stream follows the live choice. Clips are never made while you are live (the graphics card
+is busy); a run waits until the stream ends. **My clips** opens the folder with the finished clips.
+
+Settings also has two folders: **Recordings** (used from the next start) and **Finished clips**. Leave them on Default
+to keep them in the Ujwalam data folder. Folders inside the app folder are refused.
+
+The clip maker is Python and is not in the zip. Point an install at a source checkout that has it:
+`Install-Ujwalam.ps1 -SettingsOnly -ClipMaker C:\path\to\checkout`. The same updater sets the choices and folders
+without installing anything: `-ClipsWhenRecording ask|after|while|off`, `-ClipsWhenLive ask|after|while|off`,
+`-RecordingsFolder <folder>`, `-ClipsFolder <folder>` (`''` = default).
+
+### By hand and the posting review
+
+Posting is off by default. Turn on `posting` on the control page first.
 The clipper is Python and lives in the source checkout, not in the zip (the zip has no `.py` files, so this part is
 for the checkout; UNVERIFIED for an unzipped build).
 

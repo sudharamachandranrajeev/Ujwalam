@@ -89,6 +89,12 @@ private:
 	void nudge(int dx, int dy);
 	void sendNudge();
 	void hostAction(const QString &method);
+	// Settings (D284): clips (ask / after / while / off, for recordings and for streams) and the save folders.
+	void openSettings(bool firstRun);
+	void saveSettings(const QJsonObject &body);
+	void askClips(const QJsonObject &ask);
+	void answerClips(const QString &id, bool make, bool remember);
+	void updateClips(const QJsonObject &cl);
 	void loadEdits();             // undo / redo state (UI server history, D238)
 	void undoRedo(bool undo);
 	void loadFlags();             // feature flags (D149): on needs the typed phrase, off is instant
@@ -170,6 +176,10 @@ private:
 	QLabel *pillLive_ = nullptr, *pillRec_ = nullptr, *pillStats_ = nullptr, *pillHost_ = nullptr, *pillCore_ = nullptr, *pillClips_ = nullptr;
 	QLabel *note_ = nullptr;
 	QList<PreviewSlot *> slots_;
+	QPushButton *settingsBtn_ = nullptr, *clipsFolderBtn_ = nullptr;
+	QJsonObject clips_;           // status.clips: settings, state, asks, last result (D284)
+	QStringList asked_;           // "make clips?" questions already shown this session
+	bool firstRunAsked_ = false;  // the first-run clip question (no settings saved yet) was shown
 
 protected:
 	void moveEvent(QMoveEvent *e) override; // re-embed: the host re-checks the display the window is on

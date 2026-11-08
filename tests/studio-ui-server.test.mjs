@@ -3,7 +3,9 @@
 // reaches the page, static path traversal. Uses a stub core and the in-memory fake host; no real backend, no network
 // beyond 127.0.0.1.
 import assert from 'node:assert/strict';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import http from 'node:http';
+import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -11,6 +13,7 @@ import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import { createStudioServer, HOST_CALLS } from '../services/studio-ui/server.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
+const REPO = path.resolve(UI, '..');
 const KEY = 'k'.repeat(48);
 const CORE_TOKEN = 'c0ffee'.repeat(10) + 'abcd'; // a stand-in backend token: must never appear in any response
 const CONFIRM_ID = 'a'.repeat(32);
@@ -350,5 +353,53 @@ describe('Meld import and project.load', () => {
       assert.notEqual(await h('mixer.setMute', { id: 'audio:mic-1', muted: true }), 400, 'valid id passes validation (the fake host may still not know it)');
       assert.equal(await h('mixer.setMute', { id: 'audio:', muted: true }), 400);
     } finally { await c.srv.close(); }
+  });
+});
+
+// Settings and clip answers (D284): plain choices validated, folders inside the app refused, no change while live,
+// the answer to "make clips?" handed to the launcher as a file.
+describe('settings and clip answers', () => {
+  let srv, port, a, dataDir, hostLive = false;
+  before(async () => {
+    dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-set-srv-'));
+    const fake = createFakeHost({});
+    const host = { describe: () => fake.describe(), call: async (m, p) => { const r = await fake.call(m, p); return m === 'host.status' ? { ...r, live: hostLive } : r; } };
+    const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
+    srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, limits: { statusPollMs: 20 } });
+    ({ port } = await srv.listen());
+    a = await login(port);
+  });
+  after(() => { srv.close(); rmSync(dataDir, { recursive: true, force: true }); });
+
+  test('GET: defaults "ask" for both, not saved yet, default clips folder', async () => {
+    const r = JSON.parse((await raw(port, { url: '/ui/api/settings', headers: { cookie: a.cookie } })).text);
+    assert.deepEqual(r.settings.clips, { recording: 'ask', live: 'ask' });
+    assert.equal(r.clips.settingsSaved, false);
+    assert.equal(r.clips.folder, path.join(dataDir, 'clips'));
+  });
+  test('POST: a good choice is saved; a bad mode, a relative folder or a folder inside the app is refused', async () => {
+    const clips = path.join(dataDir, 'out clips');
+    assert.equal((await post(port, a, '/ui/api/settings', { clips: { recording: 'after', live: 'while' }, folders: { clips } })).status, 200);
+    const s = JSON.parse(readFileSync(path.join(dataDir, 'settings.json'), 'utf8'));
+    assert.deepEqual([s.clips, s.folders.clips], [{ recording: 'after', live: 'while' }, clips]);
+    for (const bad of [{ clips: { recording: 'maybe' } }, { folders: { clips: 'rel' } }, { folders: { recordings: path.join(REPO, 'services') } }, { other: 1 }]) {
+      const r = await post(port, a, '/ui/api/settings', bad);
+      assert.equal(r.status, 400, JSON.stringify(bad));
+      assert.equal(JSON.parse(r.text).error, 'bad-settings');
+    }
+  });
+  test('answer: written for the launcher; extra or wrong fields refused', async () => {
+    assert.equal((await post(port, a, '/ui/api/clips/answer', { id: 'x-1', make: true, remember: true })).status, 200);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(dataDir, 'clips', 'answer.json'), 'utf8')), { id: 'x-1', make: true, remember: true });
+    assert.equal((await post(port, a, '/ui/api/clips/answer', { id: 'x-1', make: 'yes' })).status, 400);
+    assert.equal((await post(port, a, '/ui/api/clips/answer', { id: 'x-1', make: true, path: 'C:/' })).status, 400);
+  });
+  test('while live: settings refused with a plain reason', async () => {
+    hostLive = true;
+    await new Promise((r) => setTimeout(r, 200)); // the status poll sees the stream
+    const r = await post(port, a, '/ui/api/settings', { clips: { recording: 'off' } });
+    hostLive = false;
+    assert.equal(r.status, 409);
+    assert.equal(JSON.parse(r.text).detail, 'Change settings after the stream.');
   });
 });
