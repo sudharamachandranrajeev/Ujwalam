@@ -7,6 +7,7 @@
 // logs in, lists the scenes, prints one line ("studio smoke: ok, <n> scene(s)") and exits (tests).
 #include "api_client.h"
 #include "main_window.h"
+#include "motion.h"
 #include "theme.h"
 
 #include <QApplication>
@@ -35,6 +36,7 @@ int main(int argc, char **argv)
 	QApplication app(argc, argv);
 	QApplication::setApplicationName(QStringLiteral("Ujwalam Studio"));
 	theme::apply(app);
+	motion::installHover(app); // hover glow on buttons and cards (D287)
 	const QString url = takeEnv("UJWALAM_UI_URL");
 	const QString key = takeEnv("UJWALAM_UI_LAUNCH_KEY");
 

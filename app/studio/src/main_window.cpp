@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "main_window.h"
+#include "motion.h"
+#include "stats_cards.h"
+#include "taskbar.h"
 #include "theme.h"
 
 #include <QCheckBox>
@@ -352,6 +355,8 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	setCentralWidget(central);
 	note_ = new QLabel(this);
 	statusBar()->addWidget(note_, 1);
+	tasks_ = new TaskBar(this);
+	statusBar()->insertPermanentWidget(0, tasks_->chip()); // before host / event core; hidden while nothing runs
 	resize(1400, 860);
 }
 
@@ -447,7 +452,8 @@ QWidget *MainWindow::buildTop()
 	menu->setToolTipsVisible(true);
 	more->setMenu(menu);
 	h->addWidget(more);
-	statusBar()->addPermanentWidget(pillStats_);
+	pillStats_->setParent(this); // the numbers live in the stats cards now (D287)
+	pillStats_->hide();
 	statusBar()->addPermanentWidget(pillHost_);
 	statusBar()->addPermanentWidget(pillCore_);
 	return w;
@@ -830,6 +836,8 @@ QWidget *MainWindow::buildRight()
 	v->addWidget(botBox_);
 
 	v->addStretch(1);
+	stats_ = new StatsCards(w);
+	v->addWidget(stats_);
 	return w;
 }
 
@@ -851,9 +859,18 @@ QWidget *MainWindow::buildMixer()
 	return mix;
 }
 
+void MainWindow::resizeEvent(QResizeEvent *e)
+{
+	QMainWindow::resizeEvent(e);
+	if (tasks_)
+		tasks_->reposition();
+}
+
 void MainWindow::moveEvent(QMoveEvent *e)
 {
 	QMainWindow::moveEvent(e);
+	if (tasks_)
+		tasks_->reposition();
 	for (PreviewSlot *s : slots_)
 		s->schedule();
 }
@@ -1469,9 +1486,9 @@ void MainWindow::pollStatus()
 		}
 		recording_ = h.value(QStringLiteral("recording")).toBool();
 		pillLive_->setText(live_ ? QStringLiteral("LIVE") : QStringLiteral("Offline"));
-		pillLive_->setStyleSheet(live_ ? QStringLiteral("background:%1;border-color:%1;color:white;").arg(QLatin1String(theme::kDanger)) : QString());
+		motion::setChip(pillLive_, live_, QColor(theme::kDanger));
 		pillRec_->setText(recording_ ? QStringLiteral("Recording") : QStringLiteral("Not recording"));
-		pillRec_->setStyleSheet(recording_ ? QStringLiteral("background:%1;border-color:%1;color:white;").arg(QLatin1String(theme::kDanger)) : QString());
+		motion::setChip(pillRec_, recording_, QColor(theme::kDanger));
 		pillStats_->setText(QStringLiteral("Dropped %1 · %2 fps · CPU %3% · GPU %4%")
 					    .arg(h.value(QStringLiteral("droppedFrames")).toInt())
 					    .arg(h.value(QStringLiteral("fps")).toDouble(), 0, 'f', 1)
@@ -1481,6 +1498,9 @@ void MainWindow::pollStatus()
 				   : h.value(QStringLiteral("available")).toBool()   ? QStringLiteral("Host: up")
 										     : QStringLiteral("Host: down"));
 		pillCore_->setText(c.value(QStringLiteral("available")).toBool() ? QStringLiteral("Event core: up") : QStringLiteral("Event core: down"));
+		stats_->sample(h.value(QStringLiteral("cpuPct")).toDouble(), h.value(QStringLiteral("gpuPct")).toDouble(), h.value(QStringLiteral("fps")).toDouble(),
+			       h.value(QStringLiteral("droppedFrames")).toInt(), live_, recording_);
+		tasks_->update(s.value(QStringLiteral("tasks")).toArray(), s.value(QStringLiteral("at")).toDouble());
 		updateClips(s.value(QStringLiteral("clips")).toObject());
 		// A layer moved or resized with the mouse on the embedded preview (D230): select it, reload layers + inspector.
 		const QJsonObject pe = h.value(QStringLiteral("previewEdit")).toObject();
@@ -2468,13 +2488,36 @@ void MainWindow::answerClips(const QString &id, bool make, bool remember)
 	});
 }
 
-void MainWindow::saveSettings(const QJsonObject &body)
+// clips.matchGate as stored in settings.json: {"top3": bool, "minKills": int | null}
+static QJsonObject matchGateJson(bool top3, int minKills)
 {
-	api_->post(QStringLiteral("ui/api/settings"), body, [this](bool ok, const QJsonObject &r, const QString &err) {
-		if (!ok)
+	return QJsonObject{{QStringLiteral("top3"), top3}, {QStringLiteral("minKills"), minKills > 0 ? QJsonValue(minKills) : QJsonValue(QJsonValue::Null)}};
+}
+
+void MainWindow::saveSettings(const QJsonObject &body, bool retried)
+{
+	api_->post(QStringLiteral("ui/api/settings"), body, [this, body, retried](bool ok, const QJsonObject &r, const QString &err) {
+		if (!ok) {
+			// An older server does not know the match filter yet and refuses the whole change (400): say so in plain
+			// words and save everything else, so one new option never blocks the other settings.
+			const QJsonObject c = body.value(QStringLiteral("clips")).toObject();
+			if (err.startsWith(QStringLiteral("HTTP 400")) && c.contains(QStringLiteral("matchGate")) && !retried) {
+				QJsonObject rest = body;
+				QJsonObject cc = c;
+				cc.remove(QStringLiteral("matchGate"));
+				rest.insert(QStringLiteral("clips"), cc);
+				if (cc.isEmpty())
+					rest.remove(QStringLiteral("clips"));
+				if (!rest.isEmpty())
+					saveSettings(rest, true);
+				else
+					note(QStringLiteral("The match filter was not saved: this version of Ujwalam does not support it yet."));
+				return;
+			}
 			return note(QStringLiteral("Settings not saved: ") + err);
+		}
 		Q_UNUSED(r);
-		note(QStringLiteral("Settings saved."));
+		note(retried ? QStringLiteral("Settings saved, except the match filter: this version of Ujwalam does not support it yet.") : QStringLiteral("Settings saved."));
 		pollStatus();
 	});
 }
@@ -2513,6 +2556,32 @@ void MainWindow::openSettings(bool firstRun)
 			cf->addRow(warn);
 		}
 		v->addWidget(clipBox);
+		// Match filter the clipper honours (clips.matchGate): only matches that went well become clips.
+		const QJsonObject gate = c.value(QStringLiteral("matchGate")).toObject();
+		const bool hadGate = c.contains(QStringLiteral("matchGate"));
+		const bool gateTop3 = gate.contains(QStringLiteral("top3")) ? gate.value(QStringLiteral("top3")).toBool() : true;
+		const int gateKills = gate.value(QStringLiteral("minKills")).isDouble() ? gate.value(QStringLiteral("minKills")).toInt() : -1;
+		auto *gateBox = new QGroupBox(QStringLiteral("Which matches get clips"), &dlg);
+		auto *gv = new QVBoxLayout(gateBox);
+		auto *top3 = new QCheckBox(QStringLiteral("Only make clips from matches where I finish in the top 3"), gateBox);
+		top3->setChecked(gateTop3);
+		auto *killRow = new QWidget(gateBox);
+		auto *kh = new QHBoxLayout(killRow);
+		kh->setContentsMargins(0, 0, 0, 0);
+		auto *killsOn = new QCheckBox(QStringLiteral("...or where I get at least"), killRow);
+		auto *kills = new QSpinBox(killRow);
+		kills->setRange(1, 99);
+		kills->setValue(gateKills > 0 ? gateKills : 5);
+		kills->setSuffix(QStringLiteral(" kills"));
+		killsOn->setChecked(gateKills > 0);
+		kills->setEnabled(killsOn->isChecked());
+		connect(killsOn, &QCheckBox::toggled, kills, &QWidget::setEnabled);
+		kh->addWidget(killsOn);
+		kh->addWidget(kills);
+		kh->addStretch(1);
+		gv->addWidget(top3);
+		gv->addWidget(killRow);
+		v->addWidget(gateBox);
 		auto *dirBox = new QGroupBox(QStringLiteral("Where files are saved"), &dlg);
 		auto *df = new QFormLayout(dirBox);
 		auto folderRow = [&](const QString &cur, const QString &placeholder) {
@@ -2554,7 +2623,11 @@ void MainWindow::openSettings(bool firstRun)
 		}
 		const auto dir = [](QLineEdit *e) { return e->text().trimmed().isEmpty() ? QJsonValue() : QJsonValue(e->text().trimmed()); };
 		QJsonObject body;
-		body.insert(QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), rec->currentData().toString()}, {QStringLiteral("live"), liv->currentData().toString()}});
+		QJsonObject clipsBody{{QStringLiteral("recording"), rec->currentData().toString()}, {QStringLiteral("live"), liv->currentData().toString()}};
+		const int newKills = killsOn->isChecked() ? kills->value() : -1;
+		if (hadGate || top3->isChecked() != gateTop3 || newKills != gateKills) // sent only when it matters: an older server refuses the key
+			clipsBody.insert(QStringLiteral("matchGate"), matchGateJson(top3->isChecked(), newKills));
+		body.insert(QStringLiteral("clips"), clipsBody);
 		body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
 		saveSettings(body);
 	});
@@ -2642,6 +2715,9 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("clips"), pillClips_->text());
 	o.insert(QStringLiteral("clipAsks"), clips_.value(QStringLiteral("asks")).toArray().size());
 	o.insert(QStringLiteral("clipSettings"), clips_.value(QStringLiteral("settings")));
+	o.insert(QStringLiteral("tasks"), tasks_->probe());
+	o.insert(QStringLiteral("stats"), QJsonObject{{QStringLiteral("samples"), stats_->samples()}, {QStringLiteral("session"), stats_->sessionText()}});
+	o.insert(QStringLiteral("motion"), motion::systemAnimations());
 	return o;
 }
 
@@ -2694,6 +2770,21 @@ bool MainWindow::probeAction(const QString &action)
 	}
 	if (p.size() == 3 && p[0] == QStringLiteral("clip-modes")) { // D284: Settings > Clips, saved as the dialog does
 		saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), p[1]}, {QStringLiteral("live"), p[2]}}}});
+		return true;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("tasks")) { // D287: open / close the task list, dismiss the first finished task
+		if (p[1] == QStringLiteral("open") || p[1] == QStringLiteral("close")) {
+			tasks_->setPanelOpen(p[1] == QStringLiteral("open"));
+			return true;
+		}
+		if (p[1] == QStringLiteral("dismiss")) {
+			tasks_->dismissFirstFinished();
+			return true;
+		}
+		return false;
+	}
+	if (p.size() == 3 && p[0] == QStringLiteral("match-gate")) { // D287: save the match filter as the Settings dialog does
+		saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("matchGate"), matchGateJson(p[1] == QStringLiteral("true"), p[2].toInt())}}}});
 		return true;
 	}
 	if (p.size() == 1 && (p[0] == QStringLiteral("clip") || p[0] == QStringLiteral("mark"))) { // D281

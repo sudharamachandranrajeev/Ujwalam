@@ -28,6 +28,8 @@ class QGroupBox;
 class QComboBox;
 class QLineEdit;
 class QCheckBox;
+class TaskBar;
+class StatsCards;
 
 // A native child widget the host draws a canvas preview into (P5a step 4): the host makes its preview a child
 // window of this widget's handle and resizes it when the slot changes size. If the host refuses (no canvas yet, host
@@ -94,7 +96,7 @@ private:
 	void hostAction(const QString &method);
 	// Settings (D284): clips (ask / after / while / off, for recordings and for streams) and the save folders.
 	void openSettings(bool firstRun);
-	void saveSettings(const QJsonObject &body);
+	void saveSettings(const QJsonObject &body, bool retried = false);
 	void askClips(const QJsonObject &ask);
 	void answerClips(const QString &id, bool make, bool remember);
 	void updateClips(const QJsonObject &cl);
@@ -180,10 +182,13 @@ private:
 	QLabel *note_ = nullptr;
 	QList<PreviewSlot *> slots_;
 	QPushButton *settingsBtn_ = nullptr, *clipsFolderBtn_ = nullptr;
+	TaskBar *tasks_ = nullptr;     // task chip, list and toasts (D287)
+	StatsCards *stats_ = nullptr;  // session time, GPU, CPU, fps with history
 	QJsonObject clips_;           // status.clips: settings, state, asks, last result (D284)
 	QStringList asked_;           // "make clips?" questions already shown this session
 	bool firstRunAsked_ = false;  // the first-run clip question (no settings saved yet) was shown
 
 protected:
 	void moveEvent(QMoveEvent *e) override; // re-embed: the host re-checks the display the window is on
+	void resizeEvent(QResizeEvent *e) override; // task list and toasts stay anchored bottom-right
 };

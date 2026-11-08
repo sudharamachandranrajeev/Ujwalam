@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { createFakeBots, createFakeHost } from '../services/studio-ui/backends.mjs';
 import { createFlags } from '../services/flags/index.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
+import { writeTaskFile } from '../services/studio-ui/tasks.mjs';
 import { EXE, qtDir } from '../app/studio/tools/build.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
@@ -146,14 +147,60 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(saved.clips, { recording: 'after', live: 'while' });
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'clips', 'answer.json'), 'utf8')), { id: ask.id, make: true, remember: false });
   });
+
+  // Task bar (D287): chip, list and toasts are child widgets of the window (no top-level window, no focus); the tasks come
+  // in the status snapshot from <dataDir>/tasks/*.json.
+  const task = (dataDir, o) => writeTaskFile(dataDir, { kind: 'clips', startedAt: Date.now() - 5000, updatedAt: Date.now(), ...o });
+  test('task bar (D287): chip counts running tasks, the list opens and closes by probe action, idle hides the chip', async () => {
+    const idle = await probe([]);
+    assert.equal(idle.tasks.chipHidden, true, 'hidden when nothing runs');
+    assert.deepEqual([idle.tasks.running, idle.tasks.total, idle.tasks.panelOpen, idle.tasks.toasts], [0, 0, false, 0]);
+    const p = await probe([], 6000, 'tasks:open', (d) => {
+      task(d, { id: 'clip-a', title: 'Editing clips (3 of 7)', state: 'running', stage: 'render', done: 2, total: 7 });
+      task(d, { id: 'clip-b', title: 'Clips from practice-3', state: 'waiting', note: 'Waiting until the stream ends' });
+      task(d, { id: 'ui-c', kind: 'preview', title: 'Opening the horizontal preview', state: 'failed', note: 'Could not open' });
+    });
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['tasks:open', true]]);
+    assert.equal(p.tasks.chipHidden, false);
+    assert.equal(p.tasks.chipText, '1 task running');
+    assert.deepEqual([p.tasks.running, p.tasks.waiting, p.tasks.total, p.tasks.rows, p.tasks.panelOpen], [1, 1, 3, 3, true]);
+    assert.equal(p.tasks.toasts, 0, 'tasks already finished when the window starts do not pop up');
+    const c = await probe([], 6000, 'tasks:open,tasks:close,tasks:dismiss', (d) => {
+      task(d, { id: 'ui-c', kind: 'preview', title: 'Opening the horizontal preview', state: 'failed' });
+    });
+    assert.deepEqual(c.actions.map((a) => [a.action, a.done]), [['tasks:open', true], ['tasks:close', true], ['tasks:dismiss', true]]);
+    assert.deepEqual([c.tasks.panelOpen, c.tasks.rows, c.tasks.total], [false, 0, 1], 'the X hides a finished task from the list');
+  });
+  test('task bar (D287): a task that was running and finishes gives a toast; a failure too; the stats cards fill from the status poll', async () => {
+    const p = await probe([], 5500, '', (d) => {
+      task(d, { id: 'clip-a', title: 'Editing clips', state: 'running', done: 1, total: 4 });
+      setTimeout(() => task(d, { id: 'clip-a', title: 'Clips ready from practice-1', state: 'done', note: '4 clips made' }), 1200);
+      setTimeout(() => task(d, { id: 'ui-x', kind: 'upload', title: 'Uploading a clip to YouTube (private)', state: 'failed', note: 'The upload did not finish' }), 2200);
+    });
+    assert.equal(p.tasks.toasts, 2, 'one toast for the finished clip run, one for the failed upload');
+    assert.deepEqual([p.tasks.running, p.tasks.chipHidden], [0, true]);
+    assert.ok(p.stats.samples >= 2, 'a history sample per status poll');
+    assert.equal(p.stats.session, 'Not live');
+  });
+  test('match filter (D287): saved through the settings route; an older server refusing the key gives a plain message', async () => {
+    const p = await probe([], 6000, 'match-gate:true:5');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['match-gate:true:5', true]]);
+    assert.match(p.note, /match filter|Settings saved/, p.note);
+    assert.doesNotMatch(p.note, /HTTP 400|bad-settings/, 'plain words, not the raw refusal');
+  });
   test('look (D285): the themed window renders to a 1600x900 picture; the top bar fits', async () => {
     const shot = path.join(os.tmpdir(), `ujw-shot-${process.pid}.png`);
     try {
-      const p = await probe(['posting', 'report-button'], 4000, '', null, { UJWALAM_STUDIO_PROBE_SHOT: shot, QT_QPA_FONTDIR: path.join(process.env.WINDIR ?? 'C:/Windows', 'Fonts') }); // the real UI font (offscreen has none)
+      const p = await probe(['posting', 'report-button'], 4500, 'tasks:open', (d) => {
+        task(d, { id: 'clip-a', title: 'Editing clips (3 of 7)', state: 'running', done: 2, total: 7 });
+        task(d, { id: 'clip-b', title: 'Clips from practice-3', state: 'waiting' });
+        setTimeout(() => task(d, { id: 'clip-z', title: 'Clips ready from practice-1', state: 'done' }), 1200);
+      }, { UJWALAM_STUDIO_PROBE_SHOT: shot, QT_QPA_FONTDIR: path.join(process.env.WINDIR ?? 'C:/Windows', 'Fonts') }); // the real UI font (offscreen has none)
       assert.equal(p.shot, true);
       const b = readFileSync(shot);
       assert.deepEqual([b.readUInt32BE(16), b.readUInt32BE(20)], [1600, 900], 'not widened by the top bar');
       assert.deepEqual([p.shown.posts, p.shown.report], [true, true], 'Posts and Report a problem in the More menu');
+      assert.deepEqual([p.tasks.panelOpen, p.tasks.toasts, p.tasks.chipHidden], [true, 1, false], 'the shot shows the task list and a toast, still 1600x900');
     } finally { rmSync(shot, { force: true }); }
   });
   test('typed confirms (D279): a flag ticked on asks for the phrase; a wrong phrase asks again, "yes" turns it on, Cancel leaves it off', async () => {

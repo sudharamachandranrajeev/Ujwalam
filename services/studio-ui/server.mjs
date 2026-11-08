@@ -41,6 +41,7 @@ import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 import { clipsFolder, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
+import { createTasks } from './tasks.mjs';
 
 // The app folder (repo or install): settings folders may not point into it (D284).
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -234,6 +235,8 @@ export function createStudioServer(opts) {
     const hs = await host.call('host.status', {});
     return { sinks: hs?.live === true ? [{ kind: 'stream', active: true }] : [] };
   }
+  // Task bar (progress of what the software is doing): its own long actions here, launcher jobs as files in <dataDir>/tasks.
+  const tasks = opts.tasks ?? createTasks({ dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null, now });
   const openFolder = opts.openFolder ?? defaultOpenFolder;
   // Bot manager (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot. opts.bots is a test seam (see createFakeBots).
   const bots = opts.bots ?? (typeof opts.dataDir === 'string' ? createBots({ dataDir: opts.dataDir }) : null);
@@ -339,7 +342,8 @@ export function createStudioServer(opts) {
     if (live) return json(res, 409, { error: 'live', detail: 'Change settings after the stream.' });
     const problems = settingsProblems(body, { forbidden: [REPO_ROOT] });
     if (problems.length) return json(res, 400, { error: 'bad-settings', detail: problems.join('; ').slice(0, 400) });
-    try { return json(res, 200, { settings: writeSettings(opts.dataDir, body) }); } catch (e) { return json(res, 500, { error: 'not-saved', detail: String(e.message).slice(0, 200) }); }
+    const t = tasks.start({ title: 'Saving your settings', kind: 'settings' });
+    try { const settings = writeSettings(opts.dataDir, body); t.done(); return json(res, 200, { settings }); } catch (e) { t.fail('Could not save'); return json(res, 500, { error: 'not-saved', detail: String(e.message).slice(0, 200) }); }
   }
   // The answer to "make clips from it?": the launcher picks it up (record-clips.mjs).
   function clipAnswer(res, body) {
@@ -370,6 +374,7 @@ export function createStudioServer(opts) {
         ...(previewLast ? { previewEdit: previewLast } : {}),
         effectEditing: !!flags && flags.isOn('effect-editor') },
       clips: clipStatus(),
+      tasks: tasks.list(),
       core: { available: cs !== null, ...(cs ? { liveState: typeof cs.live?.liveState === 'string' ? cs.live.liveState : null, panic: cs.live?.panic === true } : {}) },
     };
   }
@@ -490,6 +495,10 @@ export function createStudioServer(opts) {
   }
   // Sets one canvas's project transition (refused while live); the status poll then applies it to the host.
   async function transitionEdit(res, body) {
+    const t = tasks.start({ title: 'Applying the scene transition', kind: 'transition' });
+    try { return await transitionEditRun(res, body); } finally { if (res.statusCode < 400) t.done(); else t.fail('Not applied'); }
+  }
+  async function transitionEditRun(res, body) {
     if (!flags || !flags.isOn(TRANSITIONS_FLAG)) return json(res, 404, { error: 'transitions-off' });
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
@@ -618,6 +627,7 @@ export function createStudioServer(opts) {
     }
     if (req.method === 'GET' && route === '/ui/api/status') return json(res, 200, lastSnapshot ?? await snapshot());
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
+    if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/settings') return json(res, 200, typeof opts.dataDir === 'string' ? { settings: readSettings(opts.dataDir), clips: clipStatus() } : { settings: null });
     if (req.method === 'GET' && route === '/ui/api/edits') return json(res, 200, history.state());
@@ -706,7 +716,9 @@ export function createStudioServer(opts) {
       }
       let result;
       const before = await readBefore(body.method, params);
-      try { result = await host.call(body.method, params) ?? null; } catch (e) { return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+      const pt = body.method === 'preview.open' ? tasks.start({ title: `Opening the ${params.canvas === 'v' ? 'vertical' : 'horizontal'} preview`, kind: 'preview' }) : null;
+      try { result = await host.call(body.method, params) ?? null; } catch (e) { pt?.fail('Could not open'); return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+      pt?.done();
       remember(body.method, params, before);
       // P5b autosave: only after the host accepted the edit; the real host only (the fake has no project file).
       const saved = projectSync && host.describe().kind === 'host' ? projectSync.record(body.method, syncParams(body.method, params, result)) : false;
@@ -760,11 +772,13 @@ export function createStudioServer(opts) {
       if (v.status !== 'approved') return json(res, 409, { error: 'not-approved' });
       if (uploading.size) return json(res, 409, { error: 'upload-in-progress' });
       uploading.add(body.id);
+      const ut = tasks.start({ title: 'Uploading a clip to YouTube (private)', kind: 'upload', note: 'Sending the video' });
       try {
         // Live is re-checked inside uploadPost just before the transfer; here a failed check also refuses (fail closed).
         const r = await uploadPost({ id: body.id, store: posting, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl, outputsStatus: async () => { try { return await ytOutputsStatus(); } catch { throw new UploadError('stream-active', 'could not confirm that nothing is live; upload refused'); } } });
+        ut.done();
         return json(res, 200, { videoId: r.videoId, uploadStatus: r.uploadStatus, thumbnailOk: r.thumbnailOk, privacy: 'private' });
-      } catch (e) { return fail(e); } finally { uploading.delete(body.id); }
+      } catch (e) { ut.fail('The upload did not finish'); return fail(e); } finally { uploading.delete(body.id); }
     }
     if (route === '/ui/api/posts/edit' || route === '/ui/api/posts/status' || route === '/ui/api/posts/open') {
       // Local files only: post.json and the ledger. Nothing is uploaded; approving only marks the package.
@@ -788,12 +802,16 @@ export function createStudioServer(opts) {
     }
     if (route === '/ui/api/project/import-meld') {
       let r;
+      const it = tasks.start({ title: 'Reading your Meld session', kind: 'import' });
       try { r = importSession({ dataDir: opts.dataDir, sessionFile: opts.sessionFile === undefined ? resolveSessionFile() : opts.sessionFile, now: () => new Date(now()) }); } catch (e) {
+        it.fail(e.code === 'NO_SESSION' ? 'No Meld session found' : 'Could not read it');
         return json(res, e.code === 'NO_SESSION' ? 503 : 502, { error: String(e.code ?? 'IMPORT_FAILED').toLowerCase().replace('_', '-'), detail: e.code === 'NO_SESSION' ? 'Set UJWALAM_MELD_SESSION or paths.meld_session in the local profile.' : undefined });
       }
       lastImport = { file: r.file, project: r.project, bases: r.bases };
       let plan = null; let planError = null;
+      it.update({ note: 'Checking it against the studio' });
       try { plan = countsOnly(await callHost('project.plan', { project: r.project, bases: r.bases })); } catch (e) { planError = String(e?.code ?? 'error').slice(0, 40); }
+      if (planError) it.fail('Read, but the check did not finish'); else it.done();
       return json(res, 200, { imported: r.summary, plan, planError });
     }
     if (route === '/ui/api/project/load') {
@@ -828,7 +846,10 @@ export function createStudioServer(opts) {
           const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse
           if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
           const before = await readBefore(p.method, p.params);
-          const out = await callHost(p.method, p.params);
+          const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
+          let out;
+          try { out = await callHost(p.method, p.params); } catch (e) { ht?.fail('Did not finish'); throw e; }
+          ht?.done();
           remember(p.method, p.params, before);
           // A layout change confirmed while live autosaves like an instant one (P5b).
           const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;

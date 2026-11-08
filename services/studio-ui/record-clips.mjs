@@ -15,10 +15,11 @@
 // go to the clips folder from the settings (default <dataDir>/clips).
 
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { clipsFolder, readSettings, writeSettings } from './user-settings.mjs';
+import { writeTaskFile } from './tasks.mjs';
 
 const ACTIVE = new Set(['starting', 'live', 'reconnecting', 'retrying']);
 
@@ -93,6 +94,24 @@ export function countClips(out) {
   } catch { return 0; }
 }
 
+export const PROGRESS_STAGES = Object.freeze(['detect', 'candidates', 'render', 'validate', 'review', 'gate']);
+const PROGRESS_RE = /^ujwalam-progress\s+(\{.*\})\s*$/;
+const STAGE_TITLE = { detect: 'Finding the best moments in', candidates: 'Choosing the best moments in', render: 'Editing clips', validate: 'Checking the clips from', review: 'Reviewing the moments in', gate: 'Checking the match results of' };
+
+/** One clipper stderr line -> { stage, done, total, note } or null. Defensive: anything else is ignored, lengths capped. */
+export function parseProgress(line) {
+  if (typeof line !== 'string' || line.length > 2000) return null;
+  const m = PROGRESS_RE.exec(line.trim());
+  if (!m) return null;
+  let j; try { j = JSON.parse(m[1]); } catch { return null; }
+  if (!j || typeof j !== 'object' || !PROGRESS_STAGES.includes(j.stage)) return null;
+  const n = (v) => (Number.isFinite(v) && v >= 0 && v <= 1e6 ? Math.floor(v) : null);
+  const total = n(j.total) || null;
+  let done = n(j.done); if (done !== null && total !== null && done > total) done = total;
+  const note = typeof j.note === 'string' ? j.note.replace(/[\x00-\x1f]/g, ' ').replace(/[A-Za-z]:[\x5c/]\S*/g, '').trim().slice(0, 160) : null;
+  return { stage: j.stage, done, total, note: note || null };
+}
+
 const stamp = (ms) => new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\..*/, '').replace('T', '-');
 const iso = (ms) => new Date(ms).toISOString();
 const JOB_KEYS = ['type', 'kind', 'h', 'v', 'since', 'until', 'name', 'minutes'];
@@ -106,7 +125,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
   const workerFile = path.join(stateDir, 'live-worker.json');
   const queue = []; let asks = [];
   let prev = null; let child = null; let current = null; let last = null; let stopped = false;
-  let recStart = null; let recSawLive = false; let liveStart = null; let liveHadRecording = false; let workerOn = null;
+  let progress = null; let liveNow = false; let recStart = null; let recSawLive = false; let liveStart = null; let liveHadRecording = false; let workerOn = null;
 
   // A run cut short by closing Ujwalam (or queued, or still to be answered) comes back at the next start.
   try {
@@ -119,7 +138,26 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
     if (queue.length) log(`clips: ${queue.length} unfinished clip job(s) from the last session will run again`);
   } catch { /* no status yet */ }
 
+  // Task bar (tasks.mjs): one task file per clip job, rewritten with every status write (that also keeps it fresh).
+  const taskId = (j) => `clip-${String(j.name ?? 'run').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 70)}`;
+  const taskFor = (j, p) => {
+    const nm = j.name ?? 'the stream';
+    const base = { id: taskId(j), kind: 'clips', startedAt: j.taskStart ?? now(), updatedAt: now() };
+    if (j === current && !j.pausedForLive) {
+      const st = p?.stage ?? 'detect';
+      const title = st === 'render' && p?.total ? `Editing clips (${Math.min((p.done ?? 0) + 1, p.total)} of ${p.total})` : `${STAGE_TITLE[st]} ${nm}`;
+      return { ...base, title, state: 'running', stage: st, done: p?.done ?? null, total: p?.total ?? null, note: p?.note ?? null };
+    }
+    return { ...base, title: `Clips from ${nm}`, state: 'waiting', stage: null, done: null, total: null,
+      note: j === current ? 'Paused while the stream runs' : liveNow ? 'Waiting until the stream ends' : 'Waiting for its turn' };
+  };
+  const writeTasks = () => {
+    for (const j of queue) { j.taskStart ??= now(); writeTaskFile(dataDir, taskFor(j, progress)); }
+  };
+  const finishTask = (j, ok, note) => writeTaskFile(dataDir, { id: taskId(j), kind: 'clips', title: ok ? `Clips ready from ${j.name}` : `Clips from ${j.name} did not finish`, state: ok ? 'done' : 'failed', note, startedAt: j.taskStart ?? now(), updatedAt: now() });
+
   const write = () => {
+    writeTasks();
     const s = readSettings(dataDir);
     const t = clipTools({ clipRoot });
     const out = { at: iso(now()), state: current ? 'running' : queue.length ? 'queued' : 'idle', available: !!t.py, reason: t.reason,
@@ -145,6 +183,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
     const { spec, reason } = clipRunSpec({ clipRoot, dataDir, job });
     if (!spec) {
       queue.shift(); last = { name: job.name, kind: job.kind, result: 'not-made', reason, clips: 0 };
+      finishTask(job, false, reason);
       log(`clips: none made for ${job.name}: ${reason}`); write(); start(); return;
     }
     mkdirSync(spec.out, { recursive: true });
@@ -152,8 +191,22 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
     mkdirSync(stateDir, { recursive: true });
     const fd = openSync(logFile, 'a');
     current = job;
-    child = spawnFn(spec.exe, spec.argv, { stdio: ['ignore', fd, fd], windowsHide: true, cwd: clipRoot });
+    progress = null;
+    child = spawnFn(spec.exe, spec.argv, { stdio: ['ignore', fd, 'pipe'], windowsHide: true, cwd: clipRoot });
     closeSync(fd);
+    // stderr: copied to the log and scanned for `ujwalam-progress {...}` lines (the task bar's progress).
+    let pending = ''; let lastWrite = 0;
+    child.stderr?.on?.('data', (chunk) => {
+      try { appendFileSync(logFile, chunk); } catch { /* the log is a convenience */ }
+      pending += String(chunk);
+      let i;
+      while ((i = pending.indexOf(String.fromCharCode(10))) >= 0) {
+        const p = parseProgress(pending.slice(0, i)); pending = pending.slice(i + 1);
+        if (p) progress = p;
+      }
+      if (pending.length > 4000) pending = '';
+      if (progress && now() - lastWrite >= 0) { lastWrite = now(); writeTasks(); }
+    });
     try { os.setPriority(child.pid, os.constants.priority.PRIORITY_BELOW_NORMAL); } catch { /* a fake child has no pid */ }
     log(`clips: making clips from ${job.name} (log ${logFile})`);
     write();
@@ -161,10 +214,11 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
       if (stopped) return; // Ujwalam closing: the status keeps this job, so the next start runs it again
       const done = current; child = null; current = null;
       if (done.pausedForLive) { delete done.pausedForLive; log(`clips: ${done.name} paused for the stream; it continues after`); write(); return; }
-      queue.shift();
+      queue.shift(); progress = null;
       const n = code === 0 ? countClips(spec.out) : 0;
       last = { name: done.name, kind: done.kind, result: code === 0 ? 'done' : 'failed', code, clips: n, out: spec.out };
       log(code === 0 ? `clips: ${n} clip(s) made from ${done.name} in ${spec.out}` : `clips: making clips from ${done.name} failed (exit ${code}); see ${logFile}`);
+      finishTask(done, code === 0, code === 0 ? `${n} clip${n === 1 ? '' : 's'} made` : 'Something went wrong; see the log');
       write();
       start();
     });
@@ -190,6 +244,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
     feed(status) {
       const t = now(); const s = readSettings(dataDir);
       const live = isLive(status); const rec = isRecording(status);
+      liveNow = live;
       if (rec && recStart === null) { recStart = t; recSawLive = false; }
       if (rec && live) recSawLive = true;
       if (live && liveStart === null) { liveStart = t; liveHadRecording = false; }
