@@ -312,14 +312,40 @@ export function studioShellPaths({ root = REPO, devExe = STUDIO_EXE, devQtDir = 
 /** Qt shell spawn spec (pure; tested). null when the exe is missing. env: the launcher's environment without any
  *  UJWALAM_*TOKEN* or *_KEY variable, plus the UI URL, the one-time launch key, qtBin (the folder holding the Qt
  *  DLLs) first on PATH and, when given, QT_QPA_PLATFORM_PLUGIN_PATH = qtPlugins (packaged build). */
-export function shellSpawnSpec({ uiPort, launchKey, exe, qtBin = null, qtPlugins = null, env = process.env, exists = existsSync }) {
+export function shellSpawnSpec({ uiPort, launchKey, exe, qtBin = null, qtPlugins = null, logsDir = null, version = null, env = process.env, exists = existsSync }) {
   if (!exe || !exists(exe) || !Number.isInteger(uiPort) || uiPort < 1 || uiPort > 65535) return null;
   const clean = {};
   for (const [k, v] of Object.entries(env)) if (!/^UJWALAM_.*(TOKEN|KEY)/i.test(k)) clean[k] = v;
   const pathKey = Object.keys(clean).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
   if (qtBin) clean[pathKey] = `${qtBin}${path.delimiter}${clean[pathKey] ?? ''}`;
   if (qtPlugins) clean.QT_QPA_PLATFORM_PLUGIN_PATH = qtPlugins;
+  // logsDir: the studio writes studio-*.log and, on a crash, studio-crash-*.txt there (app/studio/src/studio_log.h).
+  if (logsDir) clean.UJWALAM_STUDIO_LOG_DIR = logsDir;
+  if (version) clean.UJWALAM_STUDIO_VERSION = version;
   return { cmd: exe, env: { ...clean, UJWALAM_UI_URL: `http://127.0.0.1:${uiPort}/`, UJWALAM_UI_LAUNCH_KEY: launchKey } };
+}
+
+export const SHELL_EXITS_FILE = 'studio-exits.jsonl';
+export const SHELL_RELAUNCH_MAX = 3;
+export const SHELL_RELAUNCH_WINDOW_MS = 10 * 60_000;
+
+/** After a studio window crash: reopen it unless it crashed SHELL_RELAUNCH_MAX times within the window (pure; tested). */
+export function shellRelaunchAllowed(crashTimes, now = Date.now(), max = SHELL_RELAUNCH_MAX, windowMs = SHELL_RELAUNCH_WINDOW_MS) {
+  return crashTimes.filter((t) => now - t <= windowMs).length <= max;
+}
+
+/** One line for <logs>/studio-exits.jsonl when the Qt shell ends (pure; tested): exit code (also as hex, so 3221225477
+ *  reads 0xc0000005), whether it counts as a crash, and the studio's own crash report written since it started. */
+export function shellExitRecord({ code, signal = null, startedAt, now = Date.now(), reports = [] }) {
+  const n = Number.isInteger(code) ? code >>> 0 : null;
+  const since = (name) => { const m = /^studio-crash-(\d{4}-\d\d-\d\d)T(\d\d)-(\d\d)-(\d\d)-(\d{3})Z/.exec(name); return m ? Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`) : NaN; };
+  const report = reports.filter((r) => since(r) >= startedAt - 1000).sort().pop() ?? null;
+  return { at: new Date(now).toISOString(), code: n, codeHex: n === null ? null : `0x${n.toString(16).padStart(8, '0')}`, signal, crash: code !== 0, upMs: now - startedAt, report };
+}
+
+/** release.json version of this install ('dev' in a checkout without one). Named in the studio's crash report. */
+export function releaseVersion(file = path.join(REPO, 'release.json')) {
+  try { const v = JSON.parse(readFileSync(file, 'utf8')).version; return typeof v === 'string' && /^[\w.+-]{1,40}$/.test(v) ? v : 'dev'; } catch { return 'dev'; }
 }
 
 export function startCommandLine(url) {
@@ -983,28 +1009,61 @@ export async function main(argv = process.argv.slice(2)) {
   const uiPort = await portFrom(ui, /listening on http:\/\/127\.0\.0\.1:(\d+)\//);
   if (!uiPort) { console.log('[studio] UI server did not start; stopping'); await stopAll(); return 1; }
 
-  console.log(`[studio] UI at http://127.0.0.1:${uiPort}/ (the login key is one-time and not printed). Ctrl-C stops everything.`);
+  console.log(`[studio] UI at http://127.0.0.1:${uiPort}/ (the login key is one-time and not printed). ${process.env.UJWALAM_NO_CONSOLE === '1' ? 'Closing the studio window stops everything (started without a console: ujwalam-start.exe).' : 'Ctrl-C stops everything.'}`);
   // Headless (D191): no browser. One exception for scripted runs (F2 real-host test): UJWALAM_BROWSER naming this
   // Node runs that script (windowsHide, no window) with the login URL, so it can drive the page API like the browser.
   const wantShell = shellMode === 'qt';
-  const shellSpec = shellPaths ? shellSpawnSpec({ uiPort, launchKey, ...shellPaths }) : null;
+  const shellLogs = path.join(dataDir, 'logs');
+  const shellSpec = shellPaths ? shellSpawnSpec({ uiPort, launchKey, ...shellPaths, logsDir: shellLogs, version: releaseVersion() }) : null;
   if (wantShell && !shellSpec && args['no-open'] !== true && !isHeadless()) console.log('[studio] the Qt studio shell is not built (npm run build:studio); opening the browser instead');
   if (args['no-open'] !== true && shellSpec && !isHeadless()) {
-    const shell = spawn(shellSpec.cmd, [], {
-      stdio: 'ignore', env: shellSpec.env,
-      windowsHide: false // GUI window: the Qt studio window (default, D277); a GUI exe, no console
-    });
-    shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
-    // One close (D280): the window closed by the user (exit 0; while live only after the typed "yes, on air") stops
-    // everything. Any other exit is a crash: the studio keeps running (a stream is never cut by a UI crash).
-    shell.on('exit', (code) => {
-      if (stopping) return;
-      if (code === 0) {
-        console.log('[studio] studio window closed: stopping Ujwalam');
-        stopAll().then(() => process.exit(0));
-      } else console.log(`[studio] Qt shell ended unexpectedly (exit ${code}); the studio keeps running. Ctrl-C stops everything.`);
-    });
-    children.push(shell);
+    const crashTimes = [];
+    const startShell = (spec) => {
+      const shell = spawn(spec.cmd, [], {
+        stdio: 'ignore', env: spec.env,
+        windowsHide: false // GUI window: the Qt studio window (default, D277); a GUI exe, no console
+      });
+      shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
+      // One close (D280): the window closed by the user (exit 0; while live only after the typed "yes, on air") stops
+      // everything. Any other exit is a crash: the studio keeps running (a stream is never cut by a UI crash) and the
+      // window is opened again (at most SHELL_RELAUNCH_MAX times in SHELL_RELAUNCH_WINDOW_MS), with a new one-time key
+      // the UI server gets on its stdin pipe. Without a console (ujwalam-start.exe) the window is the only way to stop.
+      const shellStarted = Date.now();
+      shell.on('exit', (code, signal) => {
+        const i = children.indexOf(shell);
+        if (i >= 0) children.splice(i, 1);
+        // Every exit goes to <logs>/studio-exits.jsonl too (the console may be hidden or gone; 2026-11-08 crash).
+        let rec = null;
+        try {
+          mkdirSync(shellLogs, { recursive: true });
+          rec = shellExitRecord({ code, signal, startedAt: shellStarted, reports: readdirSync(shellLogs).filter((n) => n.startsWith('studio-crash-')) });
+          appendFileSync(path.join(shellLogs, SHELL_EXITS_FILE), `${JSON.stringify({ ...rec, stopping })}\n`);
+        } catch { /* best effort: the log line below still says it */ }
+        if (stopping) return;
+        if (code === 0) {
+          console.log('[studio] studio window closed: stopping Ujwalam');
+          stopAll().then(() => process.exit(0));
+          return;
+        }
+        const what = `exit ${code}${rec?.codeHex ? ` = ${rec.codeHex}` : ''}${rec?.report ? `; crash report logs/${rec.report}` : ''}`;
+        const t = Date.now();
+        crashTimes.push(t);
+        if (!shellRelaunchAllowed(crashTimes, t) || !ui.stdin?.writable) {
+          console.log(`[studio] Qt shell ended unexpectedly (${what}); NOT reopened (more than ${SHELL_RELAUNCH_MAX} crashes in ${SHELL_RELAUNCH_WINDOW_MS / 60000} min). The studio keeps running: Ctrl-C stops it, or, started without a console, end "Node.js JavaScript Runtime" in Task Manager.`);
+          return;
+        }
+        const key = hex(32);
+        try { ui.stdin.write(`rearm ${key}\n`); } catch { console.log(`[studio] Qt shell ended unexpectedly (${what}); could not reopen it`); return; }
+        console.log(`[studio] Qt shell ended unexpectedly (${what}); the studio keeps running. Reopening the window in 2 s.`);
+        setTimeout(() => {
+          if (stopping) return;
+          const again = shellSpawnSpec({ uiPort, launchKey: key, ...shellPaths, logsDir: shellLogs, version: releaseVersion() });
+          if (again) startShell(again);
+        }, 2000).unref();
+      });
+      children.push(shell);
+    };
+    startShell(shellSpec);
     console.log('[studio] Qt studio shell started');
   } else if (args['no-open'] !== true && (!isHeadless() || headlessLoginScript())) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);
   if (alphaClient) {

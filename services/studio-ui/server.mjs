@@ -261,7 +261,7 @@ export function createStudioServer(opts) {
   }
   if (typeof opts.launchKey !== 'string' || opts.launchKey.length < 32) throw new Error('launchKey must be at least 32 characters');
   let launchKey = opts.launchKey;
-  const launchBorn = now();
+  let launchBorn = now(); // reset by rearmLaunchKey
   let loginFails = 0;
   let loginLockedUntil = 0;
   const sessions = new Map(); // sid -> { csrf }
@@ -1023,6 +1023,13 @@ export function createStudioServer(opts) {
       for (const c of sseClients) c.write(': bye\n\n');
       server.closeAllConnections?.();
       await new Promise((r) => server.close(() => r()));
+    },
+    /** A new one-time login key, same rules as the first (single use, launchKeyTtlMs from now); replaces an unused one.
+     *  Only the launcher calls it, over the UI server's stdin pipe (cli.mjs), to reopen a crashed studio window. */
+    rearmLaunchKey(k) {
+      if (typeof k !== 'string' || k.length < 32) return false;
+      launchKey = k; launchBorn = now(); loginFails = 0;
+      return true;
     },
     /** Test seam: current pending confirmations (server-side records, never sent to the page). */
     _pending: () => pending,

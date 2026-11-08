@@ -10,6 +10,7 @@
 #include <QMainWindow>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QPointer>
 #include <QScrollArea>
 #include <QStatusBar>
 #include <QTimer>
@@ -56,8 +57,10 @@ void SmoothBar::setProgress(const QString &state, double fraction)
 	state_ = state;
 	indeterminate_ = fraction < 0 && state == QStringLiteral("running");
 	target_ = fraction < 0 ? 0.0 : fraction;
-	if (glide_)
+	if (glide_) { // still gliding (a QPointer: null once the animation ended and deleted itself)
 		glide_->stop();
+		glide_->deleteLater();
+	}
 	glide_ = motion::run(this, value_, target_, 220, QEasingCurve::OutCubic, [this](const QVariant &v) {
 		value_ = v.toDouble();
 		update();
@@ -454,6 +457,12 @@ void TaskBar::setPanelOpen(bool open)
 	if (open == open_)
 		return;
 	open_ = open;
+	// A click during the other slide: that slide stops here. Its opacity effect is replaced below (setGraphicsEffect
+	// deletes the old one), so it must never step again; the step lambdas also hold the effect by QPointer.
+	if (panelAnim_) {
+		panelAnim_->stop();
+		panelAnim_->deleteLater();
+	}
 	if (open) {
 		panel_->show();
 		panel_->adjustSize();
@@ -461,11 +470,12 @@ void TaskBar::setPanelOpen(bool open)
 		panel_->raise();
 		if (motion::enabled(host_)) {
 			panel_->move(end + QPoint(0, 24));
-			auto *fx = new QGraphicsOpacityEffect(panel_);
+			QPointer<QGraphicsOpacityEffect> fx = new QGraphicsOpacityEffect(panel_);
 			fx->setOpacity(0);
 			panel_->setGraphicsEffect(fx);
-			motion::run(panel_, 0.0, 1.0, 220, QEasingCurve::OutCubic, [this, fx, end](const QVariant &v) {
-				fx->setOpacity(v.toReal());
+			panelAnim_ = motion::run(panel_, 0.0, 1.0, 220, QEasingCurve::OutCubic, [this, fx, end](const QVariant &v) {
+				if (fx)
+					fx->setOpacity(v.toReal());
 				panel_->move(end + QPoint(0, int(24 * (1.0 - v.toReal()))));
 			}, [this]() { panel_->setGraphicsEffect(nullptr); depth::attach(panel_, QString()); }); // the fade is done: the theme's depth effect again
 		} else {
@@ -477,11 +487,12 @@ void TaskBar::setPanelOpen(bool open)
 		layoutToasts(false);
 	} else {
 		if (motion::enabled(host_)) {
-			auto *fx = new QGraphicsOpacityEffect(panel_);
+			QPointer<QGraphicsOpacityEffect> fx = new QGraphicsOpacityEffect(panel_);
 			panel_->setGraphicsEffect(fx);
 			const QPoint start = panel_->pos();
-			motion::run(panel_, 1.0, 0.0, 180, QEasingCurve::OutCubic, [this, fx, start](const QVariant &v) {
-				fx->setOpacity(v.toReal());
+			panelAnim_ = motion::run(panel_, 1.0, 0.0, 180, QEasingCurve::OutCubic, [this, fx, start](const QVariant &v) {
+				if (fx)
+					fx->setOpacity(v.toReal());
 				panel_->move(start + QPoint(0, int(24 * (1.0 - v.toReal()))));
 			}, [this, start]() {
 				if (!open_) {
@@ -508,13 +519,17 @@ void TaskBar::toast(const QString &title, const QString &note, bool failed)
 	layoutToasts(false);
 	if (motion::enabled(host_)) { // slide in from the right while fading in
 		const QPoint end = t->pos();
-		auto *fx = new QGraphicsOpacityEffect(t);
+		// QPointer: a fourth toast within the slide-in closes this one, and the fade-out's new effect deletes this one.
+		QPointer<QGraphicsOpacityEffect> fx = new QGraphicsOpacityEffect(t);
 		fx->setOpacity(0);
 		t->setGraphicsEffect(fx);
-		motion::run(t, 0.0, 1.0, 240, QEasingCurve::OutCubic, [t, fx, end](const QVariant &v) {
-			fx->setOpacity(v.toReal());
+		auto *in = motion::run(t, 0.0, 1.0, 240, QEasingCurve::OutCubic, [t, fx, end](const QVariant &v) {
+			if (fx)
+				fx->setOpacity(v.toReal());
 			t->move(end + QPoint(int(40 * (1.0 - v.toReal())), 0));
 		}, [t]() { t->setGraphicsEffect(nullptr); depth::attach(t, QString()); });
+		if (in)
+			in->setObjectName(QStringLiteral("toastIn"));
 	}
 	QTimer::singleShot(4000, t, [this, t]() { closeToast(t); });
 }
@@ -529,12 +544,18 @@ void TaskBar::closeToast(Toast *t)
 		t->deleteLater();
 		layoutToasts(true);
 	};
+	// A slide-in still running stops first: its end would swap the fade-out's effect for the depth effect.
+	if (auto *in = t->findChild<QVariantAnimation *>(QStringLiteral("toastIn"), Qt::FindDirectChildrenOnly)) {
+		in->stop();
+		in->deleteLater();
+	}
 	if (motion::enabled(host_)) {
-		auto *fx = new QGraphicsOpacityEffect(t);
+		QPointer<QGraphicsOpacityEffect> fx = new QGraphicsOpacityEffect(t);
 		t->setGraphicsEffect(fx);
 		const QPoint start = t->pos();
 		motion::run(t, 1.0, 0.0, 200, QEasingCurve::InCubic, [t, fx, start](const QVariant &v) {
-			fx->setOpacity(v.toReal());
+			if (fx)
+				fx->setOpacity(v.toReal());
 			t->move(start + QPoint(int(40 * (1.0 - v.toReal())), 0));
 		}, done);
 	} else

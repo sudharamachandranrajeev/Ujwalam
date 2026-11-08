@@ -12,10 +12,17 @@ import { createCoreClient, createFakeBots, createHostRouter } from './backends.m
 import { createProjectSync } from './project-sync.mjs';
 import { readProfile, streamAssetsDir } from './alpha.mjs';
 import { createStudioServer } from './server.mjs';
-import { watchParent } from '../common/parent-pipe.mjs';
+import { PARENT_PIPE_ENV, watchParent } from '../common/parent-pipe.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const UI_ROOT = path.resolve(HERE, '..', '..', 'ui');
+
+/** A control line from the launcher on this server's stdin pipe (pure; tested). Only one exists: `rearm <64 hex>`, a new
+ *  one-time login key for a studio window the launcher reopens after a crash (2026-11-08). Anything else: null. */
+export function controlLine(line) {
+  const m = /^rearm ([0-9a-f]{64})$/.exec(String(line).trim());
+  return m ? { rearm: m[1] } : null;
+}
 
 function parseArgs(argv) {
   const out = { _: [] };
@@ -45,6 +52,19 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   const { port } = await srv.listen();
   out(`[studio-ui] listening on http://127.0.0.1:${port}/ (no token printed)`);
   if (host.describe().kind === 'fake') out('[studio-ui] BLOCKED-ON-HOST: no libobs host found, using the in-memory fake backend');
+  if (env[PARENT_PIPE_ENV] === '1') {
+    // The parent pipe (D234) also carries the launcher's control lines; nobody else can write to it.
+    let buf = '';
+    process.stdin.on('data', (d) => {
+      buf += String(d);
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const c = controlLine(buf.slice(0, i)); buf = buf.slice(i + 1);
+        if (c?.rearm && srv.rearmLaunchKey(c.rearm)) out('[studio-ui] new one-time login key armed (studio window reopened)');
+      }
+      if (buf.length > 4096) buf = '';
+    });
+  }
   // watchParent: the launcher died (even by a hard kill): stop like on Ctrl-C (D234)
   await new Promise((resolve) => { process.once('SIGINT', resolve); process.once('SIGTERM', resolve); watchParent(resolve); });
   await srv.close();

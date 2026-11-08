@@ -12,7 +12,7 @@
 //             without a profile.
 // Contents (tools/package/manifest.mjs): the host exe and its helper exes in bin/, the OBS runtime subset in obs/
 // (import closure, listed in notices/OBS-RUNTIME-FILES.txt), the Node services, UI, registry and runtime data at their
-// repo paths, Install-Ujwalam.ps1, Ujwalam.cmd, README.txt, HOW-TO.md (docs/how-to.md), release.json, CHANGELOG-alpha.md (this build's section),
+// repo paths, Install-Ujwalam.ps1, Ujwalam.cmd, ujwalam-start.exe (the shortcuts' windowless start), README.txt, HOW-TO.md (docs/how-to.md), release.json, CHANGELOG-alpha.md (this build's section),
 // notices/ (GPL-3.0 and LGPL-3.0 text, source offer, third-party list) and SHA256SUMS.txt. Node.js is not bundled: the installer
 // and the launcher require Node >= release nodeMin on PATH.
 // Checks, any failure stops the build and nothing is written to out/dist: allowlist, forbidden paths (legacy/,
@@ -27,7 +27,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { resolveConfig } from '../../app/host/lib/config.mjs';
-import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
+import { EXE as STUDIO_EXE, START_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 
 // The studio shell ships self-contained in studio/ (D277): its exe, the Qt 6.8.3 kit DLLs it imports and the platform
 // plugins (qwindows for the window, qoffscreen for headless probes). Qt finds <exe dir>/platforms by itself; the
@@ -147,7 +147,8 @@ function readme({ version, nodeMin }) {
     '  3. First run only: copy data\\profile.example.json from the installed version folder to',
     '     %LOCALAPPDATA%\\Ujwalam\\data\\profile.local.json and fill in your values. Without it nothing starts.',
     '',
-    'Run: the "Ujwalam (alpha)" shortcut, or %LOCALAPPDATA%\\Ujwalam\\Ujwalam.cmd [flags]',
+    'Run: the "Ujwalam (alpha)" shortcut (ujwalam-start.exe: no console window; close the studio window to stop),',
+    '  or %LOCALAPPDATA%\\Ujwalam\\Ujwalam.cmd [flags] from a terminal. Logs: %LOCALAPPDATA%\\Ujwalam\\data\\core\\logs\\',
     '  The studio window (Qt) opens by default.  --shell browser   open the web control page instead',
     '  --allow-devices   open the capture devices (game capture, facecam, mic)',
     '  --live            configure the real stream targets (streaming starts only after "yes, on air")',
@@ -199,6 +200,9 @@ export async function buildAlpha(opts = {}) {
   if (!existsSync(hostExe)) throw new Error(`host exe not found: ${hostExe} (build it: npm run build:host)`);
   const studioExe = path.resolve(opts.studioExe ?? STUDIO_EXE);
   if (!existsSync(studioExe)) throw new Error(`studio exe not found: ${studioExe} (build it: npm run build:studio)`);
+  // The shortcuts' windowless start stub (app/studio/src/start_stub.cpp), built with the studio; beside studioExe.
+  const startExe = path.resolve(opts.startExe ?? (opts.studioExe ? path.join(path.dirname(studioExe), 'ujwalam-start.exe') : START_EXE));
+  if (!existsSync(startExe)) throw new Error(`start stub not found: ${startExe} (build it: npm run build:studio)`);
   const qtKit = opts.qtDir ? path.resolve(opts.qtDir) : studioQtDir();
   const studioQt = STUDIO_QT.map(([dest, rel]) => ({ dest, src: qtKit ? path.join(qtKit, ...rel.split('/')) : null }));
   const noQt = studioQt.filter((f) => !f.src || !existsSync(f.src)).map((f) => f.dest);
@@ -255,6 +259,7 @@ export async function buildAlpha(opts = {}) {
     }
     put('Install-Ujwalam.ps1', 'repo', { src: path.join(REPO, 'tools', 'package', 'Install-Ujwalam.ps1') });
     put('Ujwalam.cmd', 'repo', { src: path.join(REPO, 'tools', 'package', 'Ujwalam.cmd') });
+    put('ujwalam-start.exe', 'host', { src: startExe }); // the shortcuts run it: no console window (D191)
     const hostSha = sha256(readFileSync(hostExe));
     const release = {
       product: rel.product, version, n, date: build.date, title: build.title, nodeMin: rel.nodeMin,
@@ -347,7 +352,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   try {
     const a = parseArgs(process.argv.slice(2));
     const s = await buildAlpha({
-      n: a.n !== undefined ? Number(a.n) : undefined, hostExe: a['host-exe'], studioExe: a['studio-exe'], qtDir: a['qt-dir'], runtime: a.runtime, outDir: a['out-dir'],
+      n: a.n !== undefined ? Number(a.n) : undefined, hostExe: a['host-exe'], studioExe: a['studio-exe'], startExe: a['start-exe'], qtDir: a['qt-dir'], runtime: a.runtime, outDir: a['out-dir'],
       profile: a.profile, force: a.force === true, keepStaging: a['keep-staging'] === true,
     });
     console.log(JSON.stringify({ ...s, zip: path.basename(s.zip) }, null, 2));

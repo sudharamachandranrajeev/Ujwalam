@@ -206,6 +206,22 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.ok(p.stats.samples >= 2, 'a history sample per status poll');
     assert.equal(p.stats.session, 'Not live');
   });
+  // 2026-11-08 crash (docs/evidence/2026-11-08-studio-crash.md): the window closed itself a few seconds after a clip
+  // job started (recording stopped, "while" mode). The task bar's progress bar kept a raw pointer to its glide
+  // animation, which deletes itself when it ends; the next status poll called stop() on the freed animation. Only a
+  // shown window animates, so this probe shows it (offscreen platform: nothing on screen, no focus) with motion on, and
+  // drives the same sequence: a clip task running with progress, then done, while recording.
+  test('regression (D296 proposed): a clip task running and finishing with the window shown and animations on does not crash the studio', async () => {
+    const p = await probe([], 16000, 'tasks:open,tasks:close,tasks:open', (d) => {
+      const steps = [[0, 'running', 0], [1500, 'running', 1], [3500, 'running', 2], [5500, 'running', 3], [7500, 'running', 4], [9500, 'done', 5]];
+      for (const [at, state, done] of steps)
+        setTimeout(() => task(d, { id: 'clip-practice-h', title: state === 'done' ? 'Clips ready from practice-h' : 'Reviewing the moments in practice-h', state, stage: 'review', done, total: 5, note: `clip L0${done} done` }), at);
+      setTimeout(() => task(d, { id: 'ui-prev', kind: 'preview', title: 'Opening the horizontal preview', state: 'done' }), 4000);
+    }, { UJWALAM_STUDIO_PROBE_SHOW: '1', UJWALAM_REDUCE_MOTION: '0' });
+    assert.equal(p.windowShown, true, 'the probe window was shown (offscreen), so the animations ran');
+    assert.equal(p.tasks.running, 0, 'the clip job finished while the window watched');
+    assert.ok(p.tasks.titles.includes('Clips ready from practice-h'), JSON.stringify(p.tasks.titles));
+  });
   test('match filter (D287): saved through the settings route; an older server refusing the key gives a plain message', async () => {
     const p = await probe([], 6000, 'match-gate:true:5');
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['match-gate:true:5', true]]);

@@ -23,14 +23,24 @@ Anything marked UNVERIFIED was read from the code but not run end to end on a re
    `%LOCALAPPDATA%\Ujwalam\data\profile.local.json` and fill in your own values. Without this file nothing starts.
    The file stays on your PC.
 2. Start the "Ujwalam (alpha)" shortcut (opens the capture devices; Record, Save clip and Mark moment work), or the
-   "Ujwalam (alpha, LIVE)" shortcut (also sets up the stream targets). Or run `%LOCALAPPDATA%\Ujwalam\Ujwalam.cmd`.
+   "Ujwalam (alpha, LIVE)" shortcut (also sets up the stream targets). The shortcuts start Ujwalam with no console
+   window (they run `ujwalam-start.exe` in the install folder). Or run `%LOCALAPPDATA%\Ujwalam\Ujwalam.cmd` from a
+   terminal to see the launcher's output there.
    The studio window (Qt) opens by default, with the H and V previews inside it. Closing it stops all of Ujwalam.
-   `Ujwalam.cmd --shell browser` opens the web control page instead.
+   If the studio window crashes, it reopens by itself after about 2 seconds while recording and streaming carry on
+   (at most 3 times in 10 minutes; after that, close Ujwalam from Task Manager by ending Node.js, or press Ctrl-C if
+   you started it from a terminal). `Ujwalam.cmd --shell browser` opens the web control page instead.
 3. Useful flags (add them after `Ujwalam.cmd`):
    - `--allow-devices` opens the capture devices (game capture, facecam, microphone).
    - `--live` configures the real stream targets. Streaming still only starts after the "yes, on air" step below.
    - `--mock --no-open --stop-on-stdin` is a smoke test with no Streamer.bot and no browser.
 4. Your data lives in `%LOCALAPPDATA%\Ujwalam\data` (projects, logs, feedback, markers, recordings).
+5. Logs are in `%LOCALAPPDATA%\Ujwalam\data\core\logs`:
+   - `launcher-*.log`: what the launcher printed when you used a shortcut (the newest 10 are kept).
+   - `studio-*.log`: the studio window's own log (the newest 10 are kept).
+   - `studio-crash-*.txt`: a short text report when the studio window crashes (where it crashed; no screenshots,
+     no memory dump, no keys).
+   - `studio-exits.jsonl`: one line each time the studio window closed, with its exit code.
 
 ## 3. The control page
 

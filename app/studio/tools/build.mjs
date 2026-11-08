@@ -14,6 +14,8 @@ export const STUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.ur
 export const REPO_ROOT = path.resolve(STUDIO_DIR, '..', '..');
 export const BUILD_DIR = path.join(REPO_ROOT, 'out', 'studio', 'build');
 export const EXE = path.join(BUILD_DIR, 'ujwalam-studio.exe');
+// The windowless start stub the shortcuts run (src/start_stub.cpp; built by the same cmake project).
+export const START_EXE = path.join(BUILD_DIR, 'ujwalam-start.exe');
 
 export function qtDir() {
   if (process.env.UJWALAM_QT_DIR) return path.resolve(process.env.UJWALAM_QT_DIR);

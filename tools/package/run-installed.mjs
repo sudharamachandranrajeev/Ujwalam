@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Entry point of an installed (or unzipped) Alpha build, run by Ujwalam.cmd. Same as `npm run alpha` from a checkout,
+// Entry point of an installed (or unzipped) Alpha build, run by Ujwalam.cmd or by ujwalam-start.exe (the shortcuts:
+// no console window; its output goes to <data>\core\logs\launcher-*.log, UJWALAM_LAUNCH_LOG). Same as `npm run alpha` from a checkout,
 // with every path taken from the install dir and the user's data dir instead of the repo:
 //   install dir   two levels above this file (holds release.json, bin/ujwalam-host.exe, obs/)
 //   data root     UJWALAM_DATA_ROOT, else %LOCALAPPDATA%\Ujwalam\data (never inside the install dir)
@@ -13,7 +14,7 @@
 // Usage: Ujwalam.cmd [launcher flags...]   e.g. --mock --no-open --stop-on-stdin, --allow-devices, --live
 //        Ujwalam.cmd diag [--out FILE]     diagnostics bundle (tools/diag/bundle.mjs), no host or UI needed
 // Node is checked first (release.json nodeMin) and the launcher is loaded only after the check passes.
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -69,6 +70,18 @@ export function installedSpec({ install = INSTALL, dataRoot, userArgs = [] }) {
   return { install, dataRoot, dirs, overlayRoot, profile, clipRoot, env, argv };
 }
 
+/**
+ * ujwalam-start.exe (the shortcuts' windowless start, 2026-11-08) writes each run's output to
+ * <data>\core\logs\launcher-<UTC time>-p<pid>.log; keep the newest `keep` (names sort by time). Returns the removed names.
+ */
+export function pruneLaunchLogs(dir, keep = 10) {
+  let names;
+  try { names = readdirSync(dir).filter((n) => /^launcher-\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-p\d+\.log$/.test(n)).sort(); } catch { return []; }
+  const old = names.slice(0, Math.max(0, names.length - keep));
+  for (const n of old) { try { rmSync(path.join(dir, n), { force: true }); } catch { /* still open: next time */ } }
+  return old;
+}
+
 export async function main(args = process.argv.slice(2)) {
   let release;
   try { release = JSON.parse(readFileSync(path.join(INSTALL, 'release.json'), 'utf8')); } catch { console.log('[ujwalam] release.json missing: run Ujwalam.cmd from an installed or unzipped build'); return 2; }
@@ -78,6 +91,7 @@ export async function main(args = process.argv.slice(2)) {
   }
   let dataRoot;
   try { dataRoot = dataRootFrom(); } catch (e) { console.log(`[ujwalam] ${e.message}`); return 2; }
+  if (process.env.UJWALAM_LAUNCH_LOG) pruneLaunchLogs(path.dirname(process.env.UJWALAM_LAUNCH_LOG));
   if (args[0] === 'diag') {
     const spec = installedSpec({ dataRoot, userArgs: [] });
     const { main: diag } = await import(pathToFileURL(path.join(INSTALL, 'tools', 'diag', 'bundle.mjs')).href);
