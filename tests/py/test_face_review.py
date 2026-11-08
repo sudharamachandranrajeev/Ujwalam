@@ -166,7 +166,10 @@ class LinkReviewTests(unittest.TestCase):
     def get(self, fmt, off):
         return struct.unpack_from(fmt, self.mv, off)[0]
 
-    def host_header(self, key=KEY, version=fl.VERSION):
+    def host_header(self, key=KEY, version=None):
+        # version=None means fl.VERSION; a default of fl.VERSION would be evaluated when the class is built, which
+        # fails on a system Python without numpy (fl is then not imported and the class is skipped).
+        version = fl.VERSION if version is None else version
         self.put("<I", 0, fl.MAGIC)
         self.put("<I", 4, version)
         self.put("<I", 8, fl.TOTAL)
