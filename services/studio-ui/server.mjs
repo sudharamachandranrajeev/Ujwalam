@@ -105,8 +105,9 @@ export const HOST_CALLS = Object.freeze({
   // Scene switches, visibility and the mixer stay instant: they are the controls a live show needs.
   'layers.move': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, index: { type: 'int', min: 0, max: 255, required: true } }, liveConfirm: true, summary: 'Change the layer order while live' },
   'layers.setPlacement': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, placement: PLACEMENT }, liveConfirm: true, summary: 'Move or resize a layer while live' },
-  // Effect editor (D260, flag effect-editor): the whole effects list of a layer on every canvas (no canvas field).
-  'layers.setEffects': { schema: { scene: SCENE, layer: LAYER, effects: { type: 'effects', required: true } }, liveConfirm: true, flag: 'effect-editor', summary: 'Change a layer\'s effects while live' },
+  // Layer effects (D260; the Look panel, D290, no flag): the whole effects list of a layer on every canvas (no canvas field).
+  // Flag effect-editor now only shows the Advanced list in the studio window.
+  'layers.setEffects': { schema: { scene: SCENE, layer: LAYER, effects: { type: 'effects', required: true } }, liveConfirm: true, summary: 'Change a layer\'s effects while live' },
   // parent/x/y/width/height: the Qt shell embeds the preview in its window (decimal window handle, client pixels).
   'preview.open': { schema: { canvas: CANVAS, parent: { type: 'string', pattern: /^[1-9][0-9]{0,19}$/ }, x: { type: 'int', min: 0, max: 16384 }, y: { type: 'int', min: 0, max: 16384 }, width: { type: 'int', min: 160, max: 8192 }, height: { type: 'int', min: 90, max: 8192 } } },
   'preview.focus': { schema: { canvas: CANVAS } },

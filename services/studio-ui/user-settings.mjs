@@ -46,6 +46,22 @@ function readMatchGate(g) {
 }
 // ---- match gate end
 
+// --- ui settings (D290) -------------------------------------------------------------------------------------------
+// ui.motion: how the studio window animates: "system" (follow the Windows animation setting) | "on" | "off".
+// Present in the file and in readSettings() only once the user has chosen. UJWALAM_REDUCE_MOTION still overrides.
+export const UI_MOTION = Object.freeze(['system', 'on', 'off']);
+const uiProblems = (ui) => {
+  if (!ui || typeof ui !== 'object' || Array.isArray(ui)) return ['ui must be an object'];
+  const out = [];
+  for (const [k, v] of Object.entries(ui)) {
+    if (k !== 'motion') out.push(`unknown ui setting ${k}`);
+    else if (!UI_MOTION.includes(v)) out.push(`ui.motion must be one of ${UI_MOTION.join(', ')}`);
+  }
+  return out;
+};
+const uiRead = (j) => (j?.ui && typeof j.ui === 'object' && UI_MOTION.includes(j.ui.motion) ? { ui: { motion: j.ui.motion } } : {});
+// --- end ui settings ----------------------------------------------------------------------------------------------
+
 const inside = (dir, root) => { const r = path.relative(path.resolve(root), path.resolve(dir)); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
 
 /** Why a folder cannot be used, or null. forbidden: folders it must not be inside (the clips corpus, the install). */
@@ -69,6 +85,7 @@ export function readSettings(dataDir) {
     exists: j !== null,
     clips: { recording: mode(c.recording, DEFAULTS.clips.recording), live: mode(c.live, DEFAULTS.clips.live), matchGate: readMatchGate(c.matchGate) },
     folders: { recordings: dir(f.recordings), clips: dir(f.clips) },
+    ...uiRead(j), // D290
   };
 }
 
@@ -77,7 +94,8 @@ export function readSettings(dataDir) {
 export function settingsProblems(patch, { forbidden = [] } = {}) {
   const out = [];
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return ['settings must be an object'];
-  for (const k of Object.keys(patch)) if (!['clips', 'folders'].includes(k)) out.push(`unknown setting ${k}`);
+  for (const k of Object.keys(patch)) if (!['clips', 'folders', 'ui'].includes(k)) out.push(`unknown setting ${k}`);
+  if (patch.ui !== undefined) out.push(...uiProblems(patch.ui)); // D290
   for (const [k, v] of Object.entries(patch.clips ?? {})) {
     if (k === 'matchGate') out.push(...matchGateProblems(v)); // match gate
     else if (!['recording', 'live'].includes(k)) out.push(`unknown clip setting ${k}`);
@@ -98,6 +116,7 @@ export function writeSettings(dataDir, patch) {
     // match gate: matchGate merges part by part, so changing minKills keeps top3 (and the other way round)
     clips: { ...cur.clips, ...(patch.clips ?? {}), matchGate: { ...cur.clips.matchGate, ...(patch.clips?.matchGate ?? {}) } },
     folders: { ...cur.folders, ...(patch.folders ?? {}) },
+    ...(cur.ui || patch.ui ? { ui: { ...(cur.ui ?? {}), ...(patch.ui ?? {}) } } : {}), // D290
   };
   for (const k of ['recordings', 'clips']) if (typeof next.folders[k] === 'string') mkdirSync(next.folders[k], { recursive: true });
   mkdirSync(dataDir, { recursive: true });

@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "main_window.h"
+#include "icons.h"
+#include "look_panel.h"
 #include "motion.h"
 #include "stats_cards.h"
 #include "taskbar.h"
@@ -11,6 +13,7 @@
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QApplication>
@@ -37,7 +40,11 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QStackedWidget>
+#include <QStyledItemDelegate>
+#include <QPainter>
 #include <QStatusBar>
+#include <QStyle>
 #include <QTimer>
 #include <QCloseEvent>
 #include <QUrl>
@@ -46,6 +53,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <memory>
+#include <tuple>
 #include <cmath>
 
 namespace {
@@ -232,6 +240,86 @@ QJsonObject layerAddBody(const QString &scene, const QString &kind, const QStrin
 	return b;
 }
 
+// Small upper-case caption with a little letter spacing (the reference's section labels).
+QLabel *captionLabel(const QString &text, QWidget *parent)
+{
+	auto *l = new QLabel(text.toUpper(), parent);
+	l->setObjectName(QStringLiteral("heading"));
+	QFont f = l->font();
+	f.setLetterSpacing(QFont::AbsoluteSpacing, 1.0);
+	l->setFont(f);
+	return l;
+}
+
+// The Look panel's view of fxTypes() (D290): one entry per effect type, so a type added to the table above shows up
+// in the panel with no further code.
+QList<LookType> lookTypes()
+{
+	QList<LookType> out;
+	for (const auto &t : fxTypes()) {
+		LookType lt;
+		lt.type = QLatin1String(t.type);
+		lt.label = QLatin1String(t.label);
+		lt.group = QLatin1String(t.group);
+		for (const auto &p : t.params) {
+			LookParam lp;
+			lp.key = QLatin1String(p.key);
+			lp.label = QLatin1String(p.label);
+			lp.colour = p.colour;
+			lp.lo = p.lo;
+			lp.hi = p.hi;
+			lp.def = p.def;
+			lp.step = p.step > 0 ? p.step : 1;
+			lp.dec = p.dec;
+			lp.cdef = QLatin1String(p.cdef);
+			lt.params.append(lp);
+		}
+		out.append(lt);
+	}
+	return out;
+}
+
+// Scene list as cards (D290): a rounded card per scene, the name in bold, a small caption under it (canvases, active).
+// Item data: UserRole = id, UserRole + 1 = caption, UserRole + 2 = active.
+class SceneCardDelegate : public QStyledItemDelegate {
+public:
+	using QStyledItemDelegate::QStyledItemDelegate;
+	QSize sizeHint(const QStyleOptionViewItem &, const QModelIndex &) const override { return QSize(100, 58); }
+	void paint(QPainter *p, const QStyleOptionViewItem &o, const QModelIndex &i) const override
+	{
+		p->save();
+		p->setRenderHint(QPainter::Antialiasing, true);
+		const bool active = i.data(Qt::UserRole + 2).toBool();
+		const bool sel = o.state & QStyle::State_Selected, hover = o.state & QStyle::State_MouseOver;
+		const QRectF r = QRectF(o.rect).adjusted(2, 3, -2, -3);
+		QColor fill(theme::kField);
+		if (hover || sel)
+			fill = motion::mix(fill, QColor(theme::kAccent), sel ? 0.22 : 0.08);
+		p->setBrush(fill);
+		p->setPen(QPen(QColor(active ? theme::kAccent : theme::kBorder), active ? 1.6 : 1.0));
+		p->drawRoundedRect(r, 12, 12);
+		if (active) { // a small accent bar on the left edge
+			p->setPen(Qt::NoPen);
+			p->setBrush(QColor(theme::kAccent));
+			p->drawRoundedRect(QRectF(r.left() + 8, r.top() + 12, 4, r.height() - 24), 2, 2);
+		}
+		QFont f = o.font;
+		f.setBold(true);
+		f.setPointSizeF(12.5);
+		p->setFont(f);
+		p->setPen(QColor(theme::kText));
+		const QRectF text = r.adjusted(active ? 22 : 16, 8, -12, -8);
+		p->drawText(QRectF(text.left(), text.top(), text.width(), 22), Qt::AlignVCenter | Qt::AlignLeft, p->fontMetrics().elidedText(i.data(Qt::DisplayRole).toString(), Qt::ElideRight, (int)text.width()));
+		QFont c = o.font;
+		c.setPointSizeF(8);
+		c.setLetterSpacing(QFont::AbsoluteSpacing, 0.8);
+		p->setFont(c);
+		p->setPen(QColor(active ? theme::kAccentHi : theme::kMuted));
+		p->drawText(QRectF(text.left(), text.top() + 22, text.width(), 16), Qt::AlignVCenter | Qt::AlignLeft, i.data(Qt::UserRole + 1).toString());
+		p->restore();
+	}
+};
+
 } // namespace
 
 PreviewSlot::PreviewSlot(ApiClient *api, QString canvas, QWidget *parent)
@@ -353,7 +441,7 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	split->setStretchFactor(0, 0);
 	split->setStretchFactor(1, 1);
 	split->setStretchFactor(2, 0);
-	split->setSizes({260, 800, 340});
+	split->setSizes({260, 780, 380});
 	outer->addWidget(split, 1);
 	setCentralWidget(central);
 	note_ = new QLabel(this);
@@ -363,57 +451,31 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	resize(1400, 860);
 }
 
+// Slim top toolbar (D290, after the reference): icon + short label buttons on the left, state chips and the
+// settings tools on the right. The four things you use while recording or streaming are round buttons in the
+// "Controls" card (buildControls) at the bottom of the right column.
 QWidget *MainWindow::buildTop()
 {
 	auto *w = new QWidget(this);
 	auto *h = new QHBoxLayout(w);
-	h->setContentsMargins(0, 0, 0, 0);
-	streamBtn_ = new QPushButton(QStringLiteral("Start stream"), w);
-	recordBtn_ = new QPushButton(QStringLiteral("Record"), w);
-	streamBtn_->setEnabled(false);
-	recordBtn_->setEnabled(false);
-	streamBtn_->setProperty("role", QStringLiteral("primary")); // theme.cpp (D285)
-	recordBtn_->setProperty("role", QStringLiteral("danger"));
-	connect(streamBtn_, &QPushButton::clicked, this, [this]() { hostAction(live_ ? QStringLiteral("stream.stop") : QStringLiteral("stream.start")); });
-	connect(recordBtn_, &QPushButton::clicked, this, [this]() { hostAction(recording_ ? QStringLiteral("record.stop") : QStringLiteral("record.start")); });
-	// Clipping (D281): save the replay buffer (last 60 s of H and V) now; mark a moment for the post-stream clipper.
-	clipBtn_ = new QPushButton(QStringLiteral("Save clip"), w);
-	clipBtn_->setToolTip(QStringLiteral("Save the last 60 seconds of H and V as clip files (replay buffer)."));
-	markBtn_ = new QPushButton(QStringLiteral("Mark moment"), w);
-	markBtn_->setToolTip(QStringLiteral("Mark this moment for the clipper (same as the marker hotkey, Ctrl+Alt+Shift+M by default)."));
-	connect(clipBtn_, &QPushButton::clicked, this, [this]() {
-		api_->host(QStringLiteral("replay.save"), {}, [this](bool ok, const QJsonObject &b, const QString &err) {
-			if (!ok)
-				return note(QStringLiteral("Clip not saved: ") + err);
-			const int n = b.value(QStringLiteral("result")).toObject().value(QStringLiteral("saved")).toArray().size();
-			note(n ? QStringLiteral("Clip saved: %1 file(s) in the replay folder.").arg(n) : QStringLiteral("Clip not saved: the replay buffer is not running."));
-		});
-	});
-	connect(markBtn_, &QPushButton::clicked, this, [this]() {
-		QJsonObject p;
-		p.insert(QStringLiteral("source"), QStringLiteral("api"));
-		api_->host(QStringLiteral("marker.add"), p, [this](bool ok, const QJsonObject &, const QString &err) {
-			note(ok ? QStringLiteral("Moment marked.") : QStringLiteral("Moment not marked: ") + err);
-		});
-	});
-	pillLive_ = pill(QStringLiteral("Offline"));
-	pillRec_ = pill(QStringLiteral("Not recording"));
-	pillStats_ = pill(QStringLiteral("-"));
-	pillHost_ = pill(QStringLiteral("Host: ?"));
-	pillCore_ = pill(QStringLiteral("Event core: ?"));
-	pillClips_ = pill(QStringLiteral("Clips: off")); // clips from finished recordings (D283)
-	// Top bar (D285): what you use while recording or streaming on the left, undo/redo, then the state chips; the
-	// rarely used tools sit in "More". Host, event core and frame stats live in the status bar. Short enough for a
-	// 1366 px screen at 125 %.
-	h->setSpacing(6);
-	h->addWidget(streamBtn_);
-	h->addWidget(recordBtn_);
-	h->addWidget(clipBtn_);
-	h->addWidget(markBtn_);
-	h->addSpacing(10);
+	h->setContentsMargins(4, 0, 4, 0);
+	h->setSpacing(4);
+	const QColor ink(theme::kText);
+	auto *brand = new QLabel(QStringLiteral("Ujwalam"), w);
+	brand->setObjectName(QStringLiteral("brand"));
+	h->addWidget(brand);
+	h->addSpacing(18);
+	auto tool = [&](const QString &icon, const QString &text, const QString &tip) {
+		auto *b = new QPushButton(icons::make(icon, ink, 18), text, w);
+		b->setObjectName(QStringLiteral("tb"));
+		b->setToolTip(tip);
+		b->setFlat(true);
+		b->setCursor(Qt::PointingHandCursor);
+		return b;
+	};
 	// Undo / redo of layer edits (D238; inspector, layer list, preview mouse, effects): Ctrl+Z / Ctrl+Y too.
-	undoBtn_ = new QPushButton(QStringLiteral("Undo"), w);
-	redoBtn_ = new QPushButton(QStringLiteral("Redo"), w);
+	undoBtn_ = tool(QStringLiteral("undo"), QStringLiteral("Undo"), QString());
+	redoBtn_ = tool(QStringLiteral("redo"), QStringLiteral("Redo"), QString());
 	undoBtn_->setEnabled(false);
 	redoBtn_->setEnabled(false);
 	connect(undoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(true); });
@@ -421,26 +483,34 @@ QWidget *MainWindow::buildTop()
 	h->addWidget(undoBtn_);
 	h->addWidget(redoBtn_);
 	h->addStretch(1);
+
+	pillLive_ = pill(QStringLiteral("Offline"));
+	pillRec_ = pill(QStringLiteral("Not recording"));
+	pillStats_ = pill(QStringLiteral("-"));
+	pillHost_ = pill(QStringLiteral("Host: ?"));
+	pillCore_ = pill(QStringLiteral("Event core: ?"));
+	pillClips_ = pill(QStringLiteral("Clips: off")); // clips from finished recordings (D283)
 	for (QLabel *p : {pillLive_, pillRec_, pillClips_})
 		h->addWidget(p);
-	h->addSpacing(10);
-	clipsFolderBtn_ = new QPushButton(QStringLiteral("My clips"), w);
-	clipsFolderBtn_->setToolTip(QStringLiteral("Open the folder with your finished clips."));
+	h->addSpacing(12);
+	clipsFolderBtn_ = tool(QStringLiteral("folder"), QStringLiteral("My clips"), QStringLiteral("Open the folder with your finished clips."));
 	connect(clipsFolderBtn_, &QPushButton::clicked, this, [this]() {
 		api_->post(QStringLiteral("ui/api/clips/open"), {}, [this](bool ok, const QJsonObject &, const QString &err) {
 			if (!ok)
 				note(QStringLiteral("Could not open the clips folder: ") + err);
 		});
 	});
-	settingsBtn_ = new QPushButton(QStringLiteral("Settings"), w);
-	settingsBtn_->setToolTip(QStringLiteral("Clips and save folders."));
+	settingsBtn_ = tool(QStringLiteral("gear"), QStringLiteral("Settings"), QStringLiteral("Clips, folders, layer effects and advanced options."));
 	connect(settingsBtn_, &QPushButton::clicked, this, [this]() { openSettings(false); });
 	h->addWidget(clipsFolderBtn_);
 	h->addWidget(settingsBtn_);
 	auto *more = new QToolButton(w);
+	more->setObjectName(QStringLiteral("tb"));
+	more->setIcon(icons::make(QStringLiteral("more"), ink, 18));
 	more->setText(QStringLiteral("More"));
 	more->setPopupMode(QToolButton::InstantPopup);
-	more->setToolButtonStyle(Qt::ToolButtonTextOnly);
+	more->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+	more->setCursor(Qt::PointingHandCursor);
 	auto *menu = new QMenu(more);
 	auto *imAct = menu->addAction(QStringLiteral("Import Meld session..."), this, &MainWindow::openImport);
 	imAct->setToolTip(QStringLiteral("Make a new project file from the Meld session, check it against the host, then load it."));
@@ -462,14 +532,107 @@ QWidget *MainWindow::buildTop()
 	return w;
 }
 
+// One round control: an icon in a circle, its caption under it (the caption follows setControl).
+QPushButton *MainWindow::roundButton(QWidget *parent, const QString &icon, const QString &caption, const QString &tip, const QString &role, QLayout *into)
+{
+	auto *cell = new QWidget(parent);
+	auto *v = new QVBoxLayout(cell);
+	v->setContentsMargins(0, 0, 0, 0);
+	v->setSpacing(6);
+	auto *b = new QPushButton(cell);
+	b->setObjectName(QStringLiteral("round"));
+	b->setFixedSize(52, 52);
+	b->setIconSize(QSize(24, 24));
+	b->setCursor(Qt::PointingHandCursor);
+	if (!role.isEmpty())
+		b->setProperty("role", role);
+	auto *cap = new QLabel(caption, cell);
+	cap->setObjectName(QStringLiteral("ctlCaption"));
+	cap->setAlignment(Qt::AlignCenter);
+	cap->setWordWrap(true);
+	b->setProperty("captionLabel", QVariant::fromValue<QObject *>(cap));
+	b->setToolTip(tip);
+	v->addWidget(b, 0, Qt::AlignHCenter);
+	v->addWidget(cap);
+	into->addWidget(cell);
+	setControl(b, icon, caption);
+	return b;
+}
+
+// Icon and caption of a round control (they change with the state: Start stream / Stop stream).
+void MainWindow::setControl(QPushButton *b, const QString &icon, const QString &caption)
+{
+	const bool danger = b->property("role").toString() == QStringLiteral("danger");
+	const bool primary = b->property("role").toString() == QStringLiteral("primary");
+	const bool active = b->property("active").toBool();
+	const QString state = icon + (active ? QStringLiteral("+") : QStringLiteral("-"));
+	if (b->property("iconState").toString() == state && b->accessibleName() == caption)
+		return; // nothing changed: no new picture every status poll
+	const QColor ink = (primary || (danger && active)) ? QColor(Qt::white) : danger ? QColor(theme::kDanger) : QColor(theme::kText);
+	b->setIcon(icons::make(icon, ink, 24));
+	b->setProperty("iconState", state);
+	b->setAccessibleName(caption);
+	if (auto *cap = qobject_cast<QLabel *>(b->property("captionLabel").value<QObject *>()))
+		cap->setText(caption);
+}
+
+// The four controls (D290, the reference's Controls block). Stream and record changes come back as a typed
+// confirmation, as before; Save clip and Mark moment need none.
+QWidget *MainWindow::buildControls()
+{
+	auto *card = new QFrame(this);
+	card->setObjectName(QStringLiteral("card"));
+	auto *v = new QVBoxLayout(card);
+	v->setContentsMargins(14, 12, 14, 12);
+	v->setSpacing(10);
+	auto *cap = new QLabel(QStringLiteral("CONTROLS"), card);
+	cap->setObjectName(QStringLiteral("heading"));
+	v->addWidget(cap);
+	auto *row = new QHBoxLayout();
+	row->setSpacing(4);
+	streamBtn_ = roundButton(card, QStringLiteral("play"), QStringLiteral("Start stream"), QString(), QStringLiteral("primary"), row);
+	recordBtn_ = roundButton(card, QStringLiteral("record"), QStringLiteral("Record"), QString(), QStringLiteral("danger"), row);
+	// Clipping (D281): save the replay buffer (last 60 s of H and V) now; mark a moment for the post-stream clipper.
+	clipBtn_ = roundButton(card, QStringLiteral("clip"), QStringLiteral("Save clip"), QStringLiteral("Save the last 60 seconds of H and V as clip files (replay buffer)."), QString(), row);
+	markBtn_ = roundButton(card, QStringLiteral("flag"), QStringLiteral("Mark moment"), QStringLiteral("Mark this moment for the clipper (same as the marker hotkey, Ctrl+Alt+Shift+M by default)."), QString(), row);
+	v->addLayout(row);
+	streamBtn_->setEnabled(false);
+	recordBtn_->setEnabled(false);
+	connect(streamBtn_, &QPushButton::clicked, this, [this]() { hostAction(live_ ? QStringLiteral("stream.stop") : QStringLiteral("stream.start")); });
+	connect(recordBtn_, &QPushButton::clicked, this, [this]() { hostAction(recording_ ? QStringLiteral("record.stop") : QStringLiteral("record.start")); });
+	connect(clipBtn_, &QPushButton::clicked, this, [this]() {
+		api_->host(QStringLiteral("replay.save"), {}, [this](bool ok, const QJsonObject &b, const QString &err) {
+			if (!ok)
+				return note(QStringLiteral("Clip not saved: ") + err);
+			const int n = b.value(QStringLiteral("result")).toObject().value(QStringLiteral("saved")).toArray().size();
+			note(n ? QStringLiteral("Clip saved: %1 file(s) in the replay folder.").arg(n) : QStringLiteral("Clip not saved: the replay buffer is not running."));
+		});
+	});
+	connect(markBtn_, &QPushButton::clicked, this, [this]() {
+		QJsonObject p;
+		p.insert(QStringLiteral("source"), QStringLiteral("api"));
+		api_->host(QStringLiteral("marker.add"), p, [this](bool ok, const QJsonObject &, const QString &err) {
+			note(ok ? QStringLiteral("Moment marked.") : QStringLiteral("Moment not marked: ") + err);
+		});
+	});
+	return card;
+}
+
 QWidget *MainWindow::buildLeft()
 {
 	auto *w = new QWidget(this);
 	auto *v = new QVBoxLayout(w);
 	v->setContentsMargins(0, 0, 0, 0);
-	v->addWidget(new QLabel(QStringLiteral("<b>Scenes</b>")));
+	v->setSpacing(8);
+	v->addWidget(captionLabel(QStringLiteral("Scenes"), w));
 	sceneList_ = new QListWidget(w);
-	sceneList_->setMaximumHeight(160);
+	sceneList_->setObjectName(QStringLiteral("sceneCards"));
+	sceneList_->setItemDelegate(new SceneCardDelegate(sceneList_));
+	sceneList_->setMouseTracking(true);
+	sceneList_->setFrameShape(QFrame::NoFrame);
+	sceneList_->setVerticalScrollMode(QAbstractItemView::ScrollPerPixel);
+	sceneList_->setMaximumHeight(240);
+	sceneList_->setToolTip(QStringLiteral("Double-click a scene to switch to it."));
 	connect(sceneList_, &QListWidget::itemActivated, this, [this](QListWidgetItem *it) {
 		const QString id = it->data(Qt::UserRole).toString();
 		QJsonObject p;
@@ -484,7 +647,7 @@ QWidget *MainWindow::buildLeft()
 	v->addWidget(sceneList_);
 
 	auto *hdr = new QHBoxLayout();
-	hdr->addWidget(new QLabel(QStringLiteral("<b>Layers</b>")));
+	hdr->addWidget(captionLabel(QStringLiteral("Layers"), w));
 	hdr->addStretch(1);
 	tabH_ = new QPushButton(QStringLiteral("H"), w);
 	tabV_ = new QPushButton(QStringLiteral("V"), w);
@@ -621,15 +784,14 @@ QWidget *MainWindow::buildLeft()
 	});
 	renderAddPick();
 
-	// Feature flags (D149): new features ship off; switch them here. Turning one on asks for the typed phrase
-	// ("yes, on air" while live), turning one off is instant. The list follows the server on every status poll.
-	v->addWidget(new QLabel(QStringLiteral("<b>Feature flags</b>")));
-	flagList_ = new QListWidget(w);
-	flagList_->setMaximumHeight(170);
+	// Feature flags (D149): new features ship off; switch them in Settings > Advanced (D290). Turning one on asks for
+	// the typed phrase ("yes, on air" while live), turning one off is instant. The list follows the server on every
+	// status poll; the widget lives here, hidden, and the Settings window borrows it while it is open.
+	flagList_ = new QListWidget(this);
+	flagList_->hide();
 	connect(flagList_, &QListWidget::itemChanged, this, [this](QListWidgetItem *it) {
 		setFlag(it->data(Qt::UserRole).toString(), it->checkState() == Qt::Checked);
 	});
-	v->addWidget(flagList_);
 	return w;
 }
 
@@ -638,7 +800,7 @@ QWidget *MainWindow::buildCentre()
 	auto *w = new QWidget(this);
 	auto *h = new QHBoxLayout(w);
 	for (const char *cv : {"h", "v"}) {
-		auto *box = new QGroupBox(QString::fromLatin1(cv).toUpper() == QStringLiteral("H") ? QStringLiteral("Horizontal (H)") : QStringLiteral("Vertical (V)"), w);
+		auto *box = new QGroupBox(QString::fromLatin1(cv).toUpper() == QStringLiteral("H") ? QStringLiteral("HORIZONTAL (H)") : QStringLiteral("VERTICAL (V)"), w);
 		auto *bv = new QVBoxLayout(box);
 		auto *slot = new PreviewSlot(api_, QString::fromLatin1(cv), box); // h|v, as the UI server's canvas enum (D280)
 		slot->setMinimumSize(cv[0] == 'h' ? QSize(480, 270) : QSize(180, 320));
@@ -673,22 +835,53 @@ QWidget *MainWindow::buildCentre()
 QWidget *MainWindow::buildRight()
 {
 	auto *w = new QWidget(this);
-	auto *v = new QVBoxLayout(w);
-	v->setContentsMargins(0, 0, 0, 0);
+	auto *outer = new QVBoxLayout(w);
+	outer->setContentsMargins(0, 0, 0, 0);
+	outer->setSpacing(10);
+	// The inspector, looks, transitions and bots scroll; the controls and the stats cards stay in view.
+	auto *scroll = new QScrollArea(w);
+	scroll->setWidgetResizable(true);
+	scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+	scroll->setFrameShape(QFrame::NoFrame);
+	auto *body = new QWidget(scroll);
+	body->setObjectName(QStringLiteral("scrollBody"));
+	auto *v = new QVBoxLayout(body);
+	v->setContentsMargins(0, 0, 6, 0);
+	v->setSpacing(10);
+	scroll->setWidget(body);
+	outer->addWidget(buildControls());
+	outer->addWidget(scroll, 1);
 
-	auto *insp = new QGroupBox(QStringLiteral("Inspector"), w);
+	auto *insp = new QGroupBox(QStringLiteral("INSPECTOR"), body);
 	auto *iv = new QVBoxLayout(insp);
 	inspEmpty_ = new QLabel(QStringLiteral("Select a layer to edit its position, size and crop."), insp);
 	inspEmpty_->setWordWrap(true);
 	iv->addWidget(inspEmpty_);
 	inspForm_ = new QWidget(insp);
-	auto *f = new QFormLayout(inspForm_);
+	auto *f = new QGridLayout(inspForm_);
+	f->setContentsMargins(0, 0, 0, 0);
+	f->setHorizontalSpacing(10);
+	f->setVerticalSpacing(6);
 	inspTitle_ = new QLabel(inspForm_);
-	f->addRow(inspTitle_);
+	f->addWidget(inspTitle_, 0, 0, 1, 4);
+	// A captioned field: a small muted caption over the box.
+	auto field = [&](const QString &label, QWidget *x) {
+		auto *cell = new QWidget(inspForm_);
+		auto *cv = new QVBoxLayout(cell);
+		cv->setContentsMargins(0, 0, 0, 0);
+		cv->setSpacing(2);
+		auto *cl = new QLabel(label, cell);
+		cl->setObjectName(QStringLiteral("muted"));
+		cv->addWidget(cl);
+		cv->addWidget(x);
+		return cell;
+	};
 	auto dbl = [this](double lo, double hi, int dec) {
 		auto *s = new QDoubleSpinBox(inspForm_);
 		s->setRange(lo, hi);
 		s->setDecimals(dec);
+		s->setButtonSymbols(QAbstractSpinBox::NoButtons);
+		s->setMinimumWidth(40);
 		return s;
 	};
 	inX_ = dbl(-16384, 16384, 0);
@@ -696,37 +889,71 @@ QWidget *MainWindow::buildRight()
 	inW_ = dbl(1, 16384, 0);
 	inH_ = dbl(1, 16384, 0);
 	inRot_ = dbl(-360, 360, 1);
-	f->addRow(QStringLiteral("X"), inX_);
-	f->addRow(QStringLiteral("Y"), inY_);
-	f->addRow(QStringLiteral("Width"), inW_);
-	f->addRow(QStringLiteral("Height"), inH_);
-	f->addRow(QStringLiteral("Rotation"), inRot_);
+	// Position and size in one row; rotation and the crop toggle under it; the four crop boxes only when asked for.
+	f->addWidget(field(QStringLiteral("X"), inX_), 1, 0);
+	f->addWidget(field(QStringLiteral("Y"), inY_), 1, 1);
+	f->addWidget(field(QStringLiteral("Width"), inW_), 1, 2);
+	f->addWidget(field(QStringLiteral("Height"), inH_), 1, 3);
+	f->addWidget(field(QStringLiteral("Rotation"), inRot_), 2, 0, 1, 2);
+	auto *cropToggle = new QPushButton(QStringLiteral("Crop"), inspForm_);
+	cropToggle->setCheckable(true);
+	cropToggle->setToolTip(QStringLiteral("Show the four crop boxes"));
+	f->addWidget(cropToggle, 2, 2, 1, 2, Qt::AlignBottom);
 	auto crop = [this]() {
 		auto *s = new QSpinBox(inspForm_);
 		s->setRange(0, 16384);
+		s->setButtonSymbols(QAbstractSpinBox::NoButtons);
 		return s;
 	};
 	crL_ = crop();
 	crT_ = crop();
 	crR_ = crop();
 	crB_ = crop();
-	f->addRow(QStringLiteral("Crop left"), crL_);
-	f->addRow(QStringLiteral("Crop top"), crT_);
-	f->addRow(QStringLiteral("Crop right"), crR_);
-	f->addRow(QStringLiteral("Crop bottom"), crB_);
+	auto *cropRow = new QWidget(inspForm_);
+	auto *crl = new QHBoxLayout(cropRow);
+	crl->setContentsMargins(0, 0, 0, 0);
+	crl->setSpacing(10);
+	crl->addWidget(field(QStringLiteral("Crop left"), crL_));
+	crl->addWidget(field(QStringLiteral("Crop top"), crT_));
+	crl->addWidget(field(QStringLiteral("Crop right"), crR_));
+	crl->addWidget(field(QStringLiteral("Crop bottom"), crB_));
+	cropRow->setVisible(false);
+	f->addWidget(cropRow, 3, 0, 1, 4);
+	connect(cropToggle, &QPushButton::toggled, cropRow, &QWidget::setVisible);
 	auto *btns = new QHBoxLayout();
 	auto *apply = new QPushButton(QStringLiteral("Apply"), inspForm_);
 	auto *undo = new QPushButton(QStringLiteral("Undo changes"), inspForm_);
 	btns->addWidget(apply);
 	btns->addWidget(undo);
-	f->addRow(btns);
+	f->addLayout(btns, 4, 0, 1, 4);
 	connect(apply, &QPushButton::clicked, this, &MainWindow::applyInspector);
 	connect(undo, &QPushButton::clicked, this, &MainWindow::renderInspector);
 	iv->addWidget(inspForm_);
 	inspForm_->setVisible(false);
 	v->addWidget(insp);
 
-	effBox_ = new QGroupBox(QStringLiteral("Effects"), w);
+	// Look (D290): the friendly effect controls for the selected layer. No flag: this is how rounded corners, shadows and
+	// the other looks are set. Offline every change goes to the host after a short pause (layers.setEffects, saved into the
+	// project, undoable); live the Apply button sends it and the server asks for "yes, on air".
+	lookCap_ = captionLabel(QStringLiteral("Look"), body);
+	v->addWidget(lookCap_);
+	look_ = new LookPanel(body);
+	look_->setTypes(lookTypes());
+	look_->setMax(6);
+	connect(look_, &LookPanel::edited, this, [this](const QJsonArray &fx) {
+		effEdit_ = fx; // the shared working list (the Advanced list shows it too)
+		effDirty_ = true;
+		effRev_++;
+		if (effBox_ && effBox_->isVisible())
+			renderEffects();
+	});
+	connect(look_, &LookPanel::commit, this, &MainWindow::applyLook);
+	connect(look_, &LookPanel::limit, this, [this](const QString &why) { note(why); });
+	v->addWidget(look_);
+	lookCap_->setVisible(false);
+	look_->setVisible(false);
+
+	effBox_ = new QGroupBox(QStringLiteral("ADVANCED EFFECTS"), body);
 	auto *ev = new QVBoxLayout(effBox_);
 	effList_ = new QListWidget(effBox_);
 	effList_->setMaximumHeight(120);
@@ -741,10 +968,12 @@ QWidget *MainWindow::buildRight()
 	auto *rm = new QPushButton(QStringLiteral("Remove"), effBox_);
 	erow->addWidget(addType, 1);
 	erow->addWidget(add);
-	erow->addWidget(up);
-	erow->addWidget(down);
-	erow->addWidget(rm);
 	ev->addLayout(erow);
+	auto *erow2 = new QHBoxLayout();
+	erow2->addWidget(up);
+	erow2->addWidget(down);
+	erow2->addWidget(rm);
+	ev->addLayout(erow2);
 	auto *formHost = new QWidget(effBox_);
 	effForm_ = new QFormLayout(formHost);
 	ev->addWidget(formHost);
@@ -798,7 +1027,7 @@ QWidget *MainWindow::buildRight()
 
 	// Transitions (D242, flag transitions): per canvas cut, fade or stinger, saved into the project; the UI server
 	// applies it to the host on the next status poll.
-	transBox_ = new QGroupBox(QStringLiteral("Transitions"), w);
+	transBox_ = new QGroupBox(QStringLiteral("TRANSITIONS"), body);
 	auto *tf = new QFormLayout(transBox_);
 	trCanvas_ = new QComboBox(transBox_);
 	trCanvas_->addItem(QStringLiteral("H"), QStringLiteral("h"));
@@ -833,13 +1062,13 @@ QWidget *MainWindow::buildRight()
 	});
 	connect(trApply, &QPushButton::clicked, this, &MainWindow::applyTransition);
 
-	botBox_ = new QGroupBox(QStringLiteral("Bots"), w);
+	botBox_ = new QGroupBox(QStringLiteral("BOTS"), body);
 	botRows_ = new QVBoxLayout(botBox_);
 	botBox_->setVisible(false);
 	v->addWidget(botBox_);
 
 	v->addStretch(1);
-	stats_ = new StatsCards(w);
+	stats_ = new StatsCards(body);
 	v->addWidget(stats_);
 	return w;
 }
@@ -847,7 +1076,7 @@ QWidget *MainWindow::buildRight()
 // The audio mixer as a strip under the previews (D285, as in the reference): one card per sound, side by side.
 QWidget *MainWindow::buildMixer()
 {
-	auto *mix = new QGroupBox(QStringLiteral("Audio mixer"), this);
+	auto *mix = new QGroupBox(QStringLiteral("AUDIO MIXER"), this);
 	auto *scroll = new QScrollArea(mix);
 	scroll->setWidgetResizable(true);
 	scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -897,6 +1126,7 @@ void MainWindow::start()
 		sc->setContext(Qt::WindowShortcut);
 		connect(sc, &QShortcut::activated, this, [this, undo]() { undoRedo(undo); });
 	}
+	loadUiSettings();
 	loadScenes();
 	pollStatus();
 	auto *st = new QTimer(this);
@@ -990,12 +1220,13 @@ void MainWindow::renderScenes()
 	for (const auto &x : scenes_) {
 		const QJsonObject s = x.toObject();
 		auto *it = new QListWidgetItem(s.value(QStringLiteral("name")).toString(), sceneList_);
+		const bool active = s.value(QStringLiteral("id")).toString() == activeScene_;
 		it->setData(Qt::UserRole, s.value(QStringLiteral("id")).toString());
-		if (s.value(QStringLiteral("id")).toString() == activeScene_) {
-			QFont fnt = it->font();
-			fnt.setBold(true);
-			it->setFont(fnt);
-		}
+		QStringList cv;
+		for (const QString &c : canvasesOf(s))
+			cv << c.toUpper();
+		it->setData(Qt::UserRole + 1, (active ? QStringLiteral("ACTIVE  ·  ") : QString()) + cv.join(QStringLiteral(" + ")));
+		it->setData(Qt::UserRole + 2, active);
 	}
 	bool both = false;
 	for (const auto &s : scenes_)
@@ -1044,12 +1275,18 @@ void MainWindow::renderInspector()
 	const bool editable = !l.isEmpty() && l.contains(QStringLiteral("placement"));
 	inspForm_->setVisible(editable);
 	effBox_->setVisible(editable && effectEditing_);
+	lookCap_->setVisible(editable);
+	look_->setVisible(editable);
 	if (const QString key = activeScene_ + QLatin1Char('/') + selected_; key != effLayer_ || !effDirty_) {
 		// a reload keeps unsent effect changes of the same layer
+		const bool other = key != effLayer_;
 		effLayer_ = key;
 		effEdit_ = l.value(QStringLiteral("effects")).toArray();
 		effDirty_ = false;
 		renderEffects();
+		look_->setEffects(effEdit_);
+		if (other)
+			look_->clearPending();
 	}
 	inspEmpty_->setVisible(!editable);
 	if (!l.isEmpty() && !editable)
@@ -1123,6 +1360,7 @@ void MainWindow::editEffects(const std::function<void(QJsonArray &, int &)> &cha
 	effDirty_ = true;
 	effRev_++;
 	renderEffects();
+	look_->setEffects(effEdit_);
 	if (row >= 0 && row < effList_->count())
 		effList_->setCurrentRow(row);
 }
@@ -1217,6 +1455,40 @@ void MainWindow::applyEffects()
 		if (ok && effLayer_ == key && effRev_ == rev) // not when the draft changed or moved on while it was sent
 			effDirty_ = false;
 		note(ok ? QStringLiteral("Effects applied.") : QStringLiteral("Effects not applied: ") + err);
+		loadLayers();
+	});
+}
+
+// The Look panel's send (D290): the whole working list, one send at a time (a change made while one is on its way
+// goes out right after it). Live, the server asks for "yes, on air" first (the Apply button started this).
+void MainWindow::applyLook()
+{
+	if (lookSending_) {
+		lookAgain_ = true;
+		return;
+	}
+	if (selected_.isEmpty() || activeScene_.isEmpty())
+		return;
+	lookSending_ = true;
+	QJsonObject x;
+	x.insert(QStringLiteral("scene"), activeScene_);
+	x.insert(QStringLiteral("layer"), selected_);
+	x.insert(QStringLiteral("effects"), effEdit_);
+	const QString key = activeScene_ + QLatin1Char('/') + selected_;
+	const int rev = effRev_;
+	api_->host(QStringLiteral("layers.setEffects"), x, [this, key, rev](bool ok, const QJsonObject &b, const QString &err) {
+		lookSending_ = false;
+		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm")) {
+			lookAgain_ = false;
+			return confirm(b.value(QStringLiteral("pending")).toObject());
+		}
+		if (ok && effLayer_ == key && effRev_ == rev) // not when the draft changed or moved on while it was sent
+			effDirty_ = false;
+		note(ok ? QStringLiteral("Look applied.") : QStringLiteral("Look not applied: ") + err);
+		if (lookAgain_) {
+			lookAgain_ = false;
+			return applyLook();
+		}
 		loadLayers();
 	});
 }
@@ -1475,6 +1747,7 @@ void MainWindow::pollStatus()
 		}
 		const QJsonObject h = s.value(QStringLiteral("host")).toObject(), c = s.value(QStringLiteral("core")).toObject();
 		live_ = h.value(QStringLiteral("live")).toBool();
+		look_->setLive(live_);
 		// A restarted host (crash supervisor) lost the previews it drew in our slots: embed them again (D280).
 		const double up = h.value(QStringLiteral("uptimeMs")).toDouble(-1);
 		if (up >= 0 && hostUptime_ >= 0 && up < hostUptime_)
@@ -1519,11 +1792,22 @@ void MainWindow::pollStatus()
 		streamBtn_->setEnabled(ready.value(QStringLiteral("stream")).toBool());
 		recordBtn_->setEnabled(ready.value(QStringLiteral("record")).toBool());
 		// Say why a button is off (D281): no stream target unless Ujwalam was started for live.
-		streamBtn_->setToolTip(streamBtn_->isEnabled() ? QString()
+		streamBtn_->setToolTip(streamBtn_->isEnabled() ? (live_ ? QStringLiteral("Stop the stream (you type a confirmation first).") : QStringLiteral("Go live (you type: yes, on air)."))
 							       : QStringLiteral("Streaming needs the LIVE start: the \"Ujwalam (alpha, LIVE)\" shortcut, or Ujwalam.cmd --live."));
-		recordBtn_->setToolTip(recordBtn_->isEnabled() ? QString() : QStringLiteral("No recording output is set up in this start."));
-		streamBtn_->setText(live_ ? QStringLiteral("Stop stream") : QStringLiteral("Start stream"));
-		recordBtn_->setText(recording_ ? QStringLiteral("Stop recording") : QStringLiteral("Record"));
+		recordBtn_->setToolTip(recordBtn_->isEnabled() ? (recording_ ? QStringLiteral("Stop recording.") : QStringLiteral("Start recording to a file."))
+								    : QStringLiteral("No recording output is set up in this start."));
+		// The round controls change icon and caption with the state (D290); a red fill says "on".
+		for (const auto &ctl : {std::make_tuple(streamBtn_, live_, "stop", "Stop stream", "play", "Start stream"),
+				      std::make_tuple(recordBtn_, recording_, "stop", "Stop recording", "record", "Record")}) {
+			QPushButton *b = std::get<0>(ctl);
+			const bool on = std::get<1>(ctl);
+			if (b->property("active").toBool() != on) {
+				b->setProperty("active", on);
+				b->style()->unpolish(b);
+				b->style()->polish(b);
+			}
+			setControl(b, QLatin1String(on ? std::get<2>(ctl) : std::get<4>(ctl)), QLatin1String(on ? std::get<3>(ctl) : std::get<5>(ctl)));
+		}
 		loadEdits();
 		loadFlags();
 	});
@@ -2525,23 +2809,62 @@ void MainWindow::saveSettings(const QJsonObject &body, bool retried)
 	});
 }
 
+// Settings (D284, D290): sections on the left (Clips, Folders, Layer effects, Advanced), the page on the right. The
+// feature flags list lives in Advanced: the window borrows the hidden flag list while Settings is open.
 void MainWindow::openSettings(bool firstRun)
 {
+	if (settingsDlg_) { // already open (or its answer is on the way)
+		settingsDlg_->raise();
+		return;
+	}
 	api_->get(QStringLiteral("ui/api/settings"), [this, firstRun](bool ok, const QJsonObject &b, const QString &err) {
 		if (!ok)
 			return note(QStringLiteral("Settings not available: ") + err);
+		if (settingsDlg_)
+			return;
 		const QJsonObject st = b.value(QStringLiteral("settings")).toObject(), cl = b.value(QStringLiteral("clips")).toObject();
 		const QJsonObject c = st.value(QStringLiteral("clips")).toObject(), f = st.value(QStringLiteral("folders")).toObject();
-		QDialog dlg(this);
-		dlg.setWindowTitle(firstRun ? QStringLiteral("Welcome: clips") : QStringLiteral("Settings"));
-		auto *v = new QVBoxLayout(&dlg);
+		const QString motionNow = st.value(QStringLiteral("ui")).toObject().value(QStringLiteral("motion")).toString(QStringLiteral("system"));
+		auto *dlg = new QDialog(this);
+		dlg->setAttribute(Qt::WA_DeleteOnClose, true);
+		settingsDlg_ = dlg;
+		dlg->setWindowTitle(firstRun ? QStringLiteral("Welcome: clips") : QStringLiteral("Settings"));
+		auto *outer = new QVBoxLayout(dlg);
+		outer->setContentsMargins(18, 16, 18, 14);
+		outer->setSpacing(12);
 		if (firstRun) {
-			auto *intro = new QLabel(QStringLiteral("Ujwalam can find the best moments in your recordings and streams and edit them into short clips.\nHow should it do that? You can change this later in Settings."), &dlg);
+			auto *intro = new QLabel(QStringLiteral("Ujwalam can find the best moments in your recordings and streams and edit them into short clips.\nHow should it do that? You can change this later in Settings."), dlg);
 			intro->setWordWrap(true);
-			v->addWidget(intro);
+			outer->addWidget(intro);
 		}
-		auto *clipBox = new QGroupBox(QStringLiteral("Clips"), &dlg);
+		auto *main = new QHBoxLayout();
+		main->setSpacing(18);
+		auto *nav = new QListWidget(dlg);
+		nav->setObjectName(QStringLiteral("settingsNav"));
+		nav->setFixedWidth(170);
+		auto *pages = new QStackedWidget(dlg);
+		main->addWidget(nav);
+		main->addWidget(pages, 1);
+		outer->addLayout(main, 1);
+		// A page: a title and its cards in a column.
+		auto page = [&](const QString &title) {
+			auto *w = new QWidget(pages);
+			auto *v = new QVBoxLayout(w);
+			v->setContentsMargins(0, 0, 0, 0);
+			v->setSpacing(12);
+			auto *t = new QLabel(title, w);
+			t->setObjectName(QStringLiteral("sectionTitle"));
+			v->addWidget(t);
+			pages->addWidget(w);
+			nav->addItem(title);
+			return v;
+		};
+
+		// Clips
+		auto *pc = page(QStringLiteral("Clips"));
+		auto *clipBox = new QGroupBox(QStringLiteral("WHEN TO MAKE CLIPS"), dlg);
 		auto *cf = new QFormLayout(clipBox);
+		cf->setVerticalSpacing(10);
 		auto mk = [&](bool live, const QString &cur) {
 			auto *cb = new QComboBox(clipBox);
 			for (const ModeText &m : kModes)
@@ -2558,14 +2881,15 @@ void MainWindow::openSettings(bool firstRun)
 			warn->setWordWrap(true);
 			cf->addRow(warn);
 		}
-		v->addWidget(clipBox);
+		pc->addWidget(clipBox);
 		// Match filter the clipper honours (clips.matchGate): only matches that went well become clips.
 		const QJsonObject gate = c.value(QStringLiteral("matchGate")).toObject();
 		const bool hadGate = c.contains(QStringLiteral("matchGate"));
 		const bool gateTop3 = gate.contains(QStringLiteral("top3")) ? gate.value(QStringLiteral("top3")).toBool() : true;
 		const int gateKills = gate.value(QStringLiteral("minKills")).isDouble() ? gate.value(QStringLiteral("minKills")).toInt() : -1;
-		auto *gateBox = new QGroupBox(QStringLiteral("Which matches get clips"), &dlg);
+		auto *gateBox = new QGroupBox(QStringLiteral("WHICH MATCHES GET CLIPS"), dlg);
 		auto *gv = new QVBoxLayout(gateBox);
+		gv->setSpacing(8);
 		auto *top3 = new QCheckBox(QStringLiteral("Only make clips from matches where I finish in the top 3"), gateBox);
 		top3->setChecked(gateTop3);
 		auto *killRow = new QWidget(gateBox);
@@ -2584,9 +2908,14 @@ void MainWindow::openSettings(bool firstRun)
 		kh->addStretch(1);
 		gv->addWidget(top3);
 		gv->addWidget(killRow);
-		v->addWidget(gateBox);
-		auto *dirBox = new QGroupBox(QStringLiteral("Where files are saved"), &dlg);
+		pc->addWidget(gateBox);
+		pc->addStretch(1);
+
+		// Folders
+		auto *pf = page(QStringLiteral("Folders"));
+		auto *dirBox = new QGroupBox(QStringLiteral("WHERE FILES ARE SAVED"), dlg);
 		auto *df = new QFormLayout(dirBox);
+		df->setVerticalSpacing(10);
 		auto folderRow = [&](const QString &cur, const QString &placeholder) {
 			auto *row = new QWidget(dirBox);
 			auto *h = new QHBoxLayout(row);
@@ -2598,8 +2927,8 @@ void MainWindow::openSettings(bool firstRun)
 			h->addWidget(edit, 1);
 			h->addWidget(pick);
 			h->addWidget(reset);
-			connect(pick, &QPushButton::clicked, &dlg, [edit, &dlg]() {
-				const QString d = QFileDialog::getExistingDirectory(&dlg, QStringLiteral("Choose a folder"), edit->text());
+			connect(pick, &QPushButton::clicked, dlg, [edit, dlg]() {
+				const QString d = QFileDialog::getExistingDirectory(dlg, QStringLiteral("Choose a folder"), edit->text());
 				if (!d.isEmpty())
 					edit->setText(QDir::toNativeSeparators(d));
 			});
@@ -2612,27 +2941,105 @@ void MainWindow::openSettings(bool firstRun)
 		df->addRow(QStringLiteral("Finished clips:"), clipRow.first);
 		auto *hint = new QLabel(QStringLiteral("A new recordings folder is used from the next time you start Ujwalam."), dirBox);
 		hint->setWordWrap(true);
+		hint->setObjectName(QStringLiteral("muted"));
 		df->addRow(hint);
-		v->addWidget(dirBox);
-		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, &dlg);
-		connect(bb, &QDialogButtonBox::accepted, &dlg, &QDialog::accept);
-		connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
-		v->addWidget(bb);
-		dlg.resize(620, dlg.sizeHint().height());
-		if (dlg.exec() != QDialog::Accepted) {
-			if (firstRun) // nothing chosen: keep "ask each time", and stop asking at every start
-				saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), QStringLiteral("ask")}, {QStringLiteral("live"), QStringLiteral("ask")}}}});
-			return;
-		}
-		const auto dir = [](QLineEdit *e) { return e->text().trimmed().isEmpty() ? QJsonValue() : QJsonValue(e->text().trimmed()); };
-		QJsonObject body;
-		QJsonObject clipsBody{{QStringLiteral("recording"), rec->currentData().toString()}, {QStringLiteral("live"), liv->currentData().toString()}};
-		const int newKills = killsOn->isChecked() ? kills->value() : -1;
-		if (hadGate || top3->isChecked() != gateTop3 || newKills != gateKills) // sent only when it matters: an older server refuses the key
-			clipsBody.insert(QStringLiteral("matchGate"), matchGateJson(top3->isChecked(), newKills));
-		body.insert(QStringLiteral("clips"), clipsBody);
-		body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
-		saveSettings(body);
+		pf->addWidget(dirBox);
+		pf->addStretch(1);
+
+		// Layer effects: the scene's own effects (rounded game frame, shadows, the video buttons) are a feature flag
+		// underneath; this is its plain on/off. The Look panel in the inspector needs no setting.
+		auto *pl = page(QStringLiteral("Layer effects"));
+		auto *fxBox = new QGroupBox(QStringLiteral("EFFECTS THAT COME WITH THE SCENES"), dlg);
+		auto *fv = new QVBoxLayout(fxBox);
+		fv->setSpacing(8);
+		auto *fxOn = new QCheckBox(QStringLiteral("Show layer effects from the scene (rounded corners, shadows, video buttons)"), fxBox);
+		fxOn->setObjectName(QStringLiteral("settingsLayerEffects"));
+		bool fxNow = false, fxKnown = false;
+		for (int i = 0; i < flagList_->count(); i++)
+			if (flagList_->item(i)->data(Qt::UserRole).toString() == QStringLiteral("layer-effects")) {
+				fxKnown = true;
+				fxNow = flagList_->item(i)->checkState() == Qt::Checked;
+			}
+		fxOn->setChecked(fxNow);
+		fxOn->setEnabled(fxKnown);
+		auto *fxHint = new QLabel(QStringLiteral("Turning this on asks you to type \"yes\". The effects appear the next time the scenes are built (start Ujwalam with the rebuild option). "
+							 "To change the look of one layer, select it and use the Look panel in the inspector; that needs no setting."), fxBox);
+		fxHint->setWordWrap(true);
+		fxHint->setObjectName(QStringLiteral("muted"));
+		fv->addWidget(fxOn);
+		fv->addWidget(fxHint);
+		pl->addWidget(fxBox);
+		pl->addStretch(1);
+
+		// Advanced: animations and the developer feature flags
+		auto *pa = page(QStringLiteral("Advanced"));
+		auto *motionBox = new QGroupBox(QStringLiteral("ANIMATIONS"), dlg);
+		auto *mf = new QFormLayout(motionBox);
+		auto *motionCb = new QComboBox(motionBox);
+		motionCb->setObjectName(QStringLiteral("settingsMotion"));
+		motionCb->addItem(QStringLiteral("Follow Windows"), QStringLiteral("system"));
+		motionCb->addItem(QStringLiteral("Always on"), QStringLiteral("on"));
+		motionCb->addItem(QStringLiteral("Off"), QStringLiteral("off"));
+		motionCb->setCurrentIndex(std::max(0, motionCb->findData(motionNow)));
+		mf->addRow(QStringLiteral("Motion in the window:"), motionCb);
+		pa->addWidget(motionBox);
+		auto *flagBox = new QGroupBox(QStringLiteral("FEATURE FLAGS (FOR TESTING NEW FEATURES)"), dlg);
+		auto *flv = new QVBoxLayout(flagBox);
+		auto *flagHint = new QLabel(QStringLiteral("New features ship switched off. Turning one on asks you to type the confirmation phrase; turning one off is instant."), flagBox);
+		flagHint->setWordWrap(true);
+		flagHint->setObjectName(QStringLiteral("muted"));
+		flv->addWidget(flagHint);
+		flagList_->setParent(flagBox);
+		flv->addWidget(flagList_, 1);
+		flagList_->setMinimumHeight(220);
+		flagList_->show();
+		pa->addWidget(flagBox, 1);
+		nav->setCurrentRow(firstRun ? 0 : 0);
+
+		connect(nav, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
+		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
+		connect(bb, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
+		connect(bb, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+		outer->addWidget(bb);
+		dlg->resize(860, std::max(560, dlg->sizeHint().height()));
+
+		connect(dlg, &QDialog::finished, this, [=](int result) {
+			// give the flag list back to the window before the dialog goes
+			flagList_->setParent(this);
+			flagList_->hide();
+			settingsDlg_.clear();
+			if (result != QDialog::Accepted) {
+				if (firstRun) // nothing chosen: keep "ask each time", and stop asking at every start
+					saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), QStringLiteral("ask")}, {QStringLiteral("live"), QStringLiteral("ask")}}}});
+				return;
+			}
+			const auto dir = [](QLineEdit *e) { return e->text().trimmed().isEmpty() ? QJsonValue() : QJsonValue(e->text().trimmed()); };
+			QJsonObject body;
+			QJsonObject clipsBody{{QStringLiteral("recording"), rec->currentData().toString()}, {QStringLiteral("live"), liv->currentData().toString()}};
+			const int newKills = killsOn->isChecked() ? kills->value() : -1;
+			if (hadGate || top3->isChecked() != gateTop3 || newKills != gateKills) // sent only when it matters: an older server refuses the key
+				clipsBody.insert(QStringLiteral("matchGate"), matchGateJson(top3->isChecked(), newKills));
+			body.insert(QStringLiteral("clips"), clipsBody);
+			body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
+			const QString motionNew = motionCb->currentData().toString();
+			if (motionNew != motionNow) { // sent only when it changed: an older server refuses the key
+				body.insert(QStringLiteral("ui"), QJsonObject{{QStringLiteral("motion"), motionNew}});
+				motion::setMode(motionNew);
+			}
+			saveSettings(body);
+			if (fxKnown && fxOn->isChecked() != fxNow)
+				setFlag(QStringLiteral("layer-effects"), fxOn->isChecked()); // the existing flags route: "yes" is typed in the confirm window
+		});
+		dlg->open();
+	});
+}
+
+// The saved animation choice (settings.json ui.motion, D290) is read once at start; Settings changes it live.
+void MainWindow::loadUiSettings()
+{
+	api_->get(QStringLiteral("ui/api/settings"), [](bool ok, const QJsonObject &b, const QString &) {
+		if (ok)
+			motion::setMode(b.value(QStringLiteral("settings")).toObject().value(QStringLiteral("ui")).toObject().value(QStringLiteral("motion")).toString(QStringLiteral("system")));
 	});
 }
 
@@ -2721,7 +3128,32 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("tasks"), tasks_->probe());
 	o.insert(QStringLiteral("stats"), QJsonObject{{QStringLiteral("samples"), stats_->samples()}, {QStringLiteral("session"), stats_->sessionText()}});
 	o.insert(QStringLiteral("motion"), motion::systemAnimations());
+	o.insert(QStringLiteral("motionMode"), motion::mode());
+	QJsonObject look = look_->probe();
+	look.insert(QStringLiteral("shown"), !look_->isHidden());
+	look.insert(QStringLiteral("advancedShown"), !effBox_->isHidden());
+	o.insert(QStringLiteral("look"), look);
+	o.insert(QStringLiteral("controls"), QJsonObject{{QStringLiteral("stream"), streamBtn_->accessibleName()}, {QStringLiteral("record"), recordBtn_->accessibleName()},
+							{QStringLiteral("clip"), clipBtn_->accessibleName()}, {QStringLiteral("mark"), markBtn_->accessibleName()},
+							{QStringLiteral("streamIcon"), streamBtn_->property("iconState").toString()}});
+	o.insert(QStringLiteral("flagsInSettings"), flagList_->parentWidget() != this); // the list moved out of the main window (D290)
+	if (settingsDlg_) {
+		QJsonArray sections;
+		if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")))
+			for (int i = 0; i < nav->count(); i++)
+				sections.append(nav->item(i)->text());
+		auto *fx = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsLayerEffects"));
+		auto *mo = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsMotion"));
+		o.insert(QStringLiteral("settings"), QJsonObject{{QStringLiteral("sections"), sections}, {QStringLiteral("layerEffects"), fx ? QJsonValue(fx->isChecked()) : QJsonValue()},
+								{QStringLiteral("layerEffectsText"), fx ? fx->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
+								{QStringLiteral("motionChoices"), mo ? mo->count() : 0}});
+	}
 	return o;
+}
+
+QWidget *MainWindow::settingsWindow() const
+{
+	return settingsDlg_.data();
 }
 
 bool MainWindow::probeAction(const QString &action)
@@ -2734,6 +3166,50 @@ bool MainWindow::probeAction(const QString &action)
 				out = w->findChildren<QPushButton *>();
 		return out;
 	};
+	// Look panel and Settings (D290): the real widgets are clicked, so their own handlers run.
+	if (p.size() == 2 && p[0] == QStringLiteral("select-layer")) {
+		for (int i = 0; i < layerList_->count(); i++)
+			if (layerList_->item(i)->data(Qt::UserRole).toString() == p[1]) {
+				layerList_->setCurrentRow(i);
+				return true;
+			}
+		return false;
+	}
+	if (p.size() == 3 && p[0] == QStringLiteral("look"))
+		return look_->probeToggle(p[1], p[2] == QStringLiteral("on"));
+	if (p.size() == 4 && p[0] == QStringLiteral("look-set"))
+		return look_->probeSet(p[1], p[2], p[3].toDouble());
+	if (p.size() == 1 && p[0] == QStringLiteral("settings-open")) {
+		openSettings(false);
+		return true;
+	}
+	if (p.size() >= 1 && p[0].startsWith(QStringLiteral("settings-")) && p[0] != QStringLiteral("settings-open")) {
+		if (!settingsDlg_)
+			return false;
+		if (p[0] == QStringLiteral("settings-save") || p[0] == QStringLiteral("settings-cancel")) {
+			p[0] == QStringLiteral("settings-save") ? settingsDlg_->accept() : settingsDlg_->reject();
+			return true;
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-page")) { // show a section (for the picture)
+			if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")); nav && p[1].toInt() >= 0 && p[1].toInt() < nav->count()) {
+				nav->setCurrentRow(p[1].toInt());
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-layer-effects")) {
+			if (auto *fx = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsLayerEffects")); fx && fx->isEnabled()) {
+				fx->setChecked(p[1] == QStringLiteral("on"));
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-motion")) {
+			if (auto *mo = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsMotion")); mo && mo->findData(p[1]) >= 0) {
+				mo->setCurrentIndex(mo->findData(p[1]));
+				return true;
+			}
+		}
+		return false;
+	}
 	if (p.size() == 2 && p[0] == QStringLiteral("flag-off")) {
 		for (int i = 0; i < flagList_->count(); i++)
 			if (flagList_->item(i)->data(Qt::UserRole).toString() == p[1]) {

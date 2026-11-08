@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Effect editor, UI server side (D260): layers.setEffects is refused while flag effect-editor is off (the default),
-// passes the whole list to the host when on, saves it into the project file (an empty list removes it), can be
+// Effect editor, UI server side (D260, D290): layers.setEffects needs no flag (the Look panel; flag effect-editor only shows the
+// Advanced list), passes the whole list to the host when on, saves it into the project file (an empty list removes it), can be
 // undone and redone, needs "yes, on air" while live, and refuses a list that is not a short array of typed objects.
 // Stub host (kind 'host'); real flags and project-sync on temp files.
 import assert from 'node:assert/strict';
@@ -84,18 +84,16 @@ const layerOf = (file, layer) => JSON.parse(readFileSync(file, 'utf8')).scenes.f
 const SHADOW = { type: 'shadow', color: '#000000', opacity: 0.5, size: 10, distance: 10, angle: 135 };
 const TONER = { type: 'toner', shadows: '#000000', darktones: '#404040', midtones: '#808080', brights: '#c0c0c0', highlights: '#ffffff', amount: 1 };
 
-test('effect editor: off by default; on: applied, saved, undone and redone; an empty list removes the effects', async () => {
+test('effect editor: no flag needed (D290); applied, saved, undone and redone; an empty list removes the effects', async () => {
   const c = await setup();
   try {
     const params = { scene: 'scene-main', layer: 'layer-cam', effects: [SHADOW, TONER] };
-    const off = await c.post('/ui/api/host', { method: 'layers.setEffects', params });
-    assert.equal(off.status, 404);
-    assert.equal(off.body.error, 'effect-editor-off');
-    assert.ok(!c.host.st.calls.some(([m]) => m === 'layers.setEffects'), 'host not called while the flag is off');
+    // D290: the Look panel edits effects without a flag; the flag only shows the Advanced list.
     assert.equal((await c.status()).host.effectEditing, false);
-
     c.flags.set(FLAG, true);
-    await until(async () => (await c.status()).host.effectEditing === true, 'status shows the editor on');
+    await until(async () => (await c.status()).host.effectEditing === true, 'status shows the advanced list on');
+    c.flags.set(FLAG, false);
+    await until(async () => (await c.status()).host.effectEditing === false, 'and off again');
     const on = await c.post('/ui/api/host', { method: 'layers.setEffects', params });
     assert.equal(on.status, 200, JSON.stringify(on.body));
     assert.equal(on.body.saved, 'pending');

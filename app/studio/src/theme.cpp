@@ -40,10 +40,10 @@ QMenu::item { padding: 6px 18px; border-radius: 6px; }
 QMenu::item:selected { background: %7; color: white; }
 QMainWindow, QDialog { background: %1; }
 QToolTip { background: %3; color: %5; border: 1px solid %4; padding: 4px; }
-QGroupBox { background: %2; border: 1px solid %4; border-radius: 12px; margin-top: 18px; padding: 10px 8px 8px 8px; }
-QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 4px; color: %6;
+QGroupBox { background: %2; border: 1px solid %4; border-radius: 16px; margin-top: 22px; padding: 16px 12px 12px 12px; }
+QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 4px; padding: 0 4px; color: %6;
   font-size: 8pt; font-weight: 600; }
-QFrame#strip { background: %3; border: 1px solid %4; border-radius: 10px; }
+QFrame#strip { background: %3; border: 1px solid %4; border-radius: 14px; }
 QFrame#strip QLabel { background: transparent; }
 QLabel#heading { color: %6; font-size: 8pt; font-weight: 600; }
 QLabel#pill { background: %3; border: 1px solid %4; border-radius: 10px; padding: 3px 10px; color: %5; }
@@ -97,6 +97,32 @@ QFrame#statCard QLabel { background: transparent; }
 QLabel#statName { color: %6; font-size: 8pt; font-weight: 600; }
 QLabel#statValue { color: %5; font-size: 10pt; font-weight: 600; }
 QLabel#statBig { color: %5; font-size: 20pt; font-weight: 600; }
+QFrame#card { background: %2; border: 1px solid %4; border-radius: 16px; }
+QFrame#card QLabel { background: transparent; }
+QLabel#ctlCaption { color: %6; font-size: 8pt; background: transparent; }
+QLabel#brand { font-size: 14pt; font-weight: 700; color: %5; padding-right: 6px; background: transparent; }
+QPushButton#tb, QToolButton#tb { background: transparent; border: none; border-radius: 10px; padding: 6px 12px; color: %5; font-size: 9pt; min-height: 20px; }
+QPushButton#tb:disabled { color: #5d5972; background: transparent; }
+QPushButton#round { background: %3; border: 1px solid %4; border-radius: 26px; padding: 0; min-width: 52px; max-width: 52px; min-height: 52px; max-height: 52px; }
+QPushButton#round:pressed { background: %4; }
+QPushButton#round:disabled { background: %3; border: 1px solid %4; }
+QPushButton#round[role="primary"] { background: %7; border: 1px solid %7; }
+QPushButton#round[role="primary"][active="true"] { background: %9; border: 1px solid %9; }
+QPushButton#round[role="primary"]:disabled { background: %3; border: 1px solid %4; }
+QPushButton#round[role="danger"] { background: transparent; border: 2px solid %9; }
+QPushButton#round[role="danger"][active="true"] { background: %9; }
+QPushButton#round[role="danger"]:disabled { background: transparent; border: 2px solid %4; }
+QFrame#lookCard { background: %3; border: 1px solid %4; border-radius: 12px; }
+QFrame#lookCard QLabel { background: transparent; }
+QLabel#lookName { font-weight: 600; font-size: 10pt; }
+QListWidget#sceneCards { background: transparent; border: none; padding: 0; }
+QListWidget#sceneCards::item { padding: 0; background: transparent; }
+QListWidget#sceneCards::item:selected, QListWidget#sceneCards::item:hover { background: transparent; }
+QListWidget#settingsNav { background: transparent; border: none; padding: 0; outline: none; }
+QListWidget#settingsNav::item { padding: 10px 14px; border-radius: 10px; margin-bottom: 4px; color: %6; }
+QListWidget#settingsNav::item:selected { background: %3; color: %5; font-weight: 600; }
+QListWidget#settingsNav::item:hover:!selected { background: %2; }
+QLabel#sectionTitle { font-size: 15pt; font-weight: 700; background: transparent; }
 )")
 				   .arg(QLatin1String(kBg), QLatin1String(kPanel), QLatin1String(kField), QLatin1String(kBorder), QLatin1String(kText),
 					QLatin1String(kMuted), QLatin1String(kAccent), QLatin1String(kAccentHi), QLatin1String(kDanger), QLatin1String(kOk)));

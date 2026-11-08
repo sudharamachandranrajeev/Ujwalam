@@ -11,6 +11,8 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QLayout>
+#include <QWidget>
 #include <QJsonDocument>
 #include <QGuiApplication>
 #include <QJsonArray>
@@ -75,7 +77,23 @@ int main(int argc, char **argv)
 				const QString shot = qEnvironmentVariable("UJWALAM_STUDIO_PROBE_SHOT");
 				if (shot.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) {
 					win.resize(1600, 900);
+					// The window is never shown, so pending layout work (a card that just opened, the scroll area's
+					// body) has not run: do it now, children first, then paint.
+					for (int pass = 0; pass < 2; pass++) {
+						QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+						for (QWidget *w : win.findChildren<QWidget *>())
+							if (w->layout())
+								w->layout()->activate();
+						win.layout()->activate();
+					}
 					o.insert(QStringLiteral("shot"), win.grab().save(shot, "PNG"));
+					if (QWidget *sw = win.settingsWindow()) { // an open Settings window gets its own picture
+						for (QWidget *w : sw->findChildren<QWidget *>())
+							if (w->layout())
+								w->layout()->activate();
+						sw->layout()->activate();
+						o.insert(QStringLiteral("settingsShot"), sw->grab().save(shot.left(shot.size() - 4) + QStringLiteral("-settings.png"), "PNG"));
+					}
 				}
 				std::printf("studio probe: %s\n", QJsonDocument(o).toJson(QJsonDocument::Compact).constData());
 				std::fflush(stdout);

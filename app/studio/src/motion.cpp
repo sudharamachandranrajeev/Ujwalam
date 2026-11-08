@@ -12,6 +12,8 @@
 #include <QToolButton>
 #include <QVariantAnimation>
 
+#include <algorithm>
+
 #ifdef Q_OS_WIN
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -20,6 +22,20 @@
 
 namespace motion {
 
+namespace {
+QString g_mode = QStringLiteral("system");
+}
+
+void setMode(const QString &m)
+{
+	g_mode = (m == QStringLiteral("on") || m == QStringLiteral("off")) ? m : QStringLiteral("system");
+}
+
+QString mode()
+{
+	return g_mode;
+}
+
 bool systemAnimations()
 {
 	// UJWALAM_REDUCE_MOTION=1 turns motion off; =0 turns it on even when Windows has animation effects off.
@@ -27,6 +43,10 @@ bool systemAnimations()
 	if (env == QStringLiteral("1"))
 		return false;
 	if (env == QStringLiteral("0"))
+		return true;
+	if (g_mode == QStringLiteral("off"))
+		return false;
+	if (g_mode == QStringLiteral("on"))
 		return true;
 #ifdef Q_OS_WIN
 	BOOL on = TRUE;
@@ -154,7 +174,9 @@ public:
 		if (!w || w->findChild<QWidget *>(QStringLiteral("hoverGlow"), Qt::FindDirectChildrenOnly))
 			return false;
 		int radius = 0;
-		if (qobject_cast<QAbstractButton *>(w) && (w->inherits("QPushButton") || w->inherits("QToolButton")))
+		if (w->objectName() == QStringLiteral("round"))
+			radius = std::min(w->width(), w->height()) / 2; // the round control buttons (D290)
+		else if (qobject_cast<QAbstractButton *>(w) && (w->inherits("QPushButton") || w->inherits("QToolButton")))
 			radius = 8;
 		else if (w->objectName() == QStringLiteral("strip") || w->objectName() == QStringLiteral("taskRow"))
 			radius = 10;

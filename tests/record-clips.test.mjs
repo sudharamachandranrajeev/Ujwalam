@@ -30,6 +30,26 @@ test('finishedRecording: active then stopped gives the H and V files; anything e
   assert.equal(isLive(st('stopped')), false);
 });
 
+// --- ui settings (D290) ---
+test('settings ui.motion (D290): system | on | off, written and read back; absent until chosen; bad values refused', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-set-ui-'));
+  try {
+    assert.equal(readSettings(d).ui, undefined, 'nothing chosen: no ui block');
+    assert.deepEqual(settingsProblems({ ui: { motion: 'off' } }), []);
+    assert.deepEqual(settingsProblems({ ui: { motion: 'system' } }), []);
+    assert.deepEqual(settingsProblems({ ui: { motion: 'fast' } }), ['ui.motion must be one of system, on, off']);
+    assert.match(settingsProblems({ ui: { shine: 1 } })[0], /unknown ui setting shine/);
+    assert.match(settingsProblems({ ui: 'off' })[0], /ui must be an object/);
+    writeSettings(d, { ui: { motion: 'off' } });
+    assert.deepEqual(readSettings(d).ui, { motion: 'off' });
+    writeSettings(d, { clips: { live: 'while' } });
+    assert.deepEqual(readSettings(d).ui, { motion: 'off' }, 'a clips change keeps the ui choice');
+    writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ ui: { motion: 'wild' } }));
+    assert.equal(readSettings(d).ui, undefined, 'an invalid value in the file is ignored');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+// --- end ui settings ---
+
 test('settings: defaults ask/ask, plain folders only, bad values refused, merge on write', () => {
   const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-set-'));
   try {
