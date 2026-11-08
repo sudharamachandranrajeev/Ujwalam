@@ -20,14 +20,21 @@ main step waits, results in canonical order, a step whose anchor is not selected
 
 ## Qt shell by default (D277)
 `shellChoice(args)`: no `--shell` -> `qt`, `--shell browser` -> web page, anything else -> exit 2.
-The alpha zip ships `bin/ujwalam-studio.exe` with the OBS runtime's Qt 6.8.3 DLLs (Qt6Network and
-`platforms/qwindows.dll` added; versions checked 6.8.3.0, same as the build kit); `studioShellPaths` picks the dev
-build, else the packaged exe with `QT_QPA_PLATFORM_PLUGIN_PATH`.
-Tests: `node --test tests/studio-ui-alpha.test.mjs tests/package-alpha.test.mjs`: pass (full-build E2E only with
-`UJWALAM_PACKAGE_E2E=1`). The installed studio exe starting is UNVERIFIED until the zip is built and run.
+The alpha zip (0.1.0-alpha.3) ships the studio self-contained in `studio/`: `ujwalam-studio.exe`, the Qt 6.8.3 kit
+DLLs it imports (Core, Gui, Widgets, Network) and `platforms/qwindows.dll` + `platforms/qoffscreen.dll`.
+First try used the OBS runtime's Qt (also 6.8.3.0, but OBS's own build): the exe hung at start in headless mode,
+because that runtime has no `qoffscreen` plugin (Qt waits on a "no platform plugin" box). The OBS Qt is no longer
+used for the studio. `studioShellPaths` picks the dev build, else `<root>/studio/ujwalam-studio.exe`.
+Tests:
+- `node --test tests/studio-ui-alpha.test.mjs tests/package-alpha.test.mjs`: 41 pass.
+- Packaged exe from the unzipped `out/dist/ujwalam-0.1.0-alpha.3-win64.zip`, no Qt on PATH:
+  `UJWALAM_STUDIO_TEST_EXE=<unzipped>/studio/ujwalam-studio.exe node --test tests/studio-qt-shell.test.mjs`:
+  6 pass, 0 skipped (probe, panels, click actions against a UI server with the fake host).
+- The real (non-headless) window from the installed build is UNVERIFIED until the user opens it.
 
 ## Files
 - `tools/ci.mjs`, `package.json` (`test:host`), `tests/ci.test.mjs`
-- `services/studio-ui/launch.mjs`, `tests/studio-ui-alpha.test.mjs`
+- `services/studio-ui/launch.mjs`, `tests/studio-ui-alpha.test.mjs`, `tests/studio-qt-shell.test.mjs` (`UJWALAM_STUDIO_TEST_EXE`)
+- `data/release/alpha.json`, `data/release/CHANGELOG-alpha.md` (alpha.3)
 - `tools/package/build-alpha.mjs`, `tools/package/manifest.mjs`, `tests/package-alpha.test.mjs`, `docs/how-to.md`
 - `docs/plan/2026-10-29-v1-decisions.md` (D276, D277), this file

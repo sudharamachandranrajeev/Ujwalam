@@ -16,14 +16,18 @@ import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { EXE, qtDir } from '../app/studio/tools/build.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
-const QT = qtDir();
-const skip = !existsSync(EXE) || !QT ? 'studio shell not built (npm run build:studio)' : false;
+// UJWALAM_STUDIO_TEST_EXE runs these tests against a packaged, self-contained studio exe (studio/ of an unzipped alpha
+// build, D277): its Qt DLLs sit beside it, so no Qt kit goes on PATH.
+const PACKAGED = process.env.UJWALAM_STUDIO_TEST_EXE ? path.resolve(process.env.UJWALAM_STUDIO_TEST_EXE) : null;
+const SHELL_EXE = PACKAGED ?? EXE;
+const QT = PACKAGED ? null : qtDir();
+const skip = !existsSync(SHELL_EXE) || (!PACKAGED && !QT) ? 'studio shell not built (npm run build:studio)' : false;
 
 function runShell(env) {
   return new Promise((resolve) => {
-    const child = spawn(EXE, [], {
+    const child = spawn(SHELL_EXE, [], {
       windowsHide: true,
-      env: { ...process.env, PATH: `${path.join(QT, 'bin')}${path.delimiter}${process.env.PATH}`, UJWALAM_HEADLESS: '1', ...env },
+      env: { ...process.env, ...(QT ? { PATH: `${path.join(QT, 'bin')}${path.delimiter}${process.env.PATH}` } : {}), UJWALAM_HEADLESS: '1', ...env },
     });
     let out = '', err = '';
     child.stdout.on('data', (d) => { out += d; });
