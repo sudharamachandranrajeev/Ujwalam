@@ -87,6 +87,9 @@ void draw(QPainter &p, const QString &n, const QColor &c)
 			p.restore();
 		}
 		p.drawEllipse(QPointF(12, 12), 6.6, 6.6);
+	} else if (n == QLatin1String("plus")) {
+		p.drawLine(QPointF(12, 5), QPointF(12, 19));
+		p.drawLine(QPointF(5, 12), QPointF(19, 12));
 	} else if (n == QLatin1String("more")) {
 		p.setPen(Qt::NoPen);
 		p.setBrush(c);

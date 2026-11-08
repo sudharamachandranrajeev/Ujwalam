@@ -1,0 +1,50 @@
+{
+  "$comment": "Welcome tour and short focused tours (D294 proposed). Plain words for new users. Each step points at a part of the studio window by anchor name; a step whose anchor is not on screen is skipped.",
+  "version": "0.1.0",
+  "tours": [
+    {
+      "id": "welcome",
+      "title": "Welcome tour",
+      "steps": [
+        { "id": "scenes", "anchor": "scenes", "title": "Scenes", "text": "A scene is one complete look for your stream: where your game, camera and graphics sit. Double-click a scene to switch to it. The + button adds one; right-click a scene to copy or rename it." },
+        { "id": "layers", "anchor": "layers", "title": "Layers", "text": "Layers are the things inside a scene: the game, your camera, text and pictures. Pick one to move or resize it. H and V choose which of the two pictures you are editing." },
+        { "id": "layer-menu", "anchor": "layerAdd", "title": "Add and copy layers", "text": "The + button adds a layer. Right-click a layer to copy, rename or remove it." },
+        { "id": "preview-h", "anchor": "previewH", "title": "Horizontal picture (H)", "text": "This is the wide picture for YouTube and your recordings. What you see here is what your viewers get." },
+        { "id": "preview-v", "anchor": "previewV", "title": "Vertical picture (V)", "text": "This is the tall picture for vertical videos. Keep the important parts inside it so nothing gets cut off." },
+        { "id": "look", "anchor": "look", "title": "Look", "text": "Select a layer, then use Look to round its corners, add a shadow or a filter. Move the sliders and watch the previews." },
+        { "id": "mixer", "anchor": "mixer", "title": "Audio mixer", "text": "One strip for each sound: game, microphone, music. Mute a strip, or press CUE to hear only that sound in your headphones while your viewers hear nothing extra." },
+        { "id": "stream", "anchor": "ctlStream", "title": "Start stream", "text": "This goes live. Ujwalam asks you to type a confirmation first, so you can never go live by accident." },
+        { "id": "record", "anchor": "ctlRecord", "title": "Record", "text": "Record saves your show to a file on this PC. Press it again to stop." },
+        { "id": "clip", "anchor": "ctlClip", "title": "Save clip", "text": "Saves the last 60 seconds, in both the wide and the tall picture, as clip files. Use it right after something great happens." },
+        { "id": "mark", "anchor": "ctlMark", "title": "Mark moment", "text": "Marks this exact moment so the clip maker looks at it first. Press it when you think a clip is coming." },
+        { "id": "chips", "anchor": "chips", "title": "Status chips", "text": "These show what is on right now: Live, Recording, and Clips. Red means on. The Clips chip tells you when Ujwalam is making clips." },
+        { "id": "task-bar", "anchor": "taskBar", "title": "What happens behind the scenes", "text": "When Ujwalam works on something in the background, such as cutting clips or saving settings, it shows up in this bar. Click it for the list. It never blocks you." },
+        { "id": "my-clips", "anchor": "myClips", "title": "My clips", "text": "Opens the folder with your finished clips." },
+        { "id": "settings", "anchor": "settings", "title": "Settings", "text": "Choose when clips are made, which matches get clips, and where files are saved. Tips and this tour can be switched back on under Help and tips." },
+        { "id": "help", "anchor": "help", "title": "Need help later?", "text": "Press ? any time to see how clips are made and how posting works, or to replay this tour." }
+      ]
+    },
+    {
+      "id": "clips",
+      "title": "How clips are made",
+      "steps": [
+        { "id": "clips-mark", "anchor": "ctlMark", "title": "You can point out a moment", "text": "Press Mark moment when something good happens. The clip maker looks at marked moments first." },
+        { "id": "clips-save", "anchor": "ctlClip", "title": "Or save the last minute", "text": "Save clip keeps the last 60 seconds, wide and tall, right away." },
+        { "id": "clips-chip", "anchor": "chipClips", "title": "The Clips chip", "text": "It tells you if Ujwalam is waiting for your answer, making clips, or done. Hover it to see your choices." },
+        { "id": "clips-bar", "anchor": "taskBar", "title": "Progress", "text": "While clips are made, the steps and progress show in this bar: reading the game screen, then cutting clips." },
+        { "id": "clips-folder", "anchor": "myClips", "title": "Where clips go", "text": "Finished clips are saved in this folder." },
+        { "id": "clips-settings", "anchor": "settings", "title": "Your choices", "text": "In Settings, Clips, choose when to make clips and which matches count, for example only matches where you finish in the top 3." }
+      ]
+    },
+    {
+      "id": "posting",
+      "title": "Posting your clips",
+      "steps": [
+        { "id": "posting-folder", "anchor": "myClips", "title": "Start from your clips", "text": "Posting works on finished clips. They are saved in this folder first." },
+        { "id": "posting-more", "anchor": "more", "title": "The Posts view", "text": "Open More. If Posts is in the list, posting is switched on in this build. It shows one package per clip to read and approve." },
+        { "id": "posting-settings", "anchor": "settings", "title": "Switches", "text": "Posting is off until you turn it on under Settings, Advanced. Turning it on asks you to type a confirmation." },
+        { "id": "posting-help", "anchor": "help", "title": "What is built", "text": "Press ? and open Posting your clips to see exactly what works today and what still needs your yes." }
+      ]
+    }
+  ]
+}

@@ -255,9 +255,9 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.flagsInSettings, false, 'hidden until Settings > Advanced borrows it');
     assert.ok(p.flags.length > 5, 'still loaded: the list follows the server');
   });
-  test('Settings (D290): sections Clips, Folders, Layer effects, Appearance, Advanced; the layer-effects item and animations choice are there', async () => {
+  test('Settings (D290, D294): sections Clips, Folders, Layer effects, Appearance, Advanced; the layer-effects item and animations choice are there', async () => {
     const p = await probe([], 6000, 'settings-open');
-    assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Appearance', 'Advanced']);
+    assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Appearance', 'Help & tips', 'Advanced']);
     assert.equal(p.settings.layerEffects, false);
     assert.equal(p.settings.layerEffectsText, 'Show layer effects from the scene (rounded corners, shadows, video buttons)');
     assert.equal(p.settings.motionChoices, 3, 'Follow Windows / Always on / Off');
@@ -370,7 +370,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('add buttons (D292): a + above the scene list and the layer list opens the add windows; no flag needed', async () => {
     const p = await probe([], 6500, 'add-button:layer', null, {}, { project: true });
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['add-button:layer', true]]);
-    assert.deepEqual(p.addButtons, { scene: { enabled: true, tip: 'Add scene', text: '+' }, layer: { enabled: true, tip: 'Add layer', text: '+' } });
+    assert.deepEqual(p.addButtons, { scene: { enabled: true, tip: 'Add scene', icon: true }, layer: { enabled: true, tip: 'Add layer', icon: true } });
     assert.equal(p.addDialog.kind, 'layer');
     assert.match(p.addDialog.title, /^Add layer to "Gameplay"$/);
     const by = Object.fromEntries(p.addDialog.kinds.map((k) => [k.kind, k]));
@@ -423,7 +423,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('while live (D292): the + buttons and every structure menu item are greyed with "Not while live"; Show/Hide and Move stay on', async () => {
     const p = await probe([], 6500, 'select-layer:game,layer-menu:show,add-button:layer,layer-menu:duplicate', null, {}, { project: true, live: true });
     assert.equal(p.live, true);
-    assert.deepEqual(p.addButtons, { scene: { enabled: false, tip: 'Not while live', text: '+' }, layer: { enabled: false, tip: 'Not while live', text: '+' } });
+    assert.deepEqual(p.addButtons, { scene: { enabled: false, tip: 'Not while live', icon: true }, layer: { enabled: false, tip: 'Not while live', icon: true } });
     const by = Object.fromEntries(p.menu.items.map((i) => [i.id, i]));
     for (const id of ['add', 'duplicate', 'rename', 'delete']) assert.deepEqual([id, by[id].enabled, by[id].tip], [id, false, 'Not while live']);
     for (const id of ['visible', 'up', 'copylook', 'look']) assert.equal(by[id].enabled, true, id);
@@ -433,6 +433,113 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(q.menu.items.map((i) => [i.id, i.enabled]), [['addscene', false], ['add', false], ['rename', false], ['duplicate', false], ['delete', false]]);
   });
   // --- end add ---
+
+  // --- tips, tour and help (D294 proposed) ---
+  const settingsOf = (dir) => JSON.parse(readFileSync(path.join(dir, 'settings.json'), 'utf8'));
+  const guideFile = (dir) => { try { return settingsOf(dir).ui?.guide; } catch { return undefined; } };
+  const prepGuide = (guide) => (d) => writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ ui: { guide } }));
+  const done = (p) => p.actions.map((a) => [a.action, a.done]);
+
+  test('guide: text and choices load; the window registers its anchors; nothing starts by itself on a window that is not shown', async () => {
+    const p = await probe([]);
+    assert.equal(p.guide.ready, true);
+    assert.deepEqual(p.guide.tours, ['welcome', 'clips', 'posting']);
+    assert.equal(p.guide.hintDefs, 6);
+    assert.deepEqual([p.guide.tips, p.guide.tourDone, p.guide.dismissed], [true, false, []]);
+    assert.equal(p.guide.coach.active, false);
+    assert.equal(p.guide.help.open, false);
+    for (const a of ['scenes', 'layers', 'previewH', 'previewV', 'mixer', 'ctlStream', 'ctlRecord', 'ctlClip', 'ctlMark', 'chips', 'chipClips', 'taskChip', 'myClips', 'settings', 'more', 'help', 'layerAdd', 'sceneAdd']) assert.ok(p.guide.anchors.includes(a), a);
+  });
+  test('guide: the welcome tour starts, steps forward and back, and skips a step whose anchor is missing', async () => {
+    const p = await probe([], 7000, 'guide-tour:start,guide-tour:next,guide-tour:next,guide-tour:back');
+    assert.deepEqual(done(p), [['guide-tour:start', true], ['guide-tour:next', true], ['guide-tour:next', true], ['guide-tour:back', true]]);
+    const c = p.guide.coach;
+    assert.equal(c.active, true);
+    assert.equal(c.tour, 'welcome');
+    assert.equal(c.step, 2, 'forward twice, back once');
+    assert.ok(c.of >= 12 && c.of <= 16, `steps shown: ${c.of} (16, or fewer if a part is hidden)`);
+    assert.equal(c.count, `STEP 2 OF ${c.of}`);
+    assert.equal(c.stepId, 'layers');
+    assert.equal(c.neverOffered, true);
+    assert.ok(c.hole.w > 5 && c.hole.h > 5, 'a spotlight on the step widget');
+  });
+  test('guide: the whole welcome tour, to Done, marks it done in settings.json', async () => {
+    const acts = ['guide-tour:start', ...Array(17).fill('guide-tour:next')].join(',');
+    const p = await probe([], 15500, acts);
+    assert.equal(p.actions[0].done, true);
+    assert.equal(p.guide.coach.active, false, 'the last Done closes it');
+    assert.deepEqual(p.guide.coach.overlaps, [], 'on no step does the card cover the control it points at');
+    assert.equal(guideFile(p.dataDir).tourDone, true);
+    assert.equal(p.guide.tourDone, true);
+  });
+  test('guide: Skip with the box ticked is remembered; Skip without it is not', async () => {
+    const a = await probe([], 6500, 'guide-tour:start,guide-tour:tick,guide-tour:skip');
+    assert.deepEqual(done(a), [['guide-tour:start', true], ['guide-tour:tick', true], ['guide-tour:skip', true]]);
+    assert.equal(a.guide.coach.active, false);
+    assert.equal(guideFile(a.dataDir).tourDone, true);
+    const b = await probe([], 5500, 'guide-tour:start,guide-tour:close');
+    assert.equal(b.guide.coach.active, false);
+    assert.equal(b.guide.tourDone, false);
+    assert.equal(guideFile(b.dataDir), undefined, 'nothing written: it comes back next time');
+  });
+  test('guide: a focused tour (clips) runs on the related controls and does not touch the welcome choice', async () => {
+    const p = await probe([], 8500, 'guide-tour:start:clips,guide-tour:next,guide-tour:next,guide-tour:next,guide-tour:next,guide-tour:next');
+    const c = p.guide.coach;
+    assert.deepEqual([c.tour, c.of, c.step, c.next, c.neverOffered], ['clips', 6, 6, 'Done', false]);
+    assert.equal(c.anchor, 'settings');
+    assert.deepEqual(c.overlaps, [], 'the card never covers its target');
+    assert.equal(p.guide.tourDone, false);
+  });
+  test('guide: the help panel opens with its two sections; Show me runs the related tour; Replay runs the welcome tour', async () => {
+    const o = await probe(['posting'], 6500, 'guide-help:open');
+    assert.deepEqual(done(o), [['guide-help:open', true]]);
+    assert.equal(o.guide.help.open, true);
+    assert.deepEqual(o.guide.help.sections, ['How clips are made', 'Posting your clips']);
+    assert.match(o.guide.help.facts, /posting is ON, automatic posting is OFF/);
+    const s = await probe([], 7000, 'guide-help:open,guide-help:show-posting');
+    assert.equal(s.guide.help.open, false, 'the panel closes to show the controls');
+    assert.deepEqual([s.guide.coach.active, s.guide.coach.tour], [true, 'posting']);
+    assert.match(s.guide.help.facts, /posting is OFF, automatic posting is OFF/);
+    const r = await probe([], 7000, 'guide-help:open,guide-help:replay');
+    assert.deepEqual([r.guide.coach.active, r.guide.coach.tour, r.guide.help.open], [true, 'welcome', false]);
+  });
+  test('guide: a hint shows once its thing happens; the box saves "do not show again" and it stays away, also in the next run', async () => {
+    const p = await probe([], 8000, 'guide-hint:went-live,guide-hint:tick-gotit,guide-hint:went-live');
+    assert.deepEqual(done(p), [['guide-hint:went-live', true], ['guide-hint:tick-gotit', true], ['guide-hint:went-live', false]]);
+    assert.equal(p.guide.hint.showing, false);
+    assert.deepEqual(guideFile(p.dataDir).dismissed, ['went-live']);
+    const again = await probe([], 5000, 'guide-hint:went-live', prepGuide({ dismissed: ['went-live'] }));
+    assert.deepEqual(done(again), [['guide-hint:went-live', false]], 'dismissed for good');
+    assert.equal(again.guide.hint.seen, 0);
+  });
+  test('guide: a hint closed without the box is not saved; only one hint at a time; none while a tour runs', async () => {
+    const p = await probe([], 8500, 'guide-hint:went-live,guide-hint:clip-run-started,guide-hint:close,guide-tour:start,guide-hint:clip-run-started');
+    assert.deepEqual(done(p), [['guide-hint:went-live', true], ['guide-hint:clip-run-started', false], ['guide-hint:close', true], ['guide-tour:start', true], ['guide-hint:clip-run-started', false]]);
+    assert.equal(guideFile(p.dataDir)?.dismissed?.length ?? 0, 0);
+  });
+  test('guide: a hint hides itself after its time (UJWALAM_GUIDE_HINT_MS stands in for 8 s) and is not saved', async () => {
+    const p = await probe([], 6500, 'guide-hint:went-live', null, { UJWALAM_GUIDE_HINT_MS: '400' });
+    assert.equal(p.actions[0].done, true);
+    assert.equal(p.guide.hint.seen, 1);
+    assert.equal(p.guide.hint.showing, false, 'gone by itself');
+    assert.equal(guideFile(p.dataDir), undefined);
+  });
+  test('guide: tips off in Settings stops hints and is saved; Reset clears the dismissed list and the tour choice', async () => {
+    const off = await probe([], 8500, 'settings-open,guide-settings:tips-off,guide-hint:went-live');
+    assert.deepEqual(done(off), [['settings-open', true], ['guide-settings:tips-off', true], ['guide-hint:went-live', false]]);
+    assert.equal(guideFile(off.dataDir).tips, false);
+    assert.equal(off.guide.tips, false);
+    const reset = await probe([], 8500, 'settings-open,guide-settings:reset,guide-hint:went-live', prepGuide({ dismissed: ['went-live', 'first-task'], tourDone: true, tips: true }));
+    assert.deepEqual(done(reset), [['settings-open', true], ['guide-settings:reset', true], ['guide-hint:went-live', true]]);
+    assert.deepEqual(guideFile(reset.dataDir), { tips: true, dismissed: [], tourDone: false });
+    assert.equal(reset.guide.hint.id, 'went-live', 'shows again after the reset');
+  });
+  test('guide: Settings > Help & tips: Replay closes Settings and starts the tour', async () => {
+    const p = await probe([], 8000, 'settings-open,guide-settings:replay', prepGuide({ tourDone: true }));
+    assert.equal(p.guide.coach.tour, 'welcome');
+    assert.equal(p.guide.coach.active, true);
+  });
+  // --- end tips, tour and help ---
   test('typed confirms (D279): a flag ticked on asks for the phrase; a wrong phrase asks again, "yes" turns it on, Cancel leaves it off', async () => {
     const p = await probe([], 9000, 'flag-on:transitions,type:nope,type:yes,flag-on:bot-manager,cancel,type:yes');
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [
