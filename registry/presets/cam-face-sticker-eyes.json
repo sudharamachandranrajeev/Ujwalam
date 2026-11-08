@@ -1,0 +1,34 @@
+{
+  "id": "cam-face-sticker-eyes",
+  "version": "0.1.0",
+  "function": "camera-face-sticker",
+  "functionVersion": "^0.1.0",
+  "name": "Sticker on eyes (file)",
+  "params": {
+    "effect": {
+      "type": "faceSticker",
+      "anchor": "eyes",
+      "scale": 2.2,
+      "offsetX": 0,
+      "offsetY": 0
+    }
+  },
+  "themeOverrides": {},
+  "family": "camera",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "cam-face-follow"
+  ]
+}

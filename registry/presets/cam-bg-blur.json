@@ -1,0 +1,35 @@
+{
+  "id": "cam-bg-blur",
+  "version": "0.1.0",
+  "function": "camera-background-effects",
+  "functionVersion": "^0.2.0",
+  "name": "Blur background",
+  "params": {
+    "effect": {
+      "type": "personMask",
+      "mode": "blur",
+      "threshold": 0.5,
+      "feather": 0.3,
+      "smoothing": 0.4,
+      "strength": 24
+    }
+  },
+  "themeOverrides": {},
+  "family": "camera",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "cam-bg-remove"
+  ]
+}

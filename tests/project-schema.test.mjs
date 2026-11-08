@@ -90,6 +90,13 @@ const BAD = [
   ['two blend effects', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blendMultiply', opacity: 1 }, { type: 'blendScreen', opacity: 1 }]; }, false],
   ['lut file not .cube or .png', (d) => { d.scenes[0].layers[3].effects = [{ type: 'lut', file: { base: 'media', rel: 'grade.jpg' }, amount: 1 }]; }, false],
   ['imageMask file outside its base', (d) => { d.scenes[0].layers[3].effects = [{ type: 'imageMask', file: { base: 'media', rel: '../m.png' }, channel: 'luma', invert: false, feather: 0 }]; }, false],
+  // face AI (D295 proposed)
+  ['personMask mode cutout', (d) => { d.scenes[0].layers[3].effects = [{ type: 'personMask', mode: 'cutout', threshold: 0.5, feather: 0.1, smoothing: 0.3 }]; }, true],
+  ['personMask smoothing 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'personMask', threshold: 0.5, feather: 0.1, smoothing: 1 }]; }, true],
+  ['personMask without threshold', (d) => { d.scenes[0].layers[3].effects = [{ type: 'personMask', feather: 0.1, smoothing: 0.3 }]; }, true],
+  ['autoFrame zoom 5', (d) => { d.scenes[0].layers[3].effects = [{ type: 'autoFrame', zoom: 5, smoothing: 0.5, deadzone: 0.1 }]; }, true],
+  ['faceSticker anchor chin', (d) => { d.scenes[0].layers[3].effects = [{ type: 'faceSticker', file: { base: 'media', rel: 's.png' }, anchor: 'chin', scale: 1, offsetX: 0, offsetY: 0 }]; }, true],
+  ['faceSticker without file', (d) => { d.scenes[0].layers[3].effects = [{ type: 'faceSticker', anchor: 'eyes', scale: 1, offsetX: 0, offsetY: 0 }]; }, true],
   // semantic only
   ['duplicate of a missing layer', (d) => { d.scenes[1].layers.push(dupLayer('layer-d1', 'layer-nope')); }, false],
   ['duplicate of itself (cycle)', (d) => { d.scenes[1].layers.push(dupLayer('layer-d1', 'layer-d1')); }, false],
@@ -161,6 +168,19 @@ test('D291 filter, camera and compositing effects are valid (schema and validato
     { type: 'gradientMask', angle: 90, start: 0.6, end: 1 },
     { type: 'imageMask', file: { base: 'media', rel: 'masks/heart.png' }, channel: 'luma', invert: true, feather: 4 },
     { type: 'lut', file: { base: 'media', rel: 'luts/warm.PNG' }, amount: 1 }] });
+  assert.equal(schemaCheck(d), true, JSON.stringify(schemaCheck.errors));
+  assert.deepEqual(validateProject(d).errors, []);
+});
+
+test('face AI effects (D295 proposed) are valid (schema and validator)', () => {
+  const d = sample();
+  d.scenes[0].layers[3].effects = [
+    { type: 'personMask', threshold: 0.5, feather: 0.1, smoothing: 0.3 },
+    { type: 'autoFrame', zoom: 1.6, smoothing: 0.5, deadzone: 0.1 },
+    { type: 'faceSticker', file: { base: 'media', rel: 'stickers/glasses.png' }, anchor: 'eyes', scale: 2.2, offsetX: 0, offsetY: 0 }];
+  d.scenes[1].layers.push({ ...dupLayer('layer-d1', 'layer-cam'), effects: [
+    { type: 'personMask', mode: 'blur', threshold: 0.5, feather: 0.2, smoothing: 0.5, strength: 30 },
+    { type: 'personMask', mode: 'replace', threshold: 0.6, feather: 0.1, smoothing: 0, color: '#00b140', file: { base: 'media', rel: 'bg/room.png' } }] });
   assert.equal(schemaCheck(d), true, JSON.stringify(schemaCheck.errors));
   assert.deepEqual(validateProject(d).errors, []);
 });

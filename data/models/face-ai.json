@@ -1,0 +1,99 @@
+{
+  "$comment": "Face AI models (flag face-ai, docs/plan/2026-11-08-face-ai-design.md). Model files are NOT committed: services/face/fetch_models.py downloads each from its pinned URL into data/models/face/ (gitignored) and refuses a file whose SHA-256 differs. Checked 2026-11-08.",
+  "version": 1,
+  "dir": "data/models/face",
+  "models": [
+    {
+      "id": "selfie-landscape",
+      "role": "segmentation",
+      "default": true,
+      "file": "selfie_segmentation_landscape.onnx",
+      "bytes": 462338,
+      "sha256": "7a0adcfdb1715d3b0ff0f61486d8a181c33f4a208343a5abfccbc6540e872d24",
+      "url": "https://huggingface.co/onnx-community/mediapipe_selfie_segmentation_landscape/resolve/2497d5bec26c626c7b3c4edc6e1fefc21b64f6c3/onnx/model.onnx",
+      "version": "MediaPipe Selfie Segmentation (landscape), ONNX by onnx-community, revision 2497d5be",
+      "licence": "Apache-2.0",
+      "licenceSource": "Hugging Face model card onnx-community/mediapipe_selfie_segmentation_landscape (license: apache-2.0); upstream MediaPipe model card (Apache-2.0)",
+      "input": "pixel_values float32 [1,3,144,256] RGB 0..1",
+      "output": "alphas float32 [1,1,144,256] 0..1"
+    },
+    {
+      "id": "selfie-square",
+      "role": "segmentation",
+      "file": "selfie_segmentation.onnx",
+      "bytes": 462352,
+      "sha256": "3241ac4ad8aa35bdaf33946776db29f7c283a413aa0b0dacb9483594b4531aad",
+      "url": "https://huggingface.co/onnx-community/mediapipe_selfie_segmentation/resolve/be49485c8e027524be38591817fc5cd31bd9d00e/onnx/model.onnx",
+      "version": "MediaPipe Selfie Segmentation (general, 256x256), ONNX by onnx-community, revision be49485c",
+      "licence": "Apache-2.0",
+      "licenceSource": "Hugging Face model card onnx-community/mediapipe_selfie_segmentation (license: apache-2.0)",
+      "input": "pixel_values float32 [1,3,256,256] RGB 0..1",
+      "output": "alphas float32 [1,1,256,256] 0..1"
+    },
+    {
+      "id": "modnet-fp16",
+      "role": "segmentation",
+      "file": "modnet_fp16.onnx",
+      "bytes": 12984781,
+      "sha256": "25f165da9bfd30830a575f1f0490f1acd995975cb349bc02f3d79332e1fe5cf6",
+      "url": "https://huggingface.co/Xenova/modnet/resolve/fa2fa546052fba4c08921230a26cc69a333fca12/onnx/model_fp16.onnx",
+      "version": "MODNet photographic portrait matting, ONNX fp16 by Xenova, revision fa2fa546",
+      "licence": "Apache-2.0",
+      "licenceSource": "Hugging Face model card Xenova/modnet (license: apache-2.0); upstream ZHKKKe/MODNet repository Apache-2.0 (weights licence assumed equal to the repository's: UNVERIFIED)",
+      "input": "input float32 [1,3,H,W] RGB normalised (x - 0.5) / 0.5, H and W multiples of 32",
+      "output": "output float32 [1,1,H,W] alpha 0..1"
+    },
+    {
+      "id": "rvm-mobilenetv3",
+      "role": "segmentation",
+      "file": "rvm_mobilenetv3_fp32.onnx",
+      "bytes": 14975696,
+      "sha256": "88d4531297118f595bf2fd60f6f566aec2e559393802d1f436c380f0cbbd2828",
+      "url": "https://github.com/PeterL1n/RobustVideoMatting/releases/download/v1.0.0/rvm_mobilenetv3_fp32.onnx",
+      "version": "Robust Video Matting v1.0.0, MobileNetV3, fp32 (official release)",
+      "licence": "GPL-3.0",
+      "licenceSource": "github.com/PeterL1n/RobustVideoMatting LICENSE (GPL-3.0); compatible with this repository (GPL-3.0-or-later)",
+      "input": "src float32 [1,3,H,W] RGB 0..1, recurrent r1i..r4i, downsample_ratio [1]",
+      "output": "fgr, pha float32 [1,1,H,W] alpha 0..1, recurrent r1o..r4o"
+    },
+    {
+      "id": "yunet",
+      "role": "face-detection",
+      "default": true,
+      "file": "face_detection_yunet_2023mar.onnx",
+      "bytes": 232589,
+      "sha256": "8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4",
+      "url": "https://huggingface.co/opencv/face_detection_yunet/resolve/3cc26e7f1014a5ee5d74a42acee58bafc9d0a310/face_detection_yunet_2023mar.onnx",
+      "version": "YuNet 2023mar (OpenCV Zoo), revision 3cc26e7f",
+      "licence": "MIT",
+      "licenceSource": "LICENSE file in opencv/face_detection_yunet (MIT, Copyright (c) 2020 Shiqi Yu), SHA-256 c83b8120c50ccbd4c4f96edf53141bdd566ebb8f8e9227e415326aa1b1aba958",
+      "input": "run through cv2.FaceDetectorYN (OpenCV 5), BGR uint8",
+      "output": "faces: box x,y,w,h, 5 keypoints (eyes, nose, mouth corners), score"
+    },
+    {
+      "id": "facemesh-468",
+      "role": "face-landmarks",
+      "default": true,
+      "archive": {
+        "url": "https://qaihub-public-assets.s3.us-west-2.amazonaws.com/qai-hub-models/models/mediapipe_face/releases/v0.66.0/mediapipe_face-onnx-float.zip",
+        "bytes": 2605273,
+        "sha256": "f6d60fdf53ccf6fa2ce1f3b103fcc468b6860b4e707223a0a6d6733b35e0c630",
+        "members": {
+          "mediapipe_face-onnx-float/face_landmark_detector.onnx": "face_landmark_detector.onnx",
+          "mediapipe_face-onnx-float/face_landmark_detector.data": "face_landmark_detector.data"
+        }
+      },
+      "file": "face_landmark_detector.onnx",
+      "bytes": 312873,
+      "sha256": "ebd4d22b162cfb3f8113fa48908859a4413c45a82a9ae0bd8a1e5a56f1fb9c5f",
+      "extra": [
+        { "file": "face_landmark_detector.data", "bytes": 2396848, "sha256": "7b4be428f66b16768aecb31954848ec9512eb444f13eaf6fc4690acc981d9732" }
+      ],
+      "version": "MediaPipe Face Mesh (468 points, v1 landmark model) via MediaPipePyTorch, ONNX float from Qualcomm AI Hub Models release v0.66.0",
+      "licence": "Apache-2.0",
+      "licenceSource": "Hugging Face model card qualcomm/MediaPipe-Face-Detection (license: apache-2.0); its LICENSE points to github.com/zmurez/MediaPipePyTorch (Apache-2.0)",
+      "input": "image float32 [1,3,192,192] RGB 0..1 (face crop)",
+      "output": "scores [1], landmarks [1,468,3] (x, y in crop pixels 0..192 or 0..1: normalised by the loader, see services/face/face_models.py)"
+    }
+  ]
+}

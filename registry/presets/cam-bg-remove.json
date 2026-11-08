@@ -1,0 +1,34 @@
+{
+  "id": "cam-bg-remove",
+  "version": "0.1.0",
+  "function": "camera-background-effects",
+  "functionVersion": "^0.2.0",
+  "name": "Remove background",
+  "params": {
+    "effect": {
+      "type": "personMask",
+      "mode": "remove",
+      "threshold": 0.5,
+      "feather": 0.2,
+      "smoothing": 0.4
+    }
+  },
+  "themeOverrides": {},
+  "family": "camera",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "cam-bg-blur"
+  ]
+}

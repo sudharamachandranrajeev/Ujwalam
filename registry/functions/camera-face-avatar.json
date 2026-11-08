@@ -1,0 +1,24 @@
+{
+  "id": "camera-face-avatar",
+  "version": "0.1.0",
+  "category": "sources-camera-audio",
+  "family": "camera",
+  "name": "Face-driven avatar",
+  "description": "An avatar from any reference image driven by the streamer's face (D295 proposed). Approach A (prototype, offline only): landmarks on the reference (or manual anchors), Delaunay triangulation and a piecewise-affine warp driven by the streamer's landmark deltas (head turn, blink, mouth, brows); services/face/avatar.py renders a recorded or synthetic landmark sequence to video. Approach B (LivePortrait-class neural reenactment) evaluated on paper only. Not wired into the host; live use needs the user's decision.",
+  "params": {
+    "schema": {},
+    "defaults": {},
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "planned",
+  "planSection": "4.4"
+}

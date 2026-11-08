@@ -337,23 +337,41 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what,
 				if (ext != ".cube" && ext.substr(1) != ".png")
 					throw Error(rpc::INVALID_PARAMS, w + ": lut file must be .cube or .png");
 			}
-			{ // the ref is checked (keys, base, rel) even without bases
-				Options o;
-				if (bases)
-					o.bases = *bases;
-				Unavail u;
-				fx.path = resolve_file(*f, o, w, u);
-				if (bases && fx.path.empty()) {
-					if (!warnings)
-						throw Error(rpc::UNAVAILABLE, w + ": " + fx.type + " file: " + u.reason);
-					json::Value wv = json::Value::object();
-					wv.set("layer", what.rfind("layer ", 0) == 0 ? what.substr(6) : what);
-					wv.set("effect", fx.type);
-					wv.set("reason", fx.type + " file " + u.reason + "; the layer is shown without this effect");
-					warnings->push(std::move(wv));
-					continue;
-				}
+		} else if (fx.type == "personMask") { // D295 proposed
+			chk::only_keys(x, {"type", "mode", "threshold", "feather", "smoothing", "strength", "color", "file"}, w);
+			chk::require(x, {"threshold", "feather", "smoothing"}, w);
+			fx.mode = chk::get_str(x, "mode", "remove", 8, w);
+			if (fx.mode != "remove" && fx.mode != "blur" && fx.mode != "replace")
+				throw Error(rpc::INVALID_PARAMS, w + ": personMask mode must be remove, blur or replace");
+			fx.threshold = chk::get_num(x, "threshold", 0.5, 0, 1, w);
+			fx.feather = chk::get_num(x, "feather", 0.1, 0, 1, w);
+			fx.smoothing = chk::get_num(x, "smoothing", 0, 0, 0.95, w);
+			fx.value = chk::get_num(x, "strength", 20, 1, 100, w);
+			fx.color = x.find("color") ? hex_color(x, "color", w) : 0x00b140;
+			if (const json::Value *f = x.find("file")) {
+				if (!f->is_object())
+					throw Error(rpc::INVALID_PARAMS, w + ": file must be {base, rel}");
+				fx.file = *f;
 			}
+		} else if (fx.type == "autoFrame") {
+			chk::only_keys(x, {"type", "zoom", "smoothing", "deadzone"}, w);
+			chk::require(x, {"zoom", "smoothing", "deadzone"}, w);
+			fx.zoom = chk::get_num(x, "zoom", 1.6, 1, 4, w);
+			fx.smoothing = chk::get_num(x, "smoothing", 0.5, 0, 5, w);
+			fx.deadzone = chk::get_num(x, "deadzone", 0.1, 0, 0.5, w);
+		} else if (fx.type == "faceSticker") {
+			chk::only_keys(x, {"type", "file", "anchor", "scale", "offsetX", "offsetY"}, w);
+			chk::require(x, {"file", "anchor", "scale", "offsetX", "offsetY"}, w);
+			fx.anchor = chk::get_str(x, "anchor", "", 8, w);
+			if (fx.anchor != "eyes" && fx.anchor != "nose" && fx.anchor != "forehead" && fx.anchor != "mouth")
+				throw Error(rpc::INVALID_PARAMS, w + ": faceSticker anchor must be eyes, nose, forehead or mouth");
+			fx.scale = chk::get_num(x, "scale", 1, 0.1, 10, w);
+			fx.offset_x = chk::get_num(x, "offsetX", 0, -5, 5, w);
+			fx.offset_y = chk::get_num(x, "offsetY", 0, -5, 5, w);
+			const json::Value *f = x.find("file");
+			if (!f || !f->is_object())
+				throw Error(rpc::INVALID_PARAMS, w + ": file must be {base, rel}");
+			fx.file = *f;
 		} else if (fx.type == "mirror" || fx.type == "flip") {
 			chk::only_keys(x, {"type"}, w);
 		} else if (fx.type == "circleMask" || fx.type == "roundMask") {
@@ -388,11 +406,33 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what,
 			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow, glow, color, toner, cornerPin, blinds, "
 							      "sharpen, vignette, grain, pixelate, posterize, lut, mirror, flip, circleMask, roundMask, "
 							      "opacity, blendAdd, blendSubtract, blendMultiply, blendScreen, blendLighten, blendDarken, "
-							      "gradientMask or imageMask");
+							      "gradientMask, imageMask, personMask, autoFrame or faceSticker");
+		}
+		if (fx.file.is_object()) { // lut, imageMask, personMask (replace image), faceSticker: the ref is checked
+			Options o;         // (keys, base, rel) even without bases
+			if (bases)
+				o.bases = *bases;
+			Unavail u;
+			fx.path = resolve_file(fx.file, o, w, u);
+			if (bases && fx.path.empty()) {
+				if (!warnings)
+					throw Error(rpc::UNAVAILABLE, w + ": " + fx.type + " file: " + u.reason);
+				json::Value wv = json::Value::object();
+				wv.set("layer", what.rfind("layer ", 0) == 0 ? what.substr(6) : what);
+				wv.set("effect", fx.type);
+				wv.set("reason", fx.type + " file " + u.reason + "; the layer is shown without this effect");
+				warnings->push(std::move(wv));
+				continue;
+			}
 		}
 		r.push_back(fx);
 	}
 	return r;
+}
+
+bool is_face(const std::string &type)
+{
+	return type == "personMask" || type == "autoFrame" || type == "faceSticker";
 }
 
 bool is_blend(const std::string &type)
@@ -482,6 +522,25 @@ json::Value effects_json(const std::vector<Effect> &e)
 			o.set("angle", fx.angle);
 			o.set("start", fx.start);
 			o.set("end", fx.end);
+		} else if (fx.type == "personMask") {
+			o.set("mode", fx.mode);
+			o.set("threshold", fx.threshold);
+			o.set("feather", fx.feather);
+			o.set("smoothing", fx.smoothing);
+			o.set("strength", fx.value);
+			o.set("color", hex_of(fx.color));
+			if (fx.file.is_object())
+				o.set("file", fx.file);
+		} else if (fx.type == "autoFrame") {
+			o.set("zoom", fx.zoom);
+			o.set("smoothing", fx.smoothing);
+			o.set("deadzone", fx.deadzone);
+		} else if (fx.type == "faceSticker") {
+			o.set("file", fx.file);
+			o.set("anchor", fx.anchor);
+			o.set("scale", fx.scale);
+			o.set("offsetX", fx.offset_x);
+			o.set("offsetY", fx.offset_y);
 		} else {
 			o.set(fx.type == "blur" ? "strength" : "radius", fx.value);
 		}

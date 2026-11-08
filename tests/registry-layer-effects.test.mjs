@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Layer effect presets (D258, D291 proposed): every preset whose params carry one layer effect is a valid project
-// effect, and its function's defaults are too. File effects (lut, imageMask) get their file when applied.
+// effect, and its function's defaults are too. File effects (lut, imageMask, faceSticker) get their file when applied.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
@@ -13,7 +13,7 @@ const read = (dir) => readdirSync(path.join(ROOT, 'registry', dir)).filter((f) =
   .map((f) => JSON.parse(readFileSync(path.join(ROOT, 'registry', dir, f), 'utf8')));
 
 function doc(effect) {
-  const fx = 'file' in effect || !['lut', 'imageMask'].includes(effect.type) ? effect : { ...effect, file: { base: 'media', rel: effect.type === 'lut' ? 'look.cube' : 'mask.png' } };
+  const fx = 'file' in effect || !['lut', 'imageMask', 'faceSticker'].includes(effect.type) ? effect : { ...effect, file: { base: 'media', rel: effect.type === 'lut' ? 'look.cube' : 'mask.png' } };
   return {
     version: 1, id: 'preset-check', name: 'Preset check', activeScene: 'main',
     canvases: [{ id: 'h', width: 1920, height: 1080, fps: 60 }], devices: [], overlays: [], outputs: [],

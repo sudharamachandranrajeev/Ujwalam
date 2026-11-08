@@ -225,6 +225,22 @@ export function clipsEnv({ hostClipsToken, hostDiscovery, base = process.env }) 
   return { ...env, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery };
 }
 
+/** Environment for the face AI worker (D295 proposed): no host token at all (it only opens the host's face link, an
+ *  owner-only shared-memory section named after the host pid), only the discovery file for that pid. */
+export function faceEnv({ hostDiscovery, base = process.env }) {
+  const env = {};
+  for (const [k, v] of Object.entries(base)) if (!/^UJWALAM_.*(TOKEN|KEY)/i.test(k)) env[k] = v;
+  return { ...env, UJWALAM_HOST_DISCOVERY: hostDiscovery };
+}
+
+/** Face AI worker child (D295 proposed): services/face/face_worker.py on .venv-gpu (onnxruntime-directml), or null
+ *  with the reason. It idles while the face-ai flag is off. */
+export function faceSpec({ dataDir, repo = REPO, exists = existsSync }) {
+  const py = path.join(repo, '.venv-gpu', 'Scripts', 'python.exe');
+  if (!exists(py)) return { spec: null, reason: 'no .venv-gpu (onnxruntime-directml)' };
+  return { spec: { exe: py, argv: ['-I', path.join(repo, 'services', 'face', 'face_worker.py'), '--data-dir', dataDir] } };
+}
+
 /** HUD safe-zone warnings (L12/L13, warn only): overlays above the game capture that cover the game's HUD
  *  (data/games/codm/hud-zones.json, unverified zones). Never throws; a missing file or project gives no warnings. */
 export function hudWarnings(projectFile, game = 'codm') {
@@ -885,6 +901,28 @@ export async function main(argv = process.argv.slice(2)) {
         };
         startClipper();
         console.log(`[studio] live clipper started (OCR ${lc.spec.gpu ? 'GPU, DirectML' : 'CPU'}; acts only while the live-clips flag is on)`);
+      }
+      // Face AI worker (D295 proposed): idles while the face-ai flag is off; no host token. A crash only makes the
+      // host's face effects fall back to the plain camera. Restarted at most 5 times.
+      const fs_ = faceSpec({ dataDir, repo: CLIP_ROOT });
+      if (!fs_.spec) console.log(`[studio] face worker not started: ${fs_.reason}`);
+      else {
+        let restarts = 0;
+        const startFace = () => {
+          const c = spawn(fs_.spec.exe, fs_.spec.argv, { stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true, env: { ...faceEnv({ hostDiscovery }), ...PARENT_PIPE } });
+          children.push(c);
+          c.once('exit', (code) => {
+            const i = children.indexOf(c);
+            if (i >= 0) children.splice(i, 1);
+            if (stopping) return;
+            if (restarts >= 5) { console.log(`[studio] face worker exited (${code}); not restarted again`); return; }
+            restarts += 1;
+            console.log(`[studio] face worker exited (${code}); restart ${restarts}/5 in 10 s`);
+            setTimeout(() => { if (!stopping) startFace(); }, 10_000).unref();
+          });
+        };
+        startFace();
+        console.log('[studio] face worker started (acts only while the face-ai flag is on)');
       }
     }
     if (disc) {

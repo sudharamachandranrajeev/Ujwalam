@@ -1,0 +1,61 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_person_mask filter (src/effects.cpp, D295 proposed). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Person mask: `mask` (R8, from the face AI worker through the face link, covers the whole camera source) is read at
+// mask uv = uv * maskmap.xy + maskmap.zw (the layer may show a crop of the source). The person's share
+//   a = smoothstep(threshold - feather / 2, threshold + feather / 2, m), feather at least 0.001
+// (same curve as services/face/face_post.py mask_curve), then a = lerp(1, a, weight) (weight fades to 0 when the mask
+// is stale, so the layer goes back to the plain camera). p = (threshold, feather, mode, weight).
+// mode 0 remove: alpha times a. mode 1 backdrop texture (the blurred layer or a replacement image): the person over
+// it. mode 2 colour: the person over `color` (linear light, opaque).
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform texture2d bg;
+uniform texture2d mask;
+uniform float4 maskmap;
+uniform float4 p;
+uniform float4 color;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSPerson(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(clampSampler, v_in.uv);
+	float m = mask.Sample(clampSampler, v_in.uv * maskmap.xy + maskmap.zw).r;
+	float f = max(p.y, 0.001);
+	float a = smoothstep(p.x - f * 0.5, p.x + f * 0.5, m);
+	a = lerp(1.0, a, saturate(p.w));
+	if (p.z < 0.5) {
+		rgba.a *= a;
+		return rgba;
+	}
+	float4 back = p.z < 1.5 ? bg.Sample(clampSampler, v_in.uv) : color;
+	return float4(lerp(back.rgb, rgba.rgb, a), lerp(back.a, rgba.a, a));
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSPerson(v_in);
+	}
+}
