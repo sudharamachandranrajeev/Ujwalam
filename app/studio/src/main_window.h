@@ -14,6 +14,7 @@
 
 class QLabel;
 class QListWidget;
+class QAction;
 class QPushButton;
 class QDoubleSpinBox;
 class QSpinBox;
@@ -29,7 +30,7 @@ class QCheckBox;
 
 // A native child widget the host draws a canvas preview into (P5a step 4): the host makes its preview a child
 // window of this widget's handle and resizes it when the slot changes size. If the host refuses (no canvas yet, host
-// down), the slot shows why and the Open preview button still opens a host window. Display rule: D219.
+// down), the slot shows why and the "Own window" button still opens a host window. Display rule: D219.
 class PreviewSlot : public QWidget {
 public:
 	PreviewSlot(ApiClient *api, QString canvas, QWidget *parent);
@@ -150,7 +151,7 @@ private:
 	bool sceneEditOn_ = false, transitionsOn_ = false, botsOn_ = false;
 	int botPoll_ = 0; // bot status reads the process list: every 5th status poll (10 s), and after each action
 	QGroupBox *botBox_ = nullptr;
-	QPushButton *reportBtn_ = nullptr, *postsBtn_ = nullptr;
+	QAction *reportAct_ = nullptr, *postsAct_ = nullptr; // in the More menu (D285)
 	QVBoxLayout *botRows_ = nullptr;
 	QJsonObject structure_;   // GET /ui/api/project/structure
 	QJsonObject transitions_; // GET /ui/api/project/transitions

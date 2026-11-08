@@ -15,7 +15,9 @@ add_executable(ujwalam-studio WIN32
 	src/api_client.cpp
 	src/api_client.h
 	src/main_window.cpp
-	src/main_window.h)
+	src/main_window.h
+	src/theme.cpp
+	src/theme.h)
 target_link_libraries(ujwalam-studio PRIVATE Qt6::Widgets Qt6::Network)
 if(MSVC)
 	target_compile_options(ujwalam-studio PRIVATE /W4 /permissive- /utf-8)

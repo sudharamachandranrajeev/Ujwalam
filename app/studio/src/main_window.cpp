@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "main_window.h"
+#include "theme.h"
 
 #include <QCheckBox>
 #include <QColorDialog>
@@ -25,6 +26,7 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QRegularExpressionValidator>
+#include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
@@ -232,7 +234,7 @@ PreviewSlot::PreviewSlot(ApiClient *api, QString canvas, QWidget *parent)
 	setAttribute(Qt::WA_NativeWindow, true); // a real window handle for the host's child window
 	setAutoFillBackground(true);
 	QPalette pal = palette();
-	pal.setColor(QPalette::Window, QColor(16, 16, 16));
+	pal.setColor(QPalette::Window, QColor(10, 9, 14));
 	pal.setColor(QPalette::WindowText, QColor(200, 200, 200));
 	setPalette(pal);
 	auto *l = new QVBoxLayout(this);
@@ -356,6 +358,8 @@ QWidget *MainWindow::buildTop()
 	recordBtn_ = new QPushButton(QStringLiteral("Record"), w);
 	streamBtn_->setEnabled(false);
 	recordBtn_->setEnabled(false);
+	streamBtn_->setProperty("role", QStringLiteral("primary")); // theme.cpp (D285)
+	recordBtn_->setProperty("role", QStringLiteral("danger"));
 	connect(streamBtn_, &QPushButton::clicked, this, [this]() { hostAction(live_ ? QStringLiteral("stream.stop") : QStringLiteral("stream.start")); });
 	connect(recordBtn_, &QPushButton::clicked, this, [this]() { hostAction(recording_ ? QStringLiteral("record.stop") : QStringLiteral("record.start")); });
 	// Clipping (D281): save the replay buffer (last 60 s of H and V) now; mark a moment for the post-stream clipper.
@@ -384,10 +388,28 @@ QWidget *MainWindow::buildTop()
 	pillHost_ = pill(QStringLiteral("Host: ?"));
 	pillCore_ = pill(QStringLiteral("Event core: ?"));
 	pillClips_ = pill(QStringLiteral("Clips: off")); // clips from finished recordings (D283)
+	// Top bar (D285): what you use while recording or streaming on the left, undo/redo, then the state chips; the
+	// rarely used tools sit in "More". Host, event core and frame stats live in the status bar. Short enough for a
+	// 1366 px screen at 125 %.
+	h->setSpacing(6);
 	h->addWidget(streamBtn_);
 	h->addWidget(recordBtn_);
 	h->addWidget(clipBtn_);
 	h->addWidget(markBtn_);
+	h->addSpacing(10);
+	// Undo / redo of layer edits (D238; inspector, layer list, preview mouse, effects): Ctrl+Z / Ctrl+Y too.
+	undoBtn_ = new QPushButton(QStringLiteral("Undo"), w);
+	redoBtn_ = new QPushButton(QStringLiteral("Redo"), w);
+	undoBtn_->setEnabled(false);
+	redoBtn_->setEnabled(false);
+	connect(undoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(true); });
+	connect(redoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(false); });
+	h->addWidget(undoBtn_);
+	h->addWidget(redoBtn_);
+	h->addStretch(1);
+	for (QLabel *p : {pillLive_, pillRec_, pillClips_})
+		h->addWidget(p);
+	h->addSpacing(10);
 	clipsFolderBtn_ = new QPushButton(QStringLiteral("My clips"), w);
 	clipsFolderBtn_->setToolTip(QStringLiteral("Open the folder with your finished clips."));
 	connect(clipsFolderBtn_, &QPushButton::clicked, this, [this]() {
@@ -401,38 +423,27 @@ QWidget *MainWindow::buildTop()
 	connect(settingsBtn_, &QPushButton::clicked, this, [this]() { openSettings(false); });
 	h->addWidget(clipsFolderBtn_);
 	h->addWidget(settingsBtn_);
-	h->addSpacing(12);
-	// Undo / redo of layer edits (D238; inspector, layer list, preview mouse, effects): Ctrl+Z / Ctrl+Y too.
-	undoBtn_ = new QPushButton(QStringLiteral("Undo"), w);
-	redoBtn_ = new QPushButton(QStringLiteral("Redo"), w);
-	undoBtn_->setEnabled(false);
-	redoBtn_->setEnabled(false);
-	connect(undoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(true); });
-	connect(redoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(false); });
-	h->addWidget(undoBtn_);
-	h->addWidget(redoBtn_);
-	auto *imBtn = new QPushButton(QStringLiteral("Import Meld session"), w);
-	imBtn->setToolTip(QStringLiteral("Make a new project file from the Meld session, check it against the host, then load it."));
-	connect(imBtn, &QPushButton::clicked, this, &MainWindow::openImport);
-	h->addWidget(imBtn);
-	auto *fbBtn = new QPushButton(QStringLiteral("Feedback notes"), w);
-	fbBtn->setToolTip(QStringLiteral("Add a note to each feedback moment (feedback hotkey while streaming)."));
-	connect(fbBtn, &QPushButton::clicked, this, &MainWindow::openFeedback);
-	h->addWidget(fbBtn);
-	postsBtn_ = new QPushButton(QStringLiteral("Posts"), w);
-	postsBtn_->setToolTip(QStringLiteral("Review clip packages. Nothing is uploaded without a typed confirmation."));
-	postsBtn_->setVisible(false);
-	connect(postsBtn_, &QPushButton::clicked, this, &MainWindow::openPosts);
-	h->addWidget(postsBtn_);
-	reportBtn_ = new QPushButton(QStringLiteral("Report a problem"), w);
-	reportBtn_->setToolTip(QStringLiteral("Opens a prefilled GitHub issue in your browser; you review it before submitting."));
-	reportBtn_->setVisible(false);
-	connect(reportBtn_, &QPushButton::clicked, this, &MainWindow::report);
-	h->addWidget(reportBtn_);
-	h->addSpacing(12);
-	for (QLabel *p : {pillLive_, pillRec_, pillStats_, pillHost_, pillCore_, pillClips_})
-		h->addWidget(p);
-	h->addStretch(1);
+	auto *more = new QToolButton(w);
+	more->setText(QStringLiteral("More"));
+	more->setPopupMode(QToolButton::InstantPopup);
+	more->setToolButtonStyle(Qt::ToolButtonTextOnly);
+	auto *menu = new QMenu(more);
+	auto *imAct = menu->addAction(QStringLiteral("Import Meld session..."), this, &MainWindow::openImport);
+	imAct->setToolTip(QStringLiteral("Make a new project file from the Meld session, check it against the host, then load it."));
+	auto *fbAct = menu->addAction(QStringLiteral("Feedback notes..."), this, &MainWindow::openFeedback);
+	fbAct->setToolTip(QStringLiteral("Add a note to each feedback moment (feedback hotkey while streaming)."));
+	postsAct_ = menu->addAction(QStringLiteral("Posts..."), this, &MainWindow::openPosts);
+	postsAct_->setToolTip(QStringLiteral("Review clip packages. Nothing is uploaded without a typed confirmation."));
+	postsAct_->setVisible(false);
+	reportAct_ = menu->addAction(QStringLiteral("Report a problem..."), this, &MainWindow::report);
+	reportAct_->setToolTip(QStringLiteral("Opens a prefilled GitHub issue in your browser; you review it before submitting."));
+	reportAct_->setVisible(false);
+	menu->setToolTipsVisible(true);
+	more->setMenu(menu);
+	h->addWidget(more);
+	statusBar()->addPermanentWidget(pillStats_);
+	statusBar()->addPermanentWidget(pillHost_);
+	statusBar()->addPermanentWidget(pillCore_);
 	return w;
 }
 
@@ -619,8 +630,11 @@ QWidget *MainWindow::buildCentre()
 		bv->addWidget(slot, 1);
 		slots_ << slot;
 		auto *row = new QHBoxLayout();
-		auto *open = new QPushButton(QStringLiteral("Open preview"), box);
-		auto *front = new QPushButton(QStringLiteral("Bring to front"), box);
+		// Fallback when the preview cannot sit in the window (D280): its own host window. Small, right-aligned (D285).
+		auto *open = new QPushButton(QStringLiteral("Own window"), box);
+		auto *front = new QPushButton(QStringLiteral("To front"), box);
+		open->setToolTip(QStringLiteral("Open this preview in its own window (if it does not show here)."));
+		front->setToolTip(QStringLiteral("Bring that preview window to the front."));
 		const QString canvas = QString::fromLatin1(cv);
 		connect(open, &QPushButton::clicked, this, [this, canvas]() {
 			QJsonObject p;
@@ -632,6 +646,7 @@ QWidget *MainWindow::buildCentre()
 			p.insert(QStringLiteral("canvas"), canvas);
 			api_->host(QStringLiteral("preview.focus"), p, [this](bool ok, const QJsonObject &, const QString &err) { if (!ok) note(QStringLiteral("Preview failed: ") + err); });
 		});
+		row->addStretch(1);
 		row->addWidget(open);
 		row->addWidget(front);
 		bv->addLayout(row);
@@ -1435,9 +1450,9 @@ void MainWindow::pollStatus()
 		}
 		recording_ = h.value(QStringLiteral("recording")).toBool();
 		pillLive_->setText(live_ ? QStringLiteral("LIVE") : QStringLiteral("Offline"));
-		pillLive_->setStyleSheet(live_ ? QStringLiteral("background:#c62828;color:white;") : QString());
+		pillLive_->setStyleSheet(live_ ? QStringLiteral("background:%1;border-color:%1;color:white;").arg(QLatin1String(theme::kDanger)) : QString());
 		pillRec_->setText(recording_ ? QStringLiteral("Recording") : QStringLiteral("Not recording"));
-		pillRec_->setStyleSheet(recording_ ? QStringLiteral("background:#c62828;color:white;") : QString());
+		pillRec_->setStyleSheet(recording_ ? QStringLiteral("background:%1;border-color:%1;color:white;").arg(QLatin1String(theme::kDanger)) : QString());
 		pillStats_->setText(QStringLiteral("Dropped %1 · %2 fps · CPU %3% · GPU %4%")
 					    .arg(h.value(QStringLiteral("droppedFrames")).toInt())
 					    .arg(h.value(QStringLiteral("fps")).toDouble(), 0, 'f', 1)
@@ -1530,12 +1545,12 @@ void MainWindow::loadFlags()
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("report-button"))
 				rep = x.toObject().value(QStringLiteral("on")).toBool();
-		reportBtn_->setVisible(rep);
+		reportAct_->setVisible(rep);
 		bool po = false;
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("posting"))
 				po = x.toObject().value(QStringLiteral("on")).toBool();
-		postsBtn_->setVisible(po);
+		postsAct_->setVisible(po);
 		if (bo != botsOn_) {
 			botsOn_ = bo;
 			botBox_->setVisible(bo);
@@ -2589,8 +2604,8 @@ QJsonObject MainWindow::probe() const
 	shown.insert(QStringLiteral("structure"), !structBox_->isHidden());
 	shown.insert(QStringLiteral("transitions"), !transBox_->isHidden());
 	shown.insert(QStringLiteral("bots"), !botBox_->isHidden());
-	shown.insert(QStringLiteral("report"), !reportBtn_->isHidden());
-	shown.insert(QStringLiteral("posts"), !postsBtn_->isHidden());
+	shown.insert(QStringLiteral("report"), reportAct_->isVisible());
+	shown.insert(QStringLiteral("posts"), postsAct_->isVisible());
 	QJsonObject o;
 	o.insert(QStringLiteral("flags"), flags);
 	o.insert(QStringLiteral("shown"), shown);

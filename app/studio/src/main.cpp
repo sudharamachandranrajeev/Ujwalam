@@ -7,11 +7,13 @@
 // logs in, lists the scenes, prints one line ("studio smoke: ok, <n> scene(s)") and exits (tests).
 #include "api_client.h"
 #include "main_window.h"
+#include "theme.h"
 
 #include <QApplication>
 #include <QJsonDocument>
 #include <QGuiApplication>
 #include <QJsonArray>
+#include <QPixmap>
 #include <QScreen>
 #include <QTimer>
 #include <algorithm>
@@ -32,6 +34,7 @@ int main(int argc, char **argv)
 		qputenv("QT_QPA_PLATFORM", "offscreen");
 	QApplication app(argc, argv);
 	QApplication::setApplicationName(QStringLiteral("Ujwalam Studio"));
+	theme::apply(app);
 	const QString url = takeEnv("UJWALAM_UI_URL");
 	const QString key = takeEnv("UJWALAM_UI_LAUNCH_KEY");
 
@@ -66,6 +69,12 @@ int main(int argc, char **argv)
 			QTimer::singleShot(std::min(probeMs, 60000), &app, [&, actions]() {
 				QJsonObject o = win.probe();
 				o.insert(QStringLiteral("actions"), *actions);
+				// D285: a picture of the window as the probe saw it (evidence for the look; never shown on screen).
+				const QString shot = qEnvironmentVariable("UJWALAM_STUDIO_PROBE_SHOT");
+				if (shot.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive)) {
+					win.resize(1600, 900);
+					o.insert(QStringLiteral("shot"), win.grab().save(shot, "PNG"));
+				}
 				std::printf("studio probe: %s\n", QJsonDocument(o).toJson(QJsonDocument::Compact).constData());
 				std::fflush(stdout);
 				app.exit(0);

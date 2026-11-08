@@ -71,7 +71,7 @@ describe('Qt studio shell (headless smoke)', { skip }, () => {
 describe('Qt studio shell panels (headless probe)', { skip }, () => {
   const dirs = [];
   after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
-  async function probe(on, ms = 5000, actions = '', prepare = null) {
+  async function probe(on, ms = 5000, actions = '', prepare = null, env = {}) {
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-qtp-')); dirs.push(dataDir);
     if (prepare) prepare(dataDir);
     const flags = createFlags({ dataDir });
@@ -84,7 +84,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags, bots: createFakeBots(), limits: { statusPollMs: 50 } });
     const { port } = await srv.listen();
     try {
-      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms), UJWALAM_STUDIO_PROBE_ACTIONS: actions });
+      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms), UJWALAM_STUDIO_PROBE_ACTIONS: actions, ...env });
       assert.equal(r.code, 0, r.err);
       const m = /^studio probe: (.+)$/m.exec(r.out);
       assert.ok(m, `no probe line: ${r.out} ${r.err}`);
@@ -145,6 +145,16 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const saved = JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8'));
     assert.deepEqual(saved.clips, { recording: 'after', live: 'while' });
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'clips', 'answer.json'), 'utf8')), { id: ask.id, make: true, remember: false });
+  });
+  test('look (D285): the themed window renders to a 1600x900 picture; the top bar fits', async () => {
+    const shot = path.join(os.tmpdir(), `ujw-shot-${process.pid}.png`);
+    try {
+      const p = await probe(['posting', 'report-button'], 4000, '', null, { UJWALAM_STUDIO_PROBE_SHOT: shot, QT_QPA_FONTDIR: path.join(process.env.WINDIR ?? 'C:/Windows', 'Fonts') }); // the real UI font (offscreen has none)
+      assert.equal(p.shot, true);
+      const b = readFileSync(shot);
+      assert.deepEqual([b.readUInt32BE(16), b.readUInt32BE(20)], [1600, 900], 'not widened by the top bar');
+      assert.deepEqual([p.shown.posts, p.shown.report], [true, true], 'Posts and Report a problem in the More menu');
+    } finally { rmSync(shot, { force: true }); }
   });
   test('typed confirms (D279): a flag ticked on asks for the phrase; a wrong phrase asks again, "yes" turns it on, Cancel leaves it off', async () => {
     const p = await probe([], 9000, 'flag-on:transitions,type:nope,type:yes,flag-on:bot-manager,cancel,type:yes');
