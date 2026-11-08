@@ -415,67 +415,6 @@ test('project v1 effects render: blurred duplicate, sharp original, rounded corn
   await c.call('outputs.clear');
 });
 
-// Shadow and glow (D257): they reach past the layer's box while the picture keeps its place and size. A hard shadow
-// (size 0) offset 40 px towards the bottom right (light from the top left, angle 135), and a cyan glow with spread.
-const SH = {
-  version: 1, id: 'shadow-check', name: 'Shadow check', activeScene: 'main',
-  canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }],
-  devices: [], overlays: [], outputs: [],
-  scenes: [{
-    id: 'main', name: 'Main', layers: [
-      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#ffffff' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
-      { id: 'card', type: 'color', name: 'Card', source: { color: '#0000ff' },
-        effects: [{ type: 'shadow', color: '#000000', opacity: 1, size: 0, distance: 40, angle: 135 }],
-        placements: { h: { visible: true, x: 200, y: 200, width: 200, height: 200 } } },
-      { id: 'lit', type: 'color', name: 'Lit', source: { color: '#00ff00' },
-        effects: [{ type: 'glow', color: '#00ffff', opacity: 1, size: 30, spread: 0.8 }],
-        placements: { h: { visible: true, x: 700, y: 200, width: 200, height: 200 } } }
-    ]
-  }],
-  audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
-};
-
-test('project v1 shadow and glow render past the box; the picture keeps its place and size (D257)', async () => {
-  assert.ok((await import('../../../services/project/validate.mjs')).validateProject(SH).ok);
-  const r = await loadIntoHost(c, SH, { bases: { media } });
-  assert.deepEqual(r.unavailable, []);
-  const by = Object.fromEntries((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.map((l) => [l.id, l]));
-  assert.deepEqual(by.card.effects, [{ type: 'shadow', color: '#000000', opacity: 1, size: 0, distance: 40, angle: 135 }]);
-  assert.deepEqual(by.lit.effects, [{ type: 'glow', color: '#00ffff', opacity: 1, size: 30, spread: 0.8 }]);
-  await c.call('outputs.configure', {
-    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
-    audio: { bitrate: 128, sampleRate: 48000 },
-    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: 'shadow-h.mkv' } }]
-  });
-  await c.call('record.start', {});
-  await new Promise((res) => setTimeout(res, 2000));
-  await c.call('record.stop', {});
-  let st;
-  for (let i = 0; i < 60; i++) {
-    st = await c.call('outputs.status');
-    if (st.sinks.every((s) => s.state === 'stopped')) break;
-    await new Promise((res) => setTimeout(res, 100));
-  }
-  const px = frameRgb(st.sinks.find((s) => s.id === 'fh').path, 1280, 720);
-  const W = [255, 255, 255], K = [0, 0, 0], B = [0, 0, 255], G = [0, 255, 0], C = [0, 255, 255];
-  // card 200..400; its shadow 228..428 on both axes
-  near(px(205, 205), B, 'card top-left: the picture is not shrunk by the larger bounds');
-  near(px(395, 395), B, 'card bottom-right');
-  near(px(195, 300), W, 'left of the card: no shadow (it falls to the bottom right)');
-  near(px(300, 195), W, 'above the card: no shadow');
-  near(px(415, 300), K, 'right of the card: shadow');
-  near(px(300, 420), K, 'below the card: shadow');
-  near(px(415, 215), W, 'right of the card near its top: above the shadow');
-  near(px(435, 300), W, 'past the shadow');
-  // lit 700..900; the glow reaches 30 px around it
-  near(px(800, 300), G, 'glowing card centre');
-  near(px(705, 300), G, 'glowing card edge: the picture keeps its size');
-  near(px(695, 300), C, '5 px outside: glow colour');
-  near(px(800, 195), C, '5 px above: glow colour');
-  near(px(650, 300), W, '50 px outside: no glow');
-  await c.call('outputs.clear');
-});
-
 // frames.grab (live clipper OCR, D226): reads the BMP the host writes (frames.h): 54-byte header, 32 bpp, top-down,
 // B G R A rows of width*4 bytes.
 function readBmp(file) {
@@ -631,4 +570,77 @@ test('--project on the command line takes the host test format only (v1 goes thr
   await assert.rejects(
     launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), project: path.join(REPO_ROOT, 'tests', 'fixtures', 'project', 'sample.project.json') }),
     /exited with 3/);
+});
+
+// Shadow and glow (D257): they reach past the layer's box while the picture keeps its place and size. A hard shadow
+// (size 0) offset 40 px towards the bottom right (light from the top left, angle 135), and a cyan glow with spread.
+const SH = {
+  version: 1, id: 'shadow-check', name: 'Shadow check', activeScene: 'main',
+  canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }],
+  devices: [], overlays: [], outputs: [],
+  scenes: [{
+    id: 'main', name: 'Main', layers: [
+      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#ffffff' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
+      { id: 'card', type: 'color', name: 'Card', source: { color: '#0000ff' },
+        effects: [{ type: 'shadow', color: '#000000', opacity: 1, size: 0, distance: 40, angle: 135 }],
+        placements: { h: { visible: true, x: 200, y: 200, width: 200, height: 200 } } },
+      { id: 'lit', type: 'color', name: 'Lit', source: { color: '#00ff00' },
+        effects: [{ type: 'glow', color: '#00ffff', opacity: 1, size: 30, spread: 0.8 }],
+        placements: { h: { visible: true, x: 700, y: 200, width: 200, height: 200 } } },
+      { id: 'both', type: 'color', name: 'Both', source: { color: '#ff00ff' },
+        effects: [{ type: 'glow', color: '#00ffff', opacity: 1, size: 15, spread: 0.8 }, { type: 'shadow', color: '#000000', opacity: 1, size: 0, distance: 40, angle: 135 }],
+        placements: { h: { visible: true, x: 1000, y: 450, width: 150, height: 150 } } }
+    ]
+  }],
+  audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+};
+
+test('project v1 shadow and glow render past the box; the picture keeps its place and size (D257)', async () => {
+  assert.ok((await import('../../../services/project/validate.mjs')).validateProject(SH).ok);
+  const r = await loadIntoHost(c, SH, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  const by = Object.fromEntries((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.map((l) => [l.id, l]));
+  assert.deepEqual(by.card.effects, [{ type: 'shadow', color: '#000000', opacity: 1, size: 0, distance: 40, angle: 135 }]);
+  assert.deepEqual(by.lit.effects, [{ type: 'glow', color: '#00ffff', opacity: 1, size: 30, spread: 0.8 }]);
+  await c.call('outputs.configure', {
+    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
+    audio: { bitrate: 128, sampleRate: 48000 },
+    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: 'shadow-h.mkv' } }]
+  });
+  await c.call('record.start', {});
+  await new Promise((res) => setTimeout(res, 2000));
+  await c.call('record.stop', {});
+  let st;
+  for (let i = 0; i < 60; i++) {
+    st = await c.call('outputs.status');
+    if (st.sinks.every((s) => s.state === 'stopped')) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  const px = frameRgb(st.sinks.find((s) => s.id === 'fh').path, 1280, 720);
+  const W = [255, 255, 255], K = [0, 0, 0], B = [0, 0, 255], G = [0, 255, 0], C = [0, 255, 255];
+  // card 200..400; its shadow 228..428 on both axes
+  near(px(205, 205), B, 'card top-left: the picture is not shrunk by the larger bounds');
+  near(px(395, 395), B, 'card bottom-right');
+  near(px(195, 300), W, 'left of the card: no shadow (it falls to the bottom right)');
+  near(px(300, 195), W, 'above the card: no shadow');
+  near(px(415, 300), K, 'right of the card: shadow');
+  near(px(300, 420), K, 'below the card: shadow');
+  near(px(415, 215), W, 'right of the card near its top: above the shadow');
+  near(px(435, 300), W, 'past the shadow');
+  // lit 700..900; the glow reaches 30 px around it
+  near(px(800, 300), G, 'glowing card centre');
+  near(px(705, 300), G, 'glowing card edge: the picture keeps its size');
+  near(px(695, 300), C, '5 px outside: glow colour');
+  near(px(800, 195), C, '5 px above: glow colour');
+  near(px(650, 300), W, '50 px outside: no glow');
+  // glow then shadow on one layer (Codex review D257): the shadow filter sees the glow's larger output, so the glow
+  // is not cut at the box, and the shadow (of the card and its glow) falls 40 px to the bottom right
+  const M = [255, 0, 255];
+  near(px(1075, 525), M, 'chained card centre');
+  near(px(1005, 525), M, 'chained card edge: the picture keeps its size');
+  near(px(997, 525), C, 'glow left of the card, not cut by the shadow filter after it');
+  near(px(1075, 447), C, 'glow above the card');
+  near(px(1175, 600), K, 'shadow right of the card');
+  near(px(960, 525), W, 'left of the glow: nothing');
+  await c.call('outputs.clear');
 });

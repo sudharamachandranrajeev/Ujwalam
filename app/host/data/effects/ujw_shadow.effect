@@ -1,13 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: the shadow / glow pass of the ujw_shadow filter (src/effects.cpp). Embedded into the host exe at build
 // time (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
-//   Draw: `image` is the blurred, offset copy of the layer; only its alpha is used. spread (0..1, Meld "choke")
-//         lifts the alpha before the colour is applied, so the edge of the shadow or glow is harder and reaches
-//         further. color.rgb is linear (the framebuffer is sRGB), color.a the effect's opacity.
+//   Draw: the shadow / glow under the picture, composed here with straight alpha ("over"), so the result does not
+//         depend on the caller's blend state. `image` is the blurred, offset copy of the layer; only its alpha is
+//         used. spread (0..1, Meld "choke") lifts that alpha, so the edge is harder and reaches further.
+//         color.rgb is linear (the framebuffer is sRGB), color.a the effect's opacity. `pic` is the layer itself
+//         (sRGB view), placed by picmap: pic uv = uv * picmap.xy - picmap.zw; outside it is transparent.
 
 uniform float4x4 ViewProj;
 uniform texture2d image;
+uniform texture2d pic;
 uniform float4 color;
+uniform float4 picmap;
 uniform float spread;
 
 sampler_state clampSampler {
@@ -32,8 +36,14 @@ VertData VSDefault(VertData v_in)
 float4 PSShadow(VertData v_in) : TARGET
 {
 	float a = image.Sample(clampSampler, v_in.uv).a;
-	a = saturate(a / max(1.0 - spread, 0.01));
-	return float4(color.rgb, color.a * a);
+	float sa = color.a * saturate(a / max(1.0 - spread, 0.01));
+	float2 puv = v_in.uv * picmap.xy - picmap.zw;
+	float4 p = pic.Sample(clampSampler, puv);
+	if (puv.x < 0.0 || puv.y < 0.0 || puv.x > 1.0 || puv.y > 1.0)
+		p = float4(0.0, 0.0, 0.0, 0.0);
+	float oa = p.a + sa * (1.0 - p.a);
+	float3 rgb = oa > 0.0 ? (p.rgb * p.a + color.rgb * sa * (1.0 - p.a)) / oa : float3(0.0, 0.0, 0.0);
+	return float4(rgb, oa);
 }
 
 technique Draw

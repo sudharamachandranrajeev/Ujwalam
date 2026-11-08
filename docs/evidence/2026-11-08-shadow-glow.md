@@ -37,3 +37,18 @@ spread, glow with an angle are refused); the host refuses the same in host-proje
 - app/host/src/model.{h,cpp}, app/host/src/studio.cpp (bounds grow by the outset)
 - services/project/validate.mjs, data/schemas/project.schema.json, services/project/import-meld.mjs
 - app/host/tests/host-project.test.mjs, tests/project-schema.test.mjs, tests/project-import-meld.test.mjs
+
+## Codex second-opinion review (2026-11-08)
+
+Codex CLI 0.166.0, read-only, medium effort, given the code diff of 028bec0 and the full effects.cpp on stdin.
+
+| Finding | Verdict | Action |
+|---|---|---|
+| shadow_geom reads the input size without earlier filters' padding (high) | not reproduced: libobs get_base_width uses a filter's get_width | test added: glow then shadow on one layer; the glow is not cut and the shadow falls past it |
+| final draw inherits the caller's blend state; a later filter captures with ONE/ZERO and the picture overwrites the shadow (high) | real | shadow and picture are now composed in the shader into the filter's own texture (straight-alpha over), then drawn as one sprite like the blur filter |
+| straight colour at zero alpha under premultiplied blending (medium) | resolved by the row above | |
+| one sigma for both axes on a stretched layer (medium) | real | gauss_run takes sigma_x and sigma_y |
+| big shadows on high-resolution sources shown small are narrower than asked (3 halvings, 20 taps) (medium) | real | up to 6 halvings (factor 64) |
+
+After the fixes: `node --test app/host/tests/host-project.test.mjs` 14/14 pass (blur and rounded renders unchanged; the
+shadow test now also checks the glow-then-shadow chain).

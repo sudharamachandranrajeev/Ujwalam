@@ -141,7 +141,7 @@ const char *wrap_name(void *)
 
 // --- ujw_gaussian_blur ------------------------------------------------------------------------------------------
 
-constexpr int MAX_HALVINGS = 3; // factor up to 8
+constexpr int MAX_HALVINGS = 6; // factor up to 64 (a big shadow on a high-resolution source shown small)
 constexpr int MAX_TAPS = 20;    // per side; must match the loop bound in ujw_gaussian_blur.effect
 
 // Separable Gaussian on a texture: halves it 0-3 times (sigma / factor <= 6.5), then two passes of at most MAX_TAPS
@@ -202,17 +202,17 @@ gs_texture_t *gauss_pass(Gauss &g, gs_texrender_t *tr, gs_texture_t *src, uint32
 	return gs_texrender_get_texture(tr);
 }
 
-// Blurs tex (w x h) with sigma in texels of tex. The caller has set blend ONE/ZERO. Returns the blurred texture (at
-// the reduced size; draw it stretched) or tex itself for sigma < 0.5.
-gs_texture_t *gauss_run(Gauss &g, gs_texture_t *tex, uint32_t w, uint32_t h, double sigma)
+// Blurs tex (w x h) with sigma_x / sigma_y in texels of tex. The caller has set blend ONE/ZERO. Returns the blurred
+// texture (at the reduced size; draw it stretched) or tex itself when both sigmas are < 0.5.
+gs_texture_t *gauss_run(Gauss &g, gs_texture_t *tex, uint32_t w, uint32_t h, double sigma_x, double sigma_y)
 {
+	const double sigma = std::max(sigma_x, sigma_y);
 	if (!tex || !g.effect || sigma < 0.5)
 		return tex;
 	int halvings = 0;
 	while (halvings < MAX_HALVINGS && sigma / (double)(1 << halvings) > 6.5)
 		halvings++;
-	const double s = sigma / (double)(1 << halvings); // sigma in texels at the blur size
-	const int radius = std::min(MAX_TAPS, (int)std::ceil(3.0 * s));
+	const double sx = sigma_x / (double)(1 << halvings), sy = sigma_y / (double)(1 << halvings); // texels at blur size
 	const bool prev_srgb = gs_framebuffer_srgb_enabled();
 	gs_enable_framebuffer_srgb(true);
 	for (int k = 1; k <= halvings && tex; k++) {
@@ -220,11 +220,11 @@ gs_texture_t *gauss_run(Gauss &g, gs_texture_t *tex, uint32_t w, uint32_t h, dou
 		h = std::max(1u, h / 2);
 		tex = gauss_pass(g, g.levels[k], tex, w, h, "Draw", 0, 0, 0, 0);
 	}
-	if (tex && radius >= 1) {
-		const float inv2s2 = (float)(1.0 / (2.0 * s * s));
-		tex = gauss_pass(g, g.ping, tex, w, h, "Blur", 1.0f / (float)w, 0.0f, inv2s2, (float)radius);
-		tex = gauss_pass(g, g.pong, tex, w, h, "Blur", 0.0f, 1.0f / (float)h, inv2s2, (float)radius);
-	}
+	const int rx = std::min(MAX_TAPS, (int)std::ceil(3.0 * sx)), ry = std::min(MAX_TAPS, (int)std::ceil(3.0 * sy));
+	if (tex && rx >= 1 && sx > 0)
+		tex = gauss_pass(g, g.ping, tex, w, h, "Blur", 1.0f / (float)w, 0.0f, (float)(1.0 / (2.0 * sx * sx)), (float)rx);
+	if (tex && ry >= 1 && sy > 0)
+		tex = gauss_pass(g, g.pong, tex, w, h, "Blur", 0.0f, 1.0f / (float)h, (float)(1.0 / (2.0 * sy * sy)), (float)ry);
 	gs_enable_framebuffer_srgb(prev_srgb);
 	return tex;
 }
@@ -314,7 +314,7 @@ void blur_render(void *data, gs_effect_t *)
 		gs_blend_state_push();
 		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
 		gs_texture_t *tex = render_target(b->base, target, parent, cx, cy);
-		b->result = gauss_run(b->g, tex, cx, cy, b->strength * 0.5); // sigma in source pixels
+		b->result = gauss_run(b->g, tex, cx, cy, b->strength * 0.5, b->strength * 0.5); // sigma in source pixels
 		gs_blend_state_pop();
 		b->processed = true;
 	}
@@ -397,12 +397,12 @@ struct Shadow {
 	obs_source_t *ctx = nullptr;
 	Gauss g;
 	gs_effect_t *effect = nullptr;
-	gs_eparam_t *p_image = nullptr, *p_color = nullptr, *p_spread = nullptr;
-	gs_texrender_t *base = nullptr, *moved = nullptr;
+	gs_eparam_t *p_image = nullptr, *p_pic = nullptr, *p_color = nullptr, *p_spread = nullptr, *p_picmap = nullptr;
+	gs_texrender_t *base = nullptr, *moved = nullptr, *out = nullptr;
 	// written by update / set_box (any thread), read by get_width and render (graphics thread)
 	std::atomic<float> r{0}, gr{0}, b{0}, opacity{1}, sigma{0}, dx{0}, dy{0}, spread{0}, pad{0}, box_w{0}, box_h{0};
 	bool processed = false;
-	gs_texture_t *pic = nullptr, *mask = nullptr;
+	gs_texture_t *result = nullptr; // shadow and picture composed at the padded size
 };
 
 float srgb_to_linear(float c)
@@ -435,10 +435,13 @@ void *shadow_create(obs_data_t *s, obs_source_t *src)
 		sh->p_image = gs_effect_get_param_by_name(sh->effect, "image");
 		sh->p_color = gs_effect_get_param_by_name(sh->effect, "color");
 		sh->p_spread = gs_effect_get_param_by_name(sh->effect, "spread");
+		sh->p_pic = gs_effect_get_param_by_name(sh->effect, "pic");
+		sh->p_picmap = gs_effect_get_param_by_name(sh->effect, "picmap");
 	}
 	obs_enter_graphics();
 	sh->base = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 	sh->moved = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	sh->out = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
 	obs_leave_graphics();
 	shadow_update(sh, s);
 	return sh;
@@ -451,6 +454,7 @@ void shadow_destroy(void *data)
 	obs_enter_graphics();
 	gs_texrender_destroy(sh->base);
 	gs_texrender_destroy(sh->moved);
+	gs_texrender_destroy(sh->out);
 	gs_effect_destroy(sh->effect);
 	obs_leave_graphics();
 	delete sh;
@@ -504,42 +508,51 @@ void shadow_render(void *data, gs_effect_t *)
 	}
 	const uint32_t W = geo.tw + 2 * geo.padx, H = geo.th + 2 * geo.pady;
 	if (!sh->processed) { // once per frame, however many times the item is drawn
+		// Everything is composed into `out` here with explicit blend states, so the result does not depend on the
+		// blend state of whoever draws this filter (a later filter captures it with ONE/ZERO; Codex review D257).
 		gs_blend_state_push();
 		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
-		sh->pic = render_target(sh->base, target, parent, geo.tw, geo.th);
-		sh->mask = nullptr;
+		sh->result = nullptr;
+		gs_texture_t *pic = render_target(sh->base, target, parent, geo.tw, geo.th), *mask = nullptr;
 		gs_texrender_reset(sh->moved);
-		if (sh->pic && gs_texrender_begin(sh->moved, W, H)) { // the layer moved by the offset inside the padded size
+		if (pic && gs_texrender_begin(sh->moved, W, H)) { // the layer moved by the offset inside the padded size
 			struct vec4 clear;
 			vec4_zero(&clear);
 			gs_clear(GS_CLEAR_COLOR, &clear, 0.0f, 0);
 			gs_ortho(0.0f, (float)W, 0.0f, (float)H, -100.0f, 100.0f);
 			gs_matrix_push();
 			gs_matrix_translate3f((float)(geo.padx + sh->dx * geo.kx), (float)(geo.pady + sh->dy * geo.ky), 0.0f);
-			draw_copy(sh->g, sh->pic, geo.tw, geo.th);
+			draw_copy(sh->g, pic, geo.tw, geo.th);
 			gs_matrix_pop();
 			gs_texrender_end(sh->moved);
-			sh->mask = gauss_run(sh->g, gs_texrender_get_texture(sh->moved), W, H, sh->sigma * geo.kx);
+			mask = gauss_run(sh->g, gs_texrender_get_texture(sh->moved), W, H, sh->sigma * geo.kx, sh->sigma * geo.ky);
+		}
+		gs_texrender_reset(sh->out);
+		if (mask && gs_texrender_begin(sh->out, W, H)) { // shadow under the picture, straight alpha, in the shader
+			gs_ortho(0.0f, (float)W, 0.0f, (float)H, -100.0f, 100.0f);
+			const bool prev_srgb = gs_framebuffer_srgb_enabled();
+			gs_enable_framebuffer_srgb(true);
+			struct vec4 col, map;
+			vec4_set(&col, sh->r, sh->gr, sh->b, sh->opacity);
+			// picture uv = uv * (W / tw, H / th) - (padx / tw, pady / th)
+			vec4_set(&map, (float)W / (float)geo.tw, (float)H / (float)geo.th, (float)geo.padx / (float)geo.tw,
+				 (float)geo.pady / (float)geo.th);
+			gs_effect_set_texture(sh->p_image, mask);
+			gs_effect_set_texture_srgb(sh->p_pic, pic);
+			gs_effect_set_vec4(sh->p_color, &col);
+			gs_effect_set_vec4(sh->p_picmap, &map);
+			gs_effect_set_float(sh->p_spread, sh->spread);
+			while (gs_effect_loop(sh->effect, "Draw"))
+				gs_draw_sprite(mask, 0, W, H);
+			gs_enable_framebuffer_srgb(prev_srgb);
+			gs_texrender_end(sh->out);
+			sh->result = gs_texrender_get_texture(sh->out);
 		}
 		gs_blend_state_pop();
 		sh->processed = true;
 	}
-	if (!sh->mask || !sh->pic)
-		return;
-	const bool prev_srgb = gs_framebuffer_srgb_enabled();
-	gs_enable_framebuffer_srgb(true);
-	struct vec4 col;
-	vec4_set(&col, sh->r, sh->gr, sh->b, sh->opacity);
-	gs_effect_set_texture(sh->p_image, sh->mask);
-	gs_effect_set_vec4(sh->p_color, &col);
-	gs_effect_set_float(sh->p_spread, sh->spread);
-	while (gs_effect_loop(sh->effect, "Draw"))
-		gs_draw_sprite(sh->mask, 0, W, H);
-	gs_enable_framebuffer_srgb(prev_srgb);
-	gs_matrix_push();
-	gs_matrix_translate3f((float)geo.padx, (float)geo.pady, 0.0f);
-	draw_copy(sh->g, sh->pic, geo.tw, geo.th);
-	gs_matrix_pop();
+	if (sh->result)
+		draw_copy(sh->g, sh->result, W, H); // like the blur filter: one sprite, in the caller's blend state
 }
 
 const char *shadow_name(void *)
