@@ -42,6 +42,10 @@ import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
 import { createTasks } from './tasks.mjs';
+import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
+import { clipTools } from './record-clips.mjs';
+import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
+import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
 
 // The app folder (repo or install): settings folders may not point into it (D284).
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -258,6 +262,47 @@ export function createStudioServer(opts) {
       if (typeof opts.dataDir === 'string') crashes = readFileSync(path.join(opts.dataDir, 'logs', 'host-crashes.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean).length;
     } catch { crashes = 0; }
     return { title: q.get('title') ?? '', note: q.get('note') ?? '', flags: flags ? flags.list() : [], host: h.host, outputs, crashes };
+  }
+  // Pre-stream readiness (D299 proposed, flag `readiness`): readiness.mjs. Built on first use (the config file is read
+  // then). opts.readiness = { run({ maxAgeMs }), config } is a test seam; opts.readinessDeps overrides single probes.
+  const readinessOn = () => !!flags && flags.isOn(READINESS_FLAG);
+  let readinessRunner = opts.readiness ?? null;
+  function readiness() {
+    if (readinessRunner) return readinessRunner;
+    const config = loadReadinessConfig(opts.readinessConfigFile);
+    const bc = loadBotConfig(opts.profileFile ? { profilePath: opts.profileFile } : {});
+    const clipRoot = opts.clipRoot ?? (process.env.UJWALAM_CLIP_ROOT || REPO_ROOT);
+    readinessRunner = createReadiness({
+      host, core, config, now, dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null,
+      flagOn: (id) => !!flags && flags.isOn(id),
+      store: (ref) => createCredentialStore(ref), listProcesses: listProcessNames, diskFree: diskFreeBytes, tcp: tcpAnswers,
+      botPorts: { streamerbot: bc.streamerbot?.port ?? null, speakerbot: bc.speakerbot?.port ?? null },
+      ciPass: () => lastCiPass(REPO_ROOT), clipTools: () => clipTools({ clipRoot }), planTargets: planTargets(opts.livePlanFile),
+      ...(opts.readinessDeps ?? {}),
+    });
+    return readinessRunner;
+  }
+  // Public form of a readiness result for the page (the Qt shell reads the summary text of the confirm window).
+  const publicReadiness = (r) => ({ at: r.at, ok: r.ok, counts: r.counts, items: r.items.map((i) => ({ id: i.id, title: i.title, status: i.status, message: i.message, ...(i.fix ? { fix: i.fix } : {}), ...(i.unknown ? { unknown: true } : {}) })) });
+  // End all streams (D299): the host's stream.stop with no sinks stops every stream sink (both YouTube, Twitch, Kick) and
+  // closes their connections; the recording is not touched. Then outputs.status is polled until every stream sink is
+  // stopped or the wait ends. Returns ids, platforms and states only.
+  async function endAllStreams() {
+    let waitMs = 6000; let pollMs = 500;
+    try { ({ waitMs, pollMs } = readiness().config.endAll ?? { waitMs, pollMs }); } catch { /* defaults */ }
+    await host.call('stream.stop', {});
+    const until = now() + waitMs;
+    let sinks = []; let recording = null;
+    for (;;) {
+      let st = null;
+      try { st = await host.call('outputs.status', {}); } catch { st = null; }
+      const all = Array.isArray(st?.sinks) ? st.sinks : [];
+      sinks = all.filter((s) => s?.kind === 'stream').map((s) => ({ id: String(s.id).slice(0, 64), platform: typeof s.platform === 'string' ? s.platform.slice(0, 32) : null, state: String(s.state).slice(0, 16) }));
+      recording = all.some((s) => s?.kind === 'record' && ['starting', 'live', 'retrying'].includes(s.state));
+      const busy = sinks.some((s) => ['starting', 'live', 'retrying', 'stopping'].includes(s.state));
+      if (!busy || now() >= until) return { allStopped: !busy, sinks, recording };
+      await new Promise((r) => setTimeout(r, pollMs));
+    }
   }
   if (typeof opts.launchKey !== 'string' || opts.launchKey.length < 32) throw new Error('launchKey must be at least 32 characters');
   let launchKey = opts.launchKey;
@@ -630,7 +675,7 @@ export function createStudioServer(opts) {
     pending.set(id, { ...rec, expiresAt: t + limits.pendingTtlMs });
     return id;
   }
-  const publicPending = (id, p) => ({ pendingId: id, summary: p.summary, phrase: p.phrase, expiresAt: p.expiresAt, ...(p.step ? { step: p.step, of: 2 } : {}) });
+  const publicPending = (id, p) => ({ pendingId: id, summary: p.summary, phrase: p.phrase, expiresAt: p.expiresAt, ...(p.step ? { step: p.step, of: 2 } : {}), ...(p.readiness ? { readiness: publicReadiness(p.readiness) } : {}) });
 
   async function handleCoreOutcome(r, summary) {
     // r: { verdict, reason, confirm?, dispatch? } from the event core. The page gets verdict/reason and, when a
@@ -663,6 +708,10 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/guide') return json(res, 200, guideData()); // guide (D294 proposed)
+    if (req.method === 'GET' && route === '/ui/api/readiness') {
+      if (!readinessOn()) return json(res, 404, { error: 'readiness-off' });
+      try { return json(res, 200, publicReadiness(await readiness().run({ maxAgeMs: 0 }))); } catch { return json(res, 500, { error: 'readiness-failed' }); }
+    }
     if (req.method === 'GET' && route === '/ui/api/settings') return json(res, 200, typeof opts.dataDir === 'string' ? { settings: readSettings(opts.dataDir), clips: clipStatus() } : { settings: null });
     if (req.method === 'GET' && route === '/ui/api/edits') return json(res, 200, history.state());
     if (req.method === 'GET' && route === '/ui/api/project/structure') return structureChoices(res);
@@ -743,8 +792,17 @@ export function createStudioServer(opts) {
       if (spec.flag && !(flags && flags.isOn(spec.flag))) return json(res, 404, { error: `${spec.flag}-off` });
       if (spec.confirm || (live && spec.liveConfirm)) {
         // Stream and recording changes need a typed phrase; while live, the on-air phrase (also for layout changes).
-        const phrase = (live || spec.confirm === 'onair') ? 'yes, on air' : 'yes';
-        const id = addPending({ kind: 'host', summary: spec.summary, phrase, method: body.method, params });
+        let phrase = (live || spec.confirm === 'onair') ? 'yes, on air' : 'yes';
+        let summary = spec.summary; let ready = null;
+        // Go-live readiness (flag readiness): the confirm window shows the check first. A failed item asks for the
+        // override phrase instead of "yes, on air"; confirming with it is logged. Warnings never change the phrase.
+        if (body.method === 'stream.start' && readinessOn()) {
+          try { ready = await readiness().run({ maxAgeMs: readiness().config?.goLiveMaxAgeMs ?? 0 }); } catch { ready = null; }
+          if (!ready) return json(res, 503, { error: 'readiness-failed', detail: 'The readiness check could not run; switch the readiness flag off to go live without it.' });
+          summary = `${spec.summary}.\n\n${readinessSummary(ready)}`;
+          if (!ready.ok) phrase = OVERRIDE_PHRASE;
+        }
+        const id = addPending({ kind: 'host', summary, phrase, method: body.method, params, ...(ready ? { readiness: ready, readinessOverride: !ready.ok } : {}) });
         if (!id) return json(res, 429, { error: 'too-many-pending' });
         return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
       }
@@ -758,6 +816,14 @@ export function createStudioServer(opts) {
       // P5b autosave: only after the host accepted the edit; the real host only (the fake has no project file).
       const saved = projectSync && host.describe().kind === 'host' ? projectSync.record(body.method, syncParams(body.method, params, result)) : false;
       return json(res, 200, saved ? { result, saved: 'pending' } : { result });
+    }
+    if (route === '/ui/api/streams/end-all') {
+      // End all streams (D299, no flag: it is the host's existing stream.stop, plus a check that every stream sink
+      // stopped). A studio write like Stop stream: typed "yes", or "yes, on air" while live. Recording keeps running.
+      if (Object.keys(body).length) return json(res, 400, { error: 'bad-params' });
+      const id = addPending({ kind: 'end-all', summary: 'End all streams: both YouTube outputs, Twitch and Kick stop and their connections close. The recording keeps running (stop it separately).', phrase: live ? 'yes, on air' : 'yes' });
+      if (!id) return json(res, 429, { error: 'too-many-pending' });
+      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
     }
     if (route === '/ui/api/bots/start' || route === '/ui/api/bots/stop') {
       // Studio write: typed "yes", or "yes, on air" while live. Stop only ever ends a copy Ujwalam started (checked in the module).
@@ -864,7 +930,7 @@ export function createStudioServer(opts) {
       if (typeof body.text !== 'string' || body.text.length > 40) return json(res, 400, { error: 'bad-text' });
       // The phrase was chosen when the request was made. If the stream went live since, plain "yes" no longer counts:
       // the record upgrades to the on-air phrase and the page shows it again (D151).
-      if ((p.kind === 'host' || p.kind === 'flag' || p.kind === 'bot') && live && p.phrase === 'yes') {
+      if ((p.kind === 'host' || p.kind === 'flag' || p.kind === 'bot' || p.kind === 'end-all') && live && p.phrase === 'yes') {
         p.phrase = 'yes, on air';
         return json(res, 200, { verdict: 'wrong-phrase', pending: publicPending(body.pendingId, p) });
       }
@@ -880,6 +946,9 @@ export function createStudioServer(opts) {
         if (p.kind === 'host') {
           const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse
           if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
+          // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
+          let overrideLogged;
+          if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
           const before = await readBefore(p.method, p.params);
           const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
           let out;
@@ -888,8 +957,9 @@ export function createStudioServer(opts) {
           remember(p.method, p.params, before);
           // A layout change confirmed while live autosaves like an instant one (P5b).
           const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
-          return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}) });
+          return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
         }
+        if (p.kind === 'end-all') return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() });
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });
         return json(res, 200, await handleCoreOutcome(r, p.summary));
       } catch (e) { return json(res, 502, { error: 'backend-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
