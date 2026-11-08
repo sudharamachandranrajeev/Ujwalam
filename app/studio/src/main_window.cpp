@@ -59,9 +59,12 @@ struct FxParam {
 	int dec;
 	const char *cdef;
 };
+// group (D290): where the effect is listed in the inspector: "shape" (corners, pin, blinds), "filter" (colour, blur,
+// looks), "camera" (key, mask, mirror), "compositing" (blend, opacity, masks), "light" (shadow, glow).
 struct FxType {
 	const char *type, *label;
 	std::vector<FxParam> params;
+	const char *group = "filter";
 };
 
 FxParam fxNum(const char *k, const char *l, double lo, double hi, double def, double step, int dec)
@@ -76,28 +79,28 @@ FxParam fxCol(const char *k, const char *l, const char *def)
 const std::vector<FxType> &fxTypes()
 {
 	static const std::vector<FxType> t = {
-		{"blur", "Blur", {fxNum("strength", "Strength (source px)", 1, 100, 10, 1, 1)}},
-		{"rounded", "Rounded corners", {fxNum("radius", "Radius (source px)", 0, 500, 20, 1, 1)}},
+		{"blur", "Blur", {fxNum("strength", "Strength (source px)", 1, 100, 10, 1, 1)}, "filter"},
+		{"rounded", "Rounded corners", {fxNum("radius", "Radius (source px)", 0, 500, 20, 1, 1)}, "shape"},
 		{"chromaKey", "Chroma key", {fxCol("color", "Key colour", "#00ff00"), fxNum("similarity", "Similarity", 1, 1000, 400, 10, 0),
-					     fxNum("smoothness", "Smoothness", 1, 1000, 80, 10, 0)}},
+					     fxNum("smoothness", "Smoothness", 1, 1000, 80, 10, 0)}, "camera"},
 		{"shadow", "Shadow", {fxCol("color", "Colour", "#000000"), fxNum("opacity", "Opacity", 0, 1, 0.5, 0.05, 2),
 				      fxNum("size", "Softness (px)", 0, 200, 10, 1, 1), fxNum("distance", "Distance (px)", 0, 200, 10, 1, 1),
-				      fxNum("angle", "Light from (degrees)", -360, 360, 135, 5, 1)}},
+				      fxNum("angle", "Light from (degrees)", -360, 360, 135, 5, 1)}, "light"},
 		{"glow", "Glow", {fxCol("color", "Colour", "#ffffff"), fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2),
-				  fxNum("size", "Size (px)", 0, 200, 15, 1, 1), fxNum("spread", "Spread", 0, 1, 0, 0.05, 2)}},
+				  fxNum("size", "Size (px)", 0, 200, 15, 1, 1), fxNum("spread", "Spread", 0, 1, 0, 0.05, 2)}, "light"},
 		{"color", "Colour correction", {fxNum("brightness", "Brightness", -1, 1, 0, 0.05, 2), fxNum("contrast", "Contrast", -1, 1, 0, 0.05, 2),
-						fxNum("saturation", "Saturation", -1, 1, 0, 0.05, 2), fxNum("hue", "Hue (degrees)", -180, 180, 0, 5, 1)}},
+						fxNum("saturation", "Saturation", -1, 1, 0, 0.05, 2), fxNum("hue", "Hue (degrees)", -180, 180, 0, 5, 1)}, "filter"},
 		{"toner", "Toner", {fxCol("shadows", "Shadows", "#000000"), fxCol("darktones", "Dark tones", "#404040"),
 				    fxCol("midtones", "Mid tones", "#808080"), fxCol("brights", "Brights", "#c0c0c0"),
-				    fxCol("highlights", "Highlights", "#ffffff"), fxNum("amount", "Amount", 0, 1, 1, 0.05, 2)}},
+				    fxCol("highlights", "Highlights", "#ffffff"), fxNum("amount", "Amount", 0, 1, 1, 0.05, 2)}, "filter"},
 		{"blinds", "Blinds", {fxNum("completion", "Hidden share", 0, 1, 0.5, 0.05, 2), fxNum("angle", "Angle (degrees)", -360, 360, 90, 5, 1),
-					  fxNum("width", "Slat width (% of layer)", 1, 100, 10, 1, 1), fxNum("feather", "Feather (px)", 0, 100, 2, 1, 1)}},
+					  fxNum("width", "Slat width (% of layer)", 1, 100, 10, 1, 1), fxNum("feather", "Feather (px)", 0, 100, 2, 1, 1)}, "shape"},
 		{"cornerPin", "Corner pin", {fxNum("topLeftX", "Top left x", 0, 1, 0, 0.01, 3), fxNum("topLeftY", "Top left y", 0, 1, 0, 0.01, 3),
 					     fxNum("topRightX", "Top right x", 0, 1, 1, 0.01, 3), fxNum("topRightY", "Top right y", 0, 1, 0, 0.01, 3),
 					     fxNum("bottomRightX", "Bottom right x", 0, 1, 1, 0.01, 3),
 					     fxNum("bottomRightY", "Bottom right y", 0, 1, 1, 0.01, 3),
 					     fxNum("bottomLeftX", "Bottom left x", 0, 1, 0, 0.01, 3),
-					     fxNum("bottomLeftY", "Bottom left y", 0, 1, 1, 0.01, 3)}},
+					     fxNum("bottomLeftY", "Bottom left y", 0, 1, 1, 0.01, 3)}, "shape"},
 	};
 	return t;
 }
