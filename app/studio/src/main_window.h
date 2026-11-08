@@ -64,6 +64,8 @@ private:
 	void renderInspector();
 	void renderMixer();
 	void applyInspector();
+	void nudge(int dx, int dy);
+	void sendNudge();
 	void hostAction(const QString &method);
 	void confirm(const QJsonObject &pending);
 	void note(const QString &text);
@@ -76,6 +78,9 @@ private:
 	QString selected_;
 	QJsonArray scenes_, layers_, mixer_;
 	bool live_ = false, recording_ = false, meterBusy_ = false;
+	bool previewEditing_ = false; // host switch for preview editing = flag preview-edit (status host.previewEditing)
+	int nudgeDx_ = 0, nudgeDy_ = 0; // arrow-key nudge not sent yet (D254)
+	bool nudgeBusy_ = false;
 	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
 
 	QListWidget *sceneList_ = nullptr;

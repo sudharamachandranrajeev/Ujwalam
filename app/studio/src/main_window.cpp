@@ -14,6 +14,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QShortcut>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
@@ -380,6 +381,17 @@ void MainWindow::moveEvent(QMoveEvent *e)
 
 void MainWindow::start()
 {
+	// Arrow-key nudges (D254), as on the web page: 1 canvas px, Shift 10 px. Text and number fields keep their own
+	// arrow keys (they take the key before a window shortcut).
+	const std::pair<Qt::Key, QPoint> keys[] = {{Qt::Key_Left, {-1, 0}}, {Qt::Key_Right, {1, 0}}, {Qt::Key_Up, {0, -1}}, {Qt::Key_Down, {0, 1}}};
+	for (const auto &k : keys) {
+		for (const bool shift : {false, true}) {
+			auto *sc = new QShortcut(QKeySequence(QKeyCombination(shift ? Qt::ShiftModifier : Qt::NoModifier, k.first)), this);
+			sc->setContext(Qt::WindowShortcut);
+			const QPoint d = k.second * (shift ? 10 : 1);
+			connect(sc, &QShortcut::activated, this, [this, d]() { nudge(d.x(), d.y()); });
+		}
+	}
 	loadScenes();
 	pollStatus();
 	auto *st = new QTimer(this);
@@ -589,6 +601,71 @@ void MainWindow::applyInspector()
 	});
 }
 
+// Arrow-key nudge (D254): only while preview editing is on and a layer with a placement is selected; off while live
+// (each press would need "yes, on air"). Presses made while a move is on its way add up into one layers.setPlacement.
+void MainWindow::nudge(int dx, int dy)
+{
+	if (!previewEditing_ || selectedLayer().value(QStringLiteral("placement")).toObject().isEmpty())
+		return;
+	if (live_)
+		return note(QStringLiteral("Live: arrow keys are off. Use the inspector."));
+	nudgeDx_ += dx;
+	nudgeDy_ += dy;
+	sendNudge();
+}
+
+void MainWindow::sendNudge()
+{
+	if (nudgeBusy_ || (!nudgeDx_ && !nudgeDy_))
+		return;
+	const QJsonObject p = selectedLayer().value(QStringLiteral("placement")).toObject();
+	if (p.isEmpty()) {
+		nudgeDx_ = nudgeDy_ = 0;
+		return;
+	}
+	QJsonObject patch;
+	if (nudgeDx_)
+		patch.insert(QStringLiteral("x"), std::round((p.value(QStringLiteral("x")).toDouble() + nudgeDx_) * 100) / 100);
+	if (nudgeDy_)
+		patch.insert(QStringLiteral("y"), std::round((p.value(QStringLiteral("y")).toDouble() + nudgeDy_) * 100) / 100);
+	nudgeDx_ = nudgeDy_ = 0;
+	nudgeBusy_ = true;
+	QJsonObject x;
+	x.insert(QStringLiteral("layer"), selected_);
+	x.insert(QStringLiteral("placement"), patch);
+	const QString layer = selected_;
+	api_->host(QStringLiteral("layers.setPlacement"), layerArgs(x), [this, patch, layer](bool ok, const QJsonObject &b, const QString &err) {
+		nudgeBusy_ = false;
+		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm")) {
+			QJsonObject body;
+			body.insert(QStringLiteral("pendingId"), b.value(QStringLiteral("pending")).toObject().value(QStringLiteral("pendingId")));
+			api_->post(QStringLiteral("ui/api/cancel"), body, [](bool, const QJsonObject &, const QString &) {});
+			nudgeDx_ = nudgeDy_ = 0;
+			return note(QStringLiteral("Live: arrow keys are off. Use the inspector."));
+		}
+		if (!ok) {
+			nudgeDx_ = nudgeDy_ = 0;
+			note(QStringLiteral("Not moved: ") + err);
+			return loadLayers();
+		}
+		// keep the cached placement current so the next nudge adds to it before the list reloads
+		for (int i = 0; i < layers_.size(); i++) {
+			QJsonObject l = layers_.at(i).toObject();
+			if (l.value(QStringLiteral("id")).toString() != layer)
+				continue;
+			QJsonObject pl = l.value(QStringLiteral("placement")).toObject();
+			for (auto it = patch.begin(); it != patch.end(); ++it)
+				pl.insert(it.key(), it.value());
+			l.insert(QStringLiteral("placement"), pl);
+			layers_.replace(i, l);
+		}
+		if (nudgeDx_ || nudgeDy_)
+			return sendNudge();
+		renderInspector();
+		loadLayers();
+	});
+}
+
 void MainWindow::loadMixer()
 {
 	api_->host(QStringLiteral("mixer.list"), {}, [this](bool ok, const QJsonObject &b, const QString &err) {
@@ -715,6 +792,7 @@ void MainWindow::pollStatus()
 		}
 		const QJsonObject h = s.value(QStringLiteral("host")).toObject(), c = s.value(QStringLiteral("core")).toObject();
 		live_ = h.value(QStringLiteral("live")).toBool();
+		previewEditing_ = h.value(QStringLiteral("previewEditing")).toBool();
 		recording_ = h.value(QStringLiteral("recording")).toBool();
 		pillLive_->setText(live_ ? QStringLiteral("LIVE") : QStringLiteral("Offline"));
 		pillLive_->setStyleSheet(live_ ? QStringLiteral("background:#c62828;color:white;") : QString());
