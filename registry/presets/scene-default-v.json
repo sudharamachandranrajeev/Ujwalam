@@ -1,6 +1,6 @@
 {
   "id": "scene-default-v",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default V (current vertical stream layout)",
@@ -105,7 +105,7 @@
         "key": "subscribe-cta",
         "z": 3,
         "name": "Subscribe call to action",
-        "type": "color",
+        "type": "image",
         "rect": {
           "x": 0.01471,
           "y": 0.00823,
@@ -113,8 +113,53 @@
           "h": 0.06269
         },
         "geometry": "meld",
-        "note": "Source pending: the YouTube subscribe pill is a looping video in Meld and no legacy overlay draws it, so this is a transparent placeholder holding the geometry.",
-        "color": "#00000000"
+        "note": "YouTube subscribe pill, opacity 0.59 as in Meld. Keyed looping video from the stream assets folder (base media; file name in the local profile key). Shown only with feature flag layer-effects, since without the key the green background would show. Key values are the Meld import of this layer (D246 mapping, UNVERIFIED for other footage).",
+        "file": {
+          "base": "media",
+          "rel": "{assets.subscribe_cta}"
+        },
+        "flag": "layer-effects",
+        "effects": [
+          {
+            "type": "chromaKey",
+            "color": "#00ff00",
+            "similarity": 300,
+            "smoothness": 1
+          }
+        ],
+        "opacity": 0.59
+      },
+      {
+        "key": "confetti-cta",
+        "z": 3.5,
+        "name": "Confetti call to action",
+        "type": "image",
+        "file": {
+          "base": "media",
+          "rel": "{assets.confetti_cta}"
+        },
+        "rect": {
+          "x": 0.80606,
+          "y": 0.0899,
+          "w": 0.24374,
+          "h": 0.07712
+        },
+        "rotation": 269.72,
+        "flag": "layer-effects",
+        "effects": [
+          {
+            "type": "chromaKey",
+            "color": "#00ff00",
+            "similarity": 430,
+            "smoothness": 1
+          },
+          {
+            "type": "rounded",
+            "radius": 360
+          }
+        ],
+        "geometry": "meld",
+        "note": "Pop-the-confetti prompt, top right, turned 270 degrees (Meld box 870,173 263x148, rotation 269.72; the pivot is the importer's reading of Meld rotation). Rounded radius 360 source px = Meld radius clamped to half the box height (D247). In the user's vertical target layout 2026-11-07. Keyed looping video from the stream assets folder (base media; file name in the local profile key). Shown only with feature flag layer-effects, since without the key the green background would show. Key values are the Meld import of this layer (D246 mapping, UNVERIFIED for other footage)."
       },
       {
         "key": "wordmark",
@@ -132,7 +177,16 @@
           "h": 0.15365
         },
         "geometry": "meld",
-        "note": "Meld has a duplicate layer here named after the brand colour wordmark; its target is not resolved (UNVERIFIED that it is the wordmark). Brand asset, local only."
+        "note": "Meld has a duplicate layer here named after the brand colour wordmark; its target is not resolved (UNVERIFIED that it is the wordmark). Brand asset, local only. When the profile wordmark is a video (green screen, as in Meld), it is keyed with the Meld values (chromaKey 300/1) while feature flag layer-effects is on; a still image is not keyed (D248).",
+        "videoEffects": [
+          {
+            "type": "chromaKey",
+            "color": "#00ff00",
+            "similarity": 300,
+            "smoothness": 1
+          }
+        ],
+        "effectsFlag": "layer-effects"
       },
       {
         "key": "youtube-subscribers",
@@ -170,7 +224,7 @@
         "key": "support-cta",
         "z": 7,
         "name": "Subscribe and support call to action",
-        "type": "color",
+        "type": "image",
         "rect": {
           "x": 0.0139,
           "y": 0.7876,
@@ -178,8 +232,20 @@
           "h": 0.1542
         },
         "geometry": "meld",
-        "note": "Source pending: a looping video in Meld, no legacy overlay draws it. Transparent placeholder holding the geometry. It covers the lower left of the counter area (layout issue, see evidence).",
-        "color": "#00000000"
+        "note": "Subscribe-and-support animation. It covers the lower left of the counter area (layout issue, see evidence). Keyed looping video from the stream assets folder (base media; file name in the local profile key). Shown only with feature flag layer-effects, since without the key the green background would show. Key values are the Meld import of this layer (D246 mapping, UNVERIFIED for other footage).",
+        "file": {
+          "base": "media",
+          "rel": "{assets.support_cta}"
+        },
+        "flag": "layer-effects",
+        "effects": [
+          {
+            "type": "chromaKey",
+            "color": "#00ff00",
+            "similarity": 440,
+            "smoothness": 102
+          }
+        ]
       },
       {
         "key": "social-ticker",
@@ -293,7 +359,10 @@
       "handles.twitch",
       "handles.youtube",
       "handles.kick",
-      "links.discord"
+      "links.discord",
+      "assets.subscribe_cta",
+      "assets.support_cta",
+      "assets.confetti_cta"
     ]
   },
   "themeOverrides": {},

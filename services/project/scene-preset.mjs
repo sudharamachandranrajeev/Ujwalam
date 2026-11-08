@@ -114,6 +114,9 @@ export function loadScenePreset(project, preset, opts = {}) {
       height: Math.round(l.rect.h * canvas.height * 100) / 100,
     };
     if (l.crop) px.crop = { ...l.crop };
+    // turned or see-through layers (D248, e.g. the V confetti prompt at 270 degrees, the V subscribe pill at 0.59)
+    if (typeof l.rotation === 'number' && l.rotation !== 0) px.rotation = l.rotation;
+    if (typeof l.opacity === 'number' && l.opacity !== 1) px.opacity = l.opacity;
     let type, source;
     if (l.type === 'capture') {
       const devId = roles[l.role];
@@ -133,7 +136,7 @@ export function loadScenePreset(project, preset, opts = {}) {
     } else if (l.type === 'image') {
       // A brand asset may be a still or an animation (the Meld wordmark is a looping mp4): the profile file decides.
       const file = resolvedFile.get(l.key);
-      if (!file) { type = 'color'; source = { color: '#00000000' }; }
+      if (!file) { type = 'color'; source = { color: '#00000000' }; placeholder.add(l.key); }
       else if (IMAGE_EXT.has(path.extname(file.rel).toLowerCase())) { type = 'image'; source = { file }; }
       else { type = 'media'; source = { file, loop: true }; }
     } else if (l.type === 'color') {
@@ -149,7 +152,10 @@ export function loadScenePreset(project, preset, opts = {}) {
     const layer = { id, type, name: label(l.name), source, placements: { [canvasId]: px }, origin: { importer: 'preset', id: `${preset.id}/${l.key}` } };
     // effects apply only while `flag` and `effectsFlag` (if set) are on; effectsFlag keeps the layer itself
     const effectsOn = [l.flag, l.effectsFlag].every((f) => !f || flags[f] === true);
-    if (Array.isArray(l.effects) && l.effects.length && effectsOn && !placeholder.has(l.key)) layer.effects = structuredClone(l.effects);
+    // `videoEffects` (D248) apply only when the profile file turned out to be a video: a green-screen brand video needs a
+    // key, a transparent PNG of the same asset must not lose its greens
+    const fx = [...(Array.isArray(l.effects) ? l.effects : []), ...(type === 'media' && Array.isArray(l.videoEffects) ? l.videoEffects : [])];
+    if (fx.length && effectsOn && !placeholder.has(l.key)) layer.effects = structuredClone(fx);
     layers.push({ z: l.z, layer });
   }
   layers.sort((a, b) => a.z - b.z);

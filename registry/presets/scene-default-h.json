@@ -1,6 +1,6 @@
 {
   "id": "scene-default-h",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default H (current stream layout)",
@@ -98,7 +98,16 @@
           "h": 0.096
         },
         "geometry": "spec",
-        "note": "Brand asset, local only."
+        "note": "Brand asset, local only. When the profile wordmark is a video (green screen, as in Meld), it is keyed with the Meld values (chromaKey 300/1) while feature flag layer-effects is on; a still image is not keyed (D248).",
+        "videoEffects": [
+          {
+            "type": "chromaKey",
+            "color": "#00ff00",
+            "similarity": 300,
+            "smoothness": 1
+          }
+        ],
+        "effectsFlag": "layer-effects"
       },
       {
         "key": "goal",
@@ -135,7 +144,7 @@
         "key": "subscribe-cta",
         "z": 7,
         "name": "Subscribe call to action",
-        "type": "color",
+        "type": "image",
         "rect": {
           "x": 0.52886,
           "y": 0.02254,
@@ -143,8 +152,20 @@
           "h": 0.08065
         },
         "geometry": "meld",
-        "note": "Source pending: the YouTube subscribe pill is a looping video in Meld and no legacy overlay draws it, so this is a transparent placeholder holding the geometry.",
-        "color": "#00000000"
+        "note": "YouTube subscribe pill. Keyed looping video from the stream assets folder (base media; file name in the local profile key). Shown only with feature flag layer-effects, since without the key the green background would show. Key values are the Meld import of this layer (D246 mapping, UNVERIFIED for other footage).",
+        "file": {
+          "base": "media",
+          "rel": "{assets.subscribe_cta}"
+        },
+        "flag": "layer-effects",
+        "effects": [
+          {
+            "type": "chromaKey",
+            "color": "#00ff00",
+            "similarity": 300,
+            "smoothness": 1
+          }
+        ]
       },
       {
         "key": "youtube-subscribers",
@@ -262,7 +283,8 @@
       "handles.twitch",
       "handles.youtube",
       "handles.kick",
-      "links.discord"
+      "links.discord",
+      "assets.subscribe_cta"
     ]
   },
   "themeOverrides": {},

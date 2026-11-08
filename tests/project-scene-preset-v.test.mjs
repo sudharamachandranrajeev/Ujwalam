@@ -28,11 +28,18 @@ test('V preset: registry validates, targets the v canvas, similar to Default H',
 
 test('V preset: z unique 0..13 (z13 = test-broadcast banner, z0.5 = blurred game backdrop) plus cam-pop rule z14, rects inside the canvas, crop not stretch', () => {
   const zs = presetV.params.layers.map((l) => l.z).sort((a, b) => a - b);
-  assert.deepEqual(zs, [0, 0.5, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+  assert.deepEqual(zs, [0, 0.5, 1, 2, 3, 3.5, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]); // z3.5 = confetti prompt (D248)
   assert.equal(presetV.params.rules[0].z, 14);
   for (const l of presetV.params.layers) {
     for (const k of ['x', 'y', 'w', 'h']) assert.ok(l.rect[k] >= 0 && l.rect[k] <= 1, `${l.key}.${k}`);
-    assert.ok(l.rect.x + l.rect.w <= 1.0001 && l.rect.y + l.rect.h <= 1.0001, `${l.key} inside canvas`);
+    // a layer turned a quarter turn about its centre (the host's pivot) shows its box with width and height swapped
+    const quarter = Math.abs(((((l.rotation ?? 0) % 180) + 180) % 180) - 90) < 1;
+    let { x, y, w, h } = l.rect;
+    if (quarter) {
+      const cx = (x + w / 2) * 1080, cy = (y + h / 2) * 1920, W = h * 1920, H = w * 1080;
+      [x, y, w, h] = [(cx - W / 2) / 1080, (cy - H / 2) / 1920, W / 1080, H / 1920];
+    } else assert.ok(!l.rotation, `${l.key}: only quarter turns are checked`);
+    assert.ok(x >= -0.0001 && y >= -0.0001 && x + w <= 1.0001 && y + h <= 1.0001, `${l.key} inside canvas`);
   }
   // game: 1080 px box of a 1920x1080 source scaled 0.866 shows 1248 source px
   const g = presetV.params.layers.find((l) => l.key === 'game');
@@ -45,7 +52,7 @@ test('V preset loads into the v canvas with roles bound and validates', () => {
   assert.equal(validateProject(r.project).ok, true);
   const sc = r.project.scenes.at(-1);
   assert.equal(sc.name, 'Default V');
-  assert.equal(sc.layers.length, 15);
+  assert.equal(sc.layers.length, 16);
   assert.ok(sc.layers.every((l) => Object.keys(l.placements).join() === 'v'));
   const byKey = (k) => sc.layers.find((l) => l.id === r.layerIds[k]);
   assert.deepEqual(byKey('game').source, { device: 'dev-cap' });
@@ -119,4 +126,41 @@ test('H and V presets load into one project together; both scenes valid, overlay
   // reversed order works too
   const v2 = loadScenePreset(loadScenePreset(base(), presetV, { profile }).project, presetH, { profile });
   assert.equal(validateProject(v2.project).ok, true);
+});
+
+test('call-to-action videos (D248): keyed looping media from the stream assets folder, shown only with layer-effects', () => {
+  const roles = { 'game-capture': 'dev-cap', facecam: 'dev-cam' };
+  const on = loadScenePreset(base(), presetV, { profile, roles, flags: { 'layer-effects': true } });
+  const byKey = (r, k) => r.project.scenes.at(-1).layers.find((l) => l.id === r.layerIds[k]);
+  const sub = byKey(on, 'subscribe-cta');
+  assert.deepEqual([sub.type, sub.source], ['media', { file: { base: 'media', rel: 'fixture-subscribe.webm' }, loop: true }]);
+  assert.deepEqual(sub.effects, [{ type: 'chromaKey', color: '#00ff00', similarity: 300, smoothness: 1 }]);
+  assert.equal(sub.placements.v.opacity, 0.59);
+  const conf = byKey(on, 'confetti-cta');
+  assert.equal(conf.placements.v.rotation, 269.72);
+  assert.deepEqual(conf.effects.map((e) => e.type), ['chromaKey', 'rounded']);
+  assert.equal(byKey(on, 'support-cta').source.file.rel, 'fixture-support.mp4');
+  assert.equal(validateProject(on.project).ok, true);
+
+  // flag off: the layers stay (geometry kept) but hidden and unkeyed, so no green box ever shows
+  const off = loadScenePreset(base(), presetV, { profile, roles });
+  for (const k of ['subscribe-cta', 'support-cta', 'confetti-cta']) {
+    assert.equal(byKey(off, k).placements.v.visible, false, k);
+    assert.equal(byKey(off, k).effects, undefined, k);
+  }
+  // no file named in the profile: a transparent placeholder, reported by key
+  const none = loadScenePreset(base(), presetV, { profile: { ...profile, assets: {} }, roles, flags: { 'layer-effects': true } });
+  assert.deepEqual(none.missingAssets, ['assets.confetti_cta', 'assets.subscribe_cta', 'assets.support_cta']);
+  assert.deepEqual(byKey(none, 'confetti-cta').source, { color: '#00000000' });
+  assert.equal(byKey(none, 'confetti-cta').effects, undefined);
+});
+
+test('wordmark (D248): a video wordmark is keyed under layer-effects; a still is never keyed', () => {
+  const roles = { 'game-capture': 'dev-cap', facecam: 'dev-cam' };
+  const wm = (prof, flags) => { const r = loadScenePreset(base(), presetV, { profile: prof, roles, flags }); return r.project.scenes.at(-1).layers.find((l) => l.id === r.layerIds.wordmark); };
+  const vid = { ...profile, brand: { ...profile.brand, wordmark: 'fixture-wordmark.mp4' } };
+  assert.deepEqual(wm(vid, { 'layer-effects': true }).effects, [{ type: 'chromaKey', color: '#00ff00', similarity: 300, smoothness: 1 }]);
+  assert.equal(wm(vid, {}).effects, undefined, 'flag off: no key');
+  assert.equal(wm(vid, {}).placements.v.visible, true, 'effectsFlag keeps the layer itself');
+  assert.equal(wm(profile, { 'layer-effects': true }).effects, undefined, 'a PNG wordmark keeps its colours');
 });
