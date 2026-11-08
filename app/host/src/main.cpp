@@ -484,6 +484,23 @@ int wmain(int argc, wchar_t **wargv)
 		f.allow_devices = app.allow_devices;
 		f.allow_browser = app.allow_browser;
 		app.studio = std::make_unique<Studio>(f);
+		{
+			const auto &ah = app.config.audio_health;
+			Studio::AudioHealthCfg hc;
+			hc.no_data_ms = ah.no_data_ms;
+			hc.max_recreates = ah.max_recreates;
+			hc.recreate = ah.enabled;
+			app.studio->set_audio_health(hc);
+			if (app.test_hooks)
+				ahealth::register_test_audio_type();
+			if (ah.no_data_ms && ah.check_interval_ms) {
+				Studio *st = app.studio.get();
+				app.audio_watch = std::make_unique<ahealth::Ticker>(ah.check_interval_ms, [st]() { st->audio_watch_tick(); });
+			}
+			hlog::info("audio health: %s (no data %u ms, check %u ms, max %u restarts per source; shutdown guard %u ms)",
+				   ah.enabled ? "watchdog on" : (ah.no_data_ms ? "report only" : "off"), ah.no_data_ms,
+				   ah.check_interval_ms, ah.max_recreates, ah.shutdown_guard_ms);
+		}
 		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir, app.allow_live,
 							app.twitch_bandwidth_test);
 		app.outputs->set_replay_config(app.config.replay);
@@ -703,6 +720,7 @@ int wmain(int argc, wchar_t **wargv)
 		app.panic.reset();
 		if (app.overlay)
 			app.overlay->set_mic_level(nullptr); // the mic pump stops reading the studio before it goes
+		app.audio_watch.reset(); // the watchdog stops touching the studio before it goes
 		app.studio->teardown();
 		app.studio.reset();
 		face::set(nullptr); // no face filter is left; then tick callback off and mapping freed while libobs runs
@@ -716,7 +734,7 @@ int wmain(int argc, wchar_t **wargv)
 			discovery::remove_if_ours(app.discovery_path, GetCurrentProcessId());
 	}
 	stats::shutdown();
-	obsrt::shutdown();
+	obsrt::shutdown(app.config.audio_health.shutdown_guard_ms);
 	hlog::info("exit %d", rc);
 	hlog::close_file();
 	CloseHandle(g_shutdown);

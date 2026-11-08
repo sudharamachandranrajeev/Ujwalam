@@ -109,6 +109,24 @@ public:
 	// scene on any canvas; a duplicate resolves to its target's source; a layer's effects wrapper is never returned).
 	// The caller releases it. type = the layer type. Throws rpc::Error: no such layer, layer has no source / video.
 	obs_source_t *layer_source_ref(const std::string &layer_id, std::string &type) const;
+	// Audio health (D297 proposed; audio_health.h). no_data_ms: a source with no audio packet for this long is
+	// "missing" (0 = not configured: receiving is reported as null). recreate: the watchdog replaces a missing device
+	// audio source (a fresh libobs source, same type/settings/volume/mute/tracks/monitoring, same output channel), at
+	// most max_recreates times per source per load; the replaced one is parked, never destroyed while running.
+	struct AudioHealthCfg {
+		uint32_t no_data_ms = 0;
+		uint32_t max_recreates = 0;
+		bool recreate = false;
+	};
+	void set_audio_health(const AudioHealthCfg &c);
+	// The pre-stream / pre-recording readiness view: every project device audio source with state ok | starting |
+	// missing | inactive | unknown, receiving, lastDataMs, recreates; warnings ("Game audio missing"); recent events.
+	json::Value audio_health() const;
+	void audio_watch_tick(); // one watchdog pass (the audio_health.h ticker thread calls it)
+	// --test-hooks only (methods.cpp): a project-style device audio global on the next output channel backed by the
+	// host's fake source type ujw_test_audio (audio_health.h); stall stops / restarts its packets (simulated dead device).
+	json::Value test_audio_add(const std::string &id, const std::string &name);
+	json::Value test_audio_stall(const std::string &id, bool stall);
 	json::Value mixer_list() const;
 	json::Value mixer_set_volume(const std::string &id, const double *mul, const double *db);
 	json::Value mixer_set_mute(const std::string &id, bool muted);
@@ -132,6 +150,7 @@ private:
 		std::string owner;    // layer id that owns it
 		std::string audio_id; // project audio source id bound to it
 		std::string audio_name; // its project name ("Mic", "Game"): the mixer row name
+		uint64_t created_ns = 0; // os_gettime_ns at wrap (start-up grace for the audio watchdog)
 		~Src();
 	};
 	struct Layer {
@@ -172,9 +191,18 @@ private:
 	struct Global { // project v1 audio device source on a main-canvas output channel
 		std::shared_ptr<Src> src;
 		uint32_t channel = 0;
+		uint32_t recreates = 0; // audio watchdog replacements so far
+		bool missing = false, gave_up = false;
 	};
 
 	Flags flags_;
+	AudioHealthCfg health_;
+	std::vector<std::shared_ptr<Src>> parked_; // replaced device audio sources (released in ~Studio only)
+	std::vector<json::Value> audio_events_;    // newest last, at most kAudioEvents
+	uint64_t audio_seq_ = 0;
+	void audio_event(const char *kind, const Global &g, const std::string &text);
+	bool recreate_global(Global &g);
+	std::string audio_state(const Global &g, uint64_t now, int64_t &last_ms) const;
 	mutable std::recursive_mutex m_;
 	std::vector<Canvas> canvases_;
 	std::vector<Scene> scenes_;

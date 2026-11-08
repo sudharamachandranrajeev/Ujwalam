@@ -10,7 +10,7 @@ import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
-import { createStudioServer, HOST_CALLS } from '../services/studio-ui/server.mjs';
+import { audioReadiness, createStudioServer, HOST_CALLS } from '../services/studio-ui/server.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 const REPO = path.resolve(UI, '..');
@@ -401,5 +401,40 @@ describe('settings and clip answers', () => {
     hostLive = false;
     assert.equal(r.status, 409);
     assert.equal(JSON.parse(r.text).detail, 'Change settings after the stream.');
+  });
+});
+
+describe('audio readiness (D297 proposed)', () => {
+  const AH = { ok: false, warnings: ['Game audio missing'], sources: [{ id: 'audio:aud-game', name: 'Game', state: 'missing', receiving: false, lastDataMs: 12000, recreates: 3, extra: 'x' }, { id: 'audio:aud-mic', name: 'Mic', state: 'ok', receiving: true, lastDataMs: 4, recreates: 0 }], events: [{ text: 'not for the page' }], rtwqHeld: true };
+  test('audioReadiness keeps ok, warnings and per-source state only', () => {
+    const r = audioReadiness(AH);
+    assert.deepEqual(r, { ok: false, warnings: ['Game audio missing'], sources: [
+      { id: 'audio:aud-game', name: 'Game', state: 'missing', receiving: false, lastDataMs: 12000, recreates: 3 },
+      { id: 'audio:aud-mic', name: 'Mic', state: 'ok', receiving: true, lastDataMs: 4, recreates: 0 }] });
+    assert.deepEqual(audioReadiness(undefined), { ok: true, warnings: [], sources: [] });
+    assert.deepEqual(audioReadiness({ warnings: [5, 'X audio missing'], sources: 'no' }), { ok: false, warnings: ['X audio missing'], sources: [] });
+  });
+  test('status snapshot and the record/stream confirmation name the missing sound before going live', async () => {
+    const fake = createFakeHost({ outputsReady: true });
+    let ah = AH;
+    const host = { describe: () => fake.describe(), call: async (m, p) => { const r = await fake.call(m, p); return m === 'host.status' ? { ...r, audioHealth: ah } : r; } };
+    const core = { describe: () => ({ available: false }), call: async () => { throw new Error('x'); } };
+    const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY });
+    const { port } = await srv.listen();
+    try {
+      const a = await login(port);
+      const st = JSON.parse((await raw(port, { url: '/ui/api/status', headers: { cookie: a.cookie } })).text);
+      assert.deepEqual(st.host.audioHealth, audioReadiness(AH));
+      for (const method of ['record.start', 'stream.start']) {
+        const r = JSON.parse((await post(port, a, '/ui/api/host', { method })).text);
+        assert.equal(r.verdict, 'confirm');
+        assert.match(r.pending.summary, /WARNING: Game audio missing$/, method);
+      }
+      ah = { ok: true, warnings: [], sources: [] };
+      const r2 = JSON.parse((await post(port, a, '/ui/api/host', { method: 'record.start' })).text);
+      assert.equal(r2.pending.summary, 'Start recording');
+      const stop = JSON.parse((await post(port, a, '/ui/api/host', { method: 'record.stop' })).text);
+      assert.equal(stop.pending.summary, 'Stop recording', 'only starts carry the readiness warning');
+    } finally { await srv.close(); }
   });
 });

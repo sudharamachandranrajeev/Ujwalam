@@ -152,6 +152,11 @@ json::Value host_status_json(App &a)
 	r.set("previewEditing", a.previews ? a.previews->editor().enabled() : false);
 	r.set("previewEditSeq", a.previews ? (int64_t)a.previews->editor().seq() : (int64_t)0);
 	r.set("transitions", a.studio ? a.studio->transitions() : json::Value::object());
+	// Audio readiness (D297 proposed): each project device audio source receiving or not, the "<Name> audio missing"
+	// warnings and the watchdog's events. rtwqHeld: the host holds the RTWQ platform (obs_runtime.h).
+	json::Value ah = a.studio ? a.studio->audio_health() : json::Value::object();
+	ah.set("rtwqHeld", obsrt::rtwq_held());
+	r.set("audioHealth", std::move(ah));
 	return r;
 }
 
@@ -509,6 +514,20 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 	add("preview.edits", [&a](const json::Value &p) {
 		Params q(p, {"since"});
 		return a.previews->editor().edits((uint64_t)q.int_or("since", 0, 0, INT64_MAX));
+	});
+	// audio.testAdd {id, name} / audio.testStall {id, stall}: a fake device audio source (audio_health.h
+	// ujw_test_audio, opens no device) and a simulated dead device, for the audio watchdog tests. --test-hooks only.
+	add("audio.testAdd", [&a](const json::Value &p) {
+		Params q(p, {"id", "name"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "audio.testAdd needs a host started with --test-hooks");
+		return a.studio->test_audio_add(q.str("id", 64), q.str("name", 64));
+	});
+	add("audio.testStall", [&a](const json::Value &p) {
+		Params q(p, {"id", "stall"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "audio.testStall needs a host started with --test-hooks");
+		return a.studio->test_audio_stall(q.str("id", 64), q.bool_or("stall", true));
 	});
 	// preview.editSim {canvas, width, height, steps: [{event: down|move|up|cancel, x, y, shift?, alt?}]}: runs the
 	// window procedure's editor calls for a preview of width x height client px, without a window (headless tests).

@@ -150,8 +150,23 @@ export function hotkeyOverrides(args) {
   return { overrides, problems };
 }
 
+export const AUDIO_HEALTH_FILE = path.join(REPO, 'data', 'audio', 'health.json');
+const AUDIO_HEALTH_KEYS = Object.freeze(['enabled', 'noDataMs', 'checkIntervalMs', 'maxRecreates', 'shutdownGuardMs']);
+/** data/audio/health.json -> the host config's audioHealth (D297 proposed). Range checks are the host's (exit 64). */
+export function loadAudioHealth(file = AUDIO_HEALTH_FILE) {
+  const d = JSON.parse(readFileSync(file, 'utf8'));
+  if (typeof d.source !== 'string' || !d.source) throw new Error('audio health: source is required');
+  const out = {};
+  for (const k of AUDIO_HEALTH_KEYS) {
+    if (!Object.hasOwn(d, k)) throw new Error(`audio health: ${k} is required`);
+    if (k === 'enabled' ? typeof d[k] !== 'boolean' : !Number.isInteger(d[k])) throw new Error(`audio health: bad ${k}`);
+    out[k] = d[k];
+  }
+  return out;
+}
+
 /** The alpha host config (keys of app/host/src/host_config.cpp; pure; tested). Combos: host defaults unless overridden. */
-export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, hotkeys = {}, monitoringOutput = null }) {
+export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, hotkeys = {}, monitoringOutput = null, audioHealth = loadAudioHealth() }) {
   return {
     $comment: 'Written by services/studio-ui/launch.mjs --alpha at every start (edits are overwritten; use --hotkey-panic/--hotkey-feedback/--hotkey-marker). Host defaults: panic Ctrl+Alt+P, feedback Ctrl+Alt+F, marker Ctrl+Alt+Shift+M.',
     replay: { seconds: ALPHA_REPLAY_SECONDS, autoStart: true },
@@ -160,6 +175,8 @@ export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, h
     eventCore: { systemFile: path.join(path.resolve(dataDir), SYSTEM_FILE) },
     // Low-latency audio buffering: what you hear in the headphones follows the game closely (OBS low-latency mode).
     audio: { lowLatency: true },
+    // A device audio source that stops delivering (game audio lost 2026-11-08) is reported and restarted.
+    audioHealth,
     // Headphones for monitored sources (profile devices.monitoringOutput.name); absent: the Windows default output.
     ...(typeof monitoringOutput === 'string' && monitoringOutput ? { monitoringDevice: monitoringOutput } : {}),
   };

@@ -253,8 +253,10 @@ export async function defaultAudioCheck(ctx) {
     for (const m of Array.isArray(mx?.sources) ? mx.sources : []) if (m && m.muted === true && m.mixers !== 0 && typeof m.name === 'string') muted.push(m.name.slice(0, 40));
   } catch { /* mixer not available: only the state call below */ }
   const mutedNote = muted.length ? ` Muted in the stream mix: ${muted.join(', ')}.` : '';
-  let r;
-  try { r = await ctx.host.call(ctx.config.audio.method, {}); } catch (e) {
+  // D297: the host reports live audio state in host.status.audioHealth ({ sources: [{ id, name, state }] }). The separate
+  // method call stays as the fallback for a host without it.
+  let r = Array.isArray(ctx.hostStatus.audioHealth?.sources) ? ctx.hostStatus.audioHealth : null;
+  if (!r) try { r = await ctx.host.call(ctx.config.audio.method, {}); } catch (e) {
     const missing = e?.code === 'RPC_-32601' || e?.code === 'NO_METHOD' || /method.not.found/i.test(String(e?.message));
     // TODO(audio): the host's live audio state call is being added (2026-11-08). Until then this item says "unknown".
     if (missing) return item('audio', 'warn', `Live audio state is unknown: the host cannot report it yet. Check the mixer meters by ear.${mutedNote}`, { unknown: true });

@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, clipsEnv, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, releaseVersion, shellChoice, shellExitRecord, shellRelaunchAllowed, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, loadAudioHealth, clipsEnv, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, releaseVersion, shellChoice, shellExitRecord, shellRelaunchAllowed, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -355,10 +355,17 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
 test('host config: day-2 keys only (hotkeys on, replay 60 s autostart, feedback folder, event-core system file); written owner-only', () => {
   const d = tmp('hcfg');
   const c = alphaHostConfig({ dataDir: d });
-  assert.deepEqual(Object.keys(c).sort(), ['$comment', 'audio', 'eventCore', 'feedbackDir', 'hotkeys', 'replay']);
+  assert.deepEqual(Object.keys(c).sort(), ['$comment', 'audio', 'audioHealth', 'eventCore', 'feedbackDir', 'hotkeys', 'replay']);
   assert.deepEqual(c.replay, { seconds: 60, autoStart: true });
   assert.deepEqual(c.hotkeys, { enabled: true });
   assert.deepEqual(c.audio, { lowLatency: true });
+  // audio health watchdog (D297 proposed): the numbers come from data/audio/health.json, never from code
+  const ah = JSON.parse(readFileSync(path.join(REPO, 'data', 'audio', 'health.json'), 'utf8'));
+  assert.deepEqual(c.audioHealth, { enabled: ah.enabled, noDataMs: ah.noDataMs, checkIntervalMs: ah.checkIntervalMs, maxRecreates: ah.maxRecreates, shutdownGuardMs: ah.shutdownGuardMs });
+  assert.deepEqual(loadAudioHealth(), c.audioHealth);
+  const bad = path.join(d, 'health-bad.json');
+  writeFileSync(bad, JSON.stringify({ source: 'x', enabled: true, noDataMs: 5000 }));
+  assert.throws(() => loadAudioHealth(bad), /checkIntervalMs is required/);
   assert.equal(c.feedbackDir, DEFAULT_FEEDBACK_DIR);
   assert.equal(DEFAULT_FEEDBACK_DIR, path.join(REPO, 'feedback'), 'repo-root feedback/ (gitignored), the UI form default');
   assert.equal(c.eventCore.systemFile, path.join(d, 'system.json'));
