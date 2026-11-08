@@ -2,6 +2,10 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.4 — 2026-11-08
+
+- Fix: overlays and browser layers were off in alpha.3 when `ujwalam.json` named the `overlays` folder itself (as the 3 Nov install wrote it); that folder is now read as its parent.
+
 ## 0.1.0-alpha.3 — 2026-11-08
 
 - The native studio window (Qt) opens by default instead of the browser; `Ujwalam.cmd --shell browser` opens the web control page. Closing the window does not stop a stream.

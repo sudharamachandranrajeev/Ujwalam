@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 3,
+  "current": 4,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -14,6 +14,7 @@
   "builds": [
     { "n": 1, "date": "2026-11-05", "title": "Alpha 0 first build" },
     { "n": 2, "date": "2026-11-03", "title": "Live-test guard, Twitch bandwidth test, 1080p60 live plan" },
-    { "n": 3, "date": "2026-11-08", "title": "Native Qt studio window by default" }
+    { "n": 3, "date": "2026-11-08", "title": "Native Qt studio window by default" },
+    { "n": 4, "date": "2026-11-08", "title": "Overlays back on for installs from 3 Nov" }
   ]
 }
