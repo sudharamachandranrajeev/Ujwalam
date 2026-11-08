@@ -18,6 +18,7 @@
 #include <QPushButton>
 #include <QScrollArea>
 #include <QShortcut>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
@@ -366,6 +367,16 @@ QWidget *MainWindow::buildLeft()
 		});
 	});
 	v->addLayout(order);
+
+	// Feature flags (D149): new features ship off; switch them here. Turning one on asks for the typed phrase
+	// ("yes, on air" while live), turning one off is instant. The list follows the server on every status poll.
+	v->addWidget(new QLabel(QStringLiteral("<b>Feature flags</b>")));
+	flagList_ = new QListWidget(w);
+	flagList_->setMaximumHeight(170);
+	connect(flagList_, &QListWidget::itemChanged, this, [this](QListWidgetItem *it) {
+		setFlag(it->data(Qt::UserRole).toString(), it->checkState() == Qt::Checked);
+	});
+	v->addWidget(flagList_);
 	return w;
 }
 
@@ -1117,6 +1128,48 @@ void MainWindow::pollStatus()
 		streamBtn_->setText(live_ ? QStringLiteral("Stop stream") : QStringLiteral("Start stream"));
 		recordBtn_->setText(recording_ ? QStringLiteral("Stop recording") : QStringLiteral("Record"));
 		loadEdits();
+		loadFlags();
+	});
+}
+
+void MainWindow::loadFlags()
+{
+	api_->get(QStringLiteral("ui/api/flags"), [this](bool ok, const QJsonObject &b, const QString &) {
+		if (!ok)
+			return;
+		const QJsonArray fl = b.value(QStringLiteral("flags")).toArray();
+		const QSignalBlocker block(flagList_); // a refresh is not a click
+		bool same = flagList_->count() == fl.size();
+		for (int i = 0; same && i < fl.size(); i++)
+			same = flagList_->item(i)->data(Qt::UserRole).toString() == fl.at(i).toObject().value(QStringLiteral("id")).toString();
+		if (!same)
+			flagList_->clear();
+		for (int i = 0; i < fl.size(); i++) {
+			const QJsonObject f = fl.at(i).toObject();
+			QListWidgetItem *it = same ? flagList_->item(i) : new QListWidgetItem(f.value(QStringLiteral("id")).toString(), flagList_);
+			if (!same) {
+				it->setData(Qt::UserRole, f.value(QStringLiteral("id")).toString());
+				it->setToolTip(f.value(QStringLiteral("description")).toString());
+				it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
+			}
+			it->setCheckState(f.value(QStringLiteral("on")).toBool() ? Qt::Checked : Qt::Unchecked);
+		}
+	});
+}
+
+void MainWindow::setFlag(const QString &id, bool on)
+{
+	QJsonObject body;
+	body.insert(QStringLiteral("id"), id);
+	body.insert(QStringLiteral("on"), on);
+	api_->post(QStringLiteral("ui/api/flags/set"), body, [this, id, on](bool ok, const QJsonObject &b, const QString &err) {
+		if (!ok)
+			note(QStringLiteral("Flag not changed: ") + err);
+		else if (b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
+			return confirm(b.value(QStringLiteral("pending")).toObject()); // the next poll shows the result either way
+		else
+			note(QStringLiteral("Flag ") + id + (on ? QStringLiteral(" on.") : QStringLiteral(" off.")));
+		pollStatus();
 	});
 }
 

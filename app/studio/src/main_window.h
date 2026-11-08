@@ -77,6 +77,8 @@ private:
 	void hostAction(const QString &method);
 	void loadEdits();             // undo / redo state (UI server history, D238)
 	void undoRedo(bool undo);
+	void loadFlags();             // feature flags (D149): on needs the typed phrase, off is instant
+	void setFlag(const QString &id, bool on);
 	void confirm(const QJsonObject &pending);
 	void note(const QString &text);
 	QJsonObject layerArgs(const QJsonObject &extra = {}) const;
@@ -101,6 +103,7 @@ private:
 
 	QListWidget *sceneList_ = nullptr;
 	QListWidget *layerList_ = nullptr;
+	QListWidget *flagList_ = nullptr;
 	QPushButton *tabH_ = nullptr, *tabV_ = nullptr;
 	QWidget *inspForm_ = nullptr;
 	QLabel *inspTitle_ = nullptr, *inspEmpty_ = nullptr;
