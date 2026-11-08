@@ -28,6 +28,7 @@
     "label": "node tools/label/server.mjs",
     "validate:games": "node tools/game-validate.mjs data/games",
     "test:py": "python -I -m unittest discover -s tests/py -t tests/py -v",
+    "test:face": ".venv-gpu\\Scripts\\python.exe -I -m unittest discover -s tests/py -t tests/py -p \"test_face*.py\" -v",
     "test:ocr": ".venv\\Scripts\\python.exe -I -m unittest discover -s tests/py -t tests/py -p \"test_g1*.py\" -v",
     "test:capture": "set UJWALAM_CAPTURE_TESTS=1&& python -I -m unittest discover -s tests/py -t tests/py -p \"test_record.py\" -v"
   },
