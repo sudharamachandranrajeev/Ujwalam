@@ -13,6 +13,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QRegularExpressionValidator>
 #include <QPushButton>
@@ -368,6 +369,90 @@ QWidget *MainWindow::buildLeft()
 	});
 	v->addLayout(order);
 
+	// Structure edits (D240, flag scene-edit): add and remove scenes and layers; the project file is saved too.
+	structBox_ = new QGroupBox(QStringLiteral("Edit scenes and layers"), w);
+	auto *sv = new QVBoxLayout(structBox_);
+	auto *srow = new QHBoxLayout();
+	auto *addScene = new QPushButton(QStringLiteral("Add scene"), structBox_);
+	auto *rmScene = new QPushButton(QStringLiteral("Remove scene"), structBox_);
+	auto *rmLayer = new QPushButton(QStringLiteral("Remove layer"), structBox_);
+	srow->addWidget(addScene);
+	srow->addWidget(rmScene);
+	srow->addWidget(rmLayer);
+	sv->addLayout(srow);
+	auto *arow = new QHBoxLayout();
+	addKind_ = new QComboBox(structBox_);
+	for (const auto &k : {std::pair{"Copy of layer", "copy"}, {"Colour", "color"}, {"Text", "text"}, {"Capture device", "capture"},
+			      {"Overlay", "overlay"}, {"Image", "image"}, {"Video", "media"}})
+		addKind_->addItem(QString::fromLatin1(k.first), QString::fromLatin1(k.second));
+	addPick_ = new QComboBox(structBox_);
+	addText_ = new QLineEdit(structBox_);
+	addText_->setMaxLength(2000);
+	auto *addLayer = new QPushButton(QStringLiteral("Add layer"), structBox_);
+	arow->addWidget(addKind_);
+	arow->addWidget(addPick_, 1);
+	arow->addWidget(addText_, 1);
+	arow->addWidget(addLayer);
+	sv->addLayout(arow);
+	structBox_->setVisible(false);
+	v->addWidget(structBox_);
+	connect(addKind_, &QComboBox::currentIndexChanged, this, [this]() { renderAddPick(); });
+	connect(addScene, &QPushButton::clicked, this, [this]() {
+		bool ok = false;
+		const QString name = QInputDialog::getText(this, QStringLiteral("Add scene"), QStringLiteral("Scene name"), QLineEdit::Normal, QString(), &ok).trimmed();
+		if (!ok || name.isEmpty())
+			return;
+		QJsonObject b;
+		b.insert(QStringLiteral("op"), QStringLiteral("scene.add"));
+		b.insert(QStringLiteral("name"), name.left(120));
+		structureEdit(b);
+	});
+	connect(rmScene, &QPushButton::clicked, this, [this]() {
+		QListWidgetItem *it = sceneList_->currentItem();
+		if (!it)
+			return note(QStringLiteral("Select a scene first."));
+		if (QMessageBox::question(this, QStringLiteral("Remove scene"), QStringLiteral("Remove scene \"%1\" and all its layers from the project?").arg(it->text())) != QMessageBox::Yes)
+			return;
+		QJsonObject b;
+		b.insert(QStringLiteral("op"), QStringLiteral("scene.remove"));
+		b.insert(QStringLiteral("scene"), it->data(Qt::UserRole).toString());
+		structureEdit(b);
+	});
+	connect(rmLayer, &QPushButton::clicked, this, [this]() {
+		const QJsonObject l = selectedLayer();
+		if (l.isEmpty())
+			return note(QStringLiteral("Select a layer first."));
+		if (QMessageBox::question(this, QStringLiteral("Remove layer"), QStringLiteral("Remove layer \"%1\" from this scene on every canvas?").arg(l.value(QStringLiteral("name")).toString(selected_))) != QMessageBox::Yes)
+			return;
+		QJsonObject b;
+		b.insert(QStringLiteral("op"), QStringLiteral("layer.remove"));
+		b.insert(QStringLiteral("scene"), activeScene_);
+		b.insert(QStringLiteral("layer"), selected_);
+		structureEdit(b);
+	});
+	connect(addLayer, &QPushButton::clicked, this, [this]() {
+		const QString kind = addKind_->currentData().toString();
+		QJsonObject b;
+		b.insert(QStringLiteral("op"), QStringLiteral("layer.add"));
+		b.insert(QStringLiteral("scene"), activeScene_);
+		b.insert(QStringLiteral("kind"), kind);
+		if (kind == QStringLiteral("color") || kind == QStringLiteral("text")) {
+			const QString t = addText_->text();
+			if (t.trimmed().isEmpty())
+				return note(kind == QStringLiteral("color") ? QStringLiteral("Type a colour as #RRGGBB.") : QStringLiteral("Type the text."));
+			b.insert(kind, kind == QStringLiteral("color") ? t.trimmed() : t);
+		} else {
+			const QString pick = addPick_->currentData().toString();
+			if (pick.isEmpty())
+				return note(QStringLiteral("Nothing to pick for this kind."));
+			const QString key = kind == QStringLiteral("copy") ? QStringLiteral("of") : kind == QStringLiteral("capture") ? QStringLiteral("device")
+					: kind == QStringLiteral("overlay") ? QStringLiteral("overlay") : QStringLiteral("file");
+			b.insert(key, pick);
+		}
+		structureEdit(b);
+	});
+	renderAddPick();
+
 	// Feature flags (D149): new features ship off; switch them here. Turning one on asks for the typed phrase
 	// ("yes, on air" while live), turning one off is instant. The list follows the server on every status poll.
 	v->addWidget(new QLabel(QStringLiteral("<b>Feature flags</b>")));
@@ -538,6 +623,43 @@ QWidget *MainWindow::buildRight()
 		effLayer_.clear();
 		renderInspector();
 	});
+
+	// Transitions (D242, flag transitions): per canvas cut, fade or stinger, saved into the project; the UI server
+	// applies it to the host on the next status poll.
+	transBox_ = new QGroupBox(QStringLiteral("Transitions"), w);
+	auto *tf = new QFormLayout(transBox_);
+	trCanvas_ = new QComboBox(transBox_);
+	trCanvas_->addItem(QStringLiteral("H"), QStringLiteral("h"));
+	trCanvas_->addItem(QStringLiteral("V"), QStringLiteral("v"));
+	trType_ = new QComboBox(transBox_);
+	for (const char *t : {"cut", "fade", "stinger"})
+		trType_->addItem(QString::fromLatin1(t), QString::fromLatin1(t));
+	trMs_ = new QSpinBox(transBox_);
+	trMs_->setRange(0, 10000);
+	trMs_->setSuffix(QStringLiteral(" ms"));
+	trFile_ = new QComboBox(transBox_);
+	trPoint_ = new QSpinBox(transBox_);
+	trPoint_->setRange(0, 10000);
+	trPoint_->setSuffix(QStringLiteral(" ms"));
+	trAudio_ = new QCheckBox(QStringLiteral("Play the video's sound"), transBox_);
+	auto *trApply = new QPushButton(QStringLiteral("Apply transition"), transBox_);
+	tf->addRow(QStringLiteral("Canvas"), trCanvas_);
+	tf->addRow(QStringLiteral("Type"), trType_);
+	tf->addRow(QStringLiteral("Duration"), trMs_);
+	tf->addRow(QStringLiteral("Video"), trFile_);
+	tf->addRow(QStringLiteral("Switch at"), trPoint_);
+	tf->addRow(trAudio_);
+	tf->addRow(trApply);
+	transBox_->setVisible(false);
+	v->addWidget(transBox_);
+	connect(trCanvas_, &QComboBox::currentIndexChanged, this, [this]() { renderTransition(); });
+	connect(trType_, &QComboBox::currentIndexChanged, this, [this]() {
+		const QString t = trType_->currentData().toString();
+		trMs_->setEnabled(t == QStringLiteral("fade"));
+		for (QWidget *x : {(QWidget *)trFile_, (QWidget *)trPoint_, (QWidget *)trAudio_})
+			x->setEnabled(t == QStringLiteral("stinger"));
+	});
+	connect(trApply, &QPushButton::clicked, this, &MainWindow::applyTransition);
 
 	auto *mix = new QGroupBox(QStringLiteral("Audio mixer"), w);
 	auto *scroll = new QScrollArea(mix);
@@ -1154,6 +1276,152 @@ void MainWindow::loadFlags()
 			}
 			it->setCheckState(f.value(QStringLiteral("on")).toBool() ? Qt::Checked : Qt::Unchecked);
 		}
+		bool se = false, tr = false;
+		for (const auto &x : fl) {
+			const QJsonObject f = x.toObject();
+			if (f.value(QStringLiteral("id")).toString() == QStringLiteral("scene-edit"))
+				se = f.value(QStringLiteral("on")).toBool();
+			else if (f.value(QStringLiteral("id")).toString() == QStringLiteral("transitions"))
+				tr = f.value(QStringLiteral("on")).toBool();
+		}
+		if (se != sceneEditOn_) {
+			sceneEditOn_ = se;
+			structBox_->setVisible(se);
+			if (se)
+				loadStructure();
+		}
+		if (tr != transitionsOn_) {
+			transitionsOn_ = tr;
+			transBox_->setVisible(tr);
+			if (tr)
+				loadTransitions();
+		}
+		// Both edit the project and are refused while live (the server checks too).
+		structBox_->setEnabled(!live_);
+		transBox_->setEnabled(!live_);
+	});
+}
+
+void MainWindow::loadStructure()
+{
+	api_->get(QStringLiteral("ui/api/project/structure"), [this](bool ok, const QJsonObject &b, const QString &err) {
+		if (!ok)
+			return note(QStringLiteral("Scene editing unavailable: ") + err);
+		structure_ = b;
+		if (!b.value(QStringLiteral("available")).toBool())
+			note(QStringLiteral("Scene editing needs a loaded project file."));
+		renderAddPick();
+	});
+}
+
+// The second field of the add-layer row: a list from the project (layers, devices, overlays, assets) or free text.
+void MainWindow::renderAddPick()
+{
+	const QString kind = addKind_->currentData().toString();
+	const bool typed = kind == QStringLiteral("color") || kind == QStringLiteral("text");
+	addText_->setVisible(typed);
+	addPick_->setVisible(!typed);
+	addText_->setPlaceholderText(kind == QStringLiteral("color") ? QStringLiteral("#RRGGBB") : QStringLiteral("Text"));
+	addPick_->clear();
+	if (typed)
+		return;
+	if (kind == QStringLiteral("copy")) {
+		for (const auto &x : structure_.value(QStringLiteral("layers")).toArray()) {
+			const QJsonObject l = x.toObject();
+			addPick_->addItem(l.value(QStringLiteral("sceneName")).toString() + QStringLiteral(" / ") + l.value(QStringLiteral("name")).toString(),
+					  l.value(QStringLiteral("id")).toString());
+		}
+	} else if (kind == QStringLiteral("capture") || kind == QStringLiteral("overlay")) {
+		for (const auto &x : structure_.value(kind == QStringLiteral("capture") ? QStringLiteral("devices") : QStringLiteral("overlays")).toArray()) {
+			const QJsonObject d = x.toObject();
+			addPick_->addItem(d.value(QStringLiteral("name")).toString(), d.value(QStringLiteral("id")).toString());
+		}
+	} else {
+		for (const auto &x : structure_.value(QStringLiteral("assets")).toArray()) {
+			const QJsonObject a = x.toObject();
+			if (a.value(QStringLiteral("kind")).toString() == kind)
+				addPick_->addItem(a.value(QStringLiteral("rel")).toString(), a.value(QStringLiteral("rel")).toString());
+		}
+	}
+}
+
+void MainWindow::structureEdit(const QJsonObject &body)
+{
+	if (live_)
+		return note(QStringLiteral("Live: scenes and layers cannot be added or removed."));
+	api_->post(QStringLiteral("ui/api/project/structure"), body, [this](bool ok, const QJsonObject &b, const QString &err) {
+		if (!ok) {
+			const QString detail = b.value(QStringLiteral("detail")).toString();
+			note(QStringLiteral("Not done: ") + err + (detail.isEmpty() ? QString() : QStringLiteral(" (") + detail + QStringLiteral(")")));
+		} else {
+			note(QStringLiteral("Done: ") + b.value(QStringLiteral("op")).toString() +
+			     (b.value(QStringLiteral("saved")).toBool() ? QString() : QStringLiteral(". Not saved to the project file: the change is live only.")));
+			addText_->clear();
+		}
+		loadScenes();
+		loadStructure();
+		loadEdits(); // a structure edit clears the undo history
+	});
+}
+
+void MainWindow::loadTransitions()
+{
+	api_->get(QStringLiteral("ui/api/project/transitions"), [this](bool ok, const QJsonObject &b, const QString &err) {
+		if (!ok)
+			return note(QStringLiteral("Transitions unavailable: ") + err);
+		transitions_ = b;
+		if (!b.value(QStringLiteral("available")).toBool())
+			note(QStringLiteral("Transitions need a loaded project file."));
+		const QSignalBlocker block(trFile_);
+		trFile_->clear();
+		for (const auto &x : b.value(QStringLiteral("videos")).toArray())
+			trFile_->addItem(x.toString(), x.toString());
+		renderTransition();
+	});
+}
+
+// Shows the selected canvas's saved transition in the form.
+void MainWindow::renderTransition()
+{
+	QJsonObject t;
+	for (const auto &x : transitions_.value(QStringLiteral("canvases")).toArray())
+		if (x.toObject().value(QStringLiteral("id")).toString() == trCanvas_->currentData().toString())
+			t = x.toObject().value(QStringLiteral("transition")).toObject();
+	const QString type = t.value(QStringLiteral("type")).toString(QStringLiteral("cut"));
+	trType_->setCurrentIndex(std::max(0, trType_->findData(type)));
+	trMs_->setValue(t.value(QStringLiteral("durationMs")).toInt());
+	trPoint_->setValue(t.value(QStringLiteral("pointMs")).toInt());
+	trAudio_->setChecked(t.value(QStringLiteral("audio")).toBool(true));
+	const int fi = trFile_->findData(t.value(QStringLiteral("file")).toObject().value(QStringLiteral("rel")).toString());
+	if (fi >= 0)
+		trFile_->setCurrentIndex(fi);
+	const bool fade = type == QStringLiteral("fade"), sting = type == QStringLiteral("stinger");
+	trMs_->setEnabled(fade);
+	for (QWidget *x : {(QWidget *)trFile_, (QWidget *)trPoint_, (QWidget *)trAudio_})
+		x->setEnabled(sting);
+}
+
+void MainWindow::applyTransition()
+{
+	if (live_)
+		return note(QStringLiteral("Live: transitions cannot be changed."));
+	const QString type = trType_->currentData().toString();
+	QJsonObject b;
+	b.insert(QStringLiteral("canvas"), trCanvas_->currentData().toString());
+	b.insert(QStringLiteral("type"), type);
+	if (type == QStringLiteral("fade"))
+		b.insert(QStringLiteral("durationMs"), trMs_->value());
+	if (type == QStringLiteral("stinger")) {
+		if (trFile_->currentData().toString().isEmpty())
+			return note(QStringLiteral("A stinger needs a video from the stream assets folder."));
+		b.insert(QStringLiteral("file"), trFile_->currentData().toString());
+		b.insert(QStringLiteral("pointMs"), trPoint_->value());
+		if (!trAudio_->isChecked())
+			b.insert(QStringLiteral("audio"), false);
+	}
+	api_->post(QStringLiteral("ui/api/project/transition"), b, [this](bool ok, const QJsonObject &, const QString &err) {
+		note(ok ? QStringLiteral("Transition saved; the host follows within a few seconds.") : QStringLiteral("Not done: ") + err);
+		loadTransitions();
 	});
 }
 

@@ -23,6 +23,9 @@ class QButtonGroup;
 class QTimer;
 class QFormLayout;
 class QGroupBox;
+class QComboBox;
+class QLineEdit;
+class QCheckBox;
 
 // A native child widget the host draws a canvas preview into (P5a step 4): the host makes its preview a child
 // window of this widget's handle and resizes it when the slot changes size. If the host refuses (no canvas yet, host
@@ -79,6 +82,14 @@ private:
 	void undoRedo(bool undo);
 	void loadFlags();             // feature flags (D149): on needs the typed phrase, off is instant
 	void setFlag(const QString &id, bool on);
+	// Scene and layer structure edits (D240, flag scene-edit) and transitions (D242, flag transitions): the UI server
+	// edits the project file and the host; both are refused while live.
+	void loadStructure();
+	void renderAddPick();
+	void structureEdit(const QJsonObject &body);
+	void loadTransitions();
+	void renderTransition();
+	void applyTransition();
 	void confirm(const QJsonObject &pending);
 	void note(const QString &text);
 	QJsonObject layerArgs(const QJsonObject &extra = {}) const;
@@ -104,6 +115,15 @@ private:
 	QListWidget *sceneList_ = nullptr;
 	QListWidget *layerList_ = nullptr;
 	QListWidget *flagList_ = nullptr;
+	bool sceneEditOn_ = false, transitionsOn_ = false;
+	QJsonObject structure_;   // GET /ui/api/project/structure
+	QJsonObject transitions_; // GET /ui/api/project/transitions
+	QGroupBox *structBox_ = nullptr, *transBox_ = nullptr;
+	QComboBox *addKind_ = nullptr, *addPick_ = nullptr;
+	QLineEdit *addText_ = nullptr;
+	QComboBox *trCanvas_ = nullptr, *trType_ = nullptr, *trFile_ = nullptr;
+	QSpinBox *trMs_ = nullptr, *trPoint_ = nullptr;
+	QCheckBox *trAudio_ = nullptr;
 	QPushButton *tabH_ = nullptr, *tabV_ = nullptr;
 	QWidget *inspForm_ = nullptr;
 	QLabel *inspTitle_ = nullptr, *inspEmpty_ = nullptr;
