@@ -12,6 +12,7 @@
 #include <QJsonArray>
 #include <QLabel>
 #include <QLineEdit>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QListWidget>
 #include <QPlainTextEdit>
@@ -28,6 +29,8 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTimer>
+#include <QUrl>
+#include <QUrlQuery>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -288,6 +291,11 @@ QWidget *MainWindow::buildTop()
 	fbBtn->setToolTip(QStringLiteral("Add a note to each feedback moment (feedback hotkey while streaming)."));
 	connect(fbBtn, &QPushButton::clicked, this, &MainWindow::openFeedback);
 	h->addWidget(fbBtn);
+	reportBtn_ = new QPushButton(QStringLiteral("Report a problem"), w);
+	reportBtn_->setToolTip(QStringLiteral("Opens a prefilled GitHub issue in your browser; you review it before submitting."));
+	reportBtn_->setVisible(false);
+	connect(reportBtn_, &QPushButton::clicked, this, &MainWindow::report);
+	h->addWidget(reportBtn_);
 	h->addSpacing(12);
 	for (QLabel *p : {pillLive_, pillRec_, pillStats_, pillHost_, pillCore_})
 		h->addWidget(p);
@@ -1317,6 +1325,11 @@ void MainWindow::loadFlags()
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("bot-manager"))
 				bo = x.toObject().value(QStringLiteral("on")).toBool();
+		bool rep = false;
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("report-button"))
+				rep = x.toObject().value(QStringLiteral("on")).toBool();
+		reportBtn_->setVisible(rep);
 		if (bo != botsOn_) {
 			botsOn_ = bo;
 			botBox_->setVisible(bo);
@@ -1441,6 +1454,35 @@ void MainWindow::openImport()
 		load->setEnabled(!plan.isEmpty());
 	});
 	dlg->show();
+}
+
+// Report (D199): the server builds and redacts the link; only an https github.com link is opened, in the user's
+// browser, where the user reviews it before submitting. Nothing is sent from here.
+void MainWindow::report()
+{
+	bool ok = false;
+	const QString title = QInputDialog::getText(this, QStringLiteral("Report a problem"), QStringLiteral("Title"), QLineEdit::Normal, QString(), &ok);
+	if (!ok)
+		return;
+	const QString text = QInputDialog::getMultiLineText(this, QStringLiteral("Report a problem"), QStringLiteral("What happened"), QString(), &ok);
+	if (!ok)
+		return;
+	QUrlQuery q;
+	q.addQueryItem(QStringLiteral("title"), title.left(120)); // report.mjs MAX_TITLE / MAX_NOTE
+	q.addQueryItem(QStringLiteral("note"), text.left(1500));
+	api_->get(QStringLiteral("ui/api/report-url?") + q.toString(QUrl::FullyEncoded), [this](bool ok2, const QJsonObject &r, const QString &err) {
+		if (!ok2)
+			return note(QStringLiteral("Report failed: ") + err);
+		if (!r.value(QStringLiteral("configured")).toBool())
+			return note(r.value(QStringLiteral("message")).toString(QStringLiteral("Report: set links.issues_url in the profile")));
+		const QUrl u(r.value(QStringLiteral("url")).toString(), QUrl::StrictMode);
+		if (!u.isValid() || u.scheme() != QStringLiteral("https") || u.host() != QStringLiteral("github.com"))
+			return note(QStringLiteral("Report: the link was refused"));
+		if (!QDesktopServices::openUrl(u))
+			return note(QStringLiteral("Report: no browser opened the link"));
+		note((r.value(QStringLiteral("truncated")).toBool() ? QStringLiteral("Shortened to fit: attach the diag bundle. ") : QString()) +
+		     QStringLiteral("Review it in your browser, then submit."));
+	});
 }
 
 // Feedback notes (D150): pick a moment, write a note with tag and severity, Save. Notes stay in the gitignored
