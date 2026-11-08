@@ -108,7 +108,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.previews.length, 2);
     for (const m of p.previews) assert.doesNotMatch(m, /bad field/, m);
     assert.equal(p.clips, 'Clips: ready', 'D284: no clip runs yet, the default choice is "ask me"');
-    assert.deepEqual(p.clipSettings, { recording: 'ask', live: 'ask' });
+    assert.deepEqual(p.clipSettings, { recording: 'ask', live: 'ask', matchGate: { top3: true, minKills: null } });
   });
 
   test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons; mixer track buttons', async () => {
@@ -144,7 +144,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.clipAsks, 1, 'the question is listed until the launcher picks up the answer');
     assert.equal(p.clips, 'Make clips? (1)');
     const saved = JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8'));
-    assert.deepEqual(saved.clips, { recording: 'after', live: 'while' });
+    assert.deepEqual(saved.clips, { recording: 'after', live: 'while', matchGate: { top3: true, minKills: null } });
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'clips', 'answer.json'), 'utf8')), { id: ask.id, make: true, remember: false });
   });
 
@@ -203,6 +203,62 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
       assert.deepEqual([p.tasks.panelOpen, p.tasks.toasts, p.tasks.chipHidden], [true, 1, false], 'the shot shows the task list and a toast, still 1600x900');
     } finally { rmSync(shot, { force: true }); }
   });
+  // --- Look panel, Settings, motion (D290) ---
+  test('Look panel (D290): shown for a selected layer with no flag; built from the effect table; a switch and a slider reach layers.setEffects', async () => {
+    const p = await probe([], 9000, 'select-layer:cam,look:rounded:on,look-set:rounded:radius:40');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['select-layer:cam', true], ['look:rounded:on', true], ['look-set:rounded:radius:40', true]]);
+    assert.equal(p.look.shown, true, 'no effect-editor flag needed');
+    assert.equal(p.look.advancedShown, false, 'the plain list stays behind the flag');
+    assert.deepEqual(p.look.groups, ['shape', 'filter', 'camera', 'light'], 'the table groups, in the usual order');
+    assert.equal(p.look.cards[0].type, 'rounded', 'rounded corners come first in Shape');
+    assert.ok(p.look.cards.length >= 9, 'one card per effect type in the table');
+    const sets = p.calls.filter(([m]) => m === 'layers.setEffects');
+    assert.ok(sets.length >= 1, 'layers.setEffects reached the host');
+    assert.deepEqual(sets.at(-1)[1], { scene: 'scene-1', layer: 'cam', effects: [{ type: 'rounded', radius: 40 }] });
+    assert.equal((await p.fake.call('layers.list', { scene: 'scene-1' })).layers.find((l) => l.id === 'cam').effects[0].radius, 40);
+    assert.equal(p.undoEnabled, true, 'a Look change is an undoable edit');
+    assert.equal(p.look.cards.find((c) => c.type === 'rounded').on, true);
+  });
+  test('Look panel (D290): switching off removes the effect; flag effect-editor shows the Advanced list too', async () => {
+    const p = await probe(['effect-editor'], 10000, 'select-layer:cam,look:blur:on,look:rounded:on,look:blur:off');
+    assert.equal(p.look.advancedShown, true);
+    const sets = p.calls.filter(([m]) => m === 'layers.setEffects');
+    assert.deepEqual(sets.at(-1)[1].effects.map((e) => e.type), ['rounded'], 'blur switched on then off: only rounded corners left');
+  });
+  test('controls and flags (D290): round controls carry their captions; the flag list is not on the main window', async () => {
+    const p = await probe([]);
+    assert.deepEqual(p.controls, { stream: 'Start stream', record: 'Record', clip: 'Save clip', mark: 'Mark moment', streamIcon: 'play-' });
+    assert.equal(p.flagsInSettings, false, 'hidden until Settings > Advanced borrows it');
+    assert.ok(p.flags.length > 5, 'still loaded: the list follows the server');
+  });
+  test('Settings (D290): sections Clips, Folders, Layer effects, Advanced; the layer-effects item and animations choice are there', async () => {
+    const p = await probe([], 6000, 'settings-open');
+    assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Advanced']);
+    assert.equal(p.settings.layerEffects, false);
+    assert.equal(p.settings.layerEffectsText, 'Show layer effects from the scene (rounded corners, shadows, video buttons)');
+    assert.equal(p.settings.motionChoices, 3, 'Follow Windows / Always on / Off');
+    assert.equal(p.settings.motion, 'system');
+    assert.equal(p.flagsInSettings, true, 'the feature flags list sits in Settings > Advanced');
+  });
+  test('Settings (D290): layer effects on asks for the typed "yes" and turns flag layer-effects on; animations Off is saved as ui.motion', async () => {
+    const p = await probe([], 11000, 'settings-open,settings-layer-effects:on,settings-motion:off,settings-save,type:yes');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true], ['type:yes', true]]);
+    assert.equal(p.store.isOn('layer-effects'), true, 'the existing flags route, confirmed with the typed phrase');
+    assert.equal(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).ui.motion, 'off');
+    assert.equal(p.motionMode, 'off');
+    assert.equal(p.motion, false, 'no animation while the choice is Off');
+    assert.equal(p.flagsInSettings, false, 'the flag list went back to the window when Settings closed');
+  });
+  test('motion setting (D290): settings.json ui.motion is read at start; UJWALAM_REDUCE_MOTION still overrides it', async () => {
+    const prep = (d) => writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ ui: { motion: 'off' } }));
+    const off = await probe([], 4000, '', prep);
+    assert.deepEqual([off.motionMode, off.motion], ['off', false]);
+    const env = await probe([], 4000, '', prep, { UJWALAM_REDUCE_MOTION: '0' });
+    assert.deepEqual([env.motionMode, env.motion], ['off', true], 'the environment wins');
+    const on = await probe([], 4000, '', (d) => writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ ui: { motion: 'on' } })), { UJWALAM_REDUCE_MOTION: '' });
+    assert.deepEqual([on.motionMode, on.motion], ['on', true]);
+  });
+  // --- end Look panel, Settings, motion ---
   test('typed confirms (D279): a flag ticked on asks for the phrase; a wrong phrase asks again, "yes" turns it on, Cancel leaves it off', async () => {
     const p = await probe([], 9000, 'flag-on:transitions,type:nope,type:yes,flag-on:bot-manager,cancel,type:yes');
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [

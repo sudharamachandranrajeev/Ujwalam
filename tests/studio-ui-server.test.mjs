@@ -373,7 +373,7 @@ describe('settings and clip answers', () => {
 
   test('GET: defaults "ask" for both, not saved yet, default clips folder', async () => {
     const r = JSON.parse((await raw(port, { url: '/ui/api/settings', headers: { cookie: a.cookie } })).text);
-    assert.deepEqual(r.settings.clips, { recording: 'ask', live: 'ask' });
+    assert.deepEqual(r.settings.clips, { recording: 'ask', live: 'ask', matchGate: { top3: true, minKills: null } });
     assert.equal(r.clips.settingsSaved, false);
     assert.equal(r.clips.folder, path.join(dataDir, 'clips'));
   });
@@ -381,7 +381,7 @@ describe('settings and clip answers', () => {
     const clips = path.join(dataDir, 'out clips');
     assert.equal((await post(port, a, '/ui/api/settings', { clips: { recording: 'after', live: 'while' }, folders: { clips } })).status, 200);
     const s = JSON.parse(readFileSync(path.join(dataDir, 'settings.json'), 'utf8'));
-    assert.deepEqual([s.clips, s.folders.clips], [{ recording: 'after', live: 'while' }, clips]);
+    assert.deepEqual([s.clips, s.folders.clips], [{ recording: 'after', live: 'while', matchGate: { top3: true, minKills: null } }, clips]);
     for (const bad of [{ clips: { recording: 'maybe' } }, { folders: { clips: 'rel' } }, { folders: { recordings: path.join(REPO, 'services') } }, { other: 1 }]) {
       const r = await post(port, a, '/ui/api/settings', bad);
       assert.equal(r.status, 400, JSON.stringify(bad));

@@ -128,6 +128,11 @@ export function createFakeHost({ outputsReady = false } = {}) {
           return { scene: p.scene, layer: p.layer, placement: structuredClone(l.placement) };
         }
         case 'layers.setVisible': need(need(layers[p.scene], 'scene').find((l) => l.id === p.layer), 'layer').visible = p.visible; return { ok: true };
+        case 'layers.setEffects': { // D290: effects are kept per layer and listed by layers.list
+          const l = need(need(layers[p.scene], 'scene').find((x) => x.id === p.layer), 'layer');
+          if (p.effects.length) l.effects = structuredClone(p.effects); else delete l.effects;
+          return { ok: true };
+        }
         case 'layers.move': {
           const arr = need(layers[p.scene], 'scene');
           const i = arr.findIndex((l) => l.id === p.layer);

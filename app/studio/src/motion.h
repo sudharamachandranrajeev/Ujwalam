@@ -8,6 +8,7 @@
 
 #include <QColor>
 #include <QEasingCurve>
+#include <QString>
 #include <QVariant>
 #include <functional>
 
@@ -19,7 +20,12 @@ class QWidget;
 
 namespace motion {
 
-bool systemAnimations();           // Windows setting + UJWALAM_REDUCE_MOTION
+bool systemAnimations();           // UJWALAM_REDUCE_MOTION, else the user's choice (setMode), else the Windows setting
+
+// The user's choice from Settings > Advanced > Animations (settings.json ui.motion, D290): "system" (follow Windows,
+// the default), "on" or "off". Anything else counts as "system". UJWALAM_REDUCE_MOTION still overrides it.
+void setMode(const QString &mode);
+QString mode();
 bool enabled(const QWidget *w);    // systemAnimations() and w is visible
 
 QColor mix(const QColor &a, const QColor &b, qreal t);

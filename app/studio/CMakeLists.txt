@@ -14,6 +14,10 @@ add_executable(ujwalam-studio WIN32
 	src/main.cpp
 	src/api_client.cpp
 	src/api_client.h
+	src/icons.cpp
+	src/icons.h
+	src/look_panel.cpp
+	src/look_panel.h
 	src/main_window.cpp
 	src/main_window.h
 	src/motion.cpp

@@ -9,9 +9,11 @@
 #include <QJsonArray>
 #include <QMainWindow>
 #include <QMap>
+#include <QPointer>
 
 #include <functional>
 
+class QDialog;
 class QLabel;
 class QListWidget;
 class QAction;
@@ -29,6 +31,7 @@ class QComboBox;
 class QLineEdit;
 class QCheckBox;
 class TaskBar;
+class LookPanel;
 class StatsCards;
 
 // A native child widget the host draws a canvas preview into (P5a step 4): the host makes its preview a child
@@ -61,6 +64,7 @@ public:
 	void start(); // first loads after login
 	// Headless probe (tests only, UJWALAM_STUDIO_PROBE_MS): what the panels show now, as plain data. Never shown.
 	QJsonObject probe() const;
+	QWidget *settingsWindow() const; // the open Settings window (tests: for the picture)
 
 protected:
 	void closeEvent(class QCloseEvent *e) override; // one close for the whole app (D280)
@@ -76,6 +80,9 @@ private:
 	QWidget *buildRight();
 	QWidget *buildMixer();
 	QWidget *buildTop();
+	QWidget *buildControls(); // round Start stream / Record / Save clip / Mark moment buttons (D290)
+	QPushButton *roundButton(QWidget *parent, const QString &icon, const QString &caption, const QString &tip, const QString &role, QLayout *into);
+	void setControl(QPushButton *b, const QString &icon, const QString &caption);
 
 	void loadScenes();
 	void loadLayers();
@@ -90,6 +97,7 @@ private:
 	void renderEffects();    // effect editor (D260): the working list
 	void renderEffectForm(); // the selected effect's settings
 	void applyEffects();
+	void applyLook();          // Look panel (D290): sends the working list now, or after the send in flight
 	void editEffects(const std::function<void(QJsonArray &, int &)> &change);
 	void nudge(int dx, int dy);
 	void sendNudge();
@@ -104,6 +112,7 @@ private:
 	void undoRedo(bool undo);
 	void loadFlags();             // feature flags (D149): on needs the typed phrase, off is instant
 	void setFlag(const QString &id, bool on);
+	void loadUiSettings();        // settings.json ui.motion -> motion::setMode (D290)
 	// Scene and layer structure edits (D240, flag scene-edit) and transitions (D242, flag transitions): the UI server
 	// edits the project file and the host; both are refused while live.
 	void loadStructure();
@@ -145,6 +154,10 @@ private:
 	bool effectEditing_ = false;
 	QJsonArray effEdit_;
 	QString effLayer_;     // "<scene>/<layer>" effEdit_ belongs to
+	QPointer<QDialog> settingsDlg_; // Settings window, while open (D290)
+	LookPanel *look_ = nullptr;
+	QLabel *lookCap_ = nullptr;
+	bool lookSending_ = false, lookAgain_ = false;
 	int effRev_ = 0;       // bumped on every change of effEdit_; an Apply answer for an older draft keeps it dirty
 	bool effDirty_ = false; // changed since it was read from the host
 	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
@@ -170,7 +183,7 @@ private:
 	QLabel *inspTitle_ = nullptr, *inspEmpty_ = nullptr;
 	QDoubleSpinBox *inX_ = nullptr, *inY_ = nullptr, *inW_ = nullptr, *inH_ = nullptr, *inRot_ = nullptr;
 	QSpinBox *crL_ = nullptr, *crT_ = nullptr, *crR_ = nullptr, *crB_ = nullptr;
-	QGroupBox *effBox_ = nullptr;
+	QGroupBox *effBox_ = nullptr; // "Advanced effects": the plain list (flag effect-editor)
 	QListWidget *effList_ = nullptr;
 	QFormLayout *effForm_ = nullptr;
 	QHBoxLayout *mixerBox_ = nullptr; // strips side by side under the previews (D285)
