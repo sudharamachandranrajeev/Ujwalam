@@ -3043,8 +3043,9 @@ void MainWindow::updateClips(const QJsonObject &cl)
 		t = QStringLiteral("Making clips...");
 	else if (!cl.value(QStringLiteral("asks")).toArray().isEmpty())
 		t = QStringLiteral("Make clips? (%1)").arg(cl.value(QStringLiteral("asks")).toArray().size());
-	else if (cl.value(QStringLiteral("queued")).toInt() > 0)
-		t = QStringLiteral("Clips waiting: %1").arg(cl.value(QStringLiteral("queued")).toInt());
+	else if (const QJsonValue q = cl.value(QStringLiteral("queued")); (q.isArray() ? q.toArray().size() : q.toInt()) > 0)
+		// The server sends a count; the clip job's own status file holds a list. Both are read.
+		t = QStringLiteral("Clips waiting: %1").arg(q.isArray() ? q.toArray().size() : q.toInt());
 	else if (allOff)
 		t = QStringLiteral("Clips: off");
 	else if (cl.value(QStringLiteral("available")).isBool() && !cl.value(QStringLiteral("available")).toBool())
