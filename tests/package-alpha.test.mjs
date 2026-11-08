@@ -108,6 +108,13 @@ test('installed spec: data dirs under the data root, OBS runtime and host exe fr
     s = installedSpec({ install, dataRoot, userArgs: ['--profile', 'x.json'] });
     assert.equal(s.overlayRoot, path.join(d, 'my-overlays'));
     assert.ok(!s.argv.includes(path.join(dataRoot, 'p', 'me.json')), 'a --profile argument wins');
+    // D278: an overlayRoot naming the overlays/ folder itself (installs from 2026-11-03) is read as its parent.
+    mkdirSync(path.join(d, 'legacy', 'overlays', 'alert-box'), { recursive: true });
+    writeFileSync(path.join(dataRoot, 'ujwalam.json'), JSON.stringify({ overlayRoot: path.join(d, 'legacy', 'overlays') }));
+    assert.equal(installedSpec({ install, dataRoot }).overlayRoot, path.join(d, 'legacy'));
+    mkdirSync(path.join(d, 'kit2', 'overlays', 'overlays'), { recursive: true });
+    writeFileSync(path.join(dataRoot, 'ujwalam.json'), JSON.stringify({ overlayRoot: path.join(d, 'kit2', 'overlays') }));
+    assert.equal(installedSpec({ install, dataRoot }).overlayRoot, path.join(d, 'kit2', 'overlays'), 'a root that holds overlays/ stays');
     writeFileSync(path.join(dataRoot, 'ujwalam.json'), JSON.stringify({ overlayRoot: install }));
     assert.throws(() => installedSpec({ install, dataRoot }), /install dir/);
     assert.throws(() => installedSpec({ install, dataRoot: path.join(install, 'data') }), /install dir/);

@@ -41,7 +41,11 @@ export function installedSpec({ install = INSTALL, dataRoot, userArgs = [] }) {
   const cfgFile = path.join(dataRoot, 'ujwalam.json');
   if (existsSync(cfgFile)) cfg = JSON.parse(readFileSync(cfgFile, 'utf8'));
   const fromCfg = (k, def) => (typeof cfg[k] === 'string' && cfg[k] && !/^<.*>$/.test(cfg[k]) ? path.resolve(dataRoot, cfg[k]) : def);
-  const overlayRoot = fromCfg('overlayRoot', path.join(dataRoot, 'overlays'));
+  // overlayRoot names the folder that holds overlays/, brand/ and kit/ (host overlayRootProblem). Installs from
+  // 2026-11-03 wrote the overlays/ folder itself; that form is read as its parent (D278), the file is not rewritten.
+  const named = fromCfg('overlayRoot', path.join(dataRoot, 'overlays'));
+  const overlayRoot = path.basename(named).toLowerCase() === 'overlays' && existsSync(named) && !existsSync(path.join(named, 'overlays'))
+    ? path.dirname(named) : named;
   const profile = fromCfg('profile', path.join(dataRoot, 'profile.local.json'));
   for (const [k, p] of [['overlayRoot', overlayRoot], ['profile', profile]]) {
     if (inside(p)) throw new Error(`${k} must not point into the install dir`);
