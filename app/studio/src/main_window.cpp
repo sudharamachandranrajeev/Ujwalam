@@ -9,6 +9,7 @@
 #include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QApplication>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QLabel>
@@ -2343,6 +2344,28 @@ bool MainWindow::probeAction(const QString &action)
 				return true;
 			}
 		return false;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("flag-on")) { // ticks the flag: the server asks for a phrase (D279)
+		for (int i = 0; i < flagList_->count(); i++)
+			if (flagList_->item(i)->data(Qt::UserRole).toString() == p[1]) {
+				flagList_->item(i)->setCheckState(Qt::Checked);
+				return true;
+			}
+		return false;
+	}
+	if (p[0] == QStringLiteral("type") || (p.size() == 1 && p[0] == QStringLiteral("cancel"))) {
+		// The open typed-confirm dialog (D279): type the text (percent-encoded, so "yes%2C on air") and press OK,
+		// or press Cancel. false when no confirm dialog is open.
+		auto *dlg = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
+		if (!dlg)
+			return false;
+		if (p[0] == QStringLiteral("cancel")) {
+			dlg->reject();
+			return true;
+		}
+		dlg->setTextValue(QUrl::fromPercentEncoding(action.mid(5).toUtf8()));
+		dlg->accept();
+		return true;
 	}
 	if (p.size() == 1 && p[0] == QStringLiteral("undo")) {
 		if (!undoBtn_->isEnabled())

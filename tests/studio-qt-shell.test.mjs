@@ -120,4 +120,14 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.shown.structure, false, 'the structure box follows the flag');
     assert.equal(p.trackButtons, 6);
   });
+  test('typed confirms (D279): a flag ticked on asks for the phrase; a wrong phrase asks again, "yes" turns it on, Cancel leaves it off', async () => {
+    const p = await probe([], 9000, 'flag-on:transitions,type:nope,type:yes,flag-on:bot-manager,cancel,type:yes');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [
+      ['flag-on:transitions', true], ['type:nope', true], ['type:yes', true], ['flag-on:bot-manager', true], ['cancel', true], ['type:yes', false],
+    ]);
+    assert.equal(p.store.isOn('transitions'), true, 'the phrase typed in the dialog reached /ui/api/confirm');
+    assert.equal(p.store.isOn('bot-manager'), false, 'cancelled: still off');
+    assert.equal(p.shown.transitions, true, 'the transitions box follows the flag');
+    assert.equal(p.shown.bots, false);
+  });
 });
