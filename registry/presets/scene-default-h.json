@@ -1,6 +1,6 @@
 {
   "id": "scene-default-h",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default H (current stream layout)",
@@ -98,9 +98,10 @@
           "h": 0.096
         },
         "geometry": "spec",
-        "note": "Brand asset, local only. When the profile wordmark is a video (green screen, as in Meld), it is keyed with the Meld values (chromaKey 300/1) while feature flag layer-effects is on; a still image is not keyed (D248). Shown at its true shape inside this box, black bars cut first (fit contain + cropBars, user choice 2026-11-08, D251); Meld stretched it.",
+        "note": "Brand asset, local only. When the profile wordmark is a video (green screen, as in Meld), it is keyed with the Meld values (chromaKey 300/1) while feature flag layer-effects is on; a still image is not keyed (D248). Shown at its true shape inside this box, cut to where the text ever appears: black bars and the always-green border are cropped first (fit contain + cropBars + trimKey, user choices 2026-11-08, D251); Meld stretched the whole frame.",
         "fit": "contain",
         "cropBars": true,
+        "trimKey": "#00ff00",
         "videoEffects": [
           {
             "type": "chromaKey",

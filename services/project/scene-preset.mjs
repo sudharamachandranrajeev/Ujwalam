@@ -50,10 +50,11 @@ const label = (s) => String(s).slice(0, 120) || 'Layer';
 
 // `fit: "contain"` (D251): the file is shown at its true shape, as large as fits the preset box and centred in it
 // (rotation pivots on the centre, so a turned box stays right). `cropBars` first cuts the file's black bars
-// (info.crop, source px). Without info the box stays as it is (stretched, as before).
-function fitContain(px, info, cropBars) {
+// (info.crop, source px); `trimKey` (a video keyed with that screen colour) cuts the bars and the border that is only
+// ever keyed out (info.content). Without info the box stays as it is (stretched, as before).
+function fitContain(px, info, cropBars, trimKey) {
   if (!info || !(info.width > 0) || !(info.height > 0) || !(px.width > 0) || !(px.height > 0)) return;
-  const c = cropBars && info.crop ? info.crop : { left: 0, top: 0, right: 0, bottom: 0 };
+  const c = (trimKey && info.content) || (cropBars && info.crop) || { left: 0, top: 0, right: 0, bottom: 0 };
   const sw = info.width - c.left - c.right, sh = info.height - c.top - c.bottom;
   if (!(sw > 0) || !(sh > 0)) return;
   const s = Math.min(px.width / sw, px.height / sh);
@@ -167,7 +168,11 @@ export function loadScenePreset(project, preset, opts = {}) {
       if (placeholder.has(l.of)) { type = 'color'; source = { color: '#00000000' }; delete px.crop; placeholder.add(l.key); }
       else { type = 'duplicate'; source = { layer: layerIds[l.of] }; }
     } else throw new ScenePresetError(`layer "${l.key}": unknown type "${l.type}"`);
-    if (l.fit === 'contain' && (type === 'image' || type === 'media')) fitContain(px, mediaInfo?.(source.file) ?? null, l.cropBars === true);
+    if (l.fit === 'contain' && (type === 'image' || type === 'media')) {
+      // `trimKey` only for a video: a still is not keyed (videoEffects), so its green is picture
+      const trimKey = type === 'media' && typeof l.trimKey === 'string' ? l.trimKey : null;
+      fitContain(px, mediaInfo?.(source.file, trimKey ? { keyColor: trimKey } : {}) ?? null, l.cropBars === true, trimKey !== null);
+    }
     const layer = { id, type, name: label(l.name), source, placements: { [canvasId]: px }, origin: { importer: 'preset', id: `${preset.id}/${l.key}` } };
     // effects apply only while `flag` and `effectsFlag` (if set) are on; effectsFlag keeps the layer itself
     const effectsOn = [l.flag, l.effectsFlag].every((f) => !f || flags[f] === true);

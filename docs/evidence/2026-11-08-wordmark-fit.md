@@ -1,20 +1,22 @@
-# Wordmark fit: black bars cut, true shape (D251)
+# Wordmark fit: black bars and green border cut, true shape (D251, D252)
 
 Date: 2026-11-08. Status: tests pass; real asset measured; not yet seen in a running host or on a stream.
 
 ## Choice
 
-User, 2026-11-08: "Crop bars, keep shape". The wordmark video was stretched into the 3.8:1 H box (as in Meld).
+User, 2026-11-08: "Crop bars, keep shape", then "Trim green border". The wordmark (the channel-name text animation, top
+left of the H layout) was stretched into the 3.8:1 H box, as in Meld.
 
 ## What was built
 
-- `services/project/media-info.mjs`: `probeMedia(file)` (ffprobe size; black bars from 1 gray frame per second of
-  the first 8 s; hidden children, D191) and `createMediaInfo({ bases })` (pathRef resolver, stays inside its base,
-  cached per file, size and mtime).
-- `services/project/scene-preset.mjs`: layer fields `fit: "contain"` and `cropBars`; option `mediaInfo`. No info
-  means no change.
+- `services/project/media-info.mjs`: `probeMedia(file, { keyColor })`. It reads the size with ffprobe. It measures black
+  bars, and with a key colour the always-keyed border, from rgb24 frames: 2 per second of the first 8 s, scaled to at
+  most 1280 px wide. Children are hidden (D191). `createMediaInfo({ bases })` resolves a pathRef, stays inside its base
+  and caches per file and key colour.
+- `services/project/scene-preset.mjs`: layer fields `fit: "contain"`, `cropBars`, `trimKey` (videos only); option
+  `mediaInfo`. No info means no change.
 - `services/studio-ui/alpha.mjs`, `launch.mjs`: the alpha build passes a `mediaInfo` over the alpha bases.
-- `registry/presets/scene-default-h.json` 0.4.0: the wordmark uses `fit: "contain"`, `cropBars: true`.
+- `registry/presets/scene-default-h.json` 0.4.1: the wordmark uses `fit: "contain"`, `cropBars: true`, `trimKey: "#00ff00"`.
 
 ## Measurements (local copy in `data/stream assets/`, gitignored)
 
@@ -36,18 +38,20 @@ rule.
 H result: box 391.68x103.68 at (11.52, 114.48). The picture is 1075x720 after the crop and is shown at 154.8x103.68,
 x 129.96, with crop 102/0/103/0.
 
-The keyed green around the text is large. The text itself is about 900x417 px (2.16:1) of the picture, so it shows
-at about 130x60 px. Trimming the green margin is a separate choice for the user.
+That left the text at about 130x60 px: the green around it was large. With `trimKey` (D252) the crop is
+172/104/170/182, keeping 938x434 (2.16:1, text box 900x417 plus 2 % pad). The wordmark shows at 224.08x103.68,
+x 95.32. Check over all 187 frames at 24 fps: 24,534,678 text pixels inside the crop, 4 outside (in 2 frames,
+compression noise).
 
 ## Evidence
 
 ```
 node --test tests/project-media-fit.test.mjs
-ℹ pass 6
+ℹ pass 8
 ℹ fail 0
 
 node --test tests/project-*.test.mjs tests/studio-ui*.test.mjs tests/test-broadcast.test.mjs tests/hud-zones.test.mjs
-ℹ pass 281
+ℹ pass 283
 ℹ fail 0
 ```
 
@@ -57,4 +61,4 @@ node --test tests/project-*.test.mjs tests/studio-ui*.test.mjs tests/test-broadc
 - `services/studio-ui/alpha.mjs`, `services/studio-ui/launch.mjs`
 - `registry/presets/scene-default-h.json`
 - `tests/project-media-fit.test.mjs` (new)
-- `docs/plan/2026-10-29-v1-decisions.md` (D251), this file, handover
+- `docs/plan/2026-10-29-v1-decisions.md` (D251, D252), this file, handover
