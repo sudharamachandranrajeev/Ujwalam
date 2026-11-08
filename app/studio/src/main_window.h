@@ -167,7 +167,7 @@ private:
 	QPushButton *streamBtn_ = nullptr, *recordBtn_ = nullptr, *clipBtn_ = nullptr, *markBtn_ = nullptr;
 	QPushButton *undoBtn_ = nullptr, *redoBtn_ = nullptr;
 	bool undoBusy_ = false;
-	QLabel *pillLive_ = nullptr, *pillRec_ = nullptr, *pillStats_ = nullptr, *pillHost_ = nullptr, *pillCore_ = nullptr;
+	QLabel *pillLive_ = nullptr, *pillRec_ = nullptr, *pillStats_ = nullptr, *pillHost_ = nullptr, *pillCore_ = nullptr, *pillClips_ = nullptr;
 	QLabel *note_ = nullptr;
 	QList<PreviewSlot *> slots_;
 

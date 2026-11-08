@@ -115,6 +115,10 @@ test('installed spec: data dirs under the data root, OBS runtime and host exe fr
     mkdirSync(path.join(d, 'kit2', 'overlays', 'overlays'), { recursive: true });
     writeFileSync(path.join(dataRoot, 'ujwalam.json'), JSON.stringify({ overlayRoot: path.join(d, 'kit2', 'overlays') }));
     assert.equal(installedSpec({ install, dataRoot }).overlayRoot, path.join(d, 'kit2', 'overlays'), 'a root that holds overlays/ stays');
+    // D283: clipRoot reaches the launcher as UJWALAM_CLIP_ROOT; unset, no clip env
+    assert.equal(installedSpec({ install, dataRoot }).env.UJWALAM_CLIP_ROOT, undefined);
+    writeFileSync(path.join(dataRoot, 'ujwalam.json'), JSON.stringify({ clipRoot: path.join(d, 'repo') }));
+    assert.equal(installedSpec({ install, dataRoot }).env.UJWALAM_CLIP_ROOT, path.join(d, 'repo'));
     writeFileSync(path.join(dataRoot, 'ujwalam.json'), JSON.stringify({ overlayRoot: install }));
     assert.throws(() => installedSpec({ install, dataRoot }), /install dir/);
     assert.throws(() => installedSpec({ install, dataRoot: path.join(install, 'data') }), /install dir/);

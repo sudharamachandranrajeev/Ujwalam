@@ -105,6 +105,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     // D280: the slots asked for canvas h and v (the server's enum); an upper-case id was refused as "bad field canvas".
     assert.equal(p.previews.length, 2);
     for (const m of p.previews) assert.doesNotMatch(m, /bad field/, m);
+    assert.equal(p.clips, 'Clips: off (flag clip-pipeline)', 'D283: the clip state is shown');
   });
 
   test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons; mixer track buttons', async () => {

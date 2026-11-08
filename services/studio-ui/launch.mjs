@@ -83,6 +83,7 @@ import { loadDevicePresets, matchRoles, overrideProblems } from '../project/devi
 import { hudCoverage, loadHudZones } from '../project/hud-zones.mjs';
 import { loadProject } from '../project/store.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
+import { CLIP_FLAG, createRecordClips } from './record-clips.mjs';
 import { createMediaInfo } from '../project/media-info.mjs';
 import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
@@ -95,6 +96,9 @@ const hex = (n) => randomBytes(n).toString('hex');
 export const HOST_LOGS_KEPT = 10;
 export const HOST_CONFIG_FILE = 'host-config.json';
 export const ALPHA_LIVE_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-live.json');
+// The folder that holds services/clip and the Python venv (.venv-gpu or .venv): this tree, or for an installed run the
+// clipRoot from ujwalam.json (UJWALAM_CLIP_ROOT; the zip ships no Python, D283).
+export const CLIP_ROOT = process.env.UJWALAM_CLIP_ROOT || REPO;
 // Record-only plan (H + V .mkv, no stream target): the alpha default when neither --live nor --outputs is given, so a
 // normal start can record and clip (D281). Streaming still needs --live.
 export const ALPHA_RECORD_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-practice.json');
@@ -693,11 +697,13 @@ export async function main(argv = process.argv.slice(2)) {
   let hostDiscoveryFile = null;
   let alphaClient = null;
   let stopping = false;
+  let recordClips = null;
   let endSession = () => {};
   const sessionEnded = new Promise((resolve) => { endSession = resolve; });
   // Ask the host to exit cleanly first (it closes previews and removes its discovery file), then kill what is left.
   const stopAll = async () => {
     stopping = true;
+    recordClips?.stop();
     if (hostChild && hostChild.exitCode === null && hostDiscoveryFile) {
       try {
         const d = JSON.parse(readFileSync(hostDiscoveryFile, 'utf8'));
@@ -831,10 +837,28 @@ export async function main(argv = process.argv.slice(2)) {
       }
     }
     if (disc && alpha) {
+      // Clips from each finished recording (D283, flag clip-pipeline): outputs.status every 5 s; the discovery file is
+      // read each time, so a restarted host is followed.
+      recordClips = createRecordClips({
+        clipRoot: CLIP_ROOT, dataDir,
+        flagOn: () => { try { return createFlags({ dataDir }).isOn(CLIP_FLAG); } catch { return false; } },
+        log: (l) => console.log(`[studio] ${l}`),
+      });
+      const clipTick = async () => {
+        if (stopping) return;
+        try {
+          const d = JSON.parse(readFileSync(hostDiscovery, 'utf8'));
+          recordClips.feed(await new HostClient({ port: d.port, token: hostToken }).call('outputs.status'));
+        } catch { /* host restarting: next tick */ }
+      };
+      setInterval(clipTick, 5000).unref();
+      void clipTick();
+    }
+    if (disc && alpha) {
       // Live clipper (D226): started with the alpha session, idles while the live-clips flag is off (re-read every
       // 5 s). Only the clips token reaches it. Restarted after a crash at most 5 times; never stops the stream.
       let lc = { spec: null, reason: 'project not readable' };
-      try { lc = liveClipsSpec({ project: loadProject(alphaFile(dataDir)).project, dataDir }); } catch { /* reason above */ }
+      try { lc = liveClipsSpec({ project: loadProject(alphaFile(dataDir)).project, dataDir, repo: CLIP_ROOT }); } catch { /* reason above */ }
       if (!lc.spec) console.log(`[studio] live clipper not started: ${lc.reason}`);
       else {
         let restarts = 0;

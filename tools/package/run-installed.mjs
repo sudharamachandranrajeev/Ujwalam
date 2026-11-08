@@ -7,7 +7,7 @@
 //     host/       host data dir (UJWALAM_HOST_DATA): module config, markers/, recordings/
 //     feedback/   feedback captures (--feedback-dir)
 //     diag/       diagnostics bundles
-//     ujwalam.json  optional user config: { "overlayRoot": "<dir>", "profile": "<file>" } (relative to the data root)
+//     ujwalam.json  optional user config: { "overlayRoot": "<dir>", "profile": "<file>", "clipRoot": "<dir>" } (relative to the data root)
 //     profile.local.json  default profile (only when ujwalam.json names none)
 //   Overlay root and profile come only from the data root or ujwalam.json, never from the package.
 // Usage: Ujwalam.cmd [launcher flags...]   e.g. --mock --no-open --stop-on-stdin, --allow-devices, --live
@@ -47,6 +47,8 @@ export function installedSpec({ install = INSTALL, dataRoot, userArgs = [] }) {
   const overlayRoot = path.basename(named).toLowerCase() === 'overlays' && existsSync(named) && !existsSync(path.join(named, 'overlays'))
     ? path.dirname(named) : named;
   const profile = fromCfg('profile', path.join(dataRoot, 'profile.local.json'));
+  // clipRoot: a folder holding services/clip and its Python venv (the zip ships no Python). Unset: no clipping (D283).
+  const clipRoot = fromCfg('clipRoot', null);
   for (const [k, p] of [['overlayRoot', overlayRoot], ['profile', profile]]) {
     if (inside(p)) throw new Error(`${k} must not point into the install dir`);
   }
@@ -56,6 +58,7 @@ export function installedSpec({ install = INSTALL, dataRoot, userArgs = [] }) {
     UJWALAM_HOST_EXE: path.join(install, 'bin', 'ujwalam-host.exe'),
     UJWALAM_HOST_DATA: dirs.host,
     UJWALAM_OVERLAY_ROOT: overlayRoot,
+    ...(clipRoot ? { UJWALAM_CLIP_ROOT: clipRoot } : {}),
   };
   const has = (f) => userArgs.includes(f);
   const argv = ['--alpha'];
@@ -63,7 +66,7 @@ export function installedSpec({ install = INSTALL, dataRoot, userArgs = [] }) {
   if (!has('--feedback-dir')) argv.push('--feedback-dir', dirs.feedback);
   if (!has('--profile')) argv.push('--profile', profile);
   argv.push(...userArgs.filter((a) => a !== '--alpha'));
-  return { install, dataRoot, dirs, overlayRoot, profile, env, argv };
+  return { install, dataRoot, dirs, overlayRoot, profile, clipRoot, env, argv };
 }
 
 export async function main(args = process.argv.slice(2)) {

@@ -311,6 +311,19 @@ export function createStudioServer(opts) {
     });
   }
 
+  // Clips from finished recordings (D283): <dataDir>/clips/status.json, written by the launcher.
+  function clipStatus() {
+    if (typeof opts.dataDir !== 'string') return null;
+    try {
+      const s = JSON.parse(readFileSync(path.join(opts.dataDir, 'clips', 'status.json'), 'utf8'));
+      const base = (j) => (j && typeof j.h === 'string' ? path.basename(j.h) : null);
+      const l = s.last && typeof s.last === 'object' ? s.last : null;
+      return { on: flags ? flags.isOn('clip-pipeline') : s.on === true, state: String(s.state ?? 'idle').slice(0, 16), running: base(s.running),
+        queued: Array.isArray(s.queued) ? s.queued.length : 0,
+        last: l ? { recording: String(l.recording ?? '').slice(0, 120), result: String(l.result ?? '').slice(0, 16), clips: Number(l.clips) || 0, out: typeof l.out === 'string' ? l.out.slice(0, 400) : null } : null };
+    } catch { return { on: flags ? flags.isOn('clip-pipeline') : false, state: 'idle', running: null, queued: 0, last: null }; }
+  }
+
   // ---- status snapshot (text-free: counts, flags and numbers only; never chat text) ----
   async function snapshot() {
     const h = host.describe();
@@ -327,6 +340,7 @@ export function createStudioServer(opts) {
         ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing', 'uptimeMs']) : {}),
         ...(previewLast ? { previewEdit: previewLast } : {}),
         effectEditing: !!flags && flags.isOn('effect-editor') },
+      clips: clipStatus(),
       core: { available: cs !== null, ...(cs ? { liveState: typeof cs.live?.liveState === 'string' ? cs.live.liveState : null, panic: cs.live?.panic === true } : {}) },
     };
   }

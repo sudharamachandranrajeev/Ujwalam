@@ -359,7 +359,7 @@ QWidget *MainWindow::buildTop()
 	clipBtn_ = new QPushButton(QStringLiteral("Save clip"), w);
 	clipBtn_->setToolTip(QStringLiteral("Save the last 60 seconds of H and V as clip files (replay buffer)."));
 	markBtn_ = new QPushButton(QStringLiteral("Mark moment"), w);
-	markBtn_->setToolTip(QStringLiteral("Mark this moment for the clipper (same as Ctrl+Alt+M)."));
+	markBtn_->setToolTip(QStringLiteral("Mark this moment for the clipper (same as the marker hotkey, Ctrl+Alt+Shift+M by default)."));
 	connect(clipBtn_, &QPushButton::clicked, this, [this]() {
 		api_->host(QStringLiteral("replay.save"), {}, [this](bool ok, const QJsonObject &b, const QString &err) {
 			if (!ok)
@@ -380,6 +380,7 @@ QWidget *MainWindow::buildTop()
 	pillStats_ = pill(QStringLiteral("-"));
 	pillHost_ = pill(QStringLiteral("Host: ?"));
 	pillCore_ = pill(QStringLiteral("Event core: ?"));
+	pillClips_ = pill(QStringLiteral("Clips: off")); // clips from finished recordings (D283)
 	h->addWidget(streamBtn_);
 	h->addWidget(recordBtn_);
 	h->addWidget(clipBtn_);
@@ -413,7 +414,7 @@ QWidget *MainWindow::buildTop()
 	connect(reportBtn_, &QPushButton::clicked, this, &MainWindow::report);
 	h->addWidget(reportBtn_);
 	h->addSpacing(12);
-	for (QLabel *p : {pillLive_, pillRec_, pillStats_, pillHost_, pillCore_})
+	for (QLabel *p : {pillLive_, pillRec_, pillStats_, pillHost_, pillCore_, pillClips_})
 		h->addWidget(p);
 	h->addStretch(1);
 	return w;
@@ -1430,6 +1431,23 @@ void MainWindow::pollStatus()
 				   : h.value(QStringLiteral("available")).toBool()   ? QStringLiteral("Host: up")
 										     : QStringLiteral("Host: down"));
 		pillCore_->setText(c.value(QStringLiteral("available")).toBool() ? QStringLiteral("Event core: up") : QStringLiteral("Event core: down"));
+		// Clips from finished recordings (D283): what runs, what waits, the last result and where it is.
+		const QJsonObject cl = s.value(QStringLiteral("clips")).toObject(), last = cl.value(QStringLiteral("last")).toObject();
+		QString ct;
+		if (!cl.value(QStringLiteral("on")).toBool())
+			ct = QStringLiteral("Clips: off (flag clip-pipeline)");
+		else if (!cl.value(QStringLiteral("running")).toString().isEmpty())
+			ct = QStringLiteral("Clips: making from ") + cl.value(QStringLiteral("running")).toString();
+		else if (cl.value(QStringLiteral("queued")).toInt() > 0)
+			ct = QStringLiteral("Clips: %1 recording(s) waiting").arg(cl.value(QStringLiteral("queued")).toInt());
+		else if (last.value(QStringLiteral("result")).toString() == QStringLiteral("done"))
+			ct = QStringLiteral("Clips: %1 ready").arg(last.value(QStringLiteral("clips")).toInt());
+		else if (!last.isEmpty())
+			ct = QStringLiteral("Clips: last run ") + last.value(QStringLiteral("result")).toString();
+		else
+			ct = QStringLiteral("Clips: on, waiting for a recording");
+		pillClips_->setText(ct);
+		pillClips_->setToolTip(last.value(QStringLiteral("out")).toString());
 		// A layer moved or resized with the mouse on the embedded preview (D230): select it, reload layers + inspector.
 		const QJsonObject pe = h.value(QStringLiteral("previewEdit")).toObject();
 		if (!pe.isEmpty()) {
@@ -2388,6 +2406,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("undoEnabled"), undoBtn_->isEnabled());
 	o.insert(QStringLiteral("live"), live_);
 	o.insert(QStringLiteral("note"), note_->text());
+	o.insert(QStringLiteral("clips"), pillClips_->text());
 	return o;
 }
 
