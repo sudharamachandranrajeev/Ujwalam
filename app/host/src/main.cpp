@@ -476,9 +476,9 @@ int wmain(int argc, wchar_t **wargv)
 				return st->preview_items(canvas, scene, items);
 			};
 			edit.apply = [st](const std::string &canvas, const std::string &scene, const std::string &layer,
-					  const pedit::Rect &r) -> std::string {
+					  const json::Value &patch) -> std::string {
 				try {
-					st->layer_set_placement(scene, canvas, layer, pedit::rect_json(r));
+					st->layer_set_placement(scene, canvas, layer, patch);
 					return "";
 				} catch (const std::exception &e) {
 					return e.what();

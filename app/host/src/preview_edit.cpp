@@ -11,6 +11,7 @@ namespace {
 
 const double kPi = 3.14159265358979323846;
 const size_t kKeepEdits = 64;
+const double kRotateOff = 24; // screen px from the top edge to the rotate handle (preview.cpp draws it there)
 // Corner signs in the layer's own frame: top-left, top-right, bottom-right, bottom-left (y down).
 const int kSx[4] = {-1, 1, 1, -1};
 const int kSy[4] = {-1, -1, 1, 1};
@@ -138,10 +139,36 @@ int hit_item(const std::vector<Item> &top_first, double cx, double cy)
 	return -1;
 }
 
+void rotate_handle(const Rect &r, double off, double &x, double &y)
+{
+	double wx, wy;
+	rot_fwd(r.rot, 0, -r.h / 2 - off, wx, wy);
+	x = r.x + r.w / 2 + wx;
+	y = r.y + r.h / 2 + wy;
+}
+
+bool hit_rotate(const Rect &r, double cx, double cy, double off, double tol)
+{
+	double hx, hy;
+	rotate_handle(r, off, hx, hy);
+	return std::hypot(cx - hx, cy - hy) <= tol;
+}
+
 Rect drag(const DragIn &d)
 {
 	Rect r = d.start;
 	double dx = d.cx - d.sx, dy = d.cy - d.sy;
+	if (d.mode == Mode::Rotate) { // the angle the cursor swept about the centre; position and size stay
+		double mx = r.x + r.w / 2, my = r.y + r.h / 2;
+		double a0 = std::atan2(d.sy - my, d.sx - mx), a1 = std::atan2(d.cy - my, d.cx - mx);
+		double deg = r.rot + (a1 - a0) * 180 / kPi;
+		if (d.free_aspect)
+			deg = std::round(deg / 15) * 15;
+		deg = std::remainder(deg, 360.0); // -180..180
+		deg = std::round(deg * 10) / 10;
+		r.rot = deg == -180 ? 180 : (deg == 0 ? 0 : deg); // no -0
+		return r;
+	}
 	if (d.mode == Mode::Move) {
 		r.x += dx;
 		r.y += dy;
@@ -204,6 +231,15 @@ json::Value rect_json(const Rect &r)
 	return o;
 }
 
+json::Value patch_json(const Rect &r, Mode mode)
+{
+	if (mode != Mode::Rotate)
+		return rect_json(r);
+	json::Value o = json::Value::object();
+	o.set("rotation", r.rot);
+	return o;
+}
+
 // ---- Editor ----------------------------------------------------------------------------------------------
 
 void Editor::set_enabled(bool on)
@@ -245,13 +281,14 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 	if (cur.has && cur.scene == scene) { // the selected layer first: its handles, then its box (even under others)
 		for (auto &it : items)
 			if (it.id == cur.layer) {
-				int k = hit_corner(it.r, cx, cy, tol);
-				if (k >= 0 || contains(it.r, cx, cy)) {
+				bool turn = hit_rotate(it.r, cx, cy, kRotateOff * v.canvas_per_px(), tol);
+				int k = turn ? -1 : hit_corner(it.r, cx, cy, tol);
+				if (turn || k >= 0 || contains(it.r, cx, cy)) {
 					next.has = true;
 					next.scene = scene;
 					next.layer = it.id;
 					next.r = it.r;
-					next.mode = k >= 0 ? Mode::Resize : Mode::Move;
+					next.mode = turn ? Mode::Rotate : k >= 0 ? Mode::Resize : Mode::Move;
 					next.corner = k;
 				}
 				break;
@@ -315,7 +352,7 @@ bool Editor::move(const std::string &canvas, const View &v, double sx, double sy
 		if (same(it->second.r, r))
 			return true; // nothing changed since the last move: no setPlacement call
 	}
-	std::string err = be_.apply ? be_.apply(canvas, scene, layer, r) : "no backend";
+	std::string err = be_.apply ? be_.apply(canvas, scene, layer, patch_json(r, d.mode)) : "no backend";
 	std::lock_guard<std::mutex> l(m_);
 	auto it = sel_.find(canvas);
 	if (it == sel_.end() || !it->second.has || it->second.layer != layer || it->second.mode == Mode::None)
@@ -341,6 +378,7 @@ bool Editor::up(const std::string &canvas, const View &v, double sx, double sy, 
 		return moved_now;
 	Sel &s = it->second;
 	bool moved = s.moved;
+	Mode mode = s.mode;
 	s.mode = Mode::None;
 	s.corner = -1;
 	s.moved = false;
@@ -352,6 +390,7 @@ bool Editor::up(const std::string &canvas, const View &v, double sx, double sy, 
 		e.layer = s.layer;
 		e.r = s.r;
 		e.before = s.start;
+		e.mode = mode;
 		edits_.push_back(e);
 		while (edits_.size() > kKeepEdits)
 			edits_.pop_front();
@@ -363,6 +402,7 @@ void Editor::cancel(const std::string &canvas)
 {
 	std::string scene, layer;
 	Rect start;
+	Mode mode;
 	{
 		std::lock_guard<std::mutex> l(m_);
 		auto it = sel_.find(canvas);
@@ -370,6 +410,7 @@ void Editor::cancel(const std::string &canvas)
 			return;
 		Sel &s = it->second;
 		bool moved = s.moved;
+		mode = s.mode;
 		s.mode = Mode::None;
 		s.moved = false;
 		if (!moved)
@@ -380,7 +421,7 @@ void Editor::cancel(const std::string &canvas)
 		start = s.start;
 	}
 	if (be_.apply)
-		be_.apply(canvas, scene, layer, start);
+		be_.apply(canvas, scene, layer, patch_json(start, mode));
 }
 
 bool Editor::dragging(const std::string &canvas) const
@@ -445,7 +486,10 @@ json::Value Editor::selection_json(const std::string &canvas) const
 	o.set("layer", s.layer);
 	o.set("placement", rect_json(s.r));
 	o.set("rotation", s.r.rot);
-	o.set("mode", s.mode == Mode::Move ? "move" : s.mode == Mode::Resize ? "resize" : "none");
+	o.set("mode", s.mode == Mode::Move     ? "move"
+		      : s.mode == Mode::Resize ? "resize"
+		      : s.mode == Mode::Rotate ? "rotate"
+					       : "none");
 	return o;
 }
 
@@ -467,8 +511,8 @@ json::Value Editor::edits(uint64_t since) const
 		o.set("canvas", e.canvas);
 		o.set("scene", e.scene);
 		o.set("layer", e.layer);
-		o.set("placement", rect_json(e.r));
-		o.set("before", rect_json(e.before));
+		o.set("placement", patch_json(e.r, e.mode));
+		o.set("before", patch_json(e.before, e.mode));
 		a.push(std::move(o));
 	}
 	uint64_t oldest = edits_.empty() ? seq_ + 1 : edits_.front().seq;

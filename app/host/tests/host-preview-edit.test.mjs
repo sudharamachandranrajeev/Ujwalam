@@ -131,6 +131,31 @@ test('corner drag resizes with the aspect kept (Shift: free); the opposite corne
   assert.ok(Math.abs(p.width / p.height - 400 / 150) < 0.02, `aspect kept: ${p.width}x${p.height}`);
 });
 
+test('rotate handle turns the layer about its centre (Shift: 15 degree steps); the edit is the rotation alone (D255)', async () => {
+  const b = await placement('box');
+  const mx = b.x + b.width / 2, my = b.y + b.height / 2;
+  const seq0 = (await c.call('host.status')).previewEditSeq;
+  await sim([at('down', mx, my), at('up', mx, my)]); // select it
+  // handle: 24 screen px = 48 canvas px above the top edge's middle; dragged to the right of the centre = +90
+  let r = await sim([at('down', mx, b.y - 48), at('move', mx + 100, my - 2), at('move', mx + 100, my), at('up', mx + 100, my)]);
+  assert.equal(r.steps[0].mode, 'rotate');
+  let p = await placement('box');
+  assert.equal(p.rotation, 90);
+  assert.deepEqual({ x: p.x, y: p.y, width: p.width, height: p.height }, { x: b.x, y: b.y, width: b.width, height: b.height }, 'position and size stay');
+  const e = (await c.call('preview.edits', { since: seq0 })).edits;
+  assert.deepEqual(e.map((x) => [x.placement, x.before]), [[{ rotation: 90 }, { rotation: b.rotation ?? 0 }]], 'one edit, rotation only (undo restores it)');
+  // the handle turned with the box: now right of the centre. Shift: about 50 degrees back lands on 45
+  const a = (40 * Math.PI) / 180;
+  r = await sim([at('down', mx + b.height / 2 + 48, my), at('move', mx + 100 * Math.sin(a), my - 100 * Math.cos(a), { shift: true }),
+    at('up', mx + 100 * Math.sin(a), my - 100 * Math.cos(a), { shift: true })]);
+  assert.equal(r.steps[0].mode, 'rotate');
+  assert.equal((await placement('box')).rotation, 45, 'Shift: 15 degree steps');
+  // back upright, so the later tests see an unturned box
+  const hx = mx + 48 * Math.SQRT1_2 + (b.height / 2) * Math.SQRT1_2, hy = my - 48 * Math.SQRT1_2 - (b.height / 2) * Math.SQRT1_2;
+  await sim([at('down', hx, hy), at('move', mx, my - 100, { shift: true }), at('up', mx, my - 100, { shift: true })]);
+  assert.equal((await placement('box')).rotation, 0);
+});
+
 test('lost capture puts the layer back; switching the flag off clears the selection and ignores the mouse', async () => {
   const before = await placement('box');
   const seq0 = (await c.call('host.status')).previewEditSeq;

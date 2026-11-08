@@ -93,15 +93,20 @@ void solid_pass(const vec4 &col, const std::function<void()> &emit)
 	gs_technique_end(tech);
 }
 
-// Selection box and corner handles, in canvas coordinates (the caller's ortho), sized in screen px (k = canvas px
+// Selection box, corner handles and the rotate handle (24 screen px above the top edge, preview_edit.cpp), in canvas coordinates (the caller's ortho), sized in screen px (k = canvas px
 // per screen px) so they look the same at any preview size. A dark rim under a light line reads on any picture.
 void draw_selection(const pedit::Rect &r, double k)
 {
 	double c[4][2];
 	pedit::corners(r, c);
+	double tx = (c[0][0] + c[1][0]) / 2, ty = (c[0][1] + c[1][1]) / 2, hx, hy;
+	pedit::rotate_handle(r, 24 * k, hx, hy);
 	auto box = [&](double t, double hs) {
 		for (int i = 0; i < 4; i++)
 			line(c[i][0], c[i][1], c[(i + 1) % 4][0], c[(i + 1) % 4][1], t);
+		line(tx, ty, hx, hy, t);
+		quad((float)hx, (float)(hy - hs), (float)(hx + hs), (float)hy, (float)hx, (float)(hy + hs), (float)(hx - hs),
+		     (float)hy); // a diamond: the rotate handle
 		for (auto &p : c)
 			quad((float)(p[0] - hs), (float)(p[1] - hs), (float)(p[0] + hs), (float)(p[1] - hs), (float)(p[0] + hs),
 			     (float)(p[1] + hs), (float)(p[0] - hs), (float)(p[1] + hs));

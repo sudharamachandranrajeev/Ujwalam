@@ -10,7 +10,8 @@
 // Gestures (OBS/Meld conventions): click selects the topmost visible layer under the cursor on that canvas (empty
 // canvas clears the selection; one selection per canvas). Drag inside the box moves it; a corner handle resizes it
 // with the aspect ratio kept (Shift: free). Moves and unrotated resizes snap to the canvas edges and centre within
-// 8 screen px (Alt: no snap).
+// 8 screen px (Alt: no snap). The round handle 24 screen px above the top edge turns the layer about its centre
+// (Shift: 15 degree steps); a turn changes only `rotation` (D255).
 //
 // Edit path: while dragging, every mouse move applies the rectangle through Backend::apply, which is
 // Studio::layer_set_placement, the code behind the RPC layers.setPlacement (no round trip to the UI per move). The
@@ -56,14 +57,18 @@ int hit_corner(const Rect &r, double cx, double cy, double tol);
 int hit_item(const std::vector<Item> &top_first, double cx, double cy);
 void corners(const Rect &r, double out[4][2]); // canvas px, same order as hit_corner
 
-enum class Mode { None, Move, Resize };
+// The rotate handle: off canvas px above the middle of the top edge, in the layer's own frame (turns with it).
+void rotate_handle(const Rect &r, double off, double &x, double &y);
+bool hit_rotate(const Rect &r, double cx, double cy, double off, double tol);
+
+enum class Mode { None, Move, Resize, Rotate };
 struct DragIn {
 	Rect start;
 	Mode mode = Mode::None;
 	int corner = -1;           // Resize only
 	double sx = 0, sy = 0;     // press point, canvas px
 	double cx = 0, cy = 0;     // current point, canvas px
-	bool free_aspect = false;  // Shift
+	bool free_aspect = false;  // Shift (Rotate: 15 degree steps)
 	bool snap = true;          // !Alt
 	double snap_tol = 8;       // canvas px (8 screen px)
 	double cw = 0, ch = 0;     // canvas size
@@ -80,9 +85,10 @@ struct Backend {
 	// Visible layers of the canvas's active scene that have a project placement, topmost first. false: nothing
 	// to edit (no project, test format, model busy).
 	std::function<bool(const std::string &canvas, std::string &scene, std::vector<Item> &top_first)> layers;
-	// Applies x, y, width, height to the layer on that canvas (Studio::layer_set_placement). Returns "" or the error.
+	// Applies a placement patch (patch_json: x, y, width, height, or rotation alone) to the layer on that canvas
+	// (Studio::layer_set_placement). Returns "" or the error.
 	std::function<std::string(const std::string &canvas, const std::string &scene, const std::string &layer,
-				  const Rect &r)>
+				  const json::Value &patch)>
 		apply;
 	// true while any stream output is live (live-lock, D233): a press then selects nothing and starts no drag.
 	// Placement changes while live go through the control page's "yes, on air". Unset: never locked.
@@ -115,6 +121,7 @@ public:
 		std::string canvas, scene, layer;
 		Rect r;
 		Rect before; // the rectangle when the gesture began (UI server undo, D238)
+		Mode mode = Mode::Move; // Rotate: the edit is the rotation alone
 	};
 	uint64_t seq() const;
 	// Committed edits with seq > since (oldest first; the last 64 are kept). truncated: some were dropped.
@@ -140,5 +147,7 @@ private:
 };
 
 json::Value rect_json(const Rect &r);
+// What a gesture changes: rotation (0.1 degree) for Rotate, else rect_json.
+json::Value patch_json(const Rect &r, Mode mode);
 
 } // namespace pedit
