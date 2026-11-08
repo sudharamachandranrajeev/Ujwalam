@@ -515,6 +515,15 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Params q(p, {"since"});
 		return a.previews->editor().edits((uint64_t)q.int_or("since", 0, 0, INT64_MAX));
 	});
+	// audio.status {}: the audio readiness view alone (same object as host.status.audioHealth): {ok, warnings,
+	// sources: [{id, audioSource, name, type, state: ok|starting|missing|inactive|unknown, receiving, lastDataMs,
+	// recreates}], watchdog, seq, events, rtwqHeld}. Read-only; consumed by services/studio-ui/readiness.mjs.
+	add("audio.status", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		json::Value ah = a.studio->audio_health();
+		ah.set("rtwqHeld", obsrt::rtwq_held());
+		return ah;
+	});
 	// audio.testAdd {id, name} / audio.testStall {id, stall}: a fake device audio source (audio_health.h
 	// ujw_test_audio, opens no device) and a simulated dead device, for the audio watchdog tests. --test-hooks only.
 	add("audio.testAdd", [&a](const json::Value &p) {
