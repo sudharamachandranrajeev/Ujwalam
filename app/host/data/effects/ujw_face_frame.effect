@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_face_frame filter (autoFrame, src/effects.cpp, D295 proposed). Embedded into the host exe at
+// build time (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Shows the part rect = (x, y, w, h), in 0..1 of the layer, stretched over the whole layer: a pan and zoom that the
+// host moves to keep the face centred.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 rect;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSFrame(VertData v_in) : TARGET
+{
+	return image.Sample(clampSampler, rect.xy + v_in.uv * rect.zw);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSFrame(v_in);
+	}
+}

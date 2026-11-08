@@ -178,7 +178,19 @@
             "start": { "type": "number", "minimum": 0, "maximum": 1 }, "end": { "type": "number", "minimum": 0, "maximum": 1 } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "file", "channel", "invert", "feather"],
           "properties": { "type": { "const": "imageMask" }, "file": { "$ref": "#/$defs/pathRef" }, "channel": { "enum": ["luma", "alpha"] },
-            "invert": { "type": "boolean" }, "feather": { "type": "number", "minimum": 0, "maximum": 100 } } }
+            "invert": { "type": "boolean" }, "feather": { "type": "number", "minimum": 0, "maximum": 100 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "threshold", "feather", "smoothing"],
+          "properties": { "type": { "const": "personMask" }, "mode": { "enum": ["remove", "blur", "replace"] },
+            "threshold": { "type": "number", "minimum": 0, "maximum": 1 }, "feather": { "type": "number", "minimum": 0, "maximum": 1 },
+            "smoothing": { "type": "number", "minimum": 0, "maximum": 0.95 }, "strength": { "type": "number", "minimum": 1, "maximum": 100 },
+            "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }, "file": { "$ref": "#/$defs/pathRef" } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "zoom", "smoothing", "deadzone"],
+          "properties": { "type": { "const": "autoFrame" }, "zoom": { "type": "number", "minimum": 1, "maximum": 4 },
+            "smoothing": { "type": "number", "minimum": 0, "maximum": 5 }, "deadzone": { "type": "number", "minimum": 0, "maximum": 0.5 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "file", "anchor", "scale", "offsetX", "offsetY"],
+          "properties": { "type": { "const": "faceSticker" }, "file": { "$ref": "#/$defs/pathRef" },
+            "anchor": { "enum": ["eyes", "nose", "forehead", "mouth"] }, "scale": { "type": "number", "minimum": 0.1, "maximum": 10 },
+            "offsetX": { "type": "number", "minimum": -5, "maximum": 5 }, "offsetY": { "type": "number", "minimum": -5, "maximum": 5 } } }
       ]
     },
     "layer": {

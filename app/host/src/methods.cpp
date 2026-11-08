@@ -247,6 +247,15 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		return host_status_json(a);
 	});
 	m["host.status"].clips = true; // the live clipper's health check
+	add("face.status", [&a](const json::Value &p) { // face AI link (face.h, D295 proposed); read-only
+		(void)Params(p, {});
+		if (!a.face) {
+			json::Value r = json::Value::object();
+			r.set("on", false);
+			return r;
+		}
+		return a.face->stats();
+	});
 	add("host.shutdown", [&a](const json::Value &p) {
 		(void)Params(p, {});
 		if (!a.shutting_down.exchange(true)) {

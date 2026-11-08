@@ -80,6 +80,13 @@ struct Source {
 //               blending mode (at most one blend effect per layer)
 //   gradientMask: angle -360..360 (direction of the fade, 0 = left to right, y down), start, end 0..1
 //   imageMask: file (pathRef image), channel "luma" | "alpha", invert, feather 0..100 mask px
+// Face AI (flag face-ai, D295 proposed; masks and face points come from the face link, face.h):
+//   personMask: mode "remove" | "blur" | "replace" (default remove), threshold 0..1, feather 0..1 (edge width in
+//               matte units), smoothing 0..0.95 (temporal, done by the worker), strength 1..100 (blur, as the blur
+//               effect; default 20, kept in value), replace: color (default #00b140) or file (pathRef image)
+//   autoFrame:  zoom 1..4, smoothing 0..5 s (ease time constant), deadzone 0..0.5 (share of the crop)
+//   faceSticker: file (pathRef image), anchor "eyes" | "nose" | "forehead" | "mouth", scale 0.1..10 (width in eye
+//               distances), offsetX / offsetY -5..5 (eye distances, in the face's own frame)
 struct Effect {
 	std::string type; // "blur" | "rounded" | "chromaKey" | "shadow" | "glow" | "color" | "toner" | "cornerPin" | "blinds"
 	                  // | D291 types above
@@ -97,7 +104,13 @@ struct Effect {
 	std::string channel;    // imageMask: "luma" | "alpha"
 	json::Value file;       // lut, imageMask: the pathRef as given (effects_json returns it, never the resolved path)
 	std::string path;       // its absolute file, when parse_effects was given the bases
+	// face AI (D295 proposed)
+	std::string mode, anchor;
+	double threshold = 0.5, smoothing = 0, zoom = 1.6, deadzone = 0.1, scale = 1, offset_x = 0, offset_y = 0;
 };
+
+// Face AI effect types (personMask, autoFrame, faceSticker).
+bool is_face(const std::string &type);
 
 // Blend effect types (D291), in the order of libobs's enum obs_blending_type after OBS_BLEND_NORMAL.
 bool is_blend(const std::string &type);

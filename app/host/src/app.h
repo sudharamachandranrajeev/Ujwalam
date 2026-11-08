@@ -3,6 +3,7 @@
 #pragma once
 
 #include "host_config.h"
+#include "face.h"
 #include "frames.h"
 #include "hotkeys.h"
 #include "moments.h"
@@ -41,6 +42,7 @@ struct App {
 	std::unique_ptr<Moments> moments; // markers and feedback captures (moments.h)
 	std::unique_ptr<Hotkeys> hotkeys; // global hotkeys (hotkeys.h)
 	std::unique_ptr<Frames> frames;   // frames.grab readback (frames.h)
+	std::unique_ptr<face::Link> face; // face AI link (face.h, D295 proposed); also published through face::get()
 
 	void *shutdown_event = nullptr; // HANDLE; set by host.shutdown or Ctrl+C
 	std::atomic<bool> shutting_down{false};

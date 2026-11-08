@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // ujwalam-host: per-layer visual effects. See effects.h.
 #include "effects.h"
+#include "face.h"
 #include "log.h"
 #include "rpc_server.h"
 #include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect, ujw_toner_effect, ujw_corner_pin_effect, ujw_blinds_effect
 
 #include <graphics/image-file.h>
+#include <util/platform.h>
 
 #include <algorithm>
 #include <atomic>
@@ -1093,6 +1095,381 @@ const char *imask_name(void *)
 	return "Ujwalam image mask";
 }
 
+// --- face AI filters (D295 proposed): ujw_person_mask, ujw_face_frame, ujw_face_sticker ------------------------------
+// They read the face link (face.h) for the camera behind their wrapper: the link analyses that SHARED source at its
+// own size, so a mask or face point is in 0..1 of the source; the wrapper's placement crop is mapped here. Put face
+// effects first in a layer's list: an effect before them that moves or resizes the picture (mirror, cornerPin,
+// shadow ...) is not taken into account. Without a link, worker or fresh result they draw the plain layer.
+
+const char *PERSON_ID = "ujw_person_mask";
+const char *FRAME_ID = "ujw_face_frame";
+const char *STICKER_ID = "ujw_face_sticker";
+
+// The camera source behind a filter's wrapper and the wrapper's left / top crop (source px). False if the filter
+// does not sit on an effects wrapper.
+bool wrap_info(obs_source_t *parent, obs_source_t *&cam, int &cl, int &ct)
+{
+	if (!parent || std::strcmp(obs_source_get_id(parent), WRAP_ID) != 0)
+		return false;
+	auto *w = static_cast<Wrap *>(obs_obj_get_data(parent));
+	if (!w || !w->target)
+		return false;
+	cam = w->target;
+	cl = w->l;
+	ct = w->t;
+	return true;
+}
+
+struct Person {
+	obs_source_t *ctx = nullptr;
+	gs_effect_t *effect = nullptr;
+	gs_eparam_t *p_image = nullptr, *p_bg = nullptr, *p_mask = nullptr, *p_map = nullptr, *p_p = nullptr,
+		    *p_color = nullptr;
+	Gauss g; // blur mode only
+	gs_texrender_t *base = nullptr;
+	gs_image_file_t image = {}; // replace mode with a file
+	int mode = 0;               // 0 remove, 1 blur, 2 replace colour, 3 replace image
+	float threshold = 0.5f, feather = 0.1f, smoothing = 0, strength = 20;
+	uint32_t color = 0x00b140;
+	bool processed = false;
+	gs_texture_t *in = nullptr, *bg = nullptr;
+};
+
+void *person_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *t = new Person();
+	t->ctx = src;
+	t->effect = make_effect(ujw_person_mask_effect, "ujw_person_mask.effect");
+	if (t->effect) {
+		t->p_image = gs_effect_get_param_by_name(t->effect, "image");
+		t->p_bg = gs_effect_get_param_by_name(t->effect, "bg");
+		t->p_mask = gs_effect_get_param_by_name(t->effect, "mask");
+		t->p_map = gs_effect_get_param_by_name(t->effect, "maskmap");
+		t->p_p = gs_effect_get_param_by_name(t->effect, "p");
+		t->p_color = gs_effect_get_param_by_name(t->effect, "color");
+	}
+	const char *mode = obs_data_get_string(s, "mode");
+	const char *path = obs_data_get_string(s, "path");
+	t->mode = std::strcmp(mode, "blur") == 0 ? 1 : std::strcmp(mode, "replace") == 0 ? (path && *path ? 3 : 2) : 0;
+	t->threshold = (float)std::clamp(obs_data_get_double(s, "threshold"), 0.0, 1.0);
+	t->feather = (float)std::clamp(obs_data_get_double(s, "feather"), 0.0, 1.0);
+	t->smoothing = (float)std::clamp(obs_data_get_double(s, "smoothing"), 0.0, 0.95);
+	t->strength = (float)std::clamp(obs_data_get_double(s, "strength"), 1.0, 100.0);
+	t->color = (uint32_t)obs_data_get_int(s, "color") & 0xffffff;
+	if (t->mode == 1)
+		gauss_create(t->g);
+	if (t->mode == 3) {
+		gs_image_file_init(&t->image, path);
+		obs_enter_graphics();
+		gs_image_file_init_texture(&t->image);
+		obs_leave_graphics();
+		if (!t->image.loaded) {
+			hlog::error("person mask %s: the replacement image did not load; using the colour", obs_source_get_name(src));
+			t->mode = 2;
+		}
+	}
+	obs_enter_graphics();
+	t->base = gs_texrender_create(GS_RGBA, GS_ZS_NONE);
+	obs_leave_graphics();
+	return t;
+}
+
+void person_destroy(void *data)
+{
+	auto *t = static_cast<Person *>(data);
+	if (t->mode == 1)
+		gauss_destroy(t->g);
+	obs_enter_graphics();
+	gs_image_file_free(&t->image);
+	gs_texrender_destroy(t->base);
+	gs_effect_destroy(t->effect);
+	obs_leave_graphics();
+	delete t;
+}
+
+void person_tick(void *data, float)
+{
+	static_cast<Person *>(data)->processed = false;
+}
+
+void person_render(void *data, gs_effect_t *)
+{
+	auto *t = static_cast<Person *>(data);
+	obs_source_t *target = obs_filter_get_target(t->ctx), *parent = obs_filter_get_parent(t->ctx), *cam = nullptr;
+	const uint32_t cx = target ? obs_source_get_base_width(target) : 0, cy = target ? obs_source_get_base_height(target) : 0;
+	int cl = 0, ct = 0;
+	face::Link *link = face::get();
+	if (link && wrap_info(parent, cam, cl, ct))
+		link->use(cam, face::kWantMask, t->smoothing);
+	float weight = 0;
+	gs_texture_t *mask = link && cam ? link->mask(cam, weight) : nullptr;
+	const uint32_t sw = cam ? obs_source_get_width(cam) : 0, sh = cam ? obs_source_get_height(cam) : 0;
+	if (!t->effect || !mask || weight <= 0 || !cx || !cy || !sw || !sh) { // no fresh mask: the plain camera
+		obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	if (!t->processed) { // once per frame, however many times the item is drawn
+		gs_blend_state_push();
+		gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+		t->in = render_target(t->base, target, parent, cx, cy);
+		t->bg = t->mode == 1 && t->in ? gauss_run(t->g, t->in, cx, cy, t->strength * 0.5, t->strength * 0.5)
+			: t->mode == 3 ? t->image.texture
+				       : t->in;
+		gs_blend_state_pop();
+		t->processed = true;
+	}
+	if (!t->in || !t->bg)
+		return;
+	const bool prev_srgb = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(true);
+	struct vec4 map, p, col;
+	vec4_set(&map, (float)cx / (float)sw, (float)cy / (float)sh, (float)cl / (float)sw, (float)ct / (float)sh);
+	vec4_set(&p, t->threshold, t->feather, t->mode == 0 ? 0.0f : t->mode == 2 ? 2.0f : 1.0f, weight);
+	const uint32_t c = t->color;
+	vec4_set(&col, srgb_to_linear((float)((c >> 16) & 0xff) / 255.0f), srgb_to_linear((float)((c >> 8) & 0xff) / 255.0f),
+		 srgb_to_linear((float)(c & 0xff) / 255.0f), 1.0f);
+	gs_effect_set_texture_srgb(t->p_image, t->in);
+	gs_effect_set_texture_srgb(t->p_bg, t->bg);
+	gs_effect_set_texture(t->p_mask, mask);
+	gs_effect_set_vec4(t->p_map, &map);
+	gs_effect_set_vec4(t->p_p, &p);
+	gs_effect_set_vec4(t->p_color, &col);
+	while (gs_effect_loop(t->effect, "Draw"))
+		gs_draw_sprite(t->in, 0, cx, cy);
+	gs_enable_framebuffer_srgb(prev_srgb);
+}
+
+const char *person_name(void *)
+{
+	return "Ujwalam person mask";
+}
+
+// autoFrame: a pan / zoom crop that keeps the face centred. C++ twin of services/face/face_post.py autoframe_target and
+// ease_rect (same numbers): crop height = 1 / zoom of the layer, same aspect as the layer; the crop's centre follows
+// the face only when it leaves `deadzone` of the crop; eased with time constant `smoothing` s; no face for 1 s eases
+// back to the whole layer.
+struct Frame {
+	obs_source_t *ctx = nullptr;
+	gs_effect_t *effect = nullptr;
+	gs_eparam_t *p_rect = nullptr;
+	float zoom = 1.6f, smoothing = 0.5f, deadzone = 0.1f;
+	double rect[4] = {0, 0, 1, 1};
+	double center[2] = {0.5, 0.5};
+	bool has_center = false, stepped = false;
+	int64_t last_face_ms = 0;
+	float dt = 0;
+};
+
+constexpr int64_t kFrameHoldMs = 1000;
+
+void *frame_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *t = new Frame();
+	t->ctx = src;
+	t->effect = make_effect(ujw_face_frame_effect, "ujw_face_frame.effect");
+	if (t->effect)
+		t->p_rect = gs_effect_get_param_by_name(t->effect, "rect");
+	t->zoom = (float)std::clamp(obs_data_get_double(s, "zoom"), 1.0, 4.0);
+	t->smoothing = (float)std::clamp(obs_data_get_double(s, "smoothing"), 0.0, 5.0);
+	t->deadzone = (float)std::clamp(obs_data_get_double(s, "deadzone"), 0.0, 0.5);
+	return t;
+}
+
+void frame_destroy(void *data)
+{
+	auto *t = static_cast<Frame *>(data);
+	obs_enter_graphics();
+	gs_effect_destroy(t->effect);
+	obs_leave_graphics();
+	delete t;
+}
+
+void frame_tick(void *data, float seconds)
+{
+	auto *t = static_cast<Frame *>(data);
+	t->dt += seconds;
+	t->stepped = false;
+}
+
+void frame_step(Frame *t, obs_source_t *cam, int cl, int ct, uint32_t cx, uint32_t cy)
+{
+	face::Link *link = face::get();
+	face::Face f;
+	double tgt[4];
+	std::memcpy(tgt, t->rect, sizeof tgt);
+	const uint32_t sw = cam ? obs_source_get_width(cam) : 0, sh = cam ? obs_source_get_height(cam) : 0;
+	const int64_t now = (int64_t)(os_gettime_ns() / 1000000);
+	if (link && cam) {
+		link->use(cam, face::kWantLandmarks, 0);
+		if (sw && sh && link->face(cam, f)) {
+			// face centre in 0..1 of this layer (the wrapper shows a crop of the source)
+			const double fx = ((f.box[0] + f.box[2] / 2) * sw - cl) / cx, fy = ((f.box[1] + f.box[3] / 2) * sh - ct) / cy;
+			const double w = 1.0 / t->zoom, h = w;
+			double ccx = fx, ccy = fy;
+			if (t->has_center && t->deadzone > 0) {
+				const double dzx = t->deadzone * w, dzy = t->deadzone * h;
+				ccx = std::fabs(fx - t->center[0]) <= dzx ? t->center[0] : fx - std::copysign(dzx, fx - t->center[0]);
+				ccy = std::fabs(fy - t->center[1]) <= dzy ? t->center[1] : fy - std::copysign(dzy, fy - t->center[1]);
+			}
+			tgt[0] = std::clamp(ccx - w / 2, 0.0, 1.0 - w);
+			tgt[1] = std::clamp(ccy - h / 2, 0.0, 1.0 - h);
+			tgt[2] = w;
+			tgt[3] = h;
+			t->center[0] = tgt[0] + w / 2;
+			t->center[1] = tgt[1] + h / 2;
+			t->has_center = true;
+			t->last_face_ms = now;
+		}
+	}
+	if (now - t->last_face_ms > kFrameHoldMs) {
+		tgt[0] = tgt[1] = 0;
+		tgt[2] = tgt[3] = 1;
+		t->has_center = false;
+	}
+	const double k = t->smoothing <= 0 ? 1.0 : 1.0 - std::exp(-std::max(0.0f, t->dt) / t->smoothing);
+	for (int i = 0; i < 4; i++)
+		t->rect[i] += (tgt[i] - t->rect[i]) * k;
+	t->dt = 0;
+}
+
+void frame_render(void *data, gs_effect_t *)
+{
+	auto *t = static_cast<Frame *>(data);
+	obs_source_t *target = obs_filter_get_target(t->ctx), *parent = obs_filter_get_parent(t->ctx), *cam = nullptr;
+	const uint32_t cx = target ? obs_source_get_base_width(target) : 0, cy = target ? obs_source_get_base_height(target) : 0;
+	int cl = 0, ct = 0;
+	if (!t->effect || !cx || !cy || !wrap_info(parent, cam, cl, ct)) {
+		obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	if (!t->stepped) {
+		frame_step(t, cam, cl, ct, cx, cy);
+		t->stepped = true;
+	}
+	if (t->rect[2] >= 0.999 && t->rect[3] >= 0.999) { // whole layer: nothing to do
+		obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	if (!obs_source_process_filter_begin(t->ctx, GS_RGBA, OBS_NO_DIRECT_RENDERING))
+		return;
+	struct vec4 r;
+	vec4_set(&r, (float)t->rect[0], (float)t->rect[1], (float)t->rect[2], (float)t->rect[3]);
+	gs_effect_set_vec4(t->p_rect, &r);
+	obs_source_process_filter_end(t->ctx, t->effect, 0, 0);
+}
+
+const char *frame_name(void *)
+{
+	return "Ujwalam auto frame";
+}
+
+// faceSticker: an image pinned to the face (C++ twin of services/face/face_post.py sticker_transform): width = scale x
+// the distance between the eye centres, centred on the anchor plus offset (eye distances, in the face's own frame),
+// turned with the head's roll. Hidden while there is no fresh face.
+struct Sticker {
+	obs_source_t *ctx = nullptr;
+	gs_image_file_t image = {};
+	int anchor = 0; // eyes, nose, forehead, mouth
+	float scale = 1, ox = 0, oy = 0;
+};
+
+void *sticker_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *t = new Sticker();
+	t->ctx = src;
+	const char *a = obs_data_get_string(s, "anchor");
+	t->anchor = std::strcmp(a, "nose") == 0 ? 1 : std::strcmp(a, "forehead") == 0 ? 2 : std::strcmp(a, "mouth") == 0 ? 3 : 0;
+	t->scale = (float)std::clamp(obs_data_get_double(s, "scale"), 0.1, 10.0);
+	t->ox = (float)std::clamp(obs_data_get_double(s, "offsetX"), -5.0, 5.0);
+	t->oy = (float)std::clamp(obs_data_get_double(s, "offsetY"), -5.0, 5.0);
+	gs_image_file_init(&t->image, obs_data_get_string(s, "path"));
+	obs_enter_graphics();
+	gs_image_file_init_texture(&t->image);
+	obs_leave_graphics();
+	if (!t->image.loaded)
+		hlog::error("face sticker %s: the image did not load", obs_source_get_name(src));
+	return t;
+}
+
+void sticker_destroy(void *data)
+{
+	auto *t = static_cast<Sticker *>(data);
+	obs_enter_graphics();
+	gs_image_file_free(&t->image);
+	obs_leave_graphics();
+	delete t;
+}
+
+void sticker_render(void *data, gs_effect_t *)
+{
+	auto *t = static_cast<Sticker *>(data);
+	obs_source_t *target = obs_filter_get_target(t->ctx), *parent = obs_filter_get_parent(t->ctx), *cam = nullptr;
+	const uint32_t cx = target ? obs_source_get_base_width(target) : 0, cy = target ? obs_source_get_base_height(target) : 0;
+	int cl = 0, ct = 0;
+	face::Link *link = face::get();
+	face::Face f;
+	bool have = false;
+	if (link && wrap_info(parent, cam, cl, ct)) {
+		link->use(cam, face::kWantLandmarks, 0);
+		have = link->face(cam, f);
+	}
+	const uint32_t sw = cam ? obs_source_get_width(cam) : 0, sh = cam ? obs_source_get_height(cam) : 0;
+	obs_source_skip_video_filter(t->ctx); // the layer itself, unchanged
+	if (!have || !t->image.texture || !cx || !cy || !sw || !sh)
+		return;
+	auto px = [&](int i, double &x, double &y) { // landmark i in this layer's px
+		x = f.pts[i * 3] * sw - cl;
+		y = f.pts[i * 3 + 1] * sh - ct;
+	};
+	double ax, ay, bx, by, rx, ry, lx, ly;
+	px(33, ax, ay);
+	px(133, bx, by);
+	rx = (ax + bx) / 2;
+	ry = (ay + by) / 2;
+	px(263, ax, ay);
+	px(362, bx, by);
+	lx = (ax + bx) / 2;
+	ly = (ay + by) / 2;
+	const double eye = std::hypot(lx - rx, ly - ry), roll = std::atan2(ly - ry, lx - rx);
+	double qx = (rx + lx) / 2, qy = (ry + ly) / 2;
+	if (t->anchor == 1)
+		px(1, qx, qy);
+	else if (t->anchor == 2)
+		px(10, qx, qy);
+	else if (t->anchor == 3) {
+		px(13, ax, ay);
+		px(14, bx, by);
+		qx = (ax + bx) / 2;
+		qy = (ay + by) / 2;
+	}
+	const double dx = t->ox * eye, dy = t->oy * eye, c = std::cos(roll), s = std::sin(roll);
+	qx += c * dx - s * dy;
+	qy += s * dx + c * dy;
+	const float w = (float)(t->scale * eye), h = w * (float)t->image.cy / (float)std::max(1u, t->image.cx);
+	if (w < 1)
+		return;
+	gs_effect_t *e = obs_get_base_effect(OBS_EFFECT_DEFAULT);
+	gs_blend_state_push();
+	gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
+	const bool prev_srgb = gs_framebuffer_srgb_enabled();
+	gs_enable_framebuffer_srgb(true);
+	gs_matrix_push();
+	gs_matrix_translate3f((float)qx, (float)qy, 0.0f);
+	gs_matrix_rotaa4f(0.0f, 0.0f, 1.0f, (float)roll);
+	gs_matrix_translate3f(-w / 2, -h / 2, 0.0f);
+	gs_effect_set_texture_srgb(gs_effect_get_param_by_name(e, "image"), t->image.texture);
+	while (gs_effect_loop(e, "Draw"))
+		gs_draw_sprite(t->image.texture, 0, (uint32_t)w, (uint32_t)h);
+	gs_matrix_pop();
+	gs_enable_framebuffer_srgb(prev_srgb);
+	gs_blend_state_pop();
+}
+
+const char *sticker_name(void *)
+{
+	return "Ujwalam face sticker";
+}
+
 } // namespace
 
 enum obs_blending_type blending(const std::vector<model::Effect> &effects)
@@ -1227,6 +1604,39 @@ void register_types()
 	im.video_render = imask_render;
 	obs_register_source(&im);
 	hlog::info("effect source types registered: %s, %s", PASS_ID, IMAGE_MASK_ID);
+
+	struct obs_source_info pm = {};
+	pm.id = PERSON_ID;
+	pm.type = OBS_SOURCE_TYPE_FILTER;
+	pm.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB;
+	pm.get_name = person_name;
+	pm.create = person_create;
+	pm.destroy = person_destroy;
+	pm.video_tick = person_tick;
+	pm.video_render = person_render;
+	obs_register_source(&pm);
+
+	struct obs_source_info af = {};
+	af.id = FRAME_ID;
+	af.type = OBS_SOURCE_TYPE_FILTER;
+	af.output_flags = OBS_SOURCE_VIDEO;
+	af.get_name = frame_name;
+	af.create = frame_create;
+	af.destroy = frame_destroy;
+	af.video_tick = frame_tick;
+	af.video_render = frame_render;
+	obs_register_source(&af);
+
+	struct obs_source_info st = {};
+	st.id = STICKER_ID;
+	st.type = OBS_SOURCE_TYPE_FILTER;
+	st.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_SRGB;
+	st.get_name = sticker_name;
+	st.create = sticker_create;
+	st.destroy = sticker_destroy;
+	st.video_render = sticker_render;
+	obs_register_source(&st);
+	hlog::info("effect source types registered: %s, %s, %s", PERSON_ID, FRAME_ID, STICKER_ID);
 }
 
 obs_source_t *create_chain(obs_source_t *target, const std::string &name, const std::vector<model::Effect> &effects,
@@ -1315,6 +1725,37 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 			obs_data_set_string(s, "channel", e.channel.c_str());
 			obs_data_set_bool(s, "invert", e.invert);
 			obs_data_set_double(s, "feather", e.feather);
+		} else if (e.type == "personMask") { // D295 proposed: needs the face link (flag face-ai); plain layer without it
+			id = PERSON_ID;
+			obs_data_set_string(s, "mode", e.mode.c_str());
+			obs_data_set_double(s, "threshold", e.threshold);
+			obs_data_set_double(s, "feather", e.feather);
+			obs_data_set_double(s, "smoothing", e.smoothing);
+			obs_data_set_double(s, "strength", e.value);
+			obs_data_set_int(s, "color", (long long)e.color);
+			if (!e.file.is_null() && e.path.empty()) {
+				obs_data_release(s);
+				obs_source_release(wrap);
+				throw rpc::Error(rpc::UNAVAILABLE, "background image not resolved for " + name);
+			}
+			obs_data_set_string(s, "path", e.path.c_str());
+		} else if (e.type == "autoFrame") { // D295 proposed
+			id = FRAME_ID;
+			obs_data_set_double(s, "zoom", e.zoom);
+			obs_data_set_double(s, "smoothing", e.smoothing);
+			obs_data_set_double(s, "deadzone", e.deadzone);
+		} else if (e.type == "faceSticker") { // D295 proposed
+			if (e.path.empty()) {
+				obs_data_release(s);
+				obs_source_release(wrap);
+				throw rpc::Error(rpc::UNAVAILABLE, "face sticker file not resolved for " + name);
+			}
+			id = STICKER_ID;
+			obs_data_set_string(s, "path", e.path.c_str());
+			obs_data_set_string(s, "anchor", e.anchor.c_str());
+			obs_data_set_double(s, "scale", e.scale);
+			obs_data_set_double(s, "offsetX", e.offset_x);
+			obs_data_set_double(s, "offsetY", e.offset_y);
 		} else if (const char *kind = pass_kind(e)) { // D291: one shader pass (ujw_pass)
 			id = PASS_ID;
 			double p[4] = {0, 0, 0, 0};

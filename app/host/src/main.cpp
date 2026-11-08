@@ -501,6 +501,13 @@ int wmain(int argc, wchar_t **wargv)
 		app.moments = std::make_unique<Moments>(app, mc);
 		app.hotkeys = std::make_unique<Hotkeys>();
 		app.frames = std::make_unique<Frames>((fs::u8path(app.data_dir) / "live").generic_u8string());
+		// Face link (D295 proposed): mapping + tick callback. Camera frames go out only while a face effect is shown
+		// and the face worker (flag face-ai) is alive; the worker is gated by the flag.
+		app.face = std::make_unique<face::Link>(GetCurrentProcessId());
+		if (app.face->ok())
+			face::set(app.face.get());
+		else
+			app.face.reset();
 		if (app.overlay) { // cam-pop mic feed (overlay.h): the overlay pump reads the named source's meter
 			Studio *st = app.studio.get();
 			app.overlay->set_mic_level(
@@ -676,6 +683,8 @@ int wmain(int argc, wchar_t **wargv)
 			app.overlay->set_mic_level(nullptr); // the mic pump stops reading the studio before it goes
 		app.studio->teardown();
 		app.studio.reset();
+		face::set(nullptr); // no face filter is left; then tick callback off and mapping freed while libobs runs
+		app.face.reset();
 		if (app.overlay)
 			app.overlay->stop(3000);
 		app.overlay.reset();

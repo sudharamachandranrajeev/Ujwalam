@@ -32,7 +32,13 @@ const FX291 = {
   ...Object.fromEntries(BLEND.map((b) => [b, { opacity: [0, 1] }])),
   gradientMask: { angle: [-360, 360], start: [0, 1], end: [0, 1] },
   imageMask: { file: 'file', channel: [['luma', 'alpha']], invert: 'bool', feather: [0, 100] },
+  // face AI (flag face-ai, D295 proposed)
+  personMask: { mode: [['remove', 'blur', 'replace']], threshold: [0, 1], feather: [0, 1], smoothing: [0, 0.95], strength: [1, 100], color: 'color', file: 'file' },
+  autoFrame: { zoom: [1, 4], smoothing: [0, 5], deadzone: [0, 0.5] },
+  faceSticker: { file: 'file', anchor: [['eyes', 'nose', 'forehead', 'mouth']], scale: [0.1, 10], offsetX: [-5, 5], offsetY: [-5, 5] },
 };
+// Keys that may be left out (everything else in FX291 is required).
+const FX_OPTIONAL = { personMask: ['mode', 'strength', 'color', 'file'] };
 
 const isObj = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
@@ -267,7 +273,7 @@ export function validateProject(doc) {
       } else if (FX291[e.type]) { // D291 filters, camera and compositing (same ranges as app/host/src/model.cpp)
         const spec = FX291[e.type];
         const keys = Object.keys(spec);
-        noExtra(e, ['type', ...keys], ep); req(e, keys, ep);
+        noExtra(e, ['type', ...keys], ep); req(e, keys.filter((k) => !FX_OPTIONAL[e.type]?.includes(k)), ep);
         for (const k of keys) {
           if (!(k in e)) continue;
           const s = spec[k];
