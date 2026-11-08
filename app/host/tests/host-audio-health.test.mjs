@@ -85,6 +85,13 @@ test('readiness: a source that sends packets is ok and receiving (host.status au
   assert.equal(row.receiving, true);
   assert.ok(row.lastDataMs < 1000);
   assert.equal(row.active, true, 'on an output channel');
+  // audio.status: the same view on its own (services/studio-ui/readiness.mjs reads {sources: [{id, name, state}]})
+  const as = await c.call('audio.status', {});
+  const g = as.sources.find((x) => x.id === 'audio:game');
+  assert.equal(g.name, 'Game');
+  assert.equal(g.state, 'ok');
+  assert.equal(as.rtwqHeld, true);
+  assert.deepEqual(Object.keys(as).sort(), ['events', 'ok', 'rtwqHeld', 'seq', 'sources', 'warnings', 'watchdog']);
 });
 
 test('watchdog: a source that stops sending is reported missing, recreated on the same channel, and recovers', async () => {
