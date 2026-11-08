@@ -103,6 +103,38 @@ The clip maker is Python and is not in the zip. Point an install at a source che
 without installing anything: `-ClipsWhenRecording ask|after|while|off`, `-ClipsWhenLive ask|after|while|off`,
 `-RecordingsFolder <folder>`, `-ClipsFolder <folder>` (`''` = default).
 
+### Which matches become clips
+
+The clip maker splits a recording into matches at the end screens (VICTORY or DEFEAT, the top-3 screen, MVP, Impact
+Play, the final killcam). For each match it then checks two rules:
+
+- **Top 3** (on by default): you are on one of the three cards of the top-3 screen. Ujwalam finds your card by the
+  in-game names in your profile.
+- **Kills** (off by default): you took at least this many kills in the match. Kills come from the final scoreboard
+  when it is shown, otherwise from your lines in the kill feed.
+
+A match passes when any rule that is on holds. Its clips are made; the clips of the other matches are skipped. When
+Ujwalam is not sure, it keeps the clips. That happens when no end screen was seen (a match cut off by the end of the
+recording), when the top-3 screen or the kills could not be read, or when no profile names are set.
+
+There is no switch for this in the studio window yet. Set it in `settings.json` in the Ujwalam data folder:
+
+```json
+{ "clips": { "matchGate": { "top3": true, "minKills": null } } }
+```
+
+`minKills` is `null` (kills rule off) or a whole number from 1 to 200. With both rules off (`"top3": false,
+"minKills": null`) every match keeps its clips.
+
+Each run writes `matches.json` next to the clips. It lists every match with its time, result, your top-3 place and
+score, your kill count and where that count came from, and why it passed or was skipped. Skipped clips stay in
+`candidates.json` under `gatedOut`; run `clipper.py gate --recording <file.mkv> --out <run folder>` again after
+changing the setting, then `render`. Moments saved while live are sorted the same way when the review gets
+`--matches <run folder>/matches.json`.
+
+The top-3 screen is checked on one practice match (UNVERIFIED for DEFEAT and other modes). The scoreboard kill count
+is UNVERIFIED: no final scoreboard has been captured yet.
+
 ### By hand and the posting review
 
 Posting is off by default. Turn on `posting` on the control page first.

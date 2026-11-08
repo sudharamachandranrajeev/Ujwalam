@@ -99,6 +99,23 @@
             "status": { "$ref": "#/$defs/status" }
           }
         },
+        "stats": {
+          "type": "object",
+          "description": "Match-stats reader settings (match gate, services/clip/match_gate.py): end-screen card score pattern, kills column headers, game mode names, which detectors mark a match end, the gap that joins end-screen hits into one match end, and how kill-feed lines are deduplicated.",
+          "required": ["status"],
+          "additionalProperties": false,
+          "properties": {
+            "scoreRegex": { "type": "string", "description": "Applied to the normalised text (upper case, no separators); group 1 is the score." },
+            "killsHeaders": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "modeNames": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "endScreenDetectors": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" } },
+            "endGapSec": { "type": "number", "minimum": 0 },
+            "killLineHoldSec": { "type": "number", "minimum": 0 },
+            "victimMatchMin": { "type": "number", "minimum": 0, "maximum": 1 },
+            "status": { "$ref": "#/$defs/status" },
+            "note": { "type": "string" }
+          }
+        },
         "nameRequired": { "type": "boolean" },
         "signalRule": { "enum": ["name_only"], "description": "name_only: a detection counts as a signal only when the profile name is matched on the stated side; otherwise no signal." },
         "logUnmatched": { "type": "boolean", "description": "Also log detections without a name match (signal false) as evidence records for tuning." },

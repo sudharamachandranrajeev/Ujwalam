@@ -3,6 +3,10 @@
 // (Install-Ujwalam.ps1 -ClipsWhenRecording ...). Plain choices, no flags:
 //   clips.recording / clips.live: "ask" (ask after each one) | "after" (make clips when it stops) |
 //                                 "while" (find moments while it runs, edit them into clips when it stops) | "off"
+//   clips.matchGate: which matches become clips (D286 proposed, services/clip/match_gate.py):
+//                    { top3: true|false (the streamer is in the top 3 on the end screen),
+//                      minKills: null (kills rule off) | whole number 1..200 (the streamer's kills in the match) }
+//                    a match passes when any rule that is on holds; default { top3: true, minKills: null }
 //   folders.recordings: where recordings are saved (used from the next start); null = <host data>/recordings
 //   folders.clips: where finished clips are saved; null = <dataDir>/clips
 // Read by the launcher (record-clips.mjs), the UI server and the Python clipper (clip_common.clip_settings).
@@ -12,7 +16,35 @@ import path from 'node:path';
 
 export const SETTINGS_FILE = 'settings.json';
 export const CLIP_MODES = Object.freeze(['ask', 'after', 'while', 'off']);
-export const DEFAULTS = Object.freeze({ clips: Object.freeze({ recording: 'ask', live: 'ask' }), folders: Object.freeze({ recordings: null, clips: null }) });
+export const MIN_KILLS = Object.freeze({ min: 1, max: 200 }); // match gate
+export const DEFAULTS = Object.freeze({
+  clips: Object.freeze({ recording: 'ask', live: 'ask', matchGate: Object.freeze({ top3: true, minKills: null }) }),
+  folders: Object.freeze({ recordings: null, clips: null }),
+});
+
+// ---- match gate (D286 proposed) begin: clips.matchGate checks and read; also one line each in DEFAULTS,
+// readSettings, settingsProblems and writeSettings, marked "match gate"
+const okMinKills = (v) => v === null || (Number.isInteger(v) && v >= MIN_KILLS.min && v <= MIN_KILLS.max);
+
+/** Problems with a clips.matchGate value (whole or partial: { top3?, minKills? }); [] when fine. */
+export function matchGateProblems(g) {
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return ['clips.matchGate must be an object'];
+  const out = [];
+  for (const [k, v] of Object.entries(g)) {
+    if (k === 'top3') { if (typeof v !== 'boolean') out.push('clips.matchGate.top3 must be true or false'); }
+    else if (k === 'minKills') { if (!okMinKills(v)) out.push(`clips.matchGate.minKills must be null or a whole number ${MIN_KILLS.min}-${MIN_KILLS.max}`); }
+    else out.push(`unknown match gate setting ${k}`);
+  }
+  return out;
+}
+
+/** clips.matchGate from a settings file value: each part checked on its own, defaults for anything missing or bad. */
+function readMatchGate(g) {
+  const d = DEFAULTS.clips.matchGate;
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return { ...d };
+  return { top3: typeof g.top3 === 'boolean' ? g.top3 : d.top3, minKills: okMinKills(g.minKills) ? g.minKills : d.minKills };
+}
+// ---- match gate end
 
 const inside = (dir, root) => { const r = path.relative(path.resolve(root), path.resolve(dir)); return r === '' || (!r.startsWith('..') && !path.isAbsolute(r)); };
 
@@ -35,18 +67,20 @@ export function readSettings(dataDir) {
   const dir = (v) => (typeof v === 'string' && !folderProblem(v) ? v : null);
   return {
     exists: j !== null,
-    clips: { recording: mode(c.recording, DEFAULTS.clips.recording), live: mode(c.live, DEFAULTS.clips.live) },
+    clips: { recording: mode(c.recording, DEFAULTS.clips.recording), live: mode(c.live, DEFAULTS.clips.live), matchGate: readMatchGate(c.matchGate) },
     folders: { recordings: dir(f.recordings), clips: dir(f.clips) },
   };
 }
 
-/** Problems with a settings change { clips?: {recording?, live?}, folders?: {recordings?, clips?} }; [] when fine. */
+/** Problems with a settings change { clips?: {recording?, live?, matchGate?: {top3?, minKills?}},
+ *  folders?: {recordings?, clips?} }; [] when fine. */
 export function settingsProblems(patch, { forbidden = [] } = {}) {
   const out = [];
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) return ['settings must be an object'];
   for (const k of Object.keys(patch)) if (!['clips', 'folders'].includes(k)) out.push(`unknown setting ${k}`);
   for (const [k, v] of Object.entries(patch.clips ?? {})) {
-    if (!['recording', 'live'].includes(k)) out.push(`unknown clip setting ${k}`);
+    if (k === 'matchGate') out.push(...matchGateProblems(v)); // match gate
+    else if (!['recording', 'live'].includes(k)) out.push(`unknown clip setting ${k}`);
     else if (!CLIP_MODES.includes(v)) out.push(`clips.${k} must be one of ${CLIP_MODES.join(', ')}`);
   }
   for (const [k, v] of Object.entries(patch.folders ?? {})) {
@@ -61,7 +95,8 @@ export function settingsProblems(patch, { forbidden = [] } = {}) {
 export function writeSettings(dataDir, patch) {
   const cur = readSettings(dataDir);
   const next = {
-    clips: { ...cur.clips, ...(patch.clips ?? {}) },
+    // match gate: matchGate merges part by part, so changing minKills keeps top3 (and the other way round)
+    clips: { ...cur.clips, ...(patch.clips ?? {}), matchGate: { ...cur.clips.matchGate, ...(patch.clips?.matchGate ?? {}) } },
     folders: { ...cur.folders, ...(patch.folders ?? {}) },
   };
   for (const k of ['recordings', 'clips']) if (typeof next.folders[k] === 'string') mkdirSync(next.folders[k], { recursive: true });

@@ -106,6 +106,48 @@ def clip_settings(data_dir):
     return out
 
 
+MATCH_GATE_DEFAULTS = {"top3": True, "minKills": None}
+MIN_KILLS_RANGE = (1, 200)
+
+
+def match_gate_settings(data_dir):
+    """The match gate (D286 proposed) from <data>/settings.json clips.matchGate: {"top3": bool, "minKills": int 1..200
+    or None}. Missing or invalid values fall back to the defaults (top3 on, kills rule off), as user-settings.mjs."""
+    out = dict(MATCH_GATE_DEFAULTS)
+    if not data_dir:
+        return out
+    try:
+        j = load_json(os.path.join(data_dir, SETTINGS_FILE))
+    except (OSError, ClipError):
+        return out
+    c = j.get("clips") if isinstance(j, dict) else None
+    g = c.get("matchGate") if isinstance(c, dict) else None
+    if not isinstance(g, dict):
+        return out
+    if isinstance(g.get("top3"), bool):
+        out["top3"] = g["top3"]
+    k = g.get("minKills")
+    if k is None or (isinstance(k, int) and not isinstance(k, bool) and MIN_KILLS_RANGE[0] <= k <= MIN_KILLS_RANGE[1]):
+        out["minKills"] = k
+    return out
+
+
+PROGRESS_PREFIX = "ujwalam-progress "
+PROGRESS_STAGES = ("detect", "candidates", "render", "validate", "review", "gate")
+
+
+def progress_line(stage, done, total, note=""):
+    """One progress line for the UI (contract shared with the studio): on stderr,
+    ujwalam-progress {"stage":"<stage>","done":<int>,"total":<int>,"note":"<short plain text, no names>"}"""
+    if stage not in PROGRESS_STAGES:
+        raise ValueError(f"unknown progress stage {stage}")
+    note = " ".join(str(note or "").split())[:120]
+    line = PROGRESS_PREFIX + json.dumps({"stage": stage, "done": int(done), "total": int(total), "note": note},
+                                        separators=(",", ":"), ensure_ascii=True)
+    print(line, file=sys.stderr, flush=True)
+    return line
+
+
 def clips_allowed(data_dir):
     """The clipper may run when the developer flag is on or the user chose any clip mode other than off (D284)."""
     return flag_on(data_dir, FLAG) or any(v != "off" for v in clip_settings(data_dir).values())

@@ -306,10 +306,11 @@
         }
       ],
       "detectors": [
-        "M1"
+        "M1",
+        "S1"
       ],
       "status": "unverified",
-      "note": "A final MP scoreboard frame is still missing (capture-plan mp_final_scoreboard). Scoreboards were read during play in A5c (03:36, 12:49, 14:20, 14:43); whether those show MVP badges is not recorded (UNVERIFIED).",
+      "note": "A final MP scoreboard frame is still missing (capture-plan mp_final_scoreboard). Scoreboards were read during play in A5c (03:36, 12:49, 14:20, 14:43); whether those show MVP badges is not recorded (UNVERIFIED). S1 (2026-11-08) reads the own row's kills here; its ROI and kills header are unverified until a frame exists.",
       "evidence": [
         "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
         "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
@@ -339,14 +340,16 @@
         }
       ],
       "detectors": [
-        "M1"
+        "M1",
+        "S1"
       ],
       "status": "unverified",
-      "note": "After an ad of about 4 s that follows the end screens (A5c). A5b: IGN read 7/7, small MVP badge 1/7 with the crop profile (read by the full-frame pass).",
+      "note": "After an ad of about 4 s that follows the end screens (A5c). A5b: IGN read 7/7, small MVP badge 1/7 with the crop profile (read by the full-frame pass). 2026-11-08 practice (H canvas, project layout): three cards, rank 1 centre, rank 2 left, rank 3 right, each with SCORE n, VICTORY at the top, mode and map top left, a 15 s countdown top right; S1 reads rank, score and the own card. The team shown (own team only, or the winners) is not checked (UNVERIFIED; one VICTORY match seen).",
       "evidence": [
         "docs/evidence/2026-10-27-p2a-a5-g1-corpus-check.md",
         "docs/evidence/2026-10-27-p2a-a5b-live-capture-2.md",
-        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md",
+        "docs/evidence/2026-11-08-match-gate.md"
       ]
     },
     {
