@@ -295,3 +295,23 @@ test('tasks: stderr progress lines drive the task title and bar; exit makes it d
     assert.match(readFileSync(path.join(s.dataDir, 'clips', 'run-practice-h-1.log'), 'utf8'), /warming up/, 'stderr still reaches the log');
   } finally { rmSync(s.d, { recursive: true, force: true }); }
 });
+
+test('D300: a finished clip job hands its run folder to the post chain; every status feeds its tick; a failed job does not', async () => {
+  const s = setup();
+  try {
+    writeSettings(s.dataDir, { clips: { recording: 'after', live: 'off' } });
+    const after = []; const ticks = [];
+    const postChain = { afterRun: (dir, status) => { after.push({ dir, live: isLive(status) }); return Promise.resolve(); }, tick: (status) => { ticks.push(status); return Promise.resolve(); } };
+    const rc = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: s.log, spawnFn: s.spawnFn, now: s.now, postChain });
+    rc.feed(s.S('live')); s.advance(60000); rc.feed(s.S('stopped'));
+    assert.ok(ticks.length >= 2, 'each status feeds the chain tick');
+    const out = path.join(s.dataDir, 'clips', 'runs', 'practice-h-1');
+    mkdirSync(path.join(out, 'clips', 'a'), { recursive: true }); writeFileSync(path.join(out, 'clips', 'a', 'x.mp4'), 'v');
+    s.spawned[0].c.emit('exit', 0);
+    assert.deepEqual(after, [{ dir: out, live: false }]);
+    // a failed job posts nothing
+    rc.feed(s.S('live')); rc.feed(s.S('stopped'));
+    s.spawned[1].c.emit('exit', 1);
+    assert.equal(after.length, 1);
+  } finally { rmSync(s.d, { recursive: true, force: true }); }
+});

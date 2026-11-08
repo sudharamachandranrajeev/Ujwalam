@@ -13,6 +13,7 @@ import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, PostingError, createPostStore, packageRun } from './index.mjs';
 import { createYoutubeAuth } from './oauth.mjs';
 import { uploadPost, UploadError } from './youtube.mjs';
+import { streamOnly } from './auto-chain.mjs';
 import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, loadRules, planAuto, runAuto } from './auto-post.mjs';
 import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
@@ -128,7 +129,8 @@ async function autoMain(a, out, err, deps) {
     if (!flagOn) { err(`auto-post: the '${POSTING_FLAG}' and '${AUTO_FLAG}' feature flags must both be on`); return EXIT_FLAG_OFF; }
     if (!rules.rules.length) { out('auto-post: no rules; nothing to do'); return 0; }
     const auth = rules.autoUpload ? (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen }) : null;
-    const outputsStatus = deps.outputsStatus ?? outputsStatusFor(dataDir);
+    // D300: only stream sinks block (a local recording does not); an unreadable state still refuses.
+    const outputsStatus = streamOnly(deps.outputsStatus ?? outputsStatusFor(dataDir));
     const r = await runAuto({
       store, rules, outputsStatus, logFile, now: deps.now,
       upload: auth ? (id) => (deps.upload ?? uploadPost)({ id, store, auth, outputsStatus, fetchImpl: deps.fetchImpl }) : undefined,

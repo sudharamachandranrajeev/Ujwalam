@@ -128,14 +128,14 @@ const JOB_KEYS = ['type', 'kind', 'h', 'v', 'since', 'until', 'name', 'minutes']
 const pickJob = (j) => Object.fromEntries(JOB_KEYS.filter((k) => j[k] !== undefined).map((k) => [k, j[k]]));
 
 /** The queue and the child. feed(status) is called with each outputs.status. */
-export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now = Date.now }) {
+export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now = Date.now, postChain = null }) {
   const stateDir = path.join(dataDir, 'clips');
   const statusFile = path.join(stateDir, 'status.json');
   const answerFile = path.join(stateDir, 'answer.json');
   const workerFile = path.join(stateDir, 'live-worker.json');
   const queue = []; let asks = [];
   let prev = null; let child = null; let current = null; let last = null; let stopped = false;
-  let progress = null; let liveNow = false; let recStart = null; let recSawLive = false; let liveStart = null; let liveHadRecording = false; let workerOn = null;
+  let lastStatus = null; let progress = null; let liveNow = false; let recStart = null; let recSawLive = false; let liveStart = null; let liveHadRecording = false; let workerOn = null;
 
   // A run cut short by closing Ujwalam (or queued, or still to be answered) comes back at the next start.
   try {
@@ -229,6 +229,8 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
       last = { name: done.name, kind: done.kind, result: code === 0 ? 'done' : 'failed', code, clips: n, out: spec.out, folder: spec.folder };
       log(code === 0 ? `clips: ${n} clip(s) made from ${done.name} in ${spec.folder}` : `clips: making clips from ${done.name} failed (exit ${code}); see ${logFile}`);
       finishTask(done, code === 0, code === 0 ? `${n} clip${n === 1 ? '' : 's'} made` : 'Something went wrong; see the log');
+      // D300: package + auto-approve + private upload (flags posting + auto-post; each step fails closed while live).
+      if (code === 0 && n > 0 && postChain) void Promise.resolve(postChain.afterRun(spec.out, lastStatus)).catch(() => {});
       write();
       start();
     });
@@ -279,10 +281,11 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
         if (!liveHadRecording && !rec && s.clips.live === 'while') add({ type: 'review', kind: 'live', since: iso(liveStart), until: iso(t), name: `live-${stamp(liveStart)}` }, 'stream ended; editing the moments found into clips');
         liveStart = null;
       }
-      prev = status;
+      prev = status; lastStatus = status;
       readAnswer(s);
       if (live && child && current && !current.pausedForLive) { current.pausedForLive = true; child.kill(); }
       if (!live) start();
+      if (postChain) void Promise.resolve(postChain.tick(status)).catch(() => {}); // retries of queued uploads; the chain itself refuses while a stream is live
       write();
     },
     stop() { stopped = true; if (child) child.kill(); try { writeFileSync(workerFile, JSON.stringify({ on: false, atMs: now() })); } catch { /* gone */ } },

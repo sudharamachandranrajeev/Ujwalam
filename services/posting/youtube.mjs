@@ -85,10 +85,11 @@ async function queryProgress(fetchImpl, sessionUrl, totalBytes) {
 
 /** Uploads the whole file in chunks, resuming from the last acknowledged byte on a dropped connection.
  *  Returns the finished video resource (parsed JSON) once Google responds 200/201. */
-async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSize) {
-  let offset = 0;
+async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSize, startOffset = 0, beforeChunk = null) {
+  let offset = startOffset;
   let attempt = 0;
   while (offset < totalBytes) {
+    if (beforeChunk) await beforeChunk(); // throws to stop (a stream started); the session stays valid for a later resume
     const end = Math.min(offset + chunkSize, totalBytes);
     let res;
     try {
@@ -152,8 +153,18 @@ export async function uploadVideo(opts) {
 
   const bytes = statSync(opts.videoPath).size;
   const metadata = uploadMetadata(opts.post);
-  const sessionUrl = await initiateSession(fetchImpl, opts.accessToken, metadata, bytes);
-  const resource = await uploadChunks(fetchImpl, sessionUrl, opts.videoPath, bytes, chunkSize);
+  // opts.sessions ({ get(sha), set(sha, url) }) keeps the resumable session across a stop or restart (D300): a known
+  // session is asked how many bytes Google has and continues from there; a dead one (expired) starts a new session.
+  let sessionUrl = opts.sessions?.get(opts.sha256) ?? null;
+  let offset = 0;
+  if (sessionUrl) {
+    try { offset = await queryProgress(fetchImpl, sessionUrl, bytes); } catch { sessionUrl = null; offset = 0; }
+  }
+  if (!sessionUrl) {
+    sessionUrl = await initiateSession(fetchImpl, opts.accessToken, metadata, bytes);
+    opts.sessions?.set(opts.sha256, sessionUrl);
+  }
+  const resource = await uploadChunks(fetchImpl, sessionUrl, opts.videoPath, bytes, chunkSize, offset, opts.beforeChunk ?? null);
   const videoId = resource?.id;
   if (typeof videoId !== 'string' || !videoId) throw new UploadError('upload-failed', 'no video id in the finished response');
 
@@ -186,7 +197,7 @@ export async function uploadPost(opts) {
   const accessToken = await auth.accessToken();
   const r = await uploadVideo({
     post, sha256, videoPath: video.file, coverPath: cover?.file, accessToken,
-    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now,
+    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now, sessions: opts.sessions, beforeChunk: opts.beforeChunk, chunkSize: opts.chunkSize,
     recordUploaded: async ({ videoId }) => { store.ledger.annotate(sha256, post.target, { videoId }); },
   });
   return { ...r, hasCover: !!cover };
