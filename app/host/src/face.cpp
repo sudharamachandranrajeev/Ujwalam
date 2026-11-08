@@ -260,6 +260,12 @@ void Link::use(obs_source_t *src, uint32_t want, float smoothing)
 	if (!view_ || !src)
 		return;
 	const int64_t now = steady_ms();
+	// The old target is gone (project switch, layer removed): drop it now. Its raw pointer must not be compared after
+	// that: a new source can be allocated at the same address, and would then inherit a dead target (no frame is ever
+	// captured: the weak ref no longer resolves) and the old target's mask and face. While the weak ref is not
+	// expired the old source is still allocated, so no live source can share its address.
+	if (target_ && obs_weak_source_expired(target_))
+		new_target(nullptr);
 	if ((!target_ || now - target_used_ms_ > kTargetIdleMs) && target_raw_ != src)
 		new_target(src);
 	if (src != target_raw_)
@@ -301,8 +307,8 @@ void Link::on_tick()
 	wr<float>(view_, 60, std::clamp(smooth_accum_, 0.0f, 0.95f));
 	want_accum_ = 0;
 	smooth_accum_ = 0;
-	if (target_ && mono - target_used_ms_ > kTargetIdleMs) // no face effect drew it for a second
-		new_target(nullptr);
+	if (target_ && (mono - target_used_ms_ > kTargetIdleMs || obs_weak_source_expired(target_)))
+		new_target(nullptr); // no face effect drew it for a second, or the source is gone
 	// Overflow-safe: no subtraction involves the worker's value (now +/- a constant cannot overflow).
 	const int64_t hb = rd<int64_t>(view_, 168);
 	const bool alive = hb >= now - kWorkerDeadMs && hb <= now + kClockSkewMs;
