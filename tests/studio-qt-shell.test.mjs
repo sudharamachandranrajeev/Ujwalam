@@ -5,12 +5,13 @@
 // Skipped when the shell is not built (npm run build:studio) or no Qt kit is configured.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { createFakeHost } from '../services/studio-ui/backends.mjs';
+import { createFakeBots, createFakeHost } from '../services/studio-ui/backends.mjs';
+import { createFlags } from '../services/flags/index.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { EXE, qtDir } from '../app/studio/tools/build.mjs';
 
@@ -58,5 +59,49 @@ describe('Qt studio shell (headless smoke)', { skip }, () => {
   test('only a 127.0.0.1 server URL is accepted', async () => {
     const r = await runShell({ UJWALAM_UI_URL: 'http://example.com:80/', UJWALAM_UI_LAUNCH_KEY: KEY });
     assert.equal(r.code, 64);
+  });
+});
+
+// Panel probe (D271): the shell runs its loads and status polls with the window never shown (offscreen, headless),
+// then prints what its panels show. Real UI server, fake host, fake bots; flags set in the server's flag store.
+describe('Qt studio shell panels (headless probe)', { skip }, () => {
+  const dirs = [];
+  after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
+  async function probe(on, ms = 5000) {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-qtp-')); dirs.push(dataDir);
+    const flags = createFlags({ dataDir });
+    for (const id of on) flags.set(id, true);
+    const fake = createFakeHost({});
+    const host = { describe: () => fake.describe(), call: (m, p) => fake.call(m, p) };
+    const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
+    const key = 'p'.repeat(40);
+    const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags, bots: createFakeBots(), limits: { statusPollMs: 50 } });
+    const { port } = await srv.listen();
+    try {
+      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms) });
+      assert.equal(r.code, 0, r.err);
+      const m = /^studio probe: (.+)$/m.exec(r.out);
+      assert.ok(m, `no probe line: ${r.out} ${r.err}`);
+      return JSON.parse(m[1]);
+    } finally { srv.close(); }
+  }
+
+  test('defaults: every flag listed and off, flag-gated panels hidden, scenes and layers loaded', async () => {
+    const p = await probe([]);
+    const ids = JSON.parse(readFileSync(path.join(UI, '..', 'data', 'flags.json'), 'utf8')).flags.map((f) => f.id);
+    assert.deepEqual(p.flags.map((f) => f.id), ids);
+    assert.ok(p.flags.every((f) => f.on === false));
+    assert.deepEqual(p.shown, { structure: false, transitions: false, bots: false, report: false, posts: false });
+    assert.equal(p.scenes, 3);
+    assert.ok(p.layers > 0, 'the active scene\'s layers are listed');
+    assert.equal(p.undoEnabled, false, 'empty history');
+    assert.equal(p.live, false);
+  });
+
+  test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons', async () => {
+    const p = await probe(['scene-edit', 'transitions', 'bot-manager', 'report-button', 'posting']);
+    for (const id of ['scene-edit', 'transitions', 'bot-manager', 'report-button', 'posting']) assert.equal(p.flags.find((f) => f.id === id)?.on, true, id);
+    assert.deepEqual(p.shown, { structure: true, transitions: true, bots: true, report: true, posts: true });
+    assert.equal(p.botButtons, 4, 'Start and Stop for Streamer.bot and Speaker.bot');
   });
 });

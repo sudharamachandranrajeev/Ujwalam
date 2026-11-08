@@ -54,6 +54,8 @@ class MainWindow : public QMainWindow {
 public:
 	explicit MainWindow(ApiClient *api, QWidget *parent = nullptr);
 	void start(); // first loads after login
+	// Headless probe (tests only, UJWALAM_STUDIO_PROBE_MS): what the panels show now, as plain data. Never shown.
+	QJsonObject probe() const;
 
 private:
 	QWidget *buildLeft();

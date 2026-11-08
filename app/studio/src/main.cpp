@@ -9,10 +9,12 @@
 #include "main_window.h"
 
 #include <QApplication>
+#include <QJsonDocument>
 #include <QGuiApplication>
 #include <QJsonArray>
 #include <QScreen>
 #include <QTimer>
+#include <algorithm>
 #include <cstdio>
 
 static QString takeEnv(const char *name)
@@ -44,6 +46,17 @@ int main(int argc, char **argv)
 			std::fprintf(stderr, "studio: login failed: %s\n", qPrintable(err));
 			code = 77;
 			QTimer::singleShot(0, &app, [&app]() { app.exit(77); });
+			return;
+		}
+		// Probe (tests): run the window's loads and polls without showing it, then print what its panels show.
+		const int probeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS");
+		if (headless && probeMs > 0) {
+			win.start();
+			QTimer::singleShot(std::min(probeMs, 60000), &app, [&]() {
+				std::printf("studio probe: %s\n", QJsonDocument(win.probe()).toJson(QJsonDocument::Compact).constData());
+				std::fflush(stdout);
+				app.exit(0);
+			});
 			return;
 		}
 		if (headless) {

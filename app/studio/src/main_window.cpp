@@ -2098,3 +2098,33 @@ void MainWindow::confirm(const QJsonObject &pending)
 			loadBots();
 	});
 }
+
+QJsonObject MainWindow::probe() const
+{
+	QJsonArray flags;
+	for (int i = 0; i < flagList_->count(); i++) {
+		QJsonObject f;
+		f.insert(QStringLiteral("id"), flagList_->item(i)->data(Qt::UserRole).toString());
+		f.insert(QStringLiteral("on"), flagList_->item(i)->checkState() == Qt::Checked);
+		flags.append(f);
+	}
+	QJsonObject shown; // isHidden: the window itself is never shown in a probe
+	shown.insert(QStringLiteral("structure"), !structBox_->isHidden());
+	shown.insert(QStringLiteral("transitions"), !transBox_->isHidden());
+	shown.insert(QStringLiteral("bots"), !botBox_->isHidden());
+	shown.insert(QStringLiteral("report"), !reportBtn_->isHidden());
+	shown.insert(QStringLiteral("posts"), !postsBtn_->isHidden());
+	QJsonObject o;
+	o.insert(QStringLiteral("flags"), flags);
+	o.insert(QStringLiteral("shown"), shown);
+	o.insert(QStringLiteral("scenes"), sceneList_->count());
+	o.insert(QStringLiteral("layers"), layerList_->count());
+	o.insert(QStringLiteral("mixer"), (int)meters_.size());
+	o.insert(QStringLiteral("botButtons"), (int)botBox_->findChildren<QPushButton *>().size());
+	o.insert(QStringLiteral("addLayerChoices"), addPick_->count()); // kind "copy": every layer in the project
+	o.insert(QStringLiteral("transitionVideos"), trFile_->count());
+	o.insert(QStringLiteral("undoEnabled"), undoBtn_->isEnabled());
+	o.insert(QStringLiteral("live"), live_);
+	o.insert(QStringLiteral("note"), note_->text());
+	return o;
+}
