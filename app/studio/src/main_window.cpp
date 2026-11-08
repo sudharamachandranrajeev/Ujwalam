@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "main_window.h"
 #include "icons.h"
+#include "add_dialogs.h"
 #include "look_panel.h"
 #include "motion.h"
 #include "stats_cards.h"
@@ -202,66 +203,6 @@ int meterValue(const QJsonValue &peak)
 		return 0;
 	return std::max(0, std::min(100, (int)std::lround((peak.toDouble() + 60.0) / 60.0 * 100.0)));
 }
-// Layer kinds the structure route adds (D240): label, kind, what it is (the add-layer window shows it).
-struct LayerKind {
-	const char *label, *kind, *about;
-};
-const LayerKind kLayerKinds[] = {
-	{"Copy of layer", "copy", "The same source again, placed on its own. A camera or capture card shown twice is opened once."},
-	{"Colour", "color", "A solid colour fill."},
-	{"Text", "text", "A line of text."},
-	{"Capture device", "capture", "A camera or capture card from the project's devices."},
-	{"Overlay", "overlay", "A page from the project's overlays (alerts, chat, counters)."},
-	{"Image", "image", "A picture from the stream assets folder."},
-	{"Video", "media", "A video from the stream assets folder."},
-};
-
-// What a kind can be made from: (shown text, value) from GET /ui/api/project/structure. Empty for colour and text.
-QList<QPair<QString, QString>> addChoices(const QJsonObject &st, const QString &kind)
-{
-	QList<QPair<QString, QString>> out;
-	if (kind == QStringLiteral("copy")) {
-		for (const auto &x : st.value(QStringLiteral("layers")).toArray()) {
-			const QJsonObject l = x.toObject();
-			out.append({l.value(QStringLiteral("sceneName")).toString() + QStringLiteral(" / ") + l.value(QStringLiteral("name")).toString(),
-				    l.value(QStringLiteral("id")).toString()});
-		}
-	} else if (kind == QStringLiteral("capture") || kind == QStringLiteral("overlay")) {
-		for (const auto &x : st.value(kind == QStringLiteral("capture") ? QStringLiteral("devices") : QStringLiteral("overlays")).toArray()) {
-			const QJsonObject d = x.toObject();
-			out.append({d.value(QStringLiteral("name")).toString(), d.value(QStringLiteral("id")).toString()});
-		}
-	} else if (kind == QStringLiteral("image") || kind == QStringLiteral("media")) {
-		for (const auto &x : st.value(QStringLiteral("assets")).toArray()) {
-			const QJsonObject a = x.toObject();
-			if (a.value(QStringLiteral("kind")).toString() == kind)
-				out.append({a.value(QStringLiteral("rel")).toString(), a.value(QStringLiteral("rel")).toString()});
-		}
-	}
-	return out;
-}
-
-// The structure route's layer.add body; err is set (and says what) when something is missing.
-QJsonObject layerAddBody(const QString &scene, const QString &kind, const QString &pick, const QString &text, QString &err)
-{
-	QJsonObject b;
-	b.insert(QStringLiteral("op"), QStringLiteral("layer.add"));
-	b.insert(QStringLiteral("scene"), scene);
-	b.insert(QStringLiteral("kind"), kind);
-	if (kind == QStringLiteral("color") || kind == QStringLiteral("text")) {
-		if (text.trimmed().isEmpty())
-			err = kind == QStringLiteral("color") ? QStringLiteral("Type a colour as #RRGGBB.") : QStringLiteral("Type the text.");
-		b.insert(kind, kind == QStringLiteral("color") ? text.trimmed() : text);
-	} else {
-		if (pick.isEmpty())
-			err = QStringLiteral("Nothing to pick for this kind.");
-		const QString key = kind == QStringLiteral("copy") ? QStringLiteral("of") : kind == QStringLiteral("capture") ? QStringLiteral("device")
-				: kind == QStringLiteral("overlay") ? QStringLiteral("overlay") : QStringLiteral("file");
-		b.insert(key, pick);
-	}
-	return b;
-}
-
 // Small upper-case caption with a little letter spacing (the reference's section labels).
 QLabel *captionLabel(const QString &text, QWidget *parent)
 {
@@ -646,7 +587,19 @@ QWidget *MainWindow::buildLeft()
 	auto *v = new QVBoxLayout(w);
 	v->setContentsMargins(0, 0, 0, 0);
 	v->setSpacing(8);
-	v->addWidget(captionLabel(QStringLiteral("Scenes"), w));
+	auto *shdr = new QHBoxLayout();
+	shdr->addWidget(captionLabel(QStringLiteral("Scenes"), w));
+	shdr->addStretch(1);
+	addSceneBtn_ = new QToolButton(w);
+	addSceneBtn_->setObjectName(QStringLiteral("addMini"));
+	addSceneBtn_->setText(QStringLiteral("+"));
+	addSceneBtn_->setAccessibleName(QStringLiteral("Add scene"));
+	addSceneBtn_->setAutoRaise(false);
+	addSceneBtn_->setFixedSize(28, 24);
+	addui::polish(addSceneBtn_);
+	connect(addSceneBtn_, &QToolButton::clicked, this, [this]() { openAddScene(); });
+	shdr->addWidget(addSceneBtn_);
+	v->addLayout(shdr);
 	sceneList_ = new QListWidget(w);
 	sceneList_->setObjectName(QStringLiteral("sceneCards"));
 	sceneList_->setItemDelegate(new SceneCardDelegate(sceneList_));
@@ -666,11 +619,32 @@ QWidget *MainWindow::buildLeft()
 			loadScenes();
 		});
 	});
+	sceneList_->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(sceneList_, &QWidget::customContextMenuRequested, this, &MainWindow::showSceneMenu);
+	{
+		auto sceneKey = [this](const QKeySequence &k, std::function<void(const QString &)> fn) {
+			auto *sc = new QShortcut(k, sceneList_);
+			sc->setContext(Qt::WidgetShortcut);
+			connect(sc, &QShortcut::activated, this, [this, fn]() { fn(sceneKeyId()); });
+		};
+		sceneKey(QKeySequence(Qt::Key_F2), [this](const QString &id) { sceneRename(id); });
+		sceneKey(QKeySequence(Qt::Key_Delete), [this](const QString &id) { sceneDelete(id); });
+	}
 	v->addWidget(sceneList_);
 
 	auto *hdr = new QHBoxLayout();
 	hdr->addWidget(captionLabel(QStringLiteral("Layers"), w));
 	hdr->addStretch(1);
+	addLayerBtn_ = new QToolButton(w);
+	addLayerBtn_->setObjectName(QStringLiteral("addMini"));
+	addLayerBtn_->setText(QStringLiteral("+"));
+	addLayerBtn_->setAccessibleName(QStringLiteral("Add layer"));
+	addLayerBtn_->setAutoRaise(false);
+	addLayerBtn_->setFixedSize(28, 24);
+	addui::polish(addLayerBtn_);
+	connect(addLayerBtn_, &QToolButton::clicked, this, [this]() { openAddLayer(); });
+	hdr->addWidget(addLayerBtn_);
+	updateAddButtons();
 	tabH_ = new QPushButton(QStringLiteral("H"), w);
 	tabV_ = new QPushButton(QStringLiteral("V"), w);
 	for (QPushButton *b : {tabH_, tabV_}) {
@@ -688,6 +662,19 @@ QWidget *MainWindow::buildLeft()
 		renderInspector();
 	});
 	v->addWidget(layerList_, 1);
+	// D292: right-click menu and keys on the list (the keys work while the list has focus).
+	layerList_->setContextMenuPolicy(Qt::CustomContextMenu);
+	connect(layerList_, &QWidget::customContextMenuRequested, this, &MainWindow::showLayerMenu);
+	auto layerKey = [this](const QKeySequence &k, std::function<void()> fn) {
+		auto *sc = new QShortcut(k, layerList_);
+		sc->setContext(Qt::WidgetShortcut);
+		connect(sc, &QShortcut::activated, this, [fn]() { fn(); });
+	};
+	layerKey(QKeySequence(QStringLiteral("Ctrl+D")), [this]() { layerDuplicate(); });
+	layerKey(QKeySequence(Qt::Key_F2), [this]() { layerRename(); });
+	layerKey(QKeySequence(Qt::Key_Delete), [this]() { layerDelete(); });
+	layerKey(QKeySequence(QStringLiteral("Ctrl+Shift+C")), [this]() { lookCopy(); });
+	layerKey(QKeySequence(QStringLiteral("Ctrl+Shift+V")), [this]() { lookPaste(); });
 	auto *order = new QHBoxLayout();
 	auto *up = new QPushButton(QStringLiteral("Move up"), w);
 	auto *dn = new QPushButton(QStringLiteral("Move down"), w);
@@ -746,7 +733,7 @@ QWidget *MainWindow::buildLeft()
 	sv->addLayout(srow);
 	auto *arow = new QHBoxLayout();
 	addKind_ = new QComboBox(structBox_);
-	for (const auto &k : kLayerKinds)
+	for (const auto &k : addui::kLayerKinds)
 		addKind_->addItem(QString::fromLatin1(k.label), QString::fromLatin1(k.kind));
 	addPick_ = new QComboBox(structBox_);
 	addText_ = new QLineEdit(structBox_);
@@ -760,7 +747,7 @@ QWidget *MainWindow::buildLeft()
 	auto *browse = new QPushButton(QStringLiteral("Add layer..."), structBox_);
 	browse->setToolTip(QStringLiteral("Choose what to add, with a short note on each kind and a searchable list"));
 	srow->addWidget(browse);
-	connect(browse, &QPushButton::clicked, this, &MainWindow::openAddLayer);
+	connect(browse, &QPushButton::clicked, this, [this]() { openAddLayer(); });
 	structBox_->setVisible(false);
 	v->addWidget(structBox_);
 	connect(addKind_, &QComboBox::currentIndexChanged, this, [this]() { renderAddPick(); });
@@ -799,7 +786,7 @@ QWidget *MainWindow::buildLeft()
 	});
 	connect(addLayer, &QPushButton::clicked, this, [this]() {
 		QString err;
-		const QJsonObject b = layerAddBody(activeScene_, addKind_->currentData().toString(), addPick_->currentData().toString(), addText_->text(), err);
+		const QJsonObject b = addui::layerAddBody(activeScene_, addKind_->currentData().toString(), addPick_->currentData().toString(), addText_->text(), err);
 		if (!err.isEmpty())
 			return note(err);
 		structureEdit(b);
@@ -1909,6 +1896,7 @@ void MainWindow::loadFlags()
 		// Both edit the project and are refused while live (the server checks too).
 		structBox_->setEnabled(!live_);
 		transBox_->setEnabled(!live_);
+		updateAddButtons();
 	});
 }
 
@@ -2461,104 +2449,367 @@ void MainWindow::renderAddPick()
 	addPick_->setVisible(!typed);
 	addText_->setPlaceholderText(kind == QStringLiteral("color") ? QStringLiteral("#RRGGBB") : QStringLiteral("Text"));
 	addPick_->clear();
-	for (const auto &c : addChoices(structure_, kind))
+	for (const auto &c : addui::addChoices(structure_, kind))
 		addPick_->addItem(c.first, c.second);
 }
 
-// Meld-style add-layer window (D274): the kinds on the left with what each one is, on the right a searchable list of
-// what it can be made from (or a text / colour field), Add (or a double-click) sends the same layer.add as the row.
-// User-opened only; closes after a successful send.
-void MainWindow::openAddLayer()
+// Add-layer window (D274, D292): the kinds on the left with what each one is (a kind the project cannot supply is
+// greyed), on the right a searchable list of what it can be made from (or a text / colour field). The window only builds
+// the layer.add body; the same structure route as the old row sends it. Adding needs no flag, only "not live". The
+// choices are read fresh each time (new assets, devices). User-opened only; fades in and out with the motion setting.
+void MainWindow::openAddLayer(const QString &sceneId)
 {
 	if (live_)
-		return note(QStringLiteral("Live: scenes and layers cannot be added or removed."));
-	auto *dlg = new QDialog(this);
-	dlg->setAttribute(Qt::WA_DeleteOnClose);
-	dlg->setWindowTitle(QStringLiteral("Add layer to \"%1\"").arg(activeScene_));
-	auto *h = new QHBoxLayout(dlg);
-	auto *kinds = new QListWidget(dlg);
-	for (const auto &k : kLayerKinds) {
-		auto *it = new QListWidgetItem(QString::fromLatin1(k.label), kinds);
-		it->setData(Qt::UserRole, QString::fromLatin1(k.kind));
-		it->setToolTip(QString::fromLatin1(k.about));
-	}
-	kinds->setMaximumWidth(170);
-	h->addWidget(kinds);
-	auto *right = new QVBoxLayout();
-	auto *about = new QLabel(dlg);
-	about->setWordWrap(true);
-	auto *search = new QLineEdit(dlg);
-	search->setPlaceholderText(QStringLiteral("Search"));
-	search->setClearButtonEnabled(true);
-	auto *choices = new QListWidget(dlg);
-	auto *text = new QLineEdit(dlg);
-	text->setMaxLength(2000);
-	auto *colour = new QPushButton(QStringLiteral("Pick colour..."), dlg);
-	auto *row = new QHBoxLayout();
-	auto *add = new QPushButton(QStringLiteral("Add"), dlg);
-	auto *cancel = new QPushButton(QStringLiteral("Close"), dlg);
-	add->setDefault(true);
-	row->addStretch(1);
-	row->addWidget(add);
-	row->addWidget(cancel);
-	right->addWidget(about);
-	right->addWidget(search);
-	right->addWidget(choices, 1);
-	right->addWidget(text);
-	right->addWidget(colour);
-	right->addStretch(0);
-	right->addLayout(row);
-	h->addLayout(right, 1);
-	auto fill = [this, kinds, about, search, choices, text, colour]() {
-		const QListWidgetItem *k = kinds->currentItem();
-		const QString kind = k ? k->data(Qt::UserRole).toString() : QString();
-		const bool typed = kind == QStringLiteral("color") || kind == QStringLiteral("text");
-		about->setText(k ? k->toolTip() : QString());
-		search->setVisible(!typed);
-		choices->setVisible(!typed);
-		text->setVisible(typed);
-		colour->setVisible(kind == QStringLiteral("color"));
-		text->setPlaceholderText(kind == QStringLiteral("color") ? QStringLiteral("#RRGGBB") : QStringLiteral("Text"));
-		choices->clear();
-		search->clear();
-		for (const auto &c : addChoices(structure_, kind)) {
-			auto *it = new QListWidgetItem(c.first, choices);
-			it->setData(Qt::UserRole, c.second);
-		}
-		if (!typed && choices->count() == 0)
-			new QListWidgetItem(QStringLiteral("(nothing to pick: the project has none)"), choices);
-		choices->setCurrentRow(0);
-	};
-	connect(kinds, &QListWidget::currentRowChanged, dlg, fill);
-	connect(search, &QLineEdit::textChanged, dlg, [choices](const QString &q) {
-		for (int i = 0; i < choices->count(); i++)
-			choices->item(i)->setHidden(!q.isEmpty() && !choices->item(i)->text().contains(q, Qt::CaseInsensitive));
-	});
-	connect(colour, &QPushButton::clicked, dlg, [dlg, text]() {
-		const QColor c = QColorDialog::getColor(QColor(text->text().trimmed()), dlg, QStringLiteral("Layer colour"));
-		if (c.isValid())
-			text->setText(c.name(QColor::HexRgb));
-	});
-	const QPointer<QDialog> guard(dlg);
-	auto send = [this, guard, kinds, choices, text]() {
-		if (!guard)
+		return note(QStringLiteral("Not while live."));
+	if (addDlg_)
+		return;
+	const QString scene = sceneId.isEmpty() ? activeScene_ : sceneId;
+	if (scene.isEmpty())
+		return note(QStringLiteral("Pick a scene first."));
+	QString name = scene;
+	for (const auto &x : scenes_)
+		if (x.toObject().value(QStringLiteral("id")).toString() == scene)
+			name = x.toObject().value(QStringLiteral("name")).toString(scene);
+	api_->get(QStringLiteral("ui/api/project/structure"), [this, scene, name](bool ok, const QJsonObject &b, const QString &err) {
+		if (!ok)
+			return note(QStringLiteral("Cannot add a layer: ") + err);
+		if (!b.value(QStringLiteral("available")).toBool())
+			return note(QStringLiteral("Adding needs a loaded project file."));
+		structure_ = b;
+		if (addDlg_)
 			return;
-		const QListWidgetItem *k = kinds->currentItem();
-		const QListWidgetItem *c = choices->currentItem();
-		QString err;
-		const QJsonObject b = layerAddBody(activeScene_, k ? k->data(Qt::UserRole).toString() : QString(),
-						   c && !c->isHidden() ? c->data(Qt::UserRole).toString() : QString(), text->text(), err);
-		if (!k || !err.isEmpty())
-			return note(k ? err : QStringLiteral("Pick a kind first."));
-		structureEdit(b);
-		guard->close();
+		auto *dlg = new addui::AddLayerDialog(b, scene, name, this);
+		addDlg_ = dlg;
+		connect(dlg, &addui::AddLayerDialog::chosen, this, [this](const QJsonObject &body) { structureEdit(body); });
+		dlg->show();
+	});
+}
+
+// Add-scene window: a name; the scene is made on every canvas of the project.
+void MainWindow::openAddScene()
+{
+	if (live_)
+		return note(QStringLiteral("Not while live."));
+	if (addDlg_)
+		return;
+	api_->get(QStringLiteral("ui/api/project/structure"), [this](bool ok, const QJsonObject &b, const QString &err) {
+		if (!ok)
+			return note(QStringLiteral("Cannot add a scene: ") + err);
+		if (!b.value(QStringLiteral("available")).toBool())
+			return note(QStringLiteral("Adding needs a loaded project file."));
+		if (addDlg_)
+			return;
+		QStringList canvases;
+		for (const auto &c : b.value(QStringLiteral("canvases")).toArray())
+			canvases << c.toString();
+		auto *dlg = new addui::AddSceneDialog(canvases, this);
+		addDlg_ = dlg;
+		connect(dlg, &addui::AddSceneDialog::chosen, this, [this](const QJsonObject &body) { structureEdit(body); });
+		dlg->show();
+	});
+}
+
+// The + buttons above the scene and layer lists follow the live lock.
+void MainWindow::updateAddButtons()
+{
+	if (!addSceneBtn_ || !addLayerBtn_)
+		return;
+	addSceneBtn_->setEnabled(!live_);
+	addLayerBtn_->setEnabled(!live_);
+	addSceneBtn_->setToolTip(live_ ? QStringLiteral("Not while live") : QStringLiteral("Add scene"));
+	addLayerBtn_->setToolTip(live_ ? QStringLiteral("Not while live") : QStringLiteral("Add layer"));
+}
+
+// ---- Right-click menus and keys on the layer and scene lists (D292) ----
+
+namespace {
+// What the UI server's short error codes mean, in plain words.
+QString plainStructureError(const QString &code)
+{
+	static const QHash<QString, QString> words = {
+		{QStringLiteral("live-locked"), QStringLiteral("Not while live.")},
+		{QStringLiteral("scene-edit-off"), QStringLiteral("Turn on scene editing in Settings > Advanced first.")},
+		{QStringLiteral("scene-active"), QStringLiteral("That scene is the one the project starts with; make another scene the start scene first.")},
+		{QStringLiteral("last-scene"), QStringLiteral("The last scene cannot be deleted.")},
+		{QStringLiteral("layer-copied"), QStringLiteral("Another layer shows this one; delete that copy first.")},
+		{QStringLiteral("layer-has-audio"), QStringLiteral("Its sound is in the mixer, so it cannot be deleted here.")},
+		{QStringLiteral("bad-name"), QStringLiteral("Type a name of 1 to 80 characters.")},
+		{QStringLiteral("no-project-file"), QStringLiteral("No project file is open, so nothing can be saved.")},
+		{QStringLiteral("too-many-layers"), QStringLiteral("This scene has the most layers it can hold.")},
+		{QStringLiteral("too-many-scenes"), QStringLiteral("The project has the most scenes it can hold.")},
+		{QStringLiteral("host-unavailable"), QStringLiteral("The studio host is not reachable.")},
 	};
-	connect(add, &QPushButton::clicked, dlg, send);
-	connect(choices, &QListWidget::itemDoubleClicked, dlg, [send](QListWidgetItem *) { send(); });
-	connect(cancel, &QPushButton::clicked, dlg, &QDialog::close);
-	kinds->setCurrentRow(0);
-	dlg->resize(620, 380);
-	dlg->show();
+	return words.value(code, code);
+}
+
+// One menu item: a real action (objectName = id) so the probe can trigger it, and a record of it for the probe.
+void addMenuItem(QMenu *menu, QJsonArray &items, QObject *ctx, const char *id, const QString &text, const QString &keys, bool enabled, const QString &tip,
+		 std::function<void()> fn)
+{
+	QAction *a = menu->addAction(keys.isEmpty() ? text : text + QLatin1Char('\t') + keys);
+	a->setObjectName(QString::fromLatin1(id));
+	a->setEnabled(enabled);
+	a->setToolTip(tip);
+	QObject::connect(a, &QAction::triggered, ctx, [fn]() { fn(); });
+	QJsonObject o;
+	o.insert(QStringLiteral("id"), QString::fromLatin1(id));
+	o.insert(QStringLiteral("text"), text);
+	o.insert(QStringLiteral("keys"), keys);
+	o.insert(QStringLiteral("enabled"), enabled);
+	o.insert(QStringLiteral("tip"), tip);
+	items.append(o);
+}
+} // namespace
+
+QString MainWindow::sceneKeyId() const
+{
+	const QListWidgetItem *it = sceneList_->currentItem();
+	return it ? it->data(Qt::UserRole).toString() : QString();
+}
+
+QMenu *MainWindow::buildLayerMenu(QWidget *parent, bool blank)
+{
+	const QJsonObject l = selectedLayer();
+	const bool has = !l.isEmpty();
+	const bool hasPlacement = has && l.contains(QStringLiteral("placement"));
+	int at = -1; // host order: bottom first
+	for (int i = 0; i < layers_.size(); i++)
+		if (layers_.at(i).toObject().value(QStringLiteral("id")).toString() == selected_)
+			at = i;
+	const int n = layers_.size();
+	auto *menu = new QMenu(parent);
+	menu->setToolTipsVisible(true);
+	QJsonArray items;
+	auto add = [&](const char *id, const QString &text, const QString &keys, bool enabled, const QString &tip, std::function<void()> fn) {
+		addMenuItem(menu, items, this, id, text, keys, enabled, tip, fn);
+	};
+	const QString lockTip = live_ ? QStringLiteral("Not while live") : QString();
+	addui::polish(menu);
+	add("add", QStringLiteral("Add layer…"), QString(), !live_ && !activeScene_.isEmpty(), lockTip, [this]() { openAddLayer(); });
+	if (blank) { // right-click on empty space in the list: only what needs no layer
+		lastMenu_ = QJsonObject{{QStringLiteral("kind"), QStringLiteral("layer")}, {QStringLiteral("blank"), true}, {QStringLiteral("items"), items}};
+		return menu;
+	}
+	menu->addSeparator();
+	add("duplicate", QStringLiteral("Duplicate"), QStringLiteral("Ctrl+D"), has && !live_, lockTip, [this]() { layerDuplicate(); });
+	add("rename", QStringLiteral("Rename…"), QStringLiteral("F2"), has && !live_, lockTip, [this]() { layerRename(); });
+	menu->addSeparator();
+	add("visible", l.value(QStringLiteral("visible")).toBool() ? QStringLiteral("Hide") : QStringLiteral("Show"), QString(), has, QString(), [this]() { layerToggleVisible(); });
+	add("up", QStringLiteral("Move up"), QString(), has && at >= 0 && at < n - 1, QString(), [this, at]() { layerMoveTo(at + 1); });
+	add("down", QStringLiteral("Move down"), QString(), has && at > 0, QString(), [this, at]() { layerMoveTo(at - 1); });
+	add("top", QStringLiteral("Move to top"), QString(), has && at >= 0 && at < n - 1, QString(), [this, n]() { layerMoveTo(n - 1); });
+	add("bottom", QStringLiteral("Move to bottom"), QString(), has && at > 0, QString(), [this]() { layerMoveTo(0); });
+	menu->addSeparator();
+	add("copylook", QStringLiteral("Copy look"), QStringLiteral("Ctrl+Shift+C"), hasPlacement, QString(), [this]() { lookCopy(); });
+	add("pastelook", QStringLiteral("Paste look"), QStringLiteral("Ctrl+Shift+V"), hasPlacement && hasLookClip_,
+	    hasLookClip_ ? QString() : QStringLiteral("Copy a look first"), [this]() { lookPaste(); });
+	add("look", QStringLiteral("Look…"), QString(), hasPlacement, QString(), [this]() { lookFocus(); });
+	menu->addSeparator();
+	QString delTip = lockTip;
+	if (delTip.isEmpty() && !sceneEditOn_)
+		delTip = QStringLiteral("Turn on scene editing in Settings > Advanced");
+	add("delete", QStringLiteral("Delete…"), QStringLiteral("Del"), has && !live_ && sceneEditOn_, delTip, [this]() { layerDelete(); });
+	lastMenu_ = QJsonObject{{QStringLiteral("kind"), QStringLiteral("layer")}, {QStringLiteral("items"), items}};
+	return menu;
+}
+
+QMenu *MainWindow::buildSceneMenu(QWidget *parent, const QString &sceneId, bool blank)
+{
+	const bool has = !sceneId.isEmpty();
+	const bool active = sceneId == activeScene_;
+	auto *menu = new QMenu(parent);
+	menu->setToolTipsVisible(true);
+	QJsonArray items;
+	auto add = [&](const char *id, const QString &text, const QString &keys, bool enabled, const QString &tip, std::function<void()> fn) {
+		addMenuItem(menu, items, this, id, text, keys, enabled, tip, fn);
+	};
+	const QString lockTip = live_ ? QStringLiteral("Not while live") : QString();
+	addui::polish(menu);
+	add("addscene", QStringLiteral("Add scene…"), QString(), !live_, lockTip, [this]() { openAddScene(); });
+	if (blank) {
+		lastMenu_ = QJsonObject{{QStringLiteral("kind"), QStringLiteral("scene")}, {QStringLiteral("blank"), true}, {QStringLiteral("items"), items}};
+		return menu;
+	}
+	add("add", QStringLiteral("Add layer…"), QString(), has && !live_, lockTip, [this, sceneId]() { openAddLayer(sceneId); });
+	menu->addSeparator();
+	add("rename", QStringLiteral("Rename…"), QStringLiteral("F2"), has && !live_, lockTip, [this, sceneId]() { sceneRename(sceneId); });
+	add("duplicate", QStringLiteral("Duplicate scene"), QString(), has && !live_, lockTip, [this, sceneId]() { sceneDuplicate(sceneId); });
+	menu->addSeparator();
+	QString delTip = lockTip;
+	if (delTip.isEmpty() && !sceneEditOn_)
+		delTip = QStringLiteral("Turn on scene editing in Settings > Advanced");
+	else if (delTip.isEmpty() && active)
+		delTip = QStringLiteral("Switch to another scene first");
+	add("delete", QStringLiteral("Delete…"), QStringLiteral("Del"), has && !live_ && sceneEditOn_ && !active, delTip, [this, sceneId]() { sceneDelete(sceneId); });
+	lastMenu_ = QJsonObject{{QStringLiteral("kind"), QStringLiteral("scene")}, {QStringLiteral("items"), items}};
+	return menu;
+}
+
+void MainWindow::showLayerMenu(const QPoint &pos)
+{
+	QListWidgetItem *it = layerList_->itemAt(pos);
+	if (it)
+		layerList_->setCurrentItem(it); // the layer under the pointer
+	QMenu *menu = buildLayerMenu(this, !it);
+	menu->setAttribute(Qt::WA_DeleteOnClose);
+	menu->popup(layerList_->viewport()->mapToGlobal(pos));
+	addui::popIn(menu, false);
+}
+
+void MainWindow::showSceneMenu(const QPoint &pos)
+{
+	QListWidgetItem *it = sceneList_->itemAt(pos);
+	if (it)
+		sceneList_->setCurrentItem(it);
+	QMenu *menu = buildSceneMenu(this, it ? it->data(Qt::UserRole).toString() : QString(), !it);
+	menu->setAttribute(Qt::WA_DeleteOnClose);
+	menu->popup(sceneList_->viewport()->mapToGlobal(pos));
+	addui::popIn(menu, false);
+}
+
+void MainWindow::layerDuplicate()
+{
+	if (selectedLayer().isEmpty())
+		return note(QStringLiteral("Select a layer first."));
+	if (live_)
+		return note(QStringLiteral("Not while live."));
+	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("layer.duplicate")}, {QStringLiteral("scene"), activeScene_}, {QStringLiteral("layer"), selected_}});
+}
+
+void MainWindow::layerRename()
+{
+	const QJsonObject l = selectedLayer();
+	if (l.isEmpty())
+		return note(QStringLiteral("Select a layer first."));
+	if (live_)
+		return note(QStringLiteral("Not while live."));
+	bool ok = false;
+	const QString name = QInputDialog::getText(this, QStringLiteral("Rename layer"), QStringLiteral("Layer name"), QLineEdit::Normal, l.value(QStringLiteral("name")).toString(), &ok).trimmed();
+	if (!ok || name.isEmpty() || name == l.value(QStringLiteral("name")).toString())
+		return;
+	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("layer.rename")}, {QStringLiteral("scene"), activeScene_}, {QStringLiteral("layer"), selected_}, {QStringLiteral("name"), name.left(80)}});
+}
+
+void MainWindow::layerDelete()
+{
+	const QJsonObject l = selectedLayer();
+	if (l.isEmpty())
+		return note(QStringLiteral("Select a layer first."));
+	if (live_)
+		return note(QStringLiteral("Not while live."));
+	if (!sceneEditOn_)
+		return note(QStringLiteral("Turn on scene editing in Settings > Advanced to delete layers."));
+	if (QMessageBox::question(this, QStringLiteral("Delete layer"), QStringLiteral("Delete the layer \"%1\" from this scene?\nIt goes from both the H and the V picture.").arg(l.value(QStringLiteral("name")).toString(selected_))) != QMessageBox::Yes)
+		return;
+	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("layer.remove")}, {QStringLiteral("scene"), activeScene_}, {QStringLiteral("layer"), selected_}});
+}
+
+// Host order is bottom first, so a higher index is higher in the picture. Live, the server asks for "yes, on air".
+void MainWindow::layerMoveTo(int index)
+{
+	if (selected_.isEmpty() || index < 0 || index >= layers_.size())
+		return;
+	QJsonObject x;
+	x.insert(QStringLiteral("layer"), selected_);
+	x.insert(QStringLiteral("index"), index);
+	api_->host(QStringLiteral("layers.move"), layerArgs(x), [this](bool ok, const QJsonObject &b, const QString &err) {
+		if (!ok)
+			note(QStringLiteral("Move failed: ") + err);
+		else if (b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
+			return confirm(b.value(QStringLiteral("pending")).toObject());
+		loadLayers();
+	});
+}
+
+void MainWindow::layerToggleVisible()
+{
+	const QJsonObject l = selectedLayer();
+	if (l.isEmpty())
+		return;
+	QJsonObject x;
+	x.insert(QStringLiteral("layer"), selected_);
+	x.insert(QStringLiteral("visible"), !l.value(QStringLiteral("visible")).toBool());
+	api_->host(QStringLiteral("layers.setVisible"), layerArgs(x), [this](bool ok, const QJsonObject &, const QString &err) {
+		if (!ok)
+			note(QStringLiteral("Show/hide failed: ") + err);
+		loadLayers();
+	});
+}
+
+void MainWindow::lookCopy()
+{
+	const QJsonObject l = selectedLayer();
+	if (l.isEmpty() || !l.contains(QStringLiteral("placement")))
+		return note(QStringLiteral("Select a layer first."));
+	const bool draft = effLayer_ == activeScene_ + QLatin1Char('/') + selected_; // the Look panel's list for this layer
+	lookClip_ = draft ? effEdit_ : l.value(QStringLiteral("effects")).toArray();
+	hasLookClip_ = true;
+	note(lookClip_.isEmpty() ? QStringLiteral("Copied: this layer has no look.") : QStringLiteral("Look copied (%1 effect(s)).").arg(lookClip_.size()));
+}
+
+// Sets the copied list on the selected layer through the Look panel's own send (layers.setEffects, "yes, on air" while live).
+void MainWindow::lookPaste()
+{
+	const QJsonObject l = selectedLayer();
+	if (!hasLookClip_)
+		return note(QStringLiteral("Copy a look first."));
+	if (l.isEmpty() || !l.contains(QStringLiteral("placement")))
+		return note(QStringLiteral("Select a layer first."));
+	effEdit_ = lookClip_;
+	effRev_++;
+	effDirty_ = true;
+	look_->setEffects(effEdit_);
+	renderEffects();
+	applyLook();
+}
+
+void MainWindow::lookFocus()
+{
+	if (look_->isHidden())
+		return note(QStringLiteral("Select a layer first."));
+	look_->setFocus();
+	for (QWidget *w = look_->parentWidget(); w; w = w->parentWidget())
+		if (auto *sa = qobject_cast<QScrollArea *>(w)) {
+			sa->ensureWidgetVisible(look_);
+			break;
+		}
+}
+
+void MainWindow::sceneRename(const QString &id)
+{
+	if (live_)
+		return note(QStringLiteral("Not while live."));
+	QString cur;
+	for (const auto &s : scenes_)
+		if (s.toObject().value(QStringLiteral("id")).toString() == id)
+			cur = s.toObject().value(QStringLiteral("name")).toString();
+	bool ok = false;
+	const QString name = QInputDialog::getText(this, QStringLiteral("Rename scene"), QStringLiteral("Scene name"), QLineEdit::Normal, cur, &ok).trimmed();
+	if (!ok || name.isEmpty() || name == cur)
+		return;
+	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("scene.rename")}, {QStringLiteral("scene"), id}, {QStringLiteral("name"), name.left(80)}});
+}
+
+void MainWindow::sceneDuplicate(const QString &id)
+{
+	if (live_)
+		return note(QStringLiteral("Not while live."));
+	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("scene.duplicate")}, {QStringLiteral("scene"), id}});
+}
+
+void MainWindow::sceneDelete(const QString &id)
+{
+	if (live_)
+		return note(QStringLiteral("Not while live."));
+	if (!sceneEditOn_)
+		return note(QStringLiteral("Turn on scene editing in Settings > Advanced to delete scenes."));
+	QString cur = id;
+	for (const auto &s : scenes_)
+		if (s.toObject().value(QStringLiteral("id")).toString() == id)
+			cur = s.toObject().value(QStringLiteral("name")).toString();
+	if (QMessageBox::question(this, QStringLiteral("Delete scene"), QStringLiteral("Delete the scene \"%1\" and all its layers from the project?").arg(cur)) != QMessageBox::Yes)
+		return;
+	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("scene.remove")}, {QStringLiteral("scene"), id}});
 }
 
 void MainWindow::structureEdit(const QJsonObject &body)
@@ -2568,8 +2819,10 @@ void MainWindow::structureEdit(const QJsonObject &body)
 	api_->post(QStringLiteral("ui/api/project/structure"), body, [this](bool ok, const QJsonObject &b, const QString &err) {
 		if (!ok) {
 			const QString detail = b.value(QStringLiteral("detail")).toString();
-			note(QStringLiteral("Not done: ") + err + (detail.isEmpty() ? QString() : QStringLiteral(" (") + detail + QStringLiteral(")")));
+			note(QStringLiteral("Not done: ") + plainStructureError(err) + (detail.isEmpty() ? QString() : QStringLiteral(" (") + detail + QStringLiteral(")")));
 		} else {
+			if (b.value(QStringLiteral("op")).toString() == QStringLiteral("layer.duplicate") || b.value(QStringLiteral("op")).toString() == QStringLiteral("layer.add"))
+				selected_ = b.value(QStringLiteral("layer")).toObject().value(QStringLiteral("id")).toString(); // select the new layer
 			note(QStringLiteral("Done: ") + b.value(QStringLiteral("op")).toString() +
 			     (b.value(QStringLiteral("saved")).toBool() ? QString() : QStringLiteral(". Not saved to the project file: the change is live only.")));
 			addText_->clear();
@@ -3155,6 +3408,32 @@ QJsonObject MainWindow::probe() const
 	look.insert(QStringLiteral("shown"), !look_->isHidden());
 	look.insert(QStringLiteral("advancedShown"), !effBox_->isHidden());
 	o.insert(QStringLiteral("look"), look);
+	QJsonArray layerKeys, sceneKeys; // shortcuts that are active while the list has focus (D292)
+	for (const QShortcut *sc : layerList_->findChildren<QShortcut *>())
+		layerKeys.append(sc->key().toString(QKeySequence::PortableText));
+	for (const QShortcut *sc : sceneList_->findChildren<QShortcut *>())
+		sceneKeys.append(sc->key().toString(QKeySequence::PortableText));
+	o.insert(QStringLiteral("menu"), lastMenu_);
+	QJsonObject addBtns;
+	if (addSceneBtn_ && addLayerBtn_) {
+		addBtns.insert(QStringLiteral("scene"), QJsonObject{{QStringLiteral("enabled"), addSceneBtn_->isEnabled()}, {QStringLiteral("tip"), addSceneBtn_->toolTip()}, {QStringLiteral("text"), addSceneBtn_->text()}});
+		addBtns.insert(QStringLiteral("layer"), QJsonObject{{QStringLiteral("enabled"), addLayerBtn_->isEnabled()}, {QStringLiteral("tip"), addLayerBtn_->toolTip()}, {QStringLiteral("text"), addLayerBtn_->text()}});
+	}
+	o.insert(QStringLiteral("addButtons"), addBtns);
+	if (auto *d = qobject_cast<addui::AddLayerDialog *>(addDlg_.data()))
+		o.insert(QStringLiteral("addDialog"), d->probe());
+	else if (auto *d2 = qobject_cast<addui::AddSceneDialog *>(addDlg_.data()))
+		o.insert(QStringLiteral("addDialog"), d2->probe());
+	o.insert(QStringLiteral("listKeys"), QJsonObject{{QStringLiteral("layers"), layerKeys}, {QStringLiteral("scenes"), sceneKeys}});
+	QJsonArray layerNames, sceneNames; // what the lists show, top layer first
+	for (int i = 0; i < layerList_->count(); i++)
+		layerNames.append(layerList_->item(i)->text());
+	for (int i = 0; i < sceneList_->count(); i++)
+		sceneNames.append(sceneList_->item(i)->text());
+	o.insert(QStringLiteral("layerNames"), layerNames);
+	o.insert(QStringLiteral("sceneNames"), sceneNames);
+	o.insert(QStringLiteral("selectedLayer"), selected_);
+	o.insert(QStringLiteral("lookClip"), hasLookClip_ ? QJsonValue(lookClip_) : QJsonValue());
 	o.insert(QStringLiteral("controls"), QJsonObject{{QStringLiteral("stream"), streamBtn_->accessibleName()}, {QStringLiteral("record"), recordBtn_->accessibleName()},
 							{QStringLiteral("clip"), clipBtn_->accessibleName()}, {QStringLiteral("mark"), markBtn_->accessibleName()},
 							{QStringLiteral("streamIcon"), streamBtn_->property("iconState").toString()}});
@@ -3196,6 +3475,72 @@ bool MainWindow::probeAction(const QString &action)
 				return true;
 			}
 		return false;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("select-scene")) {
+		for (int i = 0; i < sceneList_->count(); i++)
+			if (sceneList_->item(i)->data(Qt::UserRole).toString() == p[1]) {
+				sceneList_->setCurrentRow(i);
+				return true;
+			}
+		return false;
+	}
+	// D292: build the right-click menu for the selected layer or scene (recorded for the probe, never shown) and trigger
+	// one item exactly as a click would (a disabled item does nothing: false). "show" only builds. Dialogs open on the
+	// next turn of the event loop, so this action returns first.
+	if (p.size() == 2 && (p[0] == QStringLiteral("layer-menu") || p[0] == QStringLiteral("scene-menu"))) {
+		const bool layer = p[0] == QStringLiteral("layer-menu");
+		QMenu *menu = layer ? buildLayerMenu(this) : buildSceneMenu(this, sceneKeyId());
+		bool done = p[1] == QStringLiteral("show");
+		if (!done)
+			if (QAction *a = menu->findChild<QAction *>(p[1]); a && a->isEnabled()) {
+				QTimer::singleShot(0, this, [a]() { a->trigger(); });
+				done = true;
+			}
+		QTimer::singleShot(50, menu, &QObject::deleteLater);
+		return done;
+	}
+	// D292: the + buttons and the add windows, driven through their real widgets.
+	if (p.size() == 2 && p[0] == QStringLiteral("add-button")) {
+		QToolButton *b = p[1] == QStringLiteral("scene") ? addSceneBtn_ : addLayerBtn_;
+		if (!b->isEnabled())
+			return false;
+		b->click();
+		return true;
+	}
+	if (p.size() >= 2 && (p[0] == QStringLiteral("add-layer") || p[0] == QStringLiteral("add-scene"))) {
+		const bool layer = p[0] == QStringLiteral("add-layer");
+		if (p[1] == QStringLiteral("open")) {
+			if (layer)
+				openAddLayer();
+			else
+				openAddScene();
+			return !live_;
+		}
+		const QString arg = p.size() > 2 ? QUrl::fromPercentEncoding(p[2].toUtf8()) : QString();
+		if (auto *d = qobject_cast<addui::AddLayerDialog *>(addDlg_.data()); d && layer) {
+			if (p[1] == QStringLiteral("kind"))
+				return d->probeKind(arg);
+			if (p[1] == QStringLiteral("choice"))
+				return d->probeChoice(arg.toInt());
+			if (p[1] == QStringLiteral("text"))
+				return d->probeText(arg);
+			if (p[1] == QStringLiteral("send"))
+				return d->probeSend();
+		}
+		if (auto *d = qobject_cast<addui::AddSceneDialog *>(addDlg_.data()); d && !layer) {
+			if (p[1] == QStringLiteral("name"))
+				return d->probeName(arg);
+			if (p[1] == QStringLiteral("send"))
+				return d->probeSend();
+		}
+		return false;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("msg")) { // answer the open question box (delete confirm)
+		auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+		if (!box)
+			return false;
+		box->button(p[1] == QStringLiteral("yes") ? QMessageBox::Yes : QMessageBox::No)->click();
+		return true;
 	}
 	if (p.size() == 3 && p[0] == QStringLiteral("look"))
 		return look_->probeToggle(p[1], p[2] == QStringLiteral("on"));

@@ -12,6 +12,8 @@ find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network)
 
 add_executable(ujwalam-studio WIN32
 	src/main.cpp
+	src/add_dialogs.cpp
+	src/add_dialogs.h
 	src/api_client.cpp
 	src/api_client.h
 	src/icons.cpp
