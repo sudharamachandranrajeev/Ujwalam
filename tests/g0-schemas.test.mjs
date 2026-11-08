@@ -61,7 +61,7 @@ test('profile: missing ign, unknown key, bad game id, bad mode rejected', () => 
 // ---- detector pack ----
 test('pack: CODM pack files validate (game, detectors, events, screens, capture plan)', () => {
   ok(vGame, game); ok(vPack, pack); ok(vEvents, events); ok(vScreens, screens); ok(vPlan, plan);
-  assert.equal(pack.version, '0.4.0');
+  assert.equal(pack.version, '0.5.0');
   for (const doc of [pack, events, screens, plan]) assert.equal(doc.game, game.id);
 });
 

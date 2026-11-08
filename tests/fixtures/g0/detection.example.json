@@ -3,7 +3,7 @@
   "sessionId": "s-2026-09-24-1830",
   "timeSec": 1234.5,
   "detectorId": "B1",
-  "packVersion": "0.4.0",
+  "packVersion": "0.5.0",
   "mode": "br",
   "roiId": "killfeed",
   "roi": { "x0": 0.0, "y0": 0.17, "x1": 0.45, "y1": 0.29 },
