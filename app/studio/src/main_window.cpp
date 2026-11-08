@@ -280,6 +280,10 @@ QWidget *MainWindow::buildTop()
 	connect(redoBtn_, &QPushButton::clicked, this, [this]() { undoRedo(false); });
 	h->addWidget(undoBtn_);
 	h->addWidget(redoBtn_);
+	auto *imBtn = new QPushButton(QStringLiteral("Import Meld session"), w);
+	imBtn->setToolTip(QStringLiteral("Make a new project file from the Meld session, check it against the host, then load it."));
+	connect(imBtn, &QPushButton::clicked, this, &MainWindow::openImport);
+	h->addWidget(imBtn);
 	auto *fbBtn = new QPushButton(QStringLiteral("Feedback notes"), w);
 	fbBtn->setToolTip(QStringLiteral("Add a note to each feedback moment (feedback hotkey while streaming)."));
 	connect(fbBtn, &QPushButton::clicked, this, &MainWindow::openFeedback);
@@ -1375,6 +1379,68 @@ void MainWindow::loadBots()
 		hint->setWordWrap(true);
 		botRows_->addWidget(hint);
 	});
+}
+
+// Meld import: the server writes a new project file (never changes the current one), the host plans it (counts only),
+// and Load asks for the typed phrase before project.load replaces the scenes.
+void MainWindow::openImport()
+{
+	auto *dlg = new QDialog(this);
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setWindowTitle(QStringLiteral("Import Meld session"));
+	dlg->resize(520, 420);
+	auto *v = new QVBoxLayout(dlg);
+	auto *info = new QLabel(QStringLiteral("Importing and checking against the host..."), dlg);
+	info->setWordWrap(true);
+	auto *counts = new QListWidget(dlg);
+	auto *skip = new QCheckBox(QStringLiteral("Skip the items the host cannot show (missing files or devices)"), dlg);
+	skip->setVisible(false);
+	auto *load = new QPushButton(QStringLiteral("Load into the studio"), dlg);
+	load->setEnabled(false);
+	v->addWidget(info);
+	v->addWidget(counts, 1);
+	v->addWidget(skip);
+	v->addWidget(load);
+	QPointer<QDialog> guard(dlg);
+	connect(load, &QPushButton::clicked, dlg, [this, dlg, skip]() {
+		QJsonObject b;
+		if (skip->isVisible() && skip->isChecked())
+			b.insert(QStringLiteral("skipUnavailable"), true);
+		dlg->close();
+		api_->post(QStringLiteral("ui/api/project/load"), b, [this](bool ok, const QJsonObject &r, const QString &err) {
+			if (!ok)
+				return note(QStringLiteral("Not loaded: ") + err);
+			if (r.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
+				confirm(r.value(QStringLiteral("pending")).toObject());
+		});
+	});
+	api_->post(QStringLiteral("ui/api/project/import-meld"), {}, [=](bool ok, const QJsonObject &r, const QString &err) {
+		if (!guard)
+			return;
+		if (!ok)
+			return info->setText(err.startsWith(QStringLiteral("HTTP 503"))
+						 ? QStringLiteral("No Meld session file is configured (set UJWALAM_MELD_SESSION or paths.meld_session in the local profile).")
+						 : QStringLiteral("Import failed: ") + err);
+		const QJsonObject imp = r.value(QStringLiteral("imported")).toObject();
+		const QJsonObject plan = r.value(QStringLiteral("plan")).toObject();
+		QStringList bits{QStringLiteral("Created a new project file (%1).").arg(imp.value(QStringLiteral("file")).toString())};
+		if (imp.value(QStringLiteral("skipped")).toInt() > 0)
+			bits << QStringLiteral("%1 item(s) skipped by the importer.").arg(imp.value(QStringLiteral("skipped")).toInt());
+		if (r.contains(QStringLiteral("planError")) && !r.value(QStringLiteral("planError")).isNull())
+			bits << QStringLiteral("Host check failed (%1).").arg(r.value(QStringLiteral("planError")).toString());
+		info->setText(bits.join(QLatin1Char(' ')));
+		const auto add = [counts](const QString &prefix, const QJsonObject &o) {
+			for (auto k = o.begin(); k != o.end(); ++k)
+				if (k.value().isDouble() || k.value().isBool())
+					counts->addItem(prefix + k.key() + QStringLiteral(": ") + k.value().toVariant().toString());
+		};
+		add(QStringLiteral("imported "), imp.value(QStringLiteral("counts")).toObject());
+		add(QStringLiteral("skipped "), imp.value(QStringLiteral("skippedByKind")).toObject());
+		add(QStringLiteral("plan "), plan);
+		skip->setVisible(plan.value(QStringLiteral("unavailable")).toInt() > 0);
+		load->setEnabled(!plan.isEmpty());
+	});
+	dlg->show();
 }
 
 // Feedback notes (D150): pick a moment, write a note with tag and severity, Save. Notes stay in the gitignored

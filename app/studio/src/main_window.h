@@ -93,6 +93,7 @@ private:
 	// Streamer.bot / Speaker.bot start and stop (BM, flag bot-manager): typed "yes" each; stop ends only a copy
 	// Ujwalam started (the server checks).
 	void loadBots();
+	void openImport();   // Meld session import -> host check -> typed confirm -> project.load (the page's flow)
 	void openFeedback(); // post-stream notes on feedback moments (D150), the browser page's form
 	void botAction(const QString &bot, bool start);
 	void confirm(const QJsonObject &pending);
