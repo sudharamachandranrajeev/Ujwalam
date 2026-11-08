@@ -131,6 +131,16 @@ const std::vector<FxType> &fxTypes()
 		{"blendDarken", "Blend: darken", {fxNum("opacity", "Opacity", 0, 1, 1, 0.05, 2)}, "compositing"},
 		{"gradientMask", "Gradient fade", {fxNum("angle", "Direction (degrees)", -360, 360, 90, 5, 1), fxNum("start", "Fade starts", 0, 1, 0.6, 0.05, 2),
 						   fxNum("end", "Fade ends", 0, 1, 1, 0.05, 2)}, "compositing"},
+		// Face AI (flag face-ai, D295 proposed). personMask mode (remove | blur | replace) and its file, and faceSticker
+		// (file), need a choice / file field (not in this table yet): mode is kept as it is (added: remove), faceSticker
+		// is not editable here.
+		{"personMask", "Background (AI)", {fxNum("threshold", "Edge threshold", 0, 1, 0.5, 0.05, 2),
+						   fxNum("feather", "Edge softness", 0, 1, 0.2, 0.05, 2),
+						   fxNum("smoothing", "Steadiness", 0, 0.95, 0.4, 0.05, 2),
+						   fxNum("strength", "Blur strength (blur mode)", 1, 100, 20, 1, 1),
+						   fxCol("color", "Colour (replace mode)", "#00b140")}, "camera"},
+		{"autoFrame", "Follow face", {fxNum("zoom", "Zoom", 1, 4, 1.6, 0.1, 2), fxNum("smoothing", "Smoothing (s)", 0, 5, 0.5, 0.1, 2),
+					      fxNum("deadzone", "Dead zone", 0, 0.5, 0.1, 0.01, 2)}, "camera"},
 	};
 	return t;
 }

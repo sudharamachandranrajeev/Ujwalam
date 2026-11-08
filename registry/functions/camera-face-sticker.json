@@ -1,0 +1,102 @@
+{
+  "id": "camera-face-sticker",
+  "version": "0.1.0",
+  "category": "sources-camera-audio",
+  "family": "camera",
+  "name": "Camera face sticker",
+  "description": "An image pinned to the face on a camera layer (faceSticker, ujw_face_sticker; flag face-ai, off by default; D295 proposed): anchored at the eyes, nose, forehead or mouth, width = scale x eye distance, offset in eye distances in the face's own frame, turned with the head's roll. Hidden while no fresh face is found. Face points come from the face AI worker through the face link.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "file",
+            "anchor",
+            "scale",
+            "offsetX",
+            "offsetY"
+          ],
+          "properties": {
+            "type": {
+              "const": "faceSticker"
+            },
+            "file": {
+              "type": "object",
+              "description": "project file ref {base, rel}; chosen when the preset is applied",
+              "required": [
+                "base",
+                "rel"
+              ]
+            },
+            "anchor": {
+              "enum": [
+                "eyes",
+                "nose",
+                "forehead",
+                "mouth"
+              ]
+            },
+            "scale": {
+              "type": "number",
+              "minimum": 0.1,
+              "maximum": 10
+            },
+            "offsetX": {
+              "type": "number",
+              "minimum": -5,
+              "maximum": 5
+            },
+            "offsetY": {
+              "type": "number",
+              "minimum": -5,
+              "maximum": 5
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "faceSticker",
+        "anchor": "eyes",
+        "scale": 2.2,
+        "offsetX": 0,
+        "offsetY": 0
+      }
+    },
+    "safeRanges": {
+      "scale": [
+        0.5,
+        4
+      ],
+      "offsetX": [
+        -2,
+        2
+      ],
+      "offsetY": [
+        -2,
+        2
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.4"
+}

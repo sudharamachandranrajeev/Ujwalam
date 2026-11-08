@@ -1,14 +1,101 @@
 {
   "id": "camera-background-effects",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "category": "sources-camera-audio",
   "family": "camera",
   "name": "Camera background effects",
-  "description": "Background blur, removal or replacement for a camera layer. Planned, not built (D291 proposed). Needs a person-segmentation model (for example a MediaPipe/Selfie-style or RVM-style ONNX model run through onnxruntime, DirectML/CUDA on the NVIDIA GPU or CPU) producing a per-frame alpha matte, then the existing blur and the image-mask path to composite. While live, the VRAM it needs (model weights plus frame buffers at camera size, to be measured; UNVERIFIED) must be reserved inside the live-AI budget next to the small Whisper model on the 6 GB GPU (D1, VRAM rule), with a CPU fallback and a per-frame time budget so it never holds back the render thread. Model choice, licence and accuracy gate on real camera footage need the user's approval before building.",
+  "description": "Background removal, blur or replacement for a camera layer (personMask, ujw_person_mask; flag face-ai, off by default; D295 proposed). The face AI worker (services/face, onnxruntime-directml, MediaPipe selfie segmentation, Apache-2.0) returns a person matte for the camera through the face link (shared memory); the host composites it in a shader: remove (transparent background), blur (the layer blurred behind the person, strength as the blur effect) or replace (a colour, or an image file). threshold and feather shape the matte edge; smoothing is temporal (worker). A stale matte (> 500 ms) fades out over 300 ms to the plain camera; no worker = plain camera. Measured cost and live use: docs/evidence/2026-11-08-face-ai.md; live use needs the user's decision.",
   "params": {
-    "schema": {},
-    "defaults": {},
-    "safeRanges": {}
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "threshold",
+            "feather",
+            "smoothing"
+          ],
+          "properties": {
+            "type": {
+              "const": "personMask"
+            },
+            "mode": {
+              "enum": [
+                "remove",
+                "blur",
+                "replace"
+              ]
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "feather": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "smoothing": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.95
+            },
+            "strength": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "color": {
+              "type": "string",
+              "pattern": "^#[0-9a-fA-F]{6}$"
+            },
+            "file": {
+              "type": "object",
+              "description": "project file ref {base, rel}; chosen when the preset is applied",
+              "required": [
+                "base",
+                "rel"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "personMask",
+        "mode": "remove",
+        "threshold": 0.5,
+        "feather": 0.2,
+        "smoothing": 0.4
+      }
+    },
+    "safeRanges": {
+      "threshold": [
+        0.2,
+        0.8
+      ],
+      "feather": [
+        0,
+        0.5
+      ],
+      "smoothing": [
+        0,
+        0.8
+      ],
+      "strength": [
+        5,
+        60
+      ]
+    }
   },
   "canvases": [
     "H",
@@ -19,6 +106,7 @@
   "maxConcurrent": 0,
   "flashesPerSec": 0,
   "budgetCost": 0,
-  "status": "planned",
+  "status": "in-progress",
+  "format": "native-shader",
   "planSection": "4.4"
 }

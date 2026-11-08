@@ -1,0 +1,83 @@
+{
+  "id": "camera-auto-frame",
+  "version": "0.1.0",
+  "category": "sources-camera-audio",
+  "family": "camera",
+  "name": "Camera auto frame",
+  "description": "The camera follows the face: a pan and zoom crop of the camera layer that keeps the face centred (autoFrame, ujw_face_frame; flag face-ai, off by default; D295 proposed). zoom 1..4 (crop = 1/zoom of the layer), smoothing = ease time constant in s, deadzone = share of the crop the face may move in before the crop follows. No face for 1 s eases back to the whole picture. Face points come from the face AI worker (YuNet + 468-point face mesh) through the face link.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "zoom",
+            "smoothing",
+            "deadzone"
+          ],
+          "properties": {
+            "type": {
+              "const": "autoFrame"
+            },
+            "zoom": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 4
+            },
+            "smoothing": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "deadzone": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 0.5
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "autoFrame",
+        "zoom": 1.6,
+        "smoothing": 0.5,
+        "deadzone": 0.1
+      }
+    },
+    "safeRanges": {
+      "zoom": [
+        1,
+        2.5
+      ],
+      "smoothing": [
+        0.2,
+        2
+      ],
+      "deadzone": [
+        0,
+        0.3
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.4"
+}

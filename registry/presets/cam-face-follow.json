@@ -1,0 +1,33 @@
+{
+  "id": "cam-face-follow",
+  "version": "0.1.0",
+  "function": "camera-auto-frame",
+  "functionVersion": "^0.1.0",
+  "name": "Camera follows face",
+  "params": {
+    "effect": {
+      "type": "autoFrame",
+      "zoom": 1.6,
+      "smoothing": 0.5,
+      "deadzone": 0.1
+    }
+  },
+  "themeOverrides": {},
+  "family": "camera",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "cam-face-sticker-eyes"
+  ]
+}
