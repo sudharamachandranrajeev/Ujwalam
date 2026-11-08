@@ -335,6 +335,8 @@ test('project v1 effects: host refuses malformed effects; plan and layers.list c
     [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10 }],
     [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10, spread: 0.1, angle: 3 }],
     [{ type: 'color', brightness: 1.5, contrast: 0, saturation: 0, hue: 0 }],
+    [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0, bottomLeftY: 1.2 }],
+    [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0 }],
     [{ type: 'color', brightness: 0, contrast: 0, saturation: 0 }],
     [{ type: 'toner', shadows: '#000', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#000000', amount: 1 }],
     [{ type: 'toner', shadows: '#000000', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#ffffff', amount: 2 }],
@@ -708,5 +710,63 @@ test('project v1 color and toner effects render (D258)', async () => {
   near(px(200, 500), [0, 0, 255], 'toner: black takes the shadows colour');
   near(px(500, 500), [0, 255, 0], 'toner amount 0: unchanged');
   near(px(50, 50), [128, 128, 128], 'background untouched');
+  await c.call('outputs.clear');
+});
+
+
+// Corner pin (D259): a trapezoid (top edge pulled in to the middle half) and a pin onto the right half of the box.
+// Outside the quad the layer is transparent, so the background shows.
+const PIN = {
+  version: 1, id: 'pin-check', name: 'Pin check', activeScene: 'main',
+  canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }],
+  devices: [], overlays: [], outputs: [],
+  scenes: [{
+    id: 'main', name: 'Main', layers: [
+      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#ffffff' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
+      { id: 'trap', type: 'color', name: 'Trap', source: { color: '#ff0000' },
+        effects: [{ type: 'cornerPin', topLeftX: 0.25, topLeftY: 0, topRightX: 0.75, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0, bottomLeftY: 1 }],
+        placements: { h: { visible: true, x: 100, y: 100, width: 400, height: 400 } } },
+      { id: 'half', type: 'color', name: 'Half', source: { color: '#0000ff' },
+        effects: [{ type: 'cornerPin', topLeftX: 0.5, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0.5, bottomLeftY: 1 }],
+        placements: { h: { visible: true, x: 700, y: 100, width: 400, height: 400 } } }
+    ]
+  }],
+  audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+};
+
+test('project v1 corner pin draws the layer into its quad (D259)', async () => {
+  assert.ok((await import('../../../services/project/validate.mjs')).validateProject(PIN).ok);
+  const r = await loadIntoHost(c, PIN, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  const by = Object.fromEntries((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.map((l) => [l.id, l]));
+  assert.deepEqual(by.trap.effects, PIN.scenes[0].layers[1].effects);
+  await c.call('outputs.configure', {
+    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
+    audio: { bitrate: 128, sampleRate: 48000 },
+    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: 'pin-h.mkv' } }]
+  });
+  await c.call('record.start', {});
+  await new Promise((res) => setTimeout(res, 2000));
+  await c.call('record.stop', {});
+  let st;
+  for (let i = 0; i < 60; i++) {
+    st = await c.call('outputs.status');
+    if (st.sinks.every((s) => s.state === 'stopped')) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  const px = frameRgb(st.sinks.find((s) => s.id === 'fh').path, 1280, 720);
+  const W = [255, 255, 255], R = [255, 0, 0], B = [0, 0, 255];
+  // trap box 100..500; top edge 200..400, bottom edge 100..500
+  near(px(120, 110), W, 'top-left corner of the box: outside the trapezoid');
+  near(px(480, 110), W, 'top-right corner of the box: outside the trapezoid');
+  near(px(300, 110), R, 'top middle: inside');
+  near(px(110, 490), R, 'bottom-left: inside');
+  near(px(490, 490), R, 'bottom-right: inside');
+  near(px(140, 300), W, 'left of the slanted edge at mid height (edge at x 150)');
+  near(px(160, 300), R, 'right of the slanted edge at mid height');
+  // half box 700..1100; the layer fills 900..1100
+  near(px(800, 300), W, 'left half: empty');
+  near(px(1000, 300), B, 'right half: the layer');
+  near(px(1095, 495), B, 'right half bottom corner');
   await c.call('outputs.clear');
 });

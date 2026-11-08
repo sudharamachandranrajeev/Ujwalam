@@ -560,3 +560,24 @@ test('colour (D258): BrightnessContrast and HSV import as color, CCToner as tone
   assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
   assert.equal(validateProject(p).ok, true);
 });
+
+test('corner pin (D259): Meld CornerPin imports as cornerPin; an untouched pin imports nothing; corners outside are clamped and reported', () => {
+  const s = session();
+  const items = [];
+  (function walk(o) { if (o && typeof o === 'object') { if (o.id === 'H-L-MEDIA') items.push(o); Object.values(o).forEach(walk); } })(s);
+  const h = items[0];
+  h.effects = [
+    { type: 'CornerPin', enabled: true, bottomLeftX: 0, bottomLeftY: 1, bottomRightX: 1, bottomRightY: 1, topLeftX: 0.009999999776482582, topLeftY: 0, topRightX: 0.9200000166893005, topRightY: 0, version: 2 },
+    { type: 'CornerPin', enabled: true, bottomLeftX: 0, bottomLeftY: 1, bottomRightX: 1, bottomRightY: 1, topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0 },
+    { type: 'CornerPin', enabled: true, bottomLeftX: -0.2, bottomLeftY: 1, bottomRightX: 1, bottomRightY: 1.5, topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0 },
+  ];
+  const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
+  const layer = p.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
+  assert.deepEqual(layer.effects, [
+    { type: 'cornerPin', topLeftX: 0.01, topLeftY: 0, topRightX: 0.92, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0, bottomLeftY: 1 },
+  ], 'the untouched pin is dropped; the clamped one equals the untouched pin and is dropped too');
+  assert.equal(r.ignored['CornerPin corners outside the layer (clamped)'], 1);
+  assert.equal(r.ignored['effect CornerPin'], undefined);
+  assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
+  assert.equal(validateProject(p).ok, true);
+});

@@ -230,6 +230,14 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 			fx.contrast = chk::get_num(x, "contrast", 0, -1, 1, w);
 			fx.saturation = chk::get_num(x, "saturation", 0, -1, 1, w);
 			fx.hue = chk::get_num(x, "hue", 0, -180, 180, w);
+		} else if (fx.type == "cornerPin") { // D259
+			const char *keys[8] = {"topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY", "bottomLeftX", "bottomLeftY"};
+			chk::only_keys(x, {"type", "topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY",
+					    "bottomLeftX", "bottomLeftY"}, w);
+			chk::require(x, {"topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY", "bottomLeftX",
+					  "bottomLeftY"}, w);
+			for (int i = 0; i < 8; i++)
+				fx.pin[i] = chk::get_num(x, keys[i], fx.pin[i], 0, 1, w);
 		} else if (fx.type == "toner") { // D258
 			chk::only_keys(x, {"type", "shadows", "darktones", "midtones", "brights", "highlights", "amount"}, w);
 			chk::require(x, {"shadows", "darktones", "midtones", "brights", "highlights", "amount"}, w);
@@ -242,7 +250,7 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 			}
 			fx.amount = chk::get_num(x, "amount", 1, 0, 1, w);
 		} else {
-			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow, glow, color or toner");
+			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow, glow, color, toner or cornerPin");
 		}
 		r.push_back(fx);
 	}
@@ -278,6 +286,10 @@ json::Value effects_json(const std::vector<Effect> &e)
 			o.set("contrast", fx.contrast);
 			o.set("saturation", fx.saturation);
 			o.set("hue", fx.hue);
+		} else if (fx.type == "cornerPin") {
+			const char *keys[8] = {"topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY", "bottomLeftX", "bottomLeftY"};
+			for (int i = 0; i < 8; i++)
+				o.set(keys[i], fx.pin[i]);
 		} else if (fx.type == "toner") {
 			const char *keys[5] = {"shadows", "darktones", "midtones", "brights", "highlights"};
 			for (int i = 0; i < 5; i++) {

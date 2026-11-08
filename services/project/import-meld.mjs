@@ -367,6 +367,8 @@ export function importMeld(input, opts = {}) {
   // +-150 range), contrast / 100}; HSV (-1..1 values seen) -> color {hue = hueAdjust * 180 degrees, saturation =
   // satAdjust, brightness = valAdjust}, colorize and per-colour adjusts reported; CCToner -> toner (same five colours,
   // weight -> amount). All UNVERIFIED against a Meld render (docs/evidence/2026-11-08-color-toner.md).
+  // CornerPin (D259) -> cornerPin with the same corners (0..1 of the layer, read as Meld's normalised corners;
+  // corners outside are clamped and reported; an untouched pin imports nothing). UNVERIFIED against a Meld render.
   const effectsFor = (l) => {
     const out = [], post = [];
     const hex = (c) => (typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c.toLowerCase() : null);
@@ -399,6 +401,13 @@ export function importMeld(input, opts = {}) {
           saturation: clampTo(e.satAdjust, -1, 1), hue: clampTo(num(e.hueAdjust) ? e.hueAdjust * 180 : 0, -180, 180) });
         if (e.colorize === true) ignore('HSV colorize');
         if (Object.entries(e).some(([k, v]) => /^(hue|sat|val)Adjust[RGBCMY]$/.test(k) && num(v) && v !== 0)) ignore('HSV per-colour adjusts');
+      } else if (e.type === 'CornerPin') {
+        const keys = ['topLeftX', 'topLeftY', 'topRightX', 'topRightY', 'bottomRightX', 'bottomRightY', 'bottomLeftX', 'bottomLeftY'];
+        const dflt = [0, 0, 1, 0, 1, 1, 0, 1];
+        const pin = { type: 'cornerPin' };
+        keys.forEach((k, i) => { pin[k] = Math.max(0, Math.min(1, Math.round((num(e[k]) ? e[k] : dflt[i]) * 1e4) / 1e4)); });
+        if (keys.some((k) => num(e[k]) && (e[k] < 0 || e[k] > 1))) ignore('CornerPin corners outside the layer (clamped)');
+        if (keys.some((k, i) => pin[k] !== dflt[i])) out.push(pin);
       } else if (e.type === 'CCToner' && ['shadows', 'darktones', 'midtones', 'brights', 'highlights'].every((t) => hex(e[t]))) {
         out.push({ type: 'toner', shadows: hex(e.shadows), darktones: hex(e.darktones), midtones: hex(e.midtones),
           brights: hex(e.brights), highlights: hex(e.highlights), amount: clampTo(num(e.weight) ? e.weight : 1, 0, 1) });

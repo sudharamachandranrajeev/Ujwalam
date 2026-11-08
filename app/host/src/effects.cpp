@@ -3,12 +3,13 @@
 #include "effects.h"
 #include "log.h"
 #include "rpc_server.h"
-#include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect, ujw_toner_effect
+#include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect, ujw_toner_effect, ujw_corner_pin_effect
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -21,6 +22,7 @@ const char *BLUR_ID = "ujw_gaussian_blur";
 const char *ROUND_ID = "ujw_rounded_corners";
 const char *SHADOW_ID = "ujw_shadow";
 const char *TONER_ID = "ujw_toner";
+const char *PIN_ID = "ujw_corner_pin";
 
 // Canvas px a shadow or glow reaches past the layer's box on every side: its offset plus its blur (size = 3 sigma).
 double outset_of(const model::Effect &e)
@@ -631,6 +633,121 @@ const char *toner_name(void *)
 	return "Ujwalam toner";
 }
 
+// --- ujw_corner_pin ------------------------------------------------------------------------------------------------
+// Corner pin (D259), see ujw_corner_pin.effect. Corners in the order top-left, top-right, bottom-right, bottom-left,
+// each 0..1 of the layer's frame (y down).
+
+struct Pin {
+	obs_source_t *ctx = nullptr;
+	gs_effect_t *effect = nullptr;
+	gs_eparam_t *p_row[3] = {};
+	std::mutex lock;
+	double inv[9] = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+	bool degenerate = false;
+};
+
+const char *const PIN_KEYS[8] = {"topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY",
+				 "bottomLeftX", "bottomLeftY"};
+
+// Unit square -> quad (Heckbert, "Fundamentals of Texture Mapping", 1989): (u, v) = (0,0), (1,0), (1,1), (0,1) go to
+// p[0..3]. Returns the 3x3 matrix row-major in m.
+void square_to_quad(const double *p, double *m)
+{
+	const double x0 = p[0], y0 = p[1], x1 = p[2], y1 = p[3], x2 = p[4], y2 = p[5], x3 = p[6], y3 = p[7];
+	const double dx1 = x1 - x2, dx2 = x3 - x2, dx3 = x0 - x1 + x2 - x3;
+	const double dy1 = y1 - y2, dy2 = y3 - y2, dy3 = y0 - y1 + y2 - y3;
+	double g = 0, h = 0;
+	const double den = dx1 * dy2 - dx2 * dy1;
+	if ((std::fabs(dx3) > 1e-12 || std::fabs(dy3) > 1e-12) && std::fabs(den) > 1e-12) {
+		g = (dx3 * dy2 - dx2 * dy3) / den;
+		h = (dx1 * dy3 - dx3 * dy1) / den;
+	}
+	m[0] = x1 - x0 + g * x1;
+	m[1] = x3 - x0 + h * x3;
+	m[2] = x0;
+	m[3] = y1 - y0 + g * y1;
+	m[4] = y3 - y0 + h * y3;
+	m[5] = y0;
+	m[6] = g;
+	m[7] = h;
+	m[8] = 1;
+}
+
+void pin_update(void *data, obs_data_t *s)
+{
+	auto *t = static_cast<Pin *>(data);
+	double p[8], m[9], a[9];
+	for (int i = 0; i < 8; i++)
+		p[i] = obs_data_get_double(s, PIN_KEYS[i]);
+	square_to_quad(p, m);
+	// adjugate = det * inverse; scaled by sign(det) so w stays positive inside the quad
+	a[0] = m[4] * m[8] - m[5] * m[7];
+	a[1] = m[2] * m[7] - m[1] * m[8];
+	a[2] = m[1] * m[5] - m[2] * m[4];
+	a[3] = m[5] * m[6] - m[3] * m[8];
+	a[4] = m[0] * m[8] - m[2] * m[6];
+	a[5] = m[2] * m[3] - m[0] * m[5];
+	a[6] = m[3] * m[7] - m[4] * m[6];
+	a[7] = m[1] * m[6] - m[0] * m[7];
+	a[8] = m[0] * m[4] - m[1] * m[3];
+	const double det = m[0] * a[0] + m[1] * a[3] + m[2] * a[6];
+	std::lock_guard<std::mutex> g(t->lock);
+	t->degenerate = std::fabs(det) < 1e-9;
+	for (int i = 0; i < 9; i++)
+		t->inv[i] = det < 0 ? -a[i] : a[i];
+}
+
+void *pin_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *t = new Pin();
+	t->ctx = src;
+	t->effect = make_effect(ujw_corner_pin_effect, "ujw_corner_pin.effect");
+	if (t->effect)
+		for (int i = 0; i < 3; i++)
+			t->p_row[i] = gs_effect_get_param_by_name(t->effect, ("row" + std::to_string(i)).c_str());
+	pin_update(t, s);
+	return t;
+}
+
+void pin_destroy(void *data)
+{
+	auto *t = static_cast<Pin *>(data);
+	obs_enter_graphics();
+	gs_effect_destroy(t->effect);
+	obs_leave_graphics();
+	delete t;
+}
+
+void pin_render(void *data, gs_effect_t *)
+{
+	auto *t = static_cast<Pin *>(data);
+	double inv[9];
+	bool degenerate;
+	{
+		std::lock_guard<std::mutex> g(t->lock);
+		std::memcpy(inv, t->inv, sizeof inv);
+		degenerate = t->degenerate;
+	}
+	if (!t->effect || degenerate) { // a collapsed quad shows nothing rather than a broken picture
+		if (!t->effect)
+			obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	if (!obs_source_process_filter_begin(t->ctx, GS_RGBA, OBS_NO_DIRECT_RENDERING))
+		return;
+	for (int i = 0; i < 3; i++) {
+		struct vec4 v;
+		vec4_set(&v, (float)inv[i * 3], (float)inv[i * 3 + 1], (float)inv[i * 3 + 2], 0.0f);
+		gs_effect_set_vec4(t->p_row[i], &v);
+	}
+	obs_source_process_filter_end(t->ctx, t->effect, 0, 0);
+}
+
+const char *pin_name(void *)
+{
+	return "Ujwalam corner pin";
+}
+
 } // namespace
 
 void register_types()
@@ -698,7 +815,19 @@ void register_types()
 	tn.update = toner_update;
 	tn.video_render = toner_render;
 	obs_register_source(&tn);
-	hlog::info("effect source types registered: %s, %s, %s, %s, %s", WRAP_ID, BLUR_ID, ROUND_ID, SHADOW_ID, TONER_ID);
+
+	struct obs_source_info pn = {};
+	pn.id = PIN_ID;
+	pn.type = OBS_SOURCE_TYPE_FILTER;
+	pn.output_flags = OBS_SOURCE_VIDEO;
+	pn.get_name = pin_name;
+	pn.create = pin_create;
+	pn.destroy = pin_destroy;
+	pn.update = pin_update;
+	pn.video_render = pin_render;
+	obs_register_source(&pn);
+	hlog::info("effect source types registered: %s, %s, %s, %s, %s, %s", WRAP_ID, BLUR_ID, ROUND_ID, SHADOW_ID, TONER_ID,
+		   PIN_ID);
 }
 
 obs_source_t *create_chain(obs_source_t *target, const std::string &name, const std::vector<model::Effect> &effects,
@@ -737,6 +866,10 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 			obs_data_set_double(s, "contrast", e.contrast);
 			obs_data_set_double(s, "saturation", e.saturation);
 			obs_data_set_double(s, "hue_shift", e.hue);
+		} else if (e.type == "cornerPin") { // D259
+			id = PIN_ID;
+			for (int i = 0; i < 8; i++)
+				obs_data_set_double(s, PIN_KEYS[i], e.pin[i]);
 		} else if (e.type == "toner") { // D258
 			id = TONER_ID;
 			for (int i = 0; i < 5; i++)

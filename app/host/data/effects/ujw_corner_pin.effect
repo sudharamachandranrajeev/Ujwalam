@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_corner_pin filter (src/effects.cpp, D259). Embedded into the host exe at build time (CMakeLists.txt
+// generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Corner pin: the layer is drawn into the quad given by its four corners (0..1 of the layer's own frame). `row0..2` is
+// the inverse homography (quad -> unit square, computed on the CPU, sign fixed so w > 0 inside): for each output
+// pixel it gives the layer uv to sample. Outside the quad the output is transparent.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 row0;
+uniform float4 row1;
+uniform float4 row2;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSPin(VertData v_in) : TARGET
+{
+	float3 q = float3(v_in.uv, 1.0);
+	float3 p = float3(dot(row0.xyz, q), dot(row1.xyz, q), dot(row2.xyz, q));
+	if (p.z <= 1e-6)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	float2 uv = p.xy / p.z;
+	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0)
+		return float4(0.0, 0.0, 0.0, 0.0);
+	return image.Sample(clampSampler, uv);
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSPin(v_in);
+	}
+}

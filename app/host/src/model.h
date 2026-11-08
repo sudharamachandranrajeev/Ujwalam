@@ -62,8 +62,9 @@ struct Source {
 //   glow (D257): color, opacity 0..1, size 0..200 canvas px, spread 0..1 (alpha lifted before the colour: harder edge)
 //   color (D258): brightness, contrast, saturation -1..1 (0 = unchanged), hue -180..180 degrees (OBS color_filter_v2)
 //   toner (D258): tones = shadows, darktones, midtones, brights, highlights (0xRRGGBB), amount 0..1
+//   cornerPin (D259): pin = topLeft, topRight, bottomRight, bottomLeft corners, x then y, each 0..1 of the layer frame
 struct Effect {
-	std::string type; // "blur" | "rounded" | "chromaKey" | "shadow" | "glow" | "color" | "toner"
+	std::string type; // "blur" | "rounded" | "chromaKey" | "shadow" | "glow" | "color" | "toner" | "cornerPin"
 	double value = 0;
 	uint32_t color = 0;
 	int64_t similarity = 400, smoothness = 80;
@@ -71,6 +72,7 @@ struct Effect {
 	double brightness = 0, contrast = 0, saturation = 0, hue = 0;
 	uint32_t tones[5] = {};
 	double amount = 1;
+	double pin[8] = {0, 0, 1, 0, 1, 1, 0, 1};
 };
 
 struct Item {
