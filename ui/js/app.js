@@ -124,17 +124,18 @@
     $('tr-type').value = t.type;
     $('tr-ms').value = String(t.durationMs || 0);
     $('tr-point').value = String(t.pointMs || 0);
+    $('tr-audio').checked = t.audio !== false;
     if (t.file && t.file.rel) $('tr-file').value = t.file.rel;
     trFields();
   }
   function trFields() {
     var ty = $('tr-type').value;
-    $('tr-ms').hidden = ty !== 'fade'; $('tr-file').hidden = ty !== 'stinger'; $('tr-point').hidden = ty !== 'stinger';
+    $('tr-ms').hidden = ty !== 'fade'; $('tr-file').hidden = ty !== 'stinger'; $('tr-point').hidden = ty !== 'stinger'; $('tr-audio-wrap').hidden = ty !== 'stinger';
   }
   function saveTransition() {
     var ty = $('tr-type').value, body = { canvas: $('tr-canvas').value, type: ty };
     if (ty === 'fade') body.durationMs = Math.round(Number($('tr-ms').value));
-    if (ty === 'stinger') { body.file = $('tr-file').value; body.pointMs = Math.round(Number($('tr-point').value)); }
+    if (ty === 'stinger') { body.file = $('tr-file').value; body.pointMs = Math.round(Number($('tr-point').value)); body.audio = $('tr-audio').checked; }
     Api.setTransition(body).then(function () { setText($('tr-note'), 'Saved; scene switches use it within a second.'); renderTransitionCard(true); })
       .catch(function (e) { setText($('tr-note'), TR_ERRORS[e && e.message] || ('Not saved: ' + ((e && (e.detail || e.message)) || 'failed'))); });
   }

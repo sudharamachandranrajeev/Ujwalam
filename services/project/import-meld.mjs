@@ -257,8 +257,8 @@ export function importMeld(input, opts = {}) {
     // One media base holds every media path: a stinger on another drive than the layers' media cannot join it.
     if (commonDir([...mediaPaths, p]) === '') { report.warnings.push(`canvas ${cid}: the Meld stinger video is on another drive than the other media files; imported as a fade`); continue; }
     mediaPaths.push(p);
-    stingers[cid] = { p, pointMs: Math.round(Math.min(10000, Math.max(0, num(e.midPointMs) ? e.midPointMs : 0))) };
-    report.warnings.push(`canvas ${cid}: Meld stinger imported (video and cut point); its track matte and audio switch are not imported`);
+    stingers[cid] = { p, pointMs: Math.round(Math.min(10000, Math.max(0, num(e.midPointMs) ? e.midPointMs : 0))), audio: e.audioEnabled !== false };
+    report.warnings.push(`canvas ${cid}: Meld stinger imported (video, cut point, audio switch); its track matte is not imported`);
   }
 
   // ---- bases: where relative paths point
@@ -282,7 +282,7 @@ export function importMeld(input, opts = {}) {
     const durationMs = Math.round(Math.min(10000, Math.max(0, t.duration)));
     c.transition = { type: durationMs > 0 ? 'fade' : 'cut', durationMs };
     const st = stingers[cid];
-    if (st) c.transition = { type: 'stinger', durationMs, file: { base: 'media', rel: relUnder(mediaRoot, st.p) }, pointMs: st.pointMs };
+    if (st) c.transition = { type: 'stinger', durationMs, file: { base: 'media', rel: relUnder(mediaRoot, st.p) }, pointMs: st.pointMs, ...(st.audio ? {} : { audio: false }) };
   }
   project.origin = { importer: 'meld', id: 'session' };
 

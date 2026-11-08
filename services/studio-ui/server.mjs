@@ -341,7 +341,7 @@ export function createStudioServer(opts) {
   // A stinger the host refused (file missing, module absent) is not asked for again until the project changes it; the
   // canvas cuts meanwhile (D242).
   const trRefused = {};
-  const trKey = (t) => JSON.stringify([t.type, t.durationMs, t.file ?? null, t.pointMs ?? null]);
+  const trKey = (t) => JSON.stringify([t.type, t.durationMs, t.file ?? null, t.pointMs ?? null, t.audio ?? null]);
   async function transitionSync(hs) {
     if (!isPlain(hs.transitions)) return; // older host or fake: nothing to sync
     const on = !!flags && flags.isOn(TRANSITIONS_FLAG);
@@ -351,11 +351,11 @@ export function createStudioServer(opts) {
       let p = { type: 'cut', durationMs: 0 };
       if (t?.type === 'fade' && Number.isInteger(t.durationMs)) p = { type: 'fade', durationMs: Math.min(10000, Math.max(0, t.durationMs)) };
       else if (t?.type === 'stinger' && isPlain(t.file) && typeof t.file.base === 'string' && typeof t.file.rel === 'string' && Number.isInteger(t.pointMs)) {
-        p = { type: 'stinger', durationMs: 0, file: { base: t.file.base, rel: t.file.rel }, pointMs: Math.min(10000, Math.max(0, t.pointMs)) };
+        p = { type: 'stinger', durationMs: 0, file: { base: t.file.base, rel: t.file.rel }, pointMs: Math.min(10000, Math.max(0, t.pointMs)), audio: t.audio !== false };
       }
       if (p.type === 'stinger' && trRefused[hid] === trKey(p)) p = { type: 'cut', durationMs: 0 };
       const same = cur?.type === p.type && cur?.durationMs === p.durationMs
-        && (p.type !== 'stinger' || (cur?.file === `${p.file.base}:${p.file.rel}` && cur?.pointMs === p.pointMs));
+        && (p.type !== 'stinger' || (cur?.file === `${p.file.base}:${p.file.rel}` && cur?.pointMs === p.pointMs && (cur?.audio ?? true) === p.audio));
       if (same) continue;
       try { await host.call('transitions.set', { canvas: hid, ...p }); } catch { if (p.type === 'stinger') trRefused[hid] = trKey(p); }
     }
@@ -429,11 +429,12 @@ export function createStudioServer(opts) {
     if (!flags || !flags.isOn(TRANSITIONS_FLAG)) return json(res, 404, { error: 'transitions-off' });
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
-    const keys = ['canvas', 'type', 'durationMs', 'file', 'pointMs'];
+    const keys = ['canvas', 'type', 'durationMs', 'file', 'pointMs', 'audio'];
     if (!isPlain(body) || Object.keys(body).some((k) => !keys.includes(k)) || !['h', 'v'].includes(body.canvas) || !['cut', 'fade', 'stinger'].includes(body.type)) return json(res, 400, { error: 'bad-params' });
     const ms = (v) => Number.isInteger(v) && v >= 0 && v <= 10000;
     if (body.type === 'fade' && !ms(body.durationMs)) return json(res, 400, { error: 'bad-params' });
-    if (body.type === 'stinger' && (!ms(body.pointMs) || typeof body.file !== 'string')) return json(res, 400, { error: 'bad-params' });
+    if (body.type === 'stinger' && (!ms(body.pointMs) || typeof body.file !== 'string' || (body.audio !== undefined && typeof body.audio !== 'boolean'))) return json(res, 400, { error: 'bad-params' });
+    if (body.type !== 'stinger' && body.audio !== undefined) return json(res, 400, { error: 'bad-params' });
     if (body.type === 'stinger' && !listAssets(assetsDir).some((a) => a.kind === 'media' && a.rel === body.file)) return json(res, 409, { error: 'unknown-asset' });
     let hs = null;
     try { hs = await host.call('host.status', {}); } catch { hs = null; }
@@ -443,7 +444,7 @@ export function createStudioServer(opts) {
     try { doc = loadProject(file).project; } catch { return json(res, 409, { error: 'project-unreadable' }); }
     const c = doc.canvases.find((x) => x.id === body.canvas);
     if (!c) return json(res, 409, { error: 'unknown-canvas' });
-    c.transition = body.type === 'stinger' ? { type: 'stinger', durationMs: 0, file: { base: 'media', rel: body.file }, pointMs: body.pointMs }
+    c.transition = body.type === 'stinger' ? { type: 'stinger', durationMs: 0, file: { base: 'media', rel: body.file }, pointMs: body.pointMs, ...(body.audio === false ? { audio: false } : {}) }
       : { type: body.type, durationMs: body.type === 'fade' ? body.durationMs : 0 };
     try { saveProject(file, doc); } catch { return json(res, 409, { error: 'not-saved' }); }
     projectSync.reload();

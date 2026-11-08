@@ -238,7 +238,7 @@ void Studio::set_channel(Canvas &c, Scene *s, bool animate)
 }
 
 json::Value Studio::transition_set(const std::string &cv, const std::string &type, int64_t ms, const json::Value *file,
-				   int64_t point_ms)
+				   int64_t point_ms, bool audio)
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);
 	if (type != "cut" && type != "fade" && type != "stinger")
@@ -272,8 +272,10 @@ json::Value Studio::transition_set(const std::string &cv, const std::string &typ
 		obs_data_release(d);
 		if (!c->st)
 			throw Error(rpc::UNAVAILABLE, "obs_stinger_transition unavailable (obs-transitions module)");
+		obs_source_set_muted(c->st, !audio); // muted: the video plays, its sound stays out of the mix
 		c->st_ref = ref;
 		c->st_point = (uint32_t)point_ms;
+		c->st_audio = audio;
 		c->tr_ms = 0;
 	} else {
 		c->tr_ms = type == "fade" ? (uint32_t)ms : 0;
@@ -288,6 +290,7 @@ json::Value Studio::transition_set(const std::string &cv, const std::string &typ
 		c->st = nullptr;
 		c->st_ref.clear();
 		c->st_point = 0;
+		c->st_audio = true;
 	}
 	hlog::info("transition %s: %s %u ms", c->id.c_str(), c->tr_type.c_str(), type == "stinger" ? c->st_point : c->tr_ms);
 	return transitions();
@@ -304,6 +307,7 @@ json::Value Studio::transitions() const
 		if (c.tr_type == "stinger") {
 			o.set("file", c.st_ref);
 			o.set("pointMs", (int64_t)c.st_point);
+			o.set("audio", c.st_audio);
 		}
 		o.set("available", c.tr != nullptr); // false before the first scene, or without obs-transitions
 		r.set(c.id, std::move(o));

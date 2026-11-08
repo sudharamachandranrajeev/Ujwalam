@@ -54,11 +54,12 @@
             "type": { "enum": ["cut", "fade", "stinger"] },
             "durationMs": { "type": "integer", "minimum": 0, "maximum": 10000 },
             "file": { "$ref": "#/$defs/pathRef", "$comment": "stinger only (D242): the video played over the switch" },
-            "pointMs": { "type": "integer", "minimum": 0, "maximum": 10000, "$comment": "stinger only: when the scene changes under it" }
+            "pointMs": { "type": "integer", "minimum": 0, "maximum": 10000, "$comment": "stinger only: when the scene changes under it" },
+            "audio": { "type": "boolean", "$comment": "stinger only (D244): its own sound in the canvas mix; absent = true" }
           },
           "if": { "properties": { "type": { "const": "stinger" } } },
           "then": { "properties": { "file": true, "pointMs": true }, "required": ["file", "pointMs"] },
-          "else": { "properties": { "file": false, "pointMs": false } }
+          "else": { "properties": { "file": false, "pointMs": false, "audio": false } }
         }
       }
     },

@@ -105,11 +105,12 @@ export function validateProject(doc) {
         const t = c.transition; const tp = `${p}.transition`;
         if (!isObj(t)) err(tp, 'must be an object');
         else {
-          noExtra(t, ['type', 'durationMs', 'file', 'pointMs'], tp); req(t, ['type', 'durationMs'], tp);
+          noExtra(t, ['type', 'durationMs', 'file', 'pointMs', 'audio'], tp); req(t, ['type', 'durationMs'], tp);
           if ('type' in t && !['cut', 'fade', 'stinger'].includes(t.type)) err(`${tp}.type`, 'must be "cut", "fade" or "stinger"');
           if ('durationMs' in t) num(t.durationMs, `${tp}.durationMs`, 0, 10000, true);
           if (t.type === 'stinger') { req(t, ['file', 'pointMs'], tp); if ('file' in t) pathRefOk(t.file, `${tp}.file`); }
-          else if ('file' in t || 'pointMs' in t) err(tp, 'file and pointMs are for a stinger only');
+          else if ('file' in t || 'pointMs' in t || 'audio' in t) err(tp, 'file, pointMs and audio are for a stinger only');
+          if ('audio' in t && typeof t.audio !== 'boolean') err(`${tp}.audio`, 'must be true or false'); // D244: the stinger's own sound
           if ('pointMs' in t) num(t.pointMs, `${tp}.pointMs`, 0, 10000, true);
         }
       }

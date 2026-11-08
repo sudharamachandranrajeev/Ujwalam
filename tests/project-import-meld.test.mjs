@@ -407,6 +407,7 @@ test('stinger transitions (D242): an enabled Meld stinger with a local video imp
   const h = p.canvases.find((c) => c.id === 'h').transition;
   assert.equal(h.type, 'stinger');
   assert.equal(h.pointMs, 1750);
+  assert.equal(h.audio, false, 'Meld audioEnabled false: the stinger plays silent (D244)');
   assert.equal(h.file.base, 'media');
   assert.ok(h.file.rel.endsWith('wipe.webm'), h.file.rel);
   assert.equal(r.bases.media.length > 0, true);
@@ -416,6 +417,9 @@ test('stinger transitions (D242): an enabled Meld stinger with a local video imp
   assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
   assert.equal(validateProject(p).ok, true, JSON.stringify(validateProject(p).errors));
   const bad = structuredClone(p);
+  bad.canvases[1].transition = { type: 'fade', durationMs: 10, audio: true };
+  assert.equal(validateProject(bad).ok, false, 'audio only for a stinger');
+  assert.equal(schemaCheck(bad), false);
   bad.canvases[1].transition = { type: 'fade', durationMs: 10, pointMs: 5 };
   assert.equal(validateProject(bad).ok, false, 'pointMs only for a stinger');
   assert.equal(schemaCheck(bad), false);

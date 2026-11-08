@@ -66,7 +66,7 @@ test('stinger (D242): the transition form saves the project; the poll applies it
       if (m === 'transitions.set') {
         sets.push(p);
         if (p.type === 'stinger' && state.refuse) throw Object.assign(new Error('stinger: file not found'), { code: 'RPC_-32004' });
-        tr[p.canvas] = { type: p.type, durationMs: p.durationMs ?? 0, available: true, ...(p.type === 'stinger' ? { file: `${p.file.base}:${p.file.rel}`, pointMs: p.pointMs } : {}) };
+        tr[p.canvas] = { type: p.type, durationMs: p.durationMs ?? 0, available: true, ...(p.type === 'stinger' ? { file: `${p.file.base}:${p.file.rel}`, pointMs: p.pointMs, audio: p.audio } : {}) };
         return tr;
       }
       return {};
@@ -101,6 +101,12 @@ test('stinger (D242): the transition form saves the project; the poll applies it
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).canvases[0].transition, { type: 'stinger', durationMs: 0, file: { base: 'media', rel: 'wipe.webm' }, pointMs: 500 });
     await until(() => tr.H.type === 'stinger' && tr.H.pointMs === 500, 'stinger applied to the host');
+    assert.equal(tr.H.audio, true, 'stinger sound on by default');
+    assert.equal((await post({ canvas: 'h', type: 'cut', audio: false })).status, 400, 'audio is for a stinger only');
+    r = await post({ canvas: 'h', type: 'stinger', file: 'wipe.webm', pointMs: 500, audio: false });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(JSON.parse(readFileSync(file, 'utf8')).canvases[0].transition.audio, false);
+    await until(() => tr.H.audio === false, 'stinger sound off applied to the host (D244)');
     state.refuse = true;
     r = await post({ canvas: 'v', type: 'stinger', file: 'wipe.webm', pointMs: 300 });
     assert.equal(r.status, 200);
