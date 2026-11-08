@@ -32,6 +32,7 @@ export const REPO_FILES = Object.freeze([
   'LICENSE',
   'app/host/projects/test-card.project.json',
   'data/flags.json',
+  'data/guide/tour.json', 'data/guide/hints.json', // tips and tours in the studio window (D294 proposed)
   // F6 live markers (services/event-core/live-markers.mjs): shared ranking rules + live-only values
   'data/clip/ranking.json', 'data/clip/live-markers.json',
   'data/actions/catalogue.json', 'data/actions/catalogue.schema.json',

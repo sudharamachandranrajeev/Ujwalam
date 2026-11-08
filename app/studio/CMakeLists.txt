@@ -22,6 +22,14 @@ add_executable(ujwalam-studio WIN32
 	src/interaction.h
 	src/api_client.cpp
 	src/api_client.h
+	src/coach.cpp
+	src/coach.h
+	src/guide.cpp
+	src/guide.h
+	src/help_panel.cpp
+	src/help_panel.h
+	src/hints.cpp
+	src/hints.h
 	src/icons.cpp
 	src/icons.h
 	src/look_panel.cpp

@@ -40,7 +40,7 @@ import { listAssets } from './assets.mjs';
 import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
-import { clipsFolder, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
+import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
 import { createTasks } from './tasks.mjs';
 
 // The app folder (repo or install): settings folders may not point into it (D284).
@@ -345,11 +345,18 @@ export function createStudioServer(opts) {
   // Settings (D284): clip choices and folders. Refused while live (a change would load the GPU or move files mid-show).
   async function settingsRoute(res, body) {
     if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
-    if (live) return json(res, 409, { error: 'live', detail: 'Change settings after the stream.' });
+    if (live && !guideOnly(body)) return json(res, 409, { error: 'live', detail: 'Change settings after the stream.' }); // guide: tips only change what the window shows
     const problems = settingsProblems(body, { forbidden: [REPO_ROOT] });
     if (problems.length) return json(res, 400, { error: 'bad-settings', detail: problems.join('; ').slice(0, 400) });
+    if (guideOnly(body)) { try { return json(res, 200, { settings: writeSettings(opts.dataDir, body) }); } catch (e) { return json(res, 500, { error: 'not-saved', detail: String(e.message).slice(0, 200) }); } } // guide: no task, no toast
     const t = tasks.start({ title: 'Saving your settings', kind: 'settings' });
     try { const settings = writeSettings(opts.dataDir, body); t.done(); return json(res, 200, { settings }); } catch (e) { t.fail('Could not save'); return json(res, 500, { error: 'not-saved', detail: String(e.message).slice(0, 200) }); }
+  }
+  // Tips and tours (D294 proposed): data/guide/tour.json and hints.json, plain text for the studio window. A missing or
+  // broken file gives an empty list: the window then shows no tips, and nothing else changes.
+  function guideData() {
+    const read = (n, key) => { try { const j = JSON.parse(readFileSync(path.join(REPO_ROOT, 'data', 'guide', n), 'utf8')); return Array.isArray(j[key]) ? j[key] : []; } catch { return []; } };
+    return { tours: read('tour.json', 'tours'), hints: read('hints.json', 'hints') };
   }
   // The answer to "make clips from it?": the launcher picks it up (record-clips.mjs).
   function clipAnswer(res, body) {
@@ -655,6 +662,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
+    if (req.method === 'GET' && route === '/ui/api/guide') return json(res, 200, guideData()); // guide (D294 proposed)
     if (req.method === 'GET' && route === '/ui/api/settings') return json(res, 200, typeof opts.dataDir === 'string' ? { settings: readSettings(opts.dataDir), clips: clipStatus() } : { settings: null });
     if (req.method === 'GET' && route === '/ui/api/edits') return json(res, 200, history.state());
     if (req.method === 'GET' && route === '/ui/api/project/structure') return structureChoices(res);

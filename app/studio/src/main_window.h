@@ -35,6 +35,7 @@ class QCheckBox;
 class TaskBar;
 class LookPanel;
 class StatsCards;
+class Guide;
 
 // A native child widget the host draws a canvas preview into (P5a step 4): the host makes its preview a child
 // window of this widget's handle and resizes it when the slot changes size. If the host refuses (no canvas yet, host
@@ -67,6 +68,7 @@ public:
 	// Headless probe (tests only, UJWALAM_STUDIO_PROBE_MS): what the panels show now, as plain data. Never shown.
 	QJsonObject probe() const;
 	QWidget *settingsWindow() const; // the open Settings window (tests: for the picture)
+	void refreshGuide();             // tips/tour cards re-placed (tests: before a picture)
 
 protected:
 	void closeEvent(class QCloseEvent *e) override; // one close for the whole app (D280)
@@ -222,6 +224,9 @@ private:
 	QLabel *note_ = nullptr;
 	QList<PreviewSlot *> slots_;
 	QPushButton *settingsBtn_ = nullptr, *clipsFolderBtn_ = nullptr;
+	Guide *guide_ = nullptr;       // tips, tour and help (D294 proposed)
+	QPushButton *helpBtn_ = nullptr;
+	QWidget *moreBtn_ = nullptr;
 	TaskBar *tasks_ = nullptr;     // task chip, list and toasts (D287)
 	StatsCards *stats_ = nullptr;  // session time, GPU, CPU, fps with history
 	QJsonObject clips_;           // status.clips: settings, state, asks, last result (D284)

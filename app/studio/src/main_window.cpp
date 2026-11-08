@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "main_window.h"
+#include "guide.h"
 #include "icons.h"
 #include "add_dialogs.h"
 #include "look_panel.h"
@@ -425,6 +426,28 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	tasks_ = new TaskBar(this);
 	statusBar()->insertPermanentWidget(0, tasks_->chip()); // before host / event core; hidden while nothing runs
 	resize(1400, 860);
+	// Tips and tour (D294 proposed): the parts of the window they point at, by name (data/guide/*.json).
+	guide_ = new Guide(this, api_);
+	QWidget *mixW = mixerBox_->parentWidget();
+	while (mixW && !qobject_cast<QGroupBox *>(mixW))
+		mixW = mixW->parentWidget();
+	guide_->anchor(QStringLiteral("scenes"), {sceneList_});
+	guide_->anchor(QStringLiteral("layers"), {layerList_});
+	guide_->anchor(QStringLiteral("previewH"), {slots_.value(0) ? slots_.value(0)->parentWidget() : nullptr});
+	guide_->anchor(QStringLiteral("previewV"), {slots_.value(1) ? slots_.value(1)->parentWidget() : nullptr});
+	guide_->anchor(QStringLiteral("look"), {look_});
+	guide_->anchor(QStringLiteral("mixer"), {mixW});
+	guide_->anchor(QStringLiteral("ctlStream"), {streamBtn_->parentWidget()});
+	guide_->anchor(QStringLiteral("ctlRecord"), {recordBtn_->parentWidget()});
+	guide_->anchor(QStringLiteral("ctlClip"), {clipBtn_->parentWidget()});
+	guide_->anchor(QStringLiteral("ctlMark"), {markBtn_->parentWidget()});
+	guide_->anchor(QStringLiteral("chips"), {pillLive_, pillRec_, pillClips_});
+	guide_->anchor(QStringLiteral("chipClips"), {pillClips_});
+	guide_->anchor(QStringLiteral("taskChip"), {tasks_->chip()});
+	guide_->anchor(QStringLiteral("myClips"), {clipsFolderBtn_});
+	guide_->anchor(QStringLiteral("settings"), {settingsBtn_});
+	guide_->anchor(QStringLiteral("more"), {moreBtn_});
+	guide_->attachHelpButton(helpBtn_);
 }
 
 // Slim top toolbar (D290, after the reference): icon + short label buttons on the left, state chips and the
@@ -503,6 +526,14 @@ QWidget *MainWindow::buildTop()
 	menu->setToolTipsVisible(true);
 	more->setMenu(menu);
 	h->addWidget(more);
+	moreBtn_ = more;
+	helpBtn_ = new QPushButton(QStringLiteral("?"), w); // floating help and tips (guide.*)
+	helpBtn_->setObjectName(QStringLiteral("tb"));
+	helpBtn_->setToolTip(QStringLiteral("Help: how clips are made, how posting works, and the welcome tour."));
+	helpBtn_->setFlat(true);
+	helpBtn_->setCursor(Qt::PointingHandCursor);
+	helpBtn_->setFixedWidth(34);
+	h->addWidget(helpBtn_);
 	pillStats_->setParent(this); // the numbers live in the stats cards now (D287)
 	pillStats_->hide();
 	statusBar()->addPermanentWidget(pillHost_);
@@ -1151,6 +1182,7 @@ void MainWindow::start()
 		connect(sc, &QShortcut::activated, this, [this, undo]() { undoRedo(undo); });
 	}
 	loadUiSettings();
+	guide_->start();
 	loadScenes();
 	pollStatus();
 	auto *st = new QTimer(this);
@@ -1311,6 +1343,7 @@ void MainWindow::renderInspector()
 		look_->setEffects(effEdit_);
 		if (other)
 			look_->clearPending();
+		guide_->onLayerEffects(editable && !effEdit_.isEmpty());
 	}
 	inspEmpty_->setVisible(!editable);
 	if (!l.isEmpty() && !editable)
@@ -1802,6 +1835,7 @@ void MainWindow::pollStatus()
 			       h.value(QStringLiteral("droppedFrames")).toInt(), live_, recording_);
 		tasks_->update(s.value(QStringLiteral("tasks")).toArray(), s.value(QStringLiteral("at")).toDouble());
 		updateClips(s.value(QStringLiteral("clips")).toObject());
+		guide_->onStatus(s);
 		// A layer moved or resized with the mouse on the embedded preview (D230): select it, reload layers + inspector.
 		const QJsonObject pe = h.value(QStringLiteral("previewEdit")).toObject();
 		if (!pe.isEmpty()) {
@@ -1901,6 +1935,11 @@ void MainWindow::loadFlags()
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("posting"))
 				po = x.toObject().value(QStringLiteral("on")).toBool();
 		postsAct_->setVisible(po);
+		bool ap = false;
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("auto-post"))
+				ap = x.toObject().value(QStringLiteral("on")).toBool();
+		guide_->setFlags(po, ap);
 		if (bo != botsOn_) {
 			botsOn_ = bo;
 			botBox_->setVisible(bo);
@@ -3266,6 +3305,9 @@ void MainWindow::openSettings(bool firstRun)
 		auto *appear = new appearance::Page(theme::currentId(), theme::effects(), motionNow, dlg);
 		pap->addWidget(appear, 1);
 
+		// Help & tips (D294 proposed): tips on/off, reset "Don't show again", replay the welcome tour
+		guide_->fillSettingsPage(page(QStringLiteral("Help & tips")), dlg);
+
 		// Advanced: the developer feature flags
 		auto *pa = page(QStringLiteral("Advanced"));
 		auto *flagBox = new QGroupBox(QStringLiteral("FEATURE FLAGS (FOR TESTING NEW FEATURES)"), dlg);
@@ -3420,6 +3462,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("clipAsks"), clips_.value(QStringLiteral("asks")).toArray().size());
 	o.insert(QStringLiteral("clipSettings"), clips_.value(QStringLiteral("settings")));
 	o.insert(QStringLiteral("tasks"), tasks_->probe());
+	o.insert(QStringLiteral("guide"), guide_->probe());
 	o.insert(QStringLiteral("stats"), QJsonObject{{QStringLiteral("samples"), stats_->samples()}, {QStringLiteral("session"), stats_->sessionText()}});
 	o.insert(QStringLiteral("motion"), motion::systemAnimations());
 	o.insert(QStringLiteral("motionMode"), motion::mode());
@@ -3477,6 +3520,11 @@ QWidget *MainWindow::settingsWindow() const
 	return settingsDlg_.data();
 }
 
+void MainWindow::refreshGuide()
+{
+	guide_->refresh();
+}
+
 bool MainWindow::probeAction(const QString &action)
 {
 	const QStringList p = action.split(QLatin1Char(':'));
@@ -3487,6 +3535,8 @@ bool MainWindow::probeAction(const QString &action)
 				out = w->findChildren<QPushButton *>();
 		return out;
 	};
+	if (action.startsWith(QStringLiteral("guide-")))
+		return guide_->probeAction(action); // tips, tour and help (D294 proposed)
 	// Look panel and Settings (D290): the real widgets are clicked, so their own handlers run.
 	if (p.size() == 2 && (p[0] == QStringLiteral("theme") || p[0] == QStringLiteral("effects"))) // D293
 		return theme::probeAction(action);

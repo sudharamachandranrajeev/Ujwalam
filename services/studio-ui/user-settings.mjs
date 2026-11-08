@@ -9,6 +9,7 @@
 //                    a match passes when any rule that is on holds; default { top3: true, minKills: null }
 //   folders.recordings: where recordings are saved (used from the next start); null = <host data>/recordings
 //   folders.clips: where finished clips are saved; null = <dataDir>/clips
+//   ui.motion (D290), ui.guide (D294 proposed): see the blocks below
 // Read by the launcher (record-clips.mjs), the UI server and the Python clipper (clip_common.clip_settings).
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -50,11 +51,49 @@ function readMatchGate(g) {
 // ui.motion: how the studio window animates: "system" (follow the Windows animation setting) | "on" | "off".
 // Present in the file and in readSettings() only once the user has chosen. UJWALAM_REDUCE_MOTION still overrides.
 export const UI_MOTION = Object.freeze(['system', 'on', 'off']);
+
+// ---- guide settings (D294 proposed) begin: ui.guide = { tips, dismissed, tourDone } for the tips and the welcome tour
+// (app/studio/src/guide.*, data/guide/*.json). tips: show tips and hints; dismissed: ids ticked "Don't show again"
+// (short slugs from the data files, at most 200); tourDone: the welcome tour was finished or skipped for good.
+// Also marked "guide" below: one line each in uiProblems, uiRead, mergeUi and settingsRoute (server.mjs).
+export const GUIDE_DEFAULTS = Object.freeze({ tips: true, dismissed: Object.freeze([]), tourDone: false });
+export const GUIDE_MAX_IDS = 200;
+const GUIDE_ID = /^[a-z][a-z0-9-]{0,39}$/;
+
+/** Problems with a ui.guide value (whole or partial: { tips?, dismissed?, tourDone? }); [] when fine. */
+export function guideProblems(g) {
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return ['ui.guide must be an object'];
+  const out = [];
+  for (const [k, v] of Object.entries(g)) {
+    if (k === 'tips' || k === 'tourDone') { if (typeof v !== 'boolean') out.push(`ui.guide.${k} must be true or false`); }
+    else if (k === 'dismissed') {
+      if (!Array.isArray(v)) out.push('ui.guide.dismissed must be a list of ids');
+      else if (v.length > GUIDE_MAX_IDS) out.push(`ui.guide.dismissed holds at most ${GUIDE_MAX_IDS} ids`);
+      else if (v.some((x) => typeof x !== 'string' || !GUIDE_ID.test(x))) out.push('ui.guide.dismissed ids must be short lower-case slugs (a-z, 0-9, -)');
+    } else out.push(`unknown guide setting ${k}`);
+  }
+  return out;
+}
+
+/** ui.guide from a settings file value: each part checked on its own, defaults for anything missing or bad. */
+function readGuide(g) {
+  const d = GUIDE_DEFAULTS;
+  if (!g || typeof g !== 'object' || Array.isArray(g)) return { tips: d.tips, dismissed: [], tourDone: d.tourDone };
+  const ids = Array.isArray(g.dismissed) ? [...new Set(g.dismissed.filter((x) => typeof x === 'string' && GUIDE_ID.test(x)))].slice(0, GUIDE_MAX_IDS) : [];
+  return { tips: typeof g.tips === 'boolean' ? g.tips : d.tips, dismissed: ids, tourDone: typeof g.tourDone === 'boolean' ? g.tourDone : d.tourDone };
+}
+
+/** A settings patch that changes nothing but ui.guide (allowed while live: it only changes what the window shows). */
+export const guideOnly = (patch) => !!patch && typeof patch === 'object' && Object.keys(patch).length === 1 && !!patch.ui && typeof patch.ui === 'object'
+  && !Array.isArray(patch.ui) && Object.keys(patch.ui).length === 1 && patch.ui.guide !== undefined;
+// ---- guide settings end
+
 const uiProblems = (ui) => {
   if (!ui || typeof ui !== 'object' || Array.isArray(ui)) return ['ui must be an object'];
   const out = [];
   for (const [k, v] of Object.entries(ui)) {
     if (k === 'theme' || k === 'effects') out.push(...themeProblems(k, v)); // D293
+    else if (k === 'guide') out.push(...guideProblems(v)); // guide
     else if (k !== 'motion') out.push(`unknown ui setting ${k}`);
     else if (!UI_MOTION.includes(v)) out.push(`ui.motion must be one of ${UI_MOTION.join(', ')}`);
   }
@@ -62,7 +101,14 @@ const uiProblems = (ui) => {
 };
 const uiRead = (j) => {
   const ui = { ...(j?.ui && typeof j.ui === 'object' && UI_MOTION.includes(j.ui.motion) ? { motion: j.ui.motion } : {}), ...themeRead(j?.ui) }; // D293
+  if (j?.ui && typeof j.ui === 'object' && j.ui.guide !== undefined) ui.guide = readGuide(j.ui.guide); // guide
   return Object.keys(ui).length ? { ui } : {};
+};
+/** ui after a checked patch: motion replaces; guide merges part by part (dismissed is replaced whole, de-duplicated). */
+const mergeUi = (cur, patch) => {
+  const out = { ...(cur ?? {}), ...(patch ?? {}) };
+  if (patch?.guide !== undefined) out.guide = readGuide({ ...(cur?.guide ?? {}), ...patch.guide }); // guide
+  return out;
 };
 // --- end ui settings ----------------------------------------------------------------------------------------------
 
@@ -137,7 +183,7 @@ export function writeSettings(dataDir, patch) {
     // match gate: matchGate merges part by part, so changing minKills keeps top3 (and the other way round)
     clips: { ...cur.clips, ...(patch.clips ?? {}), matchGate: { ...cur.clips.matchGate, ...(patch.clips?.matchGate ?? {}) } },
     folders: { ...cur.folders, ...(patch.folders ?? {}) },
-    ...(cur.ui || patch.ui ? { ui: { ...(cur.ui ?? {}), ...(patch.ui ?? {}) } } : {}), // D290
+    ...(cur.ui || patch.ui ? { ui: mergeUi(cur.ui, patch.ui) } : {}), // D290, guide
   };
   for (const k of ['recordings', 'clips']) if (typeof next.folders[k] === 'string') mkdirSync(next.folders[k], { recursive: true });
   mkdirSync(dataDir, { recursive: true });

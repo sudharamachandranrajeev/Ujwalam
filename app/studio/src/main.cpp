@@ -99,6 +99,7 @@ int main(int argc, char **argv)
 								w->layout()->activate();
 						win.layout()->activate();
 					}
+					win.refreshGuide(); // tips, tour and help cards re-placed on the laid-out window
 					o.insert(QStringLiteral("shot"), win.grab().save(shot, "PNG"));
 					if (QWidget *sw = win.settingsWindow()) { // an open Settings window gets its own picture
 						for (QWidget *w : sw->findChildren<QWidget *>())
