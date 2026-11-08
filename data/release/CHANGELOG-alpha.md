@@ -2,6 +2,17 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.9 — 2026-11-08
+
+- Game audio no longer drops out at start (the capture card's sound could stop for a whole session). If game or mic sound stops anyway, Ujwalam says "Game audio missing" and restarts it.
+- The studio window no longer closes when a clip job finishes. If it ever crashes, it writes a short report and reopens itself.
+- The desktop shortcut starts Ujwalam with no black console window.
+- "Ready to go live?" check before streaming (switch "readiness" in the control page): keys, disk, other streaming apps, bots, audio, GPU. "End all streams" stops every stream and keeps the recording.
+- Kill montages use all your kills, streaks first; more kills make more montages.
+- The clips folder holds only finished videos, one folder per day, with clear names (for example codm_montage_20261108-185824_kills-5_01_v.mp4). Working files stay in the app's own folder. Used live-clip saves are deleted after editing.
+- Clips keep every sound track of the recording.
+- Auto posting (switches "posting" and "auto-post", plus a rule): clips, montages and match reels upload privately to YouTube after a recording, never while live, with retries. The queue shows in the control page and Posts. Needs the YouTube sign-in set up first.
+- Several layer looks, themes and the welcome tour from the last builds; face background removal and tracking stay switched off (switch "face-ai").
 ## 0.1.0-alpha.8 — 2026-11-08
 
 - Look panel: select a layer to change its look: rounded corners, filters (sharpen, vignette, film grain, pixelate, posterize, black and white, sepia), camera (mirror, flip, circle or rounded shape with a ring), blend (opacity, add, multiply, screen and more, gradient fade) and shadow and glow. No hidden switch needed; while live, changes wait for Apply and "yes, on air".
