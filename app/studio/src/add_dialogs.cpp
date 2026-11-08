@@ -77,12 +77,13 @@ void polish(QWidget *w)
 	w->setStyleSheet(w->styleSheet() + QStringLiteral(
 		"QPushButton:focus, QToolButton:focus { border-color: %1; }"
 		"QPushButton:pressed, QToolButton:pressed { background: %2; }"
-		"QToolButton:disabled { color: #5d5972; border-color: %3; }"
+		"QToolButton:disabled { color: %5; border-color: %3; }"
 		"QListWidget:focus { border-color: %1; }"
-		"QListWidget::item:disabled { color: #5d5972; }"
-		"QMenu::item:disabled { color: #5d5972; background: transparent; }"
+		"QListWidget::item:disabled { color: %5; }"
+		"QMenu::item:disabled { color: %5; background: transparent; }"
 		"QMenu::item:pressed { background: %4; }")
-			.arg(QLatin1String(theme::kAccent), QLatin1String(theme::kBorder), QLatin1String(theme::kField), QLatin1String(theme::kAccentHi)));
+			.arg(theme::hex(QStringLiteral("accent")), theme::hex(QStringLiteral("border")), theme::hex(QStringLiteral("field")), theme::hex(QStringLiteral("accentHi")),
+			     theme::hex(QStringLiteral("disabled"))));
 }
 
 void popIn(QWidget *w, bool grow)

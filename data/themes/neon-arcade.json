@@ -1,0 +1,185 @@
+{
+  "$schema": "./theme.schema.json",
+  "id": "neon-arcade",
+  "name": "Neon Arcade",
+  "topic": "Cyber esports: near-black glass, cyan neon, sharp corners, a glowing edge on everything that is on or in focus.",
+  "version": 1,
+  "dark": true,
+  "colors": {
+    "bg": "#07070f",
+    "panel": "#0d0d1c",
+    "field": "#14142a",
+    "border": "#26264a",
+    "text": "#e8fbff",
+    "muted": "#8f9bc4",
+    "accent": "#00e5ff",
+    "accentHi": "#5cf2ff",
+    "danger": "#ff2e63",
+    "ok": "#39ff88",
+    "onAccent": "#02121a",
+    "disabled": "#555a7a"
+  },
+  "gradients": {
+    "window": {
+      "from": "#07070f",
+      "to": "#10082a",
+      "angle": 90
+    },
+    "accent": {
+      "from": "#00f0ff",
+      "to": "#00b4e6",
+      "angle": 90
+    }
+  },
+  "typography": {
+    "family": "Bahnschrift SemiCondensed",
+    "fallbacks": [
+      "Bahnschrift",
+      "Segoe UI"
+    ],
+    "baseSize": 10.5,
+    "captionSize": 8.5,
+    "titleSize": 16,
+    "headingWeight": 700,
+    "letterSpacing": 0.3,
+    "captionLetterSpacing": 1.6,
+    "captionCaps": true
+  },
+  "geometry": {
+    "radius": {
+      "small": 2,
+      "medium": 3,
+      "large": 6
+    },
+    "spacing": {
+      "small": 4,
+      "medium": 8,
+      "large": 12
+    },
+    "borderWidth": 1,
+    "controlHeight": 18,
+    "roundControl": 52
+  },
+  "depth": {
+    "card": {
+      "shadow": {
+        "blur": 18,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 14,
+        "color": "accent",
+        "opacity": 0.14,
+        "when": "always"
+      }
+    },
+    "button": {
+      "glow": {
+        "blur": 10,
+        "color": "accent",
+        "opacity": 0.35,
+        "when": "hover"
+      }
+    },
+    "primaryButton": {
+      "shadow": {
+        "blur": 8,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#000000",
+        "opacity": 0.4
+      },
+      "glow": {
+        "blur": 20,
+        "color": "accent",
+        "opacity": 0.55,
+        "when": "always"
+      }
+    },
+    "roundControl": {
+      "shadow": {
+        "blur": 10,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 24,
+        "color": "auto",
+        "opacity": 0.65,
+        "when": "active"
+      },
+      "extrusion": {
+        "depth": 2,
+        "color": "#00323a"
+      }
+    },
+    "toast": {
+      "shadow": {
+        "blur": 20,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.6
+      },
+      "glow": {
+        "blur": 18,
+        "color": "accent",
+        "opacity": 0.35,
+        "when": "always"
+      }
+    },
+    "menu": {
+      "shadow": {
+        "blur": 16,
+        "offsetX": 0,
+        "offsetY": 4,
+        "color": "#000000",
+        "opacity": 0.6
+      },
+      "glow": {
+        "blur": 12,
+        "color": "accent",
+        "opacity": 0.25,
+        "when": "always"
+      }
+    },
+    "taskPanel": {
+      "shadow": {
+        "blur": 22,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.6
+      },
+      "glow": {
+        "blur": 16,
+        "color": "accent",
+        "opacity": 0.25,
+        "when": "always"
+      }
+    }
+  },
+  "motion": {
+    "fastMs": 90,
+    "normalMs": 140,
+    "slowMs": 200,
+    "easing": "outExpo",
+    "hoverLift": 1,
+    "pressSink": 1
+  },
+  "background": {
+    "kind": "pattern",
+    "pattern": "grid",
+    "patternColor": "#00e5ff",
+    "patternOpacity": 0.05,
+    "patternSpacing": 32
+  },
+  "icons": {
+    "stroke": 2.2
+  }
+}

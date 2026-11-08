@@ -14,6 +14,12 @@ add_executable(ujwalam-studio WIN32
 	src/main.cpp
 	src/add_dialogs.cpp
 	src/add_dialogs.h
+	src/appearance.cpp
+	src/appearance.h
+	src/depth.cpp
+	src/depth.h
+	src/interaction.cpp
+	src/interaction.h
 	src/api_client.cpp
 	src/api_client.h
 	src/icons.cpp
@@ -30,6 +36,11 @@ add_executable(ujwalam-studio WIN32
 	src/taskbar.h
 	src/theme.cpp
 	src/theme.h)
+# Built-in theme packs (D293): data/themes/*.json embedded as :/themes/<id>.json. A file with the same id next to the
+# exe, in the app-data folder or the repo replaces the embedded one; a new id there is a custom theme.
+file(GLOB UJW_THEME_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes/*.json")
+list(FILTER UJW_THEME_FILES EXCLUDE REGEX "\.schema\.json$")
+qt_add_resources(ujwalam-studio themes PREFIX "/themes" BASE "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes" FILES ${UJW_THEME_FILES})
 target_link_libraries(ujwalam-studio PRIVATE Qt6::Widgets Qt6::Network)
 if(WIN32)
 	target_link_libraries(ujwalam-studio PRIVATE user32)

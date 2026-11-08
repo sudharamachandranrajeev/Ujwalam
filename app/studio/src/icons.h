@@ -10,6 +10,6 @@ namespace icons {
 
 // name: play | stop | record | clip | flag | undo | redo | folder | gear | more | sliders. Unknown names give an empty icon.
 // The icon has a normal and a dimmed (disabled) pixmap, 2x for sharp edges on high-DPI screens.
-QIcon make(const QString &name, const QColor &colour, int px = 20);
+QIcon make(const QString &name, const QColor &colour, int px = 20, const QColor &disabled = QColor());
 
 } // namespace icons

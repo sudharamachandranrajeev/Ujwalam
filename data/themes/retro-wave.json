@@ -1,0 +1,190 @@
+{
+  "$schema": "./theme.schema.json",
+  "id": "retro-wave",
+  "name": "Retro Wave",
+  "topic": "Synthwave sunset: indigo night gradient, pink and cyan glow, chrome-edged round buttons.",
+  "version": 1,
+  "dark": true,
+  "colors": {
+    "bg": "#120a24",
+    "panel": "#1a0f33",
+    "field": "#24154a",
+    "border": "#3d2478",
+    "text": "#f6e9ff",
+    "muted": "#b19ad6",
+    "accent": "#ff3cac",
+    "accentHi": "#ff7ac8",
+    "danger": "#ff5470",
+    "ok": "#2ef2c9",
+    "onAccent": "#1a0a22",
+    "disabled": "#6d5a96"
+  },
+  "gradients": {
+    "window": {
+      "from": "#0e0720",
+      "to": "#2a0f4a",
+      "angle": 90
+    },
+    "accent": {
+      "from": "#ff5cc0",
+      "to": "#ff3cac",
+      "angle": 0
+    }
+  },
+  "typography": {
+    "family": "Trebuchet MS",
+    "fallbacks": [
+      "Segoe UI"
+    ],
+    "baseSize": 10,
+    "captionSize": 8,
+    "titleSize": 16,
+    "headingWeight": 700,
+    "letterSpacing": 0.2,
+    "captionLetterSpacing": 1.4,
+    "captionCaps": true
+  },
+  "geometry": {
+    "radius": {
+      "small": 6,
+      "medium": 10,
+      "large": 18
+    },
+    "spacing": {
+      "small": 4,
+      "medium": 8,
+      "large": 12
+    },
+    "borderWidth": 1,
+    "controlHeight": 18,
+    "roundControl": 52
+  },
+  "depth": {
+    "card": {
+      "shadow": {
+        "blur": 20,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#05010f",
+        "opacity": 0.45
+      },
+      "glow": {
+        "blur": 16,
+        "color": "accent",
+        "opacity": 0.14,
+        "when": "always"
+      }
+    },
+    "button": {
+      "glow": {
+        "blur": 10,
+        "color": "accentHi",
+        "opacity": 0.3,
+        "when": "hover"
+      }
+    },
+    "primaryButton": {
+      "shadow": {
+        "blur": 8,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#05010f",
+        "opacity": 0.4
+      },
+      "glow": {
+        "blur": 18,
+        "color": "accent",
+        "opacity": 0.5,
+        "when": "always"
+      },
+      "extrusion": {
+        "depth": 2,
+        "color": "#8a1e66",
+        "color2": "#c04a9a"
+      }
+    },
+    "roundControl": {
+      "shadow": {
+        "blur": 10,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#05010f",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 22,
+        "color": "auto",
+        "opacity": 0.55,
+        "when": "active"
+      },
+      "extrusion": {
+        "depth": 3,
+        "color": "#5c6a8a",
+        "color2": "#b8c4e0"
+      }
+    },
+    "toast": {
+      "shadow": {
+        "blur": 22,
+        "offsetX": 0,
+        "offsetY": 6,
+        "color": "#05010f",
+        "opacity": 0.55
+      },
+      "glow": {
+        "blur": 16,
+        "color": "accentHi",
+        "opacity": 0.3,
+        "when": "always"
+      }
+    },
+    "menu": {
+      "shadow": {
+        "blur": 18,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#05010f",
+        "opacity": 0.55
+      },
+      "glow": {
+        "blur": 12,
+        "color": "accent",
+        "opacity": 0.25,
+        "when": "always"
+      }
+    },
+    "taskPanel": {
+      "shadow": {
+        "blur": 24,
+        "offsetX": 0,
+        "offsetY": 6,
+        "color": "#05010f",
+        "opacity": 0.55
+      },
+      "glow": {
+        "blur": 14,
+        "color": "accent",
+        "opacity": 0.2,
+        "when": "always"
+      }
+    }
+  },
+  "motion": {
+    "fastMs": 110,
+    "normalMs": 170,
+    "slowMs": 240,
+    "easing": "outBack",
+    "hoverLift": 2,
+    "pressSink": 1
+  },
+  "background": {
+    "kind": "pattern",
+    "pattern": "scanlines",
+    "patternColor": "#ff3cac",
+    "patternOpacity": 0.035,
+    "patternSpacing": 4
+  },
+  "icons": {
+    "stroke": 2
+  }
+}

@@ -1,0 +1,42 @@
+[
+  {
+    "depthWidgets": 52,
+    "full": 9.212466,
+    "reduced": 5.588243,
+    "theme": "neon-arcade",
+    "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
+    "eligible": 52
+  },
+  {
+    "depthWidgets": 52,
+    "full": 10.570322,
+    "reduced": 4.967263,
+    "theme": "retro-wave",
+    "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
+    "eligible": 52
+  },
+  {
+    "depthWidgets": 52,
+    "full": 12.09218,
+    "reduced": 5.747362000000001,
+    "theme": "studio-light",
+    "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
+    "eligible": 52
+  },
+  {
+    "depthWidgets": 52,
+    "full": 9.161862,
+    "reduced": 6.7987530000000005,
+    "theme": "tactical",
+    "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
+    "eligible": 52
+  },
+  {
+    "depthWidgets": 11,
+    "full": 10.380377000000001,
+    "reduced": 5.921504,
+    "theme": "violet-night",
+    "unit": "ms per full-window paint, 1600x900, effect caches dropped each time",
+    "eligible": 11
+  }
+]

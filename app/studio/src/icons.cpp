@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "icons.h"
+#include "theme.h"
 
 #include <QPainter>
 #include <QPainterPath>
@@ -11,7 +12,7 @@ namespace {
 
 void draw(QPainter &p, const QString &n, const QColor &c)
 {
-	QPen pen(c, 2.0, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
+	QPen pen(c, theme::iconStroke(), Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
 	p.setPen(pen);
 	p.setBrush(Qt::NoBrush);
 	if (n == QLatin1String("play")) {
@@ -119,12 +120,13 @@ QPixmap pixmap(const QString &name, const QColor &c, int px)
 
 } // namespace
 
-QIcon make(const QString &name, const QColor &colour, int px)
+QIcon make(const QString &name, const QColor &colour, int px, const QColor &disabled)
 {
 	QIcon i;
 	i.addPixmap(pixmap(name, colour, px), QIcon::Normal);
-	QColor dim = colour;
-	dim.setAlphaF(0.35f);
+	QColor dim = disabled.isValid() ? disabled : colour;
+	if (!disabled.isValid())
+		dim.setAlphaF(0.35f);
 	i.addPixmap(pixmap(name, dim, px), QIcon::Disabled);
 	return i;
 }

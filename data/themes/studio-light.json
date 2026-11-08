@@ -1,0 +1,145 @@
+{
+  "$schema": "./theme.schema.json",
+  "id": "studio-light",
+  "name": "Studio Light",
+  "topic": "Clean light workspace for daytime editing: paper-white cards, soft shadows, no glow, rounded and quiet.",
+  "version": 1,
+  "dark": false,
+  "colors": {
+    "bg": "#eef0f5",
+    "panel": "#ffffff",
+    "field": "#f4f5f9",
+    "border": "#d3d7e2",
+    "text": "#1c2030",
+    "muted": "#5a6178",
+    "accent": "#4f46e5",
+    "accentHi": "#4338ca",
+    "danger": "#c62828",
+    "ok": "#17794f",
+    "onAccent": "#ffffff",
+    "disabled": "#9aa0b4"
+  },
+  "gradients": {
+    "window": {
+      "from": "#f3f5fa",
+      "to": "#e8ebf2",
+      "angle": 90
+    },
+    "accent": {
+      "from": "#5a52ee",
+      "to": "#4a41dc",
+      "angle": 90
+    }
+  },
+  "typography": {
+    "family": "Segoe UI",
+    "fallbacks": [
+      "Segoe UI Variable Text"
+    ],
+    "baseSize": 10,
+    "captionSize": 8,
+    "titleSize": 15,
+    "headingWeight": 600,
+    "letterSpacing": 0,
+    "captionLetterSpacing": 0.6,
+    "captionCaps": false
+  },
+  "geometry": {
+    "radius": {
+      "small": 6,
+      "medium": 9,
+      "large": 16
+    },
+    "spacing": {
+      "small": 4,
+      "medium": 8,
+      "large": 12
+    },
+    "borderWidth": 1,
+    "controlHeight": 18,
+    "roundControl": 52
+  },
+  "depth": {
+    "card": {
+      "shadow": {
+        "blur": 22,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#1c2030",
+        "opacity": 0.12
+      }
+    },
+    "button": {
+      "shadow": {
+        "blur": 6,
+        "offsetX": 0,
+        "offsetY": 1,
+        "color": "#1c2030",
+        "opacity": 0.1
+      }
+    },
+    "primaryButton": {
+      "shadow": {
+        "blur": 10,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#4f46e5",
+        "opacity": 0.22
+      }
+    },
+    "roundControl": {
+      "shadow": {
+        "blur": 12,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#1c2030",
+        "opacity": 0.18
+      }
+    },
+    "toast": {
+      "shadow": {
+        "blur": 24,
+        "offsetX": 0,
+        "offsetY": 7,
+        "color": "#1c2030",
+        "opacity": 0.22
+      }
+    },
+    "menu": {
+      "shadow": {
+        "blur": 20,
+        "offsetX": 0,
+        "offsetY": 6,
+        "color": "#1c2030",
+        "opacity": 0.22
+      }
+    },
+    "taskPanel": {
+      "shadow": {
+        "blur": 26,
+        "offsetX": 0,
+        "offsetY": 7,
+        "color": "#1c2030",
+        "opacity": 0.2
+      }
+    }
+  },
+  "motion": {
+    "fastMs": 120,
+    "normalMs": 180,
+    "slowMs": 260,
+    "easing": "outCubic",
+    "hoverLift": 1,
+    "pressSink": 1
+  },
+  "background": {
+    "kind": "gradient",
+    "pattern": "none",
+    "patternColor": "#000000",
+    "patternOpacity": 0,
+    "patternSpacing": 24
+  },
+  "icons": {
+    "stroke": 1.8
+  }
+}

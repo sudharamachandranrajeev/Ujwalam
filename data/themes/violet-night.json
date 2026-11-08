@@ -1,0 +1,153 @@
+{
+  "$schema": "./theme.schema.json",
+  "id": "violet-night",
+  "name": "Violet Night",
+  "topic": "Calm dark studio with a violet accent: soft shadows, a gentle glow on the main action.",
+  "version": 1,
+  "dark": true,
+  "colors": {
+    "bg": "#14121c",
+    "panel": "#1b1926",
+    "field": "#242132",
+    "border": "#2f2b42",
+    "text": "#e9e7f2",
+    "muted": "#9a96b0",
+    "accent": "#8650f0",
+    "accentHi": "#b18cff",
+    "danger": "#ef5a5f",
+    "ok": "#3ccf91",
+    "onAccent": "#ffffff",
+    "disabled": "#6a6680"
+  },
+  "gradients": {
+    "window": {
+      "from": "#14121c",
+      "to": "#14121c",
+      "angle": 90
+    },
+    "accent": {
+      "from": "#8650f0",
+      "to": "#7340dd",
+      "angle": 90
+    }
+  },
+  "typography": {
+    "family": "Segoe UI",
+    "fallbacks": [
+      "Segoe UI Variable Text"
+    ],
+    "baseSize": 10,
+    "captionSize": 8,
+    "titleSize": 15,
+    "headingWeight": 600,
+    "letterSpacing": 0,
+    "captionLetterSpacing": 0.8,
+    "captionCaps": false
+  },
+  "geometry": {
+    "radius": {
+      "small": 6,
+      "medium": 8,
+      "large": 16
+    },
+    "spacing": {
+      "small": 4,
+      "medium": 8,
+      "large": 12
+    },
+    "borderWidth": 1,
+    "controlHeight": 18,
+    "roundControl": 52
+  },
+  "depth": {
+    "card": {
+      "shadow": {
+        "blur": 20,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.35
+      }
+    },
+    "button": {},
+    "primaryButton": {
+      "shadow": {
+        "blur": 10,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#000000",
+        "opacity": 0.3
+      },
+      "glow": {
+        "blur": 14,
+        "color": "accent",
+        "opacity": 0.28,
+        "when": "hover"
+      }
+    },
+    "roundControl": {
+      "shadow": {
+        "blur": 12,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#000000",
+        "opacity": 0.35
+      },
+      "glow": {
+        "blur": 18,
+        "color": "auto",
+        "opacity": 0.4,
+        "when": "active"
+      },
+      "extrusion": {
+        "depth": 2,
+        "color": "#0b0911"
+      }
+    },
+    "toast": {
+      "shadow": {
+        "blur": 22,
+        "offsetX": 0,
+        "offsetY": 6,
+        "color": "#000000",
+        "opacity": 0.45
+      }
+    },
+    "menu": {
+      "shadow": {
+        "blur": 18,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.5
+      }
+    },
+    "taskPanel": {
+      "shadow": {
+        "blur": 24,
+        "offsetX": 0,
+        "offsetY": 6,
+        "color": "#000000",
+        "opacity": 0.45
+      }
+    }
+  },
+  "motion": {
+    "fastMs": 120,
+    "normalMs": 180,
+    "slowMs": 260,
+    "easing": "outCubic",
+    "hoverLift": 1,
+    "pressSink": 1
+  },
+  "background": {
+    "kind": "solid",
+    "pattern": "none",
+    "patternColor": "#ffffff",
+    "patternOpacity": 0,
+    "patternSpacing": 24
+  },
+  "icons": {
+    "stroke": 2
+  }
+}

@@ -255,9 +255,9 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.flagsInSettings, false, 'hidden until Settings > Advanced borrows it');
     assert.ok(p.flags.length > 5, 'still loaded: the list follows the server');
   });
-  test('Settings (D290): sections Clips, Folders, Layer effects, Advanced; the layer-effects item and animations choice are there', async () => {
+  test('Settings (D290): sections Clips, Folders, Layer effects, Appearance, Advanced; the layer-effects item and animations choice are there', async () => {
     const p = await probe([], 6000, 'settings-open');
-    assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Advanced']);
+    assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Appearance', 'Advanced']);
     assert.equal(p.settings.layerEffects, false);
     assert.equal(p.settings.layerEffectsText, 'Show layer effects from the scene (rounded corners, shadows, video buttons)');
     assert.equal(p.settings.motionChoices, 3, 'Follow Windows / Always on / Off');

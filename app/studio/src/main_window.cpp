@@ -3,6 +3,7 @@
 #include "icons.h"
 #include "add_dialogs.h"
 #include "look_panel.h"
+#include "appearance.h"
 #include "motion.h"
 #include "stats_cards.h"
 #include "taskbar.h"
@@ -255,29 +256,29 @@ public:
 		const bool active = i.data(Qt::UserRole + 2).toBool();
 		const bool sel = o.state & QStyle::State_Selected, hover = o.state & QStyle::State_MouseOver;
 		const QRectF r = QRectF(o.rect).adjusted(2, 3, -2, -3);
-		QColor fill(theme::kField);
+		QColor fill(theme::color(QStringLiteral("field")));
 		if (hover || sel)
-			fill = motion::mix(fill, QColor(theme::kAccent), sel ? 0.22 : 0.08);
+			fill = motion::mix(fill, theme::color(QStringLiteral("accent")), sel ? 0.22 : 0.08);
 		p->setBrush(fill);
-		p->setPen(QPen(QColor(active ? theme::kAccent : theme::kBorder), active ? 1.6 : 1.0));
+		p->setPen(QPen(theme::color(active ? QStringLiteral("accent") : QStringLiteral("border")), active ? 1.6 : 1.0));
 		p->drawRoundedRect(r, 12, 12);
 		if (active) { // a small accent bar on the left edge
 			p->setPen(Qt::NoPen);
-			p->setBrush(QColor(theme::kAccent));
+			p->setBrush(theme::color(QStringLiteral("accent")));
 			p->drawRoundedRect(QRectF(r.left() + 8, r.top() + 12, 4, r.height() - 24), 2, 2);
 		}
 		QFont f = o.font;
 		f.setBold(true);
 		f.setPointSizeF(12.5);
 		p->setFont(f);
-		p->setPen(QColor(theme::kText));
+		p->setPen(theme::color(QStringLiteral("text")));
 		const QRectF text = r.adjusted(active ? 22 : 16, 8, -12, -8);
 		p->drawText(QRectF(text.left(), text.top(), text.width(), 22), Qt::AlignVCenter | Qt::AlignLeft, p->fontMetrics().elidedText(i.data(Qt::DisplayRole).toString(), Qt::ElideRight, (int)text.width()));
 		QFont c = o.font;
 		c.setPointSizeF(8);
 		c.setLetterSpacing(QFont::AbsoluteSpacing, 0.8);
 		p->setFont(c);
-		p->setPen(QColor(active ? theme::kAccentHi : theme::kMuted));
+		p->setPen(theme::color(active ? QStringLiteral("accentHi") : QStringLiteral("muted")));
 		p->drawText(QRectF(text.left(), text.top() + 22, text.width(), 16), Qt::AlignVCenter | Qt::AlignLeft, i.data(Qt::UserRole + 1).toString());
 		p->restore();
 	}
@@ -295,6 +296,8 @@ PreviewSlot::PreviewSlot(ApiClient *api, QString canvas, QWidget *parent)
 	pal.setColor(QPalette::WindowText, QColor(200, 200, 200));
 	setPalette(pal);
 	auto *l = new QVBoxLayout(this);
+	// The preview surface stays dark in every theme, so its message keeps a fixed light colour (not a theme token).
+	msg_->setStyleSheet(QStringLiteral("QLabel { color: #c8c8c8; background: transparent; }"));
 	msg_->setAlignment(Qt::AlignCenter);
 	msg_->setWordWrap(true);
 	l->addWidget(msg_);
@@ -423,7 +426,7 @@ QWidget *MainWindow::buildTop()
 	auto *h = new QHBoxLayout(w);
 	h->setContentsMargins(4, 0, 4, 0);
 	h->setSpacing(4);
-	const QColor ink(theme::kText);
+	const QColor ink(theme::color(QStringLiteral("text")));
 	auto *brand = new QLabel(QStringLiteral("Ujwalam"), w);
 	brand->setObjectName(QStringLiteral("brand"));
 	h->addWidget(brand);
@@ -431,6 +434,7 @@ QWidget *MainWindow::buildTop()
 	auto tool = [&](const QString &icon, const QString &text, const QString &tip) {
 		auto *b = new QPushButton(icons::make(icon, ink, 18), text, w);
 		b->setObjectName(QStringLiteral("tb"));
+		b->setProperty("themeIcon", icon + QStringLiteral(":18")); // drawn again when the theme changes (theme.cpp)
 		b->setToolTip(tip);
 		b->setFlat(true);
 		b->setCursor(Qt::PointingHandCursor);
@@ -470,6 +474,7 @@ QWidget *MainWindow::buildTop()
 	auto *more = new QToolButton(w);
 	more->setObjectName(QStringLiteral("tb"));
 	more->setIcon(icons::make(QStringLiteral("more"), ink, 18));
+	more->setProperty("themeIcon", QStringLiteral("more:18"));
 	more->setText(QStringLiteral("More"));
 	more->setPopupMode(QToolButton::InstantPopup);
 	more->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
@@ -531,8 +536,8 @@ void MainWindow::setControl(QPushButton *b, const QString &icon, const QString &
 	const QString state = icon + (active ? QStringLiteral("+") : QStringLiteral("-"));
 	if (b->property("iconState").toString() == state && b->accessibleName() == caption)
 		return; // nothing changed: no new picture every status poll
-	const QColor ink = (primary || (danger && active)) ? QColor(Qt::white) : danger ? QColor(theme::kDanger) : QColor(theme::kText);
-	b->setIcon(icons::make(icon, ink, 24));
+	const QColor ink = (primary || (danger && active)) ? theme::color(QStringLiteral("onAccent")) : danger ? theme::color(QStringLiteral("danger")) : theme::color(QStringLiteral("text"));
+	b->setIcon(icons::make(icon, ink, 24, theme::color(QStringLiteral("muted")))); // disabled: muted on the field face (>= 3:1, tested)
 	b->setProperty("iconState", state);
 	b->setAccessibleName(caption);
 	if (auto *cap = qobject_cast<QLabel *>(b->property("captionLabel").value<QObject *>()))
@@ -1771,9 +1776,9 @@ void MainWindow::pollStatus()
 		}
 		recording_ = h.value(QStringLiteral("recording")).toBool();
 		pillLive_->setText(live_ ? QStringLiteral("LIVE") : QStringLiteral("Offline"));
-		motion::setChip(pillLive_, live_, QColor(theme::kDanger));
+		motion::setChip(pillLive_, live_, theme::color(QStringLiteral("danger")));
 		pillRec_->setText(recording_ ? QStringLiteral("Recording") : QStringLiteral("Not recording"));
-		motion::setChip(pillRec_, recording_, QColor(theme::kDanger));
+		motion::setChip(pillRec_, recording_, theme::color(QStringLiteral("danger")));
 		pillStats_->setText(QStringLiteral("Dropped %1 · %2 fps · CPU %3% · GPU %4%")
 					    .arg(h.value(QStringLiteral("droppedFrames")).toInt())
 					    .arg(h.value(QStringLiteral("fps")).toDouble(), 0, 'f', 1)
@@ -3084,7 +3089,7 @@ void MainWindow::saveSettings(const QJsonObject &body, bool retried)
 	});
 }
 
-// Settings (D284, D290): sections on the left (Clips, Folders, Layer effects, Advanced), the page on the right. The
+// Settings (D284, D290, D293): sections on the left (Clips, Folders, Layer effects, Appearance, Advanced), the page on the right. The
 // feature flags list lives in Advanced: the window borrows the hidden flag list while Settings is open.
 void MainWindow::openSettings(bool firstRun)
 {
@@ -3246,18 +3251,13 @@ void MainWindow::openSettings(bool firstRun)
 		pl->addWidget(fxBox);
 		pl->addStretch(1);
 
-		// Advanced: animations and the developer feature flags
+		// Appearance (D293): theme cards, reduce effects, animations
+		auto *pap = page(QStringLiteral("Appearance"));
+		auto *appear = new appearance::Page(theme::currentId(), theme::effects(), motionNow, dlg);
+		pap->addWidget(appear, 1);
+
+		// Advanced: the developer feature flags
 		auto *pa = page(QStringLiteral("Advanced"));
-		auto *motionBox = new QGroupBox(QStringLiteral("ANIMATIONS"), dlg);
-		auto *mf = new QFormLayout(motionBox);
-		auto *motionCb = new QComboBox(motionBox);
-		motionCb->setObjectName(QStringLiteral("settingsMotion"));
-		motionCb->addItem(QStringLiteral("Follow Windows"), QStringLiteral("system"));
-		motionCb->addItem(QStringLiteral("Always on"), QStringLiteral("on"));
-		motionCb->addItem(QStringLiteral("Off"), QStringLiteral("off"));
-		motionCb->setCurrentIndex(std::max(0, motionCb->findData(motionNow)));
-		mf->addRow(QStringLiteral("Motion in the window:"), motionCb);
-		pa->addWidget(motionBox);
 		auto *flagBox = new QGroupBox(QStringLiteral("FEATURE FLAGS (FOR TESTING NEW FEATURES)"), dlg);
 		auto *flv = new QVBoxLayout(flagBox);
 		auto *flagHint = new QLabel(QStringLiteral("New features ship switched off. Turning one on asks you to type the confirmation phrase; turning one off is instant."), flagBox);
@@ -3284,6 +3284,7 @@ void MainWindow::openSettings(bool firstRun)
 			flagList_->hide();
 			settingsDlg_.clear();
 			if (result != QDialog::Accepted) {
+				appear->revert(); // a theme tried on the cards goes back (D293)
 				if (firstRun) // nothing chosen: keep "ask each time", and stop asking at every start
 					saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), QStringLiteral("ask")}, {QStringLiteral("live"), QStringLiteral("ask")}}}});
 				return;
@@ -3296,10 +3297,18 @@ void MainWindow::openSettings(bool firstRun)
 				clipsBody.insert(QStringLiteral("matchGate"), matchGateJson(top3->isChecked(), newKills));
 			body.insert(QStringLiteral("clips"), clipsBody);
 			body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
-			const QString motionNew = motionCb->currentData().toString();
+			const QString motionNew = appear->motion();
 			if (motionNew != motionNow) { // sent only when it changed: an older server refuses the key
 				body.insert(QStringLiteral("ui"), QJsonObject{{QStringLiteral("motion"), motionNew}});
 				motion::setMode(motionNew);
+			}
+			if (appear->changedTheme() || appear->changedEffects()) { // sent only when it changed: an older server refuses the keys
+				QJsonObject ui = body.value(QStringLiteral("ui")).toObject();
+				if (appear->changedTheme())
+					ui.insert(QStringLiteral("theme"), appear->themeId());
+				if (appear->changedEffects())
+					ui.insert(QStringLiteral("effects"), appear->effects());
+				body.insert(QStringLiteral("ui"), ui);
 			}
 			saveSettings(body);
 			if (fxKnown && fxOn->isChecked() != fxNow)
@@ -3404,6 +3413,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("stats"), QJsonObject{{QStringLiteral("samples"), stats_->samples()}, {QStringLiteral("session"), stats_->sessionText()}});
 	o.insert(QStringLiteral("motion"), motion::systemAnimations());
 	o.insert(QStringLiteral("motionMode"), motion::mode());
+	o.insert(QStringLiteral("theme"), theme::probe()); // D293
 	QJsonObject look = look_->probe();
 	look.insert(QStringLiteral("shown"), !look_->isHidden());
 	look.insert(QStringLiteral("advancedShown"), !effBox_->isHidden());
@@ -3468,6 +3478,8 @@ bool MainWindow::probeAction(const QString &action)
 		return out;
 	};
 	// Look panel and Settings (D290): the real widgets are clicked, so their own handlers run.
+	if (p.size() == 2 && (p[0] == QStringLiteral("theme") || p[0] == QStringLiteral("effects"))) // D293
+		return theme::probeAction(action);
 	if (p.size() == 2 && p[0] == QStringLiteral("select-layer")) {
 		for (int i = 0; i < layerList_->count(); i++)
 			if (layerList_->item(i)->data(Qt::UserRole).toString() == p[1]) {
@@ -3566,6 +3578,16 @@ bool MainWindow::probeAction(const QString &action)
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-layer-effects")) {
 			if (auto *fx = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsLayerEffects")); fx && fx->isEnabled()) {
 				fx->setChecked(p[1] == QStringLiteral("on"));
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-theme")) { // a click on the theme card (D293)
+			if (auto *ap = settingsDlg_->findChild<appearance::Page *>())
+				return ap->pick(p[1]);
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-reduce-effects")) {
+			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsReduceEffects"))) {
+				cb->setChecked(p[1] == QStringLiteral("on"));
 				return true;
 			}
 		}
