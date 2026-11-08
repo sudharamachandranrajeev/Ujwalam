@@ -16,7 +16,7 @@
       "ocrRegions": "rois",
       "roiPad": [0.04, 0.02],
       "roiMergeArea": 0.02,
-      "roiEvery": {"M1": 5, "M2": 5},
+      "roiEvery": {"M1": 5, "M2": 5, "S1": 5},
       "modeProbeEvery": 10,
       "roiDetScale": 1.0,
       "roiTextFilter": false,

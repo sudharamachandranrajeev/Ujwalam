@@ -38,7 +38,8 @@ import time
 import g1_scan
 import g1_text as gt
 import game_pack
-from clip_common import CLIP_DATA, ClipError, REPO_ROOT, load_json
+import match_gate
+from clip_common import CLIP_DATA, ClipError, REPO_ROOT, load_json, write_json_atomic
 
 TOOL_VERSION = 1
 HITS = "detector-hits.jsonl"
@@ -151,8 +152,11 @@ def _label(e, det):
     return det.get("name", d)
 
 
-def frame_hits(boxes, pack, names, settings, mode=None):
-    """Hit rows (single frame, no t) from one frame's OCR boxes (g1_scan scan format: text, score, g)."""
+def frame_hits(boxes, pack, names, settings, mode=None, kill_keys=None):
+    """Hit rows (single frame, no t) from one frame's OCR boxes (g1_scan scan format: text, score, g).
+    kill_keys: optional list; one in-memory victim key (match_gate.victim_key) is appended per own kill-feed line
+    that signals (M5 unless the mode is br, B1 unless it is mp), for the match gate's kill count. Keys are never
+    part of a row."""
     det = {d["id"]: d for d in pack["detectors"]}
     name_min = float(settings["nameMin"])
     slack = float(settings["roiSlack"])
@@ -198,6 +202,9 @@ def frame_hits(boxes, pack, names, settings, mode=None):
             # the name must sit on the detector's own card/banner ROI (X1 in BR: the squad list always shows it)
             if not any(_in_any_roi(nb["g"], dd, slack, mode) for nb in name_boxes):
                 why.append("no_name_in_roi")
+        if (kill_keys is not None and not why and d in ("M5", "B1")
+                and mode != ("br" if d == "M5" else "mp")):
+            kill_keys.append(match_gate.victim_key(e["box"]["text"]))
         out.append({"detector": d, "label": _label(e, dd), "role": role, "signal": not why, "why": why,
                     "clipReason": clip_reason and role == "positive", "weight": weight,
                     "detectorStatus": dd.get("status", "unverified"), "mode": mode,
@@ -453,6 +460,10 @@ class FrameScanner:
         g1_scan.set_ocr_params(params)
         self.unthrottled = no_power_throttling()
         self.mode, self.last, self.prev, self.n = None, None, [], 0
+        # match gate (match_gate.py): S1 readings with t, own kill-feed lines deduplicated into kills
+        mcfg = match_gate.stats_config(pack)
+        self.kills = match_gate.KillCounter(mcfg["killLineHoldSec"], mcfg["victimMatchMin"])
+        self.readings, self.prev_keys = [], []
         self.stats = {"frames": 0, "ocrFrames": 0, "diffGateSkips": 0, "ocrCalls": 0, "bandOcr": 0, "bandSkips": 0,
                       "bandHeld": 0, "ocrSeconds": 0.0}
 
@@ -515,23 +526,40 @@ class FrameScanner:
             boxes, ran = self._scan_rois(img)
             self.n += 1
             if not ran:
-                self.stats["diffGateSkips"] += 1
-                return [dict(h, t=t) for h in self.prev]
+                return self._unchanged(t)
             recboxes = g1_scan._frame_record(boxes, self.layout, self.origin)
         else:
             t0 = time.perf_counter()
             rec, self.last = g1_scan.scan_frame({"src": "recording"}, t, img, self.origin, self.layout, self.last,
                                                 self.gate)
             if "skipped" in rec:
-                self.stats["diffGateSkips"] += 1
-                # unchanged frame: whatever was on screen at the last OCR'd frame still is, so its hits continue
-                return [dict(h, t=t) for h in self.prev]
+                return self._unchanged(t)
             self.stats["ocrSeconds"] += time.perf_counter() - t0
             recboxes = rec["boxes"]
         self.stats["ocrFrames"] += 1
         self.mode = g1_scan.classify_frame(recboxes) or self.mode  # keep the last known mode through cue-less frames
-        self.prev = frame_hits(recboxes, self.pack, self.names, self.settings, self.mode)
+        keys = []
+        self.prev = frame_hits(recboxes, self.pack, self.names, self.settings, self.mode, kill_keys=keys)
+        srows, readings = match_gate.frame_stats(recboxes, self.pack, self.names, float(self.settings["nameMin"]),
+                                                 self.mode)
+        self.prev += srows
+        self.readings += [{"t": round(float(t), 3), **r} for r in readings]
+        self.prev_keys = keys
+        self.kills.feed(t, keys)
         return [dict(h, t=t) for h in self.prev]
+
+    def _unchanged(self, t):
+        # unchanged frame: whatever was on screen at the last OCR'd frame still is, so its hits continue (and its
+        # own kill-feed lines stay the same kills)
+        self.stats["diffGateSkips"] += 1
+        self.kills.feed(t, self.prev_keys)
+        return [dict(h, t=t) for h in self.prev]
+
+    def match_stats(self):
+        """match-stats.json content: S1 readings and own-kill times (no names, no OCR text)."""
+        return {"readings": self.readings,
+                "ownKills": {"times": list(self.kills.times), "framesWithOwnLines": self.kills.frames,
+                             "holdSec": self.kills.hold}}
 
 
 # ---------------------------------------------------------------- one heavy job
@@ -647,21 +675,32 @@ def layout_for(recording, layout_path=None, project_path=None):
     return g1_scan.full_screen_layout(w, h, [0, 0, w, h]), "full-frame"
 
 
+PROGRESS_EVERY_SEC = 2.0
+
+
 def run_pass(recording, out_dir, settings, pack, names, layout, threads=g1_scan.DEFAULT_THREADS, duration=None,
-             progress=print, start=None):
-    """Samples the recording at settings.fps, OCRs changed frames, writes out_dir/detector-hits.jsonl.
-    Returns the summary dict (counts only; no text). start/duration (seconds) limit the pass to a segment; hit
-    times stay recording times."""
+             progress=print, start=None, progress_line=None, total_frames=None):
+    """Samples the recording at settings.fps, OCRs changed frames, writes out_dir/detector-hits.jsonl and
+    out_dir/match-stats.json (match gate readings and own-kill times). Returns the summary dict (counts only; no
+    text). start/duration (seconds) limit the pass to a segment; hit times stay recording times.
+    progress_line(done, total): called at most every PROGRESS_EVERY_SEC with frames done of total_frames, and once
+    at the end."""
     scanner = FrameScanner(pack, names, settings, layout, threads)
     v = g1_scan.visible_box(layout)
     rows = []
     t0 = time.monotonic()
+    last_line = t0
     for t, img in g1_scan.decode_frames(recording, float(settings["fps"]), crop=v, start=start, dur=duration):
         rows.extend(scanner.scan(t, img))
         st = scanner.stats
         if progress and st["frames"] % 300 == 0:
             progress(f"detect: {t:.0f} s, ocr {st['ocrFrames']}, skipped {st['diffGateSkips']}, "
                      f"{time.monotonic() - t0:.0f} s elapsed")
+        if progress_line and time.monotonic() - last_line >= PROGRESS_EVERY_SEC:
+            last_line = time.monotonic()
+            progress_line(st["frames"], max(total_frames or 0, st["frames"]))
+    if progress_line:
+        progress_line(scanner.stats["frames"], scanner.stats["frames"])
     hits = merge_hits(rows, float(settings["mergeGapSec"]), settings.get("splitBySignal") or ())
     os.makedirs(out_dir, exist_ok=True)
     tmp = os.path.join(out_dir, HITS + f".{os.getpid()}.tmp")
@@ -669,6 +708,10 @@ def run_pass(recording, out_dir, settings, pack, names, layout, threads=g1_scan.
         for h in hits:
             f.write(json.dumps(h, ensure_ascii=False) + "\n")
     os.replace(tmp, os.path.join(out_dir, HITS))
+    ms = scanner.match_stats()
+    write_json_atomic(os.path.join(out_dir, match_gate.STATS), {
+        "tool": "detector_pass", "toolVersion": TOOL_VERSION, "recording": os.path.basename(recording),
+        "packVersion": pack.get("version"), **ms})
     per = {}
     for h in hits:
         p = per.setdefault(h["detector"], {"hits": 0, "signal": 0})
@@ -679,6 +722,9 @@ def run_pass(recording, out_dir, settings, pack, names, layout, threads=g1_scan.
            "hits": len(hits), "signalHits": sum(1 for h in hits if h["signal"]), "perDetector": per,
            "seconds": round(time.monotonic() - t0, 2), "ocrRegions": scanner.regions,
            "powerThrottlingOff": scanner.unthrottled,
+           "matchStats": {"top3Frames": sum(1 for r in ms["readings"] if r["kind"] == "top3"),
+                          "scoreboardFrames": sum(1 for r in ms["readings"] if r["kind"] == "scoreboard"),
+                          "ownKills": len(ms["ownKills"]["times"])},
            "ocrSeconds": round(st["ocrSeconds"], 2)}
     if scanner.regions == "rois":
         out.update(bands={m or "all": [{"px": list(b["px"]), "every": b["every"], "detectors": b["detectors"]}

@@ -1,7 +1,7 @@
 {
   "$schema": "../detector-pack.schema.json",
   "$comment": "CODM detector pack. All ROIs, texts and colours are UNVERIFIED until G1/G2 check them on corpus footage (source: docs/evidence/2026-10-27-g1-live-reference.md). Weights, windows and cooldowns are null: G3 proposes them from labelled data. No private names here; names come from data/profile.local.json at runtime. `version` is the pack version for every file in this folder; version history: CHANGELOG.md.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "engineVersion": "0.1.0",
   "game": "codm",
   "detectors": [
@@ -433,6 +433,111 @@
       "cooldownSec": null,
       "status": "unverified",
       "note": "User decision 2026-11-07: marks the end of a match and its result, for the won-match highlight (every own kill of a won match). Context only: never a clip signal or weight. The whole OCR box must read VICTORY or DEFEAT (the scoreboard top line and small text elsewhere stay out by the ROI)."
+    },
+    {
+      "id": "S1",
+      "name": "Match stats (top 3, scoreboard)",
+      "role": "context",
+      "modes": [
+        "mp"
+      ],
+      "screens": [
+        "mp_top3",
+        "mp_scoreboard"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "rank1_card",
+          "label": "Top 3: centre card (rank 1): SCORE n on top, MVP badge, player names at the bottom",
+          "x0": 0.38,
+          "y0": 0.73,
+          "x1": 0.6,
+          "y1": 0.96,
+          "status": "verified",
+          "note": "2026-11-08 practice (game area of the H canvas, project layout), 3 frames of one top-3 screen (HARDPOINT, VICTORY): SCORE text x 0.441-0.525, y 0.746-0.784 (3/3); MVP badge x 0.399-0.428, y 0.839-0.870; name boxes x 0.402-0.590, y 0.876-0.910. The rank digit is not read by OCR (stylised), so the rank comes from the card position; the three scores fall in rank order on all 3 frames. docs/evidence/2026-11-08-match-gate.md."
+        },
+        {
+          "id": "rank2_card",
+          "label": "Top 3: left card (rank 2)",
+          "x0": 0.14,
+          "y0": 0.76,
+          "x1": 0.37,
+          "y1": 0.96,
+          "status": "verified",
+          "note": "2026-11-08 practice, 3 frames: SCORE text x 0.201-0.283, y 0.784-0.823 (3/3); name boxes x 0.163-0.351, y 0.915-0.948."
+        },
+        {
+          "id": "rank3_card",
+          "label": "Top 3: right card (rank 3)",
+          "x0": 0.62,
+          "y0": 0.76,
+          "x1": 0.85,
+          "y1": 0.96,
+          "status": "verified",
+          "note": "2026-11-08 practice, 3 frames: SCORE text x 0.682-0.769, y 0.783-0.824 (3/3); name boxes x 0.647-0.834, y 0.915-0.947."
+        },
+        {
+          "id": "mode_label",
+          "label": "Top 3: game mode name and map, top left",
+          "x0": 0.16,
+          "y0": 0.03,
+          "x1": 0.3,
+          "y1": 0.11,
+          "status": "verified",
+          "note": "2026-11-08 practice, 3 frames: mode name x 0.179-0.247, y 0.042-0.079; map name below it (y 0.071-0.103)."
+        },
+        {
+          "id": "scoreboard_rows",
+          "label": "Full MP scoreboard: player rows and the kills column header",
+          "x0": 0.0,
+          "y0": 0.5,
+          "x1": 1.0,
+          "y1": 0.93,
+          "status": "unverified",
+          "note": "No final MP scoreboard frame exists yet (capture-plan mp_final_scoreboard; the 2026-11-08 practice stopped at the top-3 screen). Box: the M1 endscreen_row band (own team MVP badge y 0.65, enemy y 0.84) widened up to y 0.50 for the column headers. The own row is the row with the profile name; the kills value is the number on that row under the stats.killsHeaders header."
+        }
+      ],
+      "patterns": [
+        "SCORE"
+      ],
+      "regex": "^SCORE ?\\d{1,5}$",
+      "stats": {
+        "scoreRegex": "^SC[O0]RE(\\d{1,5})$",
+        "killsHeaders": [
+          "K",
+          "KILLS"
+        ],
+        "modeNames": [
+          "HARDPOINT",
+          "DOMINATION",
+          "SEARCH AND DESTROY",
+          "TEAM DEATHMATCH",
+          "FREE FOR ALL"
+        ],
+        "endScreenDetectors": [
+          "S1",
+          "W1",
+          "M1",
+          "M2",
+          "K1"
+        ],
+        "endGapSec": 90,
+        "killLineHoldSec": 6,
+        "victimMatchMin": 0.7,
+        "status": "unverified",
+        "note": "scoreRegex runs on the normalised text (no spaces); SCORE read 9/9 on the 2026-11-08 frames. killsHeaders are an assumption (no scoreboard frame). modeNames: the MP mode cues of g1_scan; only HARDPOINT is seen on a top-3 screen. endGapSec: end-screen hits closer than this are one match end (2026-11-08: VICTORY at 437 s, top 3 until 475 s). killLineHoldSec: an own kill-feed line seen again within this time with a similar victim text (victimMatchMin) is the same kill; the on-screen time of a line is not measured."
+      },
+      "nameRequired": true,
+      "nameSide": "any",
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "D286 proposed (match gate). Context only: never a clip signal or weight. Per top-3 frame: rank (card position), score and whether the card holds a profile name (nameMin, the same fuzzy rule as the other detectors); names are never written. One match seen (own card rank 1); a DEFEAT top-3 screen and a full scoreboard are not seen yet."
     },
     {
       "id": "N1",

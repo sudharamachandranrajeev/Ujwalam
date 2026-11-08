@@ -2,6 +2,15 @@
 
 The pack version is `version` in `detectors.json`. It covers every file in this folder (`game.json`, `detectors.json`, `events.json`, `screens.json`, `capture-plan.json`). Validate with `npm run validate:games`.
 
+## 0.5.0 — 2026-11-08 (S1 match stats, match gate, D286 proposed)
+
+Evidence: `docs/evidence/2026-11-08-match-gate.md`.
+
+- New detector S1 "Match stats" (role context, no weight, status unverified), screens `mp_top3` and `mp_scoreboard`. Top 3: ROIs `rank1_card` (centre), `rank2_card` (left), `rank3_card` (right) and `mode_label` (top left), status verified from 3 frames of one top-3 screen of the 2026-11-08 practice (game area of the H canvas, project layout). Rank comes from the card position (the rank digit is not read by OCR); the own card is the card with a profile name (nameMin). Scoreboard: ROI `scoreboard_rows`, status unverified (no final scoreboard frame yet).
+- New optional detector field `stats` (schema `detector-pack.schema.json`): score pattern, kills headers, mode names, end-screen detectors, end gap, kill-line hold and victim match threshold for `services/clip/match_gate.py`. All unverified except where the notes say.
+- Screens `mp_top3` and `mp_scoreboard` list S1; `mp_top3` cites the new evidence.
+- `data/clip/detector-pass.json` `roiEvery` reads S1 every 5th sampled frame (as M1 and M2).
+
 ## 0.4.0 — 2026-11-07 (W1 match result, D237)
 
 Evidence: `docs/evidence/2026-11-07-match-result-detector.md`.

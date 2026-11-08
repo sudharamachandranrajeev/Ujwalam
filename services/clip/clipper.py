@@ -14,11 +14,21 @@
   render      --recording FILE --out DIR [--v-recording FILE] [--layouts a,b,c] [--only c01,c02] [--encoder auto|libopenh264|h264_nvenc]
               [--captions none|whisper-cli|faster-whisper] [--whisper-bin F --whisper-model F] [--language xx]
               -> DIR/clips/<id>/<layout>.mp4 (+ captions.ass), DIR/render.json
+  gate        --recording FILE --out DIR [--hits F]
+              -> DIR/matches.json: the recording split into matches by their end screens, each kept or skipped by
+              settings.json clips.matchGate (match_gate.py, D286 proposed); candidates.json keeps the passing
+              candidates and moves the others to `gatedOut`. Uses DIR/detector-hits.jsonl and DIR/match-stats.json
+              from `detect`; without them every candidate is kept.
   validate    --out DIR [--no-decode]  -> DIR/report.json; exit 4 when any file fails
-  run         [--detect] candidates + render + validate with the same options (--detect runs `detect` first)
-  live-review --saves DIR --out DIR [--layouts ...] [--encoder ...]
+  run         [--detect] candidates + gate + render + validate with the same options (--detect runs `detect` first)
+  live-review --saves DIR --out DIR [--layouts ...] [--encoder ...] [--matches FILE]
               -> DIR/clips/<id>/<layout>.mp4 + DIR/render.json from the live clipper's replay saves
-              (DIR/saves.jsonl, live_worker.py); overlapping saves are merged; then `validate --out DIR`
+              (DIR/saves.jsonl, live_worker.py); overlapping saves are merged; then `validate --out DIR`.
+              --matches: matches.json of the same session's recording; saves inside skipped matches are dropped.
+
+Progress (stderr, one per line, for the studio): ujwalam-progress {"stage":"<detect|candidates|render|validate|review|
+gate>","done":<int>,"total":<int>,"note":"<short plain text, no names>"} (clip_common.progress_line). The detector
+pass writes one at least every 2 s; render and live-review one per clip.
 
 Common: [--data-dir DIR] (flags.local.json; default paths.event_core_data from data/profile.local.json)
         [--ffmpeg F] [--ffprobe F] [--ranking F] [--layouts-file F] [--targets F]
@@ -36,7 +46,7 @@ import os
 import sys
 import tempfile
 import time
-from datetime import timezone
+from datetime import datetime, timezone
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 if _HERE not in sys.path:
@@ -48,9 +58,10 @@ import clip_render as rnd  # noqa: E402
 import clip_signals as sig  # noqa: E402
 import clip_validate as val  # noqa: E402
 import game_pack  # noqa: E402
+import match_gate as mg  # noqa: E402
 from clip_common import (  # noqa: E402
     EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, clips_allowed, corpus_dir, eprint, find_tool, flag_on, load_config,
-    load_json, lower_own_priority, media_info, resolve_data_dir, write_json_atomic,
+    load_json, lower_own_priority, match_gate_settings, media_info, progress_line, resolve_data_dir, write_json_atomic,
 )
 
 TOOL_VERSION = 1
@@ -71,6 +82,7 @@ def _same_recording(a, doc):
 # ---------------------------------------------------------------- candidates
 
 def cmd_candidates(a):
+    progress_line("candidates", 0, 1, "reading markers, chat, audio and detector hits")
     ffmpeg, ffprobe = _tools(a)
     cfg = load_config("ranking", a.ranking)
     if not os.path.isfile(a.recording):
@@ -130,6 +142,85 @@ def cmd_candidates(a):
     print(f"candidates: {len(cands)} from {len(events)} events "
           f"(markers {mstats['matched']}, chat {'on' if a.chat_db else 'off'}, "
           f"audio {'on' if astats.get('available') else 'off'}, detectors {len(hits)}); ranking {cfg.get('status')}")
+    progress_line("candidates", 1, 1, f"{len(cands)} candidate(s)")
+    return 0
+
+
+# ---------------------------------------------------------------- gate
+
+def _gate_pack(a):
+    """The game pack named by the detect summary in --out (else the default game); None when it cannot be loaded."""
+    import detector_pass as dp
+    game = getattr(a, "game", None)
+    s = os.path.join(a.out, dp.SUMMARY)
+    if not game and os.path.isfile(s):
+        try:
+            game = load_json(s).get("game")
+        except ClipError:
+            game = None
+    try:
+        _gid, st, _doc = dp.load_settings(game, getattr(a, "detector_config", None))
+        return game_pack.load_pack(dp.pack_path(st))
+    except (ClipError, OSError, ValueError, KeyError):
+        return None
+
+
+def _match_stats(a):
+    """DIR/match-stats.json from `detect` on the same recording, else None (older runs: the kill feed hits count)."""
+    p = os.path.join(a.out, mg.STATS)
+    if not os.path.isfile(p):
+        return None
+    doc = load_json(p)
+    return doc if doc.get("recording") == os.path.basename(a.recording) else None
+
+
+def cmd_gate(a):
+    """Match gate (match_gate.py): splits the recording into matches by their end screens and keeps only the
+    candidates of matches that pass clips.matchGate. -> DIR/matches.json; candidates.json keeps the passing
+    candidates in `candidates` and moves the others to `gatedOut` (with the reason)."""
+    path = os.path.join(a.out, CANDIDATES)
+    doc = load_json(path)
+    _same_recording(a, doc)
+    gate = match_gate_settings(resolve_data_dir(a.data_dir))
+    cands = [{k: v for k, v in c.items() if k not in ("match", "gateReason")}
+             for c in doc.get("candidates", []) + doc.get("gatedOut", [])]
+    cands.sort(key=lambda c: (c.get("rank", 0), c.get("id", "")))
+    hits_path = getattr(a, "hits", None) or _own_hits(a)
+    hits = mg.read_hits(hits_path)
+    pack = _gate_pack(a) or {}
+    cfg = mg.stats_config(pack)
+    stats = _match_stats(a)
+    matches = mg.segment(hits, stats, float(doc.get("duration") or 0.0), cfg)
+    progress_line("gate", 0, len(matches), "sorting clips by match")
+    kept, dropped = mg.gate_candidates(cands, matches, gate)
+    start = sig.parse_iso(doc.get("recordStartUtc"))
+    for i, m in enumerate(matches, 1):
+        if start:
+            m["startUtc"] = _iso_ms(start.timestamp() + m["start"])
+            m["endUtc"] = _iso_ms(start.timestamp() + m["end"])
+        progress_line("gate", i, len(matches), f"match {i}: {'kept' if m['passed'] else 'skipped'}")
+    write_json_atomic(os.path.join(a.out, mg.MATCHES), {
+        "tool": "clipper.gate", "toolVersion": mg.TOOL_VERSION, "createdAt": _now(), "recording": doc["recording"],
+        "recordStartUtc": doc.get("recordStartUtc"), "duration": doc.get("duration"),
+        "gate": gate, "packVersion": pack.get("version"),
+        "inputs": {"hits": os.path.basename(hits_path) if hits_path else None,
+                   "matchStats": mg.STATS if stats else None,
+                   "killsFallback": None if stats else "kill-feed hit instances (undercount close kills)"},
+        "rules": "a match passes when the streamer's card is #1-#3 on the top-3 screen (top3 on) or the streamer's "
+                 "kills reach minKills (minKills set); a match with no end screen seen, or whose end screens were "
+                 "not read, keeps its clips",
+        "matches": matches,
+    })
+    doc["candidates"], doc["gatedOut"] = kept, dropped
+    doc["matchGate"] = {"settings": gate, "file": mg.MATCHES, "matches": len(matches), "kept": len(kept),
+                        "dropped": len(dropped)}
+    write_json_atomic(path, doc)
+    print(f"gate: {len(matches)} match(es) ({sum(1 for m in matches if m['endSeen'])} with an end screen), "
+          f"{sum(1 for m in matches if m['passed'])} kept; candidates {len(kept)} kept, {len(dropped)} skipped "
+          f"(top3 {'on' if gate['top3'] else 'off'}, minKills {gate['minKills']})")
+    for m in matches:
+        print(f"gate: match {m['index']} {m['start']:.0f}-{m['end']:.0f} s: {'KEPT' if m['passed'] else 'SKIPPED'} "
+              f"({m['reason']})")
     return 0
 
 
@@ -177,8 +268,11 @@ def cmd_detect(a):
     if gpu:  # OCR on the GPU (D227): only when this Python has onnxruntime-directml (.venv-gpu)
         import g1_scan
         g1_scan.set_ocr_params({"EngineConfig.onnxruntime.use_dml": True})
+    total = int(info["duration"] * float(st["fps"])) + 1
+    progress_line("detect", 0, total, "reading the game screen")
     with dp.HeavyJobLock():
-        summ = dp.run_pass(a.recording, a.out, st, pack, names, layout, threads=a.threads)
+        summ = dp.run_pass(a.recording, a.out, st, pack, names, layout, threads=a.threads, total_frames=total,
+                           progress_line=lambda d, n: progress_line("detect", d, n, "reading the game screen"))
     doc = {
         "tool": "clipper.detect", "toolVersion": TOOL_VERSION, "detectorPassVersion": dp.TOOL_VERSION,
         "createdAt": _now(), "recording": os.path.basename(a.recording), "duration": round(info["duration"], 3),
@@ -238,7 +332,8 @@ def cmd_render(a):
     opts = {"whisper_bin": a.whisper_bin, "whisper_model": a.whisper_model, "language": a.language}
     out_rows, failed = [], 0
     t0 = time.monotonic()
-    for c in cands:
+    progress_line("render", 0, len(cands), "making clip videos")
+    for n, c in enumerate(cands, 1):
         wd = os.path.join(a.out, "clips", c["id"])
         os.makedirs(wd, exist_ok=True)
         dur = float(c["end"]) - float(c["start"])
@@ -273,6 +368,7 @@ def cmd_render(a):
             print(f"render {c['id']}/{lid}: {files[-1]['seconds']} s")
         out_rows.append({"id": c["id"], "start": c["start"], "end": c["end"], "captions": cinfo, "files": files,
                          "errors": errors})
+        progress_line("render", n, len(cands), f"clip {c['id']} {'failed' if errors else 'done'}")
     write_json_atomic(os.path.join(a.out, RENDER), {
         "tool": "clipper", "toolVersion": TOOL_VERSION, "createdAt": _now(), "recording": doc["recording"],
         "encoder": encoder, "frame": frame, "layoutsVersion": lay_doc.get("version"),
@@ -291,6 +387,8 @@ def cmd_validate(a):
     targets = load_config("targets", a.targets)
     frame = rdoc["frame"]
     rows, bad = [], 0
+    total = sum(len(c["files"]) for c in rdoc["clips"])
+    progress_line("validate", 0, total, "checking clip files")
     for c in rdoc["clips"]:
         exp = float(c["end"]) - float(c["start"])
         for f in c["files"]:
@@ -299,6 +397,8 @@ def cmd_validate(a):
             rows.append({"id": c["id"], "layout": f["layout"], "file": f["file"], "geometry": f["geometry"],
                          "captions": c["captions"].get("status"), **res})
             bad += 0 if res["ok"] else 1
+            progress_line("validate", sum(1 for r in rows if r.get("file")), total,
+                          f"clip {c['id']} {'ok' if res['ok'] else 'failed'}")
             print(f"validate {c['id']}/{f['layout']}: {'PASS' if res['ok'] else 'FAIL ' + '; '.join(res['issues'])}")
         for e in c.get("errors", []):
             rows.append({"id": c["id"], "layout": e["layout"], "file": None, "ok": False,
@@ -367,6 +467,16 @@ def cmd_live_review(a):
                 except ValueError:
                     eprint("live-review: skipped a bad saves.jsonl line")
     rows = saves_between(rows, a.since, a.until)
+    gate_info = {"applied": False, "reason": "no matches.json given (--matches): every save kept"}
+    if a.matches:
+        mdoc = load_json(a.matches)
+        gate = match_gate_settings(resolve_data_dir(a.data_dir))
+        progress_line("gate", 0, 1, "sorting saves by match")
+        rows, dropped = mg.gate_saves(rows, mdoc.get("matches") or [], gate, sig.parse_iso)
+        gate_info = {"applied": True, "settings": gate, "matches": len(mdoc.get("matches") or []),
+                     "keptSaves": len(rows), "droppedSaves": dropped}
+        progress_line("gate", 1, 1, f"{len(rows)} save(s) kept, {len(dropped)} skipped")
+        print(f"live-review: match gate kept {len(rows)} save(s), skipped {len(dropped)}")
     infos = {}
     for r in rows:
         for fl in r.get("files", []):
@@ -383,7 +493,8 @@ def cmd_live_review(a):
         raise ClipError(f"live-review renders V-canvas layouts only: {', '.join(bad)}")
     encoder = rnd.pick_encoder(a.encoder)
     out_rows, failed = [], 0
-    for c in clips:
+    progress_line("review", 0, len(clips), "making clip videos from live saves")
+    for n, c in enumerate(clips, 1):
         wd = os.path.join(a.out, "clips", c["id"])
         os.makedirs(wd, exist_ok=True)
         files, errors = [], []
@@ -399,10 +510,11 @@ def cmd_live_review(a):
         out_rows.append({"id": c["id"], "start": c["start"], "end": c["end"], "source": os.path.basename(c["file"]),
                          "score": c["score"], "labels": c["labels"], "reasons": c["reasons"],
                          "captions": {"backend": "none", "status": "off"}, "files": files, "errors": errors})
+        progress_line("review", n, len(clips), f"clip {c['id']} {'failed' if errors else 'done'}")
     write_json_atomic(os.path.join(a.out, RENDER), {
         "tool": "clipper", "toolVersion": TOOL_VERSION, "createdAt": _now(), "recording": "live-saves",
         "saves": len(rows), "encoder": encoder, "frame": frame, "layoutsVersion": lay_doc.get("version"),
-        "failed": failed, "clips": out_rows,
+        "failed": failed, "matchGate": gate_info, "clips": out_rows,
     })
     print(f"live-review: {len(rows)} save(s) -> {len(clips)} clip(s), {failed} failed render(s)")
     return 0
@@ -481,7 +593,7 @@ def cmd_montage(a):
 
 
 def cmd_run(a):
-    steps = ((cmd_detect,) if a.detect else ()) + (cmd_candidates, cmd_render, cmd_validate)
+    steps = ((cmd_detect,) if a.detect else ()) + (cmd_candidates, cmd_gate, cmd_render, cmd_validate)
     for step in steps:
         rc = step(a)
         if rc:
@@ -491,6 +603,11 @@ def cmd_run(a):
 
 def _now():
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def _iso_ms(ts):
+    """ISO UTC with milliseconds and a Z (the live saves' `at` format, so string order is time order)."""
+    return datetime.fromtimestamp(ts, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
 # ---------------------------------------------------------------- cli
@@ -541,6 +658,8 @@ def build_parser():
 
     s = sub.add_parser("detect"); common(s); detect_args(s); s.set_defaults(fn=cmd_detect)
     s = sub.add_parser("candidates"); common(s); cand_args(s); s.set_defaults(fn=cmd_candidates)
+    s = sub.add_parser("gate"); common(s); s.add_argument("--hits"); s.add_argument("--game")
+    s.add_argument("--detector-config"); s.set_defaults(fn=cmd_gate)
     s = sub.add_parser("render"); common(s); render_args(s); s.set_defaults(fn=cmd_render)
     s = sub.add_parser("validate"); common(s, recording=False); s.add_argument("--no-decode", action="store_true")
     s.set_defaults(fn=cmd_validate)
@@ -557,6 +676,8 @@ def build_parser():
     s.add_argument("--since", help="ISO UTC time: saves at or after it only")
     s.add_argument("--until", help="ISO UTC time: saves at or before it only")
     s.add_argument("--layouts"); s.add_argument("--encoder", default="auto")
+    s.add_argument("--matches", type=os.path.abspath,
+                   help="matches.json of the same session's recording (`run`): saves in skipped matches are dropped")
     s.set_defaults(fn=cmd_live_review)
     return p
 
