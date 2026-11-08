@@ -396,7 +396,7 @@ export function createStudioServer(opts) {
         running: s.running ? { name: str(s.running.name, 120), kind: str(s.running.kind, 16) } : null,
         queued: Array.isArray(s.queued) ? s.queued.length : 0,
         asks: (Array.isArray(s.asks) ? s.asks : []).slice(0, 5).map((a) => ({ id: str(a.id, 160), name: str(a.name, 120), kind: str(a.kind, 16), minutes: Number.isFinite(a.minutes) ? a.minutes : null })),
-        last: l ? { name: str(l.name, 120), kind: str(l.kind, 16), result: str(l.result, 16), reason: str(l.reason, 200), clips: Number(l.clips) || 0, out: str(l.out, 400) } : null };
+        last: l ? { name: str(l.name, 120), kind: str(l.kind, 16), result: str(l.result, 16), reason: str(l.reason, 200), clips: Number(l.clips) || 0, out: str(l.out, 400), folder: str(l.folder, 400) } : null };
     } catch { return base; }
   }
 

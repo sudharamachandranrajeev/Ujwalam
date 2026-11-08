@@ -11,8 +11,12 @@
 //   off   - nothing
 // One run at a time, hidden, below-normal priority, never while a stream is live (6 GB VRAM: while live only the
 // live-AI sidecar stays loaded): a stream that starts stops the run and it runs again after. A run cut short by
-// closing Ujwalam runs again at the next start. State for the UI server: <dataDir>/clips/status.json. Finished clips
-// go to the clips folder from the settings (default <dataDir>/clips).
+// closing Ujwalam runs again at the next start. State for the UI server: <dataDir>/clips/status.json.
+// Output layout (user 2026-11-08, D298 proposed): each run works in <dataDir>/clips/runs/<name> (analysis files, logs,
+// render/report JSON, working videos); only finished, validated videos are published to the clips folder from the
+// settings (default <dataDir>/clips) as <YYYY-MM-DD>/<game>_<kind>_<stamp>_<label>_<nn>_<canvas>.mp4
+// (services/clip/clip_names.py). A whole-recording run also makes kill montages when the V recording exists; a
+// review run deletes the live clipper's replay saves it used (host-named intermediates) once every clip rendered.
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -62,11 +66,12 @@ export function newestSaves(dataDir) {
   } catch { return null; }
 }
 
-/** Python and argv for one job, or { spec: null, reason }. job: { type: 'full'|'review', h?, v?, since?, until?, name }. */
-export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(dataDir), saves = undefined, exists = existsSync }) {
+/** Python and argv for one job, or { spec: null, reason }. job: { type: 'full'|'review', h?, v?, since?, until?, name }.
+ *  out = the run folder in app data (workRoot); outRoot = the clips folder that gets the finished videos only. */
+export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(dataDir), workRoot = path.join(dataDir, 'clips', 'runs'), saves = undefined, exists = existsSync }) {
   const t = clipTools({ clipRoot, exists });
   if (!t.py) return { spec: null, reason: t.reason };
-  const out = path.join(outRoot, job.name);
+  const out = path.join(workRoot, job.name);
   const argv = ['-I', t.script, '--data-dir', dataDir];
   if (job.type === 'review') {
     const s = saves === undefined ? newestSaves(dataDir) : saves;
@@ -74,20 +79,25 @@ export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(data
     argv.push('live-review', '--saves', s);
     if (job.since) argv.push('--since', job.since);
     if (job.until) argv.push('--until', job.until);
-    argv.push('--encoder', 'h264_nvenc', '--out', out);
+    argv.push('--encoder', 'h264_nvenc', '--publish', outRoot, '--drop-used-saves', '--out', out);
   } else {
     if (!job.h) return { spec: null, reason: 'there is no recording to make clips from' };
     argv.push('run', '--detect', '--threads', '4', '--encoder', 'h264_nvenc', '--recording', job.h);
-    if (job.v) argv.push('--v-recording', job.v);
+    if (job.v) argv.push('--v-recording', job.v, '--montage');
     const db = path.join(dataDir, 'event-core.db');
     if (exists(db)) argv.push('--chat-db', db);
-    argv.push('--out', out);
+    argv.push('--publish', outRoot, '--out', out);
   }
-  return { spec: { exe: t.py, argv, out }, reason: null };
+  return { spec: { exe: t.py, argv, out, folder: outRoot }, reason: null };
 }
 
-/** Number of finished clip files in a run's folder (out/clips/<id>/*.mp4). */
+/** Number of finished clips of a run: the videos published to the clips folder (out/published.json and
+ *  out/montage/published.json); a run folder without them (older runs) counts out/clips/<id>/*.mp4. */
 export function countClips(out) {
+  const pubs = [path.join(out, 'published.json'), path.join(out, 'montage', 'published.json')].filter((p) => existsSync(p));
+  if (pubs.length) {
+    return pubs.reduce((n, p) => { try { const j = JSON.parse(readFileSync(p, 'utf8')); return n + (Array.isArray(j.files) ? j.files.length : 0); } catch { return n; } }, 0);
+  }
   try {
     return readdirSync(path.join(out, 'clips'), { withFileTypes: true }).filter((d) => d.isDirectory())
       .reduce((n, d) => n + readdirSync(path.join(out, 'clips', d.name)).filter((f) => f.endsWith('.mp4')).length, 0);
@@ -216,8 +226,8 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
       if (done.pausedForLive) { delete done.pausedForLive; log(`clips: ${done.name} paused for the stream; it continues after`); write(); return; }
       queue.shift(); progress = null;
       const n = code === 0 ? countClips(spec.out) : 0;
-      last = { name: done.name, kind: done.kind, result: code === 0 ? 'done' : 'failed', code, clips: n, out: spec.out };
-      log(code === 0 ? `clips: ${n} clip(s) made from ${done.name} in ${spec.out}` : `clips: making clips from ${done.name} failed (exit ${code}); see ${logFile}`);
+      last = { name: done.name, kind: done.kind, result: code === 0 ? 'done' : 'failed', code, clips: n, out: spec.out, folder: spec.folder };
+      log(code === 0 ? `clips: ${n} clip(s) made from ${done.name} in ${spec.folder}` : `clips: making clips from ${done.name} failed (exit ${code}); see ${logFile}`);
       finishTask(done, code === 0, code === 0 ? `${n} clip${n === 1 ? '' : 's'} made` : 'Something went wrong; see the log');
       write();
       start();

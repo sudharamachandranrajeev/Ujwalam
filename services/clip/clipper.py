@@ -21,10 +21,22 @@
               from `detect`; without them every candidate is kept.
   validate    --out DIR [--no-decode]  -> DIR/report.json; exit 4 when any file fails
   run         [--detect] candidates + gate + render + validate with the same options (--detect runs `detect` first)
+              [--montage] then `montage` into DIR/montage; [--publish CLIPS] then `publish` (both run folders)
+  montage     --recording FILE --out DIR [--v-recording F] [--hits F] [--montage-config F] [--publish CLIPS]
+              -> DIR/montage/clips/<id>/montage-v.mp4 + render.json + candidates.json + report.json (validated):
+              every own kill, streaks first (clip_montage.py, D298 proposed), plus won-match reels
+  publish     --out DIR --to CLIPS  -> each PASS video of DIR linked into CLIPS/<YYYY-MM-DD>/<convention>.mp4
+              (clip_names.py), DIR/published.json, <data>/clips/uploads.json. --out is the run folder in app data;
+              the clips folder gets finished videos only.
+  tidy        --recordings DIR --clips DIR [--dry-run | --apply]  -> lists (default) or does the moves that bring
+              older folders to the layout: analysis files to <data>/clips/runs/<run>/, finished clips renamed by the
+              convention, the live clipper's used replay saves deleted. Never overwrites; --apply is required to act.
   live-review --saves DIR --out DIR [--layouts ...] [--encoder ...] [--matches FILE]
               -> DIR/clips/<id>/<layout>.mp4 + DIR/render.json from the live clipper's replay saves
               (DIR/saves.jsonl, live_worker.py); overlapping saves are merged; then `validate --out DIR`.
               --matches: matches.json of the same session's recording; saves inside skipped matches are dropped.
+              [--publish CLIPS] validate + publish; [--drop-used-saves] then delete the replay saves of the window
+              (host-named live clipper intermediates) when every clip rendered.
 
 Progress (stderr, one per line, for the studio): ujwalam-progress {"stage":"<detect|candidates|render|validate|review|
 gate>","done":<int>,"total":<int>,"note":"<short plain text, no names>"} (clip_common.progress_line). The detector
@@ -53,6 +65,7 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
 import clip_captions as caps  # noqa: E402
+import clip_publish as pub  # noqa: E402
 import clip_rank as rank  # noqa: E402
 import clip_render as rnd  # noqa: E402
 import clip_signals as sig  # noqa: E402
@@ -60,7 +73,7 @@ import clip_validate as val  # noqa: E402
 import game_pack  # noqa: E402
 import match_gate as mg  # noqa: E402
 from clip_common import (  # noqa: E402
-    EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, clips_allowed, corpus_dir, eprint, find_tool, flag_on, load_config,
+    CLIP_DATA, EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, clips_allowed, corpus_dir, eprint, find_tool, flag_on, load_config,
     load_json, lower_own_priority, match_gate_settings, media_info, progress_line, resolve_data_dir, write_json_atomic,
 )
 
@@ -364,7 +377,7 @@ def cmd_render(a):
                 eprint(f"render {c['id']}/{lid}: FAILED")
                 continue
             files.append({"layout": lid, "file": name, "geometry": lay.get("geometry", "unverified"),
-                          "seconds": round(time.monotonic() - t1, 2)})
+                          "seconds": round(time.monotonic() - t1, 2), "sourceAudioTracks": sinfo.get("audio_tracks")})
             print(f"render {c['id']}/{lid}: {files[-1]['seconds']} s")
         out_rows.append({"id": c["id"], "start": c["start"], "end": c["end"], "captions": cinfo, "files": files,
                          "errors": errors})
@@ -393,13 +406,17 @@ def cmd_validate(a):
         exp = float(c["end"]) - float(c["start"])
         for f in c["files"]:
             p = os.path.join(a.out, "clips", c["id"], f["file"])
-            res = val.validate_file(ffmpeg, ffprobe, p, exp, frame, targets, decode=not a.no_decode)
+            res = val.validate_file(ffmpeg, ffprobe, p, exp, frame, targets, decode=not getattr(a, "no_decode", False),
+                                    source_tracks=f.get("sourceAudioTracks"))
             rows.append({"id": c["id"], "layout": f["layout"], "file": f["file"], "geometry": f["geometry"],
                          "captions": c["captions"].get("status"), **res})
             bad += 0 if res["ok"] else 1
             progress_line("validate", sum(1 for r in rows if r.get("file")), total,
                           f"clip {c['id']} {'ok' if res['ok'] else 'failed'}")
-            print(f"validate {c['id']}/{f['layout']}: {'PASS' if res['ok'] else 'FAIL ' + '; '.join(res['issues'])}")
+            loud = ", ".join(f"track {x['track']} {x['lufs'] if x['lufs'] is not None else '-inf'} LUFS"
+                             f"{' (quiet)' if x['quiet'] else ''}" for x in res["audio"]["loudness"] or [])
+            print(f"validate {c['id']}/{f['layout']}: {'PASS' if res['ok'] else 'FAIL ' + '; '.join(res['issues'])}; "
+                  f"audio {res['audio']['tracks']} track(s){': ' + loud if loud else ''}")
         for e in c.get("errors", []):
             rows.append({"id": c["id"], "layout": e["layout"], "file": None, "ok": False,
                          "issues": ["render failed"], "error": e["error"]})
@@ -409,7 +426,11 @@ def cmd_validate(a):
         "tool": "clipper", "toolVersion": TOOL_VERSION, "createdAt": _now(), "recording": rdoc["recording"],
         "targetsVersion": targets.get("version"),
         "targetsUnverified": [t["id"] for t in targets.get("targets", []) if t.get("unverified")],
-        "files": len(rows), "failed": bad, "results": rows,
+        "files": len(rows), "failed": bad,
+        "audioRule": "per file: audio track count (fails when fewer than the source) and per-track integrated loudness "
+                     "(LUFS) and true peak; loudness is reported, not judged (no game-audio detector); quiet = below "
+                     f"{val.QUIET_LUFS} LUFS, listen before posting",
+        "results": rows,
     })
     print(f"validate: {len(rows) - bad}/{len(rows)} PASS")
     return 0 if bad == 0 else 4
@@ -444,7 +465,7 @@ def merge_saves(rows, durations):
         if end - start < 1.0:
             continue
         clips.append({"id": f"L{i:02d}", "file": c["file"], "start": round(start, 3), "end": round(end, 3),
-                      "score": c["score"], "labels": c["labels"], "reasons": c["reasons"]})
+                      "wallStart": round(c["s"], 3), "score": c["score"], "labels": c["labels"], "reasons": c["reasons"]})
     return clips
 
 
@@ -467,6 +488,7 @@ def cmd_live_review(a):
                 except ValueError:
                     eprint("live-review: skipped a bad saves.jsonl line")
     rows = saves_between(rows, a.since, a.until)
+    window_files = [fl.get("path") for r in rows for fl in r.get("files", []) if fl.get("path")]
     gate_info = {"applied": False, "reason": "no matches.json given (--matches): every save kept"}
     if a.matches:
         mdoc = load_json(a.matches)
@@ -501,13 +523,15 @@ def cmd_live_review(a):
         for lid in wanted:
             try:
                 name = rnd.render_variant(ffmpeg, c["file"], infos[c["file"]], c, by_id[lid], frame, encoder, wd)
-                files.append({"layout": lid, "file": name, "geometry": by_id[lid].get("geometry", "unverified")})
+                files.append({"layout": lid, "file": name, "geometry": by_id[lid].get("geometry", "unverified"),
+                              "sourceAudioTracks": infos[c["file"]].get("audio_tracks")})
                 print(f"live-review {c['id']}/{lid}: rendered ({c['end'] - c['start']:.1f} s)")
             except ClipError as e:
                 errors.append({"layout": lid, "error": str(e)[-300:]})
                 failed += 1
                 eprint(f"live-review {c['id']}/{lid}: FAILED")
-        out_rows.append({"id": c["id"], "start": c["start"], "end": c["end"], "source": os.path.basename(c["file"]),
+        out_rows.append({"id": c["id"], "start": c["start"], "end": c["end"], "wallStart": c["wallStart"],
+                         "source": os.path.basename(c["file"]),
                          "score": c["score"], "labels": c["labels"], "reasons": c["reasons"],
                          "captions": {"backend": "none", "status": "off"}, "files": files, "errors": errors})
         progress_line("review", n, len(clips), f"clip {c['id']} {'failed' if errors else 'done'}")
@@ -517,6 +541,13 @@ def cmd_live_review(a):
         "failed": failed, "matchGate": gate_info, "clips": out_rows,
     })
     print(f"live-review: {len(rows)} save(s) -> {len(clips)} clip(s), {failed} failed render(s)")
+    rc = 0
+    if a.publish:
+        rc = cmd_validate(a)
+        _publish(a, a.out)
+    if a.drop_used_saves and failed == 0 and rc == 0:
+        gone = pub.drop_used_saves(window_files)
+        print(f"live-review: {len(gone)} used replay save file(s) deleted (live clipper intermediates)")
     return 0
 
 
@@ -544,8 +575,11 @@ def cmd_montage(a):
     encoder = rnd.pick_encoder(a.encoder)
     out = os.path.join(a.out, "montage")
     os.makedirs(out, exist_ok=True)
-    sts, _ = mont.streaks(hits, ranking, cfg)
-    print(f"montage: {len(sts)} qualifying streak(s), {sum(len(s['kills']) for s in sts)} kill(s) in them")
+    gs, _ = mont.groups(hits, ranking, cfg)
+    sk = sum(len(g["kills"]) for g in gs if g["streak"])
+    nk = sum(len(g["kills"]) for g in gs)
+    print(f"montage: {nk} own kill(s): {sk} in {sum(1 for g in gs if g['streak'])} streak(s), {nk - sk} single; "
+          f"{sum(m['kills'] for m in plans)} used in {len(plans)} montage(s)")
     reels = mont.match_reels(hits, ranking, cfg, min(info["duration"], vinfo["duration"]))  # won matches (W1 VICTORY), every own kill (D237)
     print(f"montage: {len(reels)} won-match reel(s)")
     jobs = [(f"M{i:02d}", m) for i, m in enumerate(plans, 1)] + [(f"W{i:02d}", m) for i, m in enumerate(reels, 1)]
@@ -554,25 +588,30 @@ def cmd_montage(a):
         wd = os.path.join(out, "clips", cid)
         os.makedirs(wd, exist_ok=True)
         argv = mont.render_argv(ffmpeg, vrec, m["pieces"], frame, rnd.ENCODERS[encoder], rnd.AUDIO,
-                                int(cfg["audioFadeMs"]), "montage-v.mp4.part")
+                                int(cfg["audioFadeMs"]), "montage-v.mp4.part", audio_tracks=max(1, vinfo["audio_tracks"]))
         r = rnd.run_tool(argv, cwd=wd, timeout=1800)
         files, errors = [], []
         if r.returncode == 0:
             os.replace(os.path.join(wd, "montage-v.mp4.part"), os.path.join(wd, "montage-v.mp4"))
-            files.append({"layout": "montage-v", "file": "montage-v.mp4", "geometry": "canvas"})
-            print(f"montage {cid}: {m['seconds']:.1f} s, {len(m['pieces'])} piece(s), score {m['score']:g}")
+            files.append({"layout": "montage-v", "file": "montage-v.mp4", "geometry": "canvas",
+                          "sourceAudioTracks": vinfo["audio_tracks"]})
+            kills = m.get("kills", sum(p["kills"] for p in m["pieces"]))
+            print(f"montage {cid}: {m['seconds']:.1f} s, {len(m['pieces'])} piece(s), {kills} kill(s) "
+                  f"({m.get('streakKills', '-')} in {m.get('streaks', '-')} streak(s), {m.get('singleKills', '-')} single), "
+                  f"score {m['score']:g}")
         else:
             errors.append({"layout": "montage-v", "error": r.stderr.strip()[-300:]})
             failed += 1
             eprint(f"montage {cid}: FAILED")
         rows.append({"id": cid, "start": 0.0, "end": m["seconds"], "score": m["score"], "labels": m["labels"],
-                     "pieces": m["pieces"], "captions": {"backend": "none", "status": "off"}, "files": files,
-                     "errors": errors})
+                     "pieces": m["pieces"], "kills": m.get("kills"), "streakKills": m.get("streakKills"),
+                     "singleKills": m.get("singleKills"), "captions": {"backend": "none", "status": "off"},
+                     "files": files, "errors": errors})
     write_json_atomic(os.path.join(out, RENDER), {
         "tool": "clipper.montage", "toolVersion": TOOL_VERSION, "createdAt": _now(),
         "recording": os.path.basename(a.recording), "vRecording": os.path.basename(vrec), "encoder": encoder,
         "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
-        "failed": failed, "clips": rows,
+        "game": _game(a), "failed": failed, "clips": rows,
     })
     # candidates.json in the montage folder makes it a clip run folder for posting (services/posting packageRun):
     # times are on the montage's own timeline (0 .. seconds); anchor = the first kill (cover frame); the source
@@ -587,18 +626,96 @@ def cmd_montage(a):
                         "labels": r["labels"], "pieces": r["pieces"]}
                        for i, r in enumerate((r for r in rows if r["files"]), 1)],
     })
-    print(f"montage: {len(plans)} montage(s), {len(reels)} won-match reel(s), {failed} failed; "
-          f"validate with: validate --out {out}")
+    print(f"montage: {len(plans)} montage(s), {len(reels)} won-match reel(s), {failed} failed")
+    sub = argparse.Namespace(**{**vars(a), "out": out})
+    rc = cmd_validate(sub)
+    if getattr(a, "publish", None):
+        _publish(sub, out, run_name=os.path.basename(a.out), rec_start=a.recording)
+    return rc
+
+
+# ---------------------------------------------------------------- publish / tidy
+
+def _game(a):
+    """Game id of the detector pass in --out (its parent for a montage folder), else the default game."""
+    for d in (a.out, os.path.dirname(a.out)):
+        p = os.path.join(d, "detector-pass.json")
+        if os.path.isfile(p):
+            try:
+                g = load_json(p).get("game")
+                if g:
+                    return g
+            except ClipError:
+                pass
+    try:
+        return load_json(os.path.join(CLIP_DATA, "detector-pass.json")).get("defaultGame") or "game"
+    except ClipError:
+        return "game"
+
+
+def _publish(a, work, run_name=None, rec_start=None):
+    lay_doc = load_config("layouts", a.layouts_file)
+    ranking = load_config("ranking", a.ranking)
+    start = None
+    if rec_start:
+        try:
+            start = sig.recording_start(rec_start, getattr(a, "record_start", None)).astimezone().replace(tzinfo=None)
+        except ClipError:
+            start = None
+    rows = pub.publish(work, a.publish, resolve_data_dir(a.data_dir), _game(argparse.Namespace(out=work)),
+                       {x["id"]: x for x in lay_doc["layouts"]}, ranking.get("detectorWeights"), run_name, start)
+    for r in rows:
+        print(f"publish: {os.path.basename(r['file'])} ({r['how']})")
+    print(f"publish: {len(rows)} finished video(s) in {a.publish}")
+    return rows
+
+
+def cmd_publish(a):
+    a.publish = os.path.abspath(a.to)
+    rdoc = load_json(os.path.join(a.out, RENDER))
+    rec = rdoc.get("recording") if rdoc.get("recording") != "live-saves" else None
+    _publish(a, a.out, rec_start=rec)
+    return 0
+
+
+def cmd_tidy(a):
+    lay_doc = load_config("layouts", a.layouts_file)
+    ranking = load_config("ranking", a.ranking)
+    data_dir = resolve_data_dir(a.data_dir)
+    game = _game(argparse.Namespace(out=os.path.join(CLIP_DATA, "-")))
+    plan = pub.tidy_plan(a.recordings, a.clips, data_dir, game, {x["id"]: x for x in lay_doc["layouts"]},
+                         ranking.get("detectorWeights"))
+    for x in plan:
+        line = f"{x['action'].upper():7s} {x['src']}"
+        if x.get("dst"):
+            line += "\n        -> " + x["dst"]
+        print(line + "\n        (" + x["why"] + ")")
+    counts = {k: sum(1 for x in plan if x["action"] == k) for k in ("rename", "move", "delete", "keep", "leave")}
+    tail = "" if a.apply else " (dry run: nothing changed; add --apply to act)"
+    print("tidy: " + ", ".join(f"{v} {k}" for k, v in counts.items()) + tail)
+    if a.apply:
+        r = pub.apply_plan(plan, a.clips)
+        print(f"tidy: {len(r['done'])} done, {len(r['skipped'])} skipped")
+        for x in r["skipped"]:
+            print(f"SKIPPED {x['src']} ({x['reason']})")
     return 0
 
 
 def cmd_run(a):
     steps = ((cmd_detect,) if a.detect else ()) + (cmd_candidates, cmd_gate, cmd_render, cmd_validate)
+    rc = 0
     for step in steps:
         rc = step(a)
-        if rc:
+        if rc and step is not cmd_validate:
             return rc
-    return 0
+    if a.publish:  # the passing short clips, even when another file failed validation
+        _publish(a, a.out, rec_start=a.recording)
+    if a.montage:  # a montage that cannot be made never undoes the short clips already published
+        try:
+            rc = rc or cmd_montage(a)
+        except ClipError as e:
+            eprint(f"montage: not made: {e}")
+    return rc
 
 
 def _now():
@@ -663,14 +780,28 @@ def build_parser():
     s = sub.add_parser("render"); common(s); render_args(s); s.set_defaults(fn=cmd_render)
     s = sub.add_parser("validate"); common(s, recording=False); s.add_argument("--no-decode", action="store_true")
     s.set_defaults(fn=cmd_validate)
+    def publish_arg(sp):
+        sp.add_argument("--publish", type=os.path.abspath,
+                        help="clips folder: finished, validated videos are linked there under the naming convention")
+
     s = sub.add_parser("run"); common(s); cand_args(s); render_args(s); s.add_argument("--no-decode", action="store_true")
-    detect_args(s); s.add_argument("--detect", action="store_true")
+    detect_args(s); s.add_argument("--detect", action="store_true"); publish_arg(s)
+    s.add_argument("--montage", action="store_true", help="also make kill montages (needs the V recording)")
+    s.add_argument("--montage-config")
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("montage"); common(s)
     s.add_argument("--hits"); s.add_argument("--montage-config")
     s.add_argument("--v-recording", type=os.path.abspath); s.add_argument("--encoder", default="auto")
-    s.add_argument("--record-start")
+    s.add_argument("--record-start"); s.add_argument("--no-decode", action="store_true"); publish_arg(s)
     s.set_defaults(fn=cmd_montage)
+    s = sub.add_parser("publish"); common(s, recording=False)
+    s.add_argument("--to", required=True, help="the clips folder"); s.set_defaults(fn=cmd_publish)
+    s = sub.add_parser("tidy")
+    s.add_argument("--recordings", type=os.path.abspath); s.add_argument("--clips", type=os.path.abspath)
+    g = s.add_mutually_exclusive_group()
+    g.add_argument("--dry-run", action="store_true", help="list only (the default)")
+    g.add_argument("--apply", action="store_true", help="do the listed moves, renames and deletes")
+    s.set_defaults(fn=cmd_tidy)
     s = sub.add_parser("live-review"); common(s, recording=False)
     s.add_argument("--saves", required=True, type=os.path.abspath, help="live clipper session folder (saves.jsonl)")
     s.add_argument("--since", help="ISO UTC time: saves at or after it only")
@@ -678,6 +809,9 @@ def build_parser():
     s.add_argument("--layouts"); s.add_argument("--encoder", default="auto")
     s.add_argument("--matches", type=os.path.abspath,
                    help="matches.json of the same session's recording (`run`): saves in skipped matches are dropped")
+    s.add_argument("--no-decode", action="store_true"); publish_arg(s)
+    s.add_argument("--drop-used-saves", action="store_true",
+                   help="delete the window's replay saves (live clipper intermediates) once every clip rendered")
     s.set_defaults(fn=cmd_live_review)
     return p
 
@@ -689,8 +823,9 @@ def main(argv=None):
         if not clips_allowed(data_dir):
             eprint(f"clipper: clips are off (Settings > Clips, or the '{FLAG}' flag)")
             return EXIT_FLAG_OFF
-        a.out = os.path.abspath(a.out)
-        check_out_dir(a.out, corpus_dir())
+        if getattr(a, "out", None):
+            a.out = os.path.abspath(a.out)
+            check_out_dir(a.out, corpus_dir())
         lower_own_priority()
         return a.fn(a)
     except ClipError as e:

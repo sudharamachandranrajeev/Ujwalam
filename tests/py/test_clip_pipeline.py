@@ -405,7 +405,20 @@ class EndToEndTests(unittest.TestCase):
 
     def test_run_end_to_end(self):
         out = os.path.join(self.td.name, "out")
-        self.assertEqual(clipper.main(self.args(self.data_on, out, "--layouts", "full-crop,game-facecam,blurred-fill")), 0)
+        clips = os.path.join(self.td.name, "user clips")
+        self.assertEqual(clipper.main(self.args(self.data_on, out, "--layouts", "full-crop,game-facecam,blurred-fill",
+                                                "--publish", clips)), 0)
+        # D298: the clips folder gets the finished videos only, named by the convention; the upload list is app data
+        days = os.listdir(clips)  # the local date of the recording (the test may run in any time zone)
+        self.assertEqual(len(days), 1)
+        self.assertRegex(days[0], r"^2026-11-0[23]$")
+        day = os.path.join(clips, days[0])
+        got = sorted(os.listdir(day))
+        self.assertEqual(len(got), 3)
+        for n in got:
+            self.assertRegex(n, r"^codm_short_2026110[23]-\d{6}_[a-z0-9-]+_01_v-(full-crop|game-facecam|blurred-fill)\.mp4$")
+        up = cc.load_json(os.path.join(self.data_on, "clips", "uploads.json"))
+        self.assertEqual(len(up["files"]), 3)
         cand = cc.load_json(os.path.join(out, clipper.CANDIDATES))
         self.assertEqual(cand["signals"]["markers"]["matched"], 1)
         self.assertTrue(cand["signals"]["audio"]["available"])
@@ -419,6 +432,8 @@ class EndToEndTests(unittest.TestCase):
         for r in rep["results"]:
             self.assertTrue(r["decode"]["ok"])
             self.assertEqual((r["facts"]["width"], r["facts"]["height"]), (1080, 1920))
+            self.assertEqual((r["audio"]["tracks"], r["audio"]["sourceTracks"]), (1, 1), "audio track kept")
+            self.assertIsNotNone(r["audio"]["loudness"][0]["lufs"], "loudness reported per track")
 
     def test_default_layout_cuts_the_v_recording(self):
         out = os.path.join(self.td.name, "out-v")

@@ -78,11 +78,16 @@ test('clipRunSpec: whole recording (after) and moments found while it ran (while
   const r = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { type: 'full', h: 'C:/r/h.mkv', v: 'C:/r/v.mkv', name: 'h' }, exists: has([script, gpu]) });
   assert.equal(r.spec.exe, gpu);
   assert.deepEqual(r.spec.argv, ['-I', script, '--data-dir', 'D', 'run', '--detect', '--threads', '4', '--encoder', 'h264_nvenc',
-    '--recording', 'C:/r/h.mkv', '--v-recording', 'C:/r/v.mkv', '--out', path.join('E:/clips', 'h')]);
+    '--recording', 'C:/r/h.mkv', '--v-recording', 'C:/r/v.mkv', '--montage', '--publish', 'E:/clips', '--out', path.join('D', 'clips', 'runs', 'h')]);
+  assert.equal(r.spec.out, path.join('D', 'clips', 'runs', 'h'), 'the run works in app data');
+  assert.equal(r.spec.folder, 'E:/clips', 'only finished videos go to the clips folder');
+  const noV = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { type: 'full', h: 'C:/r/h.mkv', name: 'h' }, exists: has([script, gpu]) });
+  assert.ok(!noV.spec.argv.includes('--montage'), 'no V recording: no montage');
   const job = { type: 'review', since: '2026-11-08T10:00:00.000Z', until: '2026-11-08T11:00:00.000Z', name: 'live-1' };
   assert.match(clipRunSpec({ clipRoot: root, dataDir: 'D', job, saves: null, exists: has([script, gpu]) }).reason, /no moments/);
   const rv = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job, saves: 'D/live-clips/s1', exists: has([script, gpu]) });
-  assert.deepEqual(rv.spec.argv.slice(4), ['live-review', '--saves', 'D/live-clips/s1', '--since', job.since, '--until', job.until, '--encoder', 'h264_nvenc', '--out', path.join('E:/clips', 'live-1')]);
+  assert.deepEqual(rv.spec.argv.slice(4), ['live-review', '--saves', 'D/live-clips/s1', '--since', job.since, '--until', job.until, '--encoder', 'h264_nvenc',
+    '--publish', 'E:/clips', '--drop-used-saves', '--out', path.join('D', 'clips', 'runs', 'live-1')]);
 });
 
 function setup() {
@@ -126,13 +131,18 @@ test('after: a stopped recording is clipped whole, hidden, then counted; off: no
     assert.equal(s.spawned[0].o.windowsHide, true);
     assert.ok(s.spawned[0].argv.includes('--detect'));
     assert.equal(s.status().running.minutes, 8);
-    const out = path.join(s.dataDir, 'clips', 'practice-h-1');
+    const out = path.join(s.dataDir, 'clips', 'runs', 'practice-h-1');
+    assert.equal(s.spawned[0].argv[s.spawned[0].argv.indexOf('--out') + 1], out);
     mkdirSync(path.join(out, 'clips', 'c01'), { recursive: true });
     writeFileSync(path.join(out, 'clips', 'c01', 'stream-v.mp4'), '');
-    assert.equal(countClips(out), 1);
+    assert.equal(countClips(out), 1, 'older run folder: the rendered videos');
+    writeFileSync(path.join(out, 'published.json'), JSON.stringify({ files: [{ file: 'a' }, { file: 'b' }] }));
+    mkdirSync(path.join(out, 'montage'));
+    writeFileSync(path.join(out, 'montage', 'published.json'), JSON.stringify({ files: [{ file: 'm' }] }));
+    assert.equal(countClips(out), 3, 'published videos (short clips + montages)');
     s.spawned[0].c.emit('exit', 0);
     assert.equal(s.status().state, 'idle');
-    assert.deepEqual(s.status().last, { name: 'practice-h-1', kind: 'recording', result: 'done', code: 0, clips: 1, out });
+    assert.deepEqual(s.status().last, { name: 'practice-h-1', kind: 'recording', result: 'done', code: 0, clips: 3, out, folder: path.join(s.dataDir, 'clips') });
   } finally { rmSync(s.d, { recursive: true, force: true }); }
 });
 
