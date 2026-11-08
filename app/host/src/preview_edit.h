@@ -9,8 +9,9 @@
 //
 // Gestures (OBS/Meld conventions): click selects the topmost visible layer under the cursor on that canvas (empty
 // canvas clears the selection; one selection per canvas). Drag inside the box moves it; a corner handle resizes it
-// with the aspect ratio kept (Shift: free). Moves and unrotated resizes snap to the canvas edges and centre within
-// 8 screen px (Alt: no snap). The round handle 24 screen px above the top edge turns the layer about its centre
+// with the aspect ratio kept (Shift: free). Moves and unrotated resizes snap within 8 screen px to the canvas edges
+// and centre and to the edges and centres of the other visible layers' bounding boxes (D272; Alt: no snap); while a
+// drag holds a snap, draw_cb shows the guide line it snapped to. The round handle 24 screen px above the top edge turns the layer about its centre
 // (Shift: 15 degree steps); a turn changes only `rotation` (D255). Alt + drag on an edge crops that side (D256): the
 // box edge follows the cursor and the source is cut by the same share, so the picture keeps its scale; the opposite
 // edge stays put. Needs the source size (a source that reports 0 x 0 has no crop gesture).
@@ -27,6 +28,7 @@
 
 #include "json.h"
 
+#include <cmath>
 #include <cstdint>
 #include <deque>
 #include <functional>
@@ -78,8 +80,13 @@ struct DragIn {
 	bool snap = true;          // !Alt
 	double snap_tol = 8;       // canvas px (8 screen px)
 	double cw = 0, ch = 0;     // canvas size
+	std::vector<double> gx, gy; // more snap targets: the other layers' bounding-box edges and centres, canvas px
 };
-Rect drag(const DragIn &d);
+// line_x / line_y (optional): the guide line a snap used on that axis, NAN when none did.
+Rect drag(const DragIn &d, double *line_x = nullptr, double *line_y = nullptr);
+// Snap targets from the other layers (every item but skip): left, right and centre x; top, bottom and centre y of
+// each bounding box (a turned layer: the box around its turned corners).
+void guides(const std::vector<Item> &items, const std::string &skip, std::vector<double> &gx, std::vector<double> &gy);
 
 // Mouse modifier keys for one event.
 struct Mods {
@@ -121,6 +128,8 @@ public:
 	// For draw_cb: the selected rectangle on a canvas (false: nothing to draw).
 	bool selection(const std::string &canvas, Rect &r) const;
 	json::Value selection_json(const std::string &canvas) const;
+	// For draw_cb: the guide lines the running drag snapped to (NAN: none on that axis); false when there are none.
+	bool snap_lines(const std::string &canvas, double &x, double &y) const;
 
 	struct Edit {
 		uint64_t seq = 0;
@@ -143,6 +152,8 @@ private:
 		Rect start;
 		double sx = 0, sy = 0;
 		bool moved = false;
+		std::vector<double> gx, gy; // snap targets from the other layers, taken at the press
+		double lx = NAN, ly = NAN;  // guide lines the drag snapped to now
 	};
 	Backend be_;
 	mutable std::mutex m_;

@@ -30,30 +30,50 @@ void rot_inv(double rot, double wx, double wy, double &lx, double &ly)
 	ly = -s * wx + c * wy;
 }
 
-// Moves v to the nearest target within tol; returns the shift applied (0 when none is close enough).
-double snap_shift(const double *vals, const double *targets, int n, double tol)
+// Canvas edges and centre first (a tie goes to the canvas), then the other layers' guides.
+std::vector<double> snap_targets(double size, const std::vector<double> &extra)
+{
+	std::vector<double> t{0, size / 2, size};
+	t.insert(t.end(), extra.begin(), extra.end());
+	return t;
+}
+
+// The shift that moves the closest of vals onto a target within tol (0 when none is close enough); *line = that
+// target.
+double snap_shift(const double *vals, int n, const std::vector<double> &targets, double tol, double *line)
 {
 	double best = 0, bestd = tol + 1;
-	for (int i = 0; i < n; i++) {
-		double d = targets[i] - vals[i];
-		if (std::fabs(d) <= tol && std::fabs(d) < bestd) {
-			bestd = std::fabs(d);
-			best = d;
+	for (int i = 0; i < n; i++)
+		for (double t : targets) {
+			double d = t - vals[i];
+			if (std::fabs(d) <= tol && std::fabs(d) < bestd) {
+				bestd = std::fabs(d);
+				best = d;
+				if (line)
+					*line = t;
+			}
 		}
-	}
 	return best;
 }
 
-double snap_value(double v, double size, double tol)
+double snap_value(double v, const std::vector<double> &targets, double tol, double *line)
 {
-	const double t[3] = {0, size / 2, size};
-	double best = v, bestd = tol + 1;
-	for (double x : t)
-		if (std::fabs(x - v) <= tol && std::fabs(x - v) < bestd) {
-			bestd = std::fabs(x - v);
-			best = x;
-		}
-	return best;
+	double s[1] = {v};
+	return v + snap_shift(s, 1, targets, tol, line);
+}
+
+void bbox(const Rect &r, double &l, double &t, double &rt, double &b)
+{
+	double c[4][2];
+	corners(r, c);
+	l = rt = c[0][0];
+	t = b = c[0][1];
+	for (auto &p : c) {
+		l = std::min(l, p[0]);
+		rt = std::max(rt, p[0]);
+		t = std::min(t, p[1]);
+		b = std::max(b, p[1]);
+	}
 }
 
 // Whole pixels, rounded per edge so that the edge a resize holds still stays exactly where it was.
@@ -74,6 +94,20 @@ bool same(const Rect &a, const Rect &b)
 }
 
 } // namespace
+
+void guides(const std::vector<Item> &items, const std::string &skip, std::vector<double> &gx, std::vector<double> &gy)
+{
+	gx.clear();
+	gy.clear();
+	for (auto &it : items) {
+		if (it.id == skip || it.r.w <= 0 || it.r.h <= 0)
+			continue;
+		double l, t, rt, b;
+		bbox(it.r, l, t, rt, b);
+		gx.insert(gx.end(), {l, rt, (l + rt) / 2});
+		gy.insert(gy.end(), {t, b, (t + b) / 2});
+	}
+}
 
 View fit_view(double client_w, double client_h, double canvas_w, double canvas_h)
 {
@@ -172,8 +206,12 @@ int hit_edge(const Rect &r, double cx, double cy, double tol)
 	return best;
 }
 
-Rect drag(const DragIn &d)
+Rect drag(const DragIn &d, double *line_x, double *line_y)
 {
+	if (line_x)
+		*line_x = NAN;
+	if (line_y)
+		*line_y = NAN;
 	Rect r = d.start;
 	double dx = d.cx - d.sx, dy = d.cy - d.sy;
 	if (d.mode == Mode::Rotate) { // the angle the cursor swept about the centre; position and size stay
@@ -190,20 +228,12 @@ Rect drag(const DragIn &d)
 	if (d.mode == Mode::Move) {
 		r.x += dx;
 		r.y += dy;
-		if (d.snap) { // the turned box's bounding box: edges to the canvas edges, centre to the centre
-			double c[4][2];
-			corners(r, c);
-			double l = c[0][0], rt = c[0][0], t = c[0][1], b = c[0][1];
-			for (auto &p : c) {
-				l = std::min(l, p[0]);
-				rt = std::max(rt, p[0]);
-				t = std::min(t, p[1]);
-				b = std::max(b, p[1]);
-			}
-			const double vx[3] = {l, rt, (l + rt) / 2}, tx[3] = {0, d.cw, d.cw / 2};
-			const double vy[3] = {t, b, (t + b) / 2}, ty[3] = {0, d.ch, d.ch / 2};
-			r.x += snap_shift(vx, tx, 3, d.snap_tol);
-			r.y += snap_shift(vy, ty, 3, d.snap_tol);
+		if (d.snap) { // the turned box's bounding box: its edges and centre to the nearest target
+			double l, t, rt, b;
+			bbox(r, l, t, rt, b);
+			const double vx[3] = {l, rt, (l + rt) / 2}, vy[3] = {t, b, (t + b) / 2};
+			r.x += snap_shift(vx, 3, snap_targets(d.cw, d.gx), d.snap_tol, line_x);
+			r.y += snap_shift(vy, 3, snap_targets(d.ch, d.gy), d.snap_tol, line_y);
 		}
 		return clamp_round(r);
 	}
@@ -244,8 +274,8 @@ Rect drag(const DragIn &d)
 	double mx = c[k][0] + dx, my = c[k][1] + dy; // where the dragged corner is now
 	bool upright = std::fabs(std::remainder(s.rot, 360.0)) < 0.01;
 	if (d.snap && upright) {
-		mx = snap_value(mx, d.cw, d.snap_tol);
-		my = snap_value(my, d.ch, d.snap_tol);
+		mx = snap_value(mx, snap_targets(d.cw, d.gx), d.snap_tol, line_x);
+		my = snap_value(my, snap_targets(d.ch, d.gy), d.snap_tol, line_y);
 	}
 	double ax = c[o][0], ay = c[o][1]; // the opposite corner stays where it is
 	double lx, ly;
@@ -363,6 +393,8 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 	next.start = next.r;
 	next.sx = cx;
 	next.sy = cy;
+	if (next.has)
+		guides(items, next.layer, next.gx, next.gy);
 	std::lock_guard<std::mutex> l(m_);
 	if (!enabled_)
 		return false;
@@ -385,6 +417,8 @@ bool Editor::move(const std::string &canvas, const View &v, double sx, double sy
 		d.corner = s.corner;
 		d.sx = s.sx;
 		d.sy = s.sy;
+		d.gx = s.gx;
+		d.gy = s.gy;
 		scene = s.scene;
 		layer = s.layer;
 	}
@@ -394,7 +428,8 @@ bool Editor::move(const std::string &canvas, const View &v, double sx, double sy
 	d.snap_tol = 8 * v.canvas_per_px();
 	d.cw = v.cw;
 	d.ch = v.ch;
-	Rect r = drag(d);
+	double lx, ly;
+	Rect r = drag(d, &lx, &ly);
 	{
 		std::lock_guard<std::mutex> l(m_);
 		auto it = sel_.find(canvas);
@@ -419,6 +454,8 @@ bool Editor::move(const std::string &canvas, const View &v, double sx, double sy
 	}
 	it->second.r = r;
 	it->second.moved = !same(r, it->second.start);
+	it->second.lx = lx;
+	it->second.ly = ly;
 	return true;
 }
 
@@ -438,6 +475,7 @@ bool Editor::up(const std::string &canvas, const View &v, double sx, double sy, 
 	s.mode = Mode::None;
 	s.corner = -1;
 	s.moved = false;
+	s.lx = s.ly = NAN;
 	if (moved) { // one edit per gesture; a plain click, or a drag back to the start, only selects
 		Edit e;
 		e.seq = ++seq_;
@@ -469,6 +507,7 @@ void Editor::cancel(const std::string &canvas)
 		mode = s.mode;
 		s.mode = Mode::None;
 		s.moved = false;
+		s.lx = s.ly = NAN;
 		if (!moved)
 			return;
 		s.r = s.start;
@@ -547,7 +586,24 @@ json::Value Editor::selection_json(const std::string &canvas) const
 		      : s.mode == Mode::Rotate ? "rotate"
 		      : s.mode == Mode::Crop   ? "crop"
 					       : "none");
+	if (s.mode != Mode::None && (!std::isnan(s.lx) || !std::isnan(s.ly))) {
+		json::Value g = json::Value::object();
+		g.set("x", std::isnan(s.lx) ? json::Value() : json::Value(s.lx));
+		g.set("y", std::isnan(s.ly) ? json::Value() : json::Value(s.ly));
+		o.set("snap", g);
+	}
 	return o;
+}
+
+bool Editor::snap_lines(const std::string &canvas, double &x, double &y) const
+{
+	std::lock_guard<std::mutex> l(m_);
+	auto it = sel_.find(canvas);
+	if (!enabled_ || it == sel_.end() || !it->second.has || it->second.mode == Mode::None)
+		return false;
+	x = it->second.lx;
+	y = it->second.ly;
+	return !std::isnan(x) || !std::isnan(y);
 }
 
 uint64_t Editor::seq() const

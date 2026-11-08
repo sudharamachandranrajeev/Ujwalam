@@ -201,6 +201,31 @@ test('lost capture puts the layer back; switching the flag off clears the select
   assert.equal((await c.call('host.status')).previewEditing, false);
 });
 
+test('moves and resizes snap to other layers\' edges and centres too (Alt: no snap); the guide shows while dragging (D272)', async () => {
+  await c.call('preview.setEditing', { enabled: true });
+  const put = (pl) => c.call('layers.setPlacement', { scene: 'main', canvas: 'H', layer: 'box',
+    placement: { width: 200, height: 100, rotation: 0, crop: { left: 0, top: 0, right: 0, bottom: 0 }, ...pl } });
+  // turned covers x 650..750 (centre 700), y 250..450: its guides; bg covers the canvas (same as the canvas guides)
+  await put({ x: 300, y: 500 });
+  await sim([at('down', 400, 550), at('up', 400, 550)]); // select box
+  // bottom-right corner (500,600) to x 695 (Shift: free): 5 px from turned's centre line 700
+  let r = await sim([at('down', 500, 600), at('move', 695, 600, { shift: true }), at('up', 695, 600, { shift: true })]);
+  assert.equal(r.steps[0].mode, 'resize');
+  assert.deepEqual(r.steps[1].snap, { x: 700, y: null }, 'guide line on the turned layer\'s centre while dragging');
+  assert.equal(r.steps[2].snap, undefined, 'no guide after the release');
+  let p = await placement('box');
+  assert.deepEqual([p.x, p.width, p.height], [300, 400, 100], 'right edge snapped to the other layer\'s centre');
+
+  await put({ x: 300, y: 500 });
+  // drag by +457: left edge 757, 7 px right of turned's right edge 750
+  r = await sim([at('down', 400, 550), at('move', 857, 550), at('up', 857, 550)]);
+  assert.deepEqual(r.steps[1].snap, { x: 750, y: null });
+  assert.equal((await placement('box')).x, 750, 'left edge snapped against the other layer\'s right edge');
+  await put({ x: 300, y: 500 });
+  await sim([at('down', 400, 550), at('move', 857, 550, { alt: true }), at('up', 857, 550, { alt: true })]);
+  assert.equal((await placement('box')).x, 757, 'Alt: no snap');
+});
+
 test('bad input is refused', async () => {
   await assert.rejects(c.call('preview.editSim', { ...VIEW, steps: [{ event: 'jump' }] }));
   await assert.rejects(c.call('preview.editSim', { canvas: 'X', width: 640, height: 400, steps: [] }));

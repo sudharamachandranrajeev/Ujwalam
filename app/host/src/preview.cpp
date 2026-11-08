@@ -118,6 +118,22 @@ void draw_selection(const pedit::Rect &r, double k)
 	solid_pass(fg, [&] { box(2 * k, 5 * k); });
 }
 
+// Snap guide lines (D272) across the whole canvas, sized in screen px like the selection box.
+void draw_guides(double x, double y, double cw, double ch, double k)
+{
+	auto lines = [&](double t) {
+		if (!std::isnan(x))
+			line(x, 0, x, ch, t);
+		if (!std::isnan(y))
+			line(0, y, cw, y, t);
+	};
+	vec4 rim, fg;
+	vec4_set(&rim, 0.0f, 0.0f, 0.0f, 1.0f);
+	vec4_set(&fg, 1.0f, 0.3f, 0.75f, 1.0f);
+	solid_pass(rim, [&] { lines(3 * k); });
+	solid_pass(fg, [&] { lines(1 * k); });
+}
+
 void draw_cb(void *param, uint32_t cx, uint32_t cy)
 {
 	auto *w = static_cast<Previews::Win *>(param);
@@ -143,6 +159,9 @@ void draw_cb(void *param, uint32_t cx, uint32_t cy)
 	pedit::Rect sel; // copied under the editor's lock; drawn with no lock held
 	if (w->owner && vw > 0 && w->owner->editor().selection(w->canvas, sel))
 		draw_selection(sel, (double)bw / vw);
+	double gx, gy;
+	if (w->owner && vw > 0 && w->owner->editor().snap_lines(w->canvas, gx, gy))
+		draw_guides(gx, gy, bw, bh, (double)bw / vw);
 	gs_projection_pop();
 	gs_viewport_pop();
 	if (c)
