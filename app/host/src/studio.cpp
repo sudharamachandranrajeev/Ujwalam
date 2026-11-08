@@ -1886,33 +1886,39 @@ bool Studio::recreate_global(Global &g)
 	obs_source_t *o = old->src;
 	const std::string type = obs_source_get_id(o), name = obs_source_get_name(o);
 	obs_data_t *st = obs_source_get_settings(o);
-	const float vol = obs_source_get_volume(o);
-	const bool muted = obs_source_muted(o);
-	const uint32_t mix = obs_source_get_audio_mixers(o);
-	const enum obs_monitoring_type mon = obs_source_get_monitoring_type(o);
 	obs_source_t *n = obs_source_create(type.c_str(), (name + ":new").c_str(), st, nullptr);
 	obs_data_release(st);
-	if (!n) {
-		hlog::error("audio watchdog: could not create a new %s for %s; the old source stays", type.c_str(),
-			    name.c_str());
+	// libobs returns a source even when the plugin's create failed (it keeps the user's data); such a source has no
+	// plugin data and never sends anything. win-wasapi's create fails e.g. when CoCreateInstance does.
+	if (!n || !obs_obj_get_data(n)) {
+		hlog::error("audio watchdog: could not create a new %s for %s (the plugin could not start it); the old source "
+			    "stays", type.c_str(), name.c_str());
+		if (n)
+			obs_source_release(n);
 		return false;
 	}
+	// Source-level settings the project or the user may have set on the old one (they are not in its settings).
+	obs_source_set_volume(n, obs_source_get_volume(o));
+	obs_source_set_muted(n, obs_source_muted(o));
+	obs_source_set_audio_mixers(n, obs_source_get_audio_mixers(o));
+	obs_source_set_sync_offset(n, obs_source_get_sync_offset(o));
+	obs_source_set_balance_value(n, obs_source_get_balance_value(o));
+	obs_source_set_flags(n, obs_source_get_flags(o)); // e.g. OBS_SOURCE_FLAG_FORCE_MONO
+	obs_source_copy_filters(n, o);                    // e.g. noise suppression on the mic; same names, enabled state
+	const enum obs_monitoring_type mon = obs_source_get_monitoring_type(o);
 	// Park the old source: off its channel, out of every track, monitoring off, renamed. It is not released here:
 	// destroying a WASAPI source whose work queue died never returns and would block libobs's destruction thread.
 	obs_set_output_source(g.channel, nullptr);
 	obs_source_set_monitoring_type(o, OBS_MONITORING_TYPE_NONE);
 	obs_source_set_audio_mixers(o, 0);
 	obs_source_set_muted(o, true);
-	obs_source_set_name(o, (name + ":stale-" + std::to_string(g.recreates + 1)).c_str());
+	obs_source_set_name(o, (name + ":stale-" + std::to_string(parked_.size() + 1)).c_str());
 	old->meter.reset();
 	parked_.push_back(old);
 	obs_source_set_name(n, name.c_str());
 	auto w = wrap(n, "");
 	w->audio_id = old->audio_id;
 	w->audio_name = old->audio_name;
-	obs_source_set_volume(n, vol);
-	obs_source_set_muted(n, muted);
-	obs_source_set_audio_mixers(n, mix);
 	obs_source_set_monitoring_type(n, mon);
 	obs_set_output_source(g.channel, n);
 	g.src = w;
@@ -1937,6 +1943,8 @@ void Studio::audio_watch_tick()
 			g.missing = g.gave_up = false;
 			continue;
 		}
+		// "starting" after a restart: the new source has not sent a packet yet. It stays missing (audio_health) and
+		// is not restarted again inside its start-up grace.
 		if (state != "missing")
 			continue;
 		const std::string what = g.src->audio_name + " audio missing";
@@ -1947,19 +1955,30 @@ void Studio::audio_watch_tick()
 				   obs_source_get_name(g.src->src), last_ms < 0 ? "never" : (std::to_string(last_ms) + " ms ago").c_str());
 			audio_event("missing", g, what);
 		}
-		if (!health_.recreate)
+		if (!health_.recreate || g.gave_up)
 			continue;
+		if (g.attempt_ns && ms_since(now, g.attempt_ns) < (int64_t)health_.no_data_ms)
+			continue; // one attempt per no_data_ms (a failed create leaves the old source, still missing)
+		if (parked_full()) {
+			g.gave_up = true;
+			hlog::error("audio watchdog: %s; %zu replaced sources are parked (limit %u for this run): not restarting "
+				    "any more; restart Ujwalam after the stream", what.c_str(), parked_.size(), health_.max_parked);
+			audio_event("gave-up", g, what + ": too many restarts in this run; restart Ujwalam after the stream");
+			continue;
+		}
 		if (g.recreates < health_.max_recreates) {
 			const std::string old_name = obs_source_get_name(g.src->src);
+			g.attempt_ns = now;
+			g.recreates++;
+			const std::string attempt = std::to_string(g.recreates) + " of " + std::to_string(health_.max_recreates);
 			if (recreate_global(g)) {
-				g.recreates++;
-				hlog::warn("audio watchdog: recreated %s (%s, attempt %u of %u; the old source is parked)",
-					   old_name.c_str(), obs_source_get_id(g.src->src), g.recreates, health_.max_recreates);
-				audio_event("recreated", g,
-					    what + ": restarted the source (attempt " + std::to_string(g.recreates) + " of " +
-						    std::to_string(health_.max_recreates) + ")");
+				hlog::warn("audio watchdog: recreated %s (%s, attempt %s; the old source is parked)", old_name.c_str(),
+					   obs_source_get_id(g.src->src), attempt.c_str());
+				audio_event("recreated", g, what + ": restarted the source (attempt " + attempt + ")");
+			} else {
+				audio_event("recreate-failed", g, what + ": the restart failed (attempt " + attempt + ")");
 			}
-		} else if (!g.gave_up) {
+		} else {
 			g.gave_up = true;
 			hlog::error("audio watchdog: %s after %u restarts; not trying again until the project is loaded again",
 				    what.c_str(), g.recreates);
@@ -1976,7 +1995,9 @@ json::Value Studio::audio_health() const
 	bool ok = true;
 	for (auto &g : globals_) {
 		int64_t last_ms = 0;
-		const std::string state = audio_state(g, now, last_ms);
+		std::string state = audio_state(g, now, last_ms);
+		if (state == "starting" && g.missing)
+			state = "missing"; // restarted, but the new source has delivered nothing yet: not recovered
 		json::Value o = json::Value::object();
 		o.set("id", "audio:" + g.src->audio_id);
 		o.set("audioSource", g.src->audio_id);
@@ -2001,6 +2022,8 @@ json::Value Studio::audio_health() const
 	w.set("recreate", health_.recreate);
 	w.set("maxRecreates", (uint64_t)health_.max_recreates);
 	w.set("parked", (uint64_t)parked_.size());
+	w.set("maxParked", (uint64_t)health_.max_parked);
+	w.set("parkedFull", parked_full());
 	r.set("watchdog", std::move(w));
 	r.set("seq", audio_seq_);
 	json::Value ev = json::Value::array();
@@ -2047,6 +2070,55 @@ json::Value Studio::test_audio_stall(const std::string &id, bool stall)
 			r.set("source", obs_source_get_name(g.src->src));
 			return r;
 		}
+	throw Error(rpc::INVALID_PARAMS, "no such audio source");
+}
+
+json::Value Studio::test_audio_config(const std::string &id, const json::Value &set)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	for (auto &g : globals_) {
+		if (g.src->audio_id != id)
+			continue;
+		obs_source_t *s = g.src->src;
+		if (const json::Value *v = set.find("syncOffsetMs"))
+			obs_source_set_sync_offset(s, v->as_int() * 1000000);
+		if (const json::Value *v = set.find("balance"))
+			obs_source_set_balance_value(s, (float)v->as_double());
+		if (const json::Value *v = set.find("forceMono")) {
+			const uint32_t f = obs_source_get_flags(s);
+			obs_source_set_flags(s, v->as_bool() ? (f | OBS_SOURCE_FLAG_FORCE_MONO) : (f & ~OBS_SOURCE_FLAG_FORCE_MONO));
+		}
+		if (const json::Value *v = set.find("gainFilterDb")) { // obs-filters "gain_filter", named "Gain"
+			obs_data_t *d = obs_data_create();
+			obs_data_set_double(d, "db", v->as_double());
+			obs_source_t *f = obs_source_create_private("gain_filter", "Gain", d);
+			obs_data_release(d);
+			if (!f)
+				throw Error(rpc::INTERNAL, "gain_filter is not available");
+			obs_source_filter_add(s, f);
+			obs_source_release(f);
+		}
+		json::Value r = json::Value::object();
+		r.set("source", obs_source_get_name(s));
+		r.set("syncOffsetMs", (int64_t)(obs_source_get_sync_offset(s) / 1000000));
+		r.set("balance", (double)obs_source_get_balance_value(s));
+		r.set("forceMono", (obs_source_get_flags(s) & OBS_SOURCE_FLAG_FORCE_MONO) != 0);
+		json::Value fl = json::Value::array();
+		obs_source_enum_filters(
+			s,
+			[](obs_source_t *, obs_source_t *f, void *p) {
+				json::Value e = json::Value::object();
+				e.set("name", obs_source_get_name(f));
+				e.set("type", obs_source_get_id(f));
+				obs_data_t *d = obs_source_get_settings(f);
+				e.set("db", obs_data_get_double(d, "db"));
+				obs_data_release(d);
+				static_cast<json::Value *>(p)->push(std::move(e));
+			},
+			&fl);
+		r.set("filters", std::move(fl));
+		return r;
+	}
 	throw Error(rpc::INVALID_PARAMS, "no such audio source");
 }
 

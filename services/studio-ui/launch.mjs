@@ -151,7 +151,7 @@ export function hotkeyOverrides(args) {
 }
 
 export const AUDIO_HEALTH_FILE = path.join(REPO, 'data', 'audio', 'health.json');
-const AUDIO_HEALTH_KEYS = Object.freeze(['enabled', 'noDataMs', 'checkIntervalMs', 'maxRecreates', 'shutdownGuardMs']);
+const AUDIO_HEALTH_KEYS = Object.freeze(['enabled', 'noDataMs', 'checkIntervalMs', 'maxRecreates', 'maxParked', 'shutdownGuardMs']);
 /** data/audio/health.json -> the host config's audioHealth (D297 proposed). Range checks are the host's (exit 64). */
 export function loadAudioHealth(file = AUDIO_HEALTH_FILE) {
   const d = JSON.parse(readFileSync(file, 'utf8'));

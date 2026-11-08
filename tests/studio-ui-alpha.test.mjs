@@ -361,7 +361,7 @@ test('host config: day-2 keys only (hotkeys on, replay 60 s autostart, feedback 
   assert.deepEqual(c.audio, { lowLatency: true });
   // audio health watchdog (D297 proposed): the numbers come from data/audio/health.json, never from code
   const ah = JSON.parse(readFileSync(path.join(REPO, 'data', 'audio', 'health.json'), 'utf8'));
-  assert.deepEqual(c.audioHealth, { enabled: ah.enabled, noDataMs: ah.noDataMs, checkIntervalMs: ah.checkIntervalMs, maxRecreates: ah.maxRecreates, shutdownGuardMs: ah.shutdownGuardMs });
+  assert.deepEqual(c.audioHealth, { enabled: ah.enabled, noDataMs: ah.noDataMs, checkIntervalMs: ah.checkIntervalMs, maxRecreates: ah.maxRecreates, maxParked: ah.maxParked, shutdownGuardMs: ah.shutdownGuardMs });
   assert.deepEqual(loadAudioHealth(), c.audioHealth);
   const bad = path.join(d, 'health-bad.json');
   writeFileSync(bad, JSON.stringify({ source: 'x', enabled: true, noDataMs: 5000 }));

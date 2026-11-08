@@ -5,7 +5,10 @@
 // audio WASAPI source did after its work queue died). Checked: the RTWQ reference is held, the readiness view
 // (host.status audioHealth, mixer.list receiving), the watchdog's missing -> recreated -> recovered cycle on the same
 // output channel, the give-up after maxRecreates with the "Game audio missing" warning, report-only and unconfigured
-// hosts, and the host config checks.
+// hosts, and the host config checks. D297 second opinion (Codex): the fake fails its create on a thread with no
+// explicit COM apartment, as win-wasapi does, so a restart from the watchdog thread proves its MTA; a restart whose
+// create fails or whose replacement never sends stays missing (never "recovered"); the process-wide parked limit; and
+// the source-level settings (sync offset, balance, mono, filters) carried over to the replacement.
 //   node --test app/host/tests/host-audio-health.test.mjs   (needs the built host and the OBS runtime)
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
@@ -18,7 +21,7 @@ const OUT = path.join(REPO_ROOT, 'out', 'host', 'tests');
 const PROJECT = path.join(HOST_DIR, 'projects', 'test-card.project.json');
 const HEADLESS = { UJWALAM_HEADLESS: '1' };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const HEALTH = { enabled: true, noDataMs: 1000, checkIntervalMs: 200, maxRecreates: 2, shutdownGuardMs: 20000 };
+const HEALTH = { enabled: true, noDataMs: 1000, checkIntervalMs: 200, maxRecreates: 2, maxParked: 8, shutdownGuardMs: 20000 };
 let h, c, DATA;
 
 async function until(fn, ms = 15000, step = 100) {
@@ -69,7 +72,7 @@ test('root cause fix: the host holds the RTWQ platform; no device sources = noth
   assert.deepEqual(ah.sources, []);
   assert.equal(ah.ok, true);
   assert.deepEqual(ah.warnings, []);
-  assert.deepEqual(ah.watchdog, { noDataMs: 1000, recreate: true, maxRecreates: 2, parked: 0 });
+  assert.deepEqual(ah.watchdog, { noDataMs: 1000, recreate: true, maxRecreates: 2, parked: 0, maxParked: 8, parkedFull: false });
 });
 
 test('readiness: a source that sends packets is ok and receiving (host.status audioHealth and mixer.list)', async () => {
@@ -97,6 +100,9 @@ test('readiness: a source that sends packets is ok and receiving (host.status au
 test('watchdog: a source that stops sending is reported missing, recreated on the same channel, and recovers', async () => {
   const seq0 = (await health()).seq;
   await c.call('mixer.setVolume', { id: 'audio:game', db: -6 });
+  const cfg = { syncOffsetMs: 120, balance: 0.25, forceMono: true };
+  const set = await c.call('audio.testConfig', { id: 'game', ...cfg, gainFilterDb: -4 });
+  assert.deepEqual({ ...set, source: undefined }, { source: undefined, ...cfg, filters: [{ name: 'Gain', type: 'gain_filter', db: -4 }] });
   const st = await c.call('audio.testStall', { id: 'game', stall: true });
   assert.equal(st.source, 'ujw:audio:game');
   const back = await until(async () => {
@@ -121,7 +127,12 @@ test('watchdog: a source that stops sending is reported missing, recreated on th
   assert.equal(row.active, true, 'the new source is on the output channel');
   assert.ok(Math.abs(row.volumeDb + 6) < 0.01, `volume carried over (${row.volumeDb} dB)`);
   assert.equal(row.name, 'Game');
+  const now = await c.call('audio.testConfig', { id: 'game' });
+  assert.equal(now.source, 'ujw:audio:game', 'the replacement carries the project name');
+  assert.deepEqual({ ...now, source: undefined }, { source: undefined, ...cfg, filters: [{ name: 'Gain', type: 'gain_filter', db: -4 }] },
+    'sync offset, balance, mono flag and filters carried over');
   const log = hostLog(DATA);
+  assert.doesNotMatch(log, /created on a thread without COM/, 'the watchdog and RPC threads have an explicit COM apartment');
   assert.match(log, /audio watchdog: Game audio missing: no audio data for \d+ ms \(source ujw:audio:game/);
   assert.match(log, /audio watchdog: recreated ujw:audio:game \(ujw_test_audio, attempt 1 of 2/);
   assert.match(log, /audio watchdog: Game audio is back/);
@@ -161,6 +172,63 @@ test('watchdog: after maxRecreates it gives up and the "Game audio missing" warn
   assert.ok(await until(async () => (await health()).ok === true), 'recovered');
 });
 
+test('restart that fails or never sends stays missing; per-source give-up; process-wide parked limit', async () => {
+  const d = mkdtempSync(path.join(OUT, 'audio-health-fail-'));
+  const f = config(d, 'fail.json', { audioHealth: { ...HEALTH, maxRecreates: 3, maxParked: 2 } });
+  const h4 = await launchHost({ dataDir: d, project: PROJECT, extraArgs: ['--host-config', f, '--test-hooks'], env: HEADLESS, timeoutMs: 60000 });
+  const cl = h4.client;
+  const kinds = (ah, since) => ah.events.filter((e) => e.seq > since).map((e) => e.kind);
+  try {
+    await cl.call('audio.testAdd', { id: 'mic', name: 'Mic' });
+    assert.ok(await until(async () => src(await health(cl), 'audio:mic')?.state === 'ok'));
+    // 1) the plugin's create fails (as win-wasapi's on a thread without COM): the old source stays, still missing
+    await cl.call('audio.testCreate', { mode: 'fail' });
+    await cl.call('audio.testStall', { id: 'mic', stall: true });
+    const failed = await until(async () => { const a = await health(cl); return src(a, 'audio:mic').recreates === 2 ? a : null; });
+    assert.ok(failed, 'two failed attempts');
+    assert.deepEqual(kinds(failed, 0), ['missing', 'recreate-failed', 'recreate-failed'], 'one attempt per noDataMs, no recovery');
+    assert.equal(failed.watchdog.parked, 0, 'nothing parked: the old source stays on its channel');
+    assert.equal(src(failed, 'audio:mic').state, 'missing');
+    assert.match(hostLog(d), /audio watchdog: could not create a new ujw_test_audio for ujw:audio:mic \(the plugin could not start it\)/);
+    // 2) the replacement is created but never sends: still missing (not "starting"/ok), then the per-source give-up
+    await cl.call('audio.testCreate', { mode: 'silent' });
+    const silent = await until(async () => { const a = await health(cl); return a.events.some((e) => e.kind === 'recreated') ? a : null; });
+    assert.ok(silent, 'third attempt recreated');
+    assert.equal(src(silent, 'audio:mic').state, 'missing', 'a restart is not a recovery until packets arrive');
+    assert.equal(src(silent, 'audio:mic').receiving, false);
+    assert.equal(silent.ok, false);
+    assert.deepEqual(silent.warnings, ['Mic audio missing']);
+    const gave = await until(async () => { const a = await health(cl); return a.events.some((e) => e.kind === 'gave-up') ? a : null; });
+    assert.ok(gave, 'gave up after 3 attempts');
+    assert.deepEqual(kinds(gave, 0), ['missing', 'recreate-failed', 'recreate-failed', 'recreated', 'gave-up']);
+    assert.ok(!gave.events.some((e) => e.kind === 'recovered'), 'never reported recovered');
+    assert.equal(gave.watchdog.parked, 1);
+    // 3) process-wide parked limit (2): one more working restart fills it; the next missing source is not restarted
+    await cl.call('audio.testCreate', { mode: 'ok' });
+    await cl.call('audio.testAdd', { id: 'game', name: 'Game' });
+    assert.ok(await until(async () => src(await health(cl), 'audio:game')?.state === 'ok'));
+    let seq = (await health(cl)).seq;
+    await cl.call('audio.testStall', { id: 'game', stall: true });
+    const rec = await until(async () => { const a = await health(cl); return kinds(a, seq).includes('recovered') ? a : null; });
+    assert.ok(rec, 'game restarted and recovered');
+    assert.equal(rec.watchdog.parked, 2);
+    assert.equal(rec.watchdog.parkedFull, true);
+    seq = rec.seq;
+    await cl.call('audio.testStall', { id: 'game', stall: true });
+    const full = await until(async () => { const a = await health(cl); return kinds(a, seq).includes('gave-up') ? a : null; });
+    assert.ok(full, 'gave up at the parked limit');
+    assert.deepEqual(kinds(full, seq), ['missing', 'gave-up']);
+    assert.equal(full.events.at(-1).text, 'Game audio missing: too many restarts in this run; restart Ujwalam after the stream');
+    assert.equal(src(full, 'audio:game').recreates, 1);
+    assert.equal(full.watchdog.parked, 2);
+    assert.deepEqual(full.warnings.sort(), ['Game audio missing', 'Mic audio missing']);
+    assert.match(hostLog(d), /2 replaced sources are parked \(limit 2 for this run\): not restarting any more; restart Ujwalam after the stream/);
+    assert.equal((await rpcErr('audio.testCreate', { mode: 'maybe' }, cl)).code, -32602);
+  } finally {
+    assert.equal((await stopHost(h4, 40000)).code, 0);
+  }
+});
+
 test('report only (enabled false) never recreates; no config = receiving unknown; test methods need --test-hooks', async () => {
   const d = mkdtempSync(path.join(OUT, 'audio-health-ro-'));
   const f = config(d, 'ro.json', { audioHealth: { ...HEALTH, enabled: false } });
@@ -188,6 +256,8 @@ test('report only (enabled false) never recreates; no config = receiving unknown
     assert.equal(ah.rtwqHeld, true);
     assert.equal((await rpcErr('audio.testAdd', { id: 'x', name: 'X' }, h3.client)).code, -32001, 'FORBIDDEN without --test-hooks');
     assert.equal((await rpcErr('audio.testStall', { id: 'x' }, h3.client)).code, -32001);
+    assert.equal((await rpcErr('audio.testCreate', { mode: 'ok' }, h3.client)).code, -32001);
+    assert.equal((await rpcErr('audio.testConfig', { id: 'x' }, h3.client)).code, -32001);
     assert.match(hostLog(d3), /audio health: off/);
   } finally {
     assert.equal((await stopHost(h3, 40000)).code, 0);
@@ -203,6 +273,8 @@ test('host config: bad audioHealth values stop the host with exit 64', async () 
     { audioHealth: { ...HEALTH, shutdownGuardMs: 500 } },
     { audioHealth: { ...HEALTH, other: 1 } },
     { audioHealth: { ...HEALTH, enabled: 1 } },
+    { audioHealth: { ...HEALTH, maxParked: 0 } },
+    { audioHealth: { ...HEALTH, maxParked: undefined } }, // required when enabled
   ];
   for (const [i, cfg] of bad.entries()) {
     const f = config(d4, `c${i}.json`, cfg);

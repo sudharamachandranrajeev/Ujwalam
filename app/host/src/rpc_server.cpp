@@ -7,6 +7,7 @@
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <bcrypt.h>
+#include <objbase.h>
 
 #include <algorithm>
 #include <chrono>
@@ -605,6 +606,19 @@ void Server::io_loop()
 
 void Server::worker_loop()
 {
+	// Handlers create libobs sources (project.load): win-wasapi's constructor calls CoCreateInstance on this thread.
+	// An explicit MTA makes that independent of other threads keeping an implicit MTA alive (D297 second opinion).
+	const HRESULT com = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+	if (FAILED(com))
+		hlog::error("rpc worker: CoInitializeEx(MTA) failed: 0x%08lX", (unsigned long)com);
+	struct ComDone {
+		HRESULT hr;
+		~ComDone()
+		{
+			if (SUCCEEDED(hr))
+				CoUninitialize();
+		}
+	} com_done{com};
 	while (true) {
 		Job *j = nullptr;
 		{

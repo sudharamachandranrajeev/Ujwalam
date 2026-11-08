@@ -111,11 +111,15 @@ public:
 	obs_source_t *layer_source_ref(const std::string &layer_id, std::string &type) const;
 	// Audio health (D297 proposed; audio_health.h). no_data_ms: a source with no audio packet for this long is
 	// "missing" (0 = not configured: receiving is reported as null). recreate: the watchdog replaces a missing device
-	// audio source (a fresh libobs source, same type/settings/volume/mute/tracks/monitoring, same output channel), at
-	// most max_recreates times per source per load; the replaced one is parked, never destroyed while running.
+	// audio source (a fresh libobs source, same type/settings/volume/mute/tracks/monitoring/sync offset/balance/flags/
+	// filters, same output channel), at most max_recreates attempts per source per load, at most one attempt per
+	// no_data_ms; the replaced one is parked, never destroyed while running. max_parked bounds the parked sources per
+	// process (they survive project reloads); at the limit the watchdog stops restarting and says to restart Ujwalam.
+	// A restarted source counts as recovered only once the new one delivers audio packets.
 	struct AudioHealthCfg {
 		uint32_t no_data_ms = 0;
 		uint32_t max_recreates = 0;
+		uint32_t max_parked = 0;
 		bool recreate = false;
 	};
 	void set_audio_health(const AudioHealthCfg &c);
@@ -127,6 +131,9 @@ public:
 	// host's fake source type ujw_test_audio (audio_health.h); stall stops / restarts its packets (simulated dead device).
 	json::Value test_audio_add(const std::string &id, const std::string &name);
 	json::Value test_audio_stall(const std::string &id, bool stall);
+	// --test-hooks: the source-level settings the watchdog must carry over (sync offset, balance, flags, filters):
+	// set them on a test global (any field present) and read them back.
+	json::Value test_audio_config(const std::string &id, const json::Value &set);
 	json::Value mixer_list() const;
 	json::Value mixer_set_volume(const std::string &id, const double *mul, const double *db);
 	json::Value mixer_set_mute(const std::string &id, bool muted);
@@ -191,7 +198,8 @@ private:
 	struct Global { // project v1 audio device source on a main-canvas output channel
 		std::shared_ptr<Src> src;
 		uint32_t channel = 0;
-		uint32_t recreates = 0; // audio watchdog replacements so far
+		uint32_t recreates = 0; // audio watchdog restart attempts so far (failed creates count)
+		uint64_t attempt_ns = 0; // os_gettime_ns of the last attempt (one attempt per no_data_ms)
 		bool missing = false, gave_up = false;
 	};
 
@@ -203,6 +211,7 @@ private:
 	void audio_event(const char *kind, const Global &g, const std::string &text);
 	bool recreate_global(Global &g);
 	std::string audio_state(const Global &g, uint64_t now, int64_t &last_ms) const;
+	bool parked_full() const { return health_.max_parked && parked_.size() >= health_.max_parked; }
 	mutable std::recursive_mutex m_;
 	std::vector<Canvas> canvases_;
 	std::vector<Scene> scenes_;

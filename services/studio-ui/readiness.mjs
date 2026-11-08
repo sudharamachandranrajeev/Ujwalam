@@ -3,7 +3,10 @@
 //
 // runReadiness(deps) answers { at, ok, counts: { pass, warn, fail }, items: [{ id, title, status, message, fix? }] }.
 // status is 'pass' | 'warn' | 'fail'. ok is true when nothing failed (warnings never block). Each check runs in
-// parallel with its own timeout (config.checkTimeoutMs); a check that throws or times out is a 'warn' that says so.
+// parallel with its own timeout (config.checkTimeoutMs); a check that throws or times out is a 'warn' that says so,
+// except audio: while the host answers, audio state that cannot be read is a 'fail' (a dead game audio must not pass
+// unseen; the override phrase still goes live). The first host probes (host.status, outputs.status, host.info,
+// core.status) have the same timeout, and createReadiness gives a whole run a deadline (readinessDeadlineMs).
 // Items (ITEMS): host, credentials, disk, encoders, streamerbot, speakerbot, loopback, clips, audio, gpu.
 //
 // Secrets: stream keys and per-account server addresses stay in Windows Credential Manager. The host reports
@@ -15,7 +18,7 @@
 //
 // Thresholds and names: data/live/readiness.json (loadReadinessConfig). Nothing here is hardcoded.
 // Audio (pluggable): deps.audioCheck(ctx) replaces the default, which calls the host method config.audio.method
-// (assumed: { sources: [{ id, name, state }] }) and says "unknown" (warn) while the host has no such method.
+// (assumed: { sources: [{ id, name, state }] }) when host.status has no audioHealth; no answer from either = fail.
 
 import { execFile } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync, statfsSync } from 'node:fs';
@@ -244,7 +247,9 @@ async function checkClips(ctx) {
   return item('clips', 'pass', `Clip maker ready. Live clipping is ${lc}.`);
 }
 
-/** Default audio check. ctx.host.call(config.audio.method) when the host has it; otherwise "unknown" (warn). */
+const audioUnreadable = (why, note = '') => item('audio', 'fail', `Live audio state could not be read: ${why}. Check the mixer meters by ear before going live.${note}`, { unknown: true });
+
+/** Default audio check: host.status audioHealth, else ctx.host.call(config.audio.method). Unreadable while the host is up = fail. */
 export async function defaultAudioCheck(ctx) {
   if (ctx.hostKind !== 'host' || !ctx.hostStatus) return item('audio', 'warn', 'Audio state is unknown: the studio host is not answering.', { unknown: true });
   const muted = [];
@@ -255,12 +260,12 @@ export async function defaultAudioCheck(ctx) {
   const mutedNote = muted.length ? ` Muted in the stream mix: ${muted.join(', ')}.` : '';
   // D297: the host reports live audio state in host.status.audioHealth ({ sources: [{ id, name, state }] }). The separate
   // method call stays as the fallback for a host without it.
+  // The host is up, so audio state that cannot be read fails (D297 second opinion): it is the check that would have
+  // caught the 2026-11-08 game audio loss. An old host without the method fails too; the override still goes live.
   let r = Array.isArray(ctx.hostStatus.audioHealth?.sources) ? ctx.hostStatus.audioHealth : null;
   if (!r) try { r = await ctx.host.call(ctx.config.audio.method, {}); } catch (e) {
     const missing = e?.code === 'RPC_-32601' || e?.code === 'NO_METHOD' || /method.not.found/i.test(String(e?.message));
-    // TODO(audio): the host's live audio state call is being added (2026-11-08). Until then this item says "unknown".
-    if (missing) return item('audio', 'warn', `Live audio state is unknown: the host cannot report it yet. Check the mixer meters by ear.${mutedNote}`, { unknown: true });
-    throw e;
+    return audioUnreadable(missing ? 'the host cannot report it (update the studio)' : 'the host did not answer', mutedNote);
   }
   const sources = Array.isArray(r?.sources) ? r.sources : [];
   if (!sources.length) return item('audio', 'warn', `The host reports no audio sources.${mutedNote}`);
@@ -297,7 +302,8 @@ export async function runReadiness(deps) {
   const now = deps.now ?? Date.now;
   const host = deps.host;
   const hostKind = host.describe?.().kind ?? 'host';
-  const safe = async (fn) => { try { return await fn(); } catch { return null; } };
+  // Each first probe has the per-check timeout: a hung call answers null (host / outputs / GPU then say so).
+  const safe = async (fn) => { try { return await withTimeout(Promise.resolve().then(fn), deps.config.checkTimeoutMs); } catch { return null; } };
   const [hostStatus, outputs, hostInfo, coreStatus] = await Promise.all([
     safe(() => host.call('host.status', {})),
     safe(() => host.call('outputs.status', {})),
@@ -313,9 +319,14 @@ export async function runReadiness(deps) {
     botPorts: deps.botPorts ?? {},
   };
   const audio = deps.audioCheck ?? defaultAudioCheck;
-  const run = (id) => withTimeout((id === 'audio' ? audio : CHECKS[id])(ctx), deps.config.checkTimeoutMs)
+  const hostUp = hostKind === 'host' && !!hostStatus;
+  const run = (id) => withTimeout(Promise.resolve().then(() => (id === 'audio' ? audio : CHECKS[id])(ctx)), deps.config.checkTimeoutMs)
     .then((r) => (r && ['pass', 'warn', 'fail'].includes(r.status) ? { ...r, id, title: TITLES[id] } : item(id, 'warn', 'The check gave no answer.')))
-    .catch((e) => item(id, 'warn', e?.code === 'TIMEOUT' ? 'The check did not finish in time.' : 'The check could not run.'));
+    .catch((e) => {
+      const why = e?.code === 'TIMEOUT' ? 'the check did not finish in time' : 'the check could not run';
+      if (id === 'audio' && hostUp) return audioUnreadable(why);
+      return item(id, 'warn', e?.code === 'TIMEOUT' ? 'The check did not finish in time.' : 'The check could not run.');
+    });
   const items = await Promise.all(ITEMS.map(run));
   const counts = { pass: 0, warn: 0, fail: 0 };
   for (const i of items) counts[i.status]++;
@@ -349,7 +360,13 @@ export function logOverride(dataDir, r, at = new Date()) {
   return true;
 }
 
-/** Cached runner: run({ maxAgeMs }) reuses a result younger than maxAgeMs; concurrent calls share one run. */
+/** A whole run's deadline: the probes and then the checks, each bounded by checkTimeoutMs, plus a margin. */
+export const readinessDeadlineMs = (config) => 2 * config.checkTimeoutMs + 1000;
+
+/**
+ * Cached runner: run({ maxAgeMs }) reuses a result younger than maxAgeMs; concurrent calls share one run. A run that
+ * passes its deadline rejects (code TIMEOUT) and is dropped, so the next call starts a new one.
+ */
 export function createReadiness(deps) {
   let last = null; let lastT = -Infinity; let inflight = null;
   const now = deps.now ?? Date.now;
@@ -358,8 +375,11 @@ export function createReadiness(deps) {
     async run({ maxAgeMs = 0 } = {}) {
       if (last && now() - lastT <= maxAgeMs) return last;
       if (inflight) return inflight;
-      inflight = runReadiness(deps).then((r) => { last = r; lastT = now(); return r; }).finally(() => { inflight = null; });
-      return inflight;
+      const p = withTimeout(Promise.resolve().then(() => runReadiness(deps)), deps.deadlineMs ?? readinessDeadlineMs(deps.config))
+        .then((r) => { last = r; lastT = now(); return r; })
+        .finally(() => { if (inflight === p) inflight = null; });
+      inflight = p;
+      return p;
     },
     last: () => last,
   };

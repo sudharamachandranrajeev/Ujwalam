@@ -8,7 +8,7 @@
 //     "eventCore": { "systemFile": "<absolute path to event-core system.json>" },
 //     "audio": { "lowLatency": true },                  fixed 20 ms audio buffering (obs_runtime.h); default off
 //     "audioHealth": { "enabled": true, "noDataMs": 5000, "checkIntervalMs": 1000, "maxRecreates": 3,
-//                      "shutdownGuardMs": 20000 },   audio health watchdog (audio_health.h); the launcher copies the
+//                      "maxParked": 12, "shutdownGuardMs": 20000 },   audio health watchdog (audio_health.h); the launcher copies the
 //                                                    values from data/audio/health.json. Absent: watchdog and guard off.
 //     "monitoringDevice": "<Windows output name>" }   friendly name as devices.list shows it; default: the
 //                                                     Windows default output. Applied only with --allow-devices (it opens an output).
@@ -39,6 +39,7 @@ struct HostConfig {
 		uint32_t no_data_ms = 0;       // no audio packet for this long = missing
 		uint32_t check_interval_ms = 0;
 		uint32_t max_recreates = 0;    // per source per load; then the warning stays and nothing more is tried
+		uint32_t max_parked = 0;       // replaced sources parked per process (all loads); then no more restarts
 		uint32_t shutdown_guard_ms = 0; // obs_runtime.h shutdown guard; 0 = off
 	} audio_health;
 };
