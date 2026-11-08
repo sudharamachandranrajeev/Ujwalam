@@ -11,6 +11,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { launchHost, stopHost } from '../lib/launch.mjs';
@@ -18,6 +19,7 @@ import { loadIntoHost } from '../lib/project.mjs';
 import { REPO_ROOT, HOST_DIR } from '../lib/config.mjs';
 
 const RUN = process.env.UJWALAM_FACE_BENCH === '1';
+const FACE_KEY = randomBytes(32).toString('hex'); // the face link key: host by env, worker on stdin (as the launcher)
 const PY = process.env.UJWALAM_FACE_PYTHON || path.join(REPO_ROOT, '.venv-gpu', 'Scripts', 'python.exe');
 const OUT = path.join(REPO_ROOT, 'out', 'host', 'tests');
 const SAMPLE_MS = 10000;
@@ -44,7 +46,7 @@ before(async () => {
   mkdirSync(OUT, { recursive: true });
   media = mkdtempSync(path.join(OUT, 'facebench-media-'));
   ffmpeg(['-f', 'lavfi', '-i', 'testsrc2=size=1280x720:rate=30', '-t', '10', '-c:v', 'mpeg4', '-q:v', '3', '-pix_fmt', 'yuv420p', path.join(media, 'cam.mp4')]);
-  h = await launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), project: path.join(HOST_DIR, 'projects', 'test-card.project.json') });
+  h = await launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), project: path.join(HOST_DIR, 'projects', 'test-card.project.json'), env: { UJWALAM_FACE_LINK_KEY: FACE_KEY } });
   c = h.client;
 });
 
@@ -115,8 +117,9 @@ test('face AI next to a 1080p60 NVENC recording', { skip: !RUN && 'set UJWALAM_F
 
   const data = mkdtempSync(path.join(OUT, 'facebench-data-'));
   writeFileSync(path.join(data, 'flags.local.json'), JSON.stringify({ flags: { 'face-ai': true } }));
-  const worker = spawn(PY, ['-I', path.join(REPO_ROOT, 'services', 'face', 'face_worker.py'), '--data-dir', data, '--host-pid', String(h.child.pid)],
-    { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+  const worker = spawn(PY, ['-I', path.join(REPO_ROOT, 'services', 'face', 'face_worker.py'), '--data-dir', data],
+    { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'], env: { ...process.env, UJWALAM_PARENT_PIPE: '1' } });
+  worker.stdin.write(`${JSON.stringify({ key: FACE_KEY, hostPid: h.child.pid })}\n`);
   let wlog = '';
   worker.stderr.on('data', (d) => { wlog += d; });
   try {

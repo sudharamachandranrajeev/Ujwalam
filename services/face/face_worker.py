@@ -7,13 +7,18 @@ back. The host composites them in its own shaders (personMask, autoFrame, faceSt
 
 Live path rules:
   - this process opens no camera, no network and holds no host token; it only opens the host's face link by name
-    (from the host pid in the discovery file) and never creates it
+    and never creates it. The launcher gives it the host pid and the per-launch link key on its stdin pipe (one JSON
+    line {"key": "<64 hex>", "hostPid": N}, again after every host restart); it never reads the discovery file (that
+    file can hold host tokens). A mapping without the right key or owner is refused (face_link.py)
+  - temporal state (mask smoothing, One Euro, the tracker's last mesh, the recurrent matte) is reset when the host's
+    target generation changes (another camera); the generation is echoed in every result, so the host drops answers
+    for the previous camera
   - flag face-ai is re-read every 5 s; while it is off the models are unloaded (VRAM freed) and nothing runs
   - every error is logged and retried with back-off; a crash or a hang only makes the host's face effects fall back
     (the last mask for a short hold, then the plain camera); stream and recording never wait for this process
   - models not wanted for 30 s are unloaded
 
-  face_worker.py [--data-dir DIR] [--discovery FILE | --host-pid N] [--seg-model selfie-landscape] [--cpu]
+  face_worker.py [--data-dir DIR] [--seg-model selfie-landscape] [--cpu]    (stdin: the launcher's control pipe)
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ import argparse
 import json
 import os
 import sys
+import threading
 import time
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -37,7 +43,6 @@ import face_post as fp  # noqa: E402
 FLAG = "face-ai"
 FLAG_EVERY_SEC = 5.0
 UNLOAD_AFTER_SEC = 30.0
-DISCOVERY_ENV = "UJWALAM_HOST_DISCOVERY"
 
 
 def log(msg):
@@ -53,15 +58,31 @@ def flag_on(data_dir):
         return False
 
 
-def host_pid(a):
-    if a.host_pid:
-        return a.host_pid
-    path = a.discovery or os.environ.get(DISCOVERY_ENV, "")
-    try:
-        with open(path, encoding="utf-8") as f:
-            return int(json.load(f)["pid"])
-    except (OSError, ValueError, KeyError, TypeError):
-        return 0
+class Control:
+    """What the launcher said on stdin: the host pid and the link key (the latest valid line wins). `gone` is set at
+    end-of-file (the launcher is gone, D234)."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.pid, self.key = 0, None
+        self.gone = threading.Event()
+
+    def feed(self, line):
+        """One control line. True when it was valid; a bad line is ignored and the old target kept."""
+        try:
+            j = json.loads(line)
+            pid, key = j.get("hostPid"), fl.parse_key(j.get("key"))
+        except (ValueError, AttributeError):
+            return False
+        if not isinstance(pid, int) or isinstance(pid, bool) or not 0 < pid < 1 << 32 or key is None:
+            return False
+        with self.lock:
+            self.pid, self.key = pid, key
+        return True
+
+    def target(self):
+        with self.lock:
+            return self.pid, self.key
 
 
 class Pipeline:
@@ -87,8 +108,17 @@ class Pipeline:
 
     def unload(self):
         self.seg = self.tracker = None
+        self.reset_temporal()
+
+    def reset_temporal(self):
+        """Forget everything carried over from earlier frames (another camera, or a reopened link): mask EMA, One
+        Euro, the tracker's previous mesh, the recurrent matte's state. Loaded models stay loaded."""
         self.smoother.reset()
         self.euro.reset()
+        if self.tracker is not None:
+            self.tracker.reset()
+        if self.seg is not None:
+            self.seg.reset()
 
     def run(self, bgra, want, smoothing):
         import face_models as fm
@@ -126,10 +156,14 @@ class Pipeline:
         return out
 
 
-def serve(a, pipe=None, stop=lambda: False):
+def serve(a, ctl, pipe=None, stop=lambda: False, open_link=None):
+    """Main loop. ctl: Control (host pid + link key); open_link(pid, key) -> Link or None (tests pass a fake)."""
     pipe = pipe or Pipeline(a.seg_model, not a.cpu)
+    open_link = open_link or fl.Link.open
     link = None
+    link_target = None
     last_seq = 0
+    last_gen = None
     on = False
     next_flag = 0.0
     backoff = 0.5
@@ -150,14 +184,20 @@ def serve(a, pipe=None, stop=lambda: False):
             time.sleep(0.25)
             continue
         try:
+            target = ctl.target()
+            if link is not None and target != link_target:  # the launcher restarted the host
+                link.close()
+                link = None
             if link is None:
-                pid = host_pid(a)
-                link = fl.Link.open(pid) if pid else None
+                pid, key = target
+                link = open_link(pid, key) if pid and key else None
                 if link is None:
                     time.sleep(1.0)
                     continue
                 log(f"face link open (host pid {pid})")
+                link_target = target
                 last_seq = 0
+                last_gen = None
             if now - last_beat >= 0.25:
                 link.heartbeat()
                 last_beat = now
@@ -173,12 +213,15 @@ def serve(a, pipe=None, stop=lambda: False):
             if got is None:
                 time.sleep(0.004)
                 continue
-            seq, ts, px, _src = got
-            last_seq = seq
+            last_seq = got.seq
+            if got.gen != last_gen:  # another camera (or the first frame on this link): nothing carries over
+                pipe.reset_temporal()
+                last_gen = got.gen
             t0 = time.perf_counter()
-            r = pipe.run(px, want, min(max(link.smoothing(), 0.0), 0.95))
+            r = pipe.run(got.px, want, min(max(link.smoothing(), 0.0), 0.95))
             ms = (time.perf_counter() - t0) * 1000
-            link.write_result(seq, ts, r["mask"], r["landmarks"], r["box"], r["score"], r["feats"], ms, r["status"])
+            link.write_result(got.seq, got.ts, r["mask"], r["landmarks"], r["box"], r["score"], r["feats"], ms,
+                              r["status"], got.gen)
             backoff = 0.5
         except Exception as e:  # noqa: BLE001 - never die on one bad frame; back off and reopen
             log(f"error: {type(e).__name__}: {e}; retry in {backoff:.1f} s")
@@ -195,8 +238,6 @@ def serve(a, pipe=None, stop=lambda: False):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data-dir", default=os.path.join(os.path.dirname(os.path.dirname(_HERE)), "data"))
-    ap.add_argument("--discovery", default="")
-    ap.add_argument("--host-pid", type=int, default=0)
     ap.add_argument("--seg-model", default="selfie-landscape")
     ap.add_argument("--cpu", action="store_true")
     a = ap.parse_args(argv)
@@ -205,31 +246,35 @@ def main(argv=None):
         k = ctypes.windll.kernel32
         k.SetPriorityClass(k.GetCurrentProcess(), 0x4000)  # BELOW_NORMAL: never crowd the render or encoder
     log(f"started; acts only while flag {FLAG} is on")
-    gone = watch_parent()
-    serve(a, stop=gone.is_set)
+    ctl = watch_parent()
+    if not ctl.target()[0]:
+        log("no link key from the launcher yet (stdin); no face link without it")
+    serve(a, ctl, stop=ctl.gone.is_set)
     return 0
 
 
-def watch_parent(stdin=None, env=None):
-    """Parent pipe (D234, services/common/parent-pipe.mjs; same rule as services/clip/live_worker.py): with
-    UJWALAM_PARENT_PIPE=1 the launcher holds our stdin as a pipe; end-of-file means it is gone. Returns an Event set
-    at that point (never set without the marker)."""
-    import threading
-    gone = threading.Event()
+def watch_parent(stdin=None, env=None, wait=0.5):
+    """Parent pipe (D234, services/common/parent-pipe.mjs) and control channel: with UJWALAM_PARENT_PIPE=1 the
+    launcher holds our stdin as a pipe and writes one control line per host start; end-of-file means it is gone.
+    Returns a Control (without the marker: gone is never set and no key ever arrives, so no link opens)."""
+    ctl = Control()
     if (env if env is not None else os.environ).get("UJWALAM_PARENT_PIPE") != "1":
-        return gone
+        return ctl
     src = stdin if stdin is not None else sys.stdin.buffer
 
     def run():
         try:
-            while src.read(4096):
-                pass
+            for line in iter(lambda: src.readline(4096), b""):
+                if line.strip() and not ctl.feed(line.decode("utf-8", "replace")):
+                    log("ignored a bad control line from the launcher")
         except Exception:  # noqa: BLE001 - a broken pipe also means the parent is gone
             pass
-        gone.set()
+        ctl.gone.set()
 
-    threading.Thread(target=run, daemon=True, name="parent-pipe").start()
-    return gone
+    t = threading.Thread(target=run, daemon=True, name="parent-pipe")
+    t.start()
+    t.join(wait)  # the first line normally arrives with the start; serve() keeps waiting for it anyway
+    return ctl
 
 
 if __name__ == "__main__":

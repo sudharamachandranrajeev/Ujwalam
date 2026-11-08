@@ -212,7 +212,7 @@ class LinkLayoutTests(unittest.TestCase):
         self.put("<I", 16, 3)  # odd lock: host writing
         self.assertIsNone(self.link.read_frame(0, tries=2))
         self.put("<I", 16, 4)
-        seq, ts, got, src = self.link.read_frame(0)
+        seq, ts, got, src, _gen = self.link.read_frame(0)
         self.assertEqual((seq, ts, src), (5, 111, (1920, 1080)))
         self.assertEqual(got.shape, (h, w, 4))
         self.assertEqual(int(got[1, 2, 3]), int((1 * w * 4 + 2 * 4 + 3) % 251))

@@ -2,6 +2,9 @@
 """Face AI model runners (onnxruntime; DirectML on the GPU when the runtime has it, else CPU).
 
 Models and their SHA-256 are in data/models/face-ai.json; services/face/fetch_models.py puts them in data/models/face/.
+Every model is loaded from verified bytes: each file it needs (the .onnx and any external .data) is read once, its size
+and SHA-256 checked against the manifest, and those same bytes handed to onnxruntime / OpenCV (never the path), so a
+file swapped after the check is never the one that runs. A mismatch raises ModelIntegrityError and nothing loads.
 
   Segmenter(id)      person matte for a BGR(A) frame -> float32 0..1 at the model's size (or the frame's for RVM)
   FaceTracker()      YuNet face box (OpenCV, CPU) + MediaPipe 468-point mesh (onnxruntime) on a rotated face crop;
@@ -13,6 +16,7 @@ No camera is opened here: callers pass frames (from the host's shared memory, a 
 
 from __future__ import annotations
 
+import hashlib
 import math
 import os
 import time
@@ -32,8 +36,32 @@ MODELS = {m["id"]: m for m in _MAN["models"]}
 MODELS_DIR = fetch_models.models_dir(_MAN)
 
 
+class ModelIntegrityError(ValueError):
+    """A model file whose size or SHA-256 differs from data/models/face-ai.json."""
+
+
 def model_path(mid):
     return os.path.join(MODELS_DIR, MODELS[mid]["file"])
+
+
+def verified_bytes(mid, models_dir=None, models=None):
+    """{file name: bytes} for every file model `mid` needs, each read once and checked (size, then SHA-256) against
+    the manifest. FileNotFoundError when one is missing, ModelIntegrityError when one differs."""
+    m = (models or MODELS)[mid]
+    d = models_dir or MODELS_DIR
+    out = {}
+    for name, size, sha in fetch_models.files_of(m):
+        p = os.path.join(d, name)
+        if not os.path.isfile(p):
+            raise FileNotFoundError(f"{mid}: {p} missing (run services/face/fetch_models.py)")
+        with open(p, "rb") as f:
+            data = f.read(size + 1)  # one byte more than expected tells a longer file without reading all of it
+        if len(data) != size:
+            raise ModelIntegrityError(f"{mid}: {name} is not {size} bytes; refused (run services/face/fetch_models.py)")
+        if hashlib.sha256(data).hexdigest() != sha:
+            raise ModelIntegrityError(f"{mid}: {name} SHA-256 differs from the manifest; refused")
+        out[name] = data
+    return out
 
 
 def providers(gpu=True):
@@ -46,8 +74,11 @@ def providers(gpu=True):
 FALLBACKS = []  # (model id, reason) for every model that could not run on DirectML
 
 
-def _options(threads, dml, optimize=True):
+def _options(threads, dml, optimize=True, extra=None):
     so = ort.SessionOptions()
+    if extra:  # external weight files (e.g. face_landmark_detector.data), from the verified bytes too
+        names = list(extra)
+        so.add_external_initializers_from_files_in_memory(names, [extra[n] for n in names], [len(extra[n]) for n in names])
     so.intra_op_num_threads = threads
     so.inter_op_num_threads = 1
     so.log_severity_level = 4
@@ -62,22 +93,39 @@ def _options(threads, dml, optimize=True):
     return so
 
 
-def session(mid, gpu=True, threads=2):
-    """An onnxruntime session for model `mid`: DirectML first (when asked and available), then DirectML without graph
-    optimisations, then CPU. A model that cannot run on DirectML is noted in FALLBACKS."""
-    p = model_path(mid)
-    if not os.path.isfile(p):
-        raise FileNotFoundError(f"{mid}: {p} missing (run services/face/fetch_models.py)")
+def session(mid, gpu=True, threads=2, models_dir=None, models=None):
+    """An onnxruntime session for model `mid`, built from verified bytes (verified_bytes): DirectML first (when asked
+    and available), then DirectML without graph optimisations, then CPU. A model that cannot run on DirectML is noted
+    in FALLBACKS."""
+    m = (models or MODELS)[mid]
+    blobs = verified_bytes(mid, models_dir, models)
+    main = blobs[m["file"]]
+    extra = {n: b for n, b in blobs.items() if n != m["file"]}
     prov = providers(gpu)
+    sess = None
     if prov[0] == "DmlExecutionProvider":
         err = None
         for optimize in (True, False):
             try:
-                return ort.InferenceSession(p, sess_options=_options(threads, True, optimize), providers=prov)
+                sess = ort.InferenceSession(main, sess_options=_options(threads, True, optimize, extra), providers=prov)
+                break
             except Exception as e:  # noqa: BLE001 - DirectML refuses some graphs at init; CPU below
                 err = e
-        FALLBACKS.append((mid, str(err).splitlines()[0][-160:]))
-    return ort.InferenceSession(p, sess_options=_options(threads, False), providers=["CPUExecutionProvider"])
+        if sess is None:
+            FALLBACKS.append((mid, str(err).splitlines()[0][-160:]))
+    if sess is None:
+        sess = ort.InferenceSession(main, sess_options=_options(threads, False, extra=extra), providers=["CPUExecutionProvider"])
+    sess.ujw_blobs = blobs  # the in-memory external data stays alive as long as the session
+    return sess
+
+
+def yunet_detector(models_dir=None, models=None):
+    """cv2.FaceDetectorYN from the verified YuNet bytes (the buffer overload of create(): OpenCV never opens the
+    file)."""
+    m = (models or MODELS)["yunet"]
+    data = verified_bytes("yunet", models_dir, models)[m["file"]]
+    return cv2.FaceDetectorYN.create("onnx", np.frombuffer(data, np.uint8), np.zeros(0, np.uint8), (320, 320), 0.6, 0.3,
+                                     50)
 
 
 def _rgb01(frame, w, h):
@@ -130,7 +178,7 @@ class FaceTracker:
     CROP = 192
 
     def __init__(self, gpu=True, min_score=0.5):
-        self.det = cv2.FaceDetectorYN.create(model_path("yunet"), "", (320, 320), 0.6, 0.3, 50)
+        self.det = yunet_detector()
         self.sess = session("facemesh-468", gpu)
         self.provider = self.sess.get_providers()[0]
         self.min_score = min_score

@@ -225,12 +225,29 @@ export function clipsEnv({ hostClipsToken, hostDiscovery, base = process.env }) 
   return { ...env, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery };
 }
 
-/** Environment for the face AI worker (D295 proposed): no host token at all (it only opens the host's face link, an
- *  owner-only shared-memory section named after the host pid), only the discovery file for that pid. */
-export function faceEnv({ hostDiscovery, base = process.env }) {
+/** Variables the face AI worker may inherit (case-insensitive): what Windows, Python, onnxruntime-directml and
+ *  OpenCV need to start, plus UJWALAM_HEADLESS. Everything else (tokens, keys, discovery path, PYTHON*, proxies, the
+ *  user's own variables) is left out. */
+export const FACE_ENV_ALLOW = Object.freeze(['PATH', 'PATHEXT', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'TEMP', 'TMP',
+  'USERPROFILE', 'LOCALAPPDATA', 'APPDATA', 'PROGRAMDATA', 'PROGRAMFILES', 'NUMBER_OF_PROCESSORS',
+  'PROCESSOR_ARCHITECTURE', 'PROCESSOR_IDENTIFIER', 'OS', 'UJWALAM_HEADLESS']);
+
+/** Environment for the face AI worker (D295 proposed): an allowlist (FACE_ENV_ALLOW), never a host token, the link key
+ *  or the discovery file (that file can hold host-generated tokens). The host pid and the link key reach the worker
+ *  on its stdin pipe instead (faceControlLine). */
+export function faceEnv({ base = process.env } = {}) {
+  const allow = new Set(FACE_ENV_ALLOW);
   const env = {};
-  for (const [k, v] of Object.entries(base)) if (!/^UJWALAM_.*(TOKEN|KEY)/i.test(k)) env[k] = v;
-  return { ...env, UJWALAM_HOST_DISCOVERY: hostDiscovery };
+  for (const [k, v] of Object.entries(base)) if (allow.has(k.toUpperCase()) && typeof v === 'string') env[k] = v;
+  return env;
+}
+
+/** One control line for the face worker's stdin: the host pid and the per-launch face link key (64 hex). The same key
+ *  goes to the host by environment (UJWALAM_FACE_LINK_KEY); the worker uses a face link only when the key in its
+ *  header matches. Written at the worker's start and again after every host restart. */
+export function faceControlLine({ key, hostPid }) {
+  if (!HEX64.test(key ?? '') || !Number.isInteger(hostPid) || hostPid <= 0) throw new Error('face control line: bad key or pid');
+  return `${JSON.stringify({ key, hostPid })}\n`;
 }
 
 /** Face AI worker child (D295 proposed): services/face/face_worker.py on .venv-gpu (onnxruntime-directml), or null
@@ -749,6 +766,13 @@ export async function main(argv = process.argv.slice(2)) {
   const hostClipsToken = hex(32);
   const coreTokens = { api: hex(32), system: hex(32) };
   const launchKey = hex(32);
+  // Face link key (D295): the host gets it by environment, the face worker on its stdin (faceControlLine), nobody else.
+  const faceKey = hex(32);
+  let faceChild = null;
+  const faceTell = () => {
+    if (!faceChild || !hostChild?.pid || !faceChild.stdin?.writable) return;
+    try { faceChild.stdin.write(faceControlLine({ key: faceKey, hostPid: hostChild.pid })); } catch { /* worker gone */ }
+  };
 
   // 1. event core (port 0; its own log line reports the port). Its read-only Streamer.bot connection uses the same
   //    address as the bot manager (profile bots.streamerbot_ws, else 8093, D194); the connector's own default is
@@ -826,7 +850,7 @@ export async function main(argv = process.argv.slice(2)) {
       const hostLog = openHostLog(logsDir);
       const child = spawn(script ? process.execPath : hostExe, script ? [hostExe, ...hostArgs] : hostArgs, {
         stdio: ['pipe', hostLog.fd, hostLog.fd], // stdin: the parent pipe (D234)
-        env: { ...process.env, ...spec.env, ...PARENT_PIPE, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery },
+        env: { ...process.env, ...spec.env, ...PARENT_PIPE, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery, UJWALAM_FACE_LINK_KEY: faceKey },
         windowsHide: true,
       });
       closeSync(hostLog.fd); // the child holds its own handle
@@ -834,6 +858,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (i >= 0) children.splice(i, 1);
       children.push(child);
       hostChild = child;
+      faceTell(); // a restarted host has a new pid: the face worker follows it
       console.log(`[studio] host log: ${hostLog.file}`);
       return child;
     };
@@ -909,8 +934,12 @@ export async function main(argv = process.argv.slice(2)) {
       else {
         let restarts = 0;
         const startFace = () => {
-          const c = spawn(fs_.spec.exe, fs_.spec.argv, { stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true, env: { ...faceEnv({ hostDiscovery }), ...PARENT_PIPE } });
+          // stdin: the parent pipe (D234) and the control line (host pid + face link key); never env, never argv
+          const c = spawn(fs_.spec.exe, fs_.spec.argv, { stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true, env: { ...faceEnv(), ...PARENT_PIPE } });
+          c.stdin.on('error', () => {}); // a worker that died mid-write: its exit handler below deals with it
           children.push(c);
+          faceChild = c;
+          faceTell();
           c.once('exit', (code) => {
             const i = children.indexOf(c);
             if (i >= 0) children.splice(i, 1);
