@@ -661,6 +661,11 @@ QWidget *MainWindow::buildRight()
 	});
 	connect(trApply, &QPushButton::clicked, this, &MainWindow::applyTransition);
 
+	botBox_ = new QGroupBox(QStringLiteral("Bots"), w);
+	botRows_ = new QVBoxLayout(botBox_);
+	botBox_->setVisible(false);
+	v->addWidget(botBox_);
+
 	auto *mix = new QGroupBox(QStringLiteral("Audio mixer"), w);
 	auto *scroll = new QScrollArea(mix);
 	scroll->setWidgetResizable(true);
@@ -1296,9 +1301,83 @@ void MainWindow::loadFlags()
 			if (tr)
 				loadTransitions();
 		}
+		bool bo = false;
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("bot-manager"))
+				bo = x.toObject().value(QStringLiteral("on")).toBool();
+		if (bo != botsOn_) {
+			botsOn_ = bo;
+			botBox_->setVisible(bo);
+			botPoll_ = 0;
+		}
+		if (botsOn_ && botPoll_++ % 5 == 0)
+			loadBots();
 		// Both edit the project and are refused while live (the server checks too).
 		structBox_->setEnabled(!live_);
 		transBox_->setEnabled(!live_);
+	});
+}
+
+void MainWindow::loadBots()
+{
+	api_->get(QStringLiteral("ui/api/bots"), [this](bool ok, const QJsonObject &b, const QString &err) {
+		while (QLayoutItem *it = botRows_->takeAt(0)) {
+			delete it->widget();
+			delete it;
+		}
+		if (!ok) {
+			botRows_->addWidget(new QLabel(QStringLiteral("Bots: ") + err, botBox_));
+			return;
+		}
+		const auto yn = [](const QJsonObject &o, const char *k) { return o.value(QLatin1String(k)).toBool() ? QStringLiteral("yes") : QStringLiteral("no"); };
+		for (const auto &x : b.value(QStringLiteral("bots")).toArray()) {
+			const QJsonObject o = x.toObject();
+			const QString bot = o.value(QStringLiteral("bot")).toString();
+			const bool running = o.value(QStringLiteral("running")).toBool();
+			const QString state = o.value(QStringLiteral("ok")).toBool() ? QStringLiteral("up")
+					      : running ? QStringLiteral("running, port not answering")
+					      : o.value(QStringLiteral("installed")).toBool() ? QStringLiteral("stopped") : QStringLiteral("not installed");
+			auto *row = new QWidget(botBox_);
+			auto *rv = new QVBoxLayout(row);
+			rv->setContentsMargins(0, 0, 0, 0);
+			auto *top = new QHBoxLayout();
+			top->addWidget(new QLabel(QStringLiteral("<b>%1</b> %2").arg(o.value(QStringLiteral("label")).toString(bot).toHtmlEscaped(), state), row), 1);
+			auto *start = new QPushButton(QStringLiteral("Start"), row);
+			auto *stop = new QPushButton(QStringLiteral("Stop"), row);
+			start->setEnabled(o.value(QStringLiteral("installed")).toBool() && !running && !o.contains(QStringLiteral("error")));
+			stop->setEnabled(o.value(QStringLiteral("startedByUs")).toBool()); // a copy the user started is never stopped here
+			connect(start, &QPushButton::clicked, this, [this, bot]() { botAction(bot, true); });
+			connect(stop, &QPushButton::clicked, this, [this, bot]() { botAction(bot, false); });
+			top->addWidget(start);
+			top->addWidget(stop);
+			rv->addLayout(top);
+			QString facts = QStringLiteral("installed: %1, running: %2, port %3 answering: %4, started by Ujwalam: %5")
+						.arg(yn(o, "installed"), yn(o, "running"), o.value(QStringLiteral("port")).toVariant().toString(), yn(o, "portAnswering"), yn(o, "startedByUs"));
+			if (o.contains(QStringLiteral("error")))
+				facts += QStringLiteral("\nCheck failed: ") + o.value(QStringLiteral("error")).toString();
+			if (o.contains(QStringLiteral("wsError")))
+				facts += QStringLiteral("\nPort setting refused: ") + o.value(QStringLiteral("wsError")).toString();
+			auto *fl = new QLabel(facts, row);
+			fl->setWordWrap(true);
+			fl->setEnabled(false); // muted text
+			rv->addWidget(fl);
+			botRows_->addWidget(row);
+		}
+		auto *hint = new QLabel(QStringLiteral("Start and Stop ask you to type yes. Stop only ends a bot that Ujwalam started."), botBox_);
+		hint->setWordWrap(true);
+		botRows_->addWidget(hint);
+	});
+}
+
+void MainWindow::botAction(const QString &bot, bool start)
+{
+	QJsonObject b;
+	b.insert(QStringLiteral("bot"), bot);
+	api_->post(start ? QStringLiteral("ui/api/bots/start") : QStringLiteral("ui/api/bots/stop"), b, [this](bool ok, const QJsonObject &r, const QString &err) {
+		if (!ok)
+			return note(QStringLiteral("Not done: ") + err);
+		if (r.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
+			confirm(r.value(QStringLiteral("pending")).toObject());
 	});
 }
 
@@ -1511,7 +1590,11 @@ void MainWindow::confirm(const QJsonObject &pending)
 			return confirm(r.value(QStringLiteral("pending")).toObject());
 		}
 		note(v == QStringLiteral("allow") ? QStringLiteral("Done.") : QStringLiteral("Result: ") + v);
+		if (r.value(QStringLiteral("forced")).toBool())
+			note(QStringLiteral("The bot did not close when asked and was force-closed; unsaved bot changes may be lost."));
 		pollStatus();
 		loadScenes();
+		if (botsOn_)
+			loadBots();
 	});
 }

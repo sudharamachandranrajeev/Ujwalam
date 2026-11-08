@@ -90,6 +90,10 @@ private:
 	void loadTransitions();
 	void renderTransition();
 	void applyTransition();
+	// Streamer.bot / Speaker.bot start and stop (BM, flag bot-manager): typed "yes" each; stop ends only a copy
+	// Ujwalam started (the server checks).
+	void loadBots();
+	void botAction(const QString &bot, bool start);
 	void confirm(const QJsonObject &pending);
 	void note(const QString &text);
 	QJsonObject layerArgs(const QJsonObject &extra = {}) const;
@@ -115,7 +119,10 @@ private:
 	QListWidget *sceneList_ = nullptr;
 	QListWidget *layerList_ = nullptr;
 	QListWidget *flagList_ = nullptr;
-	bool sceneEditOn_ = false, transitionsOn_ = false;
+	bool sceneEditOn_ = false, transitionsOn_ = false, botsOn_ = false;
+	int botPoll_ = 0; // bot status reads the process list: every 5th status poll (10 s), and after each action
+	QGroupBox *botBox_ = nullptr;
+	QVBoxLayout *botRows_ = nullptr;
 	QJsonObject structure_;   // GET /ui/api/project/structure
 	QJsonObject transitions_; // GET /ui/api/project/transitions
 	QGroupBox *structBox_ = nullptr, *transBox_ = nullptr;
