@@ -4,8 +4,9 @@
 // Source types registered by the host (register_types, once after obs_startup):
 //   ujw_effects_wrap     private input that draws another source (strong ref, never a second open of it) with an
 //                        optional crop. Filters go on the wrapper, so an effect on one item (a duplicate, or one canvas)
-//                        never reaches the shared source or its other items. No audio: the shared source keeps its
-//                        audio, mixer row and meter.
+//                        never reaches the shared source or its other items. Audio passes through (D246): the item
+//                        mixes the shared source's own audio (its volume, mute, tracks); the source keeps its mixer
+//                        row and meter.
 //   ujw_gaussian_blur    filter: renders its target once per frame, halves it 0-3 times (sigma / factor <= 6.5),
 //                        runs a separable two-pass Gaussian at that size (<= 20 taps per side) and draws the result
 //                        upscaled (bilinear). sigma = strength * 0.5 source pixels.

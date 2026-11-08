@@ -56,9 +56,12 @@ struct Source {
 // Per-layer visual effect (project.schema.json $defs/effect), applied in list order.
 //   blur:    value = strength 1..100 (Gaussian sigma = strength * 0.5 source pixels, after the placement crop)
 //   rounded: value = corner radius 0..500 source pixels (after the placement crop); transparent outside
+//   chromaKey (D246): color = 0xRRGGBB keyed out; similarity, smoothness 1..1000 (OBS chroma_key_filter_v2)
 struct Effect {
-	std::string type; // "blur" | "rounded"
+	std::string type; // "blur" | "rounded" | "chromaKey"
 	double value = 0;
+	uint32_t color = 0;
+	int64_t similarity = 400, smoothness = 80;
 };
 
 struct Item {

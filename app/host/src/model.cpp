@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <regex>
@@ -195,8 +196,17 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 			chk::only_keys(x, {"type", "radius"}, w);
 			chk::require(x, {"radius"}, w);
 			fx.value = chk::get_num(x, "radius", 0, 0, 500, w);
+		} else if (fx.type == "chromaKey") {
+			chk::only_keys(x, {"type", "color", "similarity", "smoothness"}, w);
+			chk::require(x, {"color", "similarity", "smoothness"}, w);
+			const std::string c = chk::get_str(x, "color", "", 7, w);
+			if (c.size() != 7 || c[0] != '#' || c.find_first_not_of("0123456789abcdefABCDEF", 1) != std::string::npos)
+				throw Error(rpc::INVALID_PARAMS, w + ": color must be #RRGGBB");
+			fx.color = (uint32_t)std::stoul(c.substr(1), nullptr, 16);
+			fx.similarity = chk::get_int(x, "similarity", 0, 1, 1000, w);
+			fx.smoothness = chk::get_int(x, "smoothness", 0, 1, 1000, w);
 		} else {
-			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur or rounded");
+			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded or chromaKey");
 		}
 		r.push_back(fx);
 	}
@@ -209,7 +219,15 @@ json::Value effects_json(const std::vector<Effect> &e)
 	for (auto &fx : e) {
 		json::Value o = json::Value::object();
 		o.set("type", fx.type);
-		o.set(fx.type == "blur" ? "strength" : "radius", fx.value);
+		if (fx.type == "chromaKey") {
+			char hex[8];
+			snprintf(hex, sizeof hex, "#%06x", (unsigned)(fx.color & 0xffffff));
+			o.set("color", std::string(hex));
+			o.set("similarity", fx.similarity);
+			o.set("smoothness", fx.smoothness);
+		} else {
+			o.set(fx.type == "blur" ? "strength" : "radius", fx.value);
+		}
 		a.push(std::move(o));
 	}
 	return a;
@@ -526,26 +544,6 @@ Plan build(const json::Value &doc, const Options &o)
 					plan.warnings.push(std::move(w));
 				}
 				s.items[c].push_back(std::move(x));
-			}
-		}
-		// Effects items show a wrapper without audio. When it is the only item of an audio source on the mixed canvas
-		// (H), that source's audio does not reach the scene mix (two or more items: libobs mixes it once as a root
-		// node). UNVERIFIED by test; see effects.h.
-		std::map<std::string, std::pair<int, int>> uses; // source layer -> {items, items with effects} on H
-		for (auto &i : s.items["H"]) {
-			auto &u = uses[i.source_layer];
-			u.first++;
-			u.second += i.effects.empty() ? 0 : 1;
-		}
-		for (auto &[src, u] : uses) {
-			const std::string &ty = layers[src].type;
-			if (u.first == 1 && u.second == 1 && (ty == "capture" || ty == "media")) {
-				json::Value w = json::Value::object();
-				w.set("layer", src);
-				w.set("scene", s.id);
-				w.set("canvas", "H");
-				w.set("warning", "the only item of this source on H has effects: its audio is not in this scene's mix");
-				plan.warnings.push(std::move(w));
 			}
 		}
 		plan.scenes.push_back(std::move(s));

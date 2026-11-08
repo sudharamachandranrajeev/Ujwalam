@@ -107,7 +107,8 @@ test('skipped list: every unmapped kind is listed with a reason and a Meld id, n
   assert.equal(r.skipped.find((s) => s.layer === 'H-L-DUP3').reason, 'target-skipped');
   assert.match(r.skipped.find((s) => s.layer === 'H-L-DUP3').detail, /itself a duplicator/);
   assert.equal(Object.values(r.skippedByKind).reduce((a, b) => a + b, 0), 8);
-  assert.equal(r.ignored.effects, 1);
+  assert.equal(r.ignored.effects, undefined, 'an effect that is not enabled does nothing in Meld: not imported, not reported (D246)');
+  assert.ok(!importMeld(session()).project.scenes.some((x) => x.layers.some((l) => l.effects)), 'no effects imported');
   assert.equal(r.ignored['flip (negative scale)'], 1);
   assert.ok(r.warnings.some((w) => /different stacking order on V/.test(w)));
 });
@@ -430,4 +431,27 @@ test('stinger transitions (D242): an enabled Meld stinger with a local video imp
   const other = importMeld(s, { id: 'meld-test' });
   assert.deepEqual(other.project.canvases.find((c) => c.id === 'h').transition, { type: 'fade', durationMs: 2006 });
   assert.ok(other.report.warnings.some((w) => w.includes('canvas h') && w.includes('another drive')));
+});
+
+test('layer effects (D246): an enabled Meld ChromaKey imports as chromaKey with the fitted scale; others are reported', () => {
+  const s = session();
+  const items = [];
+  (function walk(o) { if (o && typeof o === 'object') { if (o.id === 'H-L-MEDIA' || o.id === 'V-L-MEDIA') items.push(o); Object.values(o).forEach(walk); } })(s);
+  const h = items.find((x) => x.id === 'H-L-MEDIA');
+  h.effects = [
+    { type: 'ChromaKey', enabled: true, keyColor: '#00FF00', threshold: 0.03, feather: 0.41, tolerance: 0, edgeBlend: 0.05, version: 2 },
+    { type: 'ChromaKey', enabled: false, keyColor: '#ff0000', threshold: 0.3, feather: 0 },
+    { type: 'GaussianBlur', enabled: true },
+  ];
+  const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
+  const layer = p.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
+  assert.deepEqual(layer.effects, [{ type: 'chromaKey', color: '#00ff00', similarity: 440, smoothness: 103 }]);
+  assert.equal(r.ignored['effect GaussianBlur'], 1);
+  assert.equal(r.ignored['V effects that differ from H (H kept)'], 1, 'the V copy has no key');
+  assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
+  assert.equal(validateProject(p).ok, true);
+  const bad = structuredClone(p);
+  bad.scenes.flatMap((x) => x.layers).find((l) => l.effects).effects[0].color = '#00ff0';
+  assert.equal(validateProject(bad).ok, false);
+  assert.equal(schemaCheck(bad), false);
 });

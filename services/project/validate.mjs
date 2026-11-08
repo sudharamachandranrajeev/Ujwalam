@@ -187,7 +187,8 @@ export function validateProject(doc) {
       }
     }
   };
-  // Per-layer visual effects (host filters, applied in list order): blur {strength 1..100}, rounded {radius 0..500}.
+  // Per-layer visual effects (host filters, applied in list order): blur {strength 1..100}, rounded {radius 0..500},
+  // chromaKey {color #RRGGBB, similarity 1..1000, smoothness 1..1000} (D246).
   const effectsOk = (list, p) => {
     if (!arr(list, p, 4)) return;
     list.forEach((e, i) => {
@@ -199,8 +200,12 @@ export function validateProject(doc) {
       } else if (e.type === 'rounded') {
         noExtra(e, ['type', 'radius'], ep); req(e, ['radius'], ep);
         if ('radius' in e) num(e.radius, `${ep}.radius`, 0, 500);
+      } else if (e.type === 'chromaKey') {
+        noExtra(e, ['type', 'color', 'similarity', 'smoothness'], ep); req(e, ['color', 'similarity', 'smoothness'], ep);
+        if ('color' in e && (typeof e.color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(e.color))) err(`${ep}.color`, 'must be #RRGGBB');
+        for (const k of ['similarity', 'smoothness']) if (k in e) num(e[k], `${ep}.${k}`, 1, 1000, true);
       } else {
-        err(`${ep}.type`, 'must be one of blur, rounded');
+        err(`${ep}.type`, 'must be one of blur, rounded, chromaKey');
       }
     });
   };

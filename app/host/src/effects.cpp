@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <cstring>
 
 namespace fx {
 
@@ -94,6 +95,30 @@ void wrap_enum(void *data, obs_source_enum_proc_t cb, void *param)
 	auto *w = static_cast<Wrap *>(data);
 	if (w->target)
 		cb(w->self, w->target, param);
+}
+
+// Audio passes through (D246): the wrapper hands its scene the target's own mix (already through the target's volume,
+// mute and track mask), as an OBS scene does for its items. So an item with effects sounds like one without; the target
+// keeps its mixer row and meter.
+bool wrap_audio_render(void *data, uint64_t *ts_out, struct obs_source_audio_mix *out, uint32_t mixers, size_t channels,
+		       size_t)
+{
+	auto *w = static_cast<Wrap *>(data);
+	if (!w->target || obs_source_audio_pending(w->target))
+		return false;
+	const uint64_t ts = obs_source_get_audio_timestamp(w->target);
+	if (!ts)
+		return false;
+	struct obs_source_audio_mix child = {};
+	obs_source_get_audio_mix(w->target, &child);
+	for (size_t mix = 0; mix < MAX_AUDIO_MIXES; mix++) {
+		if ((mixers & (1u << mix)) == 0)
+			continue;
+		for (size_t ch = 0; ch < channels; ch++)
+			memcpy(out->output[mix].data[ch], child.output[mix].data[ch], AUDIO_OUTPUT_FRAMES * sizeof(float));
+	}
+	*ts_out = ts;
+	return true;
 }
 
 const char *wrap_name(void *)
@@ -321,7 +346,7 @@ void register_types()
 	struct obs_source_info w = {};
 	w.id = WRAP_ID;
 	w.type = OBS_SOURCE_TYPE_INPUT;
-	w.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB;
+	w.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_COMPOSITE | OBS_SOURCE_CUSTOM_DRAW | OBS_SOURCE_SRGB; // composite: audio_render, like a scene
 	w.get_name = wrap_name;
 	w.create = wrap_create;
 	w.destroy = wrap_destroy;
@@ -331,6 +356,7 @@ void register_types()
 	w.video_render = wrap_render;
 	w.enum_active_sources = wrap_enum;
 	w.enum_all_sources = wrap_enum;
+	w.audio_render = wrap_audio_render;
 	obs_register_source(&w);
 
 	struct obs_source_info b = {};
@@ -381,6 +407,13 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 		} else if (e.type == "rounded") {
 			id = ROUND_ID;
 			obs_data_set_double(s, "radius", e.value);
+		} else if (e.type == "chromaKey") { // OBS's own filter (obs-filters module); key_color is 0xAABBGGRR
+			id = "chroma_key_filter_v2";
+			const uint32_t r = (e.color >> 16) & 0xff, g = (e.color >> 8) & 0xff, b = e.color & 0xff;
+			obs_data_set_string(s, "key_color_type", "custom");
+			obs_data_set_int(s, "key_color", (long long)(0xff000000u | (b << 16) | (g << 8) | r));
+			obs_data_set_int(s, "similarity", e.similarity);
+			obs_data_set_int(s, "smoothness", e.smoothness);
 		}
 		std::string fname = name + ":" + e.type + ":" + std::to_string(n++);
 		obs_source_t *f = id ? obs_source_create_private(id, fname.c_str(), s) : nullptr;

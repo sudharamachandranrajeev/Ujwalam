@@ -327,7 +327,6 @@ export function importMeld(input, opts = {}) {
     if (num(l.opacity) && l.opacity !== 1) p.opacity = Math.max(0, Math.min(1, l.opacity));
     if (flips) ignore('flip (negative scale)');
     if (isObj(l.radii) && Object.values(l.radii).some((r) => r)) ignore('rounded corners (radii)');
-    if (Array.isArray(l.effects) && l.effects.length) ignore('effects', l.effects.length);
     if (num(l.fitmentMode) && l.fitmentMode !== 0) ignore('fitmentMode other than 0');
     // Video device fill mode (2): scaled uniformly, then clipped to the rectangle. Centre crop in source pixels.
     if (c.type === 'capture' && l.fitmentMode === 2 && num(l.implicitWidth) && num(l.implicitHeight) && l.implicitWidth > 0 && l.implicitHeight > 0
@@ -340,6 +339,23 @@ export function importMeld(input, opts = {}) {
       }
     }
     return p;
+  };
+  // Layer effects (D246): an enabled Meld ChromaKey becomes chromaKey. Meld's colour distance is not OBS's: the mapping
+  // similarity = (threshold + feather) * 1000, smoothness = feather * 250 was fitted on three real green-screen videos
+  // (docs/evidence/2026-11-08-chroma-key.md); it is UNVERIFIED for other footage. Other effect types are reported.
+  const effectsFor = (l) => {
+    const out = [];
+    for (const e of Array.isArray(l.effects) ? l.effects : []) {
+      if (!isObj(e) || e.enabled !== true) continue;
+      const k = typeof e.keyColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(e.keyColor) ? e.keyColor.toLowerCase() : null;
+      if (e.type === 'ChromaKey' && k && out.length < 4) {
+        const v01 = (v) => (num(v) ? Math.max(0, Math.min(1, v)) : 0);
+        const to = (v) => Math.max(1, Math.min(1000, Math.round(v)));
+        out.push({ type: 'chromaKey', color: k, similarity: to((v01(e.threshold) + v01(e.feather)) * 1000), smoothness: to(v01(e.feather) * 250) });
+        if (num(e.tolerance) && e.tolerance !== 0) ignore('ChromaKey tolerance');
+      } else ignore(`effect ${clip(String(e.type), 40)}`);
+    }
+    return out;
   };
   const sourceFor = (c) => {
     const l = c.meld;
@@ -429,6 +445,9 @@ export function importMeld(input, opts = {}) {
         origin: { importer: 'meld', id: clip(m.h && m.v ? `${m.h.id}+${m.v.id}` : primary.id, 128) },
       };
       if ((m.h && m.h.meld.isLocked) || (m.v && m.v.meld.isLocked)) layer.locked = true;
+      const fx = effectsFor(primary.meld);
+      if (fx.length) layer.effects = fx;
+      if (m.h && m.v && JSON.stringify(effectsFor(m.v.meld)) !== JSON.stringify(fx)) ignore('V effects that differ from H (H kept)');
       layers.push(layer);
       for (const c of [m.h, m.v]) if (c) layerOfMeld.set(c.id, layer.id);
       report.counts.layersImported += (m.h ? 1 : 0) + (m.v ? 1 : 0);

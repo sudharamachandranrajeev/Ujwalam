@@ -336,7 +336,11 @@ test('project v1 effects: host refuses malformed effects; plan and layers.list c
     [{ type: 'blur', strength: 5, radius: 3 }],
     [{ type: 'rounded', radius: -1 }],
     [{ type: 'rounded', radius: 501 }],
-    Array.from({ length: 5 }, () => ({ type: 'rounded', radius: 4 }))
+    Array.from({ length: 5 }, () => ({ type: 'rounded', radius: 4 })),
+    [{ type: 'chromaKey', color: 'green', similarity: 400, smoothness: 80 }],
+    [{ type: 'chromaKey', color: '#00ff00', similarity: 0, smoothness: 80 }],
+    [{ type: 'chromaKey', color: '#00ff00', similarity: 400, smoothness: 1001 }],
+    [{ type: 'chromaKey', color: '#00ff00', similarity: 400 }]
   ];
   const { validateProject } = await import('../../../services/project/validate.mjs');
   for (const effects of bad) {
@@ -355,7 +359,7 @@ test('project v1 effects: host refuses malformed effects; plan and layers.list c
   solo.scenes[0].layers.push({ id: 'clip', type: 'media', name: 'Clip', source: { file: { base: 'media', rel: 'intro.mp4' } },
     effects: [{ type: 'rounded', radius: 8 }], placements: { h: { visible: true, x: 0, y: 400, width: 320, height: 240 } } });
   const sp = await planInHost(c, solo, { bases: { media } });
-  assert.deepEqual(sp.warnings.filter((w) => w.scene).map((w) => w.layer), ['clip'], 'audio source shown only through effects on H is flagged');
+  assert.deepEqual(sp.warnings.filter((w) => w.scene), [], 'an item with effects passes its audio through (D246): no warning');
 });
 
 test('project v1 effects render: blurred duplicate, sharp original, rounded corners after crop', async () => {
@@ -475,6 +479,87 @@ test('frames.grab: the layer source at native size, never the composed canvas or
   assert.equal((await rpcErr('frames.grab', {})).code, -32602, 'layer required');
   assert.equal((await rpcErr('frames.grab', { layer: 'bg', maxWidth: 8 })).code, -32602, 'maxWidth too small');
   assert.equal((await rpcErr('frames.grab', { layer: 'bg', path: 'C:/x.bmp' })).code, -32602, 'no caller path');
+});
+
+// Chroma key (D246): a green card keyed out shows the red background; a blue card under the same key stays blue.
+test('project v1 chroma key render: the key colour turns transparent, other colours stay', async () => {
+  const key = [{ type: 'chromaKey', color: '#00ff00', similarity: 300, smoothness: 1 }];
+  const box = (x) => ({ visible: true, x, y: 64, width: 256, height: 256 });
+  const CK = {
+    version: 1, id: 'chroma-check', name: 'Chroma check', activeScene: 'main',
+    canvases: [{ id: 'h', width: 1280, height: 720, fps: 30 }], devices: [], overlays: [], outputs: [],
+    scenes: [{ id: 'main', name: 'Main', layers: [
+      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#ff0000' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
+      { id: 'green', type: 'color', name: 'Green', source: { color: '#00ff00' }, effects: key, placements: { h: box(64) } },
+      { id: 'blue', type: 'color', name: 'Blue', source: { color: '#0000ff' }, effects: key, placements: { h: box(400) } },
+    ] }],
+    audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+  };
+  assert.ok((await import('../../../services/project/validate.mjs')).validateProject(CK).ok);
+  const r = await loadIntoHost(c, CK, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  const by = Object.fromEntries((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.map((l) => [l.id, l]));
+  assert.deepEqual(by.green.effects, key);
+  await c.call('outputs.configure', {
+    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
+    audio: { bitrate: 128, sampleRate: 48000 },
+    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: 'chroma-h.mkv' } }]
+  });
+  await c.call('record.start', {});
+  await new Promise((res) => setTimeout(res, 2000));
+  await c.call('record.stop', {});
+  let st;
+  for (let i = 0; i < 60; i++) {
+    st = await c.call('outputs.status');
+    if (st.sinks.every((s) => s.state === 'stopped')) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  const px = frameRgb(st.sinks.find((s) => s.id === 'fh').path, 1280, 720);
+  near(px(192, 192), [255, 0, 0], 'green card keyed out: the background shows');
+  near(px(528, 192), [0, 0, 255], 'blue card stays');
+  await c.call('outputs.clear');
+});
+
+// Audio through an effects item (D246): a looping 440 Hz clip shown only through a keyed item records as loud as the
+// same clip shown plainly (the wrapper hands its scene the clip's own mix: not silent, not doubled).
+test('project v1 effects audio: an item with effects keeps its source audio in the mix, at the same level', async () => {
+  const level = async (effects) => {
+    const P = {
+      version: 1, id: 'fx-audio', name: 'FX audio', activeScene: 'main',
+      canvases: [{ id: 'h', width: 640, height: 360, fps: 30 }], devices: [], overlays: [], outputs: [],
+      scenes: [{ id: 'main', name: 'Main', layers: [
+        { id: 'clip', type: 'media', name: 'Clip', source: { file: { base: 'media', rel: 'intro.mp4' }, loop: true }, ...(effects ? { effects } : {}),
+          placements: { h: { visible: true, x: 0, y: 0, width: 640, height: 360 } } }] }],
+      audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [{ id: 'aud-clip', name: 'Clip', layer: 'clip', volumeDb: 0, muted: false, monitoring: 'off', tracks: ['t1'] }] }
+    };
+    const r = await loadIntoHost(c, P, { bases: { media } });
+    assert.deepEqual(r.unavailable, []);
+    await c.call('outputs.configure', {
+      rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 640, h: 360, fps: 30, bitrate: 2000, gopSec: 1 }],
+      audio: { bitrate: 128, sampleRate: 48000 },
+      sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: `fx-audio-${effects ? 'key' : 'plain'}.mkv` } }]
+    });
+    await c.call('record.start', {});
+    await new Promise((res) => setTimeout(res, 2500));
+    await c.call('record.stop', {});
+    let st;
+    for (let i = 0; i < 60; i++) {
+      st = await c.call('outputs.status');
+      if (st.sinks.every((s) => s.state === 'stopped')) break;
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    await c.call('outputs.clear');
+    const a = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-nostdin', '-ss', '0.5', '-i', st.sinks[0].path, '-af', 'astats=metadata=1:reset=0,ametadata=mode=print:key=lavfi.astats.Overall.RMS_level:file=-', '-f', 'null', '-'],
+      { encoding: 'utf8', windowsHide: true, maxBuffer: 32 << 20 });
+    assert.equal(a.status, 0, a.stderr);
+    const lv = [...a.stdout.matchAll(/RMS_level=(-?inf|-?[0-9.]+)/g)].map((m) => (m[1].endsWith('inf') ? -Infinity : Number(m[1])));
+    return lv.at(-1);
+  };
+  const plain = await level(null);
+  const keyed = await level([{ type: 'chromaKey', color: '#00ff00', similarity: 400, smoothness: 80 }]);
+  console.log(`effects audio: plain ${plain.toFixed(1)} dBFS, through effects ${keyed.toFixed(1)} dBFS`);
+  assert.ok(plain > -40, `plain clip audible (${plain})`);
+  assert.ok(Math.abs(keyed - plain) < 2, `same level through effects (${keyed} vs ${plain})`);
 });
 
 test('--project on the command line takes the host test format only (v1 goes through the validator)', async () => {

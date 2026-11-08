@@ -117,12 +117,15 @@
       }
     },
     "effect": {
-      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside.",
+      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside. chromaKey (D246): pixels near color become transparent (OBS chroma key: similarity and smoothness 1..1000, OBS defaults 400 and 80).",
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["type", "strength"],
           "properties": { "type": { "const": "blur" }, "strength": { "type": "number", "minimum": 1, "maximum": 100 } } },
         { "type": "object", "additionalProperties": false, "required": ["type", "radius"],
-          "properties": { "type": { "const": "rounded" }, "radius": { "type": "number", "minimum": 0, "maximum": 500 } } }
+          "properties": { "type": { "const": "rounded" }, "radius": { "type": "number", "minimum": 0, "maximum": 500 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "color", "similarity", "smoothness"],
+          "properties": { "type": { "const": "chromaKey" }, "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "similarity": { "type": "integer", "minimum": 1, "maximum": 1000 }, "smoothness": { "type": "integer", "minimum": 1, "maximum": 1000 } } }
       ]
     },
     "layer": {
