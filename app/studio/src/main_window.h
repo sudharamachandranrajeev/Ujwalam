@@ -36,6 +36,7 @@ public:
 	void embed();
 	void schedule(); // debounced embed (resize, move)
 	void setMessage(const QString &text);
+	QString message() const;
 
 protected:
 	void resizeEvent(QResizeEvent *e) override;
@@ -56,6 +57,11 @@ public:
 	void start(); // first loads after login
 	// Headless probe (tests only, UJWALAM_STUDIO_PROBE_MS): what the panels show now, as plain data. Never shown.
 	QJsonObject probe() const;
+
+protected:
+	void closeEvent(class QCloseEvent *e) override; // one close for the whole app (D280)
+
+public:
 	// Probe action (tests only, UJWALAM_STUDIO_PROBE_ACTIONS, D275): clicks the real widget so its own handler runs.
 	// flag-off:<id> | mute:<strip> | track:<strip>:<n> | undo. false: no such widget. Never types a confirm phrase.
 	bool probeAction(const QString &action);
@@ -120,6 +126,7 @@ private:
 	bool routeBusy_ = false;      // a routing change is on its way: further track clicks wait for the answer
 	void setTracks(const QString &id, const QStringList &tracks);
 	bool live_ = false, recording_ = false, meterBusy_ = false;
+	double hostUptime_ = -1; // host.status uptimeMs: going down means the host restarted (D280)
 	bool previewEditing_ = false; // host switch for preview editing = flag preview-edit (status host.previewEditing)
 	int nudgeDx_ = 0, nudgeDy_ = 0; // arrow-key nudge not sent yet (D254)
 	bool nudgeBusy_ = false;
@@ -157,7 +164,7 @@ private:
 	QFormLayout *effForm_ = nullptr;
 	QVBoxLayout *mixerBox_ = nullptr;
 	QMap<QString, QProgressBar *> meters_;
-	QPushButton *streamBtn_ = nullptr, *recordBtn_ = nullptr;
+	QPushButton *streamBtn_ = nullptr, *recordBtn_ = nullptr, *clipBtn_ = nullptr, *markBtn_ = nullptr;
 	QPushButton *undoBtn_ = nullptr, *redoBtn_ = nullptr;
 	bool undoBusy_ = false;
 	QLabel *pillLive_ = nullptr, *pillRec_ = nullptr, *pillStats_ = nullptr, *pillHost_ = nullptr, *pillCore_ = nullptr;

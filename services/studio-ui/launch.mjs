@@ -95,6 +95,9 @@ const hex = (n) => randomBytes(n).toString('hex');
 export const HOST_LOGS_KEPT = 10;
 export const HOST_CONFIG_FILE = 'host-config.json';
 export const ALPHA_LIVE_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-live.json');
+// Record-only plan (H + V .mkv, no stream target): the alpha default when neither --live nor --outputs is given, so a
+// normal start can record and clip (D281). Streaming still needs --live.
+export const ALPHA_RECORD_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-practice.json');
 export const DEFAULT_FEEDBACK_DIR = path.join(REPO, 'feedback');
 export const ALPHA_REPLAY_SECONDS = 60; // live clipping (D226): a kill chain plus preSec needs up to 55 s (data/clip/live-clips.json)
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -323,7 +326,7 @@ export function openHostLog(logsDir, { keep = HOST_LOGS_KEPT, now = new Date() }
 }
 
 /** Host argv and extra environment (pure; tested). Tokens only ever go into env, never argv. */
-export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, corePort, coreApiToken, hostConfigFile, coreSystemToken, headless = isHeadless() }) {
+export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, corePort, coreApiToken, hostConfigFile, coreSystemToken, headless = isHeadless(), embedded = false }) {
   const argv = ['--runtime', hostCfg.runtime, '--data-dir', hostCfg.dataDir, '--discovery', hostDiscovery, '--recordings', hostCfg.recordings];
   const env = {};
   const notes = [];
@@ -334,6 +337,7 @@ export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, co
   if (args['allow-devices'] === true) argv.push('--allow-devices');
   if (alpha) {
     if (headless) notes.push('headless (UJWALAM_HEADLESS=1): no preview windows');
+    else if (embedded) { /* D280: the Qt shell shows the previews inside its window */ }
     else argv.push('--preview', 'h,v');
     const overlayProblem = overlayRootProblem(hostCfg.overlayRoot);
     if (!overlayProblem) {
@@ -430,13 +434,20 @@ export async function waitForDiscovery(file, child, timeoutMs = 60_000) {
 
 // Alpha project: build (or keep) <dataDir>/projects/alpha.project.json, then project.load it into the host.
 // Exported for tools/soak/stream-day.mjs (the stream-day mock run builds the same alpha session).
-export async function alphaProject({ client, dataDir, args, hostCfg }) {
+export async function alphaProject({ client, dataDir, args, hostCfg, embedded = false }) {
   const profileFile = typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json');
   const profile = readProfile(profileFile);
   let report = null;
+  // A start with devices allowed rebuilds a project that was built without them (D282): otherwise game capture,
+  // facecam and mic stay placeholders and nothing real is recorded or streamed. The old file is kept in projects/_old/.
+  let noDevicesBuild = false;
+  if (args['allow-devices'] === true && existsSync(alphaFile(dataDir))) {
+    try { const o = loadProject(alphaFile(dataDir)).project.origin; noDevicesBuild = o?.importer === 'alpha' && o.id === 'no-devices'; } catch { /* unreadable: loaded (and reported) below as before */ }
+  }
+  if (noDevicesBuild && args['rebuild-alpha'] !== true) console.log('[studio] the alpha project was built without devices: rebuilding it with devices (the old one goes to projects/_old/)');
   const r = await prepareAlphaProject({
     dataDir,
-    rebuild: args['rebuild-alpha'] === true,
+    rebuild: args['rebuild-alpha'] === true || noDevicesBuild,
     build: async () => {
       let bindings = { bound: {}, unavailable: [] };
       if (args['allow-devices'] === true) {
@@ -461,11 +472,6 @@ export async function alphaProject({ client, dataDir, args, hostCfg }) {
     for (const [role, b] of Object.entries(report.roles)) console.log(`[studio] role ${role}: bound (${b.by}${b.preset ? ` ${b.preset}` : ''})`);
     for (const u of report.unavailableRoles) console.log(`[studio] role ${u.role}: not bound: ${u.reason}`);
     if (args['allow-devices'] !== true) console.log('[studio] devices off: game capture and facecam are placeholders (run with --allow-devices --rebuild-alpha after "devices ready")');
-  } else {
-    const { project } = loadProject(r.file);
-    if (args['allow-devices'] === true && project.origin?.importer === 'alpha' && project.origin.id === 'no-devices') {
-      console.log('[studio] WARNING: the alpha project was built without devices and is loaded unchanged; add --rebuild-alpha to bind them');
-    }
   }
   const bases = alphaBases({ profile, overlayRoot: hostCfg.overlayRoot });
   const loaded = await loadFileIntoHost(client, r.file, { bases, skipUnavailable: true });
@@ -474,7 +480,8 @@ export async function alphaProject({ client, dataDir, args, hostCfg }) {
   for (const w of hudWarnings(r.file)) console.log(`[studio] WARNING: ${w}`);
   // A preview that did not open at start (e.g. closed by hand on a reused host) is opened now. The host opens previews
   // only on a second display and never takes focus (D191); with one display it refuses and this says why.
-  if (!isHeadless()) {
+  // With the Qt shell the previews live inside its window instead (D280).
+  if (!isHeadless() && !embedded) {
     let open = new Set();
     try { open = new Set(((await client.call('preview.list')).previews ?? []).filter((p) => p.open === true).map((p) => String(p.canvas).toUpperCase())); } catch { /* listed below per canvas */ }
     for (const c of ['H', 'V']) {
@@ -574,7 +581,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Crash recovery (see the header). Arms an exit handler on the running host child and on every restarted one.
 function superviseHost(o) {
-  const { logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost, getChild, isStopping, onClient, endSession } = o;
+  const { logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost, getChild, isStopping, onClient, endSession, embedded = false } = o;
   const backoffEnv = Number(process.env.UJWALAM_HOST_RESTART_BACKOFF_MS);
   const policy = restartPolicy(Number.isFinite(backoffEnv) && backoffEnv >= 0 ? { backoffMs: [backoffEnv] } : {});
   const watchMs = Math.max(100, Number(process.env.UJWALAM_HOST_WATCH_MS ?? 2000) || 2000);
@@ -640,7 +647,7 @@ function superviseHost(o) {
     onClient(client);
     console.log(`[studio] host restarted (attempt ${d.attempt})`);
     try {
-      if (alpha) await alphaProject({ client, dataDir, args, hostCfg });
+      if (alpha) await alphaProject({ client, dataDir, args, hostCfg, embedded });
     } catch (e) { console.log(`[studio] WARNING: project reload after the restart failed: ${e.message}`); }
     let resumed = [];
     if (recording.length) {
@@ -666,6 +673,9 @@ export async function main(argv = process.argv.slice(2)) {
   const alpha = args.alpha === true;
   const shellMode = shellChoice(args);
   if (!shellMode) { console.log('[studio] --shell takes qt (the default) or browser'); return 2; }
+  // The Qt shell shows the previews inside its window (D280): known before the host starts, so the host then opens
+  // no separate preview windows.
+  const shellPaths = shellMode === 'qt' && args['no-open'] !== true && !isHeadless() ? studioShellPaths({ devQtDir: studioQtDir() }) : null;
   let dataDir;
   try { dataDir = resolveDataDir({ dataDir: typeof args['data-dir'] === 'string' ? args['data-dir'] : undefined }); } catch (e) { console.log(`[studio] ${e.message}`); return 1; }
   if (args.live === true && !alpha) { console.log('[studio] --live is for the alpha session only (npm run alpha -- --live)'); return 2; }
@@ -753,10 +763,10 @@ export async function main(argv = process.argv.slice(2)) {
         console.log(`[studio] host config: ${hostConfigFile} (hotkeys on, replay ${ALPHA_REPLAY_SECONDS} s autostart, feedback folder ${feedbackDir}, monitoring output ${monitoringOutput ? 'from the profile' : 'Windows default'})`);
       } catch (e) { console.log(`[studio] host config could not be written owner-only (${e.message}); stopping`); await stopAll(); return 1; }
     }
-    const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system });
+    const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system, embedded: !!shellPaths });
     for (const n of spec.notes) console.log(`[studio] WARNING: ${n}`);
     const hostArgs = spec.argv;
-    const planPath = args.live === true ? ALPHA_LIVE_PLAN : typeof args.outputs === 'string' ? path.resolve(args.outputs) : null;
+    const planPath = args.live === true ? ALPHA_LIVE_PLAN : typeof args.outputs === 'string' ? path.resolve(args.outputs) : alpha ? ALPHA_RECORD_PLAN : null;
     if (planPath) {
       // An O1 plan file (app/host/outputs/*.json): validated against data/platforms, configured at host start, nothing
       // started. Real targets only with --live (alpha-live.json; the host then runs with --allow-live).
@@ -768,6 +778,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (ltp.length) { for (const p of ltp) console.log(`[studio] ${p}`); await stopAll(); return 2; }
       if (lt.select) console.log(`[studio] LIVE sinks: ${params.sinks.map((s) => s.id).join(', ')} (--sinks)`);
       if (args.live === true) console.log(`[studio] LIVE plan: ${path.relative(REPO, planPath)} (real targets configured, nothing started; start from the control page with "yes, on air")`);
+      else if (planPath === ALPHA_RECORD_PLAN) console.log(`[studio] record plan: ${path.relative(REPO, planPath)} (Record saves H and V .mkv; streaming needs the LIVE start: Ujwalam.cmd --live)`);
       for (const w of report.warnings) console.log(`[studio] outputs plan warning: ${w.code}`);
       const f = path.join(hostCfg.dataDir, 'outputs-params.json');
       mkdirSync(hostCfg.dataDir, { recursive: true });
@@ -801,7 +812,7 @@ export async function main(argv = process.argv.slice(2)) {
       if (!disc) { console.log('[studio] alpha: the host is not ready; stopping'); await stopAll(); return 1; }
       try {
         alphaClient = new HostClient({ port: disc.port, token: hostToken });
-        await alphaProject({ client: alphaClient, dataDir, args, hostCfg });
+        await alphaProject({ client: alphaClient, dataDir, args, hostCfg, embedded: !!shellPaths });
         await alphaStatus(alphaClient);
         if (lt.bandwidthTest) {
           const bp = bandwidthTestProblems(await alphaClient.call('outputs.status'));
@@ -846,7 +857,7 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (disc) {
       superviseHost({
-        logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost,
+        logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost, embedded: !!shellPaths,
         getChild: () => hostChild, isStopping: () => stopping,
         initialClient: alphaClient ?? new HostClient({ port: disc.port, token: hostToken }),
         onClient: (c) => { if (alpha) alphaClient = c; },
@@ -877,16 +888,23 @@ export async function main(argv = process.argv.slice(2)) {
   // Headless (D191): no browser. One exception for scripted runs (F2 real-host test): UJWALAM_BROWSER naming this
   // Node runs that script (windowsHide, no window) with the login URL, so it can drive the page API like the browser.
   const wantShell = shellMode === 'qt';
-  const shellPaths = wantShell ? studioShellPaths({ devQtDir: studioQtDir() }) : null;
   const shellSpec = shellPaths ? shellSpawnSpec({ uiPort, launchKey, ...shellPaths }) : null;
-  if (wantShell && !shellSpec) console.log('[studio] the Qt studio shell is not built (npm run build:studio); opening the browser instead');
+  if (wantShell && !shellSpec && args['no-open'] !== true && !isHeadless()) console.log('[studio] the Qt studio shell is not built (npm run build:studio); opening the browser instead');
   if (args['no-open'] !== true && shellSpec && !isHeadless()) {
     const shell = spawn(shellSpec.cmd, [], {
       stdio: 'ignore', env: shellSpec.env,
       windowsHide: false // GUI window: the Qt studio window (default, D277); a GUI exe, no console
     });
     shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
-    shell.on('exit', (code) => { if (!stopping) console.log(`[studio] Qt shell closed (exit ${code}); the studio keeps running. Ctrl-C stops everything.`); });
+    // One close (D280): the window closed by the user (exit 0; while live only after the typed "yes, on air") stops
+    // everything. Any other exit is a crash: the studio keeps running (a stream is never cut by a UI crash).
+    shell.on('exit', (code) => {
+      if (stopping) return;
+      if (code === 0) {
+        console.log('[studio] studio window closed: stopping Ujwalam');
+        stopAll().then(() => process.exit(0));
+      } else console.log(`[studio] Qt shell ended unexpectedly (exit ${code}); the studio keeps running. Ctrl-C stops everything.`);
+    });
     children.push(shell);
     console.log('[studio] Qt studio shell started');
   } else if (args['no-open'] !== true && (!isHeadless() || headlessLoginScript())) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);

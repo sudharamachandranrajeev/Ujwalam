@@ -31,6 +31,7 @@
 #include <QSplitter>
 #include <QStatusBar>
 #include <QTimer>
+#include <QCloseEvent>
 #include <QUrl>
 #include <QUrlQuery>
 #include <QToolButton>
@@ -246,6 +247,29 @@ void PreviewSlot::setMessage(const QString &text)
 	msg_->setText(text);
 }
 
+QString PreviewSlot::message() const
+{
+	return msg_->text();
+}
+
+// One close for the whole app (D280): closing this window stops Ujwalam (host, previews, services; the launcher
+// does that when the window exits with code 0). While live it stops every stream and the recording, so it needs the
+// typed "yes, on air" first; anything else keeps the window open.
+void MainWindow::closeEvent(QCloseEvent *e)
+{
+	if (live_) {
+		bool ok = false;
+		const QString typed = QInputDialog::getText(this, QStringLiteral("Close Ujwalam"),
+							    QStringLiteral("You are live. Closing Ujwalam stops every stream and the recording.\n\nType: yes, on air"),
+							    QLineEdit::Normal, QString(), &ok);
+		if (!ok || typed.trimmed() != QStringLiteral("yes, on air")) {
+			note(QStringLiteral("Still live: Ujwalam was not closed."));
+			return e->ignore();
+		}
+	}
+	e->accept();
+}
+
 void PreviewSlot::schedule()
 {
 	debounce_->start();
@@ -285,9 +309,12 @@ void PreviewSlot::embed()
 		busy_ = false;
 		if (!ok) {
 			const QString detail = b.value(QStringLiteral("detail")).toString();
-			setMessage(QStringLiteral("No preview here: ") + (detail.isEmpty() ? err : detail) +
-				   QStringLiteral("\nMove this window to the second display, or use Open preview."));
-		}
+			setMessage(QStringLiteral("No preview here: ") + (detail.isEmpty() ? err : detail));
+			// The host may still be starting or loading the project (no canvas yet): try again (D280).
+			if (!again_ && isVisible())
+				QTimer::singleShot(2000, this, [this]() { schedule(); });
+		} else
+			setMessage(QString());
 		if (again_) {
 			again_ = false;
 			embed();
@@ -328,6 +355,26 @@ QWidget *MainWindow::buildTop()
 	recordBtn_->setEnabled(false);
 	connect(streamBtn_, &QPushButton::clicked, this, [this]() { hostAction(live_ ? QStringLiteral("stream.stop") : QStringLiteral("stream.start")); });
 	connect(recordBtn_, &QPushButton::clicked, this, [this]() { hostAction(recording_ ? QStringLiteral("record.stop") : QStringLiteral("record.start")); });
+	// Clipping (D281): save the replay buffer (last 60 s of H and V) now; mark a moment for the post-stream clipper.
+	clipBtn_ = new QPushButton(QStringLiteral("Save clip"), w);
+	clipBtn_->setToolTip(QStringLiteral("Save the last 60 seconds of H and V as clip files (replay buffer)."));
+	markBtn_ = new QPushButton(QStringLiteral("Mark moment"), w);
+	markBtn_->setToolTip(QStringLiteral("Mark this moment for the clipper (same as Ctrl+Alt+M)."));
+	connect(clipBtn_, &QPushButton::clicked, this, [this]() {
+		api_->host(QStringLiteral("replay.save"), {}, [this](bool ok, const QJsonObject &b, const QString &err) {
+			if (!ok)
+				return note(QStringLiteral("Clip not saved: ") + err);
+			const int n = b.value(QStringLiteral("result")).toObject().value(QStringLiteral("saved")).toArray().size();
+			note(n ? QStringLiteral("Clip saved: %1 file(s) in the replay folder.").arg(n) : QStringLiteral("Clip not saved: the replay buffer is not running."));
+		});
+	});
+	connect(markBtn_, &QPushButton::clicked, this, [this]() {
+		QJsonObject p;
+		p.insert(QStringLiteral("source"), QStringLiteral("api"));
+		api_->host(QStringLiteral("marker.add"), p, [this](bool ok, const QJsonObject &, const QString &err) {
+			note(ok ? QStringLiteral("Moment marked.") : QStringLiteral("Moment not marked: ") + err);
+		});
+	});
 	pillLive_ = pill(QStringLiteral("Offline"));
 	pillRec_ = pill(QStringLiteral("Not recording"));
 	pillStats_ = pill(QStringLiteral("-"));
@@ -335,6 +382,8 @@ QWidget *MainWindow::buildTop()
 	pillCore_ = pill(QStringLiteral("Event core: ?"));
 	h->addWidget(streamBtn_);
 	h->addWidget(recordBtn_);
+	h->addWidget(clipBtn_);
+	h->addWidget(markBtn_);
 	h->addSpacing(12);
 	// Undo / redo of layer edits (D238; inspector, layer list, preview mouse, effects): Ctrl+Z / Ctrl+Y too.
 	undoBtn_ = new QPushButton(QStringLiteral("Undo"), w);
@@ -548,7 +597,7 @@ QWidget *MainWindow::buildCentre()
 	for (const char *cv : {"h", "v"}) {
 		auto *box = new QGroupBox(QString::fromLatin1(cv).toUpper() == QStringLiteral("H") ? QStringLiteral("Horizontal (H)") : QStringLiteral("Vertical (V)"), w);
 		auto *bv = new QVBoxLayout(box);
-		auto *slot = new PreviewSlot(api_, QString::fromLatin1(cv).toUpper(), box);
+		auto *slot = new PreviewSlot(api_, QString::fromLatin1(cv), box); // h|v, as the UI server's canvas enum (D280)
 		slot->setMinimumSize(cv[0] == 'h' ? QSize(480, 270) : QSize(180, 320));
 		bv->addWidget(slot, 1);
 		slots_ << slot;
@@ -1355,6 +1404,13 @@ void MainWindow::pollStatus()
 		}
 		const QJsonObject h = s.value(QStringLiteral("host")).toObject(), c = s.value(QStringLiteral("core")).toObject();
 		live_ = h.value(QStringLiteral("live")).toBool();
+		// A restarted host (crash supervisor) lost the previews it drew in our slots: embed them again (D280).
+		const double up = h.value(QStringLiteral("uptimeMs")).toDouble(-1);
+		if (up >= 0 && hostUptime_ >= 0 && up < hostUptime_)
+			for (PreviewSlot *slot : slots_)
+				slot->schedule();
+		if (up >= 0)
+			hostUptime_ = up;
 		previewEditing_ = h.value(QStringLiteral("previewEditing")).toBool();
 		if (const bool ee = h.value(QStringLiteral("effectEditing")).toBool(); ee != effectEditing_) {
 			effectEditing_ = ee;
@@ -1387,6 +1443,10 @@ void MainWindow::pollStatus()
 		const QJsonObject ready = h.value(QStringLiteral("outputsReady")).toObject();
 		streamBtn_->setEnabled(ready.value(QStringLiteral("stream")).toBool());
 		recordBtn_->setEnabled(ready.value(QStringLiteral("record")).toBool());
+		// Say why a button is off (D281): no stream target unless Ujwalam was started for live.
+		streamBtn_->setToolTip(streamBtn_->isEnabled() ? QString()
+							       : QStringLiteral("Streaming needs the LIVE start: the \"Ujwalam (alpha, LIVE)\" shortcut, or Ujwalam.cmd --live."));
+		recordBtn_->setToolTip(recordBtn_->isEnabled() ? QString() : QStringLiteral("No recording output is set up in this start."));
 		streamBtn_->setText(live_ ? QStringLiteral("Stop stream") : QStringLiteral("Start stream"));
 		recordBtn_->setText(recording_ ? QStringLiteral("Stop recording") : QStringLiteral("Record"));
 		loadEdits();
@@ -2306,6 +2366,9 @@ QJsonObject MainWindow::probe() const
 		flags.append(f);
 	}
 	QJsonObject shown; // isHidden: the window itself is never shown in a probe
+	QJsonArray previews; // each preview slot's message: empty once the host embedded its preview (D280)
+	for (const PreviewSlot *s : slots_)
+		previews.append(s->message());
 	shown.insert(QStringLiteral("structure"), !structBox_->isHidden());
 	shown.insert(QStringLiteral("transitions"), !transBox_->isHidden());
 	shown.insert(QStringLiteral("bots"), !botBox_->isHidden());
@@ -2314,6 +2377,7 @@ QJsonObject MainWindow::probe() const
 	QJsonObject o;
 	o.insert(QStringLiteral("flags"), flags);
 	o.insert(QStringLiteral("shown"), shown);
+	o.insert(QStringLiteral("previews"), previews);
 	o.insert(QStringLiteral("scenes"), sceneList_->count());
 	o.insert(QStringLiteral("layers"), layerList_->count());
 	o.insert(QStringLiteral("mixer"), (int)meters_.size());
@@ -2365,6 +2429,10 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		dlg->setTextValue(QUrl::fromPercentEncoding(action.mid(5).toUtf8()));
 		dlg->accept();
+		return true;
+	}
+	if (p.size() == 1 && (p[0] == QStringLiteral("clip") || p[0] == QStringLiteral("mark"))) { // D281
+		(p[0] == QStringLiteral("clip") ? clipBtn_ : markBtn_)->click();
 		return true;
 	}
 	if (p.size() == 1 && p[0] == QStringLiteral("undo")) {

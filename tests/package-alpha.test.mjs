@@ -5,7 +5,7 @@
 // The full build (real host exe and OBS runtime) runs only with UJWALAM_PACKAGE_E2E=1.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
@@ -174,6 +174,12 @@ test('Install-Ujwalam.ps1 on a fake package: install, shortcuts, tamper refused,
     assert.ok(!existsSync(path.join(ir, 'previous.txt')));
     for (const f of ['0.1.0-alpha.1/release.json', 'Ujwalam.cmd', 'data']) assert.ok(existsSync(path.join(ir, f)), f);
     for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha).lnk')), d);
+    for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha, LIVE).lnk')), `${d} LIVE (D281)`);
+    // Arguments: devices on both (D282), stream targets only on LIVE (read back through the shell COM object)
+    const args = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+      `$s = New-Object -ComObject WScript.Shell; foreach ($n in 'Ujwalam (alpha).lnk','Ujwalam (alpha, LIVE).lnk') { $s.CreateShortcut((Join-Path '${path.join(root, 'start')}' $n)).Arguments }`],
+    { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
+    assert.deepEqual(args, ['--allow-devices', '--live --allow-devices']);
     // The root launcher follows current.txt to that version's launcher and on to its run-installed.mjs.
     let run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8', windowsHide: true });
     assert.equal(run.stdout.trim(), 'fake 0.1.0-alpha.1');

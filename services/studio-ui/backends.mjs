@@ -136,6 +136,8 @@ export function createFakeHost({ outputsReady = false } = {}) {
           return { ok: true };
         }
         case 'preview.open': case 'preview.focus': return { ok: true, fake: true, note: 'BLOCKED-ON-HOST: no native preview window exists in the fake backend' };
+        case 'replay.save': return { saved: [], fake: true, note: 'BLOCKED-ON-HOST: the fake backend has no replay buffer' };
+        case 'marker.add': return { ok: true, fake: true };
         case 'mixer.list': return { sources: mixer.map((m) => ({ ...m, mixers: TRACKS.reduce((b, t, n) => (m.tracks.includes(t.id) ? b | (1 << n) : b), 0), peakDb: null })), tracks: TRACKS };
         case 'mixer.setTracks': {
           const m = need(mixer.find((x) => x.id === p.id), 'source');

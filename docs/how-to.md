@@ -22,8 +22,10 @@ Anything marked UNVERIFIED was read from the code but not run end to end on a re
 1. Copy `data\profile.example.json` (inside the installed version folder) to
    `%LOCALAPPDATA%\Ujwalam\data\profile.local.json` and fill in your own values. Without this file nothing starts.
    The file stays on your PC.
-2. Start the "Ujwalam (alpha)" shortcut, or run `%LOCALAPPDATA%\Ujwalam\Ujwalam.cmd`.
-   The studio window (Qt) opens by default. `Ujwalam.cmd --shell browser` opens the web control page instead.
+2. Start the "Ujwalam (alpha)" shortcut (opens the capture devices; Record, Save clip and Mark moment work), or the
+   "Ujwalam (alpha, LIVE)" shortcut (also sets up the stream targets). Or run `%LOCALAPPDATA%\Ujwalam\Ujwalam.cmd`.
+   The studio window (Qt) opens by default, with the H and V previews inside it. Closing it stops all of Ujwalam.
+   `Ujwalam.cmd --shell browser` opens the web control page instead.
 3. Useful flags (add them after `Ujwalam.cmd`):
    - `--allow-devices` opens the capture devices (game capture, facecam, microphone).
    - `--live` configures the real stream targets. Streaming still only starts after the "yes, on air" step below.

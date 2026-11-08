@@ -34,6 +34,9 @@ param(
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 $ShortcutName = 'Ujwalam (alpha).lnk'
+# LIVE start (D281): configures the stream targets (keys from Windows Credential Manager); nothing goes live until
+# Start stream and the typed "yes, on air".
+$LiveShortcutName = 'Ujwalam (alpha, LIVE).lnk'
 
 function Say([string]$m) { Write-Host "[install] $m" }
 function Fail([string]$m, [int]$code) { Write-Host "[install] STOP: $m"; exit $code }
@@ -174,10 +177,18 @@ if (-not $NoShortcuts) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $lnk = $shell.CreateShortcut((Join-Path $dir $ShortcutName))
     $lnk.TargetPath = Join-Path $InstallRoot 'Ujwalam.cmd'
+    $lnk.Arguments = '--allow-devices' # capture card, facecam, mic (user, 2026-11-08, D282)
     $lnk.WorkingDirectory = $InstallRoot
-    $lnk.Description = 'Ujwalam alpha (runs the version in current.txt)'
+    $lnk.Description = 'Ujwalam alpha with devices (runs the version in current.txt)'
     $lnk.Save()
     Say "shortcut: $(Join-Path $dir $ShortcutName)"
+    $lnk = $shell.CreateShortcut((Join-Path $dir $LiveShortcutName))
+    $lnk.TargetPath = Join-Path $InstallRoot 'Ujwalam.cmd'
+    $lnk.Arguments = '--live --allow-devices'
+    $lnk.WorkingDirectory = $InstallRoot
+    $lnk.Description = 'Ujwalam alpha, stream targets set up (going live still needs Start stream and the typed yes, on air)'
+    $lnk.Save()
+    Say "shortcut: $(Join-Path $dir $LiveShortcutName)"
   }
 }
 

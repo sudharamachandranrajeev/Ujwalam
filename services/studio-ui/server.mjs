@@ -106,6 +106,10 @@ export const HOST_CALLS = Object.freeze({
   'preview.open': { schema: { canvas: CANVAS, parent: { type: 'string', pattern: /^[1-9][0-9]{0,19}$/ }, x: { type: 'int', min: 0, max: 16384 }, y: { type: 'int', min: 0, max: 16384 }, width: { type: 'int', min: 160, max: 8192 }, height: { type: 'int', min: 90, max: 8192 } } },
   'preview.focus': { schema: { canvas: CANVAS } },
   'preview.close': { schema: { canvas: CANVAS } },
+  // Clipping from the studio (D281): save the replay buffer (the last 60 s of H and V, or one canvas) as clip files, and
+  // write a moment marker for the post-stream clipper. Neither changes the stream or the recording: no confirm.
+  'replay.save': { schema: { canvas: OPT_CANVAS } },
+  'marker.add': { schema: { source: { type: 'enum', values: ['api'], required: true } } },
   'mixer.list': { schema: {} },
   'mixer.setVolume': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, db: { type: 'num', min: -100, max: 0, required: true } } },
   'mixer.setMute': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, muted: { type: 'bool', required: true } } },
@@ -320,7 +324,7 @@ export function createStudioServer(opts) {
     return {
       at: now(),
       host: { kind: h.kind, available: hs !== null, blockedOnHost: h.kind === 'fake',
-        ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing']) : {}),
+        ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing', 'uptimeMs']) : {}),
         ...(previewLast ? { previewEdit: previewLast } : {}),
         effectEditing: !!flags && flags.isOn('effect-editor') },
       core: { available: cs !== null, ...(cs ? { liveState: typeof cs.live?.liveState === 'string' ? cs.live.liveState : null, panic: cs.live?.panic === true } : {}) },

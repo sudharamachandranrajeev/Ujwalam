@@ -76,7 +76,8 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const flags = createFlags({ dataDir });
     for (const id of on) flags.set(id, true);
     const fake = createFakeHost({});
-    const host = { describe: () => fake.describe(), call: (m, p) => fake.call(m, p) };
+    const calls = [];
+    const host = { describe: () => fake.describe(), call: (m, p) => { calls.push([m, p]); return fake.call(m, p); } };
     const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
     const key = 'p'.repeat(40);
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags, bots: createFakeBots(), limits: { statusPollMs: 50 } });
@@ -86,7 +87,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
       assert.equal(r.code, 0, r.err);
       const m = /^studio probe: (.+)$/m.exec(r.out);
       assert.ok(m, `no probe line: ${r.out} ${r.err}`);
-      return { ...JSON.parse(m[1]), fake, store: flags };
+      return { ...JSON.parse(m[1]), fake, store: flags, calls };
     } finally { srv.close(); }
   }
 
@@ -101,6 +102,9 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.undoEnabled, false, 'empty history');
     assert.equal(p.live, false);
     assert.equal(p.trackButtons, 0, 'no track routing buttons while mixer-routing is off');
+    // D280: the slots asked for canvas h and v (the server's enum); an upper-case id was refused as "bad field canvas".
+    assert.equal(p.previews.length, 2);
+    for (const m of p.previews) assert.doesNotMatch(m, /bad field/, m);
   });
 
   test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons; mixer track buttons', async () => {
@@ -119,6 +123,12 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.store.isOn('scene-edit'), false, 'flag unticked: off at once, no phrase');
     assert.equal(p.shown.structure, false, 'the structure box follows the flag');
     assert.equal(p.trackButtons, 6);
+  });
+  test('Save clip and Mark moment (D281): replay.save and an api marker reach the host with no confirm', async () => {
+    const p = await probe([], 6000, 'clip,mark');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['clip', true], ['mark', true]]);
+    assert.ok(p.calls.some(([m]) => m === 'replay.save'), 'replay.save called');
+    assert.ok(p.calls.some(([m, q]) => m === 'marker.add' && q?.source === 'api'), 'marker.add {source: api} called');
   });
   test('typed confirms (D279): a flag ticked on asks for the phrase; a wrong phrase asks again, "yes" turns it on, Cancel leaves it off', async () => {
     const p = await probe([], 9000, 'flag-on:transitions,type:nope,type:yes,flag-on:bot-manager,cancel,type:yes');

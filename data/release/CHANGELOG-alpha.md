@@ -2,6 +2,15 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.5 — 2026-11-08
+
+- Fix: the H and V previews show inside the studio window; no separate preview windows open.
+- One close: closing the studio window stops all of Ujwalam (previews, host, services). While live it first asks for the typed "yes, on air".
+- Record works on a normal start: H and V are recorded to `.mkv` files (no stream target needed).
+- New Save clip button (the last 60 s of H and V from the replay buffer) and Mark moment button (same as `Ctrl+Alt+M`).
+- Shortcuts: "Ujwalam (alpha)" opens the capture devices (game capture, facecam, mic); the new "Ujwalam (alpha, LIVE)" also sets up the stream targets. Going live still needs Start stream and the typed "yes, on air".
+- A start with devices rebuilds a scene project that was built without devices; the old one is kept in `projects/_old/`.
+
 ## 0.1.0-alpha.4 — 2026-11-08
 
 - Fix: overlays and browser layers were off in alpha.3 when `ujwalam.json` named the `overlays` folder itself (as the 3 Nov install wrote it); that folder is now read as its parent.

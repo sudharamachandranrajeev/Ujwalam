@@ -289,6 +289,8 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
   const after = (f) => s.argv[s.argv.indexOf(f) + 1];
   assert.match(after('--project'), /test-card\.project\.json$/, 'the test card gives the V canvas the start-up preview needs');
   assert.equal(after('--preview'), 'h,v');
+  const emb = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: {}, alpha: true, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS, headless: false, embedded: true });
+  assert.ok(!emb.argv.includes('--preview'), 'Qt shell: previews inside its window, no separate preview windows (D280)');
   assert.ok(s.argv.includes('--allow-browser'));
   assert.ok(s.argv.includes('--allow-devices'));
   assert.equal(after('--overlay-root'), OV_ROOT);
@@ -430,9 +432,11 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(h.systemTokenOk, true, 'the event-core system token reached the host by environment');
     assert.equal(h.systemTokenInArgv, false);
     assert.equal(h.systemTokenIsApiToken, false);
-    assert.ok(!h.argv.includes('--allow-live') && !h.argv.includes('--outputs'), 'no real targets and no plan without --live');
-    assert.equal(h.outputsParams, null);
-    assert.match(r.out, /\[studio\] outputs: real targets off; 0 sink\(s\) \(no plan; real targets need --live\)/);
+    // D281: without --live and --outputs the alpha start gets the record-only plan (H + V .mkv), never a real target.
+    assert.ok(!h.argv.includes('--allow-live'), 'no real targets without --live');
+    assert.deepEqual(h.outputsParams.sinks.map((s) => [s.id, s.target.transport]), [['practice-h', 'file'], ['practice-v', 'file']]);
+    assert.match(r.out, /\[studio\] record plan: data[\\/]outputs[\\/]alpha-practice\.json \(Record saves H and V \.mkv/);
+    assert.match(r.out, /\[studio\] outputs: real targets off; 2 sink\(s\)/);
     assert.match(r.out, /\[studio\] hotkeys: on; panic Ctrl\+Alt\+P registered; feedback Ctrl\+Alt\+F registered; marker Ctrl\+Alt\+M registered/);
     assert.match(r.out, /\[studio\] replay buffer: on, 60 s; H running \(fallback rung\); V running \(fallback rung\)/);
     assert.match(r.out, /\[studio\] feedback probe: moment \d{4}-\d{2}-\d{2}\/\d{6} listed by the UI server \(1 moment\(s\), HTTP 200\); replay files: replay-H\.mkv, replay-V\.mkv; scene: H: scene-default, V: scene-default; at: \d{4}-/);
@@ -468,14 +472,23 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(logs.length, 1);
     assert.match(readFileSync(path.join(dataDir, 'logs', logs[0]), 'utf8'), /fake host: rpc on 127\.0\.0\.1:/);
 
-    // 2. --allow-devices: the existing project is loaded unchanged, with a warning; devices are not listed
+    // 2. --allow-devices on a project built without devices: rebuilt with devices, the old one kept in _old (D282)
     r = await runLauncher([...base, '--allow-devices'], env);
     assert.equal(r.code, 0, r.out);
     h = JSON.parse(readFileSync(rec, 'utf8'));
     assert.ok(h.argv.includes('--allow-devices'));
-    assert.ok(!h.calls.includes('devices.list'));
-    assert.deepEqual(readFileSync(file), first);
-    assert.match(r.out, /built without devices and is loaded unchanged; add --rebuild-alpha/);
+    assert.ok(h.calls.includes('devices.list'));
+    assert.match(r.out, /built without devices: rebuilding it with devices/);
+    assert.match(r.out, /alpha project rebuilt/);
+    const olds = () => readdirSync(path.join(dataDir, 'projects', '_old')).filter((n) => n.endsWith('.project.json'));
+    assert.equal(olds().length, 1);
+    assert.deepEqual(readFileSync(path.join(dataDir, 'projects', '_old', olds()[0])), first, 'the no-devices project is kept, unchanged');
+    // a project built with devices is loaded as it is on the next start with devices
+    const withDevices = readFileSync(file);
+    r = await runLauncher([...base, '--allow-devices'], env);
+    assert.equal(r.code, 0, r.out);
+    assert.match(r.out, /alpha project loaded/);
+    assert.deepEqual(readFileSync(file), withDevices);
 
     // 3. --allow-devices --rebuild-alpha: old file to _old, roles bound from the fixture devices.list
     r = await runLauncher([...base, '--allow-devices', '--rebuild-alpha'], env);
@@ -485,9 +498,9 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(h.load.captureLayers, 2);
     assert.match(r.out, /alpha project rebuilt/);
     assert.match(r.out, /role game-capture: bound \(preset device-live-gamer-ultra-21\)/);
-    assert.equal(readdirSync(path.join(dataDir, 'projects', '_old')).filter((n) => n.endsWith('.project.json')).length, 1);
+    assert.equal(olds().length, 2);
     assert.ok(!/Live Gamer Ultra 2\.1-Video|fixture-1/.test(r.out), 'device names and paths are not printed');
-    assert.equal(readdirSync(path.join(dataDir, 'logs')).filter((n) => /^host-.*\.log$/.test(n)).length, 3);
+    assert.equal(readdirSync(path.join(dataDir, 'logs')).filter((n) => /^host-.*\.log$/.test(n)).length, 4);
 
     // 4. --live: the alpha-live plan (Credential Manager target names only) and --allow-live; per sink presence
     //    printed, never a key or a per-account URL. The fake host contacts nothing.
