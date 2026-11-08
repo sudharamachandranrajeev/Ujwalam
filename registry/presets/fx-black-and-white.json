@@ -1,0 +1,37 @@
+{
+  "id": "fx-black-and-white",
+  "version": "0.1.0",
+  "function": "layer-toner",
+  "functionVersion": "^0.1.0",
+  "name": "Black and white",
+  "params": {
+    "effect": {
+      "type": "toner",
+      "shadows": "#000000",
+      "darktones": "#404040",
+      "midtones": "#808080",
+      "brights": "#c0c0c0",
+      "highlights": "#ffffff",
+      "amount": 1
+    }
+  },
+  "themeOverrides": {},
+  "family": "layer-filters",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "fx-sepia",
+    "fx-soft-vignette"
+  ]
+}

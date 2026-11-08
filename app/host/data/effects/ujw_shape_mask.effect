@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_shape_mask (src/effects.cpp "ujw_pass", D291, camera frame). Embedded into the host exe at build
+// time (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Shape mask with an optional border ring. p.x = shape (0 = ellipse filling the frame, 1 = rounded rectangle),
+// p.y = corner radius in px (rounded rectangle; clamped to half the shorter side), p.z = feather in px (the edge fades
+// inwards over it; below 1 = one px of anti-aliasing), p.w = border in px (a ring of `color` just inside the edge,
+// so it is never cut by the frame). Outside the shape is transparent.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 size;
+uniform float4 p;
+uniform float4 color;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+// Signed distance from the shape's edge in px (negative inside).
+float shape_distance(float2 uv)
+{
+	float2 h = size * 0.5;
+	float2 q = uv * size - h;
+	if (p.x < 0.5) { // ellipse: f / |grad f| for f = |q / h| - 1 (exact on a circle, close on an ellipse)
+		float l = length(q / h);
+		float g = length(q / (h * h));
+		return g > 0.0 ? (l - 1.0) * l / g : -min(h.x, h.y);
+	}
+	float r = min(p.y, min(h.x, h.y));
+	float2 e = abs(q) - (h - r);
+	return length(max(e, float2(0.0, 0.0))) + min(max(e.x, e.y), 0.0) - r;
+}
+
+float4 PSShape(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(clampSampler, v_in.uv);
+	float d = shape_distance(v_in.uv);
+	float edge = p.z >= 1.0 ? saturate(-d / p.z) : saturate(0.5 - d);
+	if (p.w > 0.0) {
+		float inner = saturate(0.5 - (d + p.w)); // 1 inside the ring, 0 on it
+		float a = rgba.a * inner + (1.0 - inner);
+		float3 c = rgba.rgb * rgba.a * inner + color.rgb * (1.0 - inner);
+		rgba = float4(a > 0.0 ? c / a : float3(0.0, 0.0, 0.0), a);
+	}
+	rgba.a *= edge;
+	return rgba;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSShape(v_in);
+	}
+}

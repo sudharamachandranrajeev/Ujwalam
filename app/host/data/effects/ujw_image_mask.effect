@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_image_mask filter (src/effects.cpp, D291). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Image mask: `mask` (an image file, already feathered by the filter) is stretched over the layer. p.x = 0 takes its
+// luma (Rec. 709 on the stored values, times its alpha), 1 its alpha; p.y > 0.5 inverts it. The layer's alpha is
+// multiplied by the result.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform texture2d mask;
+uniform float4 p;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSMask(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(clampSampler, v_in.uv);
+	float4 m = mask.Sample(clampSampler, v_in.uv);
+	float k = p.x > 0.5 ? m.a : saturate(dot(m.rgb, float3(0.2126, 0.7152, 0.0722))) * m.a;
+	if (p.y > 0.5)
+		k = 1.0 - k;
+	rgba.a *= k;
+	return rgba;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSMask(v_in);
+	}
+}

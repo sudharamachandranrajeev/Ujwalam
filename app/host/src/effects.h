@@ -17,6 +17,13 @@
 //   ujw_corner_pin       filter (D259): draws the layer into the quad of its four corners (0..1 of its frame).
 //   ujw_toner            filter (D258): five-tone colour map by luma, mixed by amount. The `color` effect uses
 //                        OBS's own color_filter_v2 (obs-filters).
+//   ujw_pass             filter (D291): one shader pass picked by `kind`: vignette, grain, pixelate, posterize, flip
+//                        (mirror / flip), opacity (opacity and the blend effects), gradient (gradient fade mask), shape
+//                        (circle / rounded camera mask with a border ring). Each shader compiles once per process.
+//   ujw_image_mask       filter (D291): alpha from an image file's luma or alpha, inverted on request, feathered
+//                        once with the blur's Gaussian when it loads.
+//   sharpen and lut use OBS's own sharpness_filter_v2 and clut_filter (obs-filters; .cube or 512 x 512 PNG).
+//   The blend effects also set the scene item's blending mode (blending(), applied with the placement).
 // Shaders: app/host/data/effects/*.effect, embedded into the exe by CMakeLists.txt (no runtime file lookup).
 #pragma once
 
@@ -48,5 +55,8 @@ void set_crop(obs_source_t *wrap, const Crop &crop);
 double outset(const std::vector<model::Effect> &effects);
 // The layer's box in canvas px (placement width x height), for the shadow filters' unit conversion.
 void set_box(obs_source_t *wrap, double w, double h, const std::vector<model::Effect> &effects);
+
+// Compositing (D291): the scene item's blending mode for the layer's blend effect (normal without one).
+enum obs_blending_type blending(const std::vector<model::Effect> &effects);
 
 } // namespace fx

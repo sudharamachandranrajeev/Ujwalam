@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_opacity (src/effects.cpp "ujw_pass", D291). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Opacity: alpha times p.x (0..1). Used by the opacity effect and by every blend effect (its opacity).
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 p;
+
+sampler_state pointSampler {
+	Filter   = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSOpacity(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(pointSampler, v_in.uv);
+	rgba.a *= saturate(p.x);
+	return rgba;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSOpacity(v_in);
+	}
+}

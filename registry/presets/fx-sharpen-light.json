@@ -1,0 +1,32 @@
+{
+  "id": "fx-sharpen-light",
+  "version": "0.1.0",
+  "function": "layer-sharpen",
+  "functionVersion": "^0.1.0",
+  "name": "Light sharpen",
+  "params": {
+    "effect": {
+      "type": "sharpen",
+      "amount": 0.25
+    }
+  },
+  "themeOverrides": {},
+  "family": "layer-filters",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "fx-film-grain-light",
+    "fx-posterize-poster"
+  ]
+}

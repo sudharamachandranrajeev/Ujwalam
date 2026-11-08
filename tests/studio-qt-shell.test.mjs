@@ -209,7 +209,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['select-layer:cam', true], ['look:rounded:on', true], ['look-set:rounded:radius:40', true]]);
     assert.equal(p.look.shown, true, 'no effect-editor flag needed');
     assert.equal(p.look.advancedShown, false, 'the plain list stays behind the flag');
-    assert.deepEqual(p.look.groups, ['shape', 'filter', 'camera', 'light'], 'the table groups, in the usual order');
+    assert.deepEqual(p.look.groups, ['shape', 'filter', 'camera', 'compositing', 'light'], 'the table groups, in the usual order (compositing from D291)');
     assert.equal(p.look.cards[0].type, 'rounded', 'rounded corners come first in Shape');
     assert.ok(p.look.cards.length >= 9, 'one card per effect type in the table');
     const sets = p.calls.filter(([m]) => m === 'layers.setEffects');

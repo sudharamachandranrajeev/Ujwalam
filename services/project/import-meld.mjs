@@ -31,7 +31,8 @@ export const MAPPING = {
   'layer kind from meta.sceneObjectSourceName ("MeldStudio/<Kind>")': 'VERIFIED (9 kinds seen)',
   'layer x, y, width, height (final displayed rectangle)': 'VERIFIED against implicit size x scale; UNVERIFIED in a render',
   'layer rotation, visible, opacity, isLocked': 'VERIFIED present; UNVERIFIED in a render',
-  'rotation 180 with one negative scale (webcam mirror): rotation dropped, mirror reported as ignored': 'UNVERIFIED in a render (rotation 180 with one flipped axis is a pure mirror; the project placement has no flip, so the mirror is lost and reported)',
+  'rotation 180 with one negative scale (webcam mirror): rotation dropped, mirror kept as an effect': 'UNVERIFIED in a render (rotation 180 with one flipped axis is a pure mirror or flip; D291 imports it as a mirror (scaleY < 0) or flip (scaleX < 0) layer effect)',
+  'negative scaleX / scaleY -> mirror / flip layer effect (D291)': 'UNVERIFIED in a render (scale read as applied before rotation)',
   'fitmentMode 2 (fill) on video device, media and duplicate layers: centre crop in source pixels from implicit size and scale (D253)': 'UNVERIFIED (offsetX/offsetY ignored; fit mode 2 read as cover)',
   'Group: children flattened in place when the group has scale 1, rotation 0, offset 0': 'UNVERIFIED in a render (child x/y are canvas coordinates in every real group seen; visible, opacity and lock are inherited)',
   'Game capture, Display capture: no host source kind, reported as skipped': 'VERIFIED (app/host layer types: color, test_pattern, media, image, dshow_video, wasapi_input, browser)',
@@ -329,7 +330,7 @@ export function importMeld(input, opts = {}) {
     if (flips === 1 && Math.abs((((rot % 360) + 360) % 360) - 180) < 1e-6) rot = 0;
     if (rot !== 0) p.rotation = Math.max(-360, Math.min(360, rot));
     if (num(l.opacity) && l.opacity !== 1) p.opacity = Math.max(0, Math.min(1, l.opacity));
-    if (flips) ignore('flip (negative scale)');
+    // a negative scale becomes a mirror / flip effect (D291, effectsFor)
     // Fit modes (D253). Meld fill (2): scaled uniformly, then clipped to the rectangle; fit (1): scaled to fit. When the
     // scaled picture (implicit size x scale) is the box, either mode looks like a stretch and needs nothing. Fill with a
     // larger picture becomes a centre crop in source pixels, for every layer whose source size is its picture (video
@@ -377,6 +378,17 @@ export function importMeld(input, opts = {}) {
     const hex = (c) => (typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c.toLowerCase() : null);
     const clampTo = (v, lo, hi) => Math.max(lo, Math.min(hi, Math.round((num(v) ? v : 0) * 100) / 100));
     const sc = num(l.scaleX) && Math.abs(l.scaleX) > 1e-6 ? Math.abs(l.scaleX) : 1;
+    // Negative scale (D291) -> mirror (left-right) / flip (upside down), applied to the picture before the placement's
+    // rotation, as a scale is. When toPlacement drops a rotation of 180 (one flipped axis), that half turn is folded in:
+    // a half turn is a mirror plus a flip, so scaleY < 0 with 180 is a mirror and scaleX < 0 with 180 a flip.
+    // UNVERIFIED against a Meld render (the order Meld applies scale and rotation in is read, not measured).
+    {
+      const fx = num(l.scaleX) && l.scaleX < 0, fy = num(l.scaleY) && l.scaleY < 0;
+      const rot = num(l.rotation) ? l.rotation : 0;
+      const half = (fx ? 1 : 0) + (fy ? 1 : 0) === 1 && Math.abs((((rot % 360) + 360) % 360) - 180) < 1e-6;
+      if (fx !== half) out.push({ type: 'mirror' });
+      if (fy !== half) out.push({ type: 'flip' });
+    }
     for (const e of Array.isArray(l.effects) ? l.effects : []) {
       if (!isObj(e) || e.enabled !== true) continue;
       const k = typeof e.keyColor === 'string' && /^#[0-9a-fA-F]{6}$/.test(e.keyColor) ? e.keyColor.toLowerCase() : null;

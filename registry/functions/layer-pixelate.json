@@ -1,0 +1,61 @@
+{
+  "id": "layer-pixelate",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "layer-filters",
+  "name": "Layer pixelate",
+  "description": "Blocks of 2..200 source pixels (ujw_pixelate.effect, D291 proposed).",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "size"
+          ],
+          "properties": {
+            "type": {
+              "const": "pixelate"
+            },
+            "size": {
+              "type": "number",
+              "minimum": 2,
+              "maximum": 200
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "pixelate",
+        "size": 16
+      }
+    },
+    "safeRanges": {
+      "size": [
+        2,
+        200
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.2"
+}

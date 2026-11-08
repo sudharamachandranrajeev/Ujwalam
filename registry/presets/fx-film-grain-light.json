@@ -1,0 +1,33 @@
+{
+  "id": "fx-film-grain-light",
+  "version": "0.1.0",
+  "function": "layer-grain",
+  "functionVersion": "^0.1.0",
+  "name": "Film grain light",
+  "params": {
+    "effect": {
+      "type": "grain",
+      "amount": 0.2,
+      "size": 2
+    }
+  },
+  "themeOverrides": {},
+  "family": "layer-filters",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "calm",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "fx-soft-vignette",
+    "fx-sepia"
+  ]
+}

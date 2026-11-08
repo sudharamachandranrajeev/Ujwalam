@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_gradient_mask (src/effects.cpp "ujw_pass", D291). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Linear gradient fade: t runs 0..1 across the layer along direction (p.x, p.y) (unit vector, y down; 0 degrees = left
+// to right). Alpha is kept up to t = p.z (start) and gone from t = p.w (end), linear between, a hard edge when they
+// meet. A start after the end fades the other way.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 p;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSGradient(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(clampSampler, v_in.uv);
+	float2 d = p.xy;
+	float reach = abs(d.x) * 0.5 + abs(d.y) * 0.5; // half the frame's extent along d (uv units)
+	float t = dot(v_in.uv - 0.5, d) / max(reach, 0.0001) * 0.5 + 0.5;
+	float span = p.w - p.z;
+	float a = abs(span) < 0.0001 ? step(t, p.z) : 1.0 - saturate((t - p.z) / span);
+	rgba.a *= a;
+	return rgba;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSGradient(v_in);
+	}
+}

@@ -72,6 +72,24 @@ const BAD = [
   ['cornerPin without bottomLeftY', (d) => { d.scenes[0].layers[3].effects = [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0 }]; }, true],
   ['toner amount above 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'toner', shadows: '#000000', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#ffffff', amount: 2 }]; }, true],
   ['effect not an object', (d) => { d.scenes[0].layers[3].effects = ['blur']; }, true],
+  // D291 filters, camera and compositing
+  ['sharpen above 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'sharpen', amount: 1.5 }]; }, true],
+  ['vignette without colour', (d) => { d.scenes[0].layers[3].effects = [{ type: 'vignette', amount: 0.5, size: 0.4, softness: 0.5 }]; }, true],
+  ['grain size 0', (d) => { d.scenes[0].layers[3].effects = [{ type: 'grain', amount: 0.2, size: 0 }]; }, true],
+  ['pixelate cell 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'pixelate', size: 1 }]; }, true],
+  ['posterize 2.5 levels', (d) => { d.scenes[0].layers[3].effects = [{ type: 'posterize', levels: 2.5 }]; }, true],
+  ['lut without file', (d) => { d.scenes[0].layers[3].effects = [{ type: 'lut', amount: 1 }]; }, true],
+  ['mirror with a setting', (d) => { d.scenes[0].layers[3].effects = [{ type: 'mirror', horizontal: true }]; }, true],
+  ['roundMask radius above 50', (d) => { d.scenes[0].layers[3].effects = [{ type: 'roundMask', radius: 60, feather: 0, borderWidth: 0, borderColor: '#ffffff' }]; }, true],
+  ['circleMask border colour name', (d) => { d.scenes[0].layers[3].effects = [{ type: 'circleMask', feather: 0, borderWidth: 2, borderColor: 'white' }]; }, true],
+  ['blend mode overlay (not available)', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blendOverlay', opacity: 1 }]; }, true],
+  ['opacity above 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'opacity', opacity: 2 }]; }, true],
+  ['gradientMask without end', (d) => { d.scenes[0].layers[3].effects = [{ type: 'gradientMask', angle: 0, start: 0.5 }]; }, true],
+  ['imageMask channel red', (d) => { d.scenes[0].layers[3].effects = [{ type: 'imageMask', file: { base: 'media', rel: 'm.png' }, channel: 'red', invert: false, feather: 0 }]; }, true],
+  ['imageMask invert as 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'imageMask', file: { base: 'media', rel: 'm.png' }, channel: 'luma', invert: 1, feather: 0 }]; }, true],
+  ['two blend effects', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blendMultiply', opacity: 1 }, { type: 'blendScreen', opacity: 1 }]; }, false],
+  ['lut file not .cube or .png', (d) => { d.scenes[0].layers[3].effects = [{ type: 'lut', file: { base: 'media', rel: 'grade.jpg' }, amount: 1 }]; }, false],
+  ['imageMask file outside its base', (d) => { d.scenes[0].layers[3].effects = [{ type: 'imageMask', file: { base: 'media', rel: '../m.png' }, channel: 'luma', invert: false, feather: 0 }]; }, false],
   // semantic only
   ['duplicate of a missing layer', (d) => { d.scenes[1].layers.push(dupLayer('layer-d1', 'layer-nope')); }, false],
   ['duplicate of itself (cycle)', (d) => { d.scenes[1].layers.push(dupLayer('layer-d1', 'layer-d1')); }, false],
@@ -125,6 +143,24 @@ test('layer effects: blurred duplicate and rounded layer are valid (schema and v
   d.scenes[1].layers.push({ ...dupLayer('layer-d1', 'layer-cam'), effects: [{ type: 'blur', strength: 40 }] });
   d.scenes[0].layers[3].effects = [{ type: 'rounded', radius: 24 }, { type: 'blur', strength: 1 }];
   d.scenes[0].layers[4].effects = [];
+  assert.equal(schemaCheck(d), true, JSON.stringify(schemaCheck.errors));
+  assert.deepEqual(validateProject(d).errors, []);
+});
+
+test('D291 filter, camera and compositing effects are valid (schema and validator)', () => {
+  const d = sample();
+  d.scenes[0].layers[3].effects = [
+    { type: 'sharpen', amount: 0.2 }, { type: 'vignette', amount: 0.6, size: 0.35, softness: 0.6, color: '#000000' },
+    { type: 'grain', amount: 0.15, size: 2 }, { type: 'pixelate', size: 16 }, { type: 'posterize', levels: 6 },
+    { type: 'lut', file: { base: 'media', rel: 'luts/teal.cube' }, amount: 0.8 }];
+  d.scenes[0].layers[4].effects = [
+    { type: 'mirror' }, { type: 'flip' }, { type: 'circleMask', feather: 1, borderWidth: 3, borderColor: '#ffffff' },
+    { type: 'roundMask', radius: 12, feather: 0, borderWidth: 0, borderColor: '#000000' },
+    { type: 'blendMultiply', opacity: 0.8 }, { type: 'opacity', opacity: 0.5 }];
+  d.scenes[1].layers.push({ ...dupLayer('layer-d1', 'layer-cam'), effects: [
+    { type: 'gradientMask', angle: 90, start: 0.6, end: 1 },
+    { type: 'imageMask', file: { base: 'media', rel: 'masks/heart.png' }, channel: 'luma', invert: true, feather: 4 },
+    { type: 'lut', file: { base: 'media', rel: 'luts/warm.PNG' }, amount: 1 }] });
   assert.equal(schemaCheck(d), true, JSON.stringify(schemaCheck.errors));
   assert.deepEqual(validateProject(d).errors, []);
 });

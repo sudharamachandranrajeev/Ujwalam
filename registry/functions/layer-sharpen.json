@@ -1,0 +1,61 @@
+{
+  "id": "layer-sharpen",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "layer-filters",
+  "name": "Layer sharpen",
+  "description": "Sharpens a layer (OBS sharpness filter, D291 proposed). amount 0..1.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "amount"
+          ],
+          "properties": {
+            "type": {
+              "const": "sharpen"
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "sharpen",
+        "amount": 0.3
+      }
+    },
+    "safeRanges": {
+      "amount": [
+        0,
+        1
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "plugin",
+  "planSection": "4.2"
+}

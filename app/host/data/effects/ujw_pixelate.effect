@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_pixelate (src/effects.cpp "ujw_pass", D291). Embedded into the host exe at build time
+// (CMakeLists.txt generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Pixelate: every square cell of p.x input px shows the colour at the cell's centre.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float2 size;
+uniform float4 p;
+
+sampler_state pointSampler {
+	Filter   = Point;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSPixelate(VertData v_in) : TARGET
+{
+	float2 cell = max(p.x, 1.0) / size;
+	float2 uv = (floor(v_in.uv / cell) + 0.5) * cell;
+	return image.Sample(pointSampler, min(uv, 1.0 - 0.5 / size));
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSPixelate(v_in);
+	}
+}

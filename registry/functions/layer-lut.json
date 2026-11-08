@@ -1,0 +1,70 @@
+{
+  "id": "layer-lut",
+  "version": "0.1.0",
+  "category": "effects",
+  "family": "layer-filters",
+  "name": "Layer colour LUT",
+  "description": "Applies a colour look-up table from a .cube file or a 512 x 512 PNG with an amount 0..1 (OBS clut filter, D291 proposed). A missing file is a plan warning; the layer shows without it.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "file",
+            "amount"
+          ],
+          "properties": {
+            "type": {
+              "const": "lut"
+            },
+            "file": {
+              "type": "object",
+              "description": "project file ref {base, rel}; chosen when the preset is applied",
+              "required": [
+                "base",
+                "rel"
+              ]
+            },
+            "amount": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "lut",
+        "amount": 1
+      }
+    },
+    "safeRanges": {
+      "amount": [
+        0,
+        1
+      ]
+    }
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "plugin",
+  "planSection": "4.2"
+}

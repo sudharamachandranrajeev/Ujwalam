@@ -5,6 +5,8 @@
 #include "rpc_server.h"
 #include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect, ujw_toner_effect, ujw_corner_pin_effect, ujw_blinds_effect
 
+#include <graphics/image-file.h>
+
 #include <algorithm>
 #include <atomic>
 #include <cmath>
@@ -24,6 +26,8 @@ const char *SHADOW_ID = "ujw_shadow";
 const char *TONER_ID = "ujw_toner";
 const char *PIN_ID = "ujw_corner_pin";
 const char *BLINDS_ID = "ujw_blinds";
+const char *PASS_ID = "ujw_pass";             // D291
+const char *IMAGE_MASK_ID = "ujw_image_mask"; // D291
 
 // Canvas px a shadow or glow reaches past the layer's box on every side: its offset plus its blur (size = 3 sigma).
 double outset_of(const model::Effect &e)
@@ -829,7 +833,286 @@ const char *blinds_name(void *)
 	return "Ujwalam blinds";
 }
 
+// --- ujw_pass (D291) -------------------------------------------------------------------------------------------------
+// One shader pass over the layer, picked by the setting `kind`. Settings: p0..p3 (the shader's float4 p, see each
+// .effect file), color (0xRRGGBB, the shader's float4 color). Grain also gets the frame counter (p.z) and a per-layer
+// seed (p.w, from the filter's name). Each kind's shader compiles once per process (shared_effect), so changing effects
+// while live does not stall the graphics thread on a shader compile after the first use of a kind.
+
+enum PassKind { K_VIGNETTE, K_GRAIN, K_PIXELATE, K_POSTERIZE, K_FLIP, K_OPACITY, K_GRADIENT, K_SHAPE, K_COUNT };
+const char *const PASS_KINDS[K_COUNT] = {"vignette", "grain", "pixelate", "posterize", "flip", "opacity", "gradient", "shape"};
+
+gs_effect_t *shared_effect(int kind)
+{
+	static std::mutex lock;
+	static gs_effect_t *cache[K_COUNT] = {};
+	static bool tried[K_COUNT] = {};
+	static const char *const src[K_COUNT] = {ujw_vignette_effect, ujw_grain_effect, ujw_pixelate_effect, ujw_posterize_effect,
+						 ujw_flip_effect, ujw_opacity_effect, ujw_gradient_mask_effect, ujw_shape_mask_effect};
+	static const char *const file[K_COUNT] = {"ujw_vignette.effect", "ujw_grain.effect", "ujw_pixelate.effect",
+						  "ujw_posterize.effect", "ujw_flip.effect", "ujw_opacity.effect",
+						  "ujw_gradient_mask.effect", "ujw_shape_mask.effect"};
+	if (kind < 0 || kind >= K_COUNT)
+		return nullptr;
+	std::lock_guard<std::mutex> g(lock);
+	if (!tried[kind]) { // freed with the graphics device at obs_shutdown (gs_destroy frees every effect)
+		tried[kind] = true;
+		cache[kind] = make_effect(src[kind], file[kind]);
+	}
+	return cache[kind];
+}
+
+struct Pass {
+	obs_source_t *ctx = nullptr;
+	int kind = -1;
+	gs_effect_t *effect = nullptr;
+	gs_eparam_t *p_size = nullptr, *p_p = nullptr, *p_color = nullptr;
+	std::atomic<float> p[4] = {};
+	std::atomic<uint32_t> color{0};
+	uint32_t frame = 0; // graphics thread only (video_tick and render)
+	float seed = 0;
+};
+
+void pass_update(void *data, obs_data_t *s)
+{
+	auto *t = static_cast<Pass *>(data);
+	const char *keys[4] = {"p0", "p1", "p2", "p3"};
+	for (int i = 0; i < 4; i++)
+		t->p[i] = (float)obs_data_get_double(s, keys[i]);
+	t->color = (uint32_t)obs_data_get_int(s, "color") & 0xffffff;
+}
+
+void *pass_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *t = new Pass();
+	t->ctx = src;
+	const char *k = obs_data_get_string(s, "kind");
+	for (int i = 0; i < K_COUNT; i++)
+		if (k && std::strcmp(k, PASS_KINDS[i]) == 0)
+			t->kind = i;
+	t->effect = shared_effect(t->kind);
+	if (t->effect) {
+		t->p_size = gs_effect_get_param_by_name(t->effect, "size");
+		t->p_p = gs_effect_get_param_by_name(t->effect, "p");
+		t->p_color = gs_effect_get_param_by_name(t->effect, "color");
+	}
+	// Seed from the filter's name ("ujw:fx:<canvas>:<layer>:grain:<n>"): the same layer gets the same grain each run.
+	uint32_t h = 2166136261u;
+	for (const char *c = obs_source_get_name(src); c && *c; c++)
+		h = (h ^ (uint8_t)*c) * 16777619u;
+	t->seed = (float)(h % 4096u);
+	pass_update(t, s);
+	return t;
+}
+
+void pass_destroy(void *data)
+{
+	delete static_cast<Pass *>(data); // the effect is shared (shared_effect)
+}
+
+void pass_tick(void *data, float)
+{
+	auto *t = static_cast<Pass *>(data);
+	t->frame = (t->frame + 1) % 1009u; // a prime, small enough for exact float maths in the hash
+}
+
+void pass_render(void *data, gs_effect_t *)
+{
+	auto *t = static_cast<Pass *>(data);
+	obs_source_t *target = obs_filter_get_target(t->ctx);
+	const uint32_t w = target ? obs_source_get_base_width(target) : 0, h = target ? obs_source_get_base_height(target) : 0;
+	if (!t->effect || !w || !h) {
+		obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	if (!obs_source_process_filter_begin(t->ctx, GS_RGBA, OBS_NO_DIRECT_RENDERING))
+		return;
+	struct vec2 size;
+	vec2_set(&size, (float)w, (float)h);
+	struct vec4 p;
+	vec4_set(&p, t->p[0], t->p[1], t->p[2], t->p[3]);
+	if (t->kind == K_GRAIN) {
+		p.z = (float)t->frame;
+		p.w = t->seed;
+	} else if (t->kind == K_SHAPE) { // radius, feather and border are % of the shorter side
+		const float k = (float)std::min(w, h) / 100.0f;
+		p.y *= k;
+		p.z *= k;
+		p.w *= k;
+	}
+	const uint32_t c = t->color;
+	struct vec4 col;
+	vec4_set(&col, (float)((c >> 16) & 0xff) / 255.0f, (float)((c >> 8) & 0xff) / 255.0f, (float)(c & 0xff) / 255.0f, 1.0f);
+	if (t->p_size)
+		gs_effect_set_vec2(t->p_size, &size);
+	if (t->p_p)
+		gs_effect_set_vec4(t->p_p, &p);
+	if (t->p_color)
+		gs_effect_set_vec4(t->p_color, &col);
+	obs_source_process_filter_end(t->ctx, t->effect, 0, 0);
+}
+
+const char *pass_name(void *)
+{
+	return "Ujwalam shader pass";
+}
+
+// The ujw_pass kind for a D291 effect type, or null.
+const char *pass_kind(const model::Effect &e)
+{
+	if (e.type == "vignette" || e.type == "grain" || e.type == "pixelate" || e.type == "posterize")
+		return e.type.c_str();
+	if (e.type == "mirror" || e.type == "flip")
+		return "flip";
+	if (e.type == "opacity" || model::is_blend(e.type))
+		return "opacity";
+	if (e.type == "gradientMask")
+		return "gradient";
+	if (e.type == "circleMask" || e.type == "roundMask")
+		return "shape";
+	return nullptr;
+}
+
+// The shader's float4 p for the effect (see each .effect file).
+void pass_params(const model::Effect &e, double *p)
+{
+	if (e.type == "vignette") {
+		p[0] = e.amount;
+		p[1] = e.size;
+		p[2] = e.softness;
+	} else if (e.type == "grain") {
+		p[0] = e.amount;
+		p[1] = e.size;
+	} else if (e.type == "pixelate") {
+		p[0] = e.size;
+	} else if (e.type == "posterize") {
+		p[0] = e.value;
+	} else if (e.type == "mirror") {
+		p[0] = 1;
+	} else if (e.type == "flip") {
+		p[1] = 1;
+	} else if (e.type == "opacity" || model::is_blend(e.type)) {
+		p[0] = e.opacity;
+	} else if (e.type == "gradientMask") {
+		const double a = e.angle * 3.14159265358979323846 / 180.0;
+		p[0] = std::cos(a);
+		p[1] = std::sin(a);
+		p[2] = e.start;
+		p[3] = e.end;
+	} else if (e.type == "circleMask" || e.type == "roundMask") {
+		p[0] = e.type == "roundMask" ? 1 : 0;
+		p[1] = e.value; // % of the shorter side; pass_render turns these three into px
+		p[2] = e.feather;
+		p[3] = e.border;
+	}
+}
+
+// --- ujw_image_mask (D291) -------------------------------------------------------------------------------------------
+// Alpha from an image file, stretched over the layer. The file is decoded when the filter is created (gs_image_file);
+// feather blurs the mask once (the blur's Gaussian, sigma = feather / 2 mask px) on the first frame and keeps it.
+
+struct ImageMask {
+	obs_source_t *ctx = nullptr;
+	gs_effect_t *effect = nullptr;
+	gs_eparam_t *p_mask = nullptr, *p_p = nullptr;
+	gs_image_file_t image = {};
+	Gauss g;
+	bool alpha = false, invert = false;
+	double feather = 0;
+	bool prepared = false;          // graphics thread only
+	gs_texture_t *mask = nullptr;   // the (feathered) mask; owned by image or by g
+};
+
+void *imask_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *t = new ImageMask();
+	t->ctx = src;
+	t->effect = make_effect(ujw_image_mask_effect, "ujw_image_mask.effect");
+	if (t->effect) {
+		t->p_mask = gs_effect_get_param_by_name(t->effect, "mask");
+		t->p_p = gs_effect_get_param_by_name(t->effect, "p");
+	}
+	t->alpha = std::strcmp(obs_data_get_string(s, "channel"), "alpha") == 0;
+	t->invert = obs_data_get_bool(s, "invert");
+	t->feather = std::clamp(obs_data_get_double(s, "feather"), 0.0, 100.0);
+	gs_image_file_init(&t->image, obs_data_get_string(s, "path"));
+	obs_enter_graphics();
+	gs_image_file_init_texture(&t->image);
+	obs_leave_graphics();
+	if (!t->image.loaded)
+		hlog::error("image mask %s: the image did not load", obs_source_get_name(src));
+	if (t->feather > 0)
+		gauss_create(t->g);
+	return t;
+}
+
+void imask_destroy(void *data)
+{
+	auto *t = static_cast<ImageMask *>(data);
+	if (t->feather > 0)
+		gauss_destroy(t->g);
+	obs_enter_graphics();
+	gs_image_file_free(&t->image);
+	gs_effect_destroy(t->effect);
+	obs_leave_graphics();
+	delete t;
+}
+
+void imask_render(void *data, gs_effect_t *)
+{
+	auto *t = static_cast<ImageMask *>(data);
+	if (!t->effect || !t->image.texture) { // a mask that did not load hides nothing
+		obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	if (!t->prepared) {
+		t->prepared = true;
+		t->mask = t->image.texture;
+		if (t->feather > 0) {
+			gs_blend_state_push();
+			gs_blend_function(GS_BLEND_ONE, GS_BLEND_ZERO);
+			const double sigma = t->feather / 2.0;
+			t->mask = gauss_run(t->g, t->image.texture, t->image.cx, t->image.cy, sigma, sigma);
+			gs_blend_state_pop();
+		}
+	}
+	if (!t->mask || !obs_source_process_filter_begin(t->ctx, GS_RGBA, OBS_NO_DIRECT_RENDERING)) {
+		if (!t->mask)
+			obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	struct vec4 p;
+	vec4_set(&p, t->alpha ? 1.0f : 0.0f, t->invert ? 1.0f : 0.0f, 0.0f, 0.0f);
+	gs_effect_set_texture(t->p_mask, t->mask);
+	gs_effect_set_vec4(t->p_p, &p);
+	obs_source_process_filter_end(t->ctx, t->effect, 0, 0);
+}
+
+const char *imask_name(void *)
+{
+	return "Ujwalam image mask";
+}
+
 } // namespace
+
+enum obs_blending_type blending(const std::vector<model::Effect> &effects)
+{
+	for (auto &e : effects) {
+		if (e.type == "blendAdd")
+			return OBS_BLEND_ADDITIVE;
+		if (e.type == "blendSubtract")
+			return OBS_BLEND_SUBTRACT;
+		if (e.type == "blendScreen")
+			return OBS_BLEND_SCREEN;
+		if (e.type == "blendMultiply")
+			return OBS_BLEND_MULTIPLY;
+		if (e.type == "blendLighten")
+			return OBS_BLEND_LIGHTEN;
+		if (e.type == "blendDarken")
+			return OBS_BLEND_DARKEN;
+	}
+	return OBS_BLEND_NORMAL;
+}
 
 void register_types()
 {
@@ -921,6 +1204,29 @@ void register_types()
 	hlog::info("effect source types registered: %s, %s, %s, %s, %s, %s", WRAP_ID, BLUR_ID, ROUND_ID, SHADOW_ID, TONER_ID,
 		   PIN_ID);
 	hlog::info("effect source type registered: %s", BLINDS_ID);
+
+	struct obs_source_info ps = {};
+	ps.id = PASS_ID;
+	ps.type = OBS_SOURCE_TYPE_FILTER;
+	ps.output_flags = OBS_SOURCE_VIDEO;
+	ps.get_name = pass_name;
+	ps.create = pass_create;
+	ps.destroy = pass_destroy;
+	ps.update = pass_update;
+	ps.video_tick = pass_tick;
+	ps.video_render = pass_render;
+	obs_register_source(&ps);
+
+	struct obs_source_info im = {};
+	im.id = IMAGE_MASK_ID;
+	im.type = OBS_SOURCE_TYPE_FILTER;
+	im.output_flags = OBS_SOURCE_VIDEO;
+	im.get_name = imask_name;
+	im.create = imask_create;
+	im.destroy = imask_destroy;
+	im.video_render = imask_render;
+	obs_register_source(&im);
+	hlog::info("effect source types registered: %s, %s", PASS_ID, IMAGE_MASK_ID);
 }
 
 obs_source_t *create_chain(obs_source_t *target, const std::string &name, const std::vector<model::Effect> &effects,
@@ -986,6 +1292,39 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 				obs_data_set_double(s, "dy", std::sin(a) * e.distance);
 			}
 			obs_data_set_double(s, "pad", outset_of(e));
+		} else if (e.type == "sharpen") { // D291: OBS's own sharpness filter (obs-filters), 0..1
+			id = "sharpness_filter_v2";
+			obs_data_set_double(s, "sharpness", e.amount);
+		} else if (e.type == "lut") { // D291: OBS's own LUT filter (obs-filters): .cube, or a 512 x 512 PNG
+			if (e.path.empty()) {
+				obs_data_release(s);
+				obs_source_release(wrap);
+				throw rpc::Error(rpc::UNAVAILABLE, "lut file not resolved for " + name);
+			}
+			id = "clut_filter";
+			obs_data_set_string(s, "image_path", e.path.c_str());
+			obs_data_set_double(s, "clut_amount", e.amount);
+		} else if (e.type == "imageMask") { // D291
+			if (e.path.empty()) {
+				obs_data_release(s);
+				obs_source_release(wrap);
+				throw rpc::Error(rpc::UNAVAILABLE, "image mask file not resolved for " + name);
+			}
+			id = IMAGE_MASK_ID;
+			obs_data_set_string(s, "path", e.path.c_str());
+			obs_data_set_string(s, "channel", e.channel.c_str());
+			obs_data_set_bool(s, "invert", e.invert);
+			obs_data_set_double(s, "feather", e.feather);
+		} else if (const char *kind = pass_kind(e)) { // D291: one shader pass (ujw_pass)
+			id = PASS_ID;
+			double p[4] = {0, 0, 0, 0};
+			pass_params(e, p);
+			obs_data_set_string(s, "kind", kind);
+			obs_data_set_double(s, "p0", p[0]);
+			obs_data_set_double(s, "p1", p[1]);
+			obs_data_set_double(s, "p2", p[2]);
+			obs_data_set_double(s, "p3", p[3]);
+			obs_data_set_int(s, "color", (long long)e.color);
 		}
 		std::string fname = name + ":" + e.type + ":" + std::to_string(n++);
 		obs_source_t *f = id ? obs_source_create_private(id, fname.c_str(), s) : nullptr;

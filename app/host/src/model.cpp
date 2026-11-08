@@ -173,9 +173,26 @@ void check_placement(const json::Value &pl, const std::string &what)
 	}
 }
 
+// "#RRGGBB" -> 0xRRGGBB
+uint32_t hex_color(const json::Value &x, const char *key, const std::string &w)
+{
+	const std::string c = chk::get_str(x, key, "", 7, w);
+	if (c.size() != 7 || c[0] != '#' || c.find_first_not_of("0123456789abcdefABCDEF", 1) != std::string::npos)
+		throw Error(rpc::INVALID_PARAMS, w + ": " + key + " must be #RRGGBB");
+	return (uint32_t)std::stoul(c.substr(1), nullptr, 16);
+}
+
+std::string hex_of(uint32_t c)
+{
+	char hex[8];
+	snprintf(hex, sizeof hex, "#%06x", (unsigned)(c & 0xffffff));
+	return hex;
+}
+
 } // namespace
 
-std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
+std::vector<Effect> parse_effects(const json::Value *e, const std::string &what, const std::map<std::string, std::string> *bases,
+				  json::Value *warnings)
 {
 	std::vector<Effect> r;
 	if (!e)
@@ -267,12 +284,121 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 				fx.tones[i] = (uint32_t)std::stoul(c.substr(1), nullptr, 16);
 			}
 			fx.amount = chk::get_num(x, "amount", 1, 0, 1, w);
+		} else if (fx.type == "sharpen") { // D291
+			chk::only_keys(x, {"type", "amount"}, w);
+			chk::require(x, {"amount"}, w);
+			fx.amount = chk::get_num(x, "amount", 0, 0, 1, w);
+		} else if (fx.type == "vignette") {
+			chk::only_keys(x, {"type", "amount", "size", "softness", "color"}, w);
+			chk::require(x, {"amount", "size", "softness", "color"}, w);
+			fx.amount = chk::get_num(x, "amount", 0, 0, 1, w);
+			fx.size = chk::get_num(x, "size", 0, 0, 1, w);
+			fx.softness = chk::get_num(x, "softness", 0, 0, 1, w);
+			fx.color = hex_color(x, "color", w);
+		} else if (fx.type == "grain") {
+			chk::only_keys(x, {"type", "amount", "size"}, w);
+			chk::require(x, {"amount", "size"}, w);
+			fx.amount = chk::get_num(x, "amount", 0, 0, 1, w);
+			fx.size = chk::get_num(x, "size", 1, 1, 10, w);
+		} else if (fx.type == "pixelate") {
+			chk::only_keys(x, {"type", "size"}, w);
+			chk::require(x, {"size"}, w);
+			fx.size = chk::get_num(x, "size", 2, 2, 200, w);
+		} else if (fx.type == "posterize") {
+			chk::only_keys(x, {"type", "levels"}, w);
+			chk::require(x, {"levels"}, w);
+			fx.value = (double)chk::get_int(x, "levels", 8, 2, 32, w);
+		} else if (fx.type == "lut" || fx.type == "imageMask") {
+			const bool lut = fx.type == "lut";
+			if (lut) {
+				chk::only_keys(x, {"type", "file", "amount"}, w);
+				chk::require(x, {"file", "amount"}, w);
+				fx.amount = chk::get_num(x, "amount", 1, 0, 1, w);
+			} else {
+				chk::only_keys(x, {"type", "file", "channel", "invert", "feather"}, w);
+				chk::require(x, {"file", "channel", "invert", "feather"}, w);
+				fx.channel = chk::get_str(x, "channel", "", 8, w);
+				if (fx.channel != "luma" && fx.channel != "alpha")
+					throw Error(rpc::INVALID_PARAMS, w + ": channel must be luma or alpha");
+				fx.invert = chk::get_bool(x, "invert", false, w);
+				fx.feather = chk::get_num(x, "feather", 0, 0, 100, w);
+			}
+			const json::Value *f = x.find("file");
+			if (!f || !f->is_object())
+				throw Error(rpc::INVALID_PARAMS, w + ": file must be {base, rel}");
+			fx.file = *f;
+			if (lut) { // OBS's clut_filter reads .cube as a cube file and anything else as a 512 x 512 image
+				const json::Value *rel = f->find("rel");
+				std::string ext = rel && rel->is_string() && rel->as_string().size() >= 5
+							  ? rel->as_string().substr(rel->as_string().size() - 5)
+							  : "";
+				for (auto &ch : ext)
+					ch = (char)std::tolower((unsigned char)ch);
+				if (ext != ".cube" && ext.substr(1) != ".png")
+					throw Error(rpc::INVALID_PARAMS, w + ": lut file must be .cube or .png");
+			}
+			{ // the ref is checked (keys, base, rel) even without bases
+				Options o;
+				if (bases)
+					o.bases = *bases;
+				Unavail u;
+				fx.path = resolve_file(*f, o, w, u);
+				if (bases && fx.path.empty()) {
+					if (!warnings)
+						throw Error(rpc::UNAVAILABLE, w + ": " + fx.type + " file: " + u.reason);
+					json::Value wv = json::Value::object();
+					wv.set("layer", what.rfind("layer ", 0) == 0 ? what.substr(6) : what);
+					wv.set("effect", fx.type);
+					wv.set("reason", fx.type + " file " + u.reason + "; the layer is shown without this effect");
+					warnings->push(std::move(wv));
+					continue;
+				}
+			}
+		} else if (fx.type == "mirror" || fx.type == "flip") {
+			chk::only_keys(x, {"type"}, w);
+		} else if (fx.type == "circleMask" || fx.type == "roundMask") {
+			const bool round = fx.type == "roundMask";
+			if (round) {
+				chk::only_keys(x, {"type", "radius", "feather", "borderWidth", "borderColor"}, w);
+				chk::require(x, {"radius", "feather", "borderWidth", "borderColor"}, w);
+				fx.value = chk::get_num(x, "radius", 10, 0, 50, w);
+			} else {
+				chk::only_keys(x, {"type", "feather", "borderWidth", "borderColor"}, w);
+				chk::require(x, {"feather", "borderWidth", "borderColor"}, w);
+			}
+			fx.feather = chk::get_num(x, "feather", 0, 0, 25, w);
+			fx.border = chk::get_num(x, "borderWidth", 0, 0, 25, w);
+			fx.color = hex_color(x, "borderColor", w);
+		} else if (fx.type == "opacity" || is_blend(fx.type)) {
+			chk::only_keys(x, {"type", "opacity"}, w);
+			chk::require(x, {"opacity"}, w);
+			fx.opacity = chk::get_num(x, "opacity", 1, 0, 1, w);
+			if (is_blend(fx.type)) {
+				for (auto &prev : r)
+					if (is_blend(prev.type))
+						throw Error(rpc::INVALID_PARAMS, w + ": at most one blend effect per layer");
+			}
+		} else if (fx.type == "gradientMask") {
+			chk::only_keys(x, {"type", "angle", "start", "end"}, w);
+			chk::require(x, {"angle", "start", "end"}, w);
+			fx.angle = chk::get_num(x, "angle", 0, -360, 360, w);
+			fx.start = chk::get_num(x, "start", 0, 0, 1, w);
+			fx.end = chk::get_num(x, "end", 1, 0, 1, w);
 		} else {
-			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow, glow, color, toner, cornerPin or blinds");
+			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow, glow, color, toner, cornerPin, blinds, "
+							      "sharpen, vignette, grain, pixelate, posterize, lut, mirror, flip, circleMask, roundMask, "
+							      "opacity, blendAdd, blendSubtract, blendMultiply, blendScreen, blendLighten, blendDarken, "
+							      "gradientMask or imageMask");
 		}
 		r.push_back(fx);
 	}
 	return r;
+}
+
+bool is_blend(const std::string &type)
+{
+	return type == "blendAdd" || type == "blendSubtract" || type == "blendMultiply" || type == "blendScreen" ||
+	       type == "blendLighten" || type == "blendDarken";
 }
 
 json::Value effects_json(const std::vector<Effect> &e)
@@ -321,6 +447,41 @@ json::Value effects_json(const std::vector<Effect> &e)
 				o.set(keys[i], std::string(hex));
 			}
 			o.set("amount", fx.amount);
+		} else if (fx.type == "sharpen") { // D291
+			o.set("amount", fx.amount);
+		} else if (fx.type == "vignette") {
+			o.set("amount", fx.amount);
+			o.set("size", fx.size);
+			o.set("softness", fx.softness);
+			o.set("color", hex_of(fx.color));
+		} else if (fx.type == "grain") {
+			o.set("amount", fx.amount);
+			o.set("size", fx.size);
+		} else if (fx.type == "pixelate") {
+			o.set("size", fx.size);
+		} else if (fx.type == "posterize") {
+			o.set("levels", (int64_t)fx.value);
+		} else if (fx.type == "lut") {
+			o.set("file", fx.file);
+			o.set("amount", fx.amount);
+		} else if (fx.type == "imageMask") {
+			o.set("file", fx.file);
+			o.set("channel", fx.channel);
+			o.set("invert", fx.invert);
+			o.set("feather", fx.feather);
+		} else if (fx.type == "mirror" || fx.type == "flip") {
+		} else if (fx.type == "circleMask" || fx.type == "roundMask") {
+			if (fx.type == "roundMask")
+				o.set("radius", fx.value);
+			o.set("feather", fx.feather);
+			o.set("borderWidth", fx.border);
+			o.set("borderColor", hex_of(fx.color));
+		} else if (fx.type == "opacity" || is_blend(fx.type)) {
+			o.set("opacity", fx.opacity);
+		} else if (fx.type == "gradientMask") {
+			o.set("angle", fx.angle);
+			o.set("start", fx.start);
+			o.set("end", fx.end);
 		} else {
 			o.set(fx.type == "blur" ? "strength" : "radius", fx.value);
 		}
@@ -608,7 +769,7 @@ Plan build(const json::Value &doc, const Options &o)
 			bool lvis = chk::get_bool(l, "visible", true, "layer " + it.layer);
 			chk::get_bool(l, "locked", false, "layer " + it.layer);
 			it.source_layer = it.layer;
-			it.effects = parse_effects(l.find("effects"), "layer " + it.layer);
+			it.effects = parse_effects(l.find("effects"), "layer " + it.layer, &o.bases, &plan.warnings);
 			if (it.type == "duplicate") {
 				const json::Value &s2 = *l.find("source");
 				chk::only_keys(s2, {"layer"}, "layer " + it.layer + ".source");

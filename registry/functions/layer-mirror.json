@@ -1,0 +1,52 @@
+{
+  "id": "layer-mirror",
+  "version": "0.1.0",
+  "category": "sources-camera-audio",
+  "family": "camera",
+  "name": "Layer mirror and flip",
+  "description": "Mirrors a layer left to right (\"mirror\") or turns it upside down (\"flip\"); no parameters (ujw_flip.effect, D291 proposed). The Meld importer maps negative scale to these.",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effect"
+      ],
+      "properties": {
+        "effect": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "enum": [
+                "mirror",
+                "flip"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "defaults": {
+      "effect": {
+        "type": "mirror"
+      }
+    },
+    "safeRanges": {}
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 0,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "native-shader",
+  "planSection": "4.2"
+}

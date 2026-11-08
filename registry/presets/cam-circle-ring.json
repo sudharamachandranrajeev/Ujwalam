@@ -1,0 +1,34 @@
+{
+  "id": "cam-circle-ring",
+  "version": "0.1.0",
+  "function": "camera-frame-decorator",
+  "functionVersion": "^0.1.0",
+  "name": "Circle cam with ring",
+  "params": {
+    "effect": {
+      "type": "circleMask",
+      "feather": 1,
+      "borderWidth": 3,
+      "borderColor": "#ffffff"
+    }
+  },
+  "themeOverrides": {},
+  "family": "frame-effects",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "neutral",
+    "colourUse": "tokens",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "cam-rounded",
+    "cam-mirror"
+  ]
+}

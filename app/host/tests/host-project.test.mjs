@@ -5,7 +5,7 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { launchHost, stopHost } from '../lib/launch.mjs';
 import { loadIntoHost, planInHost, ProjectRefused } from '../lib/project.mjs';
@@ -31,6 +31,12 @@ before(async () => {
     '-t', '3', '-c:v', 'mpeg4', '-q:v', '5', '-c:a', 'aac', '-shortest', path.join(media, 'intro.mp4')]);
   // 16 px black/white vertical stripes (effects render test)
   ffmpeg(['-f', 'lavfi', '-i', "nullsrc=s=256x256,format=gbrp,geq=r='if(mod(floor(X/16),2),255,0)':g='if(mod(floor(X/16),2),255,0)':b='if(mod(floor(X/16),2),255,0)',format=rgb24", '-frames:v', '1', path.join(media, 'stripes.png')]);
+  // D291: red | blue halves (mirror), red over blue (flip), white | black mask, and a 2-point .cube that inverts colours
+  ffmpeg(['-f', 'lavfi', '-i', 'color=c=red:s=100x200', '-f', 'lavfi', '-i', 'color=c=blue:s=100x200', '-filter_complex', 'hstack', '-frames:v', '1', path.join(media, 'halves.png')]);
+  ffmpeg(['-f', 'lavfi', '-i', 'color=c=red:s=200x100', '-f', 'lavfi', '-i', 'color=c=blue:s=200x100', '-filter_complex', 'vstack', '-frames:v', '1', path.join(media, 'tb.png')]);
+  ffmpeg(['-f', 'lavfi', '-i', 'color=c=white:s=100x200', '-f', 'lavfi', '-i', 'color=c=black:s=100x200', '-filter_complex', 'hstack', '-frames:v', '1', path.join(media, 'mask.png')]);
+  writeFileSync(path.join(media, 'invert.cube'), ['TITLE "invert"', 'LUT_3D_SIZE 2',
+    ...Array.from({ length: 8 }, (_, i) => [i & 1, (i >> 1) & 1, (i >> 2) & 1].map((v) => (1 - v).toFixed(1)).join(' '))].join('\n') + '\n');
   h = await launchHost({ dataDir: mkdtempSync(path.join(OUT, 'data-')), project: path.join(HOST_DIR, 'projects', 'test-card.project.json') });
   c = h.client;
 });
@@ -364,7 +370,19 @@ test('project v1 effects: host refuses malformed effects; plan and layers.list c
     [{ type: 'chromaKey', color: 'green', similarity: 400, smoothness: 80 }],
     [{ type: 'chromaKey', color: '#00ff00', similarity: 0, smoothness: 80 }],
     [{ type: 'chromaKey', color: '#00ff00', similarity: 400, smoothness: 1001 }],
-    [{ type: 'chromaKey', color: '#00ff00', similarity: 400 }]
+    [{ type: 'chromaKey', color: '#00ff00', similarity: 400 }],
+    // D291
+    [{ type: 'sharpen', amount: 2 }],
+    [{ type: 'pixelate', size: 1 }],
+    [{ type: 'posterize', levels: 2.5 }],
+    [{ type: 'mirror', horizontal: true }],
+    [{ type: 'roundMask', radius: 60, feather: 0, borderWidth: 0, borderColor: '#ffffff' }],
+    [{ type: 'blendMultiply', opacity: 1 }, { type: 'blendScreen', opacity: 1 }],
+    [{ type: 'blendOverlay', opacity: 1 }],
+    [{ type: 'gradientMask', angle: 0, start: 0.5 }],
+    [{ type: 'imageMask', file: { base: 'media', rel: 'logo.png' }, channel: 'red', invert: false, feather: 0 }],
+    [{ type: 'imageMask', file: { base: 'media', rel: '../logo.png' }, channel: 'luma', invert: false, feather: 0 }],
+    [{ type: 'lut', file: { base: 'media', rel: 'logo.jpg' }, amount: 1 }]
   ];
   const { validateProject } = await import('../../../services/project/validate.mjs');
   for (const effects of bad) {
@@ -883,5 +901,144 @@ test('project v1 blinds hide the completion share of every slat (D262)', async (
   assert.ok(half.share > 0.35 && half.share < 0.65, `completion 0.5: about half shown, got ${half.share}`);
   assert.ok(half.runs >= 6, `completion 0.5: horizontal slats (angle 90), got ${half.runs} runs`);
   near(px(50, 50), [255, 255, 255], 'background');
+  await c.call('outputs.clear');
+});
+
+
+// Filter, camera and compositing effects (D291 proposed): one 140 px cell per effect on a white canvas.
+const cell = (i) => ({ x: 20 + (i % 8) * 160, y: 20 + Math.floor(i / 8) * 180, width: 140, height: 140 });
+const img = (rel) => ({ file: { base: 'media', rel } });
+const L = (id, i, type, source, effects) => ({ id, type, name: id, source, ...(effects ? { effects } : {}), placements: { h: { visible: true, ...cell(i) } } });
+const RING = { type: 'circleMask', feather: 0, borderWidth: 10, borderColor: '#00ff00' };
+const FX291 = {
+  version: 1, id: 'fx291-check', name: 'FX291 check', activeScene: 'main',
+  canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }],
+  devices: [], overlays: [], outputs: [],
+  scenes: [{
+    id: 'main', name: 'Main', layers: [
+      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#ffffff' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
+      L('mirror', 0, 'image', img('halves.png'), [{ type: 'mirror' }]),
+      L('flip', 1, 'image', img('tb.png'), [{ type: 'flip' }]),
+      L('circle', 2, 'color', { color: '#ff0000' }, [RING]),
+      L('round', 3, 'color', { color: '#ff0000' }, [{ type: 'roundMask', radius: 25, feather: 0, borderWidth: 0, borderColor: '#ffffff' }]),
+      L('half', 4, 'color', { color: '#000000' }, [{ type: 'opacity', opacity: 0.5 }]),
+      L('grey1', 5, 'color', { color: '#808080' }),
+      L('mul', 5, 'color', { color: '#ffff00' }, [{ type: 'blendMultiply', opacity: 1 }]),
+      L('grey2', 6, 'color', { color: '#808080' }),
+      L('scr', 6, 'color', { color: '#0000ff' }, [{ type: 'blendScreen', opacity: 1 }]),
+      L('grad', 8, 'color', { color: '#ff0000' }, [{ type: 'gradientMask', angle: 0, start: 0.5, end: 0.5 }]),
+      L('vig', 9, 'color', { color: '#ffffff' }, [{ type: 'vignette', amount: 1, size: 0.5, softness: 0.1, color: '#000000' }]),
+      L('post', 10, 'color', { color: '#606060' }, [{ type: 'posterize', levels: 2 }]),
+      L('pix', 11, 'image', img('stripes.png'), [{ type: 'pixelate', size: 40 }]),
+      L('sharp', 12, 'color', { color: '#ff0000' }, [{ type: 'sharpen', amount: 1 }]),
+      L('grain', 13, 'color', { color: '#808080' }, [{ type: 'grain', amount: 1, size: 1 }]),
+      L('lut', 14, 'color', { color: '#ff0000' }, [{ type: 'lut', file: { base: 'media', rel: 'invert.cube' }, amount: 1 }]),
+      L('imask', 16, 'color', { color: '#ff0000' }, [{ type: 'imageMask', file: { base: 'media', rel: 'mask.png' }, channel: 'luma', invert: false, feather: 0 }]),
+      L('imask-inv', 17, 'color', { color: '#ff0000' }, [{ type: 'imageMask', file: { base: 'media', rel: 'mask.png' }, channel: 'luma', invert: true, feather: 0 }]),
+      L('stack', 18, 'color', { color: '#ff0000' }, [{ type: 'mirror' }, { type: 'vignette', amount: 0.5, size: 0.4, softness: 0.3, color: '#000000' }, RING, { type: 'blendMultiply', opacity: 1 }])
+    ]
+  }],
+  audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+};
+
+async function recordFrame(name, seconds = 2) {
+  await c.call('outputs.configure', {
+    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
+    audio: { bitrate: 128, sampleRate: 48000 },
+    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name } }]
+  });
+  await c.call('record.start', {});
+  await new Promise((res) => setTimeout(res, seconds * 1000));
+  await c.call('record.stop', {});
+  let st;
+  for (let i = 0; i < 60; i++) {
+    st = await c.call('outputs.status');
+    if (st.sinks.every((s) => s.state === 'stopped')) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  return st.sinks.find((s) => s.id === 'fh').path;
+}
+
+test('project v1 filter, camera and compositing effects render (D291)', async () => {
+  const { validateProject } = await import('../../../services/project/validate.mjs');
+  const v = validateProject(FX291);
+  assert.ok(v.ok, JSON.stringify(v.errors));
+  const r = await loadIntoHost(c, FX291, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  const by = Object.fromEntries((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.map((l) => [l.id, l]));
+  for (const l of FX291.scenes[0].layers.filter((x) => x.effects)) assert.deepEqual(by[l.id].effects, l.effects, `layers.list round-trip: ${l.id}`);
+  const px = frameRgb(await recordFrame('fx291-h.mkv'), 1280, 720);
+  const W = [255, 255, 255], R = [255, 0, 0], G = [0, 255, 0], B = [0, 0, 255], K = [0, 0, 0];
+  const at = (i, dx, dy) => { const p = cell(i); return px(p.x + dx, p.y + dy); };
+  near(at(0, 30, 70), B, 'mirror: the right half (blue) now on the left');
+  near(at(0, 110, 70), R, 'mirror: red on the right');
+  near(at(1, 70, 30), B, 'flip: the bottom (blue) now on top');
+  near(at(1, 70, 110), R, 'flip: red at the bottom');
+  near(at(2, 70, 70), R, 'circle mask: centre');
+  near(at(2, 4, 4), W, 'circle mask: corner outside the circle');
+  near(at(2, 5, 70), G, 'circle mask: the ring inside the edge');
+  near(at(3, 3, 3), W, 'rounded mask: the corner is cut');
+  near(at(3, 3, 70), R, 'rounded mask: the edge middle stays');
+  const o = at(4, 70, 70);
+  assert.ok(o[0] > 100 && o[0] < 205 && Math.max(...o) - Math.min(...o) < 24, `opacity 0.5: black over white is grey, got ${o}`);
+  near(at(5, 70, 70), [128, 128, 0], 'multiply: yellow over grey');
+  near(at(6, 70, 70), [128, 128, 255], 'screen: blue over grey');
+  near(at(8, 30, 70), R, 'gradient mask angle 0: the start side shows');
+  near(at(8, 110, 70), W, 'gradient mask: past the end it is clear');
+  near(at(9, 70, 70), W, 'vignette: clear centre');
+  near(at(9, 3, 3), K, 'vignette: dark corner');
+  near(at(10, 70, 70), K, 'posterize 2 levels: dark grey goes black');
+  // stripes are 16 source px; 40 px cells sample at 20, 60, 100, ... => white, white, black, black, white, white, white
+  near(at(11, 15, 70), W, 'pixelate: first cells white');
+  near(at(11, 65, 70), K, 'pixelate: middle cells black');
+  near(at(11, 120, 70), W, 'pixelate: last cells white');
+  near(at(12, 70, 70), R, 'sharpen: a flat colour stays');
+  let sum = 0, sq = 0, n = 0;
+  for (let y = 40; y < 100; y++) for (let x = 40; x < 100; x++) { const g = at(13, x, y)[1]; sum += g; sq += g * g; n++; }
+  const mean = sum / n, sd = Math.sqrt(sq / n - mean * mean);
+  assert.ok(Math.abs(mean - 128) < 24, `grain keeps the mean: ${mean}`);
+  assert.ok(sd > 2, `grain adds noise: sd ${sd}`);
+  near(at(14, 70, 70), [0, 255, 255], 'lut (inverting .cube): red becomes cyan');
+  near(at(16, 30, 70), R, 'image mask: white mask shows the layer');
+  near(at(16, 110, 70), W, 'image mask: black mask hides it');
+  near(at(17, 30, 70), W, 'image mask inverted: hidden');
+  near(at(17, 110, 70), R, 'image mask inverted: shown');
+  near(at(18, 4, 4), W, 'stack: the ring mask cuts the corner');
+  near(px(5, 700), W, 'background');
+  await c.call('outputs.clear');
+});
+
+test('D291 file effects: a missing file is a plan warning (layer kept, effect dropped); setEffects refuses it', async () => {
+  const doc = clone(FX291);
+  doc.scenes[0].layers.find((l) => l.id === 'lut').effects[0].file.rel = 'nope.cube';
+  const plan = await planInHost(c, doc, { bases: { media } });
+  const w = plan.warnings.find((x) => x.layer === 'lut');
+  assert.ok(w && w.effect === 'lut', `warning: ${JSON.stringify(plan.warnings)}`);
+  const r = await loadIntoHost(c, FX291, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  const e = await rpcErr('layers.setEffects', { scene: 'main', layer: 'sharp', effects: [{ type: 'imageMask', file: { base: 'media', rel: 'nope.png' }, channel: 'luma', invert: false, feather: 0 }] });
+  assert.equal(e.code, -32004, e.message);
+  await c.call('layers.setEffects', { scene: 'main', layer: 'sharp', effects: [{ type: 'blendDarken', opacity: 1 }, { type: 'flip' }] });
+  assert.deepEqual((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.find((l) => l.id === 'sharp').effects,
+    [{ type: 'blendDarken', opacity: 1 }, { type: 'flip' }]);
+});
+
+test('D291 grain is temporal noise, never a flash: full canvas grain at amount 1 stays at or under 3 flashes/s', async () => {
+  const doc = {
+    version: 1, id: 'grain-flash', name: 'Grain flash', activeScene: 'main',
+    canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }], devices: [], overlays: [], outputs: [],
+    scenes: [{ id: 'main', name: 'Main', layers: [
+      { id: 'g', type: 'color', name: 'G', source: { color: '#808080' }, effects: [{ type: 'grain', amount: 1, size: 4 }],
+        placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } }
+    ] }],
+    audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+  };
+  assert.deepEqual((await loadIntoHost(c, doc, { bases: { media } })).unavailable, []);
+  const file = await recordFrame('grain-flash-h.mkv', 3);
+  const { analyseVideo } = await import('../../../tools/fx-test.mjs');
+  const res = await analyseVideo(file, { sample: { width: 320, height: 180 }, fps: 30 });
+  assert.ok(res.frames >= 60, `frames ${res.frames}`);
+  assert.ok(res.peakFlashesPerSecond <= 3, `grain peak ${res.peakFlashesPerSecond} flashes/s`);
+  console.log(`grain flash check: peak ${res.peakFlashesPerSecond} flashes/s over ${res.frames} frames`);
   await c.call('outputs.clear');
 });

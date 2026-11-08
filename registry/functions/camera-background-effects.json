@@ -4,7 +4,7 @@
   "category": "sources-camera-audio",
   "family": "camera",
   "name": "Camera background effects",
-  "description": "Removal, blur, tint via plugin. Planned; behaviour not yet specified.",
+  "description": "Background blur, removal or replacement for a camera layer. Planned, not built (D291 proposed). Needs a person-segmentation model (for example a MediaPipe/Selfie-style or RVM-style ONNX model run through onnxruntime, DirectML/CUDA on the NVIDIA GPU or CPU) producing a per-frame alpha matte, then the existing blur and the image-mask path to composite. While live, the VRAM it needs (model weights plus frame buffers at camera size, to be measured; UNVERIFIED) must be reserved inside the live-AI budget next to the small Whisper model on the 6 GB GPU (D1, VRAM rule), with a CPU fallback and a per-frame time budget so it never holds back the render thread. Model choice, licence and accuracy gate on real camera footage need the user's approval before building.",
   "params": {
     "schema": {},
     "defaults": {},
