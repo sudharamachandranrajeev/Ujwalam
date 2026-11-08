@@ -2,6 +2,12 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.3 — 2026-11-08
+
+- The native studio window (Qt) opens by default instead of the browser; `Ujwalam.cmd --shell browser` opens the web control page. Closing the window does not stop a stream.
+- Studio window: scenes and layers, an add-layer window, inspector, mixer with mute, CUE, volume and track routing, preview editing with snapping to other layers, undo/redo, feature flags. Panels behind flags stay off until switched on in the flags panel.
+- Mixer track routing per sound (flag `mixer-routing`, off), saved to the project.
+
 ## 0.1.0-alpha.2 — 2026-11-03
 
 - Live plan: YouTube H 1080p60 at 17 Mbps; YouTube V direct; one shared 1080p60 6000 kbps rung for Twitch and Kick.
