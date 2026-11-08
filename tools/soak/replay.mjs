@@ -157,7 +157,10 @@ function startChild({ dataDir, metricsDir, execLog, sbUrl, sampleMs, livePriorit
     });
     let err = '';
     p.stderr.on('data', (d) => { err += d; });
-    p.once('exit', (code) => { clearTimeout(readyTimer); if (!done) { done = true; reject(new Error(`core child exited early (code ${code}); stderr bytes ${err.length}, error names ${[...new Set(err.match(/\b(?:E[A-Z]{3,12}|\b(?:[A-Z][A-Za-z]{2,24})?Error)\b/g) ?? [])].slice(0, 4).join(',') || 'none'}`)); } });
+    // Only error names and the first code location (repo file:line, from the stack) are reported, never message text:
+    // the child's stderr may hold replayed chat. The location makes a start-up crash under CI load traceable.
+    const where = () => { const m = /[\\/]((?:services|tools|app)[\\/][\w./\\-]+\.mjs):(\d+)/.exec(err); return m ? `${m[1].replace(/\\/g, '/')}:${m[2]}` : 'unknown'; };
+    p.once('exit', (code) => { clearTimeout(readyTimer); if (!done) { done = true; reject(new Error(`core child exited early (code ${code}); stderr bytes ${err.length}, error names ${[...new Set(err.match(/\b(?:E[A-Z]{3,12}|\b(?:[A-Z][A-Za-z]{2,24})?Error)\b/g) ?? [])].slice(0, 4).join(',') || 'none'}, at ${where()}`)); } });
     const readyTimer = setTimeout(() => { if (!done) { done = true; killTree(p.pid); reject(new Error(`core child did not become ready in ${Math.round(READY_MS / 1000)} s`)); } }, READY_MS);
   });
 }
