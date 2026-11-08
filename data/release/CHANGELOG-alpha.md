@@ -12,7 +12,10 @@ One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the sec
 - The clips folder holds only finished videos, one folder per day, with clear names (for example codm_montage_20261108-185824_kills-5_01_v.mp4). Working files stay in the app's own folder. Used live-clip saves are deleted after editing.
 - Clips keep every sound track of the recording.
 - Auto posting (switches "posting" and "auto-post", plus a rule): clips, montages and match reels upload privately to YouTube after a recording, never while live, with retries. The queue shows in the control page and Posts. Needs the YouTube sign-in set up first.
-- Several layer looks, themes and the welcome tour from the last builds; face background removal and tracking stay switched off (switch "face-ai").
+- Right-click a layer or scene to duplicate, rename or add; add new layers and scenes.
+- Themes: Violet Night, Neon Arcade, Studio Light, Tactical, Retro Wave (Settings), with depth, shadow and glow.
+- Welcome tour and hints, each with "don't show again"; bring them back in Settings > Help & tips.
+- Face background removal and face tracking are built but stay switched off (switch "face-ai") until tested with your camera.
 ## 0.1.0-alpha.8 — 2026-11-08
 
 - Look panel: select a layer to change its look: rounded corners, filters (sharpen, vignette, film grain, pixelate, posterize, black and white, sepia), camera (mirror, flip, circle or rounded shape with a ring), blend (opacity, add, multiply, screen and more, gradient fade) and shadow and glow. No hidden switch needed; while live, changes wait for Apply and "yes, on air".
