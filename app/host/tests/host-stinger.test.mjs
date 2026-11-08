@@ -22,7 +22,8 @@ let media;
 const full = { visible: true, x: 0, y: 0, width: 640, height: 360 };
 const PROJECT = {
   version: 1, id: 'stinger', name: 'Stinger', activeScene: 'white',
-  canvases: [{ id: 'h', width: 640, height: 360, fps: 30 }],
+  // a project transition loads (D245 regression: the host refused the field); the host does not apply it at load
+  canvases: [{ id: 'h', width: 640, height: 360, fps: 30, transition: { type: 'stinger', durationMs: 0, file: { base: 'media', rel: 'sting.webm' }, pointMs: 500, audio: false } }],
   devices: [], overlays: [], outputs: [],
   scenes: [
     { id: 'white', name: 'White', layers: [{ id: 'w', type: 'color', name: 'W', source: { color: '#ffffff' }, placements: { h: full } }] },
@@ -50,6 +51,10 @@ async function code(params) {
   try { await c.call('transitions.set', params); } catch (e) { return e.code; }
   return null;
 }
+
+test('a project with a canvas transition loads; the host leaves the canvas on cut until transitions.set', async () => {
+  assert.equal((await c.call('transitions.get')).H.type, 'cut');
+});
 
 test('stinger: set, reported; refused for a missing file, a path outside the base, a bad extension, no file', async () => {
   const r = await c.call('transitions.set', { canvas: 'H', type: 'stinger', file: { base: 'media', rel: 'sting.webm' }, pointMs: 500 });

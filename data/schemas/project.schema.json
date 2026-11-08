@@ -188,7 +188,7 @@
         },
         "masterVolumeDb": { "type": "number", "minimum": -100, "maximum": 12 },
         "sources": {
-          "type": "array", "maxItems": 64,
+          "type": "array", "maxItems": 256, "$comment": "D245: a Meld session keeps one audio entry per video layer; 64 was too few for a real session",
           "items": {
             "type": "object", "additionalProperties": false,
             "required": ["id", "name", "volumeDb", "muted", "monitoring", "tracks"],

@@ -335,7 +335,7 @@ export function validateProject(doc) {
           if ('name' in t) str(t.name, `${p}.name`, 1, 120);
         });
       }
-      if ('sources' in a && arr(a.sources, '.audio.sources', 64)) {
+      if ('sources' in a && arr(a.sources, '.audio.sources', 256)) {
         uniq(a.sources, '.audio.sources', 'audio source', new Set());
         a.sources.forEach((s, i) => {
           const p = `.audio.sources[${i}]`;

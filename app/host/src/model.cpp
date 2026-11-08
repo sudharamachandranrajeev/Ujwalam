@@ -235,7 +235,9 @@ Plan build(const json::Value &doc, const Options &o)
 
 	// canvases
 	for (auto &c : arr(doc, "canvases", 2, "project").as_array()) {
-		chk::only_keys(c, {"id", "width", "height", "fps"}, "canvas");
+		// "transition" (D239/D242/D244) is not built here: the UI server applies it with transitions.set while the
+		// transitions flag is on (services/project validates it).
+		chk::only_keys(c, {"id", "width", "height", "fps", "transition"}, "canvas");
 		chk::require(c, {"id", "width", "height", "fps"}, "canvas");
 		const json::Value *id = c.find("id");
 		Canvas cv;
@@ -587,7 +589,7 @@ Plan build(const json::Value &doc, const Options &o)
 		plan.warnings.push(std::move(w));
 	}
 	std::set<std::string> bound; // layer sources that already have an audio entry
-	for (auto &a : arr(*au, "sources", 64, "audio").as_array()) {
+	for (auto &a : arr(*au, "sources", 256, "audio").as_array()) { // D245: one per video layer in a Meld session
 		chk::only_keys(a, {"id", "name", "device", "layer", "volumeDb", "muted", "monitoring", "tracks", "origin"}, "audio source");
 		chk::require(a, {"id", "name", "volumeDb", "muted", "monitoring", "tracks"}, "audio source");
 		Audio x;

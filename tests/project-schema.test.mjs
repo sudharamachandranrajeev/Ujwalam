@@ -38,6 +38,7 @@ const BAD = [
   ['placement for canvas z', (d) => { d.scenes[0].layers[0].placements.z = d.scenes[0].layers[0].placements.h; }, true],
   ['audio monitoring unknown', (d) => { d.audio.sources[0].monitoring = 'loud'; }, true],
   ['audio volume above range', (d) => { d.audio.sources[0].volumeDb = 40; }, true],
+  ['more than 256 audio sources', (d) => { d.audio.sources = Array.from({ length: 257 }, (_, i) => ({ ...d.audio.sources[0], id: `aud-${i}` })); }, true],
   ['seven tracks', (d) => { d.audio.tracks = Array.from({ length: 7 }, (_, i) => ({ id: `t${i}`, name: 'T' })); }, true],
   ['output type unknown', (d) => { d.outputs[0].type = 'encoder'; }, true],
   ['output carries encoder settings', (d) => { d.outputs[0].bitrate = 6000; }, true],
@@ -156,4 +157,11 @@ test('relPathProblem accepts relative, refuses absolute and traversal', () => {
   for (const bad of ['', 'C:/x', 'D:\\x', '/x', '\\\\host\\share', 'a/../b', '..\\b', 'a\u0000b']) {
     assert.notEqual(relPathProblem(bad), null, bad);
   }
+});
+
+test('a real Meld session size: 100 audio sources (one per video layer) are valid (D245)', () => {
+  const d = sample();
+  d.audio.sources = Array.from({ length: 100 }, (_, i) => ({ ...d.audio.sources[0], id: `aud-${i}` }));
+  assert.equal(schemaCheck(d), true, JSON.stringify(schemaCheck.errors));
+  assert.equal(validateProject(d).ok, true, JSON.stringify(validateProject(d).errors));
 });
