@@ -44,6 +44,8 @@ QToolTip { background: %3; color: %5; border: 1px solid %4; padding: 4px; }
 QGroupBox { background: %2; border: 1px solid %4; border-radius: 12px; margin-top: 18px; padding: 10px 8px 8px 8px; }
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 10px; padding: 0 4px; color: %6;
   font-size: 8pt; font-weight: 600; }
+QFrame#strip { background: %3; border: 1px solid %4; border-radius: 10px; }
+QFrame#strip QLabel { background: transparent; }
 QLabel#heading { color: %6; font-size: 8pt; font-weight: 600; }
 QLabel#pill { background: %3; border: 1px solid %4; border-radius: 10px; padding: 3px 10px; color: %5; }
 QPushButton { background: %3; color: %5; border: 1px solid %4; border-radius: 8px; padding: 5px 12px; min-height: 18px; }

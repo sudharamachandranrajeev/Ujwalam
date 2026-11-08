@@ -336,7 +336,13 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	outer->addWidget(buildTop());
 	auto *split = new QSplitter(Qt::Horizontal, central);
 	split->addWidget(buildLeft());
-	split->addWidget(buildCentre());
+	auto *mid = new QSplitter(Qt::Vertical, split); // previews over the mixer strip (D285)
+	mid->addWidget(buildCentre());
+	mid->addWidget(buildMixer());
+	mid->setStretchFactor(0, 1);
+	mid->setStretchFactor(1, 0);
+	mid->setSizes({620, 200});
+	split->addWidget(mid);
 	split->addWidget(buildRight());
 	split->setStretchFactor(0, 0);
 	split->setStretchFactor(1, 1);
@@ -823,17 +829,26 @@ QWidget *MainWindow::buildRight()
 	botBox_->setVisible(false);
 	v->addWidget(botBox_);
 
-	auto *mix = new QGroupBox(QStringLiteral("Audio mixer"), w);
+	v->addStretch(1);
+	return w;
+}
+
+// The audio mixer as a strip under the previews (D285, as in the reference): one card per sound, side by side.
+QWidget *MainWindow::buildMixer()
+{
+	auto *mix = new QGroupBox(QStringLiteral("Audio mixer"), this);
 	auto *scroll = new QScrollArea(mix);
 	scroll->setWidgetResizable(true);
+	scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 	auto *inner = new QWidget(scroll);
-	mixerBox_ = new QVBoxLayout(inner);
+	mixerBox_ = new QHBoxLayout(inner);
+	mixerBox_->setSpacing(10);
 	mixerBox_->addStretch(1);
 	scroll->setWidget(inner);
 	auto *mv = new QVBoxLayout(mix);
+	mv->setContentsMargins(4, 4, 4, 4);
 	mv->addWidget(scroll);
-	v->addWidget(mix, 1);
-	return w;
+	return mix;
 }
 
 void MainWindow::moveEvent(QMoveEvent *e)
@@ -1284,9 +1299,12 @@ void MainWindow::renderMixer()
 			continue;
 		}
 		const QString id = m.value(QStringLiteral("id")).toString();
-		auto *strip = new QWidget();
+		auto *strip = new QFrame();
+		strip->setObjectName(QStringLiteral("strip")); // a card (theme.cpp)
+		strip->setMinimumWidth(240);
+		strip->setMaximumWidth(320);
 		auto *g = new QVBoxLayout(strip);
-		g->setContentsMargins(0, 2, 0, 2);
+		g->setContentsMargins(10, 8, 10, 8);
 		auto *top = new QHBoxLayout();
 		top->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(m.value(QStringLiteral("name")).toString().toHtmlEscaped())), 1);
 		const bool muted = m.value(QStringLiteral("muted")).toBool();
@@ -1382,6 +1400,7 @@ void MainWindow::renderMixer()
 	if (!offMix.isEmpty()) {
 		auto *n = new QLabel(QStringLiteral("Not in the stream mix (layer sound off): ") + offMix.join(QStringLiteral(", ")) + QStringLiteral("."));
 		n->setWordWrap(true);
+		n->setMaximumWidth(260);
 		mixerBox_->insertWidget(row++, n);
 	}
 }

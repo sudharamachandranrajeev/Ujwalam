@@ -18,6 +18,7 @@ class QAction;
 class QPushButton;
 class QDoubleSpinBox;
 class QSpinBox;
+class QHBoxLayout;
 class QVBoxLayout;
 class QProgressBar;
 class QButtonGroup;
@@ -71,6 +72,7 @@ private:
 	QWidget *buildLeft();
 	QWidget *buildCentre();
 	QWidget *buildRight();
+	QWidget *buildMixer();
 	QWidget *buildTop();
 
 	void loadScenes();
@@ -169,7 +171,7 @@ private:
 	QGroupBox *effBox_ = nullptr;
 	QListWidget *effList_ = nullptr;
 	QFormLayout *effForm_ = nullptr;
-	QVBoxLayout *mixerBox_ = nullptr;
+	QHBoxLayout *mixerBox_ = nullptr; // strips side by side under the previews (D285)
 	QMap<QString, QProgressBar *> meters_;
 	QPushButton *streamBtn_ = nullptr, *recordBtn_ = nullptr, *clipBtn_ = nullptr, *markBtn_ = nullptr;
 	QPushButton *undoBtn_ = nullptr, *redoBtn_ = nullptr;

@@ -25,4 +25,5 @@ accent selection, styled flag check boxes, chips right, status bar bottom right.
 ## Not yet verified
 
 - UNVERIFIED: the look on the real screen at 125 % (the user's laptop) and with the real host previews.
-- Not done: the reference's bottom strip (scenes, mixer knobs, transitions, controls, stats) and a chat panel.
+- Audio mixer moved under the previews as side-by-side cards (vertical splitter).
+- Not done: mixer knobs, stats cards and a chat panel from the reference.
