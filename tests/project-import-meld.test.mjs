@@ -570,6 +570,7 @@ test('corner pin (D259): Meld CornerPin imports as cornerPin; an untouched pin i
     { type: 'CornerPin', enabled: true, bottomLeftX: 0, bottomLeftY: 1, bottomRightX: 1, bottomRightY: 1, topLeftX: 0.009999999776482582, topLeftY: 0, topRightX: 0.9200000166893005, topRightY: 0, version: 2 },
     { type: 'CornerPin', enabled: true, bottomLeftX: 0, bottomLeftY: 1, bottomRightX: 1, bottomRightY: 1, topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0 },
     { type: 'CornerPin', enabled: true, bottomLeftX: -0.2, bottomLeftY: 1, bottomRightX: 1, bottomRightY: 1.5, topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0 },
+    { type: 'CornerPin', enabled: true, bottomLeftX: 1, bottomLeftY: 1, bottomRightX: 0, bottomRightY: 1, topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0 },
   ];
   const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
   const layer = p.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
@@ -577,6 +578,7 @@ test('corner pin (D259): Meld CornerPin imports as cornerPin; an untouched pin i
     { type: 'cornerPin', topLeftX: 0.01, topLeftY: 0, topRightX: 0.92, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0, bottomLeftY: 1 },
   ], 'the untouched pin is dropped; the clamped one equals the untouched pin and is dropped too');
   assert.equal(r.ignored['CornerPin corners outside the layer (clamped)'], 1);
+  assert.equal(r.ignored['CornerPin corners that do not form a convex quad'], 1, 'a bow-tie is reported, not imported');
   assert.equal(r.ignored['effect CornerPin'], undefined);
   assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
   assert.equal(validateProject(p).ok, true);

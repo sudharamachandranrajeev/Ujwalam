@@ -2,7 +2,8 @@
 // ujwalam-host: ujw_corner_pin filter (src/effects.cpp, D259). Embedded into the host exe at build time (CMakeLists.txt
 // generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
 // Corner pin: the layer is drawn into the quad given by its four corners (0..1 of the layer's own frame). `row0..2` is
-// the inverse homography (quad -> unit square, computed on the CPU, sign fixed so w > 0 inside): for each output
+// the inverse homography (quad -> unit square, computed on the CPU, scaled so its largest entry is 1, sign fixed so
+// w > 0 inside; the host accepts convex quads only): for each output
 // pixel it gives the layer uv to sample. Outside the quad the output is transparent.
 
 uniform float4x4 ViewProj;
@@ -34,7 +35,7 @@ float4 PSPin(VertData v_in) : TARGET
 {
 	float3 q = float3(v_in.uv, 1.0);
 	float3 p = float3(dot(row0.xyz, q), dot(row1.xyz, q), dot(row2.xyz, q));
-	if (p.z <= 1e-6)
+	if (p.z <= 0.0)
 		return float4(0.0, 0.0, 0.0, 0.0);
 	float2 uv = p.xy / p.z;
 	if (uv.x < 0.0 || uv.y < 0.0 || uv.x > 1.0 || uv.y > 1.0)

@@ -92,7 +92,8 @@ private:
 	// Effect editor (D260, flag effect-editor): a working copy of the selected layer's effects; Apply sends it whole.
 	bool effectEditing_ = false;
 	QJsonArray effEdit_;
-	QString effLayer_;     // the layer effEdit_ belongs to
+	QString effLayer_;     // "<scene>/<layer>" effEdit_ belongs to
+	int effRev_ = 0;       // bumped on every change of effEdit_; an Apply answer for an older draft keeps it dirty
 	bool effDirty_ = false; // changed since it was read from the host
 	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
 

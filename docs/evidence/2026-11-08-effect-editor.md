@@ -23,3 +23,15 @@ app/host/src/studio.cpp, app/host/src/studio.h, app/host/src/methods.cpp, servic
 services/studio-ui/project-sync.mjs, services/studio-ui/edit-history.mjs, data/flags.json,
 app/studio/src/main_window.cpp, app/studio/src/main_window.h, tests/studio-ui-effects.test.mjs (new),
 app/host/tests/host-project.test.mjs, docs/plan/2026-10-29-v1-decisions.md.
+
+## Codex review (second opinion, read-only, medium effort; diff 6ca0501..835b567 on stdin)
+
+| # | Finding | Result |
+|---|---|---|
+| 1 (high) | The live swap was not render-atomic: the renderer could see a duplicate, missing or misplaced layer between steps. | Fixed: new items are staged hidden and placed; per scene, one `obs_scene_atomic_update` puts the new item in the old one's place in the order, shows it and hides the old one; the hidden old items are removed after. |
+| 2 (high) | A failure on the second canvas left the first one changed. | Fixed: every canvas is staged before any commit; a staging failure removes all staged items and wrappers; the commit has no failing step. |
+| 3 (medium) | Singular or non-convex corner pins fell back to a different quad (e.g. the full rectangle). | Fixed: host (model.cpp), validator (`convexQuad`) and Meld import refuse or report corners that are not a convex quad (each turn the same way, cross product at least 1e-6). Tests: bow-tie and dented quad refused by host and validator; a bow-tie Meld pin is reported, not imported. |
+| 4 (medium) | The shader's w test depended on the unnormalised inverse's scale. | Fixed: the inverse is scaled so its largest entry is 1; the shader tests only w <= 0. |
+| 5 (medium) | Qt: a late Apply answer could clear newer unsent edits. | Fixed: the draft carries a revision and its scene/layer key; only a matching answer marks it sent. |
+
+After the fixes: host project tests 17 pass, import/schema/effect-editor server tests 113 pass, host and Qt shell build.

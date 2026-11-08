@@ -64,7 +64,10 @@ test('a replay run that fails after starting its mock leaves no mock and no chil
   const run = main(['--data-root', root, '--speed', '10', '--duration-s', '60', '--sample-s', '1', '--run-id', 'unit-fail', '--quiet', '--no-system-probe']);
   const failed = assert.rejects(run);
   const t0 = Date.now();
-  while (openChildren() === 0 && Date.now() - t0 < 20000) await new Promise((r) => setTimeout(r, 5));
+  // Up to 50 s for the child to register (full CI 2026-11-08: none within 20 s under load, so nothing was killed and
+  // the 60 s run ended normally; the failure then read as a missing rejection).
+  while (openChildren() === 0 && Date.now() - t0 < 50000) await new Promise((r) => setTimeout(r, 5));
+  assert.ok(openChildren() > 0, 'the core child registered (machine too loaded if not)');
   assert.equal(openMocks(), 1, 'the run started its mock first');
   // killed the way a crash would be, not through stopTracked (which is the cleanup under test)
   for (const pid of childPids()) killTree(pid);

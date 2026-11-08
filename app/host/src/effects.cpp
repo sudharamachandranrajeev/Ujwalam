@@ -691,10 +691,16 @@ void pin_update(void *data, obs_data_t *s)
 	a[7] = m[1] * m[6] - m[0] * m[7];
 	a[8] = m[0] * m[4] - m[1] * m[3];
 	const double det = m[0] * a[0] + m[1] * a[3] + m[2] * a[6];
+	// Scaled so the largest entry is 1 (the map does not change; the shader's w test stays scale-free).
+	double big = 0;
+	for (double v : a)
+		big = std::max(big, std::fabs(v));
 	std::lock_guard<std::mutex> g(t->lock);
-	t->degenerate = std::fabs(det) < 1e-9;
+	t->degenerate = det == 0 || big == 0 || !std::isfinite(det);
+	if (t->degenerate)
+		return;
 	for (int i = 0; i < 9; i++)
-		t->inv[i] = det < 0 ? -a[i] : a[i];
+		t->inv[i] = (det < 0 ? -a[i] : a[i]) / big;
 }
 
 void *pin_create(obs_data_t *s, obs_source_t *src)

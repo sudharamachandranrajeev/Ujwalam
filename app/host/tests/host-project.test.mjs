@@ -335,6 +335,8 @@ test('project v1 effects: host refuses malformed effects; plan and layers.list c
     [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10 }],
     [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10, spread: 0.1, angle: 3 }],
     [{ type: 'color', brightness: 1.5, contrast: 0, saturation: 0, hue: 0 }],
+    [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 0, bottomRightY: 1, bottomLeftX: 1, bottomLeftY: 1 }],
+    [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 0.5, bottomRightY: 0.5, bottomLeftX: 0, bottomLeftY: 1 }],
     [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0, bottomLeftY: 1.2 }],
     [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0 }],
     [{ type: 'color', brightness: 0, contrast: 0, saturation: 0 }],

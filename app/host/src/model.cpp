@@ -238,6 +238,17 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 					  "bottomLeftY"}, w);
 			for (int i = 0; i < 8; i++)
 				fx.pin[i] = chk::get_num(x, keys[i], fx.pin[i], 0, 1, w);
+			// One projective map draws a convex quad only; a bow-tie, a dent or a collapsed corner is refused
+			// (Codex review D260). Every corner must turn the same way, each by a cross product of at least 1e-6.
+			int turn = 0;
+			for (int i = 0; i < 4; i++) {
+				const double *a = fx.pin + 2 * i, *b = fx.pin + 2 * ((i + 1) % 4), *c = fx.pin + 2 * ((i + 2) % 4);
+				const double cr = (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+				const int sgn = cr > 1e-6 ? 1 : cr < -1e-6 ? -1 : 0;
+				if (sgn == 0 || (turn && sgn != turn))
+					throw Error(rpc::INVALID_PARAMS, w + ": cornerPin corners must form a convex quad");
+				turn = sgn;
+			}
 		} else if (fx.type == "toner") { // D258
 			chk::only_keys(x, {"type", "shadows", "darktones", "midtones", "brights", "highlights", "amount"}, w);
 			chk::require(x, {"shadows", "darktones", "midtones", "brights", "highlights", "amount"}, w);

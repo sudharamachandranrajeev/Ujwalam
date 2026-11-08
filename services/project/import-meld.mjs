@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProject, IMAGE_EXT, relPathProblem, saveProject, validateProject } from './index.mjs';
+import { convexQuad } from './validate.mjs';
 
 export class ImportError extends Error {
   constructor(message, details = []) { super(message); this.name = 'ImportError'; this.details = details; }
@@ -407,7 +408,8 @@ export function importMeld(input, opts = {}) {
         const pin = { type: 'cornerPin' };
         keys.forEach((k, i) => { pin[k] = Math.max(0, Math.min(1, Math.round((num(e[k]) ? e[k] : dflt[i]) * 1e4) / 1e4)); });
         if (keys.some((k) => num(e[k]) && (e[k] < 0 || e[k] > 1))) ignore('CornerPin corners outside the layer (clamped)');
-        if (keys.some((k, i) => pin[k] !== dflt[i])) out.push(pin);
+        if (!convexQuad(keys.map((k) => pin[k]))) ignore('CornerPin corners that do not form a convex quad');
+        else if (keys.some((k, i) => pin[k] !== dflt[i])) out.push(pin);
       } else if (e.type === 'CCToner' && ['shadows', 'darktones', 'midtones', 'brights', 'highlights'].every((t) => hex(e[t]))) {
         out.push({ type: 'toner', shadows: hex(e.shadows), darktones: hex(e.darktones), midtones: hex(e.midtones),
           brights: hex(e.brights), highlights: hex(e.highlights), amount: clampTo(num(e.weight) ? e.weight : 1, 0, 1) });

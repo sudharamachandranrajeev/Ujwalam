@@ -696,8 +696,9 @@ void MainWindow::renderInspector()
 	const bool editable = !l.isEmpty() && l.contains(QStringLiteral("placement"));
 	inspForm_->setVisible(editable);
 	effBox_->setVisible(editable && effectEditing_);
-	if (selected_ != effLayer_ || !effDirty_) { // a reload keeps unsent effect changes of the same layer
-		effLayer_ = selected_;
+	if (const QString key = activeScene_ + QLatin1Char('/') + selected_; key != effLayer_ || !effDirty_) {
+		// a reload keeps unsent effect changes of the same layer
+		effLayer_ = key;
 		effEdit_ = l.value(QStringLiteral("effects")).toArray();
 		effDirty_ = false;
 		renderEffects();
@@ -772,6 +773,7 @@ void MainWindow::editEffects(const std::function<void(QJsonArray &, int &)> &cha
 	int row = effList_->currentRow();
 	change(effEdit_, row);
 	effDirty_ = true;
+	effRev_++;
 	renderEffects();
 	if (row >= 0 && row < effList_->count())
 		effList_->setCurrentRow(row);
@@ -813,6 +815,7 @@ void MainWindow::renderEffectForm()
 		o.insert(key, v);
 		effEdit_.replace(row, o);
 		effDirty_ = true;
+		effRev_++;
 		if (QListWidgetItem *it = effList_->item(row))
 			it->setText(fxSummary(o));
 	};
@@ -858,10 +861,12 @@ void MainWindow::applyEffects()
 	x.insert(QStringLiteral("scene"), activeScene_);
 	x.insert(QStringLiteral("layer"), selected_);
 	x.insert(QStringLiteral("effects"), effEdit_);
-	api_->host(QStringLiteral("layers.setEffects"), x, [this](bool ok, const QJsonObject &b, const QString &err) {
+	const QString key = activeScene_ + QLatin1Char('/') + selected_;
+	const int rev = effRev_;
+	api_->host(QStringLiteral("layers.setEffects"), x, [this, key, rev](bool ok, const QJsonObject &b, const QString &err) {
 		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
 			return confirm(b.value(QStringLiteral("pending")).toObject());
-		if (ok)
+		if (ok && effLayer_ == key && effRev_ == rev) // not when the draft changed or moved on while it was sent
 			effDirty_ = false;
 		note(ok ? QStringLiteral("Effects applied.") : QStringLiteral("Effects not applied: ") + err);
 		loadLayers();

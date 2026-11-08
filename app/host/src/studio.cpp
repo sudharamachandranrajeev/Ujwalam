@@ -1499,10 +1499,14 @@ json::Value Studio::layer_set_placement(const std::string &sid, const std::strin
 }
 
 // Effect editor (D260): replaces the effects of layer `lid` in scene `sid` on every canvas (effects belong to the
-// layer, not to a placement). Each item gets a new wrapper chain (or none) and a new scene item at the same place in
-// the order, with the same visibility and placement; the old item and wrapper go after it is in. The list is checked
-// and every chain is built before anything changes, so a refusal changes nothing. Project v1 layers only. In memory
-// only (dirty), like setPlacement: the studio UI server saves it into the project file.
+// layer, not to a placement). Two steps, so the picture never shows a half-done change (Codex review D260):
+//   stage:  per canvas a new wrapper chain (or none) and a new scene item over it, added hidden and placed. A failure
+//           on any canvas removes every staged item: nothing visible has changed.
+//   commit: per scene, inside obs_scene_atomic_update (the renderer waits on the scene's lock): the new item takes the
+//           old one's place in the order and its visibility, the old one is hidden. Then the hidden old items are
+//           removed and their wrappers released. Nothing in the commit can fail.
+// The list is checked first (model.cpp). Project v1 layers only. In memory only (dirty), like setPlacement: the studio
+// UI server saves it into the project file.
 json::Value Studio::layer_set_effects(const std::string &sid, const std::string &lid, const json::Value &effects)
 {
 	const std::vector<model::Effect> fxs = model::parse_effects(&effects, "layer " + lid);
@@ -1510,7 +1514,7 @@ json::Value Studio::layer_set_effects(const std::string &sid, const std::string 
 	struct Todo {
 		Scene *s;
 		Layer *l;
-		obs_source_t *fx;
+		Layer staged;
 	};
 	std::vector<Todo> todo;
 	for (Scene *s : scenes_named(sid, ""))
@@ -1518,50 +1522,69 @@ json::Value Studio::layer_set_effects(const std::string &sid, const std::string 
 			if (l.id == lid) {
 				if (l.placement.is_null())
 					throw Error(rpc::INVALID_PARAMS, "layer has no project placement");
-				todo.push_back({s, &l, nullptr});
+				todo.push_back({s, &l, {}});
 			}
 	if (todo.empty())
 		throw Error(rpc::INVALID_PARAMS, "no such layer");
 	try {
-		for (auto &t : todo)
+		for (auto &t : todo) {
+			t.staged = *t.l;
+			t.staged.item = nullptr;
+			t.staged.fx = nullptr;
+			t.staged.effects = fxs;
 			if (!fxs.empty())
-				t.fx = fx::create_chain(t.l->src->src, "ujw:fx:" + t.s->canvas + ":" + lid, fxs, {});
+				t.staged.fx = fx::create_chain(t.l->src->src, "ujw:fx:" + t.s->canvas + ":" + lid, fxs, {});
+			add_item(*t.s, t.staged);
+			obs_sceneitem_set_visible(t.staged.item, false);
+			apply_placement(t.staged);
+		}
 	} catch (...) {
-		for (auto &t : todo)
-			if (t.fx)
-				obs_source_release(t.fx);
+		for (auto &t : todo) {
+			if (t.staged.item)
+				obs_sceneitem_remove(t.staged.item);
+			if (t.staged.fx)
+				obs_source_release(t.staged.fx);
+		}
 		throw;
 	}
+	struct Swap {
+		obs_sceneitem_t *old_item, *new_item;
+		bool visible;
+		std::vector<obs_sceneitem_t *> order; // bottom to top, the old item just under the new one
+	};
+	std::vector<obs_sceneitem_t *> old_items;
+	std::vector<obs_source_t *> old_fx;
 	json::Value done = json::Value::array();
-	for (size_t i = 0; i < todo.size(); i++) {
-		Todo &t = todo[i];
+	for (auto &t : todo) {
 		Layer &l = *t.l;
-		obs_sceneitem_t *old_item = l.item;
-		obs_source_t *old_fx = l.fx;
-		l.fx = t.fx;
-		t.fx = nullptr;
-		try {
-			add_item(*t.s, l);
-		} catch (...) {
-			if (l.fx)
-				obs_source_release(l.fx);
-			l.fx = old_fx;
-			l.item = old_item;
-			for (size_t j = i + 1; j < todo.size(); j++)
-				if (todo[j].fx)
-					obs_source_release(todo[j].fx);
-			throw;
+		Swap sw{l.item, t.staged.item, t.staged.visible && l.visible, {}};
+		for (auto &x : t.s->layers) {
+			if (&x == &l)
+				sw.order.push_back(l.item);
+			sw.order.push_back(&x == &l ? t.staged.item : x.item);
 		}
+		obs_scene_atomic_update(
+			t.s->scene,
+			[](void *p, obs_scene_t *scene) {
+				auto *w = static_cast<Swap *>(p);
+				obs_scene_reorder_items(scene, w->order.data(), w->order.size());
+				obs_sceneitem_set_visible(w->old_item, false);
+				obs_sceneitem_set_visible(w->new_item, w->visible);
+			},
+			&sw);
+		old_items.push_back(l.item);
+		old_fx.push_back(l.fx);
+		l.item = t.staged.item;
+		l.fx = t.staged.fx;
 		l.effects = fxs;
-		obs_sceneitem_set_visible(l.item, false); // shown once placed, so no frame at the source's own size
-		apply_placement(l);
-		obs_sceneitem_remove(old_item);
-		if (old_fx)
-			obs_source_release(old_fx);
-		apply_order(*t.s);
-		obs_sceneitem_set_visible(l.item, l.visible);
+		l.visible = sw.visible;
 		done.push(t.s->canvas);
 	}
+	for (obs_sceneitem_t *it : old_items)
+		obs_sceneitem_remove(it);
+	for (obs_source_t *f : old_fx)
+		if (f)
+			obs_source_release(f);
 	dirty_ = true;
 	json::Value r = json::Value::object();
 	r.set("scene", sid);

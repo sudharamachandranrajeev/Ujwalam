@@ -27,6 +27,21 @@ export function relPathProblem(rel) {
   return null;
 }
 
+// Corner pin (D259/D260): one projective map draws a convex quad only. p = [x0, y0, ...] in the order top-left,
+// top-right, bottom-right, bottom-left; every corner turns the same way by a cross product of at least 1e-6 (the
+// host's rule, model.cpp).
+export function convexQuad(p) {
+  let turn = 0;
+  for (let i = 0; i < 4; i++) {
+    const a = 2 * i, b = 2 * ((i + 1) % 4), c = 2 * ((i + 2) % 4);
+    const cr = (p[b] - p[a]) * (p[c + 1] - p[b + 1]) - (p[b + 1] - p[a + 1]) * (p[c] - p[b]);
+    const s = cr > 1e-6 ? 1 : cr < -1e-6 ? -1 : 0;
+    if (s === 0 || (turn && s !== turn)) return false;
+    turn = s;
+  }
+  return true;
+}
+
 export function validateProject(doc) {
   const errors = [];
   const err = (path, message) => errors.push({ path, message });
@@ -219,6 +234,7 @@ export function validateProject(doc) {
         const keys = ['topLeftX', 'topLeftY', 'topRightX', 'topRightY', 'bottomRightX', 'bottomRightY', 'bottomLeftX', 'bottomLeftY'];
         noExtra(e, ['type', ...keys], ep); req(e, keys, ep);
         for (const k of keys) if (k in e) num(e[k], `${ep}.${k}`, 0, 1);
+        if (keys.every((k) => isNum(e[k])) && !convexQuad(keys.map((k) => e[k]))) err(ep, 'corners must form a convex quad');
       } else if (e.type === 'toner') { // D258
         const tones = ['shadows', 'darktones', 'midtones', 'brights', 'highlights'];
         noExtra(e, ['type', ...tones, 'amount'], ep); req(e, [...tones, 'amount'], ep);
