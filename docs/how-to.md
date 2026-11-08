@@ -71,6 +71,27 @@ New features are off by default. The control page has a "Feature flags" card; sw
 The flags in this build: `clip-pipeline`, `chat-effects`, `posting`, `bot-manager`, `test-broadcast`, `report-button`.
 The state is kept per PC in the event-core data folder (`flags.local.json`).
 
+## 6a. Scenes and layers: add, copy, rename (right-click)
+
+In the studio window, right-click a layer in the Layers list (or a scene in the Scenes list) for a short menu. The small **+**
+above each list adds a layer or a scene. None of this needs a feature flag. It all stops while you are live (the items are
+grey and say "Not while live"); the project file is saved at once.
+
+| Where | What it does | Keys (list has focus) |
+| --- | --- | --- |
+| Layer menu: Add layer... | Pick what to add: a copy of a layer, a colour, text, a camera, an overlay, a picture or a video. A kind the project cannot supply is grey. | |
+| Layer menu: Duplicate | A copy right above the layer, named "<name> copy", with the same position, size and look. Pictures, text, colours and overlays are copied. A camera or capture card cannot be opened twice, so its copy shows the same camera. | Ctrl+D |
+| Layer menu: Rename... | Change the name (1 to 80 letters). | F2 |
+| Layer menu: Show / Hide, Move up, Move down, Move to top, Move to bottom | The same as the buttons under the list. | |
+| Layer menu: Copy look, Paste look | Copy a layer's look (rounded corners, blur and so on) and put it on another layer. | Ctrl+Shift+C, Ctrl+Shift+V |
+| Layer menu: Look... | Jumps to the Look panel. | |
+| Layer menu: Delete... | Asks first. Needs "scene editing" switched on in Settings > Advanced (it removes things for good). | Del |
+| Scene menu: Add scene... | Asks for a name. The scene is made for both pictures (H and V). | |
+| Scene menu: Add layer..., Rename..., Duplicate scene | Duplicate scene copies the scene with all its layers. | F2 on a scene to rename |
+| Scene menu: Delete... | Asks first. Needs scene editing on. The scene the project starts with cannot be deleted. | Del |
+
+Show / Hide, Move and Paste look still work while live; they ask for "yes, on air" as before.
+
 ## 7. Recording and replay
 
 - **Record** on the control page writes an `.mkv` file (it survives a crash). Files go to the host data folder

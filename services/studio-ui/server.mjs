@@ -35,7 +35,7 @@ import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, loadRules, planA
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
-import { addLayer, addScene, moveLayer, removeLayer, removeScene } from '../project/structure.mjs';
+import { addLayer, addScene, duplicateLayer, duplicateScene, moveLayer, removeLayer, removeScene, renameLayer, renameScene } from '../project/structure.mjs';
 import { listAssets } from './assets.mjs';
 import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
@@ -143,8 +143,12 @@ export const PREVIEW_EDIT_FLAG = 'preview-edit';
 export const TRANSITIONS_FLAG = 'transitions';
 // Scene and layer structure edits (D240): add/remove scenes and layers from the control page, saved into the project.
 export const SCENE_EDIT_FLAG = 'scene-edit';
-const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove', 'layer.move'];
-const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'], 'layer.move': ['scene', 'layer', 'canvas', 'direction'] };
+// D292 (proposed): adding, duplicating and renaming lose nothing, so they work without the scene-edit flag (still
+// refused while live). Removing a scene or layer and the project-file move stay behind the flag.
+const FREE_STRUCTURE_OPS = ['scene.add', 'layer.add', 'layer.duplicate', 'layer.rename', 'scene.duplicate', 'scene.rename'];
+const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove', 'layer.move', ...FREE_STRUCTURE_OPS];
+const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'], 'layer.move': ['scene', 'layer', 'canvas', 'direction'],
+  'layer.duplicate': ['scene', 'layer'], 'layer.rename': ['scene', 'layer', 'name'], 'scene.duplicate': ['scene'], 'scene.rename': ['scene', 'name'] };
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
 const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
@@ -268,6 +272,7 @@ export function createStudioServer(opts) {
   let pollTimer = null;
   let lastSnapshot = null;
   let live = false;
+  const renamed = new Map(); // 'layer:<id>' | 'scene:<id>' -> new name, until the host reloads the project (D292)
   let lastImport = null; // { file, project, bases }: server side only, never sent to the page
   let previewSeen = null; // last host preview edit seq handled (null: not read yet)
   let previewBusy = null; // one previewSync at a time
@@ -526,12 +531,12 @@ export function createStudioServer(opts) {
   }
   // What the add-layer form can offer (D240): ids and names from the project file only (shown on this local page).
   function structureChoices(res) {
-    const on = !!flags && flags.isOn(SCENE_EDIT_FLAG);
+    const on = !!flags && flags.isOn(SCENE_EDIT_FLAG); // `on` now only says whether removing is allowed; choices need no flag (D292)
     const file = projectSync?.status?.().file;
-    if (!on || typeof file !== 'string') return json(res, 200, { on, available: false });
+    if (typeof file !== 'string') return json(res, 200, { on, available: false });
     let doc;
     try { projectSync.flush(); doc = loadProject(file).project; } catch { return json(res, 200, { on, available: false }); }
-    return json(res, 200, { on, available: true,
+    return json(res, 200, { on, available: true, canvases: doc.canvases.map((c) => c.id),
       scenes: doc.scenes.map((s) => ({ id: s.id, name: s.name, active: s.id === doc.activeScene })),
       layers: doc.scenes.flatMap((s) => s.layers.map((l) => ({ id: l.id, name: l.name, scene: s.id, sceneName: s.name, type: l.type }))),
       devices: (doc.devices ?? []).filter((d) => d.kind === 'camera' || d.kind === 'capture-card').map((d) => ({ id: d.id, name: d.name })),
@@ -539,7 +544,8 @@ export function createStudioServer(opts) {
       assets: listAssets(assetsDir) });
   }
   async function structureEdit(res, body) {
-    if (!flags || !flags.isOn(SCENE_EDIT_FLAG)) return json(res, 404, { error: 'scene-edit-off' });
+    if (!isPlain(body) || !STRUCTURE_OPS.includes(body.op)) return json(res, 400, { error: 'bad-params' });
+    if (!FREE_STRUCTURE_OPS.includes(body.op) && (!flags || !flags.isOn(SCENE_EDIT_FLAG))) return json(res, 404, { error: 'scene-edit-off' });
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
     if (!isPlain(body) || !STRUCTURE_OPS.includes(body.op) || Object.keys(body).some((k) => k !== 'op' && !STRUCTURE_KEYS[body.op].includes(k))) return json(res, 400, { error: 'bad-params' });
@@ -559,7 +565,9 @@ export function createStudioServer(opts) {
     try { doc = loadProject(file).project; } catch { return json(res, 409, { error: 'project-unreadable' }); }
     const { op } = body;
     const r = op === 'scene.add' ? addScene(doc, body) : op === 'scene.remove' ? removeScene(doc, body)
-      : op === 'layer.add' ? addLayer(doc, body) : op === 'layer.move' ? moveLayer(doc, body) : removeLayer(doc, body);
+      : op === 'layer.add' ? addLayer(doc, body) : op === 'layer.move' ? moveLayer(doc, body)
+      : op === 'layer.duplicate' ? duplicateLayer(doc, body) : op === 'layer.rename' ? renameLayer(doc, body)
+      : op === 'scene.duplicate' ? duplicateScene(doc, body) : op === 'scene.rename' ? renameScene(doc, body) : removeLayer(doc, body);
     if (r.error) return json(res, 409, { error: r.error, ...(r.errors ? { detail: r.errors.map((e) => `${e.path}: ${e.message}`).join('; ').slice(0, 300) } : {}) });
     const canvases = doc.canvases.map((c) => c.id.toUpperCase());
     try {
@@ -567,7 +575,17 @@ export function createStudioServer(opts) {
       else if (op === 'scene.remove') await host.call('scenes.remove', { scene: body.scene });
       else if (op === 'layer.add') await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
       else if (op === 'layer.move') await host.call('layers.orderFromProject', { project: r.project, scene: body.scene });
-      else await host.call('layers.remove', { scene: body.scene, layer: body.layer });
+      else if (op === 'layer.duplicate') {
+        await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
+        await host.call('layers.orderFromProject', { project: r.project, scene: body.scene }); // the copy lands just above its source
+      } else if (op === 'scene.duplicate') {
+        for (const canvas of canvases) await host.call('scenes.create', { scene: { id: r.scene.id, canvas, name: r.scene.name } });
+        for (const l of r.layers) await host.call('layers.addFromProject', { project: r.project, scene: r.scene.id, layer: l.id }); // bottom first
+      } else if (op === 'layer.rename' || op === 'scene.rename') {
+        // The host has no rename call: it takes the name from the saved project at its next load. Until then the lists
+        // below carry the new name (renamed), so the studio shows it at once.
+        renamed.set(op === 'layer.rename' ? `layer:${body.layer}` : `scene:${body.scene}`, r.layer?.name ?? r.scene.name);
+      } else await host.call('layers.remove', { scene: body.scene, layer: body.layer });
     } catch (e) {
       return json(res, 502, { error: 'host-error', detail: String(e?.message ?? e?.code ?? 'error').slice(0, 160) });
     }
@@ -578,6 +596,13 @@ export function createStudioServer(opts) {
     broadcast('edits', history.state());
     broadcast('layers', { source: 'structure', edit: { op, scene: r.scene?.id ?? body.scene, layer: r.layer?.id ?? body.layer ?? null } });
     return json(res, 200, { ok: true, op, ...(r.scene ? { scene: { id: r.scene.id, name: r.scene.name } } : {}), ...(r.layer ? { layer: { id: r.layer.id, name: r.layer.name, type: r.layer.type } } : {}), saved });
+  }
+  function withRenames(method, result) {
+    if (!renamed.size || !isPlain(result)) return result;
+    const fix = (o, kind) => (isPlain(o) && typeof o.id === 'string' && renamed.has(`${kind}:${o.id}`) ? { ...o, name: renamed.get(`${kind}:${o.id}`) } : o);
+    if (method === 'layers.list' && Array.isArray(result.layers)) return { ...result, layers: result.layers.map((l) => fix(l, 'layer')) };
+    if (method === 'scenes.list' && Array.isArray(result.scenes)) return { ...result, scenes: result.scenes.map((x) => fix(x, 'scene')) };
+    return result;
   }
   async function callHost(method, params) {
     const waits = method === 'project.load' ? limits.loadRetryMs : [];
@@ -720,6 +745,7 @@ export function createStudioServer(opts) {
       const pt = body.method === 'preview.open' ? tasks.start({ title: `Opening the ${params.canvas === 'v' ? 'vertical' : 'horizontal'} preview`, kind: 'preview' }) : null;
       try { result = await host.call(body.method, params) ?? null; } catch (e) { pt?.fail('Could not open'); return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
       pt?.done();
+      result = withRenames(body.method, result);
       remember(body.method, params, before);
       // P5b autosave: only after the host accepted the edit; the real host only (the fake has no project file).
       const saved = projectSync && host.describe().kind === 'host' ? projectSync.record(body.method, syncParams(body.method, params, result)) : false;

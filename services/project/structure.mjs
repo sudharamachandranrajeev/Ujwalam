@@ -148,3 +148,101 @@ export function moveLayer(doc, { scene, layer, canvas, direction } = {}) {
   ls.splice(to, 0, moved); // lands just past the passed layer (removing shifts indices by one in the same direction)
   return checked(project, {});
 }
+
+// ---- Duplicate and rename (D292, proposed). Neither needs the scene-edit flag (the server only refuses them while live).
+//
+//   duplicateLayer(doc, { scene, layer })   -> { project, layer }   the copy sits directly above the source in its scene.
+//   renameLayer(doc, { scene, layer, name }) -> { project, layer }  name trimmed, 1-80 characters.
+//   renameScene(doc, { scene, name })        -> { project, scene }
+//   duplicateScene(doc, { scene })           -> { project, scene, layers }  every layer copied with a new id, same order.
+// A copy is independent (own settings, placements, effects) for colour, text, image, media and browser layers. A device
+// capture cannot be opened twice, so the copy of a capture layer is a "duplicate" layer that shows the same open source
+// (the same thing "Add existing" makes); a copy of a duplicate layer points at the same real layer.
+// Devices, overlays and asset files are referenced by id or path, never cloned.
+
+const NAME_MAX = 80;
+const cleanName = (v) => (typeof v === 'string' && v.trim().length >= 1 && v.trim().length <= NAME_MAX ? v.trim() : null);
+
+/** First free "<base>-copy", "<base>-copy-2", ... (a lowercase id of at most 64 characters). */
+function freeId(base, taken) {
+  const root = base.replace(/-copy(-\d+)?$/, '');
+  for (let n = 1; n < 10000; n++) {
+    const suffix = n === 1 ? '-copy' : `-copy-${n}`;
+    const id = root.slice(0, 64 - suffix.length) + suffix;
+    if (!taken.has(id)) { taken.add(id); return id; }
+  }
+  return newId('copy');
+}
+
+/** First free "<name> copy", "<name> copy 2", ... not used in `names`. */
+function freeName(name, names, max = 120) {
+  const root = name.replace(/\s+copy(\s+\d+)?$/i, '');
+  for (let n = 1; n < 10000; n++) {
+    const suffix = n === 1 ? ' copy' : ` copy ${n}`;
+    const out = root.slice(0, max - suffix.length) + suffix;
+    if (!names.has(out)) { names.add(out); return out; }
+  }
+  return `${root.slice(0, max - 6)} copy`;
+}
+
+function copyOf(layer, id, name) {
+  const c = structuredClone(layer);
+  c.id = id;
+  c.name = name;
+  if (layer.type === 'capture') { // one device, one open source: show the same one
+    c.type = 'duplicate';
+    c.source = { layer: layer.id };
+  } else if (layer.type === 'duplicate') {
+    c.source = { layer: layer.source.layer };
+  }
+  return c;
+}
+
+export function duplicateLayer(doc, { scene, layer } = {}) {
+  const s = doc.scenes.find((x) => x.id === scene);
+  if (!s) return { error: 'unknown-scene' };
+  const at = s.layers.findIndex((l) => l.id === layer);
+  if (at < 0) return { error: 'unknown-layer' };
+  if (s.layers.length >= 64) return { error: 'too-many-layers' };
+  const src = s.layers[at];
+  const ids = new Set(allLayers(doc).map(({ layer: l }) => l.id));
+  const copy = copyOf(src, freeId(src.id, ids), freeName(src.name, new Set(s.layers.map((l) => l.name))));
+  const project = structuredClone(doc);
+  project.scenes.find((x) => x.id === scene).layers.splice(at + 1, 0, copy); // bottom first: above = next index
+  return checked(project, { layer: copy });
+}
+
+export function renameLayer(doc, { scene, layer, name } = {}) {
+  const n = cleanName(name);
+  if (!n) return { error: 'bad-name' };
+  const s = doc.scenes.find((x) => x.id === scene);
+  if (!s) return { error: 'unknown-scene' };
+  if (!s.layers.some((l) => l.id === layer)) return { error: 'unknown-layer' };
+  const project = structuredClone(doc);
+  const l = project.scenes.find((x) => x.id === scene).layers.find((x) => x.id === layer);
+  l.name = n;
+  return checked(project, { layer: l });
+}
+
+export function renameScene(doc, { scene, name } = {}) {
+  const n = cleanName(name);
+  if (!n) return { error: 'bad-name' };
+  if (!doc.scenes.some((x) => x.id === scene)) return { error: 'unknown-scene' };
+  const project = structuredClone(doc);
+  const s = project.scenes.find((x) => x.id === scene);
+  s.name = n;
+  return checked(project, { scene: s });
+}
+
+export function duplicateScene(doc, { scene } = {}) {
+  const s = doc.scenes.find((x) => x.id === scene);
+  if (!s) return { error: 'unknown-scene' };
+  if (doc.scenes.length >= 256) return { error: 'too-many-scenes' };
+  const sceneIds = new Set(doc.scenes.map((x) => x.id));
+  const layerIds = new Set(allLayers(doc).map(({ layer: l }) => l.id));
+  const copy = { ...structuredClone(s), id: freeId(s.id, sceneIds), name: freeName(s.name, new Set(doc.scenes.map((x) => x.name))) };
+  copy.layers = s.layers.map((l) => copyOf(l, freeId(l.id, layerIds), l.name)); // names stay: they sit in another scene
+  const project = structuredClone(doc);
+  project.scenes.splice(project.scenes.findIndex((x) => x.id === scene) + 1, 0, copy);
+  return checked(project, { scene: copy, layers: copy.layers });
+}

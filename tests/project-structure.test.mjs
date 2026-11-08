@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createFlags } from '../services/flags/index.mjs';
 import { createProject, saveProject, validateProject } from '../services/project/index.mjs';
-import { addLayer, addScene, moveLayer, removeLayer, removeScene } from '../services/project/structure.mjs';
+import { addLayer, addScene, duplicateLayer, duplicateScene, moveLayer, removeLayer, removeScene, renameLayer, renameScene } from '../services/project/structure.mjs';
 import { createProjectSync } from '../services/studio-ui/project-sync.mjs';
 import { listAssets } from '../services/studio-ui/assets.mjs';
 import { SCENE_EDIT_FLAG, createStudioServer } from '../services/studio-ui/server.mjs';
@@ -127,7 +127,7 @@ test('server: flag gate, live lock, host first then the file; a host refusal sav
       headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
     const disk = () => JSON.parse(readFileSync(file, 'utf8'));
 
-    assert.equal((await post({ op: 'scene.add', name: 'X' })).body.error, 'scene-edit-off');
+    assert.equal((await post({ op: 'scene.remove', scene: 'x' })).body.error, 'scene-edit-off', 'removing needs the flag');
     flags.set(SCENE_EDIT_FLAG, true);
     assert.equal((await post({ op: 'scene.add', name: 'X', extra: 1 })).status, 400);
     let r = await post({ op: 'scene.add', name: 'Starting soon' });
@@ -262,5 +262,178 @@ test('server: layer.move saves the project order after the host reorders from it
     assert.equal(r.body.error, 'live-locked');
     assert.deepEqual(disk(), [top.layer.id, 'game'], 'nothing saved while live');
     assert.equal(calls.length, 1);
+  } finally { await srv.close(); }
+});
+
+test('duplicateLayer (D292): new id and name, directly above the source, deep copy, valid project', () => {
+  const doc = base();
+  const s = doc.scenes[0].id;
+  doc.scenes[0].layers[0].effects = [{ type: 'blur', strength: 4 }];
+  const top = addLayer(doc, { scene: s, kind: 'color', color: '#00ff00' }).project; // game, <top>
+  const topId = top.scenes[0].layers[1].id;
+  const a = duplicateLayer(top, { scene: s, layer: 'game' });
+  assert.ok(!a.error, JSON.stringify(a));
+  assert.equal(a.layer.id, 'game-copy');
+  assert.equal(a.layer.name, 'Game copy');
+  assert.deepEqual(a.project.scenes[0].layers.map((l) => l.id), ['game', 'game-copy', topId], 'directly above the source, below the rest');
+  assert.deepEqual(a.layer.placements, top.scenes[0].layers[0].placements);
+  assert.deepEqual(a.layer.source, { color: '#101010' });
+  assert.deepEqual(a.layer.effects, top.scenes[0].layers[0].effects);
+  a.layer.effects[0].strength = 99;
+  a.layer.source.color = '#ffffff';
+  assert.equal(top.scenes[0].layers[0].source.color, '#101010', 'input untouched');
+  assert.equal(a.project.scenes[0].layers[0].source.color, '#101010', 'the source is independent of the copy');
+  assert.equal(a.project.scenes[0].layers[0].effects[0].strength, 4);
+  assert.ok(validateProject(a.project).ok);
+  const b = duplicateLayer(a.project, { scene: s, layer: 'game' });
+  assert.equal(b.layer.id, 'game-copy-2');
+  assert.equal(b.layer.name, 'Game copy 2');
+  const c = duplicateLayer(b.project, { scene: s, layer: 'game-copy' });
+  assert.equal(c.layer.id, 'game-copy-3', 'a copy of a copy takes the next free number');
+  assert.equal(c.layer.name, 'Game copy 3');
+  assert.equal(duplicateLayer(doc, { scene: s, layer: 'zz' }).error, 'unknown-layer');
+  assert.equal(duplicateLayer(doc, { scene: 'zz', layer: 'game' }).error, 'unknown-scene');
+  const long = structuredClone(doc);
+  long.scenes[0].layers[0].id = 'x'.repeat(64);
+  assert.ok(duplicateLayer(long, { scene: s, layer: 'x'.repeat(64) }).layer.id.length <= 64);
+});
+
+test('duplicateLayer: a device capture is copied as a layer showing the same source; a copy of a copy points at the real layer', () => {
+  let doc = base();
+  const s = doc.scenes[0].id;
+  doc = addLayer(doc, { scene: s, kind: 'capture', device: 'cam' }).project;
+  const cam = doc.scenes[0].layers.at(-1);
+  const a = duplicateLayer(doc, { scene: s, layer: cam.id });
+  assert.ok(!a.error, JSON.stringify(a));
+  assert.equal(a.layer.type, 'duplicate');
+  assert.deepEqual(a.layer.source, { layer: cam.id });
+  assert.deepEqual(a.layer.placements, cam.placements);
+  assert.equal(a.project.devices.length, doc.devices.length, 'devices are referenced, never cloned');
+  const b = duplicateLayer(a.project, { scene: s, layer: a.layer.id });
+  assert.deepEqual(b.layer.source, { layer: cam.id });
+  assert.ok(validateProject(b.project).ok);
+  doc = addLayer(doc, { scene: s, kind: 'overlay', overlay: 'alerts' }).project;
+  const ov = doc.scenes[0].layers.at(-1);
+  const o = duplicateLayer(doc, { scene: s, layer: ov.id });
+  assert.equal(o.layer.type, 'browser');
+  assert.deepEqual(o.layer.source, ov.source);
+});
+
+test('renameLayer / renameScene: trimmed, 1-80 characters, unknown ids refused', () => {
+  const doc = base();
+  const s = doc.scenes[0].id;
+  assert.equal(renameLayer(doc, { scene: s, layer: 'game', name: '  Main game  ' }).layer.name, 'Main game');
+  assert.equal(renameLayer(doc, { scene: s, layer: 'game', name: '   ' }).error, 'bad-name');
+  assert.equal(renameLayer(doc, { scene: s, layer: 'game', name: 'x'.repeat(81) }).error, 'bad-name');
+  assert.ok(!renameLayer(doc, { scene: s, layer: 'game', name: 'x'.repeat(80) }).error);
+  assert.equal(renameLayer(doc, { scene: s, layer: 'game', name: 5 }).error, 'bad-name');
+  assert.equal(renameLayer(doc, { scene: s, layer: 'zz', name: 'a' }).error, 'unknown-layer');
+  assert.equal(renameLayer(doc, { scene: 'zz', layer: 'game', name: 'a' }).error, 'unknown-scene');
+  assert.equal(doc.scenes[0].layers[0].name, 'Game', 'input unchanged');
+  assert.equal(renameScene(doc, { scene: s, name: ' Intro ' }).project.scenes[0].name, 'Intro');
+  assert.equal(renameScene(doc, { scene: s, name: '' }).error, 'bad-name');
+  assert.equal(renameScene(doc, { scene: 'zz', name: 'a' }).error, 'unknown-scene');
+});
+
+test('duplicateScene: every layer copied with a new id in the same order; capture layers share the open source', () => {
+  let doc = base();
+  const s = doc.scenes[0].id;
+  doc = addLayer(doc, { scene: s, kind: 'capture', device: 'cam' }).project;
+  doc = addLayer(doc, { scene: s, kind: 'text', text: 'Hi' }).project;
+  const r = duplicateScene(doc, { scene: s });
+  assert.ok(!r.error, JSON.stringify(r));
+  assert.equal(r.scene.id, `${s}-copy`.slice(0, 64));
+  assert.equal(r.scene.name, `${doc.scenes[0].name} copy`);
+  assert.equal(r.project.scenes[1].id, r.scene.id, 'right after the source');
+  assert.deepEqual(r.layers.map((l) => l.name), doc.scenes[0].layers.map((l) => l.name), 'layer names stay');
+  assert.deepEqual(r.layers.map((l) => l.type), ['color', 'duplicate', 'text']);
+  assert.equal(r.layers[1].source.layer, doc.scenes[0].layers[1].id);
+  const ids = r.project.scenes.flatMap((x) => x.layers.map((l) => l.id));
+  assert.equal(new Set(ids).size, ids.length, 'layer ids unique across the project');
+  assert.equal(r.project.activeScene, doc.activeScene);
+  assert.ok(validateProject(r.project).ok);
+  assert.equal(duplicateScene(r.project, { scene: s }).scene.id, `${s}-copy-2`.slice(0, 64));
+  assert.equal(duplicateScene(doc, { scene: 'zz' }).error, 'unknown-scene');
+});
+
+test('server (D292): duplicate and rename work with scene-edit OFF; add/remove still need it; refused while live', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-struct4-'));
+  const file = path.join(dir, 'p.project.json');
+  const doc = base();
+  saveProject(file, doc);
+  const sid = doc.scenes[0].id;
+  const calls = [];
+  const state = { live: false, fail: false };
+  const host = { describe: () => ({ kind: 'host', available: true }), call: async (m, p) => {
+    if (m === 'host.status') return { live: state.live };
+    if (m === 'layers.list') return { scene: sid, layers: [{ id: 'game', name: 'Game' }, { id: 'game-copy', name: 'Game copy' }] };
+    if (m === 'scenes.list') return { scenes: [{ id: sid, name: 'Scene' }] };
+    if (state.fail) throw new Error('host says no');
+    calls.push([m, p.scene?.id ?? p.scene, p.layer]);
+    return {};
+  } };
+  const flags = createFlags({ dataDir: dir }); // scene-edit stays off
+  const core = { describe: () => ({ available: false }), call: async () => { throw new Error('x'); } };
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, flags, projectSync: createProjectSync({ file }), limits: { statusPollMs: 50 } });
+  const { port } = await srv.listen();
+  try {
+    const cookie = await new Promise((resolve) => http.get({ host: '127.0.0.1', port, path: `/login?k=${KEY}` }, (res) => { res.resume(); resolve(res.headers['set-cookie'][0].split(';')[0]); }));
+    const csrf = (await raw(port, { url: '/ui/api/session', headers: { cookie } })).body.csrf;
+    const hdr = { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf };
+    const post = (body) => raw(port, { method: 'POST', url: '/ui/api/project/structure', body: JSON.stringify(body), headers: hdr });
+    const disk = () => JSON.parse(readFileSync(file, 'utf8'));
+    assert.equal(flags.isOn(SCENE_EDIT_FLAG), false);
+    assert.equal((await post({ op: 'layer.remove', scene: sid, layer: 'game' })).body.error, 'scene-edit-off');
+    assert.equal((await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', direction: 'up' })).body.error, 'scene-edit-off');
+    const choices = (await raw(port, { url: '/ui/api/project/structure', headers: { cookie } })).body;
+    assert.deepEqual([choices.on, choices.available, choices.canvases], [false, true, ['h', 'v']], 'the add lists need no flag');
+    assert.equal((await post({ op: 'layer.duplicate', scene: sid, layer: 'game', name: 'x' })).status, 400, 'unknown key');
+    assert.equal((await post({ op: 'layer.rename', scene: sid, layer: 'game' })).body.error, 'bad-name');
+    assert.equal((await post({ op: 'nope' })).status, 400);
+    state.live = true;
+    assert.equal((await post({ op: 'layer.duplicate', scene: sid, layer: 'game' })).body.error, 'live-locked');
+    assert.equal((await post({ op: 'layer.rename', scene: sid, layer: 'game', name: 'A' })).body.error, 'live-locked');
+    state.live = false;
+    assert.equal(disk().scenes[0].layers.length, 1, 'nothing saved so far');
+    let r = await post({ op: 'layer.duplicate', scene: sid, layer: 'game' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(r.body.layer, { id: 'game-copy', name: 'Game copy', type: 'color' });
+    assert.deepEqual(calls, [['layers.addFromProject', sid, 'game-copy'], ['layers.orderFromProject', sid, undefined]], 'add, then order');
+    assert.deepEqual(disk().scenes[0].layers.map((l) => l.id), ['game', 'game-copy']);
+    state.fail = true; // a host refusal saves nothing
+    r = await post({ op: 'layer.duplicate', scene: sid, layer: 'game' });
+    assert.equal(r.status, 502);
+    assert.equal(disk().scenes[0].layers.length, 2);
+    state.fail = false;
+    r = await post({ op: 'layer.rename', scene: sid, layer: 'game-copy', name: '  Overlay two ' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(disk().scenes[0].layers[1].name, 'Overlay two');
+    // the host has no rename: its lists carry the new name until it reloads the project
+    const list = await raw(port, { method: 'POST', url: '/ui/api/host', body: JSON.stringify({ method: 'layers.list', params: { scene: sid } }), headers: hdr });
+    assert.deepEqual(list.body.result.layers.map((l) => l.name), ['Game', 'Overlay two']);
+    r = await post({ op: 'scene.rename', scene: sid, name: 'Opening' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(disk().scenes[0].name, 'Opening');
+    const sl = await raw(port, { method: 'POST', url: '/ui/api/host', body: JSON.stringify({ method: 'scenes.list', params: {} }), headers: hdr });
+    assert.equal(sl.body.result.scenes[0].name, 'Opening');
+    calls.length = 0;
+    r = await post({ op: 'layer.add', scene: sid, kind: 'color', color: '#00aa00' });
+    assert.equal(r.status, 200, 'adding a layer needs no flag: ' + JSON.stringify(r.body));
+    assert.equal(r.body.layer.type, 'color');
+    assert.deepEqual(calls.map((c) => c[0]), ['layers.addFromProject']);
+    r = await post({ op: 'scene.add', name: 'Brand new' });
+    assert.equal(r.status, 200, 'adding a scene needs no flag: ' + JSON.stringify(r.body));
+    state.live = true;
+    assert.equal((await post({ op: 'layer.add', scene: sid, kind: 'color', color: '#00aa00' })).body.error, 'live-locked');
+    assert.equal((await post({ op: 'scene.add', name: 'Y' })).body.error, 'live-locked');
+    state.live = false;
+    calls.length = 0;
+    r = await post({ op: 'scene.duplicate', scene: sid });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.scene.id, `${sid}-copy`.slice(0, 64));
+    assert.deepEqual(calls.map((c) => c[0]), ['scenes.create', 'scenes.create', 'layers.addFromProject', 'layers.addFromProject', 'layers.addFromProject'], 'H and V scene, then the layers bottom first');
+    assert.equal(disk().scenes.length, 3);
+    assert.equal(disk().scenes[1].layers.length, 3, 'the copy follows the source, which now has the added colour layer');
+    assert.equal(validateProject(disk()).ok, true);
   } finally { await srv.close(); }
 });

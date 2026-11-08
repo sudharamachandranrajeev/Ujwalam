@@ -127,6 +127,29 @@ export function createFakeHost({ outputsReady = false } = {}) {
           if (crop) l.placement.crop = { ...(l.placement.crop ?? {}), ...crop };
           return { scene: p.scene, layer: p.layer, placement: structuredClone(l.placement) };
         }
+        // D292: the structure edits (duplicate, add, order, remove) as the real host takes them from the project document.
+        case 'scenes.create': {
+          if (scenes.some((x) => x.id === p.scene.id)) return { ok: true }; // one entry per scene; the fake has one canvas each
+          scenes.push({ id: p.scene.id, name: p.scene.name, canvas: p.scene.canvas }); layers[p.scene.id] ??= [];
+          return { ok: true };
+        }
+        case 'scenes.remove': { for (let i = scenes.length - 1; i >= 0; i--) if (scenes[i].id === p.scene) scenes.splice(i, 1); delete layers[p.scene]; return { ok: true }; }
+        case 'layers.addFromProject': {
+          const sc = need(scenes.find((x) => x.id === p.scene), 'scene');
+          const ps = need(p.project.scenes.find((x) => x.id === p.scene), 'scene');
+          const pl = need(ps.layers.find((x) => x.id === p.layer), 'layer');
+          const place = pl.placements[sc.canvas.toLowerCase()] ?? Object.values(pl.placements)[0];
+          layers[p.scene] ??= [];
+          layers[p.scene].push({ id: pl.id, name: pl.name, visible: place.visible !== false, placement: structuredClone(place), ...(pl.effects ? { effects: structuredClone(pl.effects) } : {}) });
+          return { ok: true };
+        }
+        case 'layers.orderFromProject': {
+          const ps = need(p.project.scenes.find((x) => x.id === p.scene), 'scene');
+          const arr = need(layers[p.scene], 'scene');
+          arr.sort((x, y) => ps.layers.findIndex((l) => l.id === x.id) - ps.layers.findIndex((l) => l.id === y.id));
+          return { ok: true };
+        }
+        case 'layers.remove': { const arr = need(layers[p.scene], 'scene'); const i = arr.findIndex((l) => l.id === p.layer); need(i >= 0 ? arr[i] : null, 'layer'); arr.splice(i, 1); return { ok: true }; }
         case 'layers.setVisible': need(need(layers[p.scene], 'scene').find((l) => l.id === p.layer), 'layer').visible = p.visible; return { ok: true };
         case 'layers.setEffects': { // D290: effects are kept per layer and listed by layers.list
           const l = need(need(layers[p.scene], 'scene').find((x) => x.id === p.layer), 'layer');

@@ -29,6 +29,8 @@ class QFormLayout;
 class QGroupBox;
 class QComboBox;
 class QLineEdit;
+class QMenu;
+class QToolButton;
 class QCheckBox;
 class TaskBar;
 class LookPanel;
@@ -118,13 +120,33 @@ private:
 	void loadStructure();
 	void renderAddPick();
 	void structureEdit(const QJsonObject &body);
+	// Right-click menus and keys on the layer and scene lists (D292): the same actions as the buttons plus duplicate,
+	// rename, copy / paste look, delete. Duplicate and rename work without the scene-edit flag; delete needs it.
+	void showLayerMenu(const QPoint &pos);
+	void showSceneMenu(const QPoint &pos);
+	QMenu *buildLayerMenu(QWidget *parent, bool blank = false);
+	QMenu *buildSceneMenu(QWidget *parent, const QString &sceneId, bool blank = false);
+	void layerDuplicate();
+	void layerRename();
+	void layerDelete();
+	void layerMoveTo(int index);
+	void layerToggleVisible();
+	void lookCopy();
+	void lookPaste();
+	void lookFocus();
+	void sceneRename(const QString &id);
+	void sceneDuplicate(const QString &id);
+	void sceneDelete(const QString &id);
+	QString sceneKeyId() const; // the scene the scene list's current row names
 	void loadTransitions();
 	void renderTransition();
 	void applyTransition();
 	// Streamer.bot / Speaker.bot start and stop (BM, flag bot-manager): typed "yes" each; stop ends only a copy
 	// Ujwalam started (the server checks).
 	void loadBots();
-	void openAddLayer(); // Meld-style add-layer window (D274): kinds with what they are, a searchable pick list
+	void openAddLayer(const QString &sceneId = QString()); // add-layer window (D274, D292): kinds with what they are, a searchable pick list
+	void openAddScene();   // add-scene window (D292): a name
+	void updateAddButtons();
 	void openImport();   // Meld session import -> host check -> typed confirm -> project.load (the page's flow)
 	void openPosts();    // flag posting (P16a): review clip packages; YouTube private upload needs "yes, upload"
 	void report();       // flag report-button (D199): prefilled GitHub issue link opened in the user's browser
@@ -171,6 +193,11 @@ private:
 	QAction *reportAct_ = nullptr, *postsAct_ = nullptr; // in the More menu (D285)
 	QVBoxLayout *botRows_ = nullptr;
 	QJsonObject structure_;   // GET /ui/api/project/structure
+	QJsonArray lookClip_;     // Copy look (D292): the effects list of the layer copied, in this process only
+	bool hasLookClip_ = false;
+	QPointer<QDialog> addDlg_; // the open Add layer / Add scene window (one at a time)
+	QToolButton *addSceneBtn_ = nullptr, *addLayerBtn_ = nullptr;
+	QJsonObject lastMenu_;    // the last menu built, for the probe
 	QJsonObject transitions_; // GET /ui/api/project/transitions
 	QGroupBox *structBox_ = nullptr, *transBox_ = nullptr;
 	QComboBox *addKind_ = nullptr, *addPick_ = nullptr;
