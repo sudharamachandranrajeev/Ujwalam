@@ -79,6 +79,7 @@ public:
 	// saves it) with the options of the last load, on every canvas it has a placement on, sharing an existing source
 	// (duplicates, the other canvas). The doc becomes the host's model document.
 	json::Value layer_add_model(const json::Value &doc, const std::string &scene, const std::string &layer);
+	json::Value layer_order_model(const json::Value &doc, const std::string &scene);
 	json::Value layer_set_visible(const std::string &scene, const std::string &canvas, const std::string &layer, bool visible);
 	json::Value layer_set_placement(const std::string &scene, const std::string &canvas, const std::string &layer,
 					const json::Value &patch);

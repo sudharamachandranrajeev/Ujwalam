@@ -1100,6 +1100,49 @@ json::Value Studio::layer_add_model(const json::Value &doc, const std::string &s
 	return r;
 }
 
+// Layer order from the project (D243): each canvas's scene items take the order of the document's scene (bottom
+// first; the plan lists only the layers on that canvas). Layers the host has but the plan lacks (skipped as
+// unavailable at load) keep their place after the ordered ones. Nothing is added or removed.
+json::Value Studio::layer_order_model(const json::Value &doc, const std::string &sid)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	if (format_ != "project-v1")
+		throw Error(rpc::CONFLICT, "no project v1 is loaded");
+	if (!model::is_model(doc))
+		throw Error(rpc::INVALID_PARAMS, "project must be a project v1 document");
+	devices::List list;
+	model::Options mo = model_options(doc, last_opts_, list, flags_.allow_devices);
+	model::Plan p = model::build(doc, mo);
+	auto ps = std::find_if(p.scenes.begin(), p.scenes.end(), [&](const model::Scene &x) { return x.id == sid; });
+	if (ps == p.scenes.end())
+		throw Error(rpc::INVALID_PARAMS, "no such scene in the project: " + sid);
+	json::Value cvs = json::Value::array();
+	for (auto &kv : ps->items) {
+		Scene *s = scene(sid, kv.first);
+		if (!s)
+			continue;
+		std::map<std::string, size_t> rank;
+		for (size_t i = 0; i < kv.second.size(); i++)
+			rank[kv.second[i].layer] = i;
+		auto key = [&](const Layer &l) {
+			auto it = rank.find(l.id);
+			return it == rank.end() ? kv.second.size() : it->second;
+		};
+		std::stable_sort(s->layers.begin(), s->layers.end(), [&](const Layer &a, const Layer &b) { return key(a) < key(b); });
+		apply_order(*s);
+		cvs.push(s->canvas);
+	}
+	if (cvs.as_array().empty())
+		throw Error(rpc::CONFLICT, "scene " + sid + " is on no canvas of the host");
+	model_doc_ = doc;
+	dirty_ = false;
+	hlog::info("layer order from the project: %s", sid.c_str());
+	json::Value r = json::Value::object();
+	r.set("scene", sid);
+	r.set("canvases", std::move(cvs));
+	return r;
+}
+
 json::Value Studio::canvases_json() const
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);

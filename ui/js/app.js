@@ -47,7 +47,7 @@
   }
 
   // ---- scene and layer structure edits (D240, flag scene-edit; saved into the project file, refused while live) ----
-  var STRUCT_ERRORS = { 'live-locked': 'Not while live.', 'host-unavailable': 'The studio host is not reachable.', 'scene-active': 'That scene is the project start scene; pick another first.', 'last-scene': 'The last scene cannot be removed.', 'layer-copied': 'Another layer is a copy of it; remove the copy first.', 'layer-has-audio': 'Its audio is in the mixer; it cannot be removed here.', 'bad-name': 'Type a scene name.', 'bad-color': 'Colour must look like #RRGGBB.', 'bad-text': 'Type the text.', 'no-project-file': 'No project file is open.', 'scene-edit-off': 'Turn on the scene-edit flag first.', 'unknown-asset': 'That file is no longer in the stream assets folder.' };
+  var STRUCT_ERRORS = { 'live-locked': 'Not while live.', 'host-unavailable': 'The studio host is not reachable.', 'scene-active': 'That scene is the project start scene; pick another first.', 'last-scene': 'The last scene cannot be removed.', 'layer-copied': 'Another layer is a copy of it; remove the copy first.', 'layer-has-audio': 'Its audio is in the mixer; it cannot be removed here.', 'bad-name': 'Type a scene name.', 'bad-color': 'Colour must look like #RRGGBB.', 'bad-text': 'Type the text.', 'no-project-file': 'No project file is open.', 'scene-edit-off': 'Turn on the scene-edit flag first.', 'unknown-asset': 'That file is no longer in the stream assets folder.', 'at-edge': 'It is already at the edge on this canvas.' };
   var choices = null;
   function renderStructure(on) {
     $('scene-edit').hidden = !on; $('layer-edit').hidden = !on;
@@ -157,8 +157,8 @@
     for (var d = 0; d < n; d++) {
       (function (l, hi) {
         var vis = el('button', { class: 'icon-btn', type: 'button', text: l.visible ? 'Hide' : 'Show', 'aria-label': (l.visible ? 'Hide ' : 'Show ') + l.name, onclick: function () { guard(Api.host('layers.setVisible', layerArgs({ layer: l.id, visible: !l.visible })).then(loadLayers)); } });
-        var up = el('button', { class: 'icon-btn', type: 'button', text: 'Up', 'aria-label': 'Move ' + l.name + ' up', disabled: hi === n - 1, onclick: function () { move(l, hi + 1); } });
-        var dn = el('button', { class: 'icon-btn', type: 'button', text: 'Dn', 'aria-label': 'Move ' + l.name + ' down', disabled: hi === 0, onclick: function () { move(l, hi - 1); } });
+        var up = el('button', { class: 'icon-btn', type: 'button', text: 'Up', 'aria-label': 'Move ' + l.name + ' up', disabled: hi === n - 1, onclick: function () { move(l, hi, hi + 1); } });
+        var dn = el('button', { class: 'icon-btn', type: 'button', text: 'Dn', 'aria-label': 'Move ' + l.name + ' down', disabled: hi === 0, onclick: function () { move(l, hi, hi - 1); } });
         var name = el('span', { class: 'name', text: l.name, tabindex: '0', role: 'button', title: 'Edit in the inspector', 'aria-label': 'Edit ' + l.name + ' in the inspector' });
         var pick = function () { state.selected = l.id; renderLayers(); renderInspector(); };
         name.addEventListener('click', pick);
@@ -214,7 +214,19 @@
       return loadLayers().then(function () { renderInspector(); setText($('insp-note'), 'Applied.'); });
     }));
   }
-  function move(l, to) {
+  // With scene editing on, a move changes the project order (shared by H and V, saved) and the host follows it on
+  // every canvas (D243). While live, or for a layer outside the project, it is the host's live-only move.
+  function move(l, from, to) {
+    if (!choices) { hostMove(l, to); return; }
+    Api.structureEdit({ op: 'layer.move', scene: state.activeScene, layer: l.id, canvas: state.canvas, direction: to > from ? 'up' : 'down' })
+      .then(function () { setText($('struct-note'), 'Order saved.'); return loadLayers(); })
+      .catch(function (e) {
+        var code = e && e.message;
+        if (code === 'live-locked' || code === 'unknown-layer' || code === 'not-on-canvas') { hostMove(l, to); return; }
+        setText($('struct-note'), STRUCT_ERRORS[code] || ('Not moved: ' + ((e && (e.detail || e.message)) || 'failed')));
+      });
+  }
+  function hostMove(l, to) {
     guard(Api.host('layers.move', layerArgs({ layer: l.id, index: to })).then(function (res) {
       if (res && res.verdict === 'confirm') { openConfirm(res.pending); return; }
       return loadLayers();

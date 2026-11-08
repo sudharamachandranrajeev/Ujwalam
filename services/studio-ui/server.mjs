@@ -35,7 +35,7 @@ import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, loadRules, planA
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
-import { addLayer, addScene, removeLayer, removeScene } from '../project/structure.mjs';
+import { addLayer, addScene, moveLayer, removeLayer, removeScene } from '../project/structure.mjs';
 import { listAssets } from './assets.mjs';
 import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
@@ -128,8 +128,8 @@ export const PREVIEW_EDIT_FLAG = 'preview-edit';
 export const TRANSITIONS_FLAG = 'transitions';
 // Scene and layer structure edits (D240): add/remove scenes and layers from the control page, saved into the project.
 export const SCENE_EDIT_FLAG = 'scene-edit';
-const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove'];
-const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'] };
+const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove', 'layer.move'];
+const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'], 'layer.move': ['scene', 'layer', 'canvas', 'direction'] };
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
 const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
@@ -468,7 +468,7 @@ export function createStudioServer(opts) {
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
     if (!isPlain(body) || !STRUCTURE_OPS.includes(body.op) || Object.keys(body).some((k) => k !== 'op' && !STRUCTURE_KEYS[body.op].includes(k))) return json(res, 400, { error: 'bad-params' });
-    for (const k of ['name', 'scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'layer', 'file']) {
+    for (const k of ['name', 'scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'layer', 'file', 'canvas', 'direction']) {
       if (body[k] !== undefined && (typeof body[k] !== 'string' || body[k].length > (k === 'text' ? 2000 : k === 'file' ? 260 : 120))) return json(res, 400, { error: 'bad-params' });
     }
     // An asset layer may only name a file the assets listing offers right now (never a path the page made up).
@@ -484,13 +484,14 @@ export function createStudioServer(opts) {
     try { doc = loadProject(file).project; } catch { return json(res, 409, { error: 'project-unreadable' }); }
     const { op } = body;
     const r = op === 'scene.add' ? addScene(doc, body) : op === 'scene.remove' ? removeScene(doc, body)
-      : op === 'layer.add' ? addLayer(doc, body) : removeLayer(doc, body);
+      : op === 'layer.add' ? addLayer(doc, body) : op === 'layer.move' ? moveLayer(doc, body) : removeLayer(doc, body);
     if (r.error) return json(res, 409, { error: r.error, ...(r.errors ? { detail: r.errors.map((e) => `${e.path}: ${e.message}`).join('; ').slice(0, 300) } : {}) });
     const canvases = doc.canvases.map((c) => c.id.toUpperCase());
     try {
       if (op === 'scene.add') for (const canvas of canvases) await host.call('scenes.create', { scene: { id: r.scene.id, canvas, name: r.scene.name } });
       else if (op === 'scene.remove') await host.call('scenes.remove', { scene: body.scene });
       else if (op === 'layer.add') await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
+      else if (op === 'layer.move') await host.call('layers.orderFromProject', { project: r.project, scene: body.scene });
       else await host.call('layers.remove', { scene: body.scene, layer: body.layer });
     } catch (e) {
       return json(res, 502, { error: 'host-error', detail: String(e?.message ?? e?.code ?? 'error').slice(0, 160) });

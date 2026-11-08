@@ -10,7 +10,7 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createFlags } from '../services/flags/index.mjs';
 import { createProject, saveProject, validateProject } from '../services/project/index.mjs';
-import { addLayer, addScene, removeLayer, removeScene } from '../services/project/structure.mjs';
+import { addLayer, addScene, moveLayer, removeLayer, removeScene } from '../services/project/structure.mjs';
 import { createProjectSync } from '../services/studio-ui/project-sync.mjs';
 import { listAssets } from '../services/studio-ui/assets.mjs';
 import { SCENE_EDIT_FLAG, createStudioServer } from '../services/studio-ui/server.mjs';
@@ -199,5 +199,68 @@ test('server: an asset layer must name a file the listing offers', async () => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(calls.length, 1);
     assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')).scenes[0].layers.at(-1).source, { file: { base: 'media', rel: 'logo.png' } });
+  } finally { await srv.close(); }
+});
+
+test('moveLayer (D243): passes the next layer on the chosen canvas; edges, other canvases and bad input refused', () => {
+  const doc = base();
+  const s = doc.scenes[0].id;
+  // bottom first: game (H+V), vonly (V), top (H+V)
+  let d = addLayer(doc, { scene: s, kind: 'color', color: '#ff0000' }).project;
+  const vonly = d.scenes[0].layers.at(-1);
+  vonly.id = 'vonly'; delete vonly.placements.h;
+  d = addLayer(d, { scene: s, kind: 'color', color: '#00ff00' }).project;
+  d.scenes[0].layers.at(-1).id = 'top';
+  assert.ok(validateProject(d).ok, JSON.stringify(validateProject(d).errors));
+  const ids = (r) => r.project.scenes[0].layers.map((l) => l.id);
+  assert.deepEqual(ids(moveLayer(d, { scene: s, layer: 'game', canvas: 'h', direction: 'up' })), ['vonly', 'top', 'game'], 'on H it passes top, skipping the V-only layer');
+  assert.deepEqual(ids(moveLayer(d, { scene: s, layer: 'game', canvas: 'v', direction: 'up' })), ['vonly', 'game', 'top'], 'on V it passes the V-only layer');
+  assert.deepEqual(ids(moveLayer(d, { scene: s, layer: 'top', canvas: 'h', direction: 'down' })), ['top', 'game', 'vonly']);
+  assert.equal(d.scenes[0].layers[0].id, 'game', 'input unchanged');
+  assert.equal(moveLayer(d, { scene: s, layer: 'top', canvas: 'h', direction: 'up' }).error, 'at-edge');
+  assert.equal(moveLayer(d, { scene: s, layer: 'game', canvas: 'v', direction: 'down' }).error, 'at-edge');
+  assert.equal(moveLayer(d, { scene: s, layer: 'vonly', canvas: 'h', direction: 'up' }).error, 'not-on-canvas');
+  assert.equal(moveLayer(d, { scene: s, layer: 'game', canvas: 'x', direction: 'up' }).error, 'bad-move');
+  assert.equal(moveLayer(d, { scene: s, layer: 'game', canvas: 'h', direction: 'left' }).error, 'bad-move');
+  assert.equal(moveLayer(d, { scene: s, layer: 'zz', canvas: 'h', direction: 'up' }).error, 'unknown-layer');
+  assert.equal(moveLayer(d, { scene: 'zz', layer: 'game', canvas: 'h', direction: 'up' }).error, 'unknown-scene');
+});
+
+test('server: layer.move saves the project order after the host reorders from it; refused while live', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-struct3-'));
+  const file = path.join(dir, 'p.project.json');
+  const doc = base();
+  const top = addLayer(doc, { scene: doc.scenes[0].id, kind: 'color', color: '#00ff00' });
+  saveProject(file, top.project);
+  const calls = [];
+  const state = { live: false };
+  const host = { describe: () => ({ kind: 'host', available: true }), call: async (m, p) => {
+    if (m === 'host.status') return { live: state.live };
+    if (m === 'layers.orderFromProject') calls.push([p.scene, p.project.scenes[0].layers.map((l) => l.id)]);
+    return {};
+  } };
+  const flags = createFlags({ dataDir: dir });
+  flags.set(SCENE_EDIT_FLAG, true);
+  const core = { describe: () => ({ available: false }), call: async () => { throw new Error('x'); } };
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, flags, projectSync: createProjectSync({ file }), limits: { statusPollMs: 50 } });
+  const { port } = await srv.listen();
+  try {
+    const cookie = await new Promise((resolve) => http.get({ host: '127.0.0.1', port, path: `/login?k=${KEY}` }, (res) => { res.resume(); resolve(res.headers['set-cookie'][0].split(';')[0]); }));
+    const csrf = (await raw(port, { url: '/ui/api/session', headers: { cookie } })).body.csrf;
+    const post = (body) => raw(port, { method: 'POST', url: '/ui/api/project/structure', body: JSON.stringify(body),
+      headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
+    const disk = () => JSON.parse(readFileSync(file, 'utf8')).scenes[0].layers.map((l) => l.id);
+    const scene = doc.scenes[0].id;
+    assert.equal((await post({ op: 'layer.move', scene, layer: 'game', canvas: 'h', direction: 'up', index: 2 })).status, 400, 'unknown key');
+    let r = await post({ op: 'layer.move', scene, layer: 'game', canvas: 'h', direction: 'up' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(calls, [[scene, [top.layer.id, 'game']]]);
+    assert.deepEqual(disk(), [top.layer.id, 'game']);
+    assert.equal((await post({ op: 'layer.move', scene, layer: 'game', canvas: 'h', direction: 'up' })).body.error, 'at-edge');
+    state.live = true;
+    r = await post({ op: 'layer.move', scene, layer: 'game', canvas: 'h', direction: 'down' });
+    assert.equal(r.body.error, 'live-locked');
+    assert.deepEqual(disk(), [top.layer.id, 'game'], 'nothing saved while live');
+    assert.equal(calls.length, 1);
   } finally { await srv.close(); }
 });

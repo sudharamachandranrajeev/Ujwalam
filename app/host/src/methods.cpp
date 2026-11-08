@@ -416,6 +416,10 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Params q(p, {"project", "scene", "layer"});
 		return a.studio->layer_add_model(q.obj("project"), q.str("scene", 64), q.str("layer", 64));
 	});
+	add("layers.orderFromProject", [&a](const json::Value &p) {
+		Params q(p, {"project", "scene"});
+		return a.studio->layer_order_model(q.obj("project"), q.str("scene", 64));
+	});
 	add("layers.remove", [&a](const json::Value &p) {
 		Params q(p, {"scene", "canvas", "layer"});
 		return a.studio->layer_remove(q.str("scene", 64), canvas_opt(q), q.str("layer", 64));

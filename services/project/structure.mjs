@@ -16,6 +16,9 @@
 //       media   { file }     a video under base "media", looping, full canvas
 //     New layers go on top, on every canvas of the project.
 //   removeLayer(doc, { scene, layer })           -> { project }      refused while a copy or an audio source uses it
+//   moveLayer(doc, { scene, layer, canvas, direction }) -> { project } (D243) direction up|down, as seen on canvas h|v:
+//     the layer passes the next layer above (up) or below (down) that is on that canvas. scene.layers is bottom first
+//     and shared by H and V; refused at the top/bottom (`at-edge`) or when the layer is not on that canvas.
 // Layer ids are unique across the project (validateProject), new ids come from newId.
 
 import { newId, relPathProblem, validateProject } from './index.mjs';
@@ -124,5 +127,24 @@ export function removeLayer(doc, { scene, layer } = {}) {
   const project = structuredClone(doc);
   const ps = project.scenes.find((x) => x.id === scene);
   ps.layers = ps.layers.filter((l) => l.id !== layer);
+  return checked(project, {});
+}
+
+export function moveLayer(doc, { scene, layer, canvas, direction } = {}) {
+  const s = doc.scenes.find((x) => x.id === scene);
+  if (!s) return { error: 'unknown-scene' };
+  if (!['h', 'v'].includes(canvas) || !['up', 'down'].includes(direction)) return { error: 'bad-move' };
+  const at = s.layers.findIndex((l) => l.id === layer);
+  if (at < 0) return { error: 'unknown-layer' };
+  const on = (l) => !!l.placements?.[canvas];
+  if (!on(s.layers[at])) return { error: 'not-on-canvas' };
+  const step = direction === 'up' ? 1 : -1;
+  let to = at + step;
+  while (to >= 0 && to < s.layers.length && !on(s.layers[to])) to += step;
+  if (to < 0 || to >= s.layers.length) return { error: 'at-edge' };
+  const project = structuredClone(doc);
+  const ls = project.scenes.find((x) => x.id === scene).layers;
+  const [moved] = ls.splice(at, 1);
+  ls.splice(to, 0, moved); // lands just past the passed layer (removing shifts indices by one in the same direction)
   return checked(project, {});
 }

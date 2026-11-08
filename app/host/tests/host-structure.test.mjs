@@ -92,3 +92,22 @@ test('scenes.create / scenes.remove / layers.remove on project v1 scenes', async
   await c.call('scenes.remove', { scene: 'new' });
   assert.equal((await c.call('scenes.list')).scenes.some((s) => s.id === 'new'), false);
 });
+
+test('orderFromProject (D243): each canvas takes the document order; layers not on a canvas are skipped there', async () => {
+  const doc = structuredClone(PROJECT); // earlier tests may have added layers to PROJECT; the checks follow the document
+  doc.scenes[0].layers.splice(1, 0, { id: 'blue', type: 'color', name: 'Blue', source: { color: '#0000ff' }, placements: { h: full('h'), v: full('v') } });
+  const on = (d, cv) => d.scenes[0].layers.filter((l) => l.placements[cv]).map((l) => l.id);
+  await loadIntoHost(c, doc);
+  assert.deepEqual(await ids('main', 'H'), on(doc, 'h'));
+  assert.deepEqual(await ids('main', 'V'), on(doc, 'v'));
+  const moved = structuredClone(doc);
+  moved.scenes[0].layers.push(moved.scenes[0].layers.shift()); // bg to the top
+  const r = await c.call('layers.orderFromProject', { project: moved, scene: 'main' });
+  assert.deepEqual(r.canvases.sort(), ['H', 'V']);
+  assert.equal((await ids('main', 'H')).at(-1), 'bg');
+  assert.deepEqual(await ids('main', 'H'), on(moved, 'h'));
+  assert.deepEqual(await ids('main', 'V'), on(moved, 'v'));
+  assert.equal(await code('layers.orderFromProject', { project: moved, scene: 'nope' }), -32602);
+  assert.equal(await code('layers.orderFromProject', { project: { x: 1 }, scene: 'main' }), -32602);
+  assert.deepEqual(await ids('main', 'H'), on(moved, 'h'), 'refusals change nothing');
+});

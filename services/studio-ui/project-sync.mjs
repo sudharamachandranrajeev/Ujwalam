@@ -4,7 +4,8 @@
 // loads the edited layout. Only the edits that map one-to-one onto the project model are saved:
 //   layers.setPlacement -> scenes[].layers[].placements[canvas] (x, y, width, height, rotation, crop merged per key)
 //   layers.setVisible   -> placements[canvas].visible (and layer.visible, see below)
-// layers.move is NOT saved: the host orders layers per canvas, the project has one order shared by H and V.
+// layers.move is NOT saved here: the host orders layers per canvas, the project has one order shared by H and V.
+// The order is saved by the structure route instead (op layer.move, D243), which reorders the host from the project.
 // Saves are debounced (one write per burst of edits) and go through saveProject (validate, temp file, .bak, rename).
 // A failed save keeps the host change (live-only) and is reported in status(); it never throws into the request.
 
