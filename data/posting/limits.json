@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "targets": {
     "youtube-shorts": {
-      "video": { "maxDurationSec": 60, "aspect": "vertical", "source": "user-instruction-2026-11-08 (videos longer than 60 s are not posted as Shorts)", "checked": "2026-11-08", "status": "unverified" },
+      "video": { "maxDurationSec": 60, "aspect": "vertical", "source": "agent default 2026-11-08 (conservative: 60 s is the classic Shorts limit; YouTube is reported to accept Shorts up to 3 min since 2024, not checked here). Not a user instruction; the user chose montage length 20-60 s (D298)", "checked": "2026-11-08", "status": "unverified" },
       "fields": {
         "title": { "from": ["title"], "max": 100, "unit": "chars", "forbid": "<>" },
         "description": { "from": ["description", "hashtags"], "max": 5000, "unit": "utf8-bytes", "forbid": "<>", "hashtagMax": 60 },
