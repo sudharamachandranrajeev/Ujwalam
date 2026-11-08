@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -79,8 +80,11 @@ class DetectorPassOcrTests(unittest.TestCase):
         cls.td.cleanup()
 
     def test_detect_then_candidates(self):
-        rc = clipper.main(["--data-dir", self.data, "detect", "--recording", self.rec, "--out", self.out,
-                           "--profile", self.profile, "--threads", "2"])
+        # The heavy-job lock is machine-wide (system temp) on purpose; the test takes its own so a real clip run on
+        # the same machine does not fail it (2026-11-08: a real run held the lock during the full CI).
+        with mock.patch.object(tempfile, "tempdir", self.td.name):
+            rc = clipper.main(["--data-dir", self.data, "detect", "--recording", self.rec, "--out", self.out,
+                               "--profile", self.profile, "--threads", "2"])
         self.assertEqual(rc, 0)
         summ = cc.load_json(os.path.join(self.out, dp.SUMMARY))
         self.assertEqual(summ["config"]["fps"], 1.0)
