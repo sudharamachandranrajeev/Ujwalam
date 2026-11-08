@@ -15,7 +15,7 @@ image ("map the features of the streamer's face, put those features on reference
 | Stall | a slow model only makes results older; the render thread never waits | inference on the render/graphics thread, or a second thread with its own D3D/DirectML device inside the host process |
 | VRAM control | the worker unloads every model when the flag is off or no face effect is shown for 30 s; killing it frees all of it | stays in the host process |
 | Build / deps | no new native dependency in the host; Python + onnxruntime-directml already in `.venv-gpu` | ship onnxruntime.dll + DirectML.dll with the host, new CMake deps |
-| Cost | one GPU readback of a <= 640x360 frame per analysed frame (staged, mapped 2 ticks later: no stall) + one R8 texture upload of the mask | no readback when the model reads the texture directly (needs D3D11 interop: more code) |
+| Cost | one GPU readback of a <= 640x360 frame per analysed frame (staged with a D3D11 event query, mapped only once the copy is done: no stall) + one R8 texture upload of the mask | no readback when the model reads the texture directly (needs D3D11 interop: more code) |
 | Latency | 50 ms end to end (host render of the analysed frame to the result back in the host), 29.4 results/s, +0.15 ms host frame time, +72 MB VRAM, next to a 1080p60 NVENC recording (evidence file) | lower by the readback (2 ticks) and IPC (sub-millisecond) |
 
 The sidecar is enough: the models run in 2.5 to 17 ms (section 3), well inside a 33 ms analysis budget, and the IPC
@@ -27,17 +27,22 @@ not needed and was not built.
 ```
 camera source (shared, own size)                                       app/host/src/face.cpp (graphics thread)
   -> tick: if a face filter used it in the last second, the worker's heartbeat is < 2 s old and something is wanted
-     -> render the source into a texture that fits 640x360 (aspect kept), copy to 1 of 3 staging surfaces
-     -> 2 ticks later map it and copy into the frame slot (seqlock), at most 30 per second
-shared memory  Local\ujwalam-face-<host pid>  (owner-only DACL; host creates, fails closed if the name exists)
+     -> render the source into a texture that fits 640x360 (aspect kept), copy to 1 of 4 staging surfaces + event query
+     -> map it once the query says the copy is done, copy into the frame slot (seqlock) with the target generation,
+        remember (seq, generation, capture time, size) in a 32-frame ring; at most 30 per second
+shared memory  Local\ujwalam-face-<host pid>  (owner-only DACL; host creates, fails closed if the name exists;
+               layout v2 carries the per-launch link key: the worker opens it only with the right key and owner)
   header 4 KiB | frame BGRA 640x360 | mask u8 640x360 | 468 x 3 float landmarks
-face worker (services/face/face_worker.py, below-normal priority, no token, no camera, no network)
+face worker (services/face/face_worker.py, below-normal priority, no token, no camera, no network code, allowlisted
+             env; host pid + link key on its stdin from the launcher; models loaded only from SHA-256-verified bytes)
   -> poll 4 ms for a new frame seq; run what the host wants: 1 = mask (segmentation), 2 = landmarks (tracker)
   -> mask: model at 256x144 (selfie) -> guided upsample to the frame -> temporal EMA (personMask smoothing)
   -> landmarks: YuNet detect (only when tracking is lost) -> 192x192 face mesh, rotated ROI from the eyes -> One Euro
   -> write result (seqlock): mask, landmarks, face box, score, roll/yaw/pitch, blinks, mouth, brows, infer ms
-host tick: copy a new result out, upload the mask (R8 dynamic texture); ignore results for frames sent before the
-current camera became the target
+host tick: copy a new result out (acquire seqlock, torn snapshots skipped); use it only for a frame in the ring,
+newer than the last, of the current generation, and only when validate() passes (finite, bounded, exact landmark
+count, mask size = frame size); upload the mask (R8 dynamic texture) only for a new valid mask; freshness = the
+host's own capture time of that frame (review fixes: docs/evidence/2026-11-08-face-ai.md)
 face filters (video_render, graphics thread)
   personMask  ujw_person_mask.effect: a = smoothstep(th - f/2, th + f/2, m) faded by staleness; remove / blur / replace
   autoFrame   ujw_face_frame.effect: crop (1/zoom of the layer) eased toward the face, deadzone, 1 s hold

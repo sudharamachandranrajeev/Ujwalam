@@ -3,6 +3,8 @@
 
 Every file is fetched from its pinned URL into a new temporary folder, hashed, and only then moved into
 data/models/face/ (gitignored). A file whose size or SHA-256 differs from the manifest is refused and deleted.
+Downloads and archive members are capped at their manifest size: the copy stops (and the partial file is deleted) as
+soon as it would pass it, so a wrong or hostile server cannot fill the disk.
 Files already present with the right hash are kept. Stdlib only (urllib, hashlib, zipfile).
 
   python -I services/face/fetch_models.py [--only id,id] [--check]
@@ -16,7 +18,6 @@ import argparse
 import hashlib
 import json
 import os
-import shutil
 import sys
 import tempfile
 import urllib.request
@@ -59,10 +60,40 @@ def ok_on_disk(dirpath, m):
     return True
 
 
-def download(url, dst, expect_bytes, expect_sha):
+class TooLarge(ValueError):
+    """More bytes than the manifest allows."""
+
+
+def copy_capped(src, dst_path, cap, what):
+    """Copy the stream src into a new file dst_path, at most `cap` bytes. Raises TooLarge as soon as one byte more
+    arrives; on any error the partial file is deleted. Returns the byte count."""
+    n = 0
+    try:
+        with open(dst_path, "wb") as f:
+            while True:
+                chunk = src.read(min(1 << 20, cap - n + 1))
+                if not chunk:
+                    break
+                n += len(chunk)
+                if n > cap:
+                    raise TooLarge(f"{what}: more than {cap} bytes; aborted")
+                f.write(chunk)
+    except BaseException:
+        try:
+            os.remove(dst_path)
+        except OSError:
+            pass
+        raise
+    return n
+
+
+def download(url, dst, expect_bytes, expect_sha, opener=None):
     req = urllib.request.Request(url, headers={"User-Agent": "ujwalam-fetch-models"})
-    with urllib.request.urlopen(req, timeout=120) as r, open(dst, "wb") as f:
-        shutil.copyfileobj(r, f, 1 << 20)
+    with (opener or urllib.request.urlopen)(req, timeout=120) as r:
+        declared = r.headers.get("Content-Length") if getattr(r, "headers", None) is not None else None
+        if declared is not None and declared.isdigit() and int(declared) > expect_bytes:
+            raise TooLarge(f"{url}: server announces {declared} bytes, more than {expect_bytes}; not downloaded")
+        copy_capped(r, dst, expect_bytes, url)
     size, sha = os.path.getsize(dst), sha256_of(dst)
     if size != expect_bytes or sha != expect_sha:
         os.remove(dst)
@@ -79,12 +110,15 @@ def fetch(m, dirpath, log=print):
             a = m["archive"]
             zpath = os.path.join(tmp, "archive.zip")
             download(a["url"], zpath, a["bytes"], a["sha256"])
+            sizes = {name: size for name, size, _ in files_of(m)}
             with zipfile.ZipFile(zpath) as z:
                 for member, name in a["members"].items():
-                    if os.path.basename(name) != name:
+                    if os.path.basename(name) != name or name not in sizes:
                         raise ValueError(f"bad member target {name}")
-                    with z.open(member) as src, open(os.path.join(tmp, name), "wb") as dst:
-                        shutil.copyfileobj(src, dst)
+                    if z.getinfo(member).file_size != sizes[name]:
+                        raise TooLarge(f"{m['id']}: archive member {member} is not {sizes[name]} bytes; refused")
+                    with z.open(member) as src:  # capped too: the zip header could lie
+                        copy_capped(src, os.path.join(tmp, name), sizes[name], member)
         else:
             download(m["url"], os.path.join(tmp, m["file"]), m["bytes"], m["sha256"])
         for name, size, sha in files_of(m):

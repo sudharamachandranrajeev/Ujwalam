@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, clipsEnv, coreEnv, liveClipsSpec, shellChoice, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, clipsEnv, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, shellChoice, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -65,6 +65,42 @@ test('live clipper env: the host clips token and discovery file only, every othe
   assert.deepEqual(Object.keys(env).filter((k) => /^UJWALAM_.*(TOKEN|KEY)/i.test(k)), ['UJWALAM_HOST_CLIPS_TOKEN']);
   for (const v of ['a', 'b', 'c', 'd', 'e']) assert.ok(!Object.values(env).includes(v.repeat(64)), v);
   assert.equal(base.UJWALAM_HOST_TOKEN, 'c'.repeat(64), 'the base environment is not changed');
+});
+
+test('face worker env: an allowlist only; no token, key, discovery path or Python variable (D295 review)', () => {
+  const base = { Path: 'x', SystemRoot: 'C:/Windows', TEMP: 't', UJWALAM_HEADLESS: '1', UJWALAM_HOST_TOKEN: 'c'.repeat(64),
+    ujwalam_host_system_token: 'd'.repeat(64), UJWALAM_FACE_LINK_KEY: 'e'.repeat(64), UJWALAM_HOST_DISCOVERY: 'C:/data/host.json',
+    UJWALAM_UI_LAUNCH_KEY: 'k', PYTHONPATH: 'C:/evil', HTTPS_PROXY: 'http://p', MY_SECRET: 's', UJWALAM_DATA_DIR: 'C:/d' };
+  const env = faceEnv({ base });
+  assert.deepEqual(Object.keys(env).sort(), ['Path', 'SystemRoot', 'TEMP', 'UJWALAM_HEADLESS']);
+  assert.equal(base.UJWALAM_HOST_TOKEN, 'c'.repeat(64), 'the base environment is not changed');
+});
+
+test('face control line: host pid + 64-hex key, one JSON line; bad input refused', () => {
+  const key = 'ab'.repeat(32);
+  assert.equal(faceControlLine({ key, hostPid: 1234 }), `{"key":"${key}","hostPid":1234}\n`);
+  for (const bad of [{ key: 'AB'.repeat(32), hostPid: 1 }, { key: 'ab', hostPid: 1 }, { key, hostPid: 0 }, { key, hostPid: '5' }]) {
+    assert.throws(() => faceControlLine(bad), /bad key or pid/);
+  }
+});
+
+const FACE_PY = process.env.UJWALAM_FACE_PYTHON || path.join(REPO, '.venv-gpu', 'Scripts', 'python.exe');
+test('face worker: takes the key on stdin, never from env; exits when the launcher pipe closes', { skip: !existsSync(FACE_PY) && `no ${FACE_PY}` }, async () => {
+  const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-face-'));
+  const spec = faceSpec({ dataDir, exists: () => true });
+  const child = spawn(FACE_PY, spec.spec.argv, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: { ...faceEnv(), UJWALAM_PARENT_PIPE: '1' } });
+  let err = '';
+  child.stderr.on('data', (d) => { err += d; });
+  child.stdin.write(faceControlLine({ key: 'cd'.repeat(32), hostPid: 4242 }));
+  await new Promise((res) => setTimeout(res, 1500));
+  child.stdin.end();
+  const code = await new Promise((res) => { child.once('exit', res); setTimeout(() => res('timeout'), 15000); });
+  if (code === 'timeout') child.kill();
+  assert.equal(code, 0, err);
+  assert.match(err, /started; acts only while flag face-ai is on/);
+  assert.doesNotMatch(err, /no link key/, 'the control line arrived');
+  assert.doesNotMatch(err, /cd{8}/, 'the key is never logged');
+  rmSync(dataDir, { recursive: true, force: true });
 });
 
 test('roles: registry presets bind game capture, facecam and mic from an anonymised devices.list', () => {

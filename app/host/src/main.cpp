@@ -29,6 +29,10 @@
 //   UJWALAM_HOST_CLIPS_TOKEN   clips token (64 hex, differs from the others; the live clipper, D226): may call only
 //                              frames.grab, replay.save, replay.status, marker.add (source clip) and host.status.
 //                              Never generated, never in the discovery file; absent = role off
+//   UJWALAM_FACE_LINK_KEY      face link key (64 hex, D295): written into the face link's shared-memory header, where
+//                              the face worker (which got the same key from the launcher on its stdin) checks it
+//                              before it uses the mapping. Generated when absent (then no worker can attach); never
+//                              logged, never in the discovery file
 //   UJWALAM_HOST_DISCOVERY     discovery file when --discovery is not given
 //   UJWALAM_HEADLESS           "1": same as --headless
 //   UJWALAM_EVENT_CORE_API_TOKEN  event-core token for the overlay server's event feed; passed only to that child
@@ -359,6 +363,23 @@ int wmain(int argc, wchar_t **wargv)
 		fprintf(stderr, "UJWALAM_HOST_CLIPS_TOKEN must be 64 lowercase hex characters and differ from the other tokens\n");
 		return 64;
 	}
+	// Face link key (face.h): from the launcher, or generated (a worker started without the launcher cannot attach).
+	std::string face_key = env(L"UJWALAM_FACE_LINK_KEY");
+	SetEnvironmentVariableW(L"UJWALAM_FACE_LINK_KEY", nullptr);
+	if (!face_key.empty() && !rpc::is_token(face_key)) {
+		fprintf(stderr, "UJWALAM_FACE_LINK_KEY must be 64 lowercase hex characters\n");
+		return 64;
+	}
+	if (face_key.empty())
+		face_key = rpc::new_token();
+	if (face_key.size() != face::kKeyBytes * 2) {
+		fprintf(stderr, "face link key generation failed\n");
+		return 70;
+	}
+	std::array<uint8_t, face::kKeyBytes> face_key_bytes{};
+	for (size_t i = 0; i < face::kKeyBytes; i++)
+		face_key_bytes[i] = (uint8_t)std::stoul(face_key.substr(i * 2, 2), nullptr, 16);
+	face_key.assign(face_key.size(), '0');
 
 	std::string err;
 	for (const std::string &d : {app.data_dir, app.recordings_dir,
@@ -503,7 +524,8 @@ int wmain(int argc, wchar_t **wargv)
 		app.frames = std::make_unique<Frames>((fs::u8path(app.data_dir) / "live").generic_u8string());
 		// Face link (D295 proposed): mapping + tick callback. Camera frames go out only while a face effect is shown
 		// and the face worker (flag face-ai) is alive; the worker is gated by the flag.
-		app.face = std::make_unique<face::Link>(GetCurrentProcessId());
+		app.face = std::make_unique<face::Link>(GetCurrentProcessId(), face_key_bytes);
+		SecureZeroMemory(face_key_bytes.data(), face_key_bytes.size());
 		if (app.face->ok())
 			face::set(app.face.get());
 		else

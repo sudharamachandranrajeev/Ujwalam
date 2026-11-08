@@ -1301,9 +1301,11 @@ void frame_step(Frame *t, obs_source_t *cam, int cl, int ct, uint32_t cx, uint32
 	const int64_t now = (int64_t)(os_gettime_ns() / 1000000);
 	if (link && cam) {
 		link->use(cam, face::kWantLandmarks, 0);
-		if (sw && sh && link->face(cam, f)) {
+		if (sw && sh && link->face(cam, f) && std::isfinite(f.box[0] + f.box[1] + f.box[2] + f.box[3])) {
 			// face centre in 0..1 of this layer (the wrapper shows a crop of the source)
-			const double fx = ((f.box[0] + f.box[2] / 2) * sw - cl) / cx, fy = ((f.box[1] + f.box[3] / 2) * sh - ct) / cy;
+			// face.cpp validated the box (finite, bounded); the clamp keeps the crop maths finite whatever arrives
+			const double fx = std::clamp((double)((f.box[0] + f.box[2] / 2) * sw - cl) / cx, -1.0, 2.0),
+				     fy = std::clamp((double)((f.box[1] + f.box[3] / 2) * sh - ct) / cy, -1.0, 2.0);
 			const double w = 1.0 / t->zoom, h = w;
 			double ccx = fx, ccy = fy;
 			if (t->has_center && t->deadzone > 0) {
@@ -1431,6 +1433,8 @@ void sticker_render(void *data, gs_effect_t *)
 	lx = (ax + bx) / 2;
 	ly = (ay + by) / 2;
 	const double eye = std::hypot(lx - rx, ly - ry), roll = std::atan2(ly - ry, lx - rx);
+	if (!std::isfinite(eye) || !std::isfinite(roll))
+		return; // face.cpp validates every point; never let a bad one reach the conversions below
 	double qx = (rx + lx) / 2, qy = (ry + ly) / 2;
 	if (t->anchor == 1)
 		px(1, qx, qy);
@@ -1445,9 +1449,13 @@ void sticker_render(void *data, gs_effect_t *)
 	const double dx = t->ox * eye, dy = t->oy * eye, c = std::cos(roll), s = std::sin(roll);
 	qx += c * dx - s * dy;
 	qy += s * dx + c * dy;
-	const float w = (float)(t->scale * eye), h = w * (float)t->image.cy / (float)std::max(1u, t->image.cx);
-	if (w < 1)
+	// Checked right before the float -> uint32_t conversions of gs_draw_sprite: finite, at least 1 px, at most kMaxPx.
+	constexpr double kMaxPx = 16384.0;
+	const double wd = t->scale * eye, hd = wd * (double)t->image.cy / (double)std::max(1u, t->image.cx);
+	if (!std::isfinite(wd) || !std::isfinite(hd) || !std::isfinite(qx) || !std::isfinite(qy) || wd < 1 || hd < 1 ||
+	    wd > kMaxPx || hd > kMaxPx)
 		return;
+	const float w = (float)wd, h = (float)hd;
 	gs_effect_t *e = obs_get_base_effect(OBS_EFFECT_DEFAULT);
 	gs_blend_state_push();
 	gs_blend_function_separate(GS_BLEND_SRCALPHA, GS_BLEND_INVSRCALPHA, GS_BLEND_ONE, GS_BLEND_INVSRCALPHA);
