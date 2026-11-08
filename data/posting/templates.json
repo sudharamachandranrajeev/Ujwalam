@@ -1,5 +1,5 @@
 {
-  "$comment": "P16a post text templates. Placeholders only: {handles.x}, {links.x} come from the local profile (data/profile.local.json) at export time; {date} is the stream date (UTC, from candidates.json recordStartUtc); {n} is the clip's rank in the run. Never put names, brands or channel ids here. Chat text, viewer names, marker notes and candidate reasons are never used in post text.",
+  "$comment": "P16a post text templates. A target may carry kinds.montage / kinds.won-reel text overrides (D301); a clip (kind short) uses the base text. youtube-video is the target for finished videos that are not Shorts (horizontal, or longer than the Shorts limit in limits.json). Placeholders only: {handles.x}, {links.x} come from the local profile (data/profile.local.json) at export time; {date} is the stream date (UTC, from candidates.json recordStartUtc); {n} is the clip's rank in the run. Never put names, brands or channel ids here. Chat text, viewer names, marker notes and candidate reasons are never used in post text.",
   "version": "0.1.0",
   "layoutPreference": ["full-crop", "blurred-fill", "game-facecam"],
   "targets": {
@@ -7,7 +7,42 @@
       "title": "Stream highlight {n} ({date})",
       "description": "Highlight {n} from the stream on {date}.\n\nLive on {handles.youtube}\nCommunity: {links.discord}",
       "tags": ["gaming", "highlights", "stream"],
-      "hashtags": ["#Shorts", "#gaming"]
+      "hashtags": ["#Shorts", "#gaming"],
+      "kinds": {
+        "montage": {
+          "title": "Stream kill montage {n} ({date})",
+          "description": "Kill montage {n} from the stream on {date}.\n\nLive on {handles.youtube}\nCommunity: {links.discord}",
+          "tags": ["gaming", "montage", "stream"],
+          "hashtags": ["#Shorts", "#montage"]
+        },
+        "won-reel": {
+          "title": "Stream victory reel {n} ({date})",
+          "description": "Victory reel {n} from the stream on {date}.\n\nLive on {handles.youtube}\nCommunity: {links.discord}",
+          "tags": ["gaming", "victory", "stream"],
+          "hashtags": ["#Shorts", "#victory"]
+        }
+      }
+    },
+    "youtube-video": {
+      "uploadsOnly": true,
+      "title": "Stream highlight {n} ({date})",
+      "description": "Highlight {n} from the stream on {date}.\n\nLive on {handles.youtube}\nCommunity: {links.discord}",
+      "tags": ["gaming", "highlights", "stream"],
+      "hashtags": ["#gaming"],
+      "kinds": {
+        "montage": {
+          "title": "Stream kill montage {n} ({date})",
+          "description": "Kill montage {n} from the stream on {date}.\n\nLive on {handles.youtube}\nCommunity: {links.discord}",
+          "tags": ["gaming", "montage", "stream"],
+          "hashtags": ["#montage"]
+        },
+        "won-reel": {
+          "title": "Stream victory reel {n} ({date})",
+          "description": "Victory reel {n} from the stream on {date}.\n\nLive on {handles.youtube}\nCommunity: {links.discord}",
+          "tags": ["gaming", "victory", "stream"],
+          "hashtags": ["#victory"]
+        }
+      }
     },
     "tiktok": {
       "title": "Stream highlight {n}",

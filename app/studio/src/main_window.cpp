@@ -11,6 +11,7 @@
 #include "theme.h"
 
 #include <QCheckBox>
+#include <QDateTime>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -2091,6 +2092,8 @@ void MainWindow::openPosts()
 	info->setWordWrap(true);
 	auto *autoInfo = new QLabel(dlg);
 	autoInfo->setWordWrap(true);
+	auto *queueInfo = new QLabel(dlg);
+	queueInfo->setWordWrap(true);
 	auto *list = new QListWidget(dlg);
 	list->setMaximumHeight(170);
 	auto *form = new QWidget(dlg);
@@ -2113,6 +2116,15 @@ void MainWindow::openPosts()
 	auto *openB = new QPushButton(QStringLiteral("Open folder"), form);
 	for (QPushButton *b : {saveB, approveB, rejectB, openB})
 		row->addWidget(b);
+	// D301 upload queue of the auto-post chain: state, plain reason, link when uploaded, "Retry now" for a failed or waiting item.
+	auto *qBox = new QGroupBox(QStringLiteral("Auto-upload queue"), form);
+	auto *qv = new QVBoxLayout(qBox);
+	auto *queueSel = new QLabel(qBox);
+	queueSel->setWordWrap(true);
+	queueSel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	auto *retryB = new QPushButton(QStringLiteral("Retry now"), qBox);
+	qv->addWidget(queueSel);
+	qv->addWidget(retryB, 0, Qt::AlignLeft);
 	auto *yt = new QGroupBox(QStringLiteral("YouTube (private upload)"), form);
 	auto *yv = new QVBoxLayout(yt);
 	auto *ytInfo = new QLabel(yt);
@@ -2133,10 +2145,12 @@ void MainWindow::openPosts()
 	ff->addRow(QStringLiteral("Tags"), tags);
 	ff->addRow(QStringLiteral("Hashtags"), hash);
 	ff->addRow(row);
+	ff->addRow(qBox);
 	ff->addRow(yt);
 	form->setVisible(false);
 	v->addWidget(info);
 	v->addWidget(autoInfo);
+	v->addWidget(queueInfo);
 	v->addWidget(list);
 	v->addWidget(form, 1);
 
@@ -2166,6 +2180,24 @@ void MainWindow::openPosts()
 			if (!x.trimmed().isEmpty())
 				out.append(x.trimmed());
 		return out;
+	};
+	const auto renderQueue = [=]() {
+		const QJsonObject p = selPost();
+		const QString qs = p.value(QStringLiteral("queueState")).toString();
+		qBox->setVisible(!qs.isEmpty());
+		if (qs.isEmpty())
+			return;
+		QStringList bits;
+		bits << (qs == QStringLiteral("queued") ? QStringLiteral("waiting") : qs == QStringLiteral("done") ? QStringLiteral("uploaded") : qs);
+		if (!p.value(QStringLiteral("queueReasonText")).toString().isEmpty())
+			bits << p.value(QStringLiteral("queueReasonText")).toString();
+		if (qs == QStringLiteral("queued") && !p.value(QStringLiteral("queueNextAt")).toString().isEmpty())
+			bits << QStringLiteral("next try ") + QDateTime::fromString(p.value(QStringLiteral("queueNextAt")).toString(), Qt::ISODate).toLocalTime().toString(Qt::TextDate);
+		if (!p.value(QStringLiteral("videoUrl")).toString().isEmpty())
+			bits << QStringLiteral("link (private): ") + p.value(QStringLiteral("videoUrl")).toString();
+		queueSel->setText(bits.join(QStringLiteral(". ")) + QLatin1Char('.'));
+		retryB->setVisible(qs == QStringLiteral("failed") || (qs == QStringLiteral("queued") && !p.value(QStringLiteral("queueReasonText")).toString().isEmpty()));
+		retryB->setEnabled(!st->busy);
 	};
 	const auto renderYt = [=]() {
 		const QJsonObject p = selPost();
@@ -2211,6 +2243,7 @@ void MainWindow::openPosts()
 			bits << QStringLiteral("unresolved: ") + join(un);
 		limits->setText((bits.isEmpty() ? QStringLiteral("no limits checked") : bits.join(QStringLiteral("  "))) +
 				(lim.value(QStringLiteral("status")).toString() == QStringLiteral("unverified") ? QStringLiteral("  (limits UNVERIFIED)") : QString()));
+		renderQueue();
 		renderYt();
 	};
 	const auto render = [=]() {
@@ -2221,7 +2254,8 @@ void MainWindow::openPosts()
 			const bool flagged = (p.value(QStringLiteral("limits")).toObject().value(QStringLiteral("ok")) == QJsonValue(false)) ||
 					     !p.value(QStringLiteral("unresolved")).toArray().isEmpty();
 			auto *it = new QListWidgetItem(p.value(QStringLiteral("clipId")).toString() + QStringLiteral("  ") + p.value(QStringLiteral("target")).toString() +
-							 QStringLiteral("   ") + p.value(QStringLiteral("status")).toString() + (flagged ? QStringLiteral(" / check") : QString()),
+							 QStringLiteral("   ") + p.value(QStringLiteral("status")).toString() + (flagged ? QStringLiteral(" / check") : QString()) +
+							 (p.value(QStringLiteral("queueState")).toString().isEmpty() ? QString() : QStringLiteral(" / ") + p.value(QStringLiteral("queueState")).toString()),
 						 list);
 			it->setData(Qt::UserRole, p.value(QStringLiteral("id")).toString());
 			if (p.value(QStringLiteral("id")).toString() == st->sel)
@@ -2238,6 +2272,14 @@ void MainWindow::openPosts()
 			if (!ok)
 				return info->setText(QStringLiteral("Posts unavailable: ") + err);
 			st->posts = r.value(QStringLiteral("posts")).toArray();
+			const QJsonObject q = r.value(QStringLiteral("queue")).toObject();
+			queueInfo->setText(q.isEmpty() ? QString()
+						       : QStringLiteral("Upload queue: %1 waiting, %2 uploading, %3 done, %4 failed. %5")
+								 .arg(q.value(QStringLiteral("queued")).toInt())
+								 .arg(q.value(QStringLiteral("uploading")).toInt())
+								 .arg(q.value(QStringLiteral("done")).toInt())
+								 .arg(q.value(QStringLiteral("failed")).toInt())
+								 .arg(q.value(QStringLiteral("message")).toString()));
 			render();
 		});
 	};
@@ -2319,6 +2361,18 @@ void MainWindow::openPosts()
 				   reload();
 			   });
 	};
+	connect(retryB, &QPushButton::clicked, dlg, [=]() {
+		if (st->busy || st->sel.isEmpty())
+			return;
+		QJsonObject b;
+		b.insert(QStringLiteral("id"), st->sel);
+		api_->post(QStringLiteral("ui/api/posts/queue/retry"), b, [=](bool ok, const QJsonObject &, const QString &err) {
+			if (!guard)
+				return;
+			info->setText(ok ? QStringLiteral("Queued again. It uploads at the next check if no stream is live.") : QStringLiteral("Not done: ") + err);
+			reload();
+		});
+	});
 	connect(upB, &QPushButton::clicked, dlg, [=]() { ytAction(true); });
 	connect(chkB, &QPushButton::clicked, dlg, [=]() { ytAction(false); });
 	// Auto-post mode (F7): read-only line.

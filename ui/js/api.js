@@ -49,6 +49,7 @@
     ytStatus: function () { return request('GET', '/ui/api/posts/youtube/status'); },
     ytUpload: function (id, confirm) { return request('POST', '/ui/api/posts/youtube/upload', { id: id, confirm: confirm }); },
     ytCheck: function (id) { return request('POST', '/ui/api/posts/youtube/check', { id: id }); },
+    postQueueRetry: function (id) { return request('POST', '/ui/api/posts/queue/retry', { id: id }); },
     postOpen: function (id) { return request('POST', '/ui/api/posts/open', { id: id }); },
     edits: function () { return request('GET', '/ui/api/edits'); },
     structure: function () { return request('GET', '/ui/api/project/structure'); },

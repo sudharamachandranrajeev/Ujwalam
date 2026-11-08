@@ -40,3 +40,48 @@ Goal: after a clip job renders, package, approve by the rules and upload private
 - A session that Google completed but whose answer was lost surfaces as an `upload-failed` retry; after 8 tries it is `failed`
   for the user to check on YouTube. UNVERIFIED against real Google behaviour.
 - Real upload with the user's account: UNVERIFIED (OAuth client not set).
+
+## Montages, won reels and the queue on screen (D301 proposed), 2026-11-08
+
+### What changed
+- `packageUploads` (services/posting/index.mjs): packages every validated, published video in `<data>/clips/uploads.json`
+  (kinds short, montage, won-reel) that is not posted and not packaged yet. The chain calls it after `packageRun` for the
+  finished run. A montage-only run (no candidates.json / report.json) is no longer "could not package": it goes straight
+  to uploads.json. Same bytes already packaged by `packageRun` are skipped (the ledger key is the SHA-256 plus target).
+  Packages live in `<data>/posting/packages/<run>/<kind>-<sha16>/<target>/`; nothing is written into the run folder.
+- Target by length and aspect, from data (never in code): `data/posting/limits.json` `youtube-shorts.video.maxDurationSec`
+  (60, user instruction 2026-11-08, status unverified). A vertical video (canvas token `v` or `v-<layout>` in the file
+  name) within the limit goes to `youtube-shorts`; anything longer or horizontal goes to the new `youtube-video` target
+  (same YouTube text limits, no duration cap, marked `uploadsOnly` so clip packaging never uses it).
+- Text: `data/posting/templates.json` targets carry `kinds.montage` and `kinds.won-reel` overrides (placeholders only);
+  `youtube-video` is new. A short uses the base text.
+- Rules: optional `kinds` per rule (default `["short"]`). `minScore` applies to shorts only; a montage or won reel has no
+  clip score, so naming its kind in a rule is the opt-in. The committed rules file is still empty (nothing auto-posts).
+  Upload targets: `youtube-shorts` and `youtube-video`; `markPosted` records the real target.
+- Control page (ui/index.html, ui/js/app.js, ui/js/api.js): queue summary line (waiting / uploading / done / failed, next
+  retry time, plain reason such as "Not signed in to YouTube: the Google sign-in client is not set up yet" or "Waiting
+  until the stream ends"), per-item state in the list, per-item reason, attempts, link to the uploaded video, and a
+  "Retry now" button for failed or waiting items. Safe DOM only.
+- Server: `/ui/api/posts` adds `kind`, `videoUrl`, `queueReasonText`; new `POST /ui/api/posts/queue/retry {id}`: session +
+  CSRF like every write, refused with 409 while a stream sink is live or the live state cannot be read (a local recording
+  does not block), only for failed or waiting items; it only re-queues, the chain's next tick uploads. No typed phrase.
+- Qt Posts view (app/studio/src/main_window.cpp; its data path is `/ui/api/posts`): same queue line, per-item state, reason,
+  link text and "Retry now". Rebuilt with `node app/studio/tools/build.mjs`: built `out/studio/build/ujwalam-studio.exe`.
+
+### Tests (fakes only, temp dirs, `UJWALAM_HEADLESS=1`)
+- `tests/posting-uploads.test.mjs` (8): target by length/aspect and that the line moves with the data; templates per kind;
+  packaging of 5 videos across kinds (targets, titles, hashtags, private draft, byte copy, unreadable/unknown/posted/missing
+  rows skipped, second run adds nothing, run filter, empty profile leaves placeholders listed); rule `kinds` validation and
+  planning (scoreless montage approved, scoreless short still skipped); chain end to end on a montage-only run: two
+  montages uploaded private to the two targets, `posted` filled with the right target, second run uploads nothing.
+- `tests/studio-ui-posting-queue.test.mjs` (6): list carries queue/summary/reason/link/kind; retry resets a failed item;
+  refused when live and when the state is unreadable, allowed during a recording; done/unknown/bad body refused; CSRF.
+- Posting + studio-ui-posting + record-clips files: 123/123 pass. Existing `posting.test.mjs` needed the `uploadsOnly` flag
+  so default clip packaging does not offer `youtube-video`.
+
+### UNVERIFIED / limits
+- The 60 s Shorts line is the user's instruction, not checked against YouTube's page (YouTube has raised the Shorts limit
+  before); change `maxDurationSec` in limits.json if it differs.
+- Aspect comes from the canvas token in the published file name (`_v` / `_v-<layout>` / `_h`), not from ffprobe.
+- A real upload of a montage with the user's account; the Qt dialog on screen (built, not opened); the web page in a browser.
+- The auto-approval of montages needs the user to write a rule with `kinds`; none is added.

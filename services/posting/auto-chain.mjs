@@ -16,8 +16,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFlags } from '../flags/index.mjs';
-import { LEDGER_NAME, POSTING_FLAG, createPostStore, packageRun, sha256File } from './index.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, createAutoLog, liveBlock, loadRules, runAuto } from './auto-post.mjs';
+import { LEDGER_NAME, POSTING_FLAG, createPostStore, packageRun, packageUploads, sha256File } from './index.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, liveBlock, loadRules, runAuto } from './auto-post.mjs';
 import { createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
 
@@ -74,6 +74,13 @@ export function createUploadQueue(file, now = () => Date.now()) {
       Object.assign(it, fields, { updatedAt: new Date(now()).toISOString() });
       write(j); return it;
     },
+    /** "Retry now" (D301): a failed or waiting item is queued again at once with a fresh attempt count. Returns the item or null. */
+    retryNow(id) {
+      const j = read(); const it = j.items[id];
+      if (!it || (it.state !== 'failed' && it.state !== 'queued')) return null;
+      Object.assign(it, { state: 'queued', attempts: 0, nextAt: null, reason: null, updatedAt: new Date(now()).toISOString() });
+      write(j); return it;
+    },
     /** A crash mid-upload leaves 'uploading': it is just queued again (the saved session resumes it). */
     recover() {
       const j = read(); let n = 0;
@@ -92,6 +99,20 @@ const REASON_TEXT = {
   'credentials-unreadable': 'Not signed in to YouTube: the saved sign-in could not be read',
   interrupted: 'Resuming after a restart',
 };
+
+/** Plain words for a queue reason code (or a failure code). */
+const FAIL_TEXT = {
+  'over-limit': 'The text is over a platform limit; edit it in the Posts view',
+  'unresolved-placeholders': 'The text still has an unfilled placeholder; fill it in the Posts view',
+  'video-changed': 'The video file changed after it was approved',
+  'video-missing': 'The video file is missing',
+  'not-approved': 'The package is not approved',
+  'unknown-post': 'The package was not found',
+};
+export function reasonText(code) {
+  if (!code) return null;
+  return REASON_TEXT[code] ?? FAIL_TEXT[code] ?? `Upload failed (${String(code).slice(0, 40)})`;
+}
 
 /** Plain-language state for the control page. Counts and short fixed texts only. */
 export function readQueueSummary(dataDir, flags = null) {
@@ -113,7 +134,7 @@ export function readQueueSummary(dataDir, flags = null) {
 // ---------------------------------------------------------------- uploads.json (the finished-video list)
 
 /** Fills `posted` on the uploads.json row(s) whose file is the uploaded video. Matches by run + content hash. */
-export async function markPosted({ dataDir, run, sha256, postIdValue, videoId, at, privacy = 'private' }) {
+export async function markPosted({ dataDir, run, sha256, postIdValue, videoId, at, privacy = 'private', target = UPLOAD_TARGET }) {
   const file = path.join(dataDir, 'clips', 'uploads.json');
   const doc = readJson(file);
   if (!isPlain(doc) || !Array.isArray(doc.files)) return 0;
@@ -124,7 +145,7 @@ export async function markPosted({ dataDir, run, sha256, postIdValue, videoId, a
     if (row.posted.some((p) => p?.platform === 'youtube' && p?.videoId === videoId)) continue;
     let h; try { h = await sha256File(row.file); } catch { continue; }
     if (h !== sha256) continue;
-    row.posted.push({ platform: 'youtube', target: UPLOAD_TARGET, id: postIdValue, videoId, url: `https://youtu.be/${videoId}`, at, privacy });
+    row.posted.push({ platform: 'youtube', target, id: postIdValue, videoId, url: `https://youtu.be/${videoId}`, at, privacy });
     n++;
   }
   if (n) writeJsonAtomic(file, doc);
@@ -195,14 +216,14 @@ export function createPostChain(opts) {
           beforeChunk: async () => { const b = await liveBlock(outputsStatus); if (b) throw new UploadError('stream-active', b); },
         });
         queue.patch(item.id, { state: 'done', videoId: r.videoId, reason: null, session: null });
-        await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: r.videoId, at: new Date(nowMs()).toISOString() });
+        await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: r.videoId, at: new Date(nowMs()).toISOString(), target: post.target });
         log(`posting: uploaded ${item.id} (private)`);
       } catch (e) {
         const code = String(e?.code ?? 'error');
         if (code === 'already-uploaded') {
           const v = store.get(item.id)?.videoId ?? null;
           queue.patch(item.id, { state: 'done', videoId: v, reason: null, session: null });
-          if (v) await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: v, at: new Date(nowMs()).toISOString() });
+          if (v) await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: v, at: new Date(nowMs()).toISOString(), target: post.target });
         } else if (code === 'stream-active') {
           queue.patch(item.id, { state: 'queued', reason: 'stream-live' });
           queue.setNote({ blocked: 'stream-live' });
@@ -234,7 +255,7 @@ export function createPostChain(opts) {
     const r = await runAuto({ store, rules, outputsStatus, logFile: autoLogFile, now: () => new Date(nowMs()) });
     if (rules.autoUpload) {
       const autoApproved = new Set(createAutoLog(autoLogFile).list().filter((e) => e.action === 'approve').map((e) => e.id));
-      for (const p of store.list()) if (p.status === 'approved' && p.target === UPLOAD_TARGET && autoApproved.has(p.id)) queue.add(p.id);
+      for (const p of store.list()) if (p.status === 'approved' && UPLOAD_TARGETS.includes(p.target) && autoApproved.has(p.id)) queue.add(p.id);
       await processQueue(store, rules);
     }
     return { refused: r.refused, approved: r.done.filter((d) => d.action === 'approve').length };
@@ -258,11 +279,21 @@ export function createPostChain(opts) {
         const pf = opts.profileFile ?? path.join(REPO, 'data', 'profile.local.json');
         if (existsSync(pf)) profile = readJson(pf) ?? {};
         const pack = opts.packageImpl ?? packageRun;
-        let packed;
-        try { packed = await pack({ runDir, ledgerFile, profile, ffmpeg: opts.ffmpeg, targets: [UPLOAD_TARGET] }); } catch (e) { log(`posting: could not package ${path.basename(runDir)}: ${String(e?.message ?? 'error').slice(0, 120)}`); return { skipped: 'package-failed' }; }
-        log(`posting: packaged ${packed.packaged.length} clip(s) from ${path.basename(runDir)}`);
+        const runName = path.basename(runDir);
+        // 1. Shorts with the clipper's scores (candidates.json + report.json). A montage-only run has neither: not an error.
+        let packedClips = 0;
+        try { packedClips = (await pack({ runDir, ledgerFile, profile, ffmpeg: opts.ffmpeg, targets: [UPLOAD_TARGET] })).packaged.length; } catch (e) {
+          if (!['no-candidates', 'no-report'].includes(e?.code)) log(`posting: could not package clips of ${runName}: ${String(e?.message ?? 'error').slice(0, 120)}`);
+        }
+        // 2. Every validated published video of this run in uploads.json (short | montage | won-reel); same-bytes files are skipped.
+        let packedVideos = 0;
+        try { packedVideos = (await (opts.packageUploadsImpl ?? packageUploads)({ dataDir, ledgerFile, profile, ffmpeg: opts.ffmpeg, run: runName })).packaged.length; } catch (e) {
+          log(`posting: could not package the finished videos of ${runName}: ${String(e?.message ?? 'error').slice(0, 120)}`);
+          if (!packedClips) return { skipped: 'package-failed' };
+        }
+        log(`posting: packaged ${packedClips} clip(s) and ${packedVideos} finished video(s) from ${runName}`);
         lastTick = nowMs();
-        return { packaged: packed.packaged.length, ...(await step()) };
+        return { packaged: packedClips + packedVideos, ...(await step()) };
       });
     },
     /** Called with each host status: remembers it, and every TICK_EVERY_MS retries what is due. */
