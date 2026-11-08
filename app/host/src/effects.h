@@ -13,6 +13,7 @@
 //   ujw_rounded_corners  filter: alpha mask outside a rounded rectangle, radius in source pixels.
 //   ujw_shadow           filter (D257): drop shadow / outer glow under the layer, in canvas pixels; its output is
 //                        larger than its input by the shadow's reach (outset), so nothing is cut at the box edge.
+//   ujw_blinds           filter (D262): venetian blinds, the first `completion` share of every slat hidden.
 //   ujw_corner_pin       filter (D259): draws the layer into the quad of its four corners (0..1 of its frame).
 //   ujw_toner            filter (D258): five-tone colour map by luma, mixed by amount. The `color` effect uses
 //                        OBS's own color_filter_v2 (obs-filters).

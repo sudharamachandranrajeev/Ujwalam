@@ -66,6 +66,8 @@ const BAD = [
   ['toner tone not #RRGGBB', (d) => { d.scenes[0].layers[3].effects = [{ type: 'toner', shadows: '#000', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#000000', amount: 1 }]; }, true],
   ['cornerPin bow-tie (validator only)', (d) => { d.scenes[0].layers[3].effects = [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 0, bottomRightY: 1, bottomLeftX: 1, bottomLeftY: 1 }]; }, false],
   ['cornerPin dented quad (validator only)', (d) => { d.scenes[0].layers[3].effects = [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 0.5, bottomRightY: 0.5, bottomLeftX: 0, bottomLeftY: 1 }]; }, false],
+  ['blinds width below 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blinds', completion: 0.5, angle: 90, width: 0.5, feather: 0 }]; }, true],
+  ['blinds without feather', (d) => { d.scenes[0].layers[3].effects = [{ type: 'blinds', completion: 0.5, angle: 90, width: 10 }]; }, true],
   ['cornerPin corner above 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0, bottomLeftY: 1.2 }]; }, true],
   ['cornerPin without bottomLeftY', (d) => { d.scenes[0].layers[3].effects = [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0 }]; }, true],
   ['toner amount above 1', (d) => { d.scenes[0].layers[3].effects = [{ type: 'toner', shadows: '#000000', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#ffffff', amount: 2 }]; }, true],

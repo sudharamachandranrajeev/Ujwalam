@@ -583,3 +583,22 @@ test('corner pin (D259): Meld CornerPin imports as cornerPin; an untouched pin i
   assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
   assert.equal(validateProject(p).ok, true);
 });
+
+test('blinds (D262): Meld VenetianBlinds imports as blinds with the same numbers, clamped', () => {
+  const s = session();
+  const items = [];
+  (function walk(o) { if (o && typeof o === 'object') { if (o.id === 'H-L-MEDIA') items.push(o); Object.values(o).forEach(walk); } })(s);
+  items[0].effects = [
+    { type: 'VenetianBlinds', enabled: true, completion: 0.6144205927848816, direction: 90, feather: 2.6652019023895264, width: 5.796630859375, version: 2 },
+    { type: 'VenetianBlinds', enabled: true, completion: 2, direction: 900, feather: -1, width: 0 },
+  ];
+  const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
+  const layer = p.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
+  assert.deepEqual(layer.effects, [
+    { type: 'blinds', completion: 0.614, angle: 90, width: 5.797, feather: 2.665 },
+    { type: 'blinds', completion: 1, angle: 360, width: 1, feather: 0 },
+  ]);
+  assert.equal(r.ignored['effect VenetianBlinds'], undefined);
+  assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
+  assert.equal(validateProject(p).ok, true);
+});

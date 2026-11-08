@@ -230,6 +230,13 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 			fx.contrast = chk::get_num(x, "contrast", 0, -1, 1, w);
 			fx.saturation = chk::get_num(x, "saturation", 0, -1, 1, w);
 			fx.hue = chk::get_num(x, "hue", 0, -180, 180, w);
+		} else if (fx.type == "blinds") { // D262
+			chk::only_keys(x, {"type", "completion", "angle", "width", "feather"}, w);
+			chk::require(x, {"completion", "angle", "width", "feather"}, w);
+			fx.completion = chk::get_num(x, "completion", 0, 0, 1, w);
+			fx.angle = chk::get_num(x, "angle", 0, -360, 360, w);
+			fx.value = chk::get_num(x, "width", 10, 1, 100, w);
+			fx.size = chk::get_num(x, "feather", 0, 0, 100, w);
 		} else if (fx.type == "cornerPin") { // D259
 			const char *keys[8] = {"topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY", "bottomLeftX", "bottomLeftY"};
 			chk::only_keys(x, {"type", "topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY",
@@ -261,7 +268,7 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 			}
 			fx.amount = chk::get_num(x, "amount", 1, 0, 1, w);
 		} else {
-			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow, glow, color, toner or cornerPin");
+			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow, glow, color, toner, cornerPin or blinds");
 		}
 		r.push_back(fx);
 	}
@@ -297,6 +304,11 @@ json::Value effects_json(const std::vector<Effect> &e)
 			o.set("contrast", fx.contrast);
 			o.set("saturation", fx.saturation);
 			o.set("hue", fx.hue);
+		} else if (fx.type == "blinds") {
+			o.set("completion", fx.completion);
+			o.set("angle", fx.angle);
+			o.set("width", fx.value);
+			o.set("feather", fx.size);
 		} else if (fx.type == "cornerPin") {
 			const char *keys[8] = {"topLeftX", "topLeftY", "topRightX", "topRightY", "bottomRightX", "bottomRightY", "bottomLeftX", "bottomLeftY"};
 			for (int i = 0; i < 8; i++)

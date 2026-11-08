@@ -335,6 +335,7 @@ test('project v1 effects: host refuses malformed effects; plan and layers.list c
     [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10 }],
     [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10, spread: 0.1, angle: 3 }],
     [{ type: 'color', brightness: 1.5, contrast: 0, saturation: 0, hue: 0 }],
+    [{ type: 'blinds', completion: 1.5, angle: 90, width: 10, feather: 0 }],
     [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 0, bottomRightY: 1, bottomLeftX: 1, bottomLeftY: 1 }],
     [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 0.5, bottomRightY: 0.5, bottomLeftX: 0, bottomLeftY: 1 }],
     [{ type: 'cornerPin', topLeftX: 0, topLeftY: 0, topRightX: 1, topRightY: 0, bottomRightX: 1, bottomRightY: 1, bottomLeftX: 0, bottomLeftY: 1.2 }],
@@ -813,6 +814,63 @@ test('layers.setEffects replaces the effects live, keeps place, order and visibi
   near(px(480, 110), [255, 0, 0], 'pin removed: top-right corner too');
   near(px(800, 300), [0, 255, 0], 'pin replaced by a toner: the whole box, toned green');
   near(px(1000, 300), [0, 255, 0], 'toned green on the right too');
+  near(px(50, 50), [255, 255, 255], 'background');
+  await c.call('outputs.clear');
+});
+
+
+// Blinds (D262): completion 0 shows the whole layer, 1 hides it, 0.5 shows about half of every column in slats.
+const BLINDS = {
+  version: 1, id: 'blinds-check', name: 'Blinds check', activeScene: 'main',
+  canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }],
+  devices: [], overlays: [], outputs: [],
+  scenes: [{
+    id: 'main', name: 'Main', layers: [
+      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#ffffff' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
+      ...[0, 0.5, 1].map((completion, i) => ({ id: `b${i}`, type: 'color', name: `B${i}`, source: { color: '#ff0000' },
+        effects: [{ type: 'blinds', completion, angle: 90, width: 10, feather: 0 }],
+        placements: { h: { visible: true, x: 100 + i * 400, y: 100, width: 300, height: 500 } } }))
+    ]
+  }],
+  audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+};
+
+test('project v1 blinds hide the completion share of every slat (D262)', async () => {
+  assert.ok((await import('../../../services/project/validate.mjs')).validateProject(BLINDS).ok);
+  const r = await loadIntoHost(c, BLINDS, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  assert.deepEqual((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.find((l) => l.id === 'b1').effects,
+    [{ type: 'blinds', completion: 0.5, angle: 90, width: 10, feather: 0 }]);
+  await c.call('outputs.configure', {
+    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
+    audio: { bitrate: 128, sampleRate: 48000 },
+    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: 'blinds-h.mkv' } }]
+  });
+  await c.call('record.start', {});
+  await new Promise((res) => setTimeout(res, 2000));
+  await c.call('record.stop', {});
+  let st;
+  for (let i = 0; i < 60; i++) {
+    st = await c.call('outputs.status');
+    if (st.sinks.every((s) => s.state === 'stopped')) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  const px = frameRgb(st.sinks.find((s) => s.id === 'fh').path, 1280, 720);
+  const redShare = (x) => {
+    let red = 0, runs = 0, last = null;
+    for (let y = 110; y < 590; y++) {
+      const p = px(x, y), isRed = p[0] > 200 && p[1] < 80;
+      red += isRed ? 1 : 0;
+      if (isRed !== last) runs++;
+      last = isRed;
+    }
+    return { share: red / 480, runs };
+  };
+  assert.ok(redShare(250).share > 0.97, 'completion 0: the whole layer');
+  assert.ok(redShare(1050).share < 0.03, 'completion 1: nothing');
+  const half = redShare(650);
+  assert.ok(half.share > 0.35 && half.share < 0.65, `completion 0.5: about half shown, got ${half.share}`);
+  assert.ok(half.runs >= 6, `completion 0.5: horizontal slats (angle 90), got ${half.runs} runs`);
   near(px(50, 50), [255, 255, 255], 'background');
   await c.call('outputs.clear');
 });

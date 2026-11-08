@@ -230,6 +230,11 @@ export function validateProject(doc) {
         const keys = ['brightness', 'contrast', 'saturation', 'hue'];
         noExtra(e, ['type', ...keys], ep); req(e, keys, ep);
         for (const k of keys) if (k in e) num(e[k], `${ep}.${k}`, k === 'hue' ? -180 : -1, k === 'hue' ? 180 : 1);
+      } else if (e.type === 'blinds') { // D262: hidden share of each slat, stacking angle, slat width % of the larger side, feather px
+        const keys = ['completion', 'angle', 'width', 'feather'];
+        const range = { completion: [0, 1], angle: [-360, 360], width: [1, 100], feather: [0, 100] };
+        noExtra(e, ['type', ...keys], ep); req(e, keys, ep);
+        for (const k of keys) if (k in e) num(e[k], `${ep}.${k}`, ...range[k]);
       } else if (e.type === 'cornerPin') { // D259: corners 0..1 of the layer frame, y down
         const keys = ['topLeftX', 'topLeftY', 'topRightX', 'topRightY', 'bottomRightX', 'bottomRightY', 'bottomLeftX', 'bottomLeftY'];
         noExtra(e, ['type', ...keys], ep); req(e, keys, ep);
@@ -241,7 +246,7 @@ export function validateProject(doc) {
         for (const k of tones) if (k in e && (typeof e[k] !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(e[k]))) err(`${ep}.${k}`, 'must be #RRGGBB');
         if ('amount' in e) num(e.amount, `${ep}.amount`, 0, 1);
       } else {
-        err(`${ep}.type`, 'must be one of blur, rounded, chromaKey, shadow, glow, color, toner, cornerPin');
+        err(`${ep}.type`, 'must be one of blur, rounded, chromaKey, shadow, glow, color, toner, cornerPin, blinds');
       }
     });
   };

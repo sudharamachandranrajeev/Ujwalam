@@ -3,7 +3,7 @@
 #include "effects.h"
 #include "log.h"
 #include "rpc_server.h"
-#include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect, ujw_toner_effect, ujw_corner_pin_effect
+#include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect, ujw_toner_effect, ujw_corner_pin_effect, ujw_blinds_effect
 
 #include <algorithm>
 #include <atomic>
@@ -23,6 +23,7 @@ const char *ROUND_ID = "ujw_rounded_corners";
 const char *SHADOW_ID = "ujw_shadow";
 const char *TONER_ID = "ujw_toner";
 const char *PIN_ID = "ujw_corner_pin";
+const char *BLINDS_ID = "ujw_blinds";
 
 // Canvas px a shadow or glow reaches past the layer's box on every side: its offset plus its blur (size = 3 sigma).
 double outset_of(const model::Effect &e)
@@ -754,6 +755,80 @@ const char *pin_name(void *)
 	return "Ujwalam corner pin";
 }
 
+// --- ujw_blinds ----------------------------------------------------------------------------------------------------
+// Venetian blinds (D262), see ujw_blinds.effect. Settings: completion 0..1 (hidden share of each slat), angle
+// (degrees, the direction the slats are stacked along, y down), width (slat width, % of the layer's larger side),
+// feather (source px).
+
+struct Blinds {
+	obs_source_t *ctx = nullptr;
+	gs_effect_t *effect = nullptr;
+	gs_eparam_t *p_size = nullptr, *p_dir = nullptr, *p_slat = nullptr, *p_hide = nullptr, *p_feather = nullptr;
+	std::atomic<float> completion{0}, angle{0}, width{10}, feather{0};
+};
+
+void blinds_update(void *data, obs_data_t *s)
+{
+	auto *t = static_cast<Blinds *>(data);
+	t->completion = (float)std::clamp(obs_data_get_double(s, "completion"), 0.0, 1.0);
+	t->angle = (float)obs_data_get_double(s, "angle");
+	t->width = (float)std::clamp(obs_data_get_double(s, "width"), 0.1, 100.0);
+	t->feather = (float)std::clamp(obs_data_get_double(s, "feather"), 0.0, 1000.0);
+}
+
+void *blinds_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *t = new Blinds();
+	t->ctx = src;
+	t->effect = make_effect(ujw_blinds_effect, "ujw_blinds.effect");
+	if (t->effect) {
+		t->p_size = gs_effect_get_param_by_name(t->effect, "size");
+		t->p_dir = gs_effect_get_param_by_name(t->effect, "dir");
+		t->p_slat = gs_effect_get_param_by_name(t->effect, "slat");
+		t->p_hide = gs_effect_get_param_by_name(t->effect, "hide");
+		t->p_feather = gs_effect_get_param_by_name(t->effect, "feather");
+	}
+	blinds_update(t, s);
+	return t;
+}
+
+void blinds_destroy(void *data)
+{
+	auto *t = static_cast<Blinds *>(data);
+	obs_enter_graphics();
+	gs_effect_destroy(t->effect);
+	obs_leave_graphics();
+	delete t;
+}
+
+void blinds_render(void *data, gs_effect_t *)
+{
+	auto *t = static_cast<Blinds *>(data);
+	obs_source_t *target = obs_filter_get_target(t->ctx);
+	const uint32_t w = target ? obs_source_get_base_width(target) : 0, h = target ? obs_source_get_base_height(target) : 0;
+	if (!t->effect || !w || !h) {
+		obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	if (!obs_source_process_filter_begin(t->ctx, GS_RGBA, OBS_NO_DIRECT_RENDERING))
+		return;
+	const double a = (double)t->angle * 3.14159265358979323846 / 180.0;
+	struct vec2 size, dir;
+	vec2_set(&size, (float)w, (float)h);
+	vec2_set(&dir, (float)std::cos(a), (float)std::sin(a));
+	gs_effect_set_vec2(t->p_size, &size);
+	gs_effect_set_vec2(t->p_dir, &dir);
+	gs_effect_set_float(t->p_slat, std::max(1.0f, (float)std::max(w, h) * t->width / 100.0f));
+	gs_effect_set_float(t->p_hide, t->completion);
+	gs_effect_set_float(t->p_feather, t->feather);
+	obs_source_process_filter_end(t->ctx, t->effect, 0, 0);
+}
+
+const char *blinds_name(void *)
+{
+	return "Ujwalam blinds";
+}
+
 } // namespace
 
 void register_types()
@@ -832,8 +907,20 @@ void register_types()
 	pn.update = pin_update;
 	pn.video_render = pin_render;
 	obs_register_source(&pn);
+
+	struct obs_source_info bl = {};
+	bl.id = BLINDS_ID;
+	bl.type = OBS_SOURCE_TYPE_FILTER;
+	bl.output_flags = OBS_SOURCE_VIDEO;
+	bl.get_name = blinds_name;
+	bl.create = blinds_create;
+	bl.destroy = blinds_destroy;
+	bl.update = blinds_update;
+	bl.video_render = blinds_render;
+	obs_register_source(&bl);
 	hlog::info("effect source types registered: %s, %s, %s, %s, %s, %s", WRAP_ID, BLUR_ID, ROUND_ID, SHADOW_ID, TONER_ID,
 		   PIN_ID);
+	hlog::info("effect source type registered: %s", BLINDS_ID);
 }
 
 obs_source_t *create_chain(obs_source_t *target, const std::string &name, const std::vector<model::Effect> &effects,
@@ -872,6 +959,12 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 			obs_data_set_double(s, "contrast", e.contrast);
 			obs_data_set_double(s, "saturation", e.saturation);
 			obs_data_set_double(s, "hue_shift", e.hue);
+		} else if (e.type == "blinds") { // D262
+			id = BLINDS_ID;
+			obs_data_set_double(s, "completion", e.completion);
+			obs_data_set_double(s, "angle", e.angle);
+			obs_data_set_double(s, "width", e.value);
+			obs_data_set_double(s, "feather", e.size);
 		} else if (e.type == "cornerPin") { // D259
 			id = PIN_ID;
 			for (int i = 0; i < 8; i++)

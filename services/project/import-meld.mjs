@@ -368,6 +368,8 @@ export function importMeld(input, opts = {}) {
   // +-150 range), contrast / 100}; HSV (-1..1 values seen) -> color {hue = hueAdjust * 180 degrees, saturation =
   // satAdjust, brightness = valAdjust}, colorize and per-colour adjusts reported; CCToner -> toner (same five colours,
   // weight -> amount). All UNVERIFIED against a Meld render (docs/evidence/2026-11-08-color-toner.md).
+  // VenetianBlinds (D262) -> blinds {completion, angle = direction, width (read as % of the layer's larger side),
+  // feather (px)}. Units UNVERIFIED against a Meld render.
   // CornerPin (D259) -> cornerPin with the same corners (0..1 of the layer, read as Meld's normalised corners;
   // corners outside are clamped and reported; an untouched pin imports nothing). UNVERIFIED against a Meld render.
   const effectsFor = (l) => {
@@ -402,6 +404,10 @@ export function importMeld(input, opts = {}) {
           saturation: clampTo(e.satAdjust, -1, 1), hue: clampTo(num(e.hueAdjust) ? e.hueAdjust * 180 : 0, -180, 180) });
         if (e.colorize === true) ignore('HSV colorize');
         if (Object.entries(e).some(([k, v]) => /^(hue|sat|val)Adjust[RGBCMY]$/.test(k) && num(v) && v !== 0)) ignore('HSV per-colour adjusts');
+      } else if (e.type === 'VenetianBlinds') {
+        const r = (v, lo, hi, d) => Math.max(lo, Math.min(hi, Math.round((num(v) ? v : d) * 1000) / 1000));
+        out.push({ type: 'blinds', completion: r(e.completion, 0, 1, 0), angle: r(e.direction, -360, 360, 0),
+          width: r(e.width, 1, 100, 10), feather: r(e.feather, 0, 100, 0) });
       } else if (e.type === 'CornerPin') {
         const keys = ['topLeftX', 'topLeftY', 'topRightX', 'topRightY', 'bottomRightX', 'bottomRightY', 'bottomLeftX', 'bottomLeftY'];
         const dflt = [0, 0, 1, 0, 1, 1, 0, 1];
