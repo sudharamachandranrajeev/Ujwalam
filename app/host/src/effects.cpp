@@ -3,12 +3,13 @@
 #include "effects.h"
 #include "log.h"
 #include "rpc_server.h"
-#include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect
+#include "ujw_effects.h" // generated: ujw_gaussian_blur_effect, ujw_rounded_corners_effect, ujw_shadow_effect, ujw_toner_effect
 
 #include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <string>
 #include <vector>
 
 namespace fx {
@@ -19,6 +20,7 @@ const char *WRAP_ID = "ujw_effects_wrap";
 const char *BLUR_ID = "ujw_gaussian_blur";
 const char *ROUND_ID = "ujw_rounded_corners";
 const char *SHADOW_ID = "ujw_shadow";
+const char *TONER_ID = "ujw_toner";
 
 // Canvas px a shadow or glow reaches past the layer's box on every side: its offset plus its blur (size = 3 sigma).
 double outset_of(const model::Effect &e)
@@ -560,6 +562,75 @@ const char *shadow_name(void *)
 	return "Ujwalam shadow / glow";
 }
 
+// --- ujw_toner -----------------------------------------------------------------------------------------------------
+// Five-tone colour map (D258), see ujw_toner.effect.
+
+struct Toner {
+	obs_source_t *ctx = nullptr;
+	gs_effect_t *effect = nullptr;
+	gs_eparam_t *p_tone[5] = {}, *p_amount = nullptr;
+	std::atomic<uint32_t> tone[5] = {};
+	std::atomic<float> amount{1};
+};
+
+const char *const TONE_KEYS[5] = {"shadows", "darktones", "midtones", "brights", "highlights"};
+
+void toner_update(void *data, obs_data_t *s)
+{
+	auto *t = static_cast<Toner *>(data);
+	for (int i = 0; i < 5; i++)
+		t->tone[i] = (uint32_t)obs_data_get_int(s, TONE_KEYS[i]) & 0xffffff;
+	t->amount = (float)std::clamp(obs_data_get_double(s, "amount"), 0.0, 1.0);
+}
+
+void *toner_create(obs_data_t *s, obs_source_t *src)
+{
+	auto *t = new Toner();
+	t->ctx = src;
+	t->effect = make_effect(ujw_toner_effect, "ujw_toner.effect");
+	if (t->effect) {
+		for (int i = 0; i < 5; i++)
+			t->p_tone[i] = gs_effect_get_param_by_name(t->effect, ("tone" + std::to_string(i)).c_str());
+		t->p_amount = gs_effect_get_param_by_name(t->effect, "amount");
+	}
+	toner_update(t, s);
+	return t;
+}
+
+void toner_destroy(void *data)
+{
+	auto *t = static_cast<Toner *>(data);
+	obs_enter_graphics();
+	gs_effect_destroy(t->effect);
+	obs_leave_graphics();
+	delete t;
+}
+
+void toner_render(void *data, gs_effect_t *)
+{
+	auto *t = static_cast<Toner *>(data);
+	if (!t->effect) {
+		obs_source_skip_video_filter(t->ctx);
+		return;
+	}
+	if (!obs_source_process_filter_begin(t->ctx, GS_RGBA, OBS_NO_DIRECT_RENDERING))
+		return;
+	for (int i = 0; i < 5; i++) {
+		const uint32_t c = t->tone[i];
+		struct vec4 v;
+		vec4_set(&v, (float)((c >> 16) & 0xff) / 255.0f, (float)((c >> 8) & 0xff) / 255.0f, (float)(c & 0xff) / 255.0f,
+			 1.0f);
+		gs_effect_set_vec4(t->p_tone[i], &v);
+	}
+	gs_effect_set_float(t->p_amount, t->amount);
+	obs_source_process_filter_end(t->ctx, t->effect, 0, 0);
+}
+
+const char *toner_name(void *)
+{
+	return "Ujwalam toner";
+}
+
 } // namespace
 
 void register_types()
@@ -616,7 +687,18 @@ void register_types()
 	sh.video_tick = shadow_tick;
 	sh.video_render = shadow_render;
 	obs_register_source(&sh);
-	hlog::info("effect source types registered: %s, %s, %s, %s", WRAP_ID, BLUR_ID, ROUND_ID, SHADOW_ID);
+
+	struct obs_source_info tn = {};
+	tn.id = TONER_ID;
+	tn.type = OBS_SOURCE_TYPE_FILTER;
+	tn.output_flags = OBS_SOURCE_VIDEO;
+	tn.get_name = toner_name;
+	tn.create = toner_create;
+	tn.destroy = toner_destroy;
+	tn.update = toner_update;
+	tn.video_render = toner_render;
+	obs_register_source(&tn);
+	hlog::info("effect source types registered: %s, %s, %s, %s, %s", WRAP_ID, BLUR_ID, ROUND_ID, SHADOW_ID, TONER_ID);
 }
 
 obs_source_t *create_chain(obs_source_t *target, const std::string &name, const std::vector<model::Effect> &effects,
@@ -649,6 +731,17 @@ obs_source_t *create_chain(obs_source_t *target, const std::string &name, const 
 			obs_data_set_int(s, "key_color", (long long)(0xff000000u | (b << 16) | (g << 8) | r));
 			obs_data_set_int(s, "similarity", e.similarity);
 			obs_data_set_int(s, "smoothness", e.smoothness);
+		} else if (e.type == "color") { // D258: OBS's own colour correction (obs-filters), all -1..1 except hue
+			id = "color_filter_v2";
+			obs_data_set_double(s, "brightness", e.brightness);
+			obs_data_set_double(s, "contrast", e.contrast);
+			obs_data_set_double(s, "saturation", e.saturation);
+			obs_data_set_double(s, "hue_shift", e.hue);
+		} else if (e.type == "toner") { // D258
+			id = TONER_ID;
+			for (int i = 0; i < 5; i++)
+				obs_data_set_int(s, TONE_KEYS[i], (long long)e.tones[i]);
+			obs_data_set_double(s, "amount", e.amount);
 		} else if (e.type == "shadow" || e.type == "glow") { // D257; canvas px, see ujw_shadow above
 			id = SHADOW_ID;
 			obs_data_set_int(s, "color", (long long)e.color);

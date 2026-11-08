@@ -533,3 +533,30 @@ test('shadow and glow (D257): Meld DropShadow and outer GlowStyles import after 
   assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
   assert.equal(validateProject(p).ok, true);
 });
+
+test('colour (D258): BrightnessContrast and HSV import as color, CCToner as toner; colorize and per-colour adjusts are reported', () => {
+  const s = session();
+  const items = [];
+  (function walk(o) { if (o && typeof o === 'object') { if (o.id === 'H-L-MEDIA') items.push(o); Object.values(o).forEach(walk); } })(s);
+  const h = items[0];
+  h.effects = [
+    { type: 'BrightnessContrast', enabled: true, brightness: 121.5087890625, contrast: 50, version: 2 },
+    { type: 'HSV', enabled: true, colorize: true, hueAdjust: -0.11999999731779099, satAdjust: 0.18000000715255737, valAdjust: -0.2, hueAdjustR: 0.1 },
+    { type: 'CCToner', enabled: true, shadows: '#000000', darktones: '#704A30', midtones: '#82603e', brights: '#d1a780', highlights: '#f4e3c0', weight: 1, version: 2 },
+    { type: 'CCToner', enabled: true, shadows: 'red', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#000000', weight: 1 },
+    { type: 'BrightnessContrast', enabled: true, brightness: 900, contrast: -500 },
+  ];
+  const { project: p, report: r } = importMeld(s, { id: 'meld-test' });
+  const layer = p.scenes.flatMap((x) => x.layers).find((l) => l.origin?.id?.includes('H-L-MEDIA'));
+  assert.deepEqual(layer.effects, [
+    { type: 'color', brightness: 0.81, contrast: 0.5, saturation: 0, hue: 0 },
+    { type: 'color', brightness: -0.2, contrast: 0, saturation: 0.18, hue: -21.6 },
+    { type: 'toner', shadows: '#000000', darktones: '#704a30', midtones: '#82603e', brights: '#d1a780', highlights: '#f4e3c0', amount: 1 },
+    { type: 'color', brightness: 1, contrast: -1, saturation: 0, hue: 0 },
+  ]);
+  assert.equal(r.ignored['HSV colorize'], 1);
+  assert.equal(r.ignored['HSV per-colour adjusts'], 1);
+  assert.equal(r.ignored['effect CCToner'], 1, 'a toner with a bad colour is reported');
+  assert.equal(schemaCheck(p), true, JSON.stringify(schemaCheck.errors));
+  assert.equal(validateProject(p).ok, true);
+});

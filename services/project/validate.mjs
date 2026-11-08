@@ -211,8 +211,17 @@ export function validateProject(doc) {
         if ('color' in e && (typeof e.color !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(e.color))) err(`${ep}.color`, 'must be #RRGGBB');
         const range = { opacity: [0, 1], size: [0, 200], distance: [0, 200], angle: [-360, 360], spread: [0, 1] };
         for (const k of keys.slice(1)) if (k in e) num(e[k], `${ep}.${k}`, ...range[k]);
+      } else if (e.type === 'color') { // D258: -1..1 (0 = unchanged), hue in degrees
+        const keys = ['brightness', 'contrast', 'saturation', 'hue'];
+        noExtra(e, ['type', ...keys], ep); req(e, keys, ep);
+        for (const k of keys) if (k in e) num(e[k], `${ep}.${k}`, k === 'hue' ? -180 : -1, k === 'hue' ? 180 : 1);
+      } else if (e.type === 'toner') { // D258
+        const tones = ['shadows', 'darktones', 'midtones', 'brights', 'highlights'];
+        noExtra(e, ['type', ...tones, 'amount'], ep); req(e, [...tones, 'amount'], ep);
+        for (const k of tones) if (k in e && (typeof e[k] !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(e[k]))) err(`${ep}.${k}`, 'must be #RRGGBB');
+        if ('amount' in e) num(e.amount, `${ep}.amount`, 0, 1);
       } else {
-        err(`${ep}.type`, 'must be one of blur, rounded, chromaKey, shadow, glow');
+        err(`${ep}.type`, 'must be one of blur, rounded, chromaKey, shadow, glow, color, toner');
       }
     });
   };

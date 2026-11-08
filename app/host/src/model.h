@@ -60,12 +60,17 @@ struct Source {
 //   shadow (D257): color, opacity 0..1, size 0..200 (blur reach, canvas px; sigma = size / 3), distance 0..200 canvas
 //           px, angle -360..360 degrees (where the light comes from: 0 right, 90 above; shadow on the other side)
 //   glow (D257): color, opacity 0..1, size 0..200 canvas px, spread 0..1 (alpha lifted before the colour: harder edge)
+//   color (D258): brightness, contrast, saturation -1..1 (0 = unchanged), hue -180..180 degrees (OBS color_filter_v2)
+//   toner (D258): tones = shadows, darktones, midtones, brights, highlights (0xRRGGBB), amount 0..1
 struct Effect {
-	std::string type; // "blur" | "rounded" | "chromaKey" | "shadow" | "glow"
+	std::string type; // "blur" | "rounded" | "chromaKey" | "shadow" | "glow" | "color" | "toner"
 	double value = 0;
 	uint32_t color = 0;
 	int64_t similarity = 400, smoothness = 80;
 	double opacity = 1, size = 0, distance = 0, angle = 0, spread = 0;
+	double brightness = 0, contrast = 0, saturation = 0, hue = 0;
+	uint32_t tones[5] = {};
+	double amount = 1;
 };
 
 struct Item {

@@ -223,8 +223,26 @@ std::vector<Effect> parse_effects(const json::Value *e, const std::string &what)
 			fx.color = (uint32_t)std::stoul(c.substr(1), nullptr, 16);
 			fx.opacity = chk::get_num(x, "opacity", 1, 0, 1, w);
 			fx.size = chk::get_num(x, "size", 0, 0, 200, w);
+		} else if (fx.type == "color") { // D258
+			chk::only_keys(x, {"type", "brightness", "contrast", "saturation", "hue"}, w);
+			chk::require(x, {"brightness", "contrast", "saturation", "hue"}, w);
+			fx.brightness = chk::get_num(x, "brightness", 0, -1, 1, w);
+			fx.contrast = chk::get_num(x, "contrast", 0, -1, 1, w);
+			fx.saturation = chk::get_num(x, "saturation", 0, -1, 1, w);
+			fx.hue = chk::get_num(x, "hue", 0, -180, 180, w);
+		} else if (fx.type == "toner") { // D258
+			chk::only_keys(x, {"type", "shadows", "darktones", "midtones", "brights", "highlights", "amount"}, w);
+			chk::require(x, {"shadows", "darktones", "midtones", "brights", "highlights", "amount"}, w);
+			const char *keys[5] = {"shadows", "darktones", "midtones", "brights", "highlights"};
+			for (int i = 0; i < 5; i++) {
+				const std::string c = chk::get_str(x, keys[i], "", 7, w);
+				if (c.size() != 7 || c[0] != '#' || c.find_first_not_of("0123456789abcdefABCDEF", 1) != std::string::npos)
+					throw Error(rpc::INVALID_PARAMS, w + ": " + keys[i] + " must be #RRGGBB");
+				fx.tones[i] = (uint32_t)std::stoul(c.substr(1), nullptr, 16);
+			}
+			fx.amount = chk::get_num(x, "amount", 1, 0, 1, w);
 		} else {
-			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow or glow");
+			throw Error(rpc::INVALID_PARAMS, w + ": type must be blur, rounded, chromaKey, shadow, glow, color or toner");
 		}
 		r.push_back(fx);
 	}
@@ -255,6 +273,19 @@ json::Value effects_json(const std::vector<Effect> &e)
 			} else {
 				o.set("spread", fx.spread);
 			}
+		} else if (fx.type == "color") {
+			o.set("brightness", fx.brightness);
+			o.set("contrast", fx.contrast);
+			o.set("saturation", fx.saturation);
+			o.set("hue", fx.hue);
+		} else if (fx.type == "toner") {
+			const char *keys[5] = {"shadows", "darktones", "midtones", "brights", "highlights"};
+			for (int i = 0; i < 5; i++) {
+				char hex[8];
+				snprintf(hex, sizeof hex, "#%06x", (unsigned)(fx.tones[i] & 0xffffff));
+				o.set(keys[i], std::string(hex));
+			}
+			o.set("amount", fx.amount);
 		} else {
 			o.set(fx.type == "blur" ? "strength" : "radius", fx.value);
 		}

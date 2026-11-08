@@ -334,6 +334,10 @@ test('project v1 effects: host refuses malformed effects; plan and layers.list c
     [{ type: 'shadow', color: '#000000', opacity: 1.5, size: 10, distance: 5, angle: 45 }],
     [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10 }],
     [{ type: 'glow', color: '#00ffff', opacity: 1, size: 10, spread: 0.1, angle: 3 }],
+    [{ type: 'color', brightness: 1.5, contrast: 0, saturation: 0, hue: 0 }],
+    [{ type: 'color', brightness: 0, contrast: 0, saturation: 0 }],
+    [{ type: 'toner', shadows: '#000', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#000000', amount: 1 }],
+    [{ type: 'toner', shadows: '#000000', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#ffffff', amount: 2 }],
     [{ type: 'blur' }],
     [{ type: 'blur', strength: 0 }],
     [{ type: 'blur', strength: 101 }],
@@ -642,5 +646,67 @@ test('project v1 shadow and glow render past the box; the picture keeps its plac
   near(px(1075, 447), C, 'glow above the card');
   near(px(1175, 600), K, 'shadow right of the card');
   near(px(960, 525), W, 'left of the glow: nothing');
+  await c.call('outputs.clear');
+});
+
+// Colour and toner (D258) on flat colour layers, so the expected pixels do not depend on how luma or gamma are read:
+// brightness +1 lifts black to white, saturation -1 turns red grey, a toner maps white to its highlights colour and
+// black to its shadows colour, and amount 0 leaves the picture as it was.
+const COL = {
+  version: 1, id: 'color-check', name: 'Colour check', activeScene: 'main',
+  canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }],
+  devices: [], overlays: [], outputs: [],
+  scenes: [{
+    id: 'main', name: 'Main', layers: [
+      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#808080' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
+      { id: 'lift', type: 'color', name: 'Lift', source: { color: '#000000' },
+        effects: [{ type: 'color', brightness: 1, contrast: 0, saturation: 0, hue: 0 }],
+        placements: { h: { visible: true, x: 100, y: 100, width: 200, height: 200 } } },
+      { id: 'grey', type: 'color', name: 'Grey', source: { color: '#ff0000' },
+        effects: [{ type: 'color', brightness: 0, contrast: 0, saturation: -1, hue: 0 }],
+        placements: { h: { visible: true, x: 400, y: 100, width: 200, height: 200 } } },
+      { id: 'hi', type: 'color', name: 'Hi', source: { color: '#ffffff' },
+        effects: [{ type: 'toner', shadows: '#0000ff', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#ff0000', amount: 1 }],
+        placements: { h: { visible: true, x: 700, y: 100, width: 200, height: 200 } } },
+      { id: 'lo', type: 'color', name: 'Lo', source: { color: '#000000' },
+        effects: [{ type: 'toner', shadows: '#0000ff', darktones: '#000000', midtones: '#000000', brights: '#000000', highlights: '#ff0000', amount: 1 }],
+        placements: { h: { visible: true, x: 100, y: 400, width: 200, height: 200 } } },
+      { id: 'off', type: 'color', name: 'Off', source: { color: '#00ff00' },
+        effects: [{ type: 'toner', shadows: '#0000ff', darktones: '#0000ff', midtones: '#0000ff', brights: '#0000ff', highlights: '#0000ff', amount: 0 }],
+        placements: { h: { visible: true, x: 400, y: 400, width: 200, height: 200 } } }
+    ]
+  }],
+  audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+};
+
+test('project v1 color and toner effects render (D258)', async () => {
+  assert.ok((await import('../../../services/project/validate.mjs')).validateProject(COL).ok);
+  const r = await loadIntoHost(c, COL, { bases: { media } });
+  assert.deepEqual(r.unavailable, []);
+  const by = Object.fromEntries((await c.call('layers.list', { scene: 'main', canvas: 'H' })).layers.map((l) => [l.id, l]));
+  assert.deepEqual(by.grey.effects, [{ type: 'color', brightness: 0, contrast: 0, saturation: -1, hue: 0 }]);
+  assert.deepEqual(by.hi.effects, [COL.scenes[0].layers[3].effects[0]]);
+  await c.call('outputs.configure', {
+    rungs: [{ id: 'rh', canvas: 'H', codec: 'h264', encoder: 'nvenc', rc: 'cbr', w: 1280, h: 720, fps: 30, bitrate: 8000, gopSec: 1 }],
+    audio: { bitrate: 128, sampleRate: 48000 },
+    sinks: [{ id: 'fh', rung: 'rh', platform: 'local', proto: 'file', priority: 1, target: { transport: 'file', name: 'color-h.mkv' } }]
+  });
+  await c.call('record.start', {});
+  await new Promise((res) => setTimeout(res, 2000));
+  await c.call('record.stop', {});
+  let st;
+  for (let i = 0; i < 60; i++) {
+    st = await c.call('outputs.status');
+    if (st.sinks.every((s) => s.state === 'stopped')) break;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  const px = frameRgb(st.sinks.find((s) => s.id === 'fh').path, 1280, 720);
+  near(px(200, 200), [255, 255, 255], 'brightness +1 lifts black to white');
+  const g = px(500, 200);
+  assert.ok(Math.max(...g) - Math.min(...g) <= 24 && g[0] < 200, `saturation -1 turns red grey: got ${g}`);
+  near(px(800, 200), [255, 0, 0], 'toner: white takes the highlights colour');
+  near(px(200, 500), [0, 0, 255], 'toner: black takes the shadows colour');
+  near(px(500, 500), [0, 255, 0], 'toner amount 0: unchanged');
+  near(px(50, 50), [128, 128, 128], 'background untouched');
   await c.call('outputs.clear');
 });

@@ -1,0 +1,60 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// ujwalam-host: ujw_toner filter (src/effects.cpp, D258). Embedded into the host exe at build time (CMakeLists.txt
+// generates ujw_effects.h). Direct3D 11 (libobs-d3d11) only.
+// Five-tone colour map: each pixel's luma (Rec. 709 weights on the stored values) picks a colour between shadows (0),
+// darktones (0.25), midtones (0.5), brights (0.75) and highlights (1), linearly; `amount` mixes it with the original.
+// Alpha is kept.
+
+uniform float4x4 ViewProj;
+uniform texture2d image;
+uniform float4 tone0;
+uniform float4 tone1;
+uniform float4 tone2;
+uniform float4 tone3;
+uniform float4 tone4;
+uniform float amount;
+
+sampler_state clampSampler {
+	Filter   = Linear;
+	AddressU = Clamp;
+	AddressV = Clamp;
+};
+
+struct VertData {
+	float4 pos : POSITION;
+	float2 uv  : TEXCOORD0;
+};
+
+VertData VSDefault(VertData v_in)
+{
+	VertData vert_out;
+	vert_out.pos = mul(float4(v_in.pos.xyz, 1.0), ViewProj);
+	vert_out.uv  = v_in.uv;
+	return vert_out;
+}
+
+float4 PSToner(VertData v_in) : TARGET
+{
+	float4 rgba = image.Sample(clampSampler, v_in.uv);
+	float y = saturate(dot(rgba.rgb, float3(0.2126, 0.7152, 0.0722))) * 4.0;
+	float3 c;
+	if (y < 1.0)
+		c = lerp(tone0.rgb, tone1.rgb, y);
+	else if (y < 2.0)
+		c = lerp(tone1.rgb, tone2.rgb, y - 1.0);
+	else if (y < 3.0)
+		c = lerp(tone2.rgb, tone3.rgb, y - 2.0);
+	else
+		c = lerp(tone3.rgb, tone4.rgb, y - 3.0);
+	rgba.rgb = lerp(rgba.rgb, c, amount);
+	return rgba;
+}
+
+technique Draw
+{
+	pass
+	{
+		vertex_shader = VSDefault(v_in);
+		pixel_shader  = PSToner(v_in);
+	}
+}

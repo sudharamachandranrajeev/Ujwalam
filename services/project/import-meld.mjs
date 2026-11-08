@@ -363,6 +363,10 @@ export function importMeld(input, opts = {}) {
   // project's shadow and glow are: shadow {angle, distance, size, opacity 0..100, color}, glow {size, choke -> spread,
   // opacity 0..1, color} for edgeStyle 0 (read as the outer glow; other edge styles are reported). Angle as in
   // Photoshop (where the light comes from). All UNVERIFIED against a Meld render (docs/evidence/2026-11-08-shadow-glow.md).
+  // Colour (D258), in the effect order Meld lists them: BrightnessContrast -> color {brightness / 150 (Photoshop's
+  // +-150 range), contrast / 100}; HSV (-1..1 values seen) -> color {hue = hueAdjust * 180 degrees, saturation =
+  // satAdjust, brightness = valAdjust}, colorize and per-colour adjusts reported; CCToner -> toner (same five colours,
+  // weight -> amount). All UNVERIFIED against a Meld render (docs/evidence/2026-11-08-color-toner.md).
   const effectsFor = (l) => {
     const out = [], post = [];
     const hex = (c) => (typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c.toLowerCase() : null);
@@ -387,7 +391,18 @@ export function importMeld(input, opts = {}) {
         post.push({ type: 'glow', color: hex(e.color), opacity: clampTo(num(e.opacity) ? e.opacity : 1, 0, 1),
           size: clampTo(e.size, 0, 200), spread: clampTo(e.choke, 0, 1) });
       } else if (e.type === 'GlowStyles' && hex(e.color)) ignore(`GlowStyles edgeStyle ${clip(String(e.edgeStyle), 10)}`);
-      else ignore(`effect ${clip(String(e.type), 40)}`);
+      else if (e.type === 'BrightnessContrast') {
+        out.push({ type: 'color', brightness: clampTo(num(e.brightness) ? e.brightness / 150 : 0, -1, 1),
+          contrast: clampTo(num(e.contrast) ? e.contrast / 100 : 0, -1, 1), saturation: 0, hue: 0 });
+      } else if (e.type === 'HSV') {
+        out.push({ type: 'color', brightness: clampTo(e.valAdjust, -1, 1), contrast: 0,
+          saturation: clampTo(e.satAdjust, -1, 1), hue: clampTo(num(e.hueAdjust) ? e.hueAdjust * 180 : 0, -180, 180) });
+        if (e.colorize === true) ignore('HSV colorize');
+        if (Object.entries(e).some(([k, v]) => /^(hue|sat|val)Adjust[RGBCMY]$/.test(k) && num(v) && v !== 0)) ignore('HSV per-colour adjusts');
+      } else if (e.type === 'CCToner' && ['shadows', 'darktones', 'midtones', 'brights', 'highlights'].every((t) => hex(e[t]))) {
+        out.push({ type: 'toner', shadows: hex(e.shadows), darktones: hex(e.darktones), midtones: hex(e.midtones),
+          brights: hex(e.brights), highlights: hex(e.highlights), amount: clampTo(num(e.weight) ? e.weight : 1, 0, 1) });
+      } else ignore(`effect ${clip(String(e.type), 40)}`);
     }
     if (isObj(l.radii)) {
       const r = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'].map((c) => (num(l.radii[c]) && l.radii[c] > 0 ? l.radii[c] : 0));

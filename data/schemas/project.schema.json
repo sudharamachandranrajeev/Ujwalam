@@ -117,7 +117,7 @@
       }
     },
     "effect": {
-      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside. chromaKey (D246): pixels near color become transparent (OBS chroma key: similarity and smoothness 1..1000, OBS defaults 400 and 80). shadow and glow (D257): a blurred copy of the layer's alpha in one colour under the layer, reaching past its box; canvas px: size = blur reach (sigma = size / 3), distance = offset, angle = where the light comes from (0 right, 90 above); glow spread 0..1 hardens the edge.",
+      "$comment": "Per-layer visual effect, applied in list order to the layer's own copy of its source (a duplicate's effects never reach the original). blur: Gaussian, sigma = strength * 0.5 source pixels (after placement crop). rounded: corner radius in source pixels (after placement crop), transparent outside. chromaKey (D246): pixels near color become transparent (OBS chroma key: similarity and smoothness 1..1000, OBS defaults 400 and 80). shadow and glow (D257): a blurred copy of the layer's alpha in one colour under the layer, reaching past its box; canvas px: size = blur reach (sigma = size / 3), distance = offset, angle = where the light comes from (0 right, 90 above); glow spread 0..1 hardens the edge. color (D258): OBS colour correction, brightness/contrast/saturation -1..1 (0 = unchanged), hue -180..180 degrees. toner (D258): five colours picked by luma (shadows 0, darktones 0.25, midtones 0.5, brights 0.75, highlights 1), mixed with the original by amount.",
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["type", "strength"],
           "properties": { "type": { "const": "blur" }, "strength": { "type": "number", "minimum": 1, "maximum": 100 } } },
@@ -133,7 +133,15 @@
         { "type": "object", "additionalProperties": false, "required": ["type", "color", "opacity", "size", "spread"],
           "properties": { "type": { "const": "glow" }, "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
             "opacity": { "type": "number", "minimum": 0, "maximum": 1 }, "size": { "type": "number", "minimum": 0, "maximum": 200 },
-            "spread": { "type": "number", "minimum": 0, "maximum": 1 } } }
+            "spread": { "type": "number", "minimum": 0, "maximum": 1 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "brightness", "contrast", "saturation", "hue"],
+          "properties": { "type": { "const": "color" }, "brightness": { "type": "number", "minimum": -1, "maximum": 1 },
+            "contrast": { "type": "number", "minimum": -1, "maximum": 1 }, "saturation": { "type": "number", "minimum": -1, "maximum": 1 },
+            "hue": { "type": "number", "minimum": -180, "maximum": 180 } } },
+        { "type": "object", "additionalProperties": false, "required": ["type", "shadows", "darktones", "midtones", "brights", "highlights", "amount"],
+          "properties": { "type": { "const": "toner" }, "shadows": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }, "darktones": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "midtones": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }, "brights": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" }, "highlights": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+            "amount": { "type": "number", "minimum": 0, "maximum": 1 } } }
       ]
     },
     "layer": {

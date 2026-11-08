@@ -13,6 +13,8 @@
 //   ujw_rounded_corners  filter: alpha mask outside a rounded rectangle, radius in source pixels.
 //   ujw_shadow           filter (D257): drop shadow / outer glow under the layer, in canvas pixels; its output is
 //                        larger than its input by the shadow's reach (outset), so nothing is cut at the box edge.
+//   ujw_toner            filter (D258): five-tone colour map by luma, mixed by amount. The `color` effect uses
+//                        OBS's own color_filter_v2 (obs-filters).
 // Shaders: app/host/data/effects/*.effect, embedded into the exe by CMakeLists.txt (no runtime file lookup).
 #pragma once
 
