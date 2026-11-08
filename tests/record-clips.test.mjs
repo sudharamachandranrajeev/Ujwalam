@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clipRunSpec, countClips, createRecordClips, finishedRecording, isLive } from '../services/studio-ui/record-clips.mjs';
+import { clipRunSpec, countClips, createRecordClips, finishedRecording, isLive, parseProgress } from '../services/studio-ui/record-clips.mjs';
 import { folderProblem, readSettings, settingsProblems, writeSettings } from '../services/studio-ui/user-settings.mjs';
 
 const RUNGS = [{ id: 'rec-h', canvas: 'H' }, { id: 'rec-v', canvas: 'V' }];
@@ -210,5 +210,57 @@ test('no clip maker: reported in plain words, nothing spawned', () => {
     assert.equal(s.status().available, false);
     assert.equal(s.status().last.result, 'not-made');
     assert.match(s.status().last.reason, /not set up on this PC/);
+  } finally { rmSync(s.d, { recursive: true, force: true }); }
+});
+
+test('parseProgress: only well-formed ujwalam-progress lines count; lengths capped, paths dropped', () => {
+  assert.deepEqual(parseProgress('ujwalam-progress {"stage":"render","done":3,"total":7,"note":"clip 3"}'), { stage: 'render', done: 3, total: 7, note: 'clip 3' });
+  assert.equal(parseProgress('ujwalam-progress {"stage":"bogus","done":1,"total":2}'), null);
+  assert.equal(parseProgress('ujwalam-progress {not json'), null);
+  assert.equal(parseProgress('some other line'), null);
+  assert.equal(parseProgress(`ujwalam-progress ${'x'.repeat(3000)}`), null);
+  assert.equal(parseProgress('ujwalam-progress {"stage":"detect","done":9,"total":4}').done, 4, 'done never above total');
+  assert.equal(parseProgress('ujwalam-progress {"stage":"detect","done":-1,"total":"a"}').done, null);
+  const line = (note) => 'ujwalam-progress ' + JSON.stringify({ stage: 'gate', note });
+  assert.equal(parseProgress(line('n'.repeat(400))).note.length, 160);
+  assert.equal(parseProgress(line('see D:\\recordings\\a.mp4 now')).note, 'see  now', 'a Windows path is dropped');
+});
+
+test('tasks: a queued run shows as waiting while the stream is live, then running', () => {
+  const s = setup();
+  const task = () => JSON.parse(readFileSync(path.join(s.dataDir, 'tasks', 'clip-practice-h-1.json'), 'utf8'));
+  try {
+    writeSettings(s.dataDir, { clips: { recording: 'after', live: 'after' } });
+    const rc = make(s);
+    rc.feed(s.S('live', { stream: 'live' })); rc.feed(s.S('stopped', { stream: 'live' }));
+    assert.equal(s.spawned.length, 0, 'nothing runs while the stream is live');
+    assert.deepEqual([task().state, task().note], ['waiting', 'Waiting until the stream ends']);
+    rc.feed(s.S('stopped'));
+    assert.equal(s.spawned.length, 1);
+    assert.deepEqual([task().state, task().title], ['running', 'Finding the best moments in practice-h-1']);
+  } finally { rmSync(s.d, { recursive: true, force: true }); }
+});
+
+test('tasks: stderr progress lines drive the task title and bar; exit makes it done or failed', async () => {
+  const s = setup();
+  const { PassThrough } = await import('node:stream');
+  const spawnFn = (exe, argv, o) => { const c = new EventEmitter(); c.stderr = new PassThrough(); c.kill = () => { c.killed = true; setImmediate(() => c.emit('exit', 1)); }; s.spawned.push({ exe, argv, o, c }); return c; };
+  const task = () => JSON.parse(readFileSync(path.join(s.dataDir, 'tasks', 'clip-practice-h-1.json'), 'utf8'));
+  try {
+    writeSettings(s.dataDir, { clips: { recording: 'after', live: 'off' } });
+    const rc = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: s.log, spawnFn, now: s.now });
+    rc.feed(s.S('live')); rc.feed(s.S('stopped'));
+    const err = s.spawned[0].c.stderr;
+    err.write('warming up\nujwalam-progress {"stage":"detect","done":40,"total":100,"note":"scanning"}\n');
+    await tick();
+    assert.deepEqual([task().stage, task().done, task().total, task().note], ['detect', 40, 100, 'scanning']);
+    err.write('ujwalam-progress {"stage":"rend'); await tick();
+    err.write('er","done":2,"total":7}\nnot a progress line\n'); await tick();
+    assert.equal(task().title, 'Editing clips (3 of 7)');
+    assert.equal(task().state, 'running');
+    s.spawned[0].c.emit('exit', 1);
+    assert.equal(task().state, 'failed');
+    assert.match(task().title, /did not finish/);
+    assert.match(readFileSync(path.join(s.dataDir, 'clips', 'run-practice-h-1.log'), 'utf8'), /warming up/, 'stderr still reaches the log');
   } finally { rmSync(s.d, { recursive: true, force: true }); }
 });

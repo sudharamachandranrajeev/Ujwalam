@@ -34,7 +34,6 @@ void apply(QApplication &app)
 	app.setStyleSheet(QStringLiteral(R"(
 QWidget { font-family: "Segoe UI"; font-size: 10pt; }
 QToolButton { background: %3; color: %5; border: 1px solid %4; border-radius: 8px; padding: 5px 12px; }
-QToolButton:hover { border-color: %7; }
 QToolButton::menu-indicator { image: none; width: 0; }
 QMenu { background: %3; color: %5; border: 1px solid %4; border-radius: 8px; padding: 4px; }
 QMenu::item { padding: 6px 18px; border-radius: 6px; }
@@ -49,12 +48,10 @@ QFrame#strip QLabel { background: transparent; }
 QLabel#heading { color: %6; font-size: 8pt; font-weight: 600; }
 QLabel#pill { background: %3; border: 1px solid %4; border-radius: 10px; padding: 3px 10px; color: %5; }
 QPushButton { background: %3; color: %5; border: 1px solid %4; border-radius: 8px; padding: 5px 12px; min-height: 18px; }
-QPushButton:hover { border-color: %7; }
 QPushButton:pressed { background: %4; }
 QPushButton:disabled { color: #5d5972; border-color: %3; }
 QPushButton:checked { background: %7; border-color: %7; color: white; }
 QPushButton[role="primary"] { background: %7; border-color: %7; color: white; font-weight: 600; }
-QPushButton[role="primary"]:hover { background: %8; border-color: %8; }
 QPushButton[role="danger"] { background: transparent; border-color: %9; color: %9; font-weight: 600; }
 QPushButton[role="danger"]:checked { background: %9; color: white; }
 QPushButton[role="primary"]:disabled, QPushButton[role="danger"]:disabled { background: %3; border-color: %4; color: #5d5972; }
@@ -84,9 +81,25 @@ QSplitter::handle { background: transparent; }
 QStatusBar { background: %1; color: %6; }
 QTabBar::tab { background: %3; color: %6; border: 1px solid %4; border-radius: 8px; padding: 4px 12px; margin-right: 4px; }
 QTabBar::tab:selected { background: %7; color: white; border-color: %7; }
+QLabel#muted { color: %6; background: transparent; }
+QToolButton#taskClose { border: none; background: transparent; color: %6; padding: 0 6px; border-radius: 6px; }
+QToolButton#taskClose:hover { background: %4; color: %5; }
+QWidget#taskChip { background: %3; border: 1px solid %4; border-radius: 10px; }
+QWidget#taskChip QLabel { background: transparent; color: %5; }
+QFrame#taskPanel { background: %2; border: 1px solid %4; border-radius: 14px; }
+QFrame#taskRow { background: %3; border: 1px solid %4; border-radius: 10px; }
+QFrame#taskRow QLabel { background: transparent; }
+QFrame#toast { background: %3; border: 1px solid %7; border-radius: 12px; }
+QFrame#toast[failed="true"] { border-color: %9; }
+QFrame#toast QLabel { background: transparent; }
+QFrame#statCard { background: %2; border: 1px solid %4; border-radius: 12px; }
+QFrame#statCard QLabel { background: transparent; }
+QLabel#statName { color: %6; font-size: 8pt; font-weight: 600; }
+QLabel#statValue { color: %5; font-size: 10pt; font-weight: 600; }
+QLabel#statBig { color: %5; font-size: 20pt; font-weight: 600; }
 )")
 				   .arg(QLatin1String(kBg), QLatin1String(kPanel), QLatin1String(kField), QLatin1String(kBorder), QLatin1String(kText),
-					QLatin1String(kMuted), QLatin1String(kAccent), QLatin1String(kAccentHi), QLatin1String(kDanger)));
+					QLatin1String(kMuted), QLatin1String(kAccent), QLatin1String(kAccentHi), QLatin1String(kDanger), QLatin1String(kOk)));
 }
 
 } // namespace theme
