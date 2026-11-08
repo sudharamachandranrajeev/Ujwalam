@@ -48,10 +48,28 @@ export function placeholderKeys(preset) {
 
 const label = (s) => String(s).slice(0, 120) || 'Layer';
 
+// `fit: "contain"` (D251): the file is shown at its true shape, as large as fits the preset box and centred in it
+// (rotation pivots on the centre, so a turned box stays right). `cropBars` first cuts the file's black bars
+// (info.crop, source px). Without info the box stays as it is (stretched, as before).
+function fitContain(px, info, cropBars) {
+  if (!info || !(info.width > 0) || !(info.height > 0) || !(px.width > 0) || !(px.height > 0)) return;
+  const c = cropBars && info.crop ? info.crop : { left: 0, top: 0, right: 0, bottom: 0 };
+  const sw = info.width - c.left - c.right, sh = info.height - c.top - c.bottom;
+  if (!(sw > 0) || !(sh > 0)) return;
+  const s = Math.min(px.width / sw, px.height / sh);
+  const w = Math.round(sw * s * 100) / 100, h = Math.round(sh * s * 100) / 100;
+  px.x = Math.round((px.x + (px.width - w) / 2) * 100) / 100;
+  px.y = Math.round((px.y + (px.height - h) / 2) * 100) / 100;
+  px.width = w; px.height = h;
+  if (c.left || c.top || c.right || c.bottom) px.crop = { left: c.left, top: c.top, right: c.right, bottom: c.bottom };
+}
+
 export function loadScenePreset(project, preset, opts = {}) {
   // flags: feature flag states ({ id: bool }); a preset layer with `flag` starts hidden while that flag is off, and
-  // its `effects` apply only while `effectsFlag` (if set) is on
-  const { profile = {}, roles = {}, sceneName, idFn = newId, flags = {} } = opts;
+  // its `effects` apply only while `effectsFlag` (if set) is on.
+  // mediaInfo(pathRef) -> { width, height, crop } | null (services/project/media-info.mjs): needed only by layers with
+  // `fit: "contain"`; without it (or when it returns null) such a layer keeps its box as it is.
+  const { profile = {}, roles = {}, sceneName, idFn = newId, flags = {}, mediaInfo = null } = opts;
   if (!preset || preset.function !== 'scene-layout-preset') throw new ScenePresetError('not a scene-layout-preset preset');
   const P = preset.params;
   const canvasId = P.canvas;
@@ -149,6 +167,7 @@ export function loadScenePreset(project, preset, opts = {}) {
       if (placeholder.has(l.of)) { type = 'color'; source = { color: '#00000000' }; delete px.crop; placeholder.add(l.key); }
       else { type = 'duplicate'; source = { layer: layerIds[l.of] }; }
     } else throw new ScenePresetError(`layer "${l.key}": unknown type "${l.type}"`);
+    if (l.fit === 'contain' && (type === 'image' || type === 'media')) fitContain(px, mediaInfo?.(source.file) ?? null, l.cropBars === true);
     const layer = { id, type, name: label(l.name), source, placements: { [canvasId]: px }, origin: { importer: 'preset', id: `${preset.id}/${l.key}` } };
     // effects apply only while `flag` and `effectsFlag` (if set) are on; effectsFlag keeps the layer itself
     const effectsOn = [l.flag, l.effectsFlag].every((f) => !f || flags[f] === true);

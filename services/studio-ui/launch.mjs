@@ -82,6 +82,7 @@ import { loadDevicePresets, matchRoles, overrideProblems } from '../project/devi
 import { hudCoverage, loadHudZones } from '../project/hud-zones.mjs';
 import { loadProject } from '../project/store.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
+import { createMediaInfo } from '../project/media-info.mjs';
 import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
 import { writeZip } from '../../tools/package/zip.mjs';
@@ -430,7 +431,9 @@ export async function alphaProject({ client, dataDir, args, hostCfg }) {
       }
       const flagState = createFlags({ dataDir });
       const flags = Object.fromEntries(flagState.ids().map((id) => [id, flagState.isOn(id)]));
-      const b = buildAlphaProject({ presetsDir: path.join(REPO, 'registry', 'presets'), profile, bindings, devicesListed: args['allow-devices'] === true, flags });
+      // preset layers with `fit` (the wordmark) measure their file once (D251)
+      const mediaInfo = createMediaInfo({ bases: alphaBases({ profile, overlayRoot: hostCfg.overlayRoot }) });
+      const b = buildAlphaProject({ presetsDir: path.join(REPO, 'registry', 'presets'), profile, bindings, devicesListed: args['allow-devices'] === true, flags, mediaInfo });
       report = b.report;
       return b.project;
     },

@@ -4,7 +4,8 @@
 //     An existing file is used unchanged (a user's edits are never modified). rebuild builds the new project first;
 //     only when that succeeds is the old file (and its .bak) moved to <dataDir>/projects/_old/alpha-<stamp>.project.json[.bak]
 //     and the new one saved (atomic save, services/project/store.mjs).
-//   buildAlphaProject({ presetsDir, profile, bindings, devicesListed }) -> { project, report }
+//   buildAlphaProject({ presetsDir, profile, bindings, devicesListed, flags, mediaInfo }) -> { project, report }
+//     (mediaInfo: services/project/media-info.mjs, for preset layers with `fit`, D251)
 //     createProject (H 1920x1080, V 1080x1920) + the Default H preset + the Default V preset when
 //     registry/presets/scene-default-v.json exists (else a warning: the V canvas stays empty). Both presets go into
 //     ONE scene (the host shows one active scene on every canvas; H layers carry only H placements, V layers only V).
@@ -81,7 +82,7 @@ function mergeInto(project, hSceneId, vSceneId) {
   return { project: out, duplicated };
 }
 
-export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound: {}, unavailable: [] }, devicesListed = false, idFn = newId, flags = {} } = {}) {
+export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound: {}, unavailable: [] }, devicesListed = false, idFn = newId, flags = {}, mediaInfo = null } = {}) {
   const warnings = [];
   const hFile = path.join(presetsDir, H_PRESET);
   if (!existsSync(hFile)) throw new ScenePresetError(`${H_PRESET} not found in the registry presets`);
@@ -106,7 +107,7 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
   const roles = Object.fromEntries(LAYER_ROLES.filter((r) => deviceOf[r]).map((r) => [r, deviceOf[r]]));
 
   const hPreset = JSON.parse(readFileSync(hFile, 'utf8'));
-  const h = loadScenePreset(base, hPreset, { profile, roles, idFn, flags });
+  const h = loadScenePreset(base, hPreset, { profile, roles, idFn, flags, mediaInfo });
   let project = h.project;
   const unbound = h.unbound.map((r) => `h:${r}`);
   const missingAssets = new Set(h.missingAssets);
@@ -118,7 +119,7 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
     if (vPreset?.params?.canvas !== 'v') {
       warnings.push(`${V_PRESET} is not a V canvas preset; the V canvas stays empty`);
     } else {
-      const v = loadScenePreset(project, vPreset, { profile, roles, idFn, flags });
+      const v = loadScenePreset(project, vPreset, { profile, roles, idFn, flags, mediaInfo });
       unbound.push(...v.unbound.map((r) => `v:${r}`));
       v.missingAssets.forEach((k) => missingAssets.add(k));
       vScene = v.sceneId;
