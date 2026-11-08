@@ -217,6 +217,7 @@
   <div class="modal-card wide">
     <h3 id="posts-title">Posts</h3>
     <p id="posts-text" class="muted" role="status"></p>
+    <p id="posts-queue" class="muted" role="status"></p>
     <p id="posts-auto" class="muted" role="status"></p>
     <ul id="posts-auto-plan" class="list" aria-label="Auto-post dry run"></ul>
     <div class="fb-body">
@@ -238,6 +239,13 @@
           <button id="post-reject" class="btn btn-quiet" type="button">Reject</button>
           <button id="post-save" class="btn btn-quiet" type="submit">Save text</button>
           <button id="post-approve" class="btn" type="button">Approve</button>
+        </div>
+        <div id="post-queue" class="fb-form" hidden>
+          <div id="post-queue-info" class="muted" role="status"></div>
+          <div id="post-queue-link" class="muted"></div>
+          <div class="modal-actions">
+            <button id="post-queue-retry" class="btn btn-quiet" type="button" hidden>Retry now</button>
+          </div>
         </div>
         <div id="post-yt" class="fb-form" hidden>
           <div id="post-yt-info" class="muted" role="status"></div>

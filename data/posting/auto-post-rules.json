@@ -1,5 +1,5 @@
 {
-  "$comment": "F7 auto-post-approved-rules (opt-in, flag `auto-post`, off by default). The rules list is EMPTY: nothing auto-posts until you write a rule. All field names and limits are proposed, not approved. A rule: { id, target, minScore, layouts?, maxPerDay }. minScore compares to the ranker's candidate score (data/clip/ranking.json; carried into post.json as source.score). Uploads are always private. autoUpload false = rules only mark matching drafts approved; true additionally uploads them (YouTube Shorts target only), after a run with no output live or starting.",
+  "$comment": "F7 auto-post-approved-rules (opt-in, flag `auto-post`, off by default). The rules list is EMPTY: nothing auto-posts until you write a rule. All field names and limits are proposed, not approved. A rule: { id, target, minScore, layouts?, kinds?, maxPerDay }. kinds (default short only) lists which finished videos the rule covers: short | montage | won-reel; minScore applies to shorts only (a montage or won reel has no clip score, so naming its kind is the opt-in). minScore compares to the ranker's candidate score (data/clip/ranking.json; carried into post.json as source.score). Uploads are always private. autoUpload false = rules only mark matching drafts approved; true additionally uploads them (YouTube targets youtube-shorts and youtube-video only; the target is chosen by length and aspect from limits.json), after a run with no output live or starting.",
   "version": "0.1.0",
   "status": "proposed",
   "autoUpload": false,
@@ -7,6 +7,7 @@
   "fields": {
     "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$", "status": "proposed" },
     "target": { "type": "string", "from": "post.json target", "status": "proposed" },
+    "kinds": { "type": "string[] optional, default [\"short\"]", "from": "post.json source.kind (short | montage | won-reel)", "status": "proposed" },
     "minScore": { "type": "number", "from": "candidates.json score (post.json source.score)", "status": "proposed" },
     "layouts": { "type": "string[] optional", "from": "post.json source.layout", "status": "proposed" },
     "maxPerDay": { "type": "integer 1..10", "counts": "auto approvals (and, separately, auto uploads) per UTC day per rule", "status": "proposed" }

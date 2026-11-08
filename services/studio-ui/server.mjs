@@ -31,8 +31,8 @@ import { BOTS, BOT_LABELS, GRACEFUL_MS, createBots } from '../bots/index.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
-import { QUEUE_NAME, createUploadQueue, readQueueSummary } from '../posting/auto-chain.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, loadRules, planAuto } from '../posting/auto-post.mjs';
+import { QUEUE_NAME, createUploadQueue, readQueueSummary, reasonText, streamOnly } from '../posting/auto-chain.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, liveBlock, loadRules, planAuto } from '../posting/auto-post.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
@@ -751,7 +751,7 @@ export function createStudioServer(opts) {
       if (typeof opts.dataDir === 'string') {
         try { qs = new Map(createUploadQueue(path.join(opts.dataDir, 'posting', QUEUE_NAME)).items().map((i) => [i.id, i])); queue = readQueueSummary(opts.dataDir, flags); } catch { /* the list still works */ }
       }
-      return json(res, 200, { posts: posting.list().map((p) => { const q = qs.get(p.id); return q ? { ...p, queueState: q.state, queueAttempts: q.attempts, queueNextAt: q.nextAt, queueReason: q.reason } : p; }), queue });
+      return json(res, 200, { posts: posting.list().map((p) => { const q = qs.get(p.id); const url = p.videoId ? `https://youtu.be/${p.videoId}` : null; return q ? { ...p, videoUrl: url, queueState: q.state, queueAttempts: q.attempts, queueNextAt: q.nextAt, queueReason: q.reason, queueReasonText: reasonText(q.reason) } : { ...p, videoUrl: url }; }), queue });
     }
     if (req.method === 'GET' && route === '/ui/api/posts/auto') {
       // Read-only: the auto-post mode and what a run would do now. Enabling stays a flag; nothing is changed here.
@@ -911,6 +911,19 @@ export function createStudioServer(opts) {
         ut.done();
         return json(res, 200, { videoId: r.videoId, uploadStatus: r.uploadStatus, thumbnailOk: r.thumbnailOk, privacy: 'private' });
       } catch (e) { ut.fail('The upload did not finish'); return fail(e); } finally { uploading.delete(body.id); }
+    }
+    if (route === '/ui/api/posts/queue/retry') {
+      // D301 "Retry now": puts a failed (or waiting) item back in the upload queue at once; the chain's next tick uploads it.
+      // Nothing is sent from here. Refused while a stream is live or when the live state cannot be read (fail closed).
+      if (typeof body.id !== 'string' || body.id.length > 64 || Object.keys(body).some((k) => k !== 'id') || typeof opts.dataDir !== 'string') return json(res, 400, { error: 'bad-params' });
+      const q = createUploadQueue(path.join(opts.dataDir, 'posting', QUEUE_NAME));
+      const cur = q.get(body.id);
+      if (!cur) return json(res, 404, { error: 'unknown-queue-item' });
+      if (cur.state !== 'failed' && cur.state !== 'queued') return json(res, 409, { error: 'not-retryable', state: cur.state });
+      const blocked = await liveBlock(streamOnly(ytOutputsStatus));
+      if (blocked) return json(res, 409, { error: blocked === 'output-live' ? 'stream-live' : blocked });
+      const it = q.retryNow(body.id);
+      return it ? json(res, 200, { ok: true, state: it.state, queue: readQueueSummary(opts.dataDir, flags) }) : json(res, 409, { error: 'not-retryable' });
     }
     if (route === '/ui/api/posts/edit' || route === '/ui/api/posts/status' || route === '/ui/api/posts/open') {
       // Local files only: post.json and the ledger. Nothing is uploaded; approving only marks the package.

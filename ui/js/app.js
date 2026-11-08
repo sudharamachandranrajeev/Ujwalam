@@ -572,7 +572,36 @@
   }
 
   // ---- Posts view (P16a, flag `posting`): review packages; nothing is uploaded ----
-  var ps = { posts: [], sel: null };
+  var ps = { posts: [], sel: null, queue: null };
+  var QSTATE = { queued: 'waiting', uploading: 'uploading', done: 'uploaded', failed: 'failed' };
+  function whenText(iso) { var t = Date.parse(iso || ''); return isNaN(t) ? '' : new Date(t).toLocaleString(); }
+  function renderQueue() {
+    var q = ps.queue;
+    if (!q) { setText($('posts-queue'), ''); return; }
+    var bits = ['Upload queue: ' + (q.queued || 0) + ' waiting, ' + (q.uploading || 0) + ' uploading, ' + (q.done || 0) + ' done, ' + (q.failed || 0) + ' failed'];
+    if (q.nextAt) bits.push('next retry ' + whenText(q.nextAt));
+    setText($('posts-queue'), bits.join('; ') + '.' + (q.message ? ' ' + q.message + '.' : ''));
+  }
+  function renderPostQueue(p) {
+    var box = $('post-queue'); box.hidden = !p || !p.queueState;
+    if (box.hidden) return;
+    var bits = [QSTATE[p.queueState] || p.queueState];
+    if (p.queueReasonText) bits.push(p.queueReasonText);
+    if (p.queueState === 'queued' && p.queueNextAt) bits.push('next try ' + whenText(p.queueNextAt));
+    if (p.queueAttempts) bits.push(p.queueAttempts + ' failed attempt(s)');
+    setText($('post-queue-info'), 'Auto-upload: ' + bits.join('. ') + '.');
+    var l = $('post-queue-link'); clear(l);
+    if (p.videoUrl) l.appendChild(el('a', { href: p.videoUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Open the uploaded video (private)' }));
+    var rb = $('post-queue-retry');
+    rb.hidden = !(p.queueState === 'failed' || (p.queueState === 'queued' && p.queueReasonText));
+  }
+  function queueRetry() {
+    var p = selPost(); if (!p) return;
+    setText($('posts-text'), 'Queueing the upload again...');
+    Api.postQueueRetry(p.id).then(function () { setText($('posts-text'), 'Queued again. It uploads at the next check if no stream is live.'); return Api.posts(); })
+      .then(function (r) { ps.posts = r.posts || []; ps.queue = r.queue || null; ps.queue = r.queue || null; renderPosts(); var q = selPost(); if (q) fillPost(q); })
+      .catch(function (x) { setText($('posts-text'), 'Not done: ' + (x.message === 'stream-live' ? 'a stream is live; try again after it ends.' : (x.message || 'error'))); });
+  }
   function csv(s) { return String(s).split(',').map(function (x) { return x.trim(); }).filter(Boolean); }
   function selPost() { return ps.posts.filter(function (p) { return p.id === ps.sel; })[0] || null; }
   function replacePost(p) {
@@ -585,7 +614,7 @@
       var flagged = (p.limits && p.limits.ok === false) || (p.unresolved && p.unresolved.length);
       var li = el('li', { class: 'row' + (p.id === ps.sel ? ' active' : ''), tabindex: 0, role: 'button', 'aria-pressed': p.id === ps.sel ? 'true' : 'false' }, [
         el('span', { class: 'name', text: p.clipId + '  ' + p.target }),
-        el('span', { class: flagged ? 'warn-text' : 'muted', text: p.status + (flagged ? ' / check' : '') })]);
+        el('span', { class: flagged || p.queueState === 'failed' ? 'warn-text' : 'muted', text: (p.kind && p.kind !== 'short' ? p.kind + ' / ' : '') + p.status + (flagged ? ' / check' : '') + (p.queueState ? ' / ' + (QSTATE[p.queueState] || p.queueState) : '') })]);
       var pick = function () { ps.sel = p.id; renderPosts(); fillPost(p); };
       li.addEventListener('click', pick);
       li.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
@@ -593,6 +622,7 @@
     });
     setText($('posts-text'), ps.posts.length ? ps.posts.length + ' package(s). Private drafts only; approving marks a package. Upload to YouTube is separate and needs a typed confirmation.' : 'No packages yet. Run: node services/posting/cli.mjs package --run <clip run folder>');
     $('post-form').hidden = !ps.sel;
+    renderQueue();
   }
   function fillPost(p) {
     setText($('post-meta'), p.target + '  ' + p.layout + '  ' + p.startSec + '-' + p.endSec + ' s  privacy ' + p.privacy + '  status ' + p.status);
@@ -606,6 +636,7 @@
     if (p.unresolved && p.unresolved.length) bits.push('unresolved: ' + p.unresolved.join(', '));
     setText($('post-limits'), (bits.join('  ') || 'no limits checked') + (lim.status === 'unverified' ? '  (limits UNVERIFIED)' : ''));
     $('post-form').hidden = false;
+    renderPostQueue(p);
     renderYt(p);
   }
   // YouTube private upload. Sign-in is CLI-only; the browser never sees a token.
@@ -634,7 +665,7 @@
       if (kind === 'upload') { $('post-yt-confirm').value = ''; setText($('posts-text'), 'Uploaded as private video ' + r.videoId + (r.uploadStatus ? ' (' + r.uploadStatus + ')' : '') + '.'); }
       else setText($('posts-text'), 'Video ' + r.videoId + ': ' + (r.found ? 'upload ' + (r.uploadStatus || '?') + ', processing ' + (r.processingStatus || '?') + ', privacy ' + (r.privacyStatus || '?') + (r.failureReason ? ', failure ' + r.failureReason : '') : 'not found yet') + '.');
     }).catch(function (x) { setText($('posts-text'), 'Not done: ' + ytMsg(x)); })
-      .then(function () { yt.busy = false; return Api.posts().then(function (r) { ps.posts = r.posts || []; renderPosts(); var q = selPost(); if (q) fillPost(q); }); })
+      .then(function () { yt.busy = false; return Api.posts().then(function (r) { ps.posts = r.posts || []; ps.queue = r.queue || null; renderPosts(); var q = selPost(); if (q) fillPost(q); }); })
       .catch(function () { yt.busy = false; });
   }
   // Auto-post mode (F7, flag auto-post): read-only display of the mode and a dry-run list of what a run would do.
@@ -648,7 +679,7 @@
   }
   function openPosts() {
     $('posts').hidden = false; ps.sel = null; $('post-form').hidden = true;
-    guard(Api.posts().then(function (r) { ps.posts = r.posts || []; renderPosts(); }));
+    guard(Api.posts().then(function (r) { ps.posts = r.posts || []; ps.queue = r.queue || null; renderPosts(); }));
     loadAuto();
     Api.ytStatus().then(function (r) { yt.signedIn = r.signedIn === true; if (r.phrase) yt.phrase = r.phrase; var p = selPost(); if (p) renderYt(p); }).catch(function () { yt.signedIn = false; });
   }
@@ -674,6 +705,7 @@
     $('post-reject').addEventListener('click', function () { postAction(function (p) { return Api.postStatus(p.id, 'rejected'); }); });
     $('post-yt-upload').addEventListener('click', function () { ytAction('upload'); });
     $('post-yt-check').addEventListener('click', function () { ytAction('check'); });
+    $('post-queue-retry').addEventListener('click', queueRetry);
     $('post-open').addEventListener('click', function () {
       var p = selPost(); if (!p) return;
       Api.postOpen(p.id).catch(function (x) { setText($('posts-text'), 'Could not open the folder: ' + (x.message || 'error')); });

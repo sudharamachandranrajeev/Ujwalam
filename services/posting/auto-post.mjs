@@ -16,6 +16,9 @@ export const AUTO_FLAG = 'auto-post';
 export const DEFAULT_RULES = path.join(REPO, 'data', 'posting', 'auto-post-rules.json');
 export const AUTO_LOG_NAME = 'auto-log.json';
 export const UPLOAD_TARGET = 'youtube-shorts';
+/** Targets the auto chain may upload (private YouTube). youtube-video is for finished videos that are not Shorts (D301). */
+export const UPLOAD_TARGETS = Object.freeze(['youtube-shorts', 'youtube-video']);
+export const RULE_KINDS = Object.freeze(['short', 'montage', 'won-reel']);
 export const MAX_PER_DAY = 10;
 const ID = /^[a-z][a-z0-9-]{0,31}$/;
 const ACTIVE = new Set(['starting', 'live', 'retrying', 'active', 'running']);
@@ -36,7 +39,8 @@ export function validateRules(j) {
     if (!Number.isFinite(r.minScore)) throw new AutoPostError('bad-rules', `rule ${r.id}: minScore must be a number`);
     if (!Number.isInteger(r.maxPerDay) || r.maxPerDay < 1 || r.maxPerDay > MAX_PER_DAY) throw new AutoPostError('bad-rules', `rule ${r.id}: maxPerDay must be an integer 1..${MAX_PER_DAY}`);
     if (r.layouts !== undefined && !(Array.isArray(r.layouts) && r.layouts.every((l) => typeof l === 'string'))) throw new AutoPostError('bad-rules', `rule ${r.id}: layouts must be a list of names`);
-    return { id: r.id, target: r.target, minScore: r.minScore, layouts: r.layouts ?? null, maxPerDay: r.maxPerDay };
+    if (r.kinds !== undefined && !(Array.isArray(r.kinds) && r.kinds.length && r.kinds.every((k) => RULE_KINDS.includes(k)))) throw new AutoPostError('bad-rules', `rule ${r.id}: kinds must be a non-empty list of ${RULE_KINDS.join(', ')}`);
+    return { id: r.id, target: r.target, minScore: r.minScore, layouts: r.layouts ?? null, kinds: r.kinds ?? ['short'], maxPerDay: r.maxPerDay };
   });
   return { autoUpload: j.autoUpload === true, rules };
 }
@@ -93,15 +97,20 @@ export function planAuto({ posts, rules, autoUpload, log, now }) {
   const claimed = new Set();
   const sorted = [...posts].sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
   for (const rule of rules) {
-    const canUpload = autoUpload && rule.target === UPLOAD_TARGET;
+    const canUpload = autoUpload && UPLOAD_TARGETS.includes(rule.target);
     for (const p of sorted) {
       if (p.target !== rule.target || claimed.has(p.id)) continue;
+      const kind = p.kind ?? 'short';
+      if (!(rule.kinds ?? ['short']).includes(kind)) continue;
       if (rule.layouts && !rule.layouts.includes(p.layout)) continue;
       if (p.status === 'draft') {
         const skip = (reason) => plan.push({ id: p.id, ruleId: rule.id, action: 'skip', reason });
         if (autoApproved.has(p.id)) { skip('already-auto-approved'); continue; }
-        if (!Number.isFinite(p.score)) { skip('no-score'); continue; }
-        if (p.score < rule.minScore) continue;
+        // minScore ranks clips only; a montage or won reel has no clip score, so listing its kind in a rule is the opt-in.
+        if (kind === 'short') {
+          if (!Number.isFinite(p.score)) { skip('no-score'); continue; }
+          if (p.score < rule.minScore) continue;
+        }
         if (p.limits && p.limits.ok === false) { skip('over-limit'); continue; }
         if (p.unresolved && p.unresolved.length) { skip('unresolved-placeholders'); continue; }
         if (!take(rule.id, 'approve', rule.maxPerDay)) { skip('max-per-day'); continue; }

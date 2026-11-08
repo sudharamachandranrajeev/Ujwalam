@@ -12,6 +12,8 @@
 //     privacy is fixed "private"; status starts "draft".
 //   Ledger (<dataDir>/posting/ledger.json): one entry per video SHA-256 + target. A video is never packaged twice for
 //     the same target, even after reject. Later upload steps reuse this ledger (not built here).
+//   packageUploads({ dataDir, ledgerFile, ... }) (D301): packages every finished video in <dataDir>/clips/uploads.json
+//     (kinds short | montage | won-reel) that is not posted or packaged yet; target by length/aspect from limits.json.
 //   createPostStore({ ledgerFile }) -> list/get/edit/setStatus/media for the studio UI server.
 //
 // Why Node (not Python next to the clipper): the studio-ui server edits and approves packages and owns the ledger
@@ -255,7 +257,8 @@ export async function packageRun(opts) {
   if (!isPlain(cands) || !Array.isArray(cands.candidates)) throw new PostingError('no-candidates', 'run folder has no usable candidates.json');
   if (!isPlain(report) || !Array.isArray(report.results)) throw new PostingError('no-report', 'run folder has no usable report.json (run clipper validate first)');
   const known = Object.keys(templates.targets);
-  const targets = opts.targets ?? known;
+  // A template marked uploadsOnly (youtube-video) is for finished videos from uploads.json, not for clip variants.
+  const targets = opts.targets ?? known.filter((t) => templates.targets[t].uploadsOnly !== true);
   for (const t of targets) if (!known.includes(t) || !limits.targets?.[t]) throw new PostingError('unknown-target', `no template or limits for target ${String(t).slice(0, 32)}`);
   const profile = cleanProfile(opts.profile ?? {});
   const date = typeof cands.recordStartUtc === 'string' && /^\d{4}-\d{2}-\d{2}/.test(cands.recordStartUtc) ? cands.recordStartUtc.slice(0, 10) : 'unknown-date';
@@ -326,6 +329,97 @@ export async function packageRun(opts) {
   return { packaged, skipped };
 }
 
+// ---------------------------------------------------------------- finished videos (uploads.json, D301)
+
+export const UPLOAD_KINDS = Object.freeze(['short', 'montage', 'won-reel']);
+const CANVAS_TAIL = /_(\d{2})_(v(?:-[a-z0-9-]+)?|h)\.[a-z0-9]+$/i;
+const NAME_DATE = /_(\d{4})(\d{2})(\d{2})-\d{6}_/;
+
+/** Target for one finished video, from data/posting/limits.json (never hardcoded): vertical and not longer than the
+ *  Shorts limit -> the target that carries `video`; anything else -> `youtube-video`. */
+export function pickYoutubeTarget({ seconds, vertical }, limits) {
+  const shorts = limits.targets?.['youtube-shorts']?.video;
+  const max = Number(shorts?.maxDurationSec);
+  const isShort = !!shorts && vertical === true && Number.isFinite(Number(seconds)) && Number.isFinite(max) && Number(seconds) <= max;
+  return isShort ? 'youtube-shorts' : 'youtube-video';
+}
+
+/** opts: { dataDir, ledgerFile, profile?, ffmpeg?, templates?, limits?, run?, now? }
+ *  Packages every validated, published video in <dataDir>/clips/uploads.json that is not posted and not packaged yet
+ *  (kinds short | montage | won-reel). Packages go to <dataDir>/posting/packages/<run>/<kind>-<sha16>/<target>/.
+ *  -> { packaged: [{ file, kind, target, dir }], skipped: [{ file, reason }] } */
+export async function packageUploads(opts) {
+  const templates = opts.templates ?? loadTemplates();
+  const limits = opts.limits ?? loadLimits();
+  const doc = readJson(path.join(opts.dataDir, 'clips', 'uploads.json'));
+  const packaged = []; const skipped = [];
+  if (!isPlain(doc) || !Array.isArray(doc.files)) return { packaged, skipped };
+  const now = opts.now ?? (() => new Date());
+  const profile = cleanProfile(opts.profile ?? {});
+  const ledger = createLedger(opts.ledgerFile);
+  let ffmpeg = null;
+  for (const row of doc.files) {
+    const file = isPlain(row) && typeof row.file === 'string' ? row.file : null;
+    const skip = (reason) => skipped.push({ file: file ? path.basename(file) : '?', reason });
+    if (!file || !UPLOAD_KINDS.includes(row.kind)) { skip('unknown-kind'); continue; }
+    if (opts.run && row.run !== opts.run) continue;
+    if (Array.isArray(row.posted) && row.posted.some((p) => p?.platform === 'youtube')) { skip('already-posted'); continue; }
+    if (!path.isAbsolute(file) || !isRealFile(file)) { skip('file-missing'); continue; }
+    const tail = CANVAS_TAIL.exec(path.basename(file));
+    const vertical = tail ? tail[2].toLowerCase().startsWith('v') : false;
+    const seconds = Number(row.seconds);
+    const target = pickYoutubeTarget({ seconds, vertical }, limits);
+    if (!templates.targets[target] || !limits.targets?.[target]) { skip('no-template'); continue; }
+    const sha = await sha256File(file);
+    if (ledger.get(sha, target)) { skip('already-packaged'); continue; }
+    const runName = SAFE_NAME.test(String(row.run)) ? row.run : 'run';
+    const dir = path.join(opts.dataDir, 'posting', 'packages', runName, `${row.kind}-${sha.slice(0, 16)}`, target);
+    if (existsSync(dir)) { skip('folder-exists'); continue; }
+    ffmpeg ??= findFfmpeg(opts.ffmpeg);
+    mkdirSync(dir, { recursive: true });
+    const videoName = `${row.kind}.mp4`;
+    const dst = path.join(dir, videoName);
+    copyFileSync(file, dst, FS.COPYFILE_EXCL);
+    if (await sha256File(dst) !== sha) throw new PostingError('copy-mismatch', 'copied video differs from the source');
+    const dm = NAME_DATE.exec(path.basename(file));
+    const date = dm ? `${dm[1]}-${dm[2]}-${dm[3]}` : 'unknown-date';
+    const n = tail ? Number(tail[1]) : 1;
+    const base = templates.targets[target];
+    const tpl = isPlain(base.kinds?.[row.kind]) ? { ...base, ...base.kinds[row.kind] } : base;
+    const missing = new Set();
+    const ctx = { profile, n, date };
+    const post = {
+      title: renderText(tpl.title, ctx, missing),
+      description: renderText(tpl.description, ctx, missing),
+      tags: tpl.tags.map((t) => renderText(t, ctx, missing)),
+      hashtags: tpl.hashtags.map((t) => renderText(t, ctx, missing)),
+      target,
+    };
+    const at = Number.isFinite(seconds) && seconds > 0.4 ? Math.min(2, seconds / 2) : 0;
+    const coverOk = await extractCover(ffmpeg, dst, at, path.join(dir, 'cover.jpg'));
+    const stamp = now().toISOString();
+    const clipId = `${row.kind}-${sha.slice(0, 12)}`;
+    const full = {
+      version: 1,
+      ...post,
+      privacy: 'private',
+      status: 'draft',
+      source: { run: runName, clipId, kind: row.kind, layout: tail ? tail[2].toLowerCase() : 'unknown', startSec: 0, endSec: Number.isFinite(seconds) ? seconds : null, score: null, sha256: sha },
+      video: { file: videoName, bytes: statSync(dst).size },
+      cover: coverOk ? { file: 'cover.jpg', atSec: Number(at.toFixed(3)) } : null,
+      captions: null,
+      limits: checkLimits(post, limits),
+      unresolved: unresolvedKeys(post.title, post.description, ...post.tags, ...post.hashtags),
+      createdAt: stamp,
+      updatedAt: stamp,
+    };
+    writeJsonAtomic(path.join(dir, 'post.json'), full);
+    ledger.put({ sha256: sha, target, status: 'draft', dir, clipId, createdAt: stamp, updatedAt: stamp });
+    packaged.push({ file: path.basename(file), kind: row.kind, target, dir, limitsOk: full.limits.ok, unresolved: full.unresolved });
+  }
+  return { packaged, skipped };
+}
+
 // ---------------------------------------------------------------- store (studio UI)
 
 export const postId = (entry) => `${entry.sha256.slice(0, 16)}.${entry.target}`;
@@ -349,7 +443,7 @@ export function createPostStore(opts) {
   }
   const find = (id) => (typeof id === 'string' && POST_ID.test(id) ? entries().find((e) => postId(e) === id) ?? null : null);
   const view = (e, p) => ({
-    id: postId(e), target: p.target, clipId: p.source.clipId, layout: p.source.layout, score: Number.isFinite(p.source.score) ? p.source.score : null, startSec: p.source.startSec, endSec: p.source.endSec,
+    id: postId(e), target: p.target, clipId: p.source.clipId, kind: typeof p.source.kind === 'string' ? p.source.kind : 'short', layout: p.source.layout, score: Number.isFinite(p.source.score) ? p.source.score : null, startSec: p.source.startSec, endSec: p.source.endSec,
     status: e.status, videoId: e.videoId ?? null, privacy: 'private', title: p.title, description: p.description, tags: p.tags, hashtags: p.hashtags,
     limits: p.limits, unresolved: p.unresolved ?? [], hasCover: !!p.cover, hasCaptions: !!p.captions, videoBytes: p.video?.bytes ?? null, updatedAt: p.updatedAt,
   });

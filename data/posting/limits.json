@@ -3,6 +3,7 @@
   "version": "0.2.0",
   "targets": {
     "youtube-shorts": {
+      "video": { "maxDurationSec": 60, "aspect": "vertical", "source": "user-instruction-2026-11-08 (videos longer than 60 s are not posted as Shorts)", "checked": "2026-11-08", "status": "unverified" },
       "fields": {
         "title": { "from": ["title"], "max": 100, "unit": "chars", "forbid": "<>" },
         "description": { "from": ["description", "hashtags"], "max": 5000, "unit": "utf8-bytes", "forbid": "<>", "hashtagMax": 60 },
@@ -11,6 +12,39 @@
       "source": "https://developers.google.com/youtube/v3/docs/videos (snippet.title max 100 characters, no < or >; snippet.description max 5000 bytes, no < or >; snippet.tags max 500 characters with commas and added quotes); https://support.google.com/youtube/answer/6390658 (more than 60 hashtags: all hashtags on the video are ignored)",
       "checked": "2026-11-03",
       "status": "verified"
+    },
+    "youtube-video": {
+      "fields": {
+        "title": {
+          "from": [
+            "title"
+          ],
+          "max": 100,
+          "unit": "chars",
+          "forbid": "<>"
+        },
+        "description": {
+          "from": [
+            "description",
+            "hashtags"
+          ],
+          "max": 5000,
+          "unit": "utf8-bytes",
+          "forbid": "<>",
+          "hashtagMax": 60
+        },
+        "tags": {
+          "from": [
+            "tags"
+          ],
+          "max": 500,
+          "unit": "youtube-tags"
+        }
+      },
+      "source": "https://developers.google.com/youtube/v3/docs/videos (snippet.title max 100 characters, no < or >; snippet.description max 5000 bytes, no < or >; snippet.tags max 500 characters with commas and added quotes); https://support.google.com/youtube/answer/6390658 (more than 60 hashtags: all hashtags on the video are ignored)",
+      "checked": "2026-11-03",
+      "status": "verified",
+      "note": "Same text limits as Shorts; no duration cap, any aspect. Used for finished videos that are not Shorts (D301)."
     },
     "tiktok": {
       "fields": {
