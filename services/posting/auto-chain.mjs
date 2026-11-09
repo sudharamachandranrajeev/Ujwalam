@@ -22,7 +22,9 @@
 //   - the slot is re-checked right before a session starts or resumes (>= now + minLeadHours) and before every chunk
 //     (>= now + marginMinutes) in youtube.mjs; every chunk request is aborted chunkDeadlineSeconds before the time,
 //     and the final chunk only starts if its estimated transfer fits. Too close: the upload stops ('slot-passed' / 'slot-passed-mid'), an
-//     unfinished session is dropped, and the item gets a new slot at the end on the next pass. Nothing finishes with a
+//     unfinished session is dropped, and on the next pass the item gets now + minLead + margin again (D314)
+//     and every later queued item without a session is re-chained intervalHours apart from it (rule: schedule.mjs).
+//     A slot more than maxAheadDays ahead is not given out; the item waits ('schedule-beyond-cap'). Nothing finishes with a
 //     passed time. Each session's own publish time is saved (sessionPublishAt) and the time recorded as posted is the
 //     one Google really got; a finished upload whose time had already passed is marked plainly ('went-public-early').
 //   - live: nothing changes. Approvals, slots and uploads all wait for the stream to end (same fail-closed check).
@@ -34,7 +36,7 @@ import { LEDGER_NAME, POSTING_FLAG, createPostStore, packageRun, packageUploads,
 import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, liveBlock, loadRules, runAuto } from './auto-post.mjs';
 import { READONLY_SCOPE, createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
-import { SCHEDULE_FLAG, ScheduleError, chunkDeadlineMs, fallbackBps, loadScheduleConfig, marginMs, minLeadMs, nextSlot, ownLastSlot, slotTooClose, toIso } from './schedule.mjs';
+import { SCHEDULE_FLAG, ScheduleError, chunkDeadlineMs, fallbackBps, isRetry, loadScheduleConfig, marginMs, minLeadMs, planQueueSlots, toIso } from './schedule.mjs';
 import { readChannelSchedule } from './schedule-read.mjs';
 import { removeTaskFile, writeTaskFile } from '../studio-ui/tasks.mjs';
 
@@ -123,6 +125,7 @@ const REASON_TEXT = {
   'schedule-config-bad': 'Waiting: the schedule settings (data/posting/schedule.json) are not valid',
   'schedule-read-incomplete': 'Waiting: the channel has more uploads than Ujwalam checks for scheduled posts; raise maxPages in data/posting/schedule.json',
   'slot-passed': 'Getting a new public time: the planned one came too close before the upload could finish',
+  'schedule-beyond-cap': 'Waiting: the next free public time is more than the allowed time ahead (maxAheadDays in data/posting/schedule.json, 730 days = 2 years); planned again later',
   'stopped-by-user': 'Stopped by you; tried again at the next start',
 };
 
@@ -227,11 +230,14 @@ export function createPostChain(opts) {
       log(`posting: ${REASON_TEXT['schedule-config-bad']}`);
       return null;
     }
-    const need = queued.filter((i) => !i.publishAt || (!i.session && slotTooClose(i.publishAt, t, cfg)));
-    if (!need.length) return cfg;
+    // A slot is needed by a new item or a D314 retry (too close, no session). An item waiting past the 2-year cap does not
+    // trigger a channel read before its own wait ends (it is still re-planned when a read happens anyway).
+    const capWait = (i) => i.reason === 'schedule-beyond-cap' && i.nextAt && Date.parse(i.nextAt) > t;
+    const need = queued.filter((i) => !i.publishAt || isRetry(i, t, cfg));
+    if (!need.some((i) => !capWait(i))) return cfg;
     const wait = (code, delay) => {
-      // A too-close slot is dropped here (it can no longer be used); nothing else is released.
-      for (const i of need) queue.patch(i.id, { publishAt: null, reason: code, nextAt: new Date(t + delay).toISOString() });
+      // A too-close slot is dropped here (it can no longer be used) and marked for the D314 retry; nothing else is released.
+      for (const i of need) queue.patch(i.id, { publishAt: null, reason: code, nextAt: new Date(t + delay).toISOString(), ...(isRetry(i, t, cfg) ? { reslot: true } : {}) });
       log(`posting: ${REASON_TEXT[code] ?? code}; ${need.length} clip(s) wait for a publish time`);
     };
     let accessToken;
@@ -249,14 +255,24 @@ export function createPostChain(opts) {
     queue.setSchedule({ channelLast: read.last !== null ? toIso(read.last) : null, count: read.count, scanned: read.scanned, truncated: read.truncated, readAt: toIso(t) });
     // Page cap hit: an older scheduled post could be past the pages read, so no slot is given out (never a guess).
     if (read.truncated) { wait('schedule-read-incomplete', SIGNIN_WAIT_MS); return cfg; }
-    let own = ownLastSlot(queue.items(), new Set(need.map((i) => i.id)));
-    for (const i of need) {
-      const slot = nextSlot({ channelLast: read.last, ownLast: own, nowMs: t, cfg });
-      own = slot;
+    // D310 slots for new items, and the D314 retry + re-chain (rule in schedule.mjs, planQueueSlots).
+    const plan = planQueueSlots({ items: queue.items(), channelLast: read.last, nowMs: t, cfg });
+    let given = 0; let moved = 0; let capped = 0;
+    for (const p of plan) {
+      const i = queue.get(p.id); if (!i) continue;
       const clear = typeof i.reason === 'string' && (i.reason.startsWith('schedule-') || i.reason === 'slot-passed' || i.reason === 'not-signed-in' || i.reason === 'no-oauth-client');
-      queue.patch(i.id, { publishAt: toIso(slot), slotAt: toIso(t), ...(clear ? { reason: null, nextAt: null } : {}) });
+      if (p.at === null) {
+        // Past maxAheadDays: no slot is given; the clip waits (no attempt used) and is planned again later.
+        queue.patch(i.id, { publishAt: null, reslot: null, reason: 'schedule-beyond-cap', nextAt: new Date(t + MAX_DELAY_MS).toISOString() });
+        capped++; continue;
+      }
+      const at = toIso(p.at);
+      if (i.publishAt === at && !i.reslot) continue; // a re-chained slot that did not change
+      if (i.publishAt) moved++; else given++;
+      queue.patch(i.id, { publishAt: at, slotAt: toIso(t), reslot: null, ...(clear ? { reason: null, nextAt: null } : {}) });
     }
-    log(`posting: gave ${need.length} clip(s) a publish time (every ${cfg.intervalHours} h)`);
+    if (given || moved) log(`posting: gave ${given} clip(s) a publish time and moved ${moved} (every ${cfg.intervalHours} h)`);
+    if (capped) log(`posting: ${REASON_TEXT['schedule-beyond-cap']}; ${capped} clip(s) wait`);
     return cfg;
   }
 
@@ -339,9 +355,10 @@ export function createPostChain(opts) {
           queue.patch(item.id, { state: 'queued', reason: 'stopped-by-user' });
           return;
         } else if (code === 'slot-passed') {
-          // No session runs now: the slot is too close to use; the next pass gives a new one at the end (no attempt used).
+          // No session runs now: the slot is too close to use; the next pass gives it now + lead + margin and re-chains the
+          // later queued clips (D314; no attempt used).
           taskEnd = { state: 'waiting', note: 'Waiting: new public time' };
-          queue.patch(item.id, { state: 'queued', publishAt: null, reason: 'slot-passed', nextAt: null });
+          queue.patch(item.id, { state: 'queued', publishAt: null, reslot: true, reason: 'slot-passed', nextAt: null });
           log(`posting: ${item.id}: ${REASON_TEXT['slot-passed']}`);
         } else if (code === 'slot-passed-mid') {
           // Stopped between chunks or aborted at the chunk deadline (not a failure); the next try drops the unfinished

@@ -13,7 +13,7 @@ import {
   CANVAS_TAIL, LEDGER_NAME, NAME_DATE, UPLOAD_KINDS, checkLimits, cleanProfile, createLedger, createPostStore, loadLimits,
   loadTemplates, pickYoutubeTarget, renderText, sha256File, unresolvedKeys,
 } from './index.mjs';
-import { loadScheduleConfig, nextSlot, ownLastSlot, savedChannelLast, toIso } from './schedule.mjs';
+import { isRetry, loadScheduleConfig, planQueueSlots, savedChannelLast, toIso } from './schedule.mjs';
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isFile = (f) => { try { return statSync(f).isFile(); } catch { return false; } };
@@ -140,13 +140,19 @@ function estimateSlots({ dataDir, queued, nowMs, file }) {
   if (qdoc?.schedule?.truncated === true) return { on: true, error: 'schedule-read-incomplete' }; // same as the queue: no time is guessed
   const items = isPlain(qdoc?.items) ? Object.values(qdoc.items) : [];
   const channelLast = savedChannelLast(qdoc, nowMs);
-  let own = ownLastSlot(items); // same as the queue: a failed item's slot is never given back
-  for (const q of queued) {
-    if (!q.actions.includes('upload') || !UPLOAD_TARGETS.includes(q.target)) continue;
-    own = nextSlot({ channelLast, ownLast: own, nowMs, cfg });
-    q.publishAt = toIso(own);
+  // Same plan as the queue (D310 + D314 retry and re-chain): the would-queue clips are appended after the queue's own items.
+  const known = new Set(items.map((i) => i.id));
+  const ups = queued.filter((q) => q.actions.includes('upload') && UPLOAD_TARGETS.includes(q.target) && !known.has(q.id));
+  const virtual = ups.map((q) => ({ id: q.id, state: 'queued', publishAt: null, session: null }));
+  const retries = items.filter((i) => isRetry(i, nowMs, cfg)).length;
+  const plan = new Map(planQueueSlots({ items: [...items, ...virtual], channelLast, nowMs, cfg }).map((p) => [p.id, p]));
+  const rechained = [...plan.values()].filter((p) => known.has(p.id) && p.rechain).length;
+  for (const q of ups) {
+    const p = plan.get(q.id);
+    if (p?.at) q.publishAt = toIso(p.at);
+    else if (p) { q.publishAt = null; q.publishNote = 'beyond-cap'; }
   }
-  return { on: true, intervalHours: cfg.intervalHours, minLeadHours: cfg.minLeadHours, channelReadAt: typeof qdoc?.schedule?.readAt === 'string' ? qdoc.schedule.readAt : null, estimate: true };
+  return { on: true, intervalHours: cfg.intervalHours, minLeadHours: cfg.minLeadHours, maxAheadDays: cfg.maxAheadDays, retries, rechained, channelReadAt: typeof qdoc?.schedule?.readAt === 'string' ? qdoc.schedule.readAt : null, estimate: true };
 }
 
 /** Plain-text report for the CLI. */
@@ -158,11 +164,12 @@ export function formatPreview(r) {
   if (r.schedule?.on) {
     L.push(r.schedule.error === 'schedule-read-incomplete' ? 'scheduled posting: on, but the channel has more uploads than are checked (raise maxPages in data/posting/schedule.json); nothing would upload'
       : r.schedule.error ? 'scheduled posting: on, but the settings file data/posting/schedule.json is not valid (nothing would upload)'
-      : `scheduled posting: on, every ${r.schedule.intervalHours} h; publish times below are estimates (UTC)${r.schedule.channelReadAt ? `, channel last read ${r.schedule.channelReadAt}` : ', channel not read yet'}; the real time is set when the clip is queued`);
+      : `scheduled posting: on, every ${r.schedule.intervalHours} h; publish times below are estimates (UTC)${r.schedule.channelReadAt ? `, channel last read ${r.schedule.channelReadAt}` : ', channel not read yet'}; the real time is set when the clip is queued${r.schedule.retries ? `; ${r.schedule.retries} queued clip(s) came within ${r.schedule.minLeadHours} h of their time and would get a new time about ${r.schedule.minLeadHours} h from now, ${r.schedule.rechained} queued clip(s) re-timed ${r.schedule.intervalHours} h apart after it` : ''}`);
   }
   for (const q of r.queued) {
     L.push(`  [${q.actions.join('+')}] ${q.kind} -> ${q.target} (rule ${q.ruleId}${q.score !== null ? `, score ${q.score}` : ''}) ${q.id}${q.note ? ` | ${q.note}` : ''}`);
     if (q.publishAt) L.push(`      goes public: ${q.publishAt} (estimate)`);
+    else if (q.publishNote === 'beyond-cap') L.push(`      waits: its public time would be more than ${r.schedule.maxAheadDays} days ahead (maxAheadDays)`);
     L.push(`      title: ${q.title}`);
     for (const line of String(q.description).split('\n')) L.push(`      | ${line}`);
   }
