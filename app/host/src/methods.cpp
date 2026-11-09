@@ -538,6 +538,14 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 			throw Error(rpc::FORBIDDEN, "audio.testStall needs a host started with --test-hooks");
 		return a.studio->test_audio_stall(q.str("id", 64), q.bool_or("stall", true));
 	});
+	// audio.testHangDestroy {id}: that fake source's destroy never returns (a stuck libobs destruction thread at
+	// shutdown, as a WASAPI source on a dead work queue); proves the shutdown guard ends the host. --test-hooks only.
+	add("audio.testHangDestroy", [&a](const json::Value &p) {
+		Params q(p, {"id"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "audio.testHangDestroy needs a host started with --test-hooks");
+		return a.studio->test_audio_hang_destroy(q.str("id", 64));
+	});
 	// audio.testCreate {mode: ok|fail|silent}: what the next ujw_test_audio creates do (a restart whose create fails,
 	// or a replacement that never sends). audio.testConfig {id, syncOffsetMs?, balance?, forceMono?, gainFilterDb?}:
 	// sets source-level settings on a test global and returns them (the watchdog must carry them over). --test-hooks.

@@ -64,7 +64,7 @@ std::atomic<int> g_create_mode{(int)TestCreate::Ok};
 
 struct FakeAudio {
 	obs_source_t *src = nullptr;
-	std::atomic<bool> quit{false}, stall{false};
+	std::atomic<bool> quit{false}, stall{false}, hang_destroy{false};
 	std::thread th;
 };
 
@@ -119,12 +119,21 @@ void fake_destroy(void *p)
 	f->quit = true;
 	if (f->th.joinable())
 		f->th.join();
+	if (f->hang_destroy) {
+		// Test hook (audio.testHangDestroy, --test-hooks only): a destroy that never returns, on libobs's
+		// destruction thread. Only the shutdown guard (TerminateProcess) ends the process after this.
+		hlog::warn("ujw_test_audio: destroy hangs on purpose (test hook hangDestroy)");
+		for (;;)
+			Sleep(INFINITE);
+	}
 	delete f;
 }
 
 void fake_update(void *p, obs_data_t *s)
 {
-	static_cast<FakeAudio *>(p)->stall = obs_data_get_bool(s, "stall");
+	auto *f = static_cast<FakeAudio *>(p);
+	f->stall = obs_data_get_bool(s, "stall");
+	f->hang_destroy = obs_data_get_bool(s, "hangDestroy");
 }
 
 const char *fake_name(void *)

@@ -37,7 +37,7 @@
     "method": "audio.status",
     "failStates": ["missing"],
     "warnStates": ["starting", "unknown"],
-    "source": "D297: the host reports each device audio source in host.status.audioHealth.sources (state ok | starting | missing | inactive | unknown; 'missing' = no audio packets for data/audio/health.json noDataMs). 'method' is only the fallback for a host without audioHealth. 'inactive' (source not in use) neither fails nor warns. Muted sources in the stream mix (mixer.list) warn. While the host answers, audio state that cannot be read (no audioHealth and the method fails, is missing or times out) fails (D297 second opinion, 2026-11-08); host down = the host item fails and audio warns. A restarted source stays 'missing' until the new one delivers packets. States verified against app/host/src/studio.cpp Studio::audio_health on 2026-11-08; behaviour with a real dead source UNVERIFIED."
+    "source": "D297: the host reports each device audio source in host.status.audioHealth.sources (state ok | starting | missing | inactive | unknown; 'missing' = no audio packets for data/audio/health.json noDataMs). 'method' is only the fallback for a host without audioHealth. 'inactive' (source not in use) neither fails nor warns. Muted sources in the stream mix (mixer.list) warn. While the host answers, audio state that cannot be read (no audioHealth and the method fails, is missing, times out or answers without a sources list) fails (D297 second opinion, 2026-11-08); host down = the host item fails and audio warns. A restarted source stays 'missing' until the new one delivers packets. States verified against app/host/src/studio.cpp Studio::audio_health on 2026-11-08; behaviour with a real dead source UNVERIFIED."
   },
   "endAll": {
     "waitMs": 6000,

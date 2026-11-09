@@ -354,6 +354,17 @@
       rp.hidden = !(rv && rv.text);
       if (rv && rv.text) { pill(rp, rv.text, rv.result === 'restarted' ? 'ok' : 'warn'); rp.title = rv.count > 1 ? rv.count + ' host crash(es) while live this session' : ''; }
     }
+    // Clip maker missing (the Alpha zip ships no Python): plain words on the pill, the reason and the fix on hover.
+    // Shown only when the launcher says clips cannot be made; nothing else changes.
+    var cl = s.clips, cp = $('st-clips');
+    if (cp) {
+      var noClips = !!(cl && cl.available === false);
+      cp.hidden = !noClips;
+      if (noClips) {
+        pill(cp, cl.missing === 'python' ? 'Clips: Python not found' : 'Clips: not set up', 'warn');
+        cp.title = 'Clips can\'t be made on this PC yet: ' + (cl.reason || 'the clip maker is not set up') + '.' + (cl.fix ? ' ' + cl.fix : '');
+      }
+    }
     // Live test kit (D305 proposed, flag live-test-kit): the Streamer.bot test-action reminder and the feedback result.
     // Sound and recovery lines already have their own pills above.
     var tk = $('st-testkit');

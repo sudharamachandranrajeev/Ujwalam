@@ -39,6 +39,9 @@ private:
 // stops the packets of that one instance (a dead device). Like win-wasapi, a create on a thread with no explicit COM
 // apartment fails (the plugin returns no data). set_test_create_mode: what the next creates do: Ok (sends), Fail (the
 // create fails as a WASAPI constructor that throws), Silent (created, sends nothing: a replacement that never works).
+// obs_source_update with {"hangDestroy": true} makes that one instance's destroy never return (it stops its packet
+// thread, logs, then blocks forever), as the destroy of a WASAPI source on a dead work queue did on 2026-11-08: the
+// shutdown guard test (obs_runtime.h) needs a stuck libobs destruction thread. The type exists only with --test-hooks.
 enum class TestCreate { Ok = 0, Fail = 1, Silent = 2 };
 void register_test_audio_type();
 void set_test_create_mode(TestCreate m);

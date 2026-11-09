@@ -131,6 +131,8 @@ public:
 	// host's fake source type ujw_test_audio (audio_health.h); stall stops / restarts its packets (simulated dead device).
 	json::Value test_audio_add(const std::string &id, const std::string &name);
 	json::Value test_audio_stall(const std::string &id, bool stall);
+	// --test-hooks: that test global's destroy will never return (audio_health.h hangDestroy; shutdown guard test).
+	json::Value test_audio_hang_destroy(const std::string &id);
 	// --test-hooks: the source-level settings the watchdog must carry over (sync offset, balance, flags, filters):
 	// set them on a test global (any field present) and read them back.
 	json::Value test_audio_config(const std::string &id, const json::Value &set);

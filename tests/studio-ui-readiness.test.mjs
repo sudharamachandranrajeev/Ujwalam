@@ -187,6 +187,11 @@ describe('runReadiness', () => {
     const c = byId(await runReadiness(deps({ clip: { py: null, reason: 'the clip maker is missing in X' } })), 'clips');
     assert.equal(c.status, 'warn');
     assert.match(c.message, /missing/);
+    // the zip ships no Python: the item carries the clip maker's plain reason and the fix
+    const np = byId(await runReadiness(deps({ clip: { py: null, reason: "the clip maker's Python is missing (the Ujwalam download does not include Python; looked in X)", fix: 'To make clips, run Y' } })), 'clips');
+    assert.equal(np.status, 'warn');
+    assert.match(np.message, /^Clips cannot be made: the clip maker's Python is missing/);
+    assert.equal(np.fix, 'To make clips, run Y');
   });
 
   test('audio: host up without the state call = unreadable (fail); a missing source fails; a muted mix source warns; pluggable', async () => {
@@ -247,6 +252,67 @@ describe('runReadiness', () => {
     const r = await runReadiness(d);
     assert.match(byId(r, 'encoders').message, /did not finish/);
     assert.match(byId(r, 'disk').message, /could not run/);
+  });
+});
+
+// Failure simulations (docs/evidence/2026-11-09-failure-sims-and-clipmaker-check.md). The real-host side (a dead source
+// with the shipped watchdog numbers, readiness against it, the shutdown guard) is app/host/tests/host-audio-failsim.test.mjs.
+describe('failure sims: disk thresholds and unreadable audio state', () => {
+  const disk = async (bytes, over = {}) => byId(await runReadiness({ ...deps(over), diskFree: async () => bytes }), 'disk');
+
+  test('disk: exact thresholds from data/live/readiness.json (fail below 22 GB, warn below 44 GB, 11 GB per hour)', async () => {
+    assert.deepEqual(CONFIG.disk, { failBelowGB: 22, warnBelowGB: 44, gbPerHour: 11 }, 'thresholds changed: update the evidence doc');
+    const { failBelowGB: F, warnBelowGB: W, gbPerHour: H } = CONFIG.disk;
+    assert.equal((await disk(F * GB - 1)).status, 'fail', 'one byte under the fail line');
+    assert.equal((await disk(F * GB)).status, 'warn', 'exactly the fail line is not a fail');
+    assert.equal((await disk(W * GB - 1)).status, 'warn', 'one byte under the warn line');
+    assert.equal((await disk(W * GB)).status, 'pass', 'exactly the warn line passes');
+    assert.equal((await disk(0)).status, 'fail', 'a full disk');
+    const f = await disk(10 * GB);
+    assert.match(f.message, /^Only 10 GB free on C:\\ \(needs at least 22 GB\)\. Free space before going live\.$/);
+    const w = await disk(33 * GB);
+    assert.equal(w.message, `33 GB free on C:\\ (below 44 GB, about ${(33 / H).toFixed(1)} h of H+V recording).`);
+    // the drive checked is the host's recordings folder, else the data folder; neither = warn, never pass
+    let asked = null;
+    const d = { ...deps({ hostOpts: { info: { recordingsDir: 'D:\\rec\\x' } } }), diskFree: async (dir) => { asked = dir; return 100 * GB; } };
+    assert.match(byId(await runReadiness(d), 'disk').message, /on D:\\/);
+    assert.equal(asked, 'D:\\rec\\x');
+    const noDir = { ...deps({ hostOpts: { info: { recordingsDir: '' } } }), dataDir: null };
+    const nd = byId(await runReadiness(noDir), 'disk');
+    assert.deepEqual([nd.status, nd.message], ['warn', 'No recordings folder known to check.']);
+    const dataOnly = { ...deps({ hostOpts: { info: { recordingsDir: null } } }), dataDir: 'E:\\ujw', diskFree: async (dir) => { asked = dir; return 100 * GB; } };
+    assert.equal(byId(await runReadiness(dataOnly), 'disk').status, 'pass');
+    assert.equal(asked, 'E:\\ujw');
+    // a drive that cannot be read (removed, no permission) is a warning that says so, never a pass
+    const gone = { ...deps(), diskFree: async () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }); } };
+    assert.deepEqual([byId(await runReadiness(gone), 'disk').status, byId(await runReadiness(gone), 'disk').message], ['warn', 'The check could not run.']);
+  });
+
+  test('audio: an answer that cannot be read while the host is up fails (malformed, null, sources not a list)', async () => {
+    for (const bad of [null, {}, { sources: 'x' }, { sources: null }, 42]) {
+      const a = byId(await runReadiness(deps({ hostOpts: { methods: { 'audio.status': () => bad } } })), 'audio');
+      assert.equal(a.status, 'fail', `audio.status answered ${JSON.stringify(bad)}: ${a.message}`);
+      assert.equal(a.unknown, true);
+      assert.match(a.message, /could not be read: the host's answer cannot be read/);
+    }
+    // host.status audioHealth that is malformed falls back to the method; both unreadable = fail
+    const d = deps({ hostOpts: { audio: { nope: 1 }, methods: { 'host.status': () => ({ live: false, audioHealth: { sources: 'bad' } }) } } });
+    assert.equal(byId(await runReadiness(d), 'audio').status, 'fail');
+    assert.ok(d.host.calls.includes('audio.status'));
+    // an empty list is a real answer (no device audio in the project): warn, not fail
+    assert.equal(byId(await runReadiness(deps({ hostOpts: { audio: { sources: [] } } })), 'audio').status, 'warn');
+  });
+
+  test('audio: the host states each map as data/live/readiness.json says (missing fails; starting/unknown warn; inactive passes)', async () => {
+    assert.deepEqual(CONFIG.audio.failStates, ['missing']);
+    assert.deepEqual(CONFIG.audio.warnStates, ['starting', 'unknown']);
+    const st = async (state) => byId(await runReadiness(deps({ hostOpts: { audio: { sources: [{ id: 'audio:game', name: 'Game', state }, { id: 'audio:mic', name: 'Mic', state: 'ok' }] } } })), 'audio');
+    const m = await st('missing');
+    assert.deepEqual([m.status, m.message], ['fail', 'Not working: Game (missing).']);
+    assert.deepEqual([(await st('starting')).status, (await st('starting')).message], ['warn', 'Check: Game (starting).']);
+    assert.equal((await st('unknown')).status, 'warn');
+    assert.equal((await st('inactive')).status, 'pass');
+    assert.equal((await st('ok')).message, '2 audio source(s) working.');
   });
 });
 
