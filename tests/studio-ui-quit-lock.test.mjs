@@ -5,7 +5,9 @@
 //   - a start already under way when the quit comes: the quit is refused;
 //   - a start that comes after the grant (also one asked for before and confirmed after): refused, 409 "Ujwalam is
 //     closing", and the host never gets it;
-//   - a released (or expired) lock lets starts through again; the go-live authority is revoked on a grant.
+//   - a released lock lets starts through again; the go-live authority is revoked on a grant;
+//   - round 3: a granted lock never expires (only its token's cancel releases it); the studio exits only when
+//     quit/commit confirms the token still holds the granted lock; a slow or failing revoke cannot end in a grant.
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import http from 'node:http';
@@ -36,7 +38,7 @@ function raw(port, { method = 'GET', url = '/', headers = {}, body } = {}) {
   });
 }
 
-/** A UI server over the fake host. ctl: { live, recording, statusFails, startDelayMs }; calls lists the host calls. */
+/** A UI server over the fake host. ctl: { live, recording, statusFails, startDelayMs, revoke }; calls lists the host calls. */
 async function boot(ctl = {}) {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-ql-')); dirs.push(dataDir);
   const fake = createFakeHost({ outputsReady: true });
@@ -56,8 +58,8 @@ async function boot(ctl = {}) {
     },
   };
   const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
-  const authority = { begin: async () => 0, arm: async () => true, revoke: async (why) => { revokes.push(why); return true; } };
-  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, authority, now: () => clock.t, limits: { statusPollMs: 50 } });
+  const authority = { begin: async () => 0, arm: async () => true, revoke: async (why) => { revokes.push(why); return ctl.revoke ? ctl.revoke(why) : true; } };
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, authority, now: () => clock.t, limits: { statusPollMs: 50, quitWaitMs: 400 } });
   servers.push(srv);
   const { port } = await srv.listen();
   const r = await raw(port, { url: `/login?k=${KEY}` });
@@ -123,10 +125,37 @@ test('race: a start already on its way to the host refuses the quit; right after
   assert.equal((await s.post('/ui/api/quit/begin')).body.granted, true, 'later, idle: granted');
 });
 
-test('an unreleased lock expires (a studio that did not exit must not block going live for ever)', async () => {
+test('a granted lock never expires (test clock past 60 s): starts stay refused; commit holds only for the held token', async () => {
   const s = await boot();
-  assert.equal((await s.post('/ui/api/quit/begin')).body.granted, true);
-  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).status, 409);
-  s.clock.t += 61_000;
-  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).body.verdict, 'confirm');
+  const { token } = (await s.post('/ui/api/quit/begin')).body;
+  s.clock.t += 3_600_000;
+  const r = await s.post('/ui/api/host', { method: 'stream.start', params: {} });
+  assert.equal(r.status, 409, 'an hour later: still closing (a studio that hangs holding it is fail safe)');
+  assert.equal(r.body.detail, 'Ujwalam is closing');
+  assert.equal((await s.post('/ui/api/quit/commit', { token })).status, 200, 'still granted: the studio may exit');
+  assert.equal((await s.post('/ui/api/quit/commit', { token: 'f'.repeat(32) })).status, 409, 'another token: not granted');
+  await s.post('/ui/api/quit/cancel', { token });
+  const stale = await s.post('/ui/api/quit/commit', { token });
+  assert.deepEqual([stale.status, stale.body.error], [409, 'stale-quit'], 'released: a late commit of the old token fails, so no exit');
+  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).body.verdict, 'confirm', 'released: going live works');
+});
+
+test('the revoke racing time cannot grant: slow revoke holds the lock (no start slips in); a revoke with no answer or a refusal releases without a grant', async () => {
+  const s = await boot();
+  let answer;
+  s.ctl.revoke = () => new Promise((r) => { answer = r; });
+  const begin = s.post('/ui/api/quit/begin');
+  await new Promise((r) => setTimeout(r, 100));
+  s.clock.t += 120_000; // "time passes" while the launcher has not answered
+  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).status, 409, 'locked while the grant is being decided');
+  answer(true);
+  const g = (await begin).body;
+  assert.equal(g.granted, true);
+  assert.equal((await s.post('/ui/api/quit/commit', { token: g.token })).status, 200);
+  await s.post('/ui/api/quit/cancel', { token: g.token });
+  s.ctl.revoke = () => new Promise(() => {}); // never answers: bounded (quitWaitMs 400 here, 10 s by default)
+  assert.deepEqual((await s.post('/ui/api/quit/begin')).body, { granted: false, reason: 'unreadable' });
+  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).body.verdict, 'confirm', 'released: not locked for ever');
+  s.ctl.revoke = async () => false; // the launcher did not confirm the revoke
+  assert.deepEqual((await s.post('/ui/api/quit/begin')).body, { granted: false, reason: 'unreadable' });
 });

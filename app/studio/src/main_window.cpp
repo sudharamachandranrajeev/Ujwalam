@@ -427,11 +427,13 @@ void MainWindow::stopAllFromTray(bool ask)
 	if (ask && QMessageBox::question(nullptr, QStringLiteral("Stop all"),
 					  QStringLiteral("Stop every running task and quit Ujwalam?\nUnfinished clip jobs run again at the next start.")) != QMessageBox::Yes)
 		return;
-	requestQuit([this](bool can, const QString &why, const QString &) {
+	requestQuit([this](bool can, const QString &why, const QString &token) {
 		if (can) {
-			std::printf("studio tray: stop all\n");
-			std::fflush(stdout);
-			QApplication::exit(0); // the launcher ends every task's whole process tree
+			commitQuit(token, []() {
+				std::printf("studio tray: stop all\n");
+				std::fflush(stdout);
+				QApplication::exit(0); // the launcher ends every task's whole process tree
+			}, [this]() { note(QStringLiteral("Ujwalam did not close: the quit was no longer confirmed. Try Stop all again.")); });
 			return;
 		}
 		// Live, recording or unknown: quitting would stop them. Stop the tasks only; the studio and host stay, and the
@@ -455,6 +457,19 @@ void MainWindow::requestQuit(std::function<void(bool, const QString &, const QSt
 		const QString why = ok ? r.value(QStringLiteral("reason")).toString() : QString();
 		then(false, why.isEmpty() ? QStringLiteral("unreadable") : why, QString());
 	});
+}
+
+void MainWindow::commitQuit(const QString &token, std::function<void()> exitNow, std::function<void()> stay)
+{
+	api_->post(QStringLiteral("ui/api/quit/commit"), QJsonObject{{QStringLiteral("token"), token}},
+		   [this, token, exitNow, stay](bool ok, const QJsonObject &r, const QString &) {
+			   if (ok && r.value(QStringLiteral("ok")).toBool(false))
+				   return exitNow();
+			   releaseQuit(token);
+			   std::printf("studio tray: quit not confirmed; staying open\n");
+			   std::fflush(stdout);
+			   stay();
+		   });
 }
 
 void MainWindow::releaseQuit(const QString &token)
@@ -579,10 +594,15 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 					note(QStringLiteral("All tasks finished. Ujwalam stays open: %1.").arg(why == QStringLiteral("unreadable") ? QStringLiteral("could not confirm that nothing is live") : why));
 					return leaveTray();
 				}
-				std::printf("studio tray: all tasks finished; exiting\n");
-				std::printf("studio tray probe: %s\n", QJsonDocument(tray_->probe()).toJson(QJsonDocument::Compact).constData());
-				std::fflush(stdout);
-				QApplication::exit(0); // exit 0: the launcher stops everything else (D280)
+				commitQuit(token, [this]() {
+					std::printf("studio tray: all tasks finished; exiting\n");
+					std::printf("studio tray probe: %s\n", QJsonDocument(tray_->probe()).toJson(QJsonDocument::Compact).constData());
+					std::fflush(stdout);
+					QApplication::exit(0); // exit 0: the launcher stops everything else (D280)
+				}, [this]() {
+					trayStay_ = QStringLiteral("not-confirmed");
+					leaveTray();
+				});
 			});
 		});
 	}

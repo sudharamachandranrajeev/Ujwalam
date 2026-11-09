@@ -30,7 +30,7 @@
   }
   function fmt(v, suffix) { return (typeof v === 'number' && isFinite(v)) ? (Math.round(v * 10) / 10) + (suffix || '') : '-'; }
   function showError(msg) { setText($('preview-note'), msg); }
-  function guard(p) { return p.catch(function (e) { showError('Error: ' + (e && e.message ? e.message : 'failed')); }); }
+  function guard(p) { return p.catch(function (e) { showError('Error: ' + (e && (e.detail || e.message) ? (e.detail || e.message) : 'failed')); }); } // detail: plain words when the server gives them ("Ujwalam is closing")
 
   // ---- undo / redo of layer edits (P5b, D238; the server keeps the history, refused while live) ----
   function renderEdits(st) {
@@ -446,7 +446,7 @@
       else if (r.verdict === 'allow' && r.endAll) setText($('preview-note'), endAllText(r.endAll));
       else if (r.verdict === 'allow' && r.override) setText($('preview-note'), 'Going live with the readiness override' + (r.overrideLogged ? ' (logged).' : ' (the log could not be written).'));
       else if (r.verdict === 'allow') { if (r.flags) renderFlags(r.flags); if (r.bots) renderBots(r.bots); setText($('preview-note'), 'Done.'); if (r.forced) setText($('bot-note'), 'The bot did not close when asked and was force-closed; unsaved bot changes may be lost.'); loadScenes().then(loadMixer).catch(function () {}); } else setText($('preview-note'), r.verdict === 'allow' ? 'Done.' : 'Result: ' + r.verdict + (r.reason ? ' (' + r.reason + ')' : ''));
-    }).catch(function (e) { closeConfirm(); showError('Confirmation failed: ' + (e.message || 'error')); });
+    }).catch(function (e) { closeConfirm(); showError('Confirmation failed: ' + (e.detail || e.message || 'error')); });
   }
   function cancelConfirm() { var p = state.pending; closeConfirm(); if (p) Api.cancel(p.pendingId).catch(function () {}); }
 

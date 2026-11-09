@@ -243,6 +243,9 @@ private:
 	// then() gets granted, the reason when not, and the lock's token (release it with releaseQuit when not exiting).
 	void requestQuit(std::function<void(bool granted, const QString &reason, const QString &token)> then);
 	void releaseQuit(const QString &token);
+	// Right before exiting: the UI server confirms the grant still stands. exitNow() only on that answer; otherwise
+	// the lock is released and stay() runs (the studio keeps running).
+	void commitQuit(const QString &token, std::function<void()> exitNow, std::function<void()> stay);
 	QString trayStay_;            // why the tray did not quit (live | recording | unreadable; probe)
 	StatsCards *stats_ = nullptr;  // session time, GPU, CPU, fps with history
 	QJsonObject clips_;           // status.clips: settings, state, asks, last result (D284)

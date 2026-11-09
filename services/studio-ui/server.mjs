@@ -479,31 +479,49 @@ export function createStudioServer(opts) {
   //   - a start already under way (or one that ended in the last RECENT_START_MS, the host may still report it idle)
   //     refuses the grant;
   //   - then a fresh host.status: a stream or recording running, or a status that cannot be read, refuses (fail closed);
-  //   - a refused or cancelled quit releases the lock; an unreleased lock expires after CLOSING_MS (the studio exits
-  //     at once after a grant; a stale lock must not block going live for ever).
-  const CLOSING_MS = 60_000; const RECENT_START_MS = 5000;
+  //   - a refused or cancelled quit releases the lock;
+  //   - a granted lock never expires (round 3): only a cancel with its token, or the end of this process, releases
+  //     it. A studio that hangs holding it leaves every start refused ("Ujwalam is closing"): fail safe, never a quit
+  //     that ends a stream. The lock exists before its grant only while quitBegin itself runs, and each of its waits
+  //     is bounded (QUIT_WAIT_MS: no answer = refused and released), so nothing can expire or clear it meanwhile;
+  //   - the studio exits only after quitCommit confirms, at that moment, that its token is still the held, granted lock.
+  const RECENT_START_MS = 5000; const QUIT_WAIT_MS = Number.isFinite(limits.quitWaitMs) && limits.quitWaitMs > 0 ? limits.quitWaitMs : 10_000; // limits.quitWaitMs: tests
   let closing = null; let startsInFlight = 0; let lastStartAt = -Infinity;
-  const isClosing = () => { if (closing && closing.until <= now()) closing = null; return !!closing; };
+  const isClosing = () => !!closing;
   const CLOSING_REFUSAL = { error: 'closing', detail: 'Ujwalam is closing' };
+  const bounded = (p) => Promise.race([Promise.resolve(p), new Promise((_, rej) => { const t = setTimeout(() => rej(new Error('timeout')), QUIT_WAIT_MS); t.unref?.(); })]);
   async function quitBegin(res) {
     if (isClosing()) return json(res, 200, { granted: false, reason: 'already-closing' });
     const token = randomBytes(16).toString('hex');
-    closing = { token, until: now() + CLOSING_MS };
-    const refuse = (reason) => { if (closing?.token === token) closing = null; return json(res, 200, { granted: false, reason }); };
+    const lock = { token, granted: false };
+    closing = lock;
+    const refuse = (reason) => { if (closing === lock) closing = null; return json(res, 200, { granted: false, reason }); };
     if (startsInFlight > 0 || now() - lastStartAt < RECENT_START_MS) return refuse('starting');
     let hs = null;
-    try { hs = await host.call('host.status', {}); } catch { hs = null; }
-    if (closing?.token !== token) return json(res, 200, { granted: false, reason: 'cancelled' });
+    try { hs = await bounded(host.call('host.status', {})); } catch { hs = null; }
+    if (closing !== lock) return json(res, 200, { granted: false, reason: 'cancelled' });
     if (!hs || typeof hs.live !== 'boolean' || typeof hs.recording !== 'boolean') return refuse('unreadable');
     if (hs.live) return refuse('live');
     if (hs.recording) return refuse('recording');
     if (startsInFlight > 0) return refuse('starting'); // cannot happen (starts are refused while closing): fail closed anyway
-    if (authority) await authority.revoke('closing');
+    if (authority) {
+      let revoked = false;
+      try { revoked = (await bounded(authority.revoke('closing'))) !== false; } catch { revoked = false; }
+      if (closing !== lock) return json(res, 200, { granted: false, reason: 'cancelled' });
+      if (!revoked) return refuse('unreadable'); // the launcher did not confirm: no grant (the revoke itself fails closed)
+    }
+    lock.granted = true;
     return json(res, 200, { granted: true, token });
   }
   function quitCancel(res, body) {
     if (typeof body.token !== 'string' || Object.keys(body).some((k) => k !== 'token')) return json(res, 400, { error: 'bad-params' });
     if (closing?.token === body.token) closing = null;
+    return json(res, 200, { ok: true });
+  }
+  // Right before it exits, the studio checks that its grant still stands (synchronous: no start can slip in between).
+  function quitCommit(res, body) {
+    if (typeof body.token !== 'string' || Object.keys(body).some((k) => k !== 'token')) return json(res, 400, { error: 'bad-params' });
+    if (!closing || !closing.granted || closing.token !== body.token) return json(res, 409, { error: 'stale-quit', detail: 'This quit is no longer granted' });
     return json(res, 200, { ok: true });
   }
   // Stop the background tasks only (the tray's Stop all while live or recording): the launcher reads the request
@@ -902,6 +920,7 @@ export function createStudioServer(opts) {
     if (route === '/ui/api/tasks/stop') return stopTasks(res);
     if (route === '/ui/api/quit/begin') return quitBegin(res);
     if (route === '/ui/api/quit/cancel') return quitCancel(res, body);
+    if (route === '/ui/api/quit/commit') return quitCommit(res, body);
     if (route === '/ui/api/clips/open') {
       if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
       const dir = clipsFolder(opts.dataDir);

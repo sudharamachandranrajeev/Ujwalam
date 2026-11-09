@@ -38,7 +38,7 @@ describe('Qt studio: close with tasks running, and the tray (D311 proposed)', { 
 
   // Runs the shell once. o.prepare(dataDir) writes task files first; o.onStatus(n, dataDir) runs on each status request;
   // o.onOut(out, dataDir) on each stdout chunk. Returns the exit code, output and both probe lines (null when absent).
-  async function run({ ms = 7000, actions = '', show = true, prepare, onStatus, onOut, onRequest, authority, outputsReady = false, env = {} } = {}) {
+  async function run({ ms = 7000, actions = '', show = true, prepare, onStatus, onOut, onRequest, beforeRoute, authority, outputsReady = false, env = {} } = {}) {
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-tray-')); dirs.push(dataDir);
     if (prepare) prepare(dataDir);
     const fake = createFakeHost({ outputsReady });
@@ -49,6 +49,7 @@ describe('Qt studio: close with tasks running, and the tray (D311 proposed)', { 
     const key = 't'.repeat(40);
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags: createFlags({ dataDir }), bots: createFakeBots(), limits: { statusPollMs: 50 }, ...(authority ? { authority } : {}) });
     if (onRequest) srv.server.on('request', (req) => onRequest(req.url?.split('?')[0], dataDir));
+    if (beforeRoute) srv.server.prependListener('request', (req) => beforeRoute(req)); // runs before the server routes it
     const { port } = await srv.listen();
     if (onStatus) {
       let n = 0;
@@ -203,6 +204,24 @@ describe('Qt studio: close with tasks running, and the tray (D311 proposed)', { 
     assert.ok(seen.includes('/ui/api/quit/cancel'), 'the granted lock was released (going live is not blocked)');
     assert.ok(r.probe, 'still running');
     assert.deepEqual([r.probe.tray.active, r.probe.tray.running], [true, 1]);
+  });
+
+  test('tray (round 3): a quit the server no longer confirms at commit time does not exit; the lock is released and the window comes back', async () => {
+    const seen = [];
+    const r = await run({
+      ms: 12000, actions: 'close,close-choice:tray', prepare: (d) => task(d, RUNNING),
+      onOut: once(/^studio tray: on/m, (d) => task(d, { ...RUNNING, state: 'done', done: 10 })),
+      // the commit does not reach a "still granted" answer (as when the grant is stale): the server answers 404
+      beforeRoute: (req) => { if (req.url === '/ui/api/quit/commit') req.url = '/ui/api/quit/commit-refused-by-test'; },
+      onRequest: (url) => seen.push(url),
+    });
+    assert.equal(r.code, 0, r.err);
+    assert.ok(seen.includes('/ui/api/quit/begin') && seen.includes('/ui/api/quit/commit-refused-by-test'), JSON.stringify(seen));
+    assert.match(r.out, /^studio tray: quit not confirmed; staying open$/m);
+    assert.doesNotMatch(r.out, /all tasks finished; exiting/);
+    assert.ok(seen.includes('/ui/api/quit/cancel'), 'the lock was released');
+    assert.ok(r.probe, 'still running');
+    assert.deepEqual([r.probe.tray.active, r.probe.tray.stay], [false, 'not-confirmed']);
   });
 
   test('tray: Stop all ends the studio with exit 0', async () => {
