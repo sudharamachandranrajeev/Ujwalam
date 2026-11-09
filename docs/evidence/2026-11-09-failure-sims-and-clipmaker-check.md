@@ -133,6 +133,11 @@ node --test tests/record-clips.test.mjs tests/studio-ui-readiness.test.mjs tests
   `status.json` of an installed copy shows "Clips: Python not found" and the reason and fix in the tooltip; with no
   root, "Clips: not set up".
 
+Whole Qt shell file after the rebuild (`node --test tests/studio-qt-shell.test.mjs`): tests 47, pass 46, fail 1. The
+failure was `look (D285)`: `[panelOpen, toasts, chipHidden]` was `[true, 0, false]`, expected `[true, 1, false]` (the
+toast written 1200 ms into a 4500 ms probe was not counted). It touches task toasts, not the clips pill, and passed
+when run alone right after (`--test-name-pattern "look \(D285\)"`: pass 1). Recorded as a timing flake, not fixed here.
+
 ## Not checked / UNVERIFIED
 
 - The real game-audio failure (a WASAPI source on a dead RTWQ work queue) was not reproduced; the dead device and the
