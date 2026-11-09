@@ -70,9 +70,12 @@ export async function launchHost({
 
 // The wait ends the moment the host exits, so a long bound costs nothing when healthy. 20 s was too tight for a host
 // with the CEF overlay child under full-CI load (host-browser after hook, 2026-11-08); a real hang still ends at 60 s.
+// The bound's timer is cleared the moment the host exits: a pending timer keeps the test process alive, so an uncleared
+// bound made every host test file run on for the full timeout after its last test (2026-11-09, docs/evidence/2026-11-09-host-test-time.md).
 export async function stopHost(h, timeoutMs = 60000) {
   try { await h.client.call('host.shutdown'); } catch { /* already gone */ }
-  const code = await Promise.race([h.exit, new Promise((r) => setTimeout(() => r('timeout'), timeoutMs))]);
+  let timer;
+  const code = await Promise.race([h.exit, new Promise((r) => { timer = setTimeout(() => r('timeout'), timeoutMs); })]).finally(() => clearTimeout(timer));
   if (code === 'timeout') {
     h.child.kill();
     return { code: null, timedOut: true };

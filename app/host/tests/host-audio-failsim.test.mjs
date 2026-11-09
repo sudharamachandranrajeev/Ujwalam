@@ -9,11 +9,10 @@
 //   2. recreates exhausted: replacements that never send, 3 restarts, then "gave-up" (restarts did not help)
 //   3. parked limit: the 12th parked source fills the limit; the next missing source is not restarted at all
 //   4. readiness: audio passes while sources send and fails, naming them, once they are missing
-//   5. shutdown guard: a source whose destroy never returns (audio.testHangDestroy) ends the host with exit 9 after
-//      shutdownGuardMs, logged; without the guard it would hang forever
+//   5. (host-audio-failsim-guard.test.mjs, a separate file so the 20 s wait runs beside this file's, D276)
 // Faults come only from --test-hooks methods (audio.testAdd/testStall/testCreate/testHangDestroy), which a host
 // started without --test-hooks refuses (FORBIDDEN); the fake source type is registered only with --test-hooks.
-//   node --test app/host/tests/host-audio-failsim.test.mjs   (needs the built host and the OBS runtime; ~2 min)
+//   node --test app/host/tests/host-audio-failsim.test.mjs   (needs the built host and the OBS runtime; ~1 min)
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
@@ -156,31 +155,6 @@ test('parked limit: the 12th parked source fills it; the next missing source is 
   const r = await audioItem();
   assert.equal(r.status, 'fail');
   assert.ok(r.message.includes('AUX3 (missing)'), r.message);
-});
-
-test('shutdown guard: a source destroy that never returns ends the host with exit 9 after shutdownGuardMs', async () => {
-  const d = mkdtempSync(path.join(OUT, 'audio-failsim-guard-'));
-  const g = await launchHost({ dataDir: d, project: PROJECT, extraArgs: ['--host-config', hostConfig(d, SHIPPED), '--test-hooks'], env: HEADLESS, timeoutMs: 60000 });
-  let stopped = false;
-  try {
-    await g.client.call('audio.testAdd', { id: 'game', name: 'Game' });
-    const set = await g.client.call('audio.testHangDestroy', { id: 'game' });
-    assert.deepEqual(set, { id: 'audio:game', hangDestroy: true, source: 'ujw:audio:game' });
-    assert.equal((await g.client.call('host.status', {})).audioHealth.sources.length, 1, 'still running normally');
-    const t0 = Date.now();
-    const r = await stopHost(g, SHIPPED.shutdownGuardMs + 30000);
-    stopped = true;
-    const ms = Date.now() - t0;
-    assert.equal(r.timedOut, false, 'the guard ended the process (the test did not have to kill it)');
-    assert.equal(r.code, 9, 'kShutdownGuardExit');
-    assert.ok(ms >= SHIPPED.shutdownGuardMs - 500, `ended after ${ms} ms (guard ${SHIPPED.shutdownGuardMs} ms)`);
-    const log = hostLog(d);
-    assert.match(log, /ujw_test_audio: destroy hangs on purpose/);
-    assert.match(log, /obs_shutdown did not return in 20000 ms \(a source's destroy is stuck\); ending the process with exit code 9/);
-    assert.doesNotMatch(log, /obs_shutdown returned/);
-  } finally {
-    if (!stopped) { try { g.child.kill(); } catch { /* gone */ } }
-  }
 });
 
 test('audio.testHangDestroy is refused without --test-hooks and for an unknown source', async () => {
