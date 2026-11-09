@@ -71,7 +71,7 @@ const authOk = { status: async () => ({ signedIn: true, hasClient: true }), acce
 
 function chain(e, { yt, auth = authOk, flagsOn = true, time, chunkSize } = {}) {
   const clock = time ?? { t: T0 };
-  const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: () => flagsOn }, rulesFile: e.rulesFile, auth, fetchImpl: yt?.fetchImpl, now: () => clock.t, tickEveryMs: 0, chunkSize,
+  const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: (id) => flagsOn && id !== 'post-schedule' }, rulesFile: e.rulesFile, auth, fetchImpl: yt?.fetchImpl, now: () => clock.t, tickEveryMs: 0, chunkSize,
     profileFile: path.join(e.dataDir, 'none.json'), packageImpl: async () => ({ packaged: [], skipped: [] }) });
   return { c, clock };
 }

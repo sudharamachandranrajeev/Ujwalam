@@ -106,7 +106,7 @@ function setup(rows = ROWS) {
   const ledgerFile = path.join(dataDir, 'posting', 'ledger.json');
   const runDir = path.join(dataDir, 'clips', 'runs', 'run1');
   const clock = { t: T0 };
-  const chain = (g, extra = {}) => createPostChain({ dataDir, flags: { isOn: () => true }, rulesFile, auth: authOk, fetchImpl: g.fetchImpl, now: () => clock.t,
+  const chain = (g, extra = {}) => createPostChain({ dataDir, flags: { isOn: (id) => id !== 'post-schedule' }, rulesFile, auth: authOk, fetchImpl: g.fetchImpl, now: () => clock.t,
     tickEveryMs: 0, profileFile, ffmpeg: FFMPEG, chunkSize: 16, ...extra });
   const uploads = () => JSON.parse(readFileSync(path.join(dataDir, 'clips', 'uploads.json'), 'utf8')).files;
   const queue = () => createUploadQueue(path.join(dataDir, 'posting', 'upload-queue.json'), () => clock.t);

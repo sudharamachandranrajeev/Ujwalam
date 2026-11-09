@@ -148,7 +148,7 @@ describe('chain: finished videos reach the queue', () => {
       { id: 'ml', target: 'youtube-video', minScore: 0, kinds: ['montage'], maxPerDay: 5 }] }));
     const pf = path.join(e.dataDir, 'profile.json'); writeFileSync(pf, JSON.stringify(PROFILE));
     const yt = fakeYt(); const logs = [];
-    const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: () => true }, rulesFile, auth: authOk, fetchImpl: yt.fetchImpl, now: () => Date.parse('2026-11-08T10:00:00Z'),
+    const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: (id) => id !== 'post-schedule' }, rulesFile, auth: authOk, fetchImpl: yt.fetchImpl, now: () => Date.parse('2026-11-08T10:00:00Z'),
       tickEveryMs: 0, profileFile: pf, ffmpeg: FFMPEG, log: (m) => logs.push(m) });
     const r = await c.afterRun(runDir, { sinks: [{ id: 'yt', kind: 'stream', state: 'stopped' }] });
     assert.equal(r.packaged, 3, JSON.stringify(logs));

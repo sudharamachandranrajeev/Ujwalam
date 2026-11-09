@@ -2232,6 +2232,9 @@ void MainWindow::openPosts()
 			bits << p.value(QStringLiteral("queueReasonText")).toString();
 		if (qs == QStringLiteral("queued") && !p.value(QStringLiteral("queueNextAt")).toString().isEmpty())
 			bits << QStringLiteral("next try ") + QDateTime::fromString(p.value(QStringLiteral("queueNextAt")).toString(), Qt::ISODate).toLocalTime().toString(Qt::TextDate);
+		if (!p.value(QStringLiteral("queuePublishAt")).toString().isEmpty()) // post-schedule (D310 proposed)
+			bits << (qs == QStringLiteral("done") ? QStringLiteral("goes public ") : QStringLiteral("will go public ")) +
+					QDateTime::fromString(p.value(QStringLiteral("queuePublishAt")).toString(), Qt::ISODate).toLocalTime().toString(Qt::TextDate);
 		if (!p.value(QStringLiteral("videoUrl")).toString().isEmpty())
 			bits << QStringLiteral("link (private): ") + p.value(QStringLiteral("videoUrl")).toString();
 		queueSel->setText(bits.join(QStringLiteral(". ")) + QLatin1Char('.'));

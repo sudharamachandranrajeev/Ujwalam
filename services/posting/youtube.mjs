@@ -39,11 +39,20 @@ export class UploadError extends Error {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Builds the fixed snippet from a post.json entry. privacyStatus is hardcoded here, never from `post`. */
-export function uploadMetadata(post) {
+/** Builds the fixed snippet from a post.json entry. privacyStatus is hardcoded here, never from `post`.
+ *  publishAt (RFC 3339 UTC, from the post-schedule queue slot, D310 proposed) makes YouTube publish the private video at
+ *  that time; it is never read from post.json and only accepted as a valid future-looking ISO string ending in Z. */
+export function uploadMetadata(post, { publishAt = null } = {}) {
+  const status = { privacyStatus: 'private', selfDeclaredMadeForKids: false };
+  if (publishAt !== null) {
+    if (typeof publishAt !== 'string' || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(publishAt) || !Number.isFinite(Date.parse(publishAt))) {
+      throw new UploadError('bad-publish-at', 'the scheduled publish time is not a valid UTC time');
+    }
+    status.publishAt = publishAt;
+  }
   return {
     snippet: { title: composeField(post, ['title']), description: composeField(post, ['description', 'hashtags']), tags: post.tags ?? [] },
-    status: { privacyStatus: 'private', selfDeclaredMadeForKids: false },
+    status,
   };
 }
 
@@ -161,7 +170,7 @@ export async function uploadVideo(opts) {
   if (isStreamLive(live)) throw new UploadError('stream-active', 'a stream sink is active; uploads never compete with a live stream');
 
   const bytes = statSync(opts.videoPath).size;
-  const metadata = uploadMetadata(opts.post);
+  const metadata = uploadMetadata(opts.post, { publishAt: opts.publishAt ?? null });
   // opts.sessions ({ get(sha), set(sha, url) }) keeps the resumable session across a stop or restart (D300): a known
   // session is asked how many bytes Google has and continues from there; a dead one (expired) starts a new session.
   let sessionUrl = opts.sessions?.get(opts.sha256) ?? null;
@@ -207,7 +216,7 @@ export async function uploadPost(opts) {
   const accessToken = await auth.accessToken();
   const r = await uploadVideo({
     post, sha256, videoPath: video.file, coverPath: cover?.file, accessToken,
-    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now, sessions: opts.sessions, beforeChunk: opts.beforeChunk, chunkSize: opts.chunkSize,
+    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now, sessions: opts.sessions, publishAt: opts.publishAt ?? null, beforeChunk: opts.beforeChunk, chunkSize: opts.chunkSize,
     recordUploaded: async ({ videoId }) => { store.ledger.annotate(sha256, post.target, { videoId }); },
   });
   return { ...r, hasCover: !!cover };
