@@ -10,6 +10,8 @@
   "preSec": 17.0,
   "preNote": "17 s (was 15, 2026-11-07): with postSec 3 a single-card save is 20 s, the user's minimum clip length (D236).",
   "postSec": 3.0,
+  "minClipSec": 20.0,
+  "minClipNote": "2026-11-09: the user's minimum clip length (D236, same as data/clip/montage.json minSec). A live window shorter than this starts earlier (preSec is the normal lead, this is the floor), bounded by the replay buffer and the previous KILLCAM. A death close can still leave a window short because its end is fixed.",
   "replaySec": 60,
   "forceMarginSec": 5.0
 }
