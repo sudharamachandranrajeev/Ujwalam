@@ -505,3 +505,5 @@ private upload. Evidence: `docs/evidence/2026-11-09-scheduled-posting.md`.
 - `tests/studio-ui-readiness.test.mjs`
 - `tools/outputs-validate-presets.mjs`
 - `docs/evidence/2026-11-09-twitch-either-scheme.md` (this file)
+
+**D311 (2026-11-09): Nothing runs hidden after close; tasks visible with elapsed and ETA.** Every background task (clip job, upload) shows in the studio task bar with elapsed time, ETA (or unknown) and a toast on start. Closing the studio with tasks running asks: keep in tray, stop tasks, or do not close. The tray icon lists each task with progress and exits when all finish. A tray exit or Stop all never ends a stream or recording: the UI server holds a closing lock (granted only when not live, not recording and status readable; never expires once granted; the studio exits only after a synchronous commit check), and while live Stop all stops only the tasks. A clip job ends with its whole process tree (taskkill /T, kill-on-close job, parent-gone watch); killChildTree never targets an exited child. Evidence: `docs/evidence/2026-11-09-visible-tasks-and-tray.md`.
