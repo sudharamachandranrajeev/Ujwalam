@@ -472,6 +472,21 @@ that takes both schemes. Kick (rtmps only) cannot use it and stays `rtmps`; a st
 refused at build time. The host is unchanged and re-checks the scheme against the chosen transport when it connects.
 Readiness accepts either scheme for Twitch and asks for a restart when the address changes scheme after start.
 
+**D310 (proposed 2026-11-09): Scheduled posting behind flag `post-schedule` (off).** Each clip the auto-post chain
+queues uploads to YouTube as private with `status.publishAt` (UTC). Slot = the later of the channel's latest future
+scheduled post (private + publishAt after now, read with youtube.readonly: channels.list mine -> uploads playlist ->
+playlistItems -> videos.list part=status, at most maxPages x pageSize per pass, only when a clip needs a slot) and the
+latest slot already in the upload queue (any state), plus intervalHours; never sooner than now + minLeadHours; with
+no anchor, now + minLeadHours; rounded up to the minute. Settings in `data/posting/schedule.json` (6 h from the user;
+lead 1 h, stale 15 min, 4 x 50: agent defaults). Slots go out in queue order and are saved on the queue item, so a
+retry or restart never re-slots or double-books; a failed item keeps its slot (the gap stays). A slot within
+staleMinutes of now with no upload session yet is replaced by a new slot at the end; with a session it stays. Fail
+closed: without the readonly scope (sign-in again needed), on a failed read or a bad settings file the clip waits
+without a slot and nothing uploads; no attempt is used. Sign-in asks for upload + readonly only while the flag is on.
+Nothing reads, slots or uploads while live. With the flag on, `auto --run` only approves; the studio queue uploads.
+`youtube upload --id` (manual) stays an unscheduled private upload. Evidence:
+`docs/evidence/2026-11-09-scheduled-posting.md`.
+
 ## Files changed
 
 - `app/host/lib/outputs-plan.mjs`
