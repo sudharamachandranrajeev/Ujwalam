@@ -28,7 +28,7 @@ struct Previews::Win {
 	HWND hwnd = nullptr;
 	obs_display_t *display = nullptr;
 	Previews *owner = nullptr;
-	std::string screen; // where it opened: "laptop display" | "second display", plus the GDI device name
+	std::string screen; // where it opened: "main display" or "embedded", plus the GDI device name
 	HWND parent = nullptr; // embedded: the studio shell window it is a child of
 };
 
@@ -193,7 +193,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
 	auto *w = reinterpret_cast<Previews::Win *>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 	// Mouse editing (preview_edit.h). The editor ignores every event while flag preview-edit is off. Capture keeps
-	// the drag going outside the window; it never activates or focuses the window (D191).
+	// the drag going outside the window.
 	switch (msg) {
 	case WM_LBUTTONDOWN:
 		if (w && w->owner && w->owner->editor().down(w->canvas, view_of(w), GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_of(wp))) {
@@ -238,8 +238,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		return 0;
 	case WM_ERASEBKGND:
 		return 1;
-	case WM_MOUSEACTIVATE: // a click never activates the window or takes focus (D191)
-		return MA_NOACTIVATE;
+	case WM_MOUSEACTIVATE: // embedded child (studio slot): a click leaves activation to the studio window, as before
+		if (w && w->parent)
+			return MA_NOACTIVATE;
+		break; // a stand-alone preview is a normal window and activates on a click (D316)
 	case WM_CLOSE:
 		if (w && w->display) {
 			obs_display_remove_draw_callback(w->display, draw_cb, w);
@@ -270,83 +272,22 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 struct Display {
 	std::wstring device; // \\.\DISPLAYn
 	RECT work = {};
-	bool primary = false;
-	bool internal = false;
 };
 
-BOOL CALLBACK enum_monitor(HMONITOR mon, HDC, LPRECT, LPARAM lp)
+// The display a stand-alone preview opens on (D316): the one under the given point, else the main display, like any
+// normal window. The second-display preference and the "one display" refusal (D191 window part) are gone.
+Display display_at(bool given, LONG x, LONG y)
 {
+	Display d;
 	MONITORINFOEXW mi = {};
 	mi.cbSize = sizeof(mi);
-	if (GetMonitorInfoW(mon, &mi)) {
-		Display d;
+	const POINT at = given ? POINT{x, y} : POINT{0, 0};
+	if (GetMonitorInfoW(MonitorFromPoint(at, MONITOR_DEFAULTTOPRIMARY), &mi)) {
 		d.device = mi.szDevice;
 		d.work = mi.rcWork;
-		d.primary = (mi.dwFlags & MONITORINFOF_PRIMARY) != 0;
-		reinterpret_cast<std::vector<Display> *>(lp)->push_back(d);
-	}
-	return TRUE;
-}
-
-// GDI device names (\\.\DISPLAYn) of built-in panels (laptop screens), from the display configuration.
-std::vector<std::wstring> internal_devices()
-{
-	std::vector<std::wstring> out;
-	UINT32 np = 0, nm = 0;
-	if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &np, &nm) != ERROR_SUCCESS)
-		return out;
-	std::vector<DISPLAYCONFIG_PATH_INFO> paths(np);
-	std::vector<DISPLAYCONFIG_MODE_INFO> modes(nm);
-	if (QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &np, paths.data(), &nm, modes.data(), nullptr) != ERROR_SUCCESS)
-		return out;
-	for (UINT32 i = 0; i < np; i++) {
-		DISPLAYCONFIG_TARGET_DEVICE_NAME tn = {};
-		tn.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
-		tn.header.size = sizeof(tn);
-		tn.header.adapterId = paths[i].targetInfo.adapterId;
-		tn.header.id = paths[i].targetInfo.id;
-		if (DisplayConfigGetDeviceInfo(&tn.header) != ERROR_SUCCESS)
-			continue;
-		if (tn.outputTechnology != DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL)
-			continue;
-		DISPLAYCONFIG_SOURCE_DEVICE_NAME sn = {};
-		sn.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
-		sn.header.size = sizeof(sn);
-		sn.header.adapterId = paths[i].sourceInfo.adapterId;
-		sn.header.id = paths[i].sourceInfo.id;
-		if (DisplayConfigGetDeviceInfo(&sn.header) == ERROR_SUCCESS)
-			out.push_back(sn.viewGdiDeviceName);
-	}
-	return out;
-}
-
-// The display previews may use (D191): the built-in panel if it is not the main display, else the first non-main
-// display. One display -> none (the caller refuses; a preview must never cover the main screen).
-bool pick_display(Display &out, std::string &why)
-{
-	std::vector<Display> all;
-	EnumDisplayMonitors(nullptr, nullptr, enum_monitor, reinterpret_cast<LPARAM>(&all));
-	if (all.size() < 2) {
-		why = "one display";
-		return false;
-	}
-	auto internal = internal_devices();
-	for (auto &d : all)
-		d.internal = std::find(internal.begin(), internal.end(), d.device) != internal.end();
-	for (auto &d : all)
-		if (d.internal && !d.primary) {
-			out = d;
-			why = "laptop display";
-			return true;
-		}
-	for (auto &d : all)
-		if (!d.primary) {
-			out = d;
-			why = "second display";
-			return true;
-		}
-	why = "no non-main display";
-	return false;
+	} else
+		SystemParametersInfoW(SPI_GETWORKAREA, 0, &d.work, 0);
+	return d;
 }
 
 std::string narrow(const std::wstring &w)
@@ -357,12 +298,14 @@ std::string narrow(const std::wstring &w)
 	return s;
 }
 
-// Brings a preview above other windows without activating it or taking focus (D191). Restores it if minimised.
-void raise_no_activate(HWND hwnd)
+// Brings a stand-alone preview to the front like a normal window (D316): restores it if minimised and asks Windows to
+// make it the foreground window (Windows may refuse that from a background process; the window is raised anyway).
+void raise_window(HWND hwnd)
 {
 	if (IsIconic(hwnd))
-		ShowWindow(hwnd, SW_SHOWNOACTIVATE);
-	SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+		ShowWindow(hwnd, SW_RESTORE);
+	SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+	SetForegroundWindow(hwnd);
 }
 
 } // namespace
@@ -467,16 +410,13 @@ json::Value Previews::open(const OpenArgs &a)
 			if (found->second->parent) // embedded one: a plain open replaces it with a window of its own
 				SendMessageW(found->second->hwnd, WM_CLOSE, 0, 0);
 			else {
-				raise_no_activate(found->second->hwnd);
+				raise_window(found->second->hwnd);
 				return win_json(found->second);
 			}
 		}
-		Display disp;
-		std::string why;
-		if (!pick_display(disp, why))
-			throw rpc::Error(rpc::CONFLICT, "no preview: " + why +
-								  " (previews open only on a second display and never on the main one)");
-		Win *&w = wins_[a.canvas]; // created only past the refusals: list() never sees a null entry
+		const bool given = a.x >= 0 && a.y >= 0;
+		const Display disp = display_at(given, a.x, a.y);
+		Win *&w = wins_[a.canvas];
 		if (!w) {
 			w = new Win;
 			w->canvas = a.canvas;
@@ -496,7 +436,7 @@ json::Value Previews::open(const OpenArgs &a)
 			ch = (int)(bh * s);
 		}
 		DWORD style = WS_OVERLAPPEDWINDOW;
-		DWORD ex = WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | (a.topmost ? WS_EX_TOPMOST : 0);
+		DWORD ex = a.topmost ? WS_EX_TOPMOST : 0; // a normal window: taskbar entry, activates when shown (D316)
 		const LONG ww = disp.work.right - disp.work.left, wh = disp.work.bottom - disp.work.top;
 		RECT r = {0, 0, cw, ch};
 		AdjustWindowRectExForDpi(&r, style, FALSE, ex, GetDpiForSystem());
@@ -510,12 +450,16 @@ json::Value Previews::open(const OpenArgs &a)
 			fw = r.right - r.left;
 			fh = r.bottom - r.top;
 		}
-		// Default spot: H at the work area's left edge, V at its right edge. A given x/y is clamped into the
-		// chosen display's work area, so a stale position can never put the window on the main display.
+		// Default spot: H at the display's left edge, V at its right edge. A given x/y picks the display under it (a
+		// window the user placed on another screen comes back there, else the main display); the whole window is then
+		// kept inside that display's work area, so it never hangs off an edge or sits under the taskbar.
 		LONG x = a.x >= 0 ? a.x : (a.canvas == "H" ? disp.work.left + 16 : disp.work.right - fw - 16);
 		LONG y = a.y >= 0 ? a.y : disp.work.top + 16;
-		x = std::clamp<LONG>(x, disp.work.left, std::max<LONG>(disp.work.left, disp.work.right - fw));
-		y = std::clamp<LONG>(y, disp.work.top, std::max<LONG>(disp.work.top, disp.work.bottom - fh));
+		const pplace::Rect placed = pplace::fit_in({disp.work.left, disp.work.top, ww, wh}, {x, y, fw, fh});
+		x = placed.x;
+		y = placed.y;
+		fw = placed.w;
+		fh = placed.h;
 		std::wstring title = L"Ujwalam preview - " + std::wstring(a.canvas.begin(), a.canvas.end()) + L" (" +
 				     std::to_wstring(bw) + L"x" + std::to_wstring(bh) + L")";
 		HWND hwnd = CreateWindowExW(ex, kClass, title.c_str(), style, x, y, fw, fh, nullptr, nullptr,
@@ -539,13 +483,18 @@ json::Value Previews::open(const OpenArgs &a)
 		}
 		obs_display_add_draw_callback(w->display, draw_cb, w);
 		SetTimer(hwnd, kRefreshTimer, 200, nullptr);
-		w->screen = why + " " + narrow(disp.device);
+		HMONITOR on = MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY);
+		MONITORINFOEXW omi = {};
+		omi.cbSize = sizeof(omi);
+		const bool onMain = GetMonitorInfoW(on, &omi) && (omi.dwFlags & MONITORINFOF_PRIMARY) != 0;
+		w->screen = onMain ? "main display " + narrow(disp.device) : "display " + narrow(omi.szDevice);
 		// The first ShowWindow in a process started with STARTF_USESHOWWINDOW (Node's windowsHide: true) may
-		// take the parent's SW_HIDE instead of ours; this hide call absorbs that, then show without activating.
+		// take the parent's SW_HIDE instead of ours; this hide call absorbs that, then show as a normal window.
 		ShowWindow(hwnd, SW_HIDE);
-		ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+		ShowWindow(hwnd, SW_SHOWNORMAL);
 		UpdateWindow(hwnd);
-		hlog::info("preview opened: %s %dx%d at %ld,%ld on the %s (no focus)", a.canvas.c_str(), (int)cr.right,
+		SetForegroundWindow(hwnd);
+		hlog::info("preview opened: %s %dx%d at %ld,%ld on the %s", a.canvas.c_str(), (int)cr.right,
 			   (int)cr.bottom, (long)x, (long)y, w->screen.c_str());
 		return win_json(w);
 	});
@@ -559,8 +508,7 @@ json::Value Previews::open_embedded(const OpenArgs &a)
 		throw rpc::Error(rpc::INVALID_PARAMS, "parent is not a window");
 	if (a.width <= 0 || a.height <= 0 || a.x < 0 || a.y < 0)
 		throw rpc::Error(rpc::INVALID_PARAMS, "an embedded preview needs x, y, width and height");
-	// D219: embedded previews follow the studio window's display (the user opened that window on purpose); only
-	// stand-alone preview windows keep D191's second-display-only rule (pick_display in open()).
+	// Embedded previews are child windows of the studio's preview slot and follow the studio window wherever it is.
 	HMONITOR mon = MonitorFromWindow(parent, MONITOR_DEFAULTTONEAREST);
 	MONITORINFOEXW mi = {};
 	mi.cbSize = sizeof(mi);
@@ -617,7 +565,10 @@ json::Value Previews::focus(const std::string &canvas)
 		auto it = wins_.find(canvas);
 		if (it == wins_.end() || !it->second->hwnd || !IsWindow(it->second->hwnd))
 			throw rpc::Error(rpc::CONFLICT, "preview " + canvas + " is not open");
-		raise_no_activate(it->second->hwnd);
+		if (it->second->parent) // embedded: a child of the studio window; only its z-order among siblings
+			SetWindowPos(it->second->hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		else
+			raise_window(it->second->hwnd);
 		return win_json(it->second);
 	});
 }

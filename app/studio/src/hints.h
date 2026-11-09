@@ -2,7 +2,8 @@
 // "Behind the scenes" hints (D294 proposed): one small card at a time, pointing at the part of the window the news is
 // about, shown the first time something happens. It hides itself after about 8 s unless the mouse is over it. Close
 // (x) or "Got it" hides it now; "Don't show this again" remembers that for good (the Guide stores it in
-// settings.json ui.guide.dismissed). Child widget of the main window, no focus, no top-level window (D191).
+// settings.json ui.guide.dismissed). Child widget of the main window, no focus, no top-level window (a design
+// choice; D316 dropped the old no-focus rule).
 #pragma once
 
 #include "coach.h"

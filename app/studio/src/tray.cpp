@@ -183,7 +183,8 @@ void TrayKeeper::rebuild()
 void TrayKeeper::showList()
 {
 	if (!list_) {
-		// A tool window shown without activation: it never takes focus from the game or another app (D191).
+		// A small popup-style tool window shown without activation, so opening it from the tray leaves the game or other
+		// app in front. D316 dropped the hard no-focus rule; this stays as the simpler choice for a quick task list.
 		list_ = new QFrame(nullptr, Qt::Tool | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint | Qt::WindowDoesNotAcceptFocus);
 		list_->setAttribute(Qt::WA_ShowWithoutActivating, true);
 		list_->setObjectName(QStringLiteral("taskPanel"));

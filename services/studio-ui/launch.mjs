@@ -571,14 +571,14 @@ export async function alphaProject({ client, dataDir, args, hostCfg, embedded = 
   for (const u of loaded.unavailable ?? []) console.log(`[studio]   not built: ${u.layer ?? u.audio}: ${u.code}: ${u.reason}`);
   for (const w of hudWarnings(r.file)) console.log(`[studio] WARNING: ${w}`);
   // A preview that did not open at start (e.g. closed by hand on a reused host) is opened now. The host opens previews
-  // only on a second display and never takes focus (D191); with one display it refuses and this says why.
+  // as normal windows on the main display, also with one display (D316); if it refuses, this says why.
   // With the Qt shell the previews live inside its window instead (D280).
   if (!isHeadless() && !embedded) {
     let open = new Set();
     try { open = new Set(((await client.call('preview.list')).previews ?? []).filter((p) => p.open === true).map((p) => String(p.canvas).toUpperCase())); } catch { /* listed below per canvas */ }
     for (const c of ['H', 'V']) {
       if (open.has(c)) continue;
-      try { const w = await client.call('preview.open', { canvas: c }); console.log(`[studio] preview ${c} opened after the load on the ${w.display ?? 'second display'}`); } catch (e) { console.log(`[studio] preview ${c} not shown: ${e.message}`); }
+      try { const w = await client.call('preview.open', { canvas: c }); console.log(`[studio] preview ${c} opened after the load on the ${w.display ?? 'main display'}`); } catch (e) { console.log(`[studio] preview ${c} not shown: ${e.message}`); }
     }
   }
   try {

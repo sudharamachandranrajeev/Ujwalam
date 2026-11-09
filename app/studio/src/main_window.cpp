@@ -414,9 +414,11 @@ void MainWindow::leaveTray()
 {
 	tray_->end();
 	QApplication::setQuitOnLastWindowClosed(true);
-	setAttribute(Qt::WA_ShowWithoutActivating, true); // shown, never activated (D219)
-	if (qEnvironmentVariable("UJWALAM_HEADLESS") != QStringLiteral("1"))
+	if (qEnvironmentVariable("UJWALAM_HEADLESS") != QStringLiteral("1")) { // the user asked for it: a normal show (D316)
 		show();
+		raise();
+		activateWindow();
+	}
 	std::printf("studio tray: off (window open again)\n");
 	std::fflush(stdout);
 }

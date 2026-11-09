@@ -2,8 +2,8 @@
 // ujwalam-studio: the Qt studio shell (P5a, docs/plan/2026-11-06-p5a-qt-shell-plan.md).
 // Started by the alpha launcher, which passes the UI server URL and its one-time launch key in the environment
 // (UJWALAM_UI_URL, UJWALAM_UI_LAUNCH_KEY), never on argv. Both are read once and removed from the environment.
-// Window rule (D219): the window opens on the second display when there is one, shown without taking focus; with
-// one display it opens there. UJWALAM_HEADLESS=1: no window at all; the shell
+// Window rule (D316, replaces D219): a normal app window. It opens where Windows places it (the main display) and is
+// activated when the user starts it. UJWALAM_HEADLESS=1: no window at all; the shell
 // logs in, lists the scenes, prints one line ("studio smoke: ok, <n> scene(s)") and exits (tests).
 #include "api_client.h"
 #include "depth.h"
@@ -169,12 +169,9 @@ int main(int argc, char **argv)
 			});
 			return;
 		}
-		const auto screens = QGuiApplication::screens();
-		QScreen *target = screens.size() > 1 ? screens.at(1) : QGuiApplication::primaryScreen();
-		if (target)
-			win.move(target->availableGeometry().topLeft() + QPoint(40, 40));
-		win.setAttribute(Qt::WA_ShowWithoutActivating, true);
-		win.show();
+		win.show(); // a normal window on the main display, activated like any app the user starts (D316)
+		win.raise();
+		win.activateWindow();
 		win.start();
 		});
 	});
