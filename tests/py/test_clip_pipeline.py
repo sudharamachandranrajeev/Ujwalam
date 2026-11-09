@@ -461,6 +461,10 @@ class EndToEndTests(unittest.TestCase):
         _write(os.path.join(d, "detector-hits.jsonl"), "".join(json.dumps(h) + "\n" for h in (
             {"t": 3.0, "detector": "M5", "signal": True}, {"t": 5.0, "detector": "M5", "signal": True},
             {"t": 9.0, "detector": "W1", "label": "VICTORY", "signal": True, "tEnd": 10.0})))
+        # D315: a VICTORY gets a reel only with its place read (own card #1 on the top-3 screen, placeholder reading)
+        _write(os.path.join(d, "match-stats.json"), json.dumps({
+            "recording": os.path.basename(self.rec), "ownKills": {"times": [3.0, 5.0]},
+            "readings": [{"t": 9.5, "kind": "top3", "ownRank": 1, "ownScore": 1000, "gameMode": "hardpoint", "cards": []}]}))
         vrec = self.rec.replace("-h-", "-v-")
         shutil.copyfile(self.rec, vrec)
         try:
@@ -483,6 +487,12 @@ class EndToEndTests(unittest.TestCase):
         self.assertAlmostEqual(c[0]["end"], 10.0, delta=0.05)
         rep = cc.load_json(os.path.join(out, clipper.REPORT))
         self.assertEqual([(r["id"], r["layout"], r["ok"]) for r in rep["results"]], [("W01", "montage-v", True)])
+        why = cc.load_json(os.path.join(out, clipper.MATCH_REELS))
+        self.assertEqual(why["decision"], "D315")
+        self.assertEqual([(m["index"], m["reel"]["qualifies"]) for m in why["matches"]], [(1, True), (2, False)])
+        self.assertIn("won-top3 (VICTORY; placed #1)", why["matches"][0]["reel"]["reason"])
+        self.assertEqual(why["reels"], [{"id": "W01", "match": 1, "rules": ["won-top3"], "kills": 2}])
+        self.assertEqual(cc.load_json(os.path.join(out, clipper.RENDER))["matchReels"]["reels"], 1)
 
     def test_caption_burn_in(self):
         """Burns a fixture ASS through the libass subtitles filter and validates the file."""

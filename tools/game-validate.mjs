@@ -4,7 +4,7 @@
 //   gamesRoot  default "data/games"; holds the *.schema.json files and one folder per game pack
 //   repoRoot   default cwd; evidence paths resolve against it
 // Each pack folder (data/games/<id>/) must hold game.json, detectors.json, events.json, screens.json and
-// capture-plan.json. Every file is checked against its schema, then the cross-file references are checked.
+// capture-plan.json and match-reels.json. Every file is checked against its schema, then the cross-file references are checked.
 // The local/ folder (gitignored) is never read. Exit code 1 on any error; each error is printed with its file.
 
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
@@ -18,6 +18,7 @@ export const PACK_FILES = {
   events: ['events.json', 'events.schema.json'],
   screens: ['screens.json', 'screens.schema.json'],
   capturePlan: ['capture-plan.json', 'capture-plan.schema.json'],
+  matchReels: ['match-reels.json', 'match-reels.schema.json'],
 };
 
 // Screen kinds on which no detector runs (also enforced by screens.schema.json).
@@ -43,11 +44,11 @@ function dupes(list) {
 export function checkPack(id, p, rel, repoRoot) {
   const errors = [];
   const err = (name, message) => errors.push({ file: rel(name), message });
-  const { game, detectors, events, screens, capturePlan } = p;
+  const { game, detectors, events, screens, capturePlan, matchReels } = p;
 
   // game id everywhere
   if (game.id !== id) err('game.json', `id "${game.id}" does not match the folder "${id}"`);
-  for (const [k, name] of [['detectors', 'detectors.json'], ['events', 'events.json'], ['screens', 'screens.json'], ['capturePlan', 'capture-plan.json']]) {
+  for (const [k, name] of [['detectors', 'detectors.json'], ['events', 'events.json'], ['screens', 'screens.json'], ['capturePlan', 'capture-plan.json'], ['matchReels', 'match-reels.json']]) {
     if (p[k].game !== game.id) err(name, `game "${p[k].game}" does not match game.json id "${game.id}"`);
   }
 
@@ -217,6 +218,15 @@ export function checkPack(id, p, rel, repoRoot) {
       }
       if (auto && !measured) err('capture-plan.json', `${at}: confirm "auto" needs a measured position (rois or screen); use manual`);
     }
+  }
+
+  // match reel rules (D315): unique ids; a result must be a pattern of the match-result detector W1
+  for (const x of dupes(matchReels.rules.map((r) => r.id))) err('match-reels.json', `duplicate rule id "${x}"`);
+  const w1 = detectors.detectors.find((d) => d.id === 'W1');
+  for (const r of matchReels.rules) {
+    if (r.when.result === undefined) continue;
+    if (!w1) err('match-reels.json', `${r.id}: result needs the match-result detector W1`);
+    else if (!(w1.patterns || []).includes(r.when.result)) err('match-reels.json', `${r.id}: result "${r.when.result}" is not a pattern of W1`);
   }
 
   // evidence paths exist

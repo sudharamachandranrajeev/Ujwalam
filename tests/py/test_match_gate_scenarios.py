@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Match gate and W1 won-reel selection together, from synthetic OCR readings (2026-11-09). One recording of five
 matches, one per case: top 3, DEFEAT, not top 3, unreadable (end seen, no top-3 reading) and no end screen. Locks
-the current rules: gate = match_gate.segment + decide + gate_candidates; reels = clip_montage.match_reels (VICTORY
-with an own kill; the match gate does not filter reels). Placeholders only; no names."""
+the current rules: gate = match_gate.segment + decide + gate_candidates; reels = match_gate.reel_decide (D315 rules
+of the pack) + clip_montage.match_reels (a qualifying match with an own kill). Placeholders only; no names."""
 import os
 import sys
 import unittest
@@ -112,27 +112,42 @@ class MatchGateScenarios(unittest.TestCase):
 
 
 class WonReelScenarios(unittest.TestCase):
+    """D315 reel rules on the same five matches (Hardpoint, 2-3 own kills each): match 1 VICTORY #2 and match 2
+    DEFEAT #1 qualify; match 3 VICTORY off the top-3 cards fails; match 4 (no top-3 reading) and match 5 (no end
+    screen) stay without a reel."""
+
+    def decided(self, ranks=None):
+        ms = matches(ranks or {1: 2, 2: 1, 3: None})
+        for m in ms:
+            m["reel"] = mg.reel_decide(m, mg.reel_rules(PACK))
+        return ms
+
     def reels(self):
-        return mont.match_reels(hits(), RANKING, MONTAGE, 1300.0)
+        return mont.match_reels(hits(), RANKING, MONTAGE, self.decided(), 1300.0)
 
-    def test_only_victory_matches_with_kills_give_a_reel(self):
+    def test_won_top3_and_defeat_first_give_a_reel(self):
         rs = self.reels()
-        self.assertEqual([(r["matchStart"], r["result"], r["score"]) for r in rs],
-                         [(0.0, 292.0, 3.0), (592.0, 892.0, 3.0), (892.0, 1192.0, 2.0)])
-        self.assertTrue(all(r["labels"][0] == "VICTORY" for r in rs))
+        self.assertEqual([(r["matchStart"], r["result"], r["score"], r["rules"]) for r in rs],
+                         [(0.0, 292.0, 3.0, ["won-top3"]), (292.0, 592.0, 2.0, ["defeat-top2"])])
+        self.assertEqual([r["labels"][0] for r in rs], ["VICTORY", "DEFEAT"])
 
-    def test_defeat_gives_no_reel_even_in_the_top3(self):
-        self.assertFalse(any(r["matchStart"] == 292.0 for r in self.reels()))
+    def test_every_match_records_why(self):
+        ms = self.decided()
+        self.assertEqual([m["reel"]["qualifies"] for m in ms], [True, True, False, False, False])
+        self.assertIn("won-top3 fail (not on the top-3 cards)", ms[2]["reel"]["reason"])
+        self.assertIn("objective-kills fail (3 kills", ms[2]["reel"]["reason"])
+        self.assertIn("won-top3 inert (top-3 screen not read)", ms[3]["reel"]["reason"])
+        self.assertIn("no end screen", ms[4]["reel"]["reason"])
 
     def test_reel_pieces_stay_inside_their_match_and_end_with_the_result(self):
         for r in self.reels():
             self.assertGreaterEqual(r["pieces"][0]["start"], r["matchStart"] - MONTAGE["preSec"])
             self.assertGreaterEqual(r["pieces"][-1]["end"], r["result"])
 
-    def test_reels_are_not_filtered_by_the_match_gate(self):
-        # current behaviour, locked: a VICTORY outside the top 3 (match 3) still gets its reel
-        self.assertIn(592.0, [r["matchStart"] for r in self.reels()])
+    def test_reels_do_not_depend_on_the_match_gate_setting(self):
+        # the reel rules are their own (D315); the clip gate (clips.matchGate) is unchanged and separate
         self.assertEqual(mg.decide(matches({1: 2, 2: 1, 3: None})[2], TOP3_ON)[0], False)
+        self.assertNotIn(592.0, [r["matchStart"] for r in self.reels()])
 
 
 if __name__ == "__main__":

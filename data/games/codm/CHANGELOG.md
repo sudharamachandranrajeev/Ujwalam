@@ -1,6 +1,13 @@
 # CODM pack changelog
 
-The pack version is `version` in `detectors.json`. It covers every file in this folder (`game.json`, `detectors.json`, `events.json`, `screens.json`, `capture-plan.json`). Validate with `npm run validate:games`.
+The pack version is `version` in `detectors.json`. It covers every file in this folder (`game.json`, `detectors.json`, `events.json`, `screens.json`, `capture-plan.json`, `match-reels.json`). Validate with `npm run validate:games`.
+
+## Unreleased — 2026-11-09 (match reel rules, D315)
+
+Evidence: `docs/evidence/2026-11-09-match-reel-rules.md`.
+
+- New file `match-reels.json` (rules version 1, schema `match-reels.schema.json`, checked by `tools/game-validate.mjs`): which matches get a won-match reel. Replaces the VICTORY-only selection of D237. Rules: won and top 3; defeated and top 2 (`maxPlace` 2, user D315a); more than 20 own kills in Hardpoint, Domination or Control; more than 7 own kills in TDM; Search and Destroy won, or at least 2 own kills in one round. A rule whose signal was not read is inert.
+- No detector, ROI, pattern or threshold changed, so detection results are the same as 0.5.0; the pack version is not bumped.
 
 ## 0.5.0 — 2026-11-08 (S1 match stats, match gate, D286 proposed)
 

@@ -93,6 +93,10 @@ class ClipPipelineE2E(unittest.TestCase):
         _write(os.path.join(cls.run_dir, "detector-hits.jsonl"), "".join(json.dumps(h) + "\n" for h in (
             {"t": 3.0, "detector": "M5", "signal": True}, {"t": 5.0, "detector": "M5", "signal": True},
             {"t": 9.0, "detector": "W1", "label": "VICTORY", "signal": True, "tEnd": 10.0})))
+        # D315: a VICTORY gets a reel only with its place read (own card #1 on the top-3 screen, placeholder reading)
+        _write(os.path.join(cls.run_dir, "match-stats.json"), json.dumps({
+            "recording": os.path.basename(cls.rec), "ownKills": {"times": [3.0, 5.0]},
+            "readings": [{"t": 9.5, "kind": "top3", "ownRank": 1, "ownScore": 1000, "gameMode": "hardpoint", "cards": []}]}))
         cls.rc = clipper.main(["--data-dir", cls.data, "run", "--recording", cls.rec, "--markers", cls.markers,
                                "--chat-db", chat, "--record-start", "2026-11-03T07:00:00Z", "--out", cls.run_dir,
                                "--encoder", "libopenh264", "--montage", "--publish", cls.clips])

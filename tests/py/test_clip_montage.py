@@ -10,9 +10,12 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "services
 
 import clip_common as cc  # noqa: E402
 import clip_montage as mont  # noqa: E402
+import game_pack  # noqa: E402
+import match_gate as mg  # noqa: E402
 
 RANKING = cc.load_config("ranking")
 CFG = cc.load_config("montage")
+PACK = game_pack.load_pack(os.path.join(os.path.dirname(__file__), "..", "..", "data", "games", "codm"))
 
 
 def kill(t):
@@ -154,30 +157,44 @@ def result(t, word="VICTORY"):
     return {"t": float(t), "tEnd": float(t), "detector": "W1", "label": word, "signal": True, "role": "context"}
 
 
+def reels(hits, places=None, duration=None):
+    """match_reels with the D315 rules of the CODM pack; places: {result time: own place on the top-3 screen}."""
+    readings = [{"t": float(t) + 0.5, "kind": "top3", "ownRank": r, "ownScore": 1000, "gameMode": "hardpoint"}
+                for t, r in (places or {}).items()]
+    ms = mg.segment(hits, {"readings": readings} if readings else None, duration or 2000.0, mg.stats_config(PACK))
+    for m in ms:
+        m["reel"] = mg.reel_decide(m, mg.reel_rules(PACK))
+    return mont.match_reels(hits, RANKING, CFG, ms, duration)
+
+
 class MatchReelTests(unittest.TestCase):
-    def test_won_match_takes_every_own_kill_and_the_result_screen(self):
+    def test_won_top3_match_takes_every_own_kill_and_the_result_screen(self):
         hits = [kill(t) for t in (100, 200, 300)] + [result(358)] + [kill(t) for t in (500, 600)] + [result(942, "DEFEAT")]
-        rs = mont.match_reels(hits, RANKING, CFG)
-        self.assertEqual(len(rs), 1, "the lost match gives no reel")
+        rs = reels(hits, {358: 2})
+        self.assertEqual(len(rs), 1, "the lost match (place not read) gives no reel")
         r = rs[0]
         self.assertEqual([p["kills"] for p in r["pieces"]], [1, 1, 1, 0])
         self.assertEqual(r["pieces"][-1], {"start": 357.5, "end": 361.0, "kills": 0})
         self.assertAlmostEqual(r["seconds"], 3 * 4.5 + 3.5)
+        self.assertEqual(r["rules"], ["won-top3"])
 
     def test_second_won_match_starts_after_the_first_result(self):
         hits = [kill(100), result(358, "DEFEAT"), kill(400), kill(402), result(700)]
-        r = mont.match_reels(hits, RANKING, CFG)[0]
+        r = reels(hits, {700: 1})[0]
         self.assertEqual(r["matchStart"], 358.0)
         self.assertEqual(r["pieces"][0], {"start": 397.0, "end": 403.5, "kills": 2})
 
     def test_won_match_without_kills_and_unsignalled_results_give_nothing(self):
-        self.assertEqual(mont.match_reels([result(358)], RANKING, CFG), [])
+        self.assertEqual(reels([result(358)], {358: 1}), [])
         h = result(358)
         h["signal"] = False
-        self.assertEqual(mont.match_reels([kill(100), h], RANKING, CFG), [])
+        self.assertEqual(reels([kill(100), h], {358: 1}), [], "an unsignalled W1 box is not a read result")
+
+    def test_victory_without_a_top3_reading_gives_no_reel(self):
+        self.assertEqual(reels([kill(100), result(358)]), [], "won-top3 is inert without the top-3 screen")
 
     def test_reel_ends_at_the_recording_end(self):
-        r = mont.match_reels([kill(355), result(358)], RANKING, CFG, duration=359.0)[0]
+        r = reels([kill(355), result(358)], {358: 1}, duration=359.0)[0]
         self.assertEqual(r["pieces"], [{"start": 352.0, "end": 356.5, "kills": 1}, {"start": 357.5, "end": 359.0, "kills": 0}])
 
 

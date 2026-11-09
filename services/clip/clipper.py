@@ -24,7 +24,8 @@
               [--montage] then `montage` into DIR/montage; [--publish CLIPS] then `publish` (both run folders)
   montage     --recording FILE --out DIR [--v-recording F] [--hits F] [--montage-config F] [--publish CLIPS]
               -> DIR/montage/clips/<id>/montage-v.mp4 + render.json + candidates.json + report.json (validated):
-              every own kill, streaks first (clip_montage.py, D298 proposed), plus won-match reels
+              every own kill, streaks first (clip_montage.py, D298 proposed), plus match reels for the matches that
+              pass the pack's match-reels.json rules (D315); why each match did or did not: DIR/montage/match-reels.json
   publish     --out DIR --to CLIPS  -> each PASS video of DIR linked into CLIPS/<YYYY-MM-DD>/<convention>.mp4
               (clip_names.py), DIR/published.json, <data>/clips/uploads.json. --out is the run folder in app data;
               the clips folder gets finished videos only.
@@ -85,6 +86,7 @@ TOOL_VERSION = 1
 CANDIDATES = "candidates.json"
 RENDER = "render.json"
 REPORT = "report.json"
+MATCH_REELS = "match-reels.json"  # montage/: why each match got a reel or not (D315)
 
 
 def _tools(a):
@@ -189,6 +191,29 @@ def _match_stats(a):
         return None
     doc = load_json(p)
     return doc if doc.get("recording") == os.path.basename(a.recording) else None
+
+
+def _reel_matches(a, hits_path, duration):
+    """Matches of the recording with their reel decision (D315, match-reels.json rules of the game pack) in
+    m["reel"], and the report doc for DIR/montage/match-reels.json (the caller adds `reels`). Rules whose signal was
+    not read stay inert; a match qualifies only on a rule that passes."""
+    pack = _gate_pack(a) or {}
+    stats = _match_stats(a)
+    matches = mg.segment(mg.read_hits(hits_path), stats, float(duration), mg.stats_config(pack))
+    rules = mg.reel_rules(pack)
+    for m in matches:
+        m["reel"] = mg.reel_decide(m, rules)
+    doc = {"tool": "clipper.montage", "toolVersion": mg.TOOL_VERSION, "createdAt": _now(),
+           "recording": os.path.basename(a.recording), "packVersion": pack.get("version"),
+           "decision": (pack.get("matchReels") or {}).get("decision"),
+           "rules": [{"id": r.get("id"), "label": r.get("label"), "when": r.get("when"), "status": r.get("status")}
+                     for r in rules],
+           "inputs": {"hits": os.path.basename(hits_path), "matchStats": mg.STATS if stats else None,
+                      "killsFallback": None if stats else "kill-feed hit instances (undercount close kills)"},
+           "summary": "a match gets a reel when any rule passes; a rule whose signal was not read is inert and "
+                      "never gives a reel; a qualifying match with no own kill gives no reel",
+           "matches": matches}
+    return matches, doc
 
 
 def cmd_gate(a):
@@ -635,8 +660,17 @@ def cmd_montage(a):
     nk = sum(len(g["kills"]) for g in gs)
     print(f"montage: {nk} own kill(s): {sk} in {sum(1 for g in gs if g['streak'])} streak(s), {nk - sk} single; "
           f"{sum(m['kills'] for m in plans)} used in {len(plans)} montage(s)")
-    reels = mont.match_reels(hits, ranking, cfg, min(info["duration"], vinfo["duration"]))  # won matches (W1 VICTORY), every own kill (D237)
-    print(f"montage: {len(reels)} won-match reel(s)")
+    matches, reel_doc = _reel_matches(a, hits_path, info["duration"])
+    reels = mont.match_reels(hits, ranking, cfg, matches, min(info["duration"], vinfo["duration"]))  # D315 rules, every own kill (D237)
+    for m in matches:
+        d = m["reel"]
+        verdict = "REEL" if d["qualifies"] and not d.get("noReel") else "no reel"
+        extra = f"; {d['noReel']}" if d.get("noReel") else ""
+        print(f"montage: match {m['index']} {m['start']:.0f}-{m['end']:.0f} s: {verdict} ({d['reason']}{extra})")
+    reel_doc["reels"] = [{"id": f"W{i:02d}", "match": r["match"], "rules": r["rules"], "kills": int(r["score"])}
+                         for i, r in enumerate(reels, 1)]
+    write_json_atomic(os.path.join(out, MATCH_REELS), reel_doc)
+    print(f"montage: {len(reels)} won-match reel(s) (rules: {MATCH_REELS})")
     jobs = [(f"M{i:02d}", m) for i, m in enumerate(plans, 1)] + [(f"W{i:02d}", m) for i, m in enumerate(reels, 1)]
     rows, failed = [], 0
     for cid, m in jobs:
@@ -667,6 +701,8 @@ def cmd_montage(a):
         "recording": os.path.basename(a.recording), "vRecording": os.path.basename(vrec), "encoder": encoder,
         "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
         "game": _game(a), "failed": failed, "clips": rows,
+        "matchReels": {"file": MATCH_REELS, "matches": len(matches),
+                       "qualified": sum(1 for m in matches if m["reel"]["qualifies"]), "reels": len(reels)},
     })
     # candidates.json in the montage folder makes it a clip run folder for posting (services/posting packageRun):
     # times are on the montage's own timeline (0 .. seconds); anchor = the first kill (cover frame); the source
