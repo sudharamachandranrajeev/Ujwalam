@@ -46,6 +46,8 @@ import { createTasks } from './tasks.mjs';
 import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
 import { clipTools } from './record-clips.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
+import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
+import { collectFeedback } from '../../tools/collect-stream-feedback.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
 
@@ -265,6 +267,23 @@ export function createStudioServer(opts) {
   // Test only (race tests): a pause right before a confirmed stream.start goes to the host. 0 = none.
   const startPauseMs = Math.min(10_000, Math.max(0, Number(opts.startPauseMs ?? process.env.UJWALAM_TEST_START_PAUSE_MS ?? 0) || 0));
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
+  // Live test kit (flag `live-test-kit`, D305 proposed; live-test-kit.mjs): plain-words alerts in the status snapshot
+  // (audio sources that stopped, stream recovery, the Streamer.bot test-action reminder, the feedback result) and, when
+  // a stream ends, the viewers' replies collected read-only from <dataDir>/event-core.db into the feedback folder.
+  // Never posts, speaks or triggers anything. opts.testKit = { kit, collect } are test seams.
+  const testKitOn = () => !!flags && flags.isOn(TEST_KIT_FLAG);
+  let kitCfg;
+  const testKit = () => {
+    if (kitCfg === undefined) { try { kitCfg = opts.testKit?.kit ?? loadTestKitConfig(); } catch (e) { kitCfg = null; log(`[studio-ui] live test kit: ${e.message}`); } }
+    return kitCfg;
+  };
+  const feedbackCollect = createFeedbackAutoCollect({
+    collect: opts.testKit?.collect ?? collectFeedback,
+    dbFile: typeof opts.dataDir === 'string' ? path.join(opts.dataDir, 'event-core.db') : null,
+    outDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR,
+    kit: () => { const k = testKit(); if (!k) throw new Error('data/live/test-kit.json could not be read'); return k; },
+    enabled: testKitOn, now, log: (m) => log(`[studio-ui] ${m}`),
+  });
   // Export-only posting (P16a, flag `posting`): packages are listed from <dataDir>/posting/ledger.json. Nothing is uploaded.
   const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME) }) : null);
   // YouTube private upload (P16b, behind `posting`). Sign-in stays CLI-only: tokens live in the Credential Manager and never
@@ -458,10 +477,11 @@ export function createStudioServer(opts) {
     try { hs = await host.call('host.status', {}); } catch { hs = null; }
     try { cs = core.describe().available ? await core.call('core.status', {}) : null; } catch { cs = null; }
     if (hs && typeof hs.live === 'boolean') live = hs.live;
+    if (hs) feedbackCollect.observe(hs.live);
     if (hs) await previewSync(hs);
     if (hs) await transitionSync(hs);
     const pick = (o, ks) => Object.fromEntries(ks.filter((k) => o && Object.hasOwn(o, k)).map((k) => [k, o[k]]));
-    return {
+    const snap = {
       at: now(),
       host: { kind: h.kind, available: hs !== null, blockedOnHost: h.kind === 'fake',
         ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing', 'uptimeMs']) : {}),
@@ -473,6 +493,8 @@ export function createStudioServer(opts) {
       tasks: tasks.list(),
       core: { available: cs !== null, ...(cs ? { liveState: typeof cs.live?.liveState === 'string' ? cs.live.liveState : null, panic: cs.live?.panic === true } : {}) },
     };
+    if (testKitOn()) snap.alerts = liveAlerts(snap, { kit: testKit(), liveSinceMs: feedbackCollect.liveSince(), nowMs: now(), feedback: feedbackCollect.last() });
+    return snap;
   }
   // Host preview mouse edits (D230). Called with each host.status: (1) the host's editing switch follows flag
   // preview-edit (a restarted host starts off and is switched on again here); (2) when previewEditSeq moved, the new

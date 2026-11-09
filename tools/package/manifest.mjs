@@ -50,6 +50,10 @@ export const REPO_FILES = Object.freeze([
   'app/studio/tools/build.mjs',
   // --mock (event core without Streamer.bot): imported by services/event-core/api/service.mjs
   'tools/mock/mock-streamerbot.mjs', 'tools/mock/mock-chat.mjs',
+  // Live test kit (D305 proposed): texts and action name; the feedback collector imported by services/studio-ui/server.mjs
+  'data/live/test-kit.json', 'tools/collect-stream-feedback.mjs',
+  // Pre-stream readiness (D299) and stream recovery (D303) limits: read at run time, missing from the package before
+  'data/live/readiness.json', 'data/live/recovery.json',
 ]);
 export const REPO_GLOB_DIRS = Object.freeze([['data/platforms', /\.json$/], ['data/outputs/presets', /\.json$/]]);
 
