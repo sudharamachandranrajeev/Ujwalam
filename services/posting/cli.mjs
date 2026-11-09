@@ -22,12 +22,15 @@ import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mj
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const EXIT_FLAG_OFF = 3;
 
-/** Opens a URL in the system's default browser. Windows only (this project targets Windows); 'start' with an
- *  empty title arg avoids cmd treating a URL with '&' as its own title. No shell injection risk: the URL comes
- *  from authUrl() (our own query-string builder), never from user-typed text. */
-function defaultBrowserOpen(url) {
+/** Opens a URL in the system's default browser. Windows only (this project targets Windows). No shell: `cmd /c start`
+ *  split the URL at its first '&', so Google got only client_id and refused the sign-in ("Required parameter is
+ *  missing: response_type", 2026-11-09). rundll32's URL handler takes the whole URL as one argument. The URL is
+ *  also printed, so it can be pasted into a browser by hand. It comes from authUrl() (our own query-string
+ *  builder), never from user-typed text. */
+export function defaultBrowserOpen(url, { spawnImpl = spawn, log = (s) => console.log(s) } = {}) {
+  log(`If no browser opens, paste this into the browser signed in to the channel's Google account:\n${url}`);
   return new Promise((resolve, reject) => {
-    const p = spawn('cmd', ['/c', 'start', '', url], { windowsHide: true });
+    const p = spawnImpl('rundll32', ['url.dll,FileProtocolHandler', url], { windowsHide: true });
     p.on('error', reject);
     p.on('exit', (code) => (code === 0 ? resolve() : reject(new Error(`could not open a browser (exit ${code})`))));
   });

@@ -7,7 +7,25 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
-import { main as cli, EXIT_FLAG_OFF } from '../services/posting/cli.mjs';
+import { EventEmitter } from 'node:events';
+import { main as cli, EXIT_FLAG_OFF, defaultBrowserOpen } from '../services/posting/cli.mjs';
+import { authUrl } from '../services/posting/oauth.mjs';
+
+test('browser opener passes the whole sign-in URL as one argument, with no shell (cmd cut it at the first &)', async () => {
+  const url = authUrl({ clientId: 'cid', redirectUri: 'http://127.0.0.1:5555/', challenge: 'ch', state: 'st' });
+  assert.match(url, /&response_type=code/);
+  const calls = [];
+  const logged = [];
+  await defaultBrowserOpen(url, {
+    log: (s) => logged.push(s),
+    spawnImpl: (cmd, args, opts) => { calls.push({ cmd, args, opts }); const p = new EventEmitter(); setImmediate(() => p.emit('exit', 0)); return p; },
+  });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].cmd, 'rundll32');
+  assert.deepEqual(calls[0].args, ['url.dll,FileProtocolHandler', url]);
+  assert.equal(calls[0].opts.windowsHide, true);
+  assert.ok(logged.join('\n').includes(url), 'the URL is printed for pasting by hand');
+});
 import { POSTING_FLAG, LEDGER_NAME, createLedger } from '../services/posting/index.mjs';
 
 const tmp = [];
