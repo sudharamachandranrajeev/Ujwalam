@@ -130,8 +130,8 @@ void TrayKeeper::update(const QJsonArray &tasks)
 		// Time to read the notification; then the studio ends (and the launcher stops the rest).
 		QTimer::singleShot(finishMs_ >= 0 ? finishMs_ : tray_ ? 3000 : 300, this, [this, gen]() {
 			// Checked again when it fires: still this countdown, still in the tray, still nothing running.
-			if (active_ && finishing_ && gen == finishGen_ && activeCount(tasks_) == 0)
-				emit allFinished();
+			if (stillFinished(gen))
+				emit allFinished(gen);
 		});
 	}
 }

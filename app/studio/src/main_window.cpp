@@ -348,7 +348,7 @@ void MainWindow::closeEvent(QCloseEvent *e)
 			return e->ignore();
 		}
 	}
-	// Tasks still running or waiting (user 2026-11-09, D310 proposed): nothing may go on unseen after the window is
+	// Tasks still running or waiting (user 2026-11-09, D311 proposed): nothing may go on unseen after the window is
 	// gone, so the user picks: keep them in the tray (icon, progress, time left), stop them now, or keep the window.
 	const int n = tasks_ ? tasks_->active() : 0;
 	if (n > 0 && !live_) {
@@ -399,7 +399,7 @@ void MainWindow::closeEvent(QCloseEvent *e)
 	e->accept();
 }
 
-// Keep running in the tray (D310 proposed): the window hides (its previews with it), the polls go on, the tray shows
+// Keep running in the tray (D311 proposed): the window hides (its previews with it), the polls go on, the tray shows
 // the tasks. The app no longer quits on the last window; it ends when the tasks finish or on Stop all.
 void MainWindow::enterTray()
 {
@@ -427,7 +427,7 @@ void MainWindow::stopAllFromTray(bool ask)
 	if (ask && QMessageBox::question(nullptr, QStringLiteral("Stop all"),
 					  QStringLiteral("Stop every running task and quit Ujwalam?\nUnfinished clip jobs run again at the next start.")) != QMessageBox::Yes)
 		return;
-	checkQuit([this](bool can, const QString &why) {
+	requestQuit([this](bool can, const QString &why, const QString &) {
 		if (can) {
 			std::printf("studio tray: stop all\n");
 			std::fflush(stdout);
@@ -446,15 +446,21 @@ void MainWindow::stopAllFromTray(bool ask)
 	});
 }
 
-void MainWindow::checkQuit(std::function<void(bool, const QString &)> then)
+void MainWindow::requestQuit(std::function<void(bool, const QString &, const QString &)> then)
 {
-	api_->get(QStringLiteral("ui/api/quit-check"), [then](bool ok, const QJsonObject &r, const QString &) {
-		const QJsonValue can = r.value(QStringLiteral("canQuit"));
-		if (!ok || !can.isBool())
-			return then(false, QStringLiteral("unreadable"));
-		const QString why = r.value(QStringLiteral("reason")).toString();
-		then(can.toBool(), can.toBool() ? QString() : (why.isEmpty() ? QStringLiteral("unreadable") : why));
+	api_->post(QStringLiteral("ui/api/quit/begin"), {}, [then](bool ok, const QJsonObject &r, const QString &) {
+		const bool granted = ok && r.value(QStringLiteral("granted")).toBool(false) && r.value(QStringLiteral("token")).isString();
+		if (granted)
+			return then(true, QString(), r.value(QStringLiteral("token")).toString());
+		const QString why = ok ? r.value(QStringLiteral("reason")).toString() : QString();
+		then(false, why.isEmpty() ? QStringLiteral("unreadable") : why, QString());
 	});
+}
+
+void MainWindow::releaseQuit(const QString &token)
+{
+	if (!token.isEmpty())
+		api_->post(QStringLiteral("ui/api/quit/cancel"), QJsonObject{{QStringLiteral("token"), token}}, [](bool, const QJsonObject &, const QString &) {});
 }
 
 void PreviewSlot::schedule()
@@ -547,19 +553,25 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	tasks_ = new TaskBar(this);
 	statusBar()->insertPermanentWidget(0, tasks_->chip()); // before host / event core; hidden while nothing runs
 	{
-		// Tray icon (D310 proposed): the app icon when the build has one (app/studio/res/ujwalam.ico), else a standard one.
+		// Tray icon (D311 proposed): the app icon when the build has one (app/studio/res/ujwalam.ico), else a standard one.
 		QIcon ico(QStringLiteral(":/app/ujwalam.ico"));
 		if (ico.isNull())
 			ico = style()->standardIcon(QStyle::SP_ComputerIcon);
 		tray_ = new TrayKeeper(ico, this);
 		connect(tray_, &TrayKeeper::openRequested, this, &MainWindow::leaveTray);
 		connect(tray_, &TrayKeeper::stopAllRequested, this, [this]() { stopAllFromTray(true); });
-		connect(tray_, &TrayKeeper::allFinished, this, [this]() {
+		connect(tray_, &TrayKeeper::allFinished, this, [this](int countdown) {
 			// Exit 0 makes the launcher stop the host: never while a stream or recording runs (it may have been started
 			// from the control page while the window was in the tray). Then the window comes back instead.
-			checkQuit([this](bool can, const QString &why) {
-				if (!tray_->active())
+			requestQuit([this, countdown](bool can, const QString &why, const QString &token) {
+				// The request took a while: a task may have started (the countdown was cancelled) or the window come
+				// back. Then nothing exits, and a granted lock is released so going live is not blocked.
+				if (!tray_->stillFinished(countdown)) {
+					releaseQuit(token);
+					std::printf("studio tray: not quitting (a task started or the window came back meanwhile)\n");
+					std::fflush(stdout);
 					return;
+				}
 				if (!can) {
 					trayStay_ = why;
 					std::printf("studio tray: all tasks finished; staying open (%s)\n", qUtf8Printable(why));
@@ -3959,7 +3971,7 @@ bool MainWindow::probeAction(const QString &action)
 		saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), p[1]}, {QStringLiteral("live"), p[2]}}}});
 		return true;
 	}
-	// D310 proposed: close the window (as its X does; the question opens on the next turn), answer the close question,
+	// D311 proposed: close the window (as its X does; the question opens on the next turn), answer the close question,
 	// and the tray's own choices (click the icon, Open Ujwalam, Stop all without the extra question).
 	if (p.size() == 1 && p[0] == QStringLiteral("close")) {
 		QTimer::singleShot(0, this, [this]() { close(); });

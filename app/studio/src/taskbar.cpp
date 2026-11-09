@@ -36,7 +36,7 @@ double fractionOf(const QJsonObject &t)
 {
 	return tasktime::fraction(t);
 }
-// Long jobs get a toast when they start (D310 proposed); the studio's own quick actions (saving settings, a preview)
+// Long jobs get a toast when they start (D311 proposed); the studio's own quick actions (saving settings, a preview)
 // only when they finish, as before.
 bool longJob(const QJsonObject &t)
 {
@@ -293,7 +293,7 @@ TaskRow::TaskRow(const QString &id, QWidget *parent) : QFrame(parent), id_(id)
 	v->addWidget(note_);
 	bar_ = new SmoothBar(5, this);
 	v->addWidget(bar_);
-	time_ = new QLabel(this); // elapsed and time left (D310 proposed)
+	time_ = new QLabel(this); // elapsed and time left (D311 proposed)
 	time_->setObjectName(QStringLiteral("muted"));
 	v->addWidget(time_);
 }

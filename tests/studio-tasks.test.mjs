@@ -59,7 +59,7 @@ test('createTasks: start/update/done/fail, track(), order, pruning, file tasks m
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
-// ---- progress, elapsed, time left (user 2026-11-09, D310 proposed) ----
+// ---- progress, elapsed, time left (user 2026-11-09, D311 proposed) ----
 test('progressOf: done/total, done = 1, unknown amount = null', () => {
   assert.equal(progressOf({ state: 'running', done: 1, total: 4 }), 0.25);
   assert.equal(progressOf({ state: 'done', done: null, total: null }), 1);

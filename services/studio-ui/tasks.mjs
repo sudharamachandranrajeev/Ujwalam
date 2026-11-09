@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // What the software is doing, in plain words, for the studio window's task bar (it only informs; it never blocks).
 // A task: { id, title, kind, state: running|done|failed|waiting, done, total (null = unknown), stage, note,
-// startedAt, updatedAt } plus, in list(), progress (0..1 | null), elapsedMs and etaMs (null = unknown; D310 proposed). Two sources: files <dataDir>/tasks/<id>.json written by launcher-side jobs (writeTaskFile,
+// startedAt, updatedAt } plus, in list(), progress (0..1 | null), elapsedMs and etaMs (null = unknown; D311 proposed). Two sources: files <dataDir>/tasks/<id>.json written by launcher-side jobs (writeTaskFile,
 // atomic), and in-memory tasks of the UI server for its own long actions (createTasks().track). Finished or silent
 // tasks are dropped after PRUNE_MS. Text only: no chat text, no viewer names, no paths beyond the clips folder.
 
@@ -69,7 +69,7 @@ export function readTaskFiles(dataDir, nowMs = Date.now()) {
   return out;
 }
 
-// ---- progress, elapsed time and time left (user 2026-11-09, D310 proposed) ----
+// ---- progress, elapsed time and time left (user 2026-11-09, D311 proposed) ----
 // Every task in the list carries: progress (0..1, or null = unknown amount of work), elapsedMs (since it started; a
 // finished task: up to its last update) and etaMs (time left, or null = unknown). The time left comes only from the
 // measured rate of the current stage: (time since the first sample of this stage) * (work left / work done since then).

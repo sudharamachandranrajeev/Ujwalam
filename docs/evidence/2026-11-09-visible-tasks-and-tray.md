@@ -1,7 +1,7 @@
 # 2026-11-09 visible tasks and the tray: nothing runs on unseen after Ujwalam closes
 
 Status: built and tested headless on branch `ui/tray-tasks`. The changes are not merged and have not been used on a real
-desktop or stream yet. Decision D310 is proposed (text below).
+desktop or stream yet. Decision D311 is proposed (text below).
 
 ## The user's report (2026-11-09)
 
@@ -118,16 +118,23 @@ While live, the existing "yes, on air" question comes first and stays as it was.
 | MEDIUM | `finishing_` in the tray was never cleared when new tasks appeared, so the pending timer exited anyway. | A new active task cancels the countdown (a generation counter) and shows "still working" again. The callback checks again, when it fires, that it is still the same countdown, the tray is still active and nothing is running. `UJWALAM_TRAY_FINISH_MS` sets the countdown for tests. | `tests/studio-tray.test.mjs`: a task starting during the countdown cancels it. |
 | MEDIUM | `end_own_tree` never reached `os._exit(1)` if `subprocess.run(taskkill)` raised (for example the 15 s timeout). | `os._exit(1)` now runs in `finally`. | `tests/py/test_clip_contain.py`: exits even when taskkill fails. |
 
-## Proposed decision D310 (default on)
+Round 2 (Codex review of a1d0893):
 
-> D310 (proposed, 2026-11-09): Nothing Ujwalam starts runs on unseen.
+| Severity | Finding | Fix | Test |
+|---|---|---|---|
+| HIGH | The quit check was only a snapshot. A stream or recording could start between "idle" and `QApplication::exit(0)`, and the launcher would then stop the host. | `GET /ui/api/quit-check` is replaced by a closing lock in the UI server, which is the only writer of starts to the host. `POST /ui/api/quit/begin` works in this order: (1) it sets the lock first, synchronously, so every later `stream.start` or `record.start` is refused with 409 `{ error: 'closing', detail: 'Ujwalam is closing' }`, both when the start is asked for and when it is confirmed, so a start asked for before the quit is refused too; (2) it refuses the grant if a start is under way or ended less than 5 s ago (the host may not show it yet); (3) it reads `host.status` fresh and refuses if live, recording or unreadable; (4) on a grant it revokes the launcher's go-live authority, so no stream recovery runs. A refused quit releases the lock at once. `POST /ui/api/quit/cancel {token}` releases it, and an unreleased lock expires after 60 s. The studio exits only with a granted lock. Stops are never blocked. | `tests/studio-ui-quit-lock.test.mjs` (4 tests): quit refused while live, while recording or when unreadable; a granted lock blocks starts (including one confirmed after the grant) and the host never gets them; a start racing the quit refuses the quit; the lock is released by cancel or expiry. |
+| MEDIUM | After allFinished, the asynchronous quit callback checked only `tray_->active()`. A task restarted while the request was pending would still be killed. | `allFinished(countdown)` carries its countdown generation. The callback checks `stillFinished(countdown)` again: same countdown, still in the tray, nothing running. If that fails it does not exit, and it releases a granted lock. | `tests/studio-tray.test.mjs`: a task restarting while the (slow) quit request is in flight leaves no exit and releases the lock. |
+
+## Proposed decision D311 (default on)
+
+> D311 (proposed, 2026-11-09): Nothing Ujwalam starts runs on unseen.
 > - Every background job is a task in `<dataDir>/tasks/` with progress, elapsed time and time left. The time left is
 >   "unknown" when it cannot be estimated.
 > - The window shows each task, with a toast on start, finish and fail.
 > - Closing the window with tasks running asks: keep running in the tray, stop them, or do not close.
 > - Stopping ends each job's whole process tree: taskkill /T, a kill-on-close job in the clipper, and the parent pipe.
 > - The tray shows each task and exits with a notification when the last one ends.
-> - A tray exit never ends a stream or a recording. It asks the host first and fails closed. While busy, Stop all
+> - A tray exit never ends a stream or a recording. It takes the UI server's closing lock first, which fails closed and refuses every start while it is held. While busy, Stop all
 >   stops the tasks only.
 > - The launcher never stays running without a window unless something is live.
 > - The `hidden-window` lint rule also flags PowerShell shortcuts and `Start-Process` calls that start console
@@ -143,7 +150,8 @@ While live, the existing "yes, on air" question comes first and stays as it was.
 | Task timing: progress, ETA math, stage reset, finished tasks | `node --test tests/studio-tasks.test.mjs` | pass |
 | Upload task written and ends done | `node --test tests/posting-auto-chain.test.mjs` | 14 pass |
 | Lint catches `.TargetPath = ...\Ujwalam.cmd` and a visible `Start-Process` (fixture lines 4, 6, 8); accepts `**cc.NO_WINDOW` (a false positive in the rule, fixed in the rule) | `node --test tests/lint.test.mjs` | 33 pass |
-| Close question with cancel, stop, tray; tray rows, menu, tooltip, click opens list once; tray exits when the last task finishes; Stop all; Open; no tasks means no question; taskbar elapsed + ETA | `node --test tests/studio-tray.test.mjs` | 12 pass |
+| Close question with cancel, stop, tray; tray rows, menu, tooltip, click opens list once; tray exits when the last task finishes; Stop all; Open; no tasks means no question; taskbar elapsed + ETA; review fixes | `node --test --test-concurrency=1 tests/studio-tray.test.mjs` | 13 pass |
+| Closing lock (round 2) | `node --test tests/studio-ui-quit-lock.test.mjs` | 4 pass |
 | Regression: existing studio shell probes (task bar, toasts, crash regression), together with the task, record-clips, auto-chain, lint and kill-tree tests | `node --test --test-concurrency=1 tests/studio-qt-shell.test.mjs tests/studio-tasks.test.mjs tests/record-clips.test.mjs tests/posting-auto-chain.test.mjs tests/lint.test.mjs tests/kill-tree.test.mjs` | 119 pass, 0 fail, 0 skipped |
 | Quick CI | `node tools/ci.mjs --quick` (pre-commit hook, every commit on this branch) | 9/9 passed |
 
@@ -170,6 +178,8 @@ studio tray probe: {"active":true,"finishing":true,"lastMessage":"all finished",
 - **Work not yet wired as tasks.** Feedback collection, tidy and packaging jobs do not write task files yet. Clip runs,
   uploads and the UI's own tasks do.
 - **Estimate accuracy.** The time left is per stage and assumes steady progress.
+- **Starts that bypass the UI server.** The closing lock covers every start that goes through the UI server (control page and studio window). The launcher's own stream recovery is covered by revoking the authority on a grant. A start sent directly to the host's API by another program is not covered.
+- **Closing the window directly.** The plain window close (no tray) keeps its existing behaviour: "yes, on air" while live, and closing while only recording stops the recording (D280).
 
 ## Setup for this branch
 

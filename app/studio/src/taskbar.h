@@ -23,7 +23,7 @@ class QVBoxLayout;
 class QVariantAnimation;
 
 namespace tasktime {
-// "2:13 elapsed · about 4 min left" from a task's elapsedMs / etaMs (services/studio-ui/tasks.mjs, D310 proposed);
+// "2:13 elapsed · about 4 min left" from a task's elapsedMs / etaMs (services/studio-ui/tasks.mjs, D311 proposed);
 // "time left unknown" when the server could not measure a rate. Shared by the task list and the tray.
 QString text(const QJsonObject &t);
 QString duration(double ms); // m:ss, or h:mm:ss
@@ -119,7 +119,7 @@ public:
 	bool panelOpen() const { return open_; }
 	void dismissFirstFinished();
 	QJsonObject probe() const;
-	int active() const { return running_ + waiting_; } // running + waiting (the close question, D310 proposed)
+	int active() const { return running_ + waiting_; } // running + waiting (the close question, D311 proposed)
 	const QJsonArray &tasks() const { return tasks_; }
 
 private:

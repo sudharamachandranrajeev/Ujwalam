@@ -213,7 +213,7 @@ export function createPostChain(opts) {
         queue.patch(item.id, { sha, run });
       }
       queue.patch(item.id, { state: 'uploading', reason: null, nextAt: null });
-      // Task bar and tray (D310 proposed): an upload in progress is a task with its own progress (MB sent of MB).
+      // Task bar and tray (D311 proposed): an upload in progress is a task with its own progress (MB sent of MB).
       const task = { id: `upload-${String(item.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60)}`, kind: 'upload', title: 'Uploading a clip to YouTube (private)', startedAt: nowMs() };
       const taskSay = (p) => writeTaskFile(dataDir, { ...task, updatedAt: nowMs(), ...p });
       taskSay({ state: 'running', note: 'Starting the upload' });
@@ -322,7 +322,7 @@ export function createPostChain(opts) {
         return { packaged: packedClips + packedVideos, ...(await step()) };
       });
     },
-    /** The tray's Stop all (D310 proposed): the upload in progress stops at its next chunk; nothing new starts this session. */
+    /** The tray's Stop all (D311 proposed): the upload in progress stops at its next chunk; nothing new starts this session. */
     stopTasks() { halted = true; },
     /** Called with each host status: remembers it, and every TICK_EVERY_MS retries what is due. */
     tick(status) {

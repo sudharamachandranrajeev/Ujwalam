@@ -28,7 +28,7 @@ import { clipsFolder, readSettings, writeSettings } from './user-settings.mjs';
 import { writeTaskFile } from './tasks.mjs';
 
 const ACTIVE = new Set(['starting', 'live', 'reconnecting', 'retrying']);
-/** The tray's "Stop all" while live or recording (D310 proposed): <dataDir>/clips/<this>, written by the UI server. */
+/** The tray's "Stop all" while live or recording (D311 proposed): <dataDir>/clips/<this>, written by the UI server. */
 export const STOP_TASKS_FILE = 'stop-tasks.json';
 
 const canvasOf = (status, rungId) => (Array.isArray(status?.rungs) ? status.rungs : []).find((r) => r.id === rungId)?.canvas ?? null;
@@ -223,7 +223,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
     current = job;
     progress = null;
     // stdin: the parent pipe (D234): when the launcher is gone (even hard-killed) the clipper ends itself and its ffmpeg
-    // children (clip_common.end_tree_when_parent_gone), so nothing runs on unseen after Ujwalam closed (D310 proposed).
+    // children (clip_common.end_tree_when_parent_gone), so nothing runs on unseen after Ujwalam closed (D311 proposed).
     child = spawnFn(spec.exe, spec.argv, { stdio: ['pipe', fd, 'pipe'], windowsHide: true, cwd: clipRoot, env: { ...process.env, [PARENT_PIPE_ENV]: '1' } });
     child.stdin?.on?.('error', () => {});
     closeSync(fd);

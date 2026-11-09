@@ -155,6 +155,8 @@ export const SCENE_EDIT_FLAG = 'scene-edit';
 // refused while live). Removing a scene or layer and the project-file move stay behind the flag.
 const FREE_STRUCTURE_OPS = ['scene.add', 'layer.add', 'layer.duplicate', 'layer.rename', 'scene.duplicate', 'scene.rename'];
 const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove', 'layer.move', ...FREE_STRUCTURE_OPS];
+/** Host calls that start a stream or a recording: refused while Ujwalam is closing (closing lock, D311 proposed). */
+const START_METHODS = new Set(['stream.start', 'record.start']);
 const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'], 'layer.move': ['scene', 'layer', 'canvas', 'direction'],
   'layer.duplicate': ['scene', 'layer'], 'layer.rename': ['scene', 'layer', 'name'], 'scene.duplicate': ['scene'], 'scene.rename': ['scene', 'name'] };
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
@@ -470,14 +472,39 @@ export function createStudioServer(opts) {
     return json(res, 200, { ok: true });
   }
 
-  // May the studio quit now (tray exits, D310 proposed)? A fresh host.status, never the cached snapshot. Fail closed:
-  // a stream or recording running, or a status that cannot be read, means "no" (quitting would stop them).
-  async function quitCheck(res) {
+  // Closing lock (tray exits, D311 proposed; Codex review round 2). The studio quits only with a granted lock, and
+  // quitting makes the launcher stop the host, so the grant and every stream/recording start are serialized here (the
+  // one writer of starts to the host; the go-live authority is revoked too, so no stream recovery starts meanwhile):
+  //   - quitBegin sets the lock FIRST (synchronously), so every start that arrives after it is refused (409 closing);
+  //   - a start already under way (or one that ended in the last RECENT_START_MS, the host may still report it idle)
+  //     refuses the grant;
+  //   - then a fresh host.status: a stream or recording running, or a status that cannot be read, refuses (fail closed);
+  //   - a refused or cancelled quit releases the lock; an unreleased lock expires after CLOSING_MS (the studio exits
+  //     at once after a grant; a stale lock must not block going live for ever).
+  const CLOSING_MS = 60_000; const RECENT_START_MS = 5000;
+  let closing = null; let startsInFlight = 0; let lastStartAt = -Infinity;
+  const isClosing = () => { if (closing && closing.until <= now()) closing = null; return !!closing; };
+  const CLOSING_REFUSAL = { error: 'closing', detail: 'Ujwalam is closing' };
+  async function quitBegin(res) {
+    if (isClosing()) return json(res, 200, { granted: false, reason: 'already-closing' });
+    const token = randomBytes(16).toString('hex');
+    closing = { token, until: now() + CLOSING_MS };
+    const refuse = (reason) => { if (closing?.token === token) closing = null; return json(res, 200, { granted: false, reason }); };
+    if (startsInFlight > 0 || now() - lastStartAt < RECENT_START_MS) return refuse('starting');
     let hs = null;
     try { hs = await host.call('host.status', {}); } catch { hs = null; }
-    if (!hs || typeof hs.live !== 'boolean' || typeof hs.recording !== 'boolean') return json(res, 200, { canQuit: false, reason: 'unreadable' });
-    const reason = hs.live ? 'live' : hs.recording ? 'recording' : null;
-    return json(res, 200, { canQuit: !reason, reason, live: hs.live, recording: hs.recording });
+    if (closing?.token !== token) return json(res, 200, { granted: false, reason: 'cancelled' });
+    if (!hs || typeof hs.live !== 'boolean' || typeof hs.recording !== 'boolean') return refuse('unreadable');
+    if (hs.live) return refuse('live');
+    if (hs.recording) return refuse('recording');
+    if (startsInFlight > 0) return refuse('starting'); // cannot happen (starts are refused while closing): fail closed anyway
+    if (authority) await authority.revoke('closing');
+    return json(res, 200, { granted: true, token });
+  }
+  function quitCancel(res, body) {
+    if (typeof body.token !== 'string' || Object.keys(body).some((k) => k !== 'token')) return json(res, 400, { error: 'bad-params' });
+    if (closing?.token === body.token) closing = null;
+    return json(res, 200, { ok: true });
   }
   // Stop the background tasks only (the tray's Stop all while live or recording): the launcher reads the request
   // (<dataDir>/clips/stop-tasks.json) and ends the clip job's whole tree and any upload; the studio and host stay.
@@ -786,7 +813,6 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/status') return json(res, 200, lastSnapshot ?? await snapshot());
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
-    if (req.method === 'GET' && route === '/ui/api/quit-check') return quitCheck(res);
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/guide') return json(res, 200, guideData()); // guide (D294 proposed)
     if (req.method === 'GET' && route === '/ui/api/readiness') {
@@ -874,6 +900,8 @@ export function createStudioServer(opts) {
     if (route === '/ui/api/settings') return settingsRoute(res, body);
     if (route === '/ui/api/clips/answer') return clipAnswer(res, body);
     if (route === '/ui/api/tasks/stop') return stopTasks(res);
+    if (route === '/ui/api/quit/begin') return quitBegin(res);
+    if (route === '/ui/api/quit/cancel') return quitCancel(res, body);
     if (route === '/ui/api/clips/open') {
       if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
       const dir = clipsFolder(opts.dataDir);
@@ -889,6 +917,7 @@ export function createStudioServer(opts) {
       const bad = validate(spec.schema, params);
       if (bad) return json(res, 400, { error: bad });
       if (spec.flag && !(flags && flags.isOn(spec.flag))) return json(res, 404, { error: `${spec.flag}-off` });
+      if (START_METHODS.has(body.method) && isClosing()) return json(res, 409, CLOSING_REFUSAL);
       if (spec.confirm || (live && spec.liveConfirm)) {
         // Stream and recording changes need a typed phrase; while live, the on-air phrase (also for layout changes).
         let phrase = (live || spec.confirm === 'onair') ? 'yes, on air' : 'yes';
@@ -1064,6 +1093,12 @@ export function createStudioServer(opts) {
           return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, forced: r.forced === true, bots: await bots.statusAll() });
         }
         if (p.kind === 'host') {
+          // A stream or recording start: refused while Ujwalam is closing; counted from here (before any await) so a
+          // quit request in between sees it (closing lock above).
+          const starting = START_METHODS.has(p.method);
+          if (starting && isClosing()) return json(res, 409, CLOSING_REFUSAL);
+          if (starting) startsInFlight += 1;
+          try {
           const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse
           if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
           // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
@@ -1101,6 +1136,7 @@ export function createStudioServer(opts) {
           // A layout change confirmed while live autosaves like an instant one (P5b).
           const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
+          } finally { if (starting) { startsInFlight -= 1; lastStartAt = now(); } }
         }
         if (p.kind === 'end-all') { if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });

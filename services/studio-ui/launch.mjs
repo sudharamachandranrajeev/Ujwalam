@@ -863,7 +863,7 @@ export async function main(argv = process.argv.slice(2)) {
         await new Promise((r) => { hostChild.once('exit', r); setTimeout(r, 8000); });
       } catch { /* fall through to kill */ }
     }
-    // The whole tree of each child (D310 proposed): a plain kill left a clip job's ffmpeg running after close.
+    // The whole tree of each child (D311 proposed): a plain kill left a clip job's ffmpeg running after close.
     for (const c of children) killChildTree(c);
     // BM6: with the `bot-manager` flag on, close the bots Ujwalam started. A copy the user started is never touched.
     try {
@@ -1149,7 +1149,7 @@ export async function main(argv = process.argv.slice(2)) {
         const t = Date.now();
         crashTimes.push(t);
         if (!shellRelaunchAllowed(crashTimes, t) || !ui.stdin?.writable) {
-          // Nothing may run on with no window (user 2026-11-09, D310 proposed): unless a stream is live (a UI crash
+          // Nothing may run on with no window (user 2026-11-09, D311 proposed): unless a stream is live (a UI crash
           // never cuts a stream), everything stops, the clip job's whole process tree included.
           console.log(`[studio] Qt shell ended unexpectedly (${what}); NOT reopened (more than ${SHELL_RELAUNCH_MAX} crashes in ${SHELL_RELAUNCH_WINDOW_MS / 60000} min).`);
           void (async () => {

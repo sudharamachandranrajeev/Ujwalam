@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Nothing runs on after Ujwalam closes (user 2026-11-09, D310 proposed). A clip job is a process tree (Python, then
+// Nothing runs on after Ujwalam closes (user 2026-11-09, D311 proposed). A clip job is a process tree (Python, then
 // ffmpeg). These tests start a real two-process tree (tools/mock/clip-tree.mjs: parent + child, like clipper.py and
 // ffmpeg) and check with tools/stray-procs.mjs that nothing of it is left:
 //   - the old way (child.kill(), TerminateProcess on Windows) leaves the child running: the root cause;
@@ -152,7 +152,7 @@ test('an exited child is never targeted, also when a signal ended it (exitCode n
   assert.equal(calls.length, 1);
 });
 
-test('record-clips: Stop all while live or recording (D310 proposed) ends the clip job\'s whole tree, keeps it for the next start, and starts nothing new', async () => {
+test('record-clips: Stop all while live or recording (D311 proposed) ends the clip job\'s whole tree, keeps it for the next start, and starts nothing new', async () => {
   const s = clipSetup();
   try {
     const rc = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: () => {}, spawnFn: s.spawnFn });

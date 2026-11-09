@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Tray (user 2026-11-09, D310 proposed): when the studio window is closed while tasks still run and the user chose
+// Tray (user 2026-11-09, D311 proposed): when the studio window is closed while tasks still run and the user chose
 // "Keep them running in the tray", the studio process stays with only a tray icon. Its tooltip sums the tasks up; a
 // click opens a small list (each task: title, progress bar, elapsed time and time left) with Open Ujwalam and Stop
 // all; a right click opens the same choices as a menu. Nothing opens by itself and nothing takes focus: the list is a
@@ -32,11 +32,14 @@ public:
 	QString tooltip() const { return tip_; }
 	QJsonObject probe() const;
 	static int activeCount(const QJsonArray &tasks);
+	// The "all finished" countdown `countdown` still stands: in the tray, not cancelled by a new task, nothing running.
+	// Checked again after any wait (the quit request is asynchronous; a task can start meanwhile).
+	bool stillFinished(int countdown) const { return active_ && finishing_ && countdown == finishGen_ && activeCount(tasks_) == 0; }
 
 signals:
 	void openRequested();
 	void stopAllRequested();
-	void allFinished(); // every task done or failed: the studio may end
+	void allFinished(int countdown); // every task done or failed: the studio may end (countdown: see stillFinished)
 
 private:
 	void rebuild();

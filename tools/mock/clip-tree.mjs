@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Test stand-in for a clip job's process tree (tests/kill-tree.test.mjs, D310 proposed): this process starts one child
+// Test stand-in for a clip job's process tree (tests/kill-tree.test.mjs, D311 proposed): this process starts one child
 // of itself (as clipper.py starts ffmpeg), prints "clip-tree ready <child pid>" on stderr, then both wait forever.
 // Being under tools/mock/, any copy left running is listed by tools/stray-procs.mjs (and fails the CI stray step).
 import { spawn } from 'node:child_process';

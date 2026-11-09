@@ -28,7 +28,7 @@ _JOB = None  # the kill-on-close job of contain_children(); held (never closed) 
 
 
 def contain_children():
-    """Windows (user 2026-11-09, D310 proposed): puts this process in a new job object that kills every member when
+    """Windows (user 2026-11-09, D311 proposed): puts this process in a new job object that kills every member when
     its last handle closes. Children started from now on (ffmpeg) are members too, so however this process ends
     (finished, crashed, or killed by the launcher: a plain kill ends only this process) none of them runs on unseen.
     Returns True when the job is in place; False elsewhere or when Windows refused (the parent pipe still applies)."""
@@ -90,7 +90,7 @@ def end_own_tree(pid=None, run=None):
 
 
 def end_tree_when_parent_gone(env=None, stdin=None, on_gone=None):
-    """Parent pipe (D234; user 2026-11-09, D310 proposed): with UJWALAM_PARENT_PIPE=1 the launcher holds our stdin as
+    """Parent pipe (D234; user 2026-11-09, D311 proposed): with UJWALAM_PARENT_PIPE=1 the launcher holds our stdin as
     a pipe. End-of-file means Ujwalam is gone (closed, crashed or hard-killed); the clip job then ends itself and its
     ffmpeg children, so nothing runs on unseen. Returns the watcher thread, or None without the env marker."""
     import threading

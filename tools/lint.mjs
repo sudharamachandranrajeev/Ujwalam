@@ -325,7 +325,7 @@ function childProcessCalls(text, lang) {
   return sites;
 }
 
-// PowerShell (2026-11-09, D310 proposed; the 2026-11-08 root cause): a shortcut whose target is a console program
+// PowerShell (2026-11-09, D311 proposed; the 2026-11-08 root cause): a shortcut whose target is a console program
 // (.cmd/.bat/.ps1, cmd, powershell, node, python, not pythonw) opens a terminal window that stays for the whole session
 // and, after the studio window was gone, kept showing the clip job's processing. Shortcuts point at the windowless
 // ujwalam-start.exe. The same holds for Start-Process of a console program without -WindowStyle Hidden / -NoNewWindow.

@@ -216,7 +216,7 @@ test('hidden-window (Python): calls without creationflags / **NO_WINDOW are flag
   assert.deepEqual(f.map((x) => x.line), [6, 12]);
 });
 
-test('hidden-window (PowerShell, D310 proposed): a shortcut to a console program and Start-Process of one without a hidden window are flagged', async () => {
+test('hidden-window (PowerShell, D311 proposed): a shortcut to a console program and Start-Process of one without a hidden window are flagged', async () => {
   // The 2026-11-08 root cause: the shortcuts pointed at Ujwalam.cmd, a console that stayed open (and kept showing the
   // clip job's processing after the studio window was gone). 4: .cmd target; 6: cmd.exe target; 8: Start-Process node.
   const f = await run({ 'a.ps1': fixture('hidden-window-ps1.txt') }, 'hidden-window');

@@ -107,7 +107,7 @@ describe('chain', () => {
     assert.deepEqual({ ...row.posted[0], at: 'T' }, { platform: 'youtube', target: 'youtube-shorts', id: e.ids.a, videoId: 'vid1', url: 'https://youtu.be/vid1', at: 'T', privacy: 'private' });
     for (const f of ['posting/upload-queue.json', 'clips/uploads.json', 'posting/auto-log.json']) assert.ok(!/fake-access/.test(readFileSync(path.join(e.dataDir, f), 'utf8')), f);
     assert.match(readQueueSummary(e.dataDir).message, /uploaded to YouTube \(private\)/);
-    // D310 proposed: the upload was a task in the task bar and the tray; it ends "done" with its time.
+    // D311 proposed: the upload was a task in the task bar and the tray; it ends "done" with its time.
     const tdir = tasksDir(e.dataDir);
     const tasks = readdirSync(tdir).map((n) => JSON.parse(readFileSync(path.join(tdir, n), 'utf8')));
     assert.equal(tasks.length, 1);
@@ -141,7 +141,7 @@ describe('chain', () => {
     assert.equal(y4.count('init'), 1, 'a local recording does not block');
   });
 
-  test('Stop all from the tray while live or recording (D310 proposed): the upload stops at its next chunk, the task says so, nothing new starts', async () => {
+  test('Stop all from the tray while live or recording (D311 proposed): the upload stops at its next chunk, the task says so, nothing new starts', async () => {
     const e = env(); const yt = fakeYt(); const clock = { t: T0 };
     let c = null;
     const stopAfterFirst = async (url, o) => { const r = await yt.fetchImpl(url, o); if (yt.count('chunk') === 1) c.stopTasks(); return r; };

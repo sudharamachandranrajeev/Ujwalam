@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Visible tasks and the tray (user 2026-11-09, D310 proposed): nothing runs on unseen after the window closes.
+// Visible tasks and the tray (user 2026-11-09, D311 proposed): nothing runs on unseen after the window closes.
 // The real Qt studio shell, headless (offscreen platform: nothing reaches the screen, nothing takes focus), against the
 // real UI server with a fake host. Task files in <dataDir>/tasks/*.json stand in for a clip job or an upload.
 //   - closing with a task running asks: keep in the tray / stop / do not close (each answered by a probe action);
@@ -32,13 +32,13 @@ const skip = !existsSync(SHELL_EXE) || (!PACKAGED && !QT) ? 'studio shell not bu
 const task = (dataDir, o) => writeTaskFile(dataDir, { kind: 'clips', startedAt: Date.now() - 5000, updatedAt: Date.now(), ...o });
 const RUNNING = { id: 'clip-practice-h', title: 'Reviewing the moments in practice-h', state: 'running', stage: 'review', done: 1, total: 10 };
 
-describe('Qt studio: close with tasks running, and the tray (D310 proposed)', { skip }, () => {
+describe('Qt studio: close with tasks running, and the tray (D311 proposed)', { skip }, () => {
   const dirs = [];
   after(() => dirs.forEach((d) => rmSync(d, { recursive: true, force: true })));
 
   // Runs the shell once. o.prepare(dataDir) writes task files first; o.onStatus(n, dataDir) runs on each status request;
   // o.onOut(out, dataDir) on each stdout chunk. Returns the exit code, output and both probe lines (null when absent).
-  async function run({ ms = 7000, actions = '', show = true, prepare, onStatus, onOut, outputsReady = false, env = {} } = {}) {
+  async function run({ ms = 7000, actions = '', show = true, prepare, onStatus, onOut, onRequest, authority, outputsReady = false, env = {} } = {}) {
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-tray-')); dirs.push(dataDir);
     if (prepare) prepare(dataDir);
     const fake = createFakeHost({ outputsReady });
@@ -47,7 +47,8 @@ describe('Qt studio: close with tasks running, and the tray (D310 proposed)', { 
     const host = { describe: () => fake.describe(), call: (m, p) => (ctl.statusFails && m === 'host.status' ? Promise.reject(new Error('host gone')) : fake.call(m, p)) };
     const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
     const key = 't'.repeat(40);
-    const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags: createFlags({ dataDir }), bots: createFakeBots(), limits: { statusPollMs: 50 } });
+    const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags: createFlags({ dataDir }), bots: createFakeBots(), limits: { statusPollMs: 50 }, ...(authority ? { authority } : {}) });
+    if (onRequest) srv.server.on('request', (req) => onRequest(req.url?.split('?')[0], dataDir));
     const { port } = await srv.listen();
     if (onStatus) {
       let n = 0;
@@ -180,6 +181,28 @@ describe('Qt studio: close with tasks running, and the tray (D310 proposed)', { 
     const t = r.probe.tray;
     assert.deepEqual([t.active, t.finishing, t.running, t.lastMessage], [true, false, 1, 'still working']);
     assert.ok(t.cancels >= 1, JSON.stringify(t));
+  });
+
+  test('tray: a task that starts while the quit request is on its way: no exit, and the closing lock is released', async () => {
+    const seen = [];
+    let restarted = false;
+    const r = await run({
+      ms: 14000, actions: 'close,close-choice:tray', prepare: (d) => task(d, RUNNING),
+      onOut: once(/^studio tray: on/m, (d) => task(d, { ...RUNNING, state: 'done', done: 10 })),
+      // the grant is slow (the go-live authority answers after 5 s); the task starts again as soon as the quit is asked
+      authority: { begin: async () => 0, arm: async () => true, revoke: () => new Promise((res) => setTimeout(() => res(true), 5000)) },
+      onRequest: (url, d) => {
+        seen.push(url);
+        if (url === '/ui/api/quit/begin' && !restarted) { restarted = true; task(d, { ...RUNNING, state: 'running', done: 2 }); }
+      },
+    });
+    assert.equal(r.code, 0, r.err);
+    assert.ok(restarted, 'the quit was asked');
+    assert.match(r.out, /^studio tray: not quitting \(a task started or the window came back meanwhile\)$/m);
+    assert.doesNotMatch(r.out, /all tasks finished; exiting/);
+    assert.ok(seen.includes('/ui/api/quit/cancel'), 'the granted lock was released (going live is not blocked)');
+    assert.ok(r.probe, 'still running');
+    assert.deepEqual([r.probe.tray.active, r.probe.tray.running], [true, 1]);
   });
 
   test('tray: Stop all ends the studio with exit 0', async () => {

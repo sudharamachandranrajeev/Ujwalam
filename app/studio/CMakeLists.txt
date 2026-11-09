@@ -56,7 +56,7 @@ add_executable(ujwalam-studio WIN32
 file(GLOB UJW_THEME_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes/*.json")
 list(FILTER UJW_THEME_FILES EXCLUDE REGEX "\.schema\.json$")
 qt_add_resources(ujwalam-studio themes PREFIX "/themes" BASE "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes" FILES ${UJW_THEME_FILES})
-# The tray icon (D310 proposed) uses the app icon when the build has one (another branch adds res/ujwalam.ico).
+# The tray icon (D311 proposed) uses the app icon when the build has one (another branch adds res/ujwalam.ico).
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/res/ujwalam.ico")
 	qt_add_resources(ujwalam-studio appicon PREFIX "/app" BASE "${CMAKE_CURRENT_SOURCE_DIR}/res" FILES "${CMAKE_CURRENT_SOURCE_DIR}/res/ujwalam.ico")
 endif()

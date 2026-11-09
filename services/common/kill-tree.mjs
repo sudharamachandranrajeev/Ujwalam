@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Ends a child process AND everything it started (user 2026-11-09, D310 proposed). On Windows child.kill() ends only
+// Ends a child process AND everything it started (user 2026-11-09, D311 proposed). On Windows child.kill() ends only
 // the one process (TerminateProcess): a clip job's Python ends, its ffmpeg children run on, hidden, after Ujwalam
 // closed. taskkill /T /F ends the whole tree. taskkill is run by its absolute System32 path (never from PATH), with
 // no console window (D191). Elsewhere the child is sent SIGKILL (its group when it leads one).

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Nothing runs on after Ujwalam closes (user 2026-11-09, D310 proposed): the clip job's children (ffmpeg) end with it.
+"""Nothing runs on after Ujwalam closes (user 2026-11-09, D311 proposed): the clip job's children (ffmpeg) end with it.
 
 Real processes, no window (CREATE_NO_WINDOW): a stand-in clip job (this Python) starts a sleeping child, then is
 ended with a plain kill (TerminateProcess, what the launcher's old child.kill() did).

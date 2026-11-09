@@ -885,8 +885,8 @@ def main(argv=None):
             a.out = os.path.abspath(a.out)
             check_out_dir(a.out, corpus_dir())
         lower_own_priority()
-        contain_children()  # ffmpeg and other children end with this process, however it ends (D310 proposed)
-        end_tree_when_parent_gone()  # started by Ujwalam: ends with it, ffmpeg children included (D310 proposed)
+        contain_children()  # ffmpeg and other children end with this process, however it ends (D311 proposed)
+        end_tree_when_parent_gone()  # started by Ujwalam: ends with it, ffmpeg children included (D311 proposed)
         return a.fn(a)
     except ClipError as e:
         eprint(f"clipper: {e}")
