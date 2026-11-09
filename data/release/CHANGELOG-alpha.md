@@ -2,6 +2,13 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.16 — 2026-11-09
+
+- Nothing keeps running hidden after you close Ujwalam. Work still going (clip making, uploads) shows in the studio's task bar with time so far and time left, and a short notice when it starts.
+- Closing the studio while work is still going asks: keep it running in the tray, stop it, or don't close. The tray icon lists each task with its progress and closes itself when everything is done.
+- Closing never ends a stream or a recording. While live, "Stop all" in the tray stops only the background work.
+- A clip job that is stopped ends completely, with every program it started.
+- Scheduled YouTube posting (switch "post-schedule", off): each new clip is uploaded as private with a public time 6 hours after the last post already scheduled on your channel. If the channel can't be read in full, nothing uploads and the clip waits. An upload is cut off before its public time rather than going public early.
 ## 0.1.0-alpha.15 — 2026-11-09
 
 - Ujwalam has its own icon: shortcuts, task bar, windows and the control page tab.
