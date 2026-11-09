@@ -108,6 +108,12 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     if (file) saveProject(file, menuProject());
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags, bots: createFakeBots(), limits: { statusPollMs: 50 }, ...(file ? { projectSync: createProjectSync({ file }) } : {}) });
     const { port } = await srv.listen();
+    // opts.onStatus(n, dataDir): called once per status request the shell makes (n counts from 1), so a test can change
+    // state at a point in the shell's own progress instead of at a wall-clock time that a loaded machine moves.
+    if (opts.onStatus) {
+      let n = 0;
+      srv.server.on('request', (req) => { if (req.method === 'GET' && req.url?.split('?')[0] === '/ui/api/status') opts.onStatus(++n, dataDir); });
+    }
     try {
       const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms), UJWALAM_STUDIO_PROBE_ACTIONS: actions, ...env });
       assert.equal(r.code, 0, r.err);
@@ -249,11 +255,16 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('look (D285): the themed window renders to a 1600x900 picture; the top bar fits', async () => {
     const shot = path.join(os.tmpdir(), `ujw-shot-${process.pid}.png`);
     try {
-      const p = await probe(['posting', 'report-button'], 4500, 'tasks:open', (d) => {
+      // The finish of clip-z is tied to the shell's own status polls (every 2 s), not to a wall-clock timer: the shell
+      // sees it running on its first poll and done on a later one, so the toast (alive 4 s) always starts well inside the
+      // probe's 5.5 s, however slowly the shell starts on a loaded machine (a timer from before the launch made the toast
+      // appear never, or after the probe had ended: toasts 0 vs 1, 2026-11-09).
+      const p = await probe(['posting', 'report-button'], 5500, 'tasks:open', (d) => {
         task(d, { id: 'clip-a', title: 'Editing clips (3 of 7)', state: 'running', done: 2, total: 7 });
         task(d, { id: 'clip-b', title: 'Clips from practice-3', state: 'waiting' });
-        setTimeout(() => task(d, { id: 'clip-z', title: 'Clips ready from practice-1', state: 'done' }), 1200);
-      }, { UJWALAM_STUDIO_PROBE_SHOT: shot, QT_QPA_FONTDIR: path.join(process.env.WINDIR ?? 'C:/Windows', 'Fonts') }); // the real UI font (offscreen has none)
+        task(d, { id: 'clip-z', title: 'Clips ready from practice-1', state: 'running' });
+      }, { UJWALAM_STUDIO_PROBE_SHOT: shot, QT_QPA_FONTDIR: path.join(process.env.WINDIR ?? 'C:/Windows', 'Fonts') }, // the real UI font (offscreen has none)
+      { onStatus: (n, d) => { if (n === 2) task(d, { id: 'clip-z', title: 'Clips ready from practice-1', state: 'done' }); } });
       assert.equal(p.shot, true);
       const b = readFileSync(shot);
       assert.deepEqual([b.readUInt32BE(16), b.readUInt32BE(20)], [1600, 900], 'not widened by the top bar');
