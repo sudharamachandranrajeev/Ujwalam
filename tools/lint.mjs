@@ -325,11 +325,33 @@ function childProcessCalls(text, lang) {
   return sites;
 }
 
+// PowerShell (2026-11-09, D310 proposed; the 2026-11-08 root cause): a shortcut whose target is a console program
+// (.cmd/.bat/.ps1, cmd, powershell, node, python, not pythonw) opens a terminal window that stays for the whole session
+// and, after the studio window was gone, kept showing the clip job's processing. Shortcuts point at the windowless
+// ujwalam-start.exe. The same holds for Start-Process of a console program without -WindowStyle Hidden / -NoNewWindow.
+// Exception: `# console window: <reason>` on the same line (a terminal the user asked for).
+const PS_CONSOLE = /(?:\.(?:cmd|bat|ps1)\b|\b(?:cmd|powershell|pwsh|node|python|py)(?:\.exe)?\b)/i;
+const PS_OK = /#\s*console window:\s*\S[^\n]{2,}/;
+function checkPsWindows(rel, text, out) {
+  const lines = text.split(/\r?\n/);
+  lines.forEach((line, i) => {
+    const code = line.replace(/(^|\s)#.*$/, '');
+    if (PS_OK.test(line)) return;
+    if (/\.TargetPath\s*=/.test(code) && PS_CONSOLE.test(code.split('=').slice(1).join('='))) {
+      out.push([rel, i + 1, 'hidden-window', 'shortcut target is a console program (opens a terminal window that stays open); point it at a windowless exe']);
+    } else if (/\bStart-Process\b/i.test(code) && PS_CONSOLE.test(code.replace(/^.*?Start-Process/i, '')) && !/-WindowStyle\s+Hidden\b|-NoNewWindow\b/i.test(code)) {
+      out.push([rel, i + 1, 'hidden-window', 'Start-Process of a console program without -WindowStyle Hidden or -NoNewWindow (opens a console window)']);
+    }
+  });
+}
+
 export function checkHiddenWindow(rel, text, out) {
   const ext = path.extname(rel).toLowerCase();
+  if (ext === '.ps1') { checkPsWindows(rel, text, out); return; }
   const lang = ['.js', '.mjs', '.cjs'].includes(ext) ? 'js' : ext === '.py' ? 'py' : null;
   if (!lang) return;
-  const want = lang === 'js' ? /\bwindowsHide\s*:\s*true\b/ : /\bcreationflags\s*=|\*\*NO_WINDOW\b/;
+  // Python: **NO_WINDOW, or **module.NO_WINDOW (e.g. clip_common imported as cc), the same kwargs.
+  const want = lang === 'js' ? /\bwindowsHide\s*:\s*true\b/ : /\bcreationflags\s*=|\*\*(?:[A-Za-z_]\w*\.)?NO_WINDOW\b/;
   const gui = /\bwindowsHide\s*:\s*false\b[^\n]*\/\/\s*GUI window:\s*\S[^\n]{2,}/;
   for (const { at, open } of childProcessCalls(text, lang)) {
     const call = callText(text, open, lang);

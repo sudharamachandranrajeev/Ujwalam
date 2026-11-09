@@ -11,3 +11,4 @@ subprocess.Popen(
 )
 sh(["git", "log"])
 # subprocess.run(["in-a-comment"]) is not a call
+subprocess.run(["a"], **cc.NO_WINDOW)  # module-qualified kwargs: not flagged

@@ -91,7 +91,8 @@ import { loadDevicePresets, matchRoles, overrideProblems } from '../project/devi
 import { hudCoverage, loadHudZones } from '../project/hud-zones.mjs';
 import { loadProject } from '../project/store.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
-import { createRecordClips } from './record-clips.mjs';
+import { createRecordClips, isLive } from './record-clips.mjs';
+import { killChildTree } from '../common/kill-tree.mjs';
 import { createPostChain } from '../posting/auto-chain.mjs';
 import { folderProblem, readSettings } from './user-settings.mjs';
 import { createMediaInfo } from '../project/media-info.mjs';
@@ -862,7 +863,8 @@ export async function main(argv = process.argv.slice(2)) {
         await new Promise((r) => { hostChild.once('exit', r); setTimeout(r, 8000); });
       } catch { /* fall through to kill */ }
     }
-    for (const c of children) { try { c.kill(); } catch { /* already gone */ } }
+    // The whole tree of each child (D310 proposed): a plain kill left a clip job's ffmpeg running after close.
+    for (const c of children) killChildTree(c);
     // BM6: with the `bot-manager` flag on, close the bots Ujwalam started. A copy the user started is never touched.
     try {
       if (createFlags({ dataDir }).isOn('bot-manager')) {
@@ -1147,7 +1149,16 @@ export async function main(argv = process.argv.slice(2)) {
         const t = Date.now();
         crashTimes.push(t);
         if (!shellRelaunchAllowed(crashTimes, t) || !ui.stdin?.writable) {
-          console.log(`[studio] Qt shell ended unexpectedly (${what}); NOT reopened (more than ${SHELL_RELAUNCH_MAX} crashes in ${SHELL_RELAUNCH_WINDOW_MS / 60000} min). The studio keeps running: Ctrl-C stops it, or, started without a console, end "Node.js JavaScript Runtime" in Task Manager.`);
+          // Nothing may run on with no window (user 2026-11-09, D310 proposed): unless a stream is live (a UI crash
+          // never cuts a stream), everything stops, the clip job's whole process tree included.
+          console.log(`[studio] Qt shell ended unexpectedly (${what}); NOT reopened (more than ${SHELL_RELAUNCH_MAX} crashes in ${SHELL_RELAUNCH_WINDOW_MS / 60000} min).`);
+          void (async () => {
+            let live = true; // unreadable: assume live, never cut a stream
+            try { live = alphaClient ? isLive(await alphaClient.call('outputs.status')) : false; } catch { /* keep live = true */ }
+            if (live) { console.log('[studio] a stream is live, so the studio keeps running without its window; stop the stream from the control page, then end it'); return; }
+            console.log('[studio] nothing is live: stopping Ujwalam so nothing runs on without a window');
+            stopAll().then(() => process.exit(0));
+          })();
           return;
         }
         const key = hex(32);

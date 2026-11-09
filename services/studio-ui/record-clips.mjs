@@ -22,6 +22,8 @@ import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { PARENT_PIPE_ENV } from '../common/parent-pipe.mjs';
+import { killChildTree } from '../common/kill-tree.mjs';
 import { clipsFolder, readSettings, writeSettings } from './user-settings.mjs';
 import { writeTaskFile } from './tasks.mjs';
 
@@ -141,7 +143,7 @@ const JOB_KEYS = ['type', 'kind', 'h', 'v', 'since', 'until', 'name', 'minutes']
 const pickJob = (j) => Object.fromEntries(JOB_KEYS.filter((k) => j[k] !== undefined).map((k) => [k, j[k]]));
 
 /** The queue and the child. feed(status) is called with each outputs.status. */
-export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now = Date.now, postChain = null }) {
+export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now = Date.now, postChain = null, killTreeFn = killChildTree }) {
   const stateDir = path.join(dataDir, 'clips');
   const statusFile = path.join(stateDir, 'status.json');
   const answerFile = path.join(stateDir, 'answer.json');
@@ -215,7 +217,10 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
     const fd = openSync(logFile, 'a');
     current = job;
     progress = null;
-    child = spawnFn(spec.exe, spec.argv, { stdio: ['ignore', fd, 'pipe'], windowsHide: true, cwd: clipRoot });
+    // stdin: the parent pipe (D234): when the launcher is gone (even hard-killed) the clipper ends itself and its ffmpeg
+    // children (clip_common.end_tree_when_parent_gone), so nothing runs on unseen after Ujwalam closed (D310 proposed).
+    child = spawnFn(spec.exe, spec.argv, { stdio: ['pipe', fd, 'pipe'], windowsHide: true, cwd: clipRoot, env: { ...process.env, [PARENT_PIPE_ENV]: '1' } });
+    child.stdin?.on?.('error', () => {});
     closeSync(fd);
     // stderr: copied to the log and scanned for `ujwalam-progress {...}` lines (the task bar's progress).
     let pending = ''; let lastWrite = 0;
@@ -296,12 +301,14 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
       }
       prev = status; lastStatus = status;
       readAnswer(s);
-      if (live && child && current && !current.pausedForLive) { current.pausedForLive = true; child.kill(); }
+      if (live && child && current && !current.pausedForLive) { current.pausedForLive = true; killTreeFn(child); } // the whole tree: ffmpeg must not encode while live
       if (!live) start();
       if (postChain) void Promise.resolve(postChain.tick(status)).catch(() => {}); // retries of queued uploads; the chain itself refuses while a stream is live
       write();
     },
-    stop() { stopped = true; if (child) child.kill(); try { writeFileSync(workerFile, JSON.stringify({ on: false, atMs: now() })); } catch { /* gone */ } },
+    stop() { stopped = true; if (child) killTreeFn(child); try { writeFileSync(workerFile, JSON.stringify({ on: false, atMs: now() })); } catch { /* gone */ } },
     state: () => ({ running: current, queued: [...queue], asks: [...asks], last }),
+    /** The running clip job's process (tests, and the launcher's stray check), or null. */
+    child: () => child,
   };
 }

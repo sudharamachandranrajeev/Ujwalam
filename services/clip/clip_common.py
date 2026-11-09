@@ -23,6 +23,90 @@ import time
 # No console window on Windows (D191): every subprocess call passes **NO_WINDOW.
 NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" else {}
 
+PARENT_PIPE_ENV = "UJWALAM_PARENT_PIPE"
+_JOB = None  # the kill-on-close job of contain_children(); held (never closed) for the life of this process
+
+
+def contain_children():
+    """Windows (user 2026-11-09, D310 proposed): puts this process in a new job object that kills every member when
+    its last handle closes. Children started from now on (ffmpeg) are members too, so however this process ends
+    (finished, crashed, or killed by the launcher: a plain kill ends only this process) none of them runs on unseen.
+    Returns True when the job is in place; False elsewhere or when Windows refused (the parent pipe still applies)."""
+    global _JOB
+    if os.name != "nt":
+        return False
+    if _JOB is not None:
+        return True
+    import ctypes
+    from ctypes import wintypes
+
+    class BASIC(ctypes.Structure):
+        _fields_ = [("PerProcessUserTimeLimit", ctypes.c_int64), ("PerJobUserTimeLimit", ctypes.c_int64),
+                    ("LimitFlags", wintypes.DWORD), ("MinimumWorkingSetSize", ctypes.c_size_t),
+                    ("MaximumWorkingSetSize", ctypes.c_size_t), ("ActiveProcessLimit", wintypes.DWORD),
+                    ("Affinity", ctypes.c_size_t), ("PriorityClass", wintypes.DWORD), ("SchedulingClass", wintypes.DWORD)]
+
+    class IO(ctypes.Structure):
+        _fields_ = [(n, ctypes.c_uint64) for n in ("ReadOps", "WriteOps", "OtherOps", "ReadBytes", "WriteBytes", "OtherBytes")]
+
+    class EXTENDED(ctypes.Structure):
+        _fields_ = [("Basic", BASIC), ("Io", IO), ("ProcessMemoryLimit", ctypes.c_size_t), ("JobMemoryLimit", ctypes.c_size_t),
+                    ("PeakProcessMemoryUsed", ctypes.c_size_t), ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateJobObjectW.restype = wintypes.HANDLE
+    k32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+    k32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+    k32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    job = k32.CreateJobObjectW(None, None)
+    if not job:
+        return False
+    info = EXTENDED()
+    info.Basic.LimitFlags = 0x2000  # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if not k32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)) or \
+            not k32.AssignProcessToJobObject(job, k32.GetCurrentProcess()):  # 9: JobObjectExtendedLimitInformation
+        k32.CloseHandle(job)
+        return False
+    _JOB = job
+    return True
+
+
+def end_own_tree(pid=None, run=None):
+    """Ends this process and every process it started (ffmpeg, workers). Windows: taskkill /T /F from System32, no
+    console window (D191); elsewhere SIGKILL to the process. Never returns when it works."""
+    pid = os.getpid() if pid is None else pid
+    if os.name == "nt":
+        root = os.environ.get("SystemRoot", "")
+        exe = os.path.join(root, "System32", "taskkill.exe") if root else ""
+        if exe and os.path.isfile(exe):
+            (run or subprocess.run)([exe, "/T", "/F", "/PID", str(pid)], capture_output=True, timeout=15, **NO_WINDOW)
+    os._exit(1)
+
+
+def end_tree_when_parent_gone(env=None, stdin=None, on_gone=None):
+    """Parent pipe (D234; user 2026-11-09, D310 proposed): with UJWALAM_PARENT_PIPE=1 the launcher holds our stdin as
+    a pipe. End-of-file means Ujwalam is gone (closed, crashed or hard-killed); the clip job then ends itself and its
+    ffmpeg children, so nothing runs on unseen. Returns the watcher thread, or None without the env marker."""
+    import threading
+    if (env if env is not None else os.environ).get(PARENT_PIPE_ENV) != "1":
+        return None
+    src = stdin if stdin is not None else sys.stdin.buffer
+    gone = on_gone or end_own_tree
+
+    def read():
+        try:
+            while src.read(64):
+                pass
+        except (OSError, ValueError):
+            pass
+        gone()
+
+    t = threading.Thread(target=read, name="parent-pipe", daemon=True)
+    t.start()
+    return t
+
 _HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.normpath(os.path.join(_HERE, "..", ".."))
 FLAGS_FILE = os.path.join(REPO_ROOT, "data", "flags.json")
