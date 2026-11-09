@@ -7,7 +7,9 @@ Backends (--captions):
   whisper-cli     a whisper.cpp command line binary (--whisper-bin, --whisper-model). Runs
                   <bin> -m <model> -f <clip.wav> -oj -of <base> -t 4 and reads <base>.json
                   (transcription[].offsets.from/to in ms, text). UNVERIFIED: no binary or model on the laptop yet.
-  faster-whisper  the faster_whisper package, if importable in this interpreter (not installed). UNVERIFIED.
+  faster-whisper  the faster_whisper package, if importable in this interpreter (D176: project .venv, model folder
+                  passed with --whisper-model). CPU int8, VAD filter on. Checked on a synthetic speech fixture
+                  (tests/py/test_caption_seam.py); quality on real stream speech UNVERIFIED.
 No network and no paid API: every backend runs on local files.
 
 Segments are [{start, end, text}] in seconds from the clip start. The ASS file uses the 1080x1920 frame and keeps
@@ -80,7 +82,10 @@ def transcribe(backend, wav, opts):
             return [], {"backend": backend, "status": "unavailable", "reason": "no --whisper-model (local path)"}
         m = WhisperModel(model, device=opts.get("device", "cpu"), compute_type=opts.get("compute_type", "int8"),
                          cpu_threads=4, local_files_only=True)
-        segs, _ = m.transcribe(wav, language=opts.get("language"))
+        # vad_filter: without it a segment after leading silence is stamped from 0.0, so the caption showed seconds
+        # before the speech (caption seam, tests/py/test_caption_seam.py). Silero VAD ships inside faster-whisper and
+        # runs on the CPU through onnxruntime; segment times stay on the clip timeline.
+        segs, _ = m.transcribe(wav, language=opts.get("language"), vad_filter=True)
         out = [{"start": float(s.start), "end": float(s.end), "text": s.text.strip()} for s in segs if s.text.strip()]
         return out, {"backend": backend, "status": "ok", "segments": len(out)}
     raise ClipError(f"unknown captions backend {backend}")

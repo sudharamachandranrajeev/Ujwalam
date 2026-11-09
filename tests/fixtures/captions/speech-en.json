@@ -1,0 +1,10 @@
+{
+  "$comment": "Caption seam fixture recipe (tests/py/test_caption_seam.py, D312). The wav is generated at test time by make-fixture.ps1 with the Windows built-in synthesizer and cached in out/caption-seam/ (gitignored); it is never committed. Synthesis can differ between Windows builds, so the test checks the transcript and the timing, not bytes. 16 kHz mono 16-bit PCM, the format clip_captions.extract_wav produces.",
+  "text": "Clip it. That was a clean triple kill on the last round.",
+  "language": "en",
+  "keyWords": ["clip", "clean", "triple", "kill", "last", "round"],
+  "generator": { "tool": "System.Speech SpeechSynthesizer (Windows, built in)", "voice": "Microsoft David Desktop", "rate": 0 },
+  "sampleRate": 16000,
+  "channels": 1,
+  "bits": 16
+}
