@@ -2,6 +2,12 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.17 — 2026-11-10
+
+- Windows behave normally: the studio opens on your main screen and comes to the front; preview windows also work with one screen and always fit fully on it.
+- Match reels follow your rules: a win in the top 3, a loss in the top 2, more than 20 kills in Hardpoint, Domination or Control, more than 7 in TDM, a Search and Destroy win. A rule only counts when Ujwalam could read what it needs; each run's report says why a match did or did not get a reel.
+- Captions start when the words start (they used to start up to several seconds early after a silence).
+- Scheduled posting (switch "post-schedule"): a clip whose public time comes within 1 hour gets a new time about 1 h 15 min ahead, at least 1 hour from any other post; clips after it move to stay 6 hours apart. Nothing is scheduled more than 2 years ahead.
 ## 0.1.0-alpha.16 — 2026-11-09
 
 - Nothing keeps running hidden after you close Ujwalam. Work still going (clip making, uploads) shows in the studio's task bar with time so far and time left, and a short notice when it starts.
