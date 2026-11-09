@@ -2,6 +2,12 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.11 — 2026-11-09
+
+- Live test kit (switch "live-test-kit", off): a strip under the top bar of the studio window says in plain words when game or mic sound is missing, when streams were restarted after a crash, and what happened to chat feedback.
+- For the first 10 minutes live it reminds you to start your own Streamer.bot action "Ujwalam test stream" (it posts the feedback question and Speaker.bot reads the test announcement). Ujwalam itself never posts or speaks.
+- When a stream ends, viewers' feedback replies are collected into your local feedback file, in the background.
+- Fix: the readiness check and stream restart settings were missing from the install package.
 ## 0.1.0-alpha.10 — 2026-11-09
 
 - Streams can restart by themselves after a host crash (switch "stream-recovery", off): only streams you started with "yes, on air", at most 2 times in 10 minutes, and never if you pressed Stop or End all.

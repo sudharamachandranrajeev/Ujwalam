@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 10,
+  "current": 11,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -21,6 +21,7 @@
     { "n": 7, "date": "2026-11-08", "title": "New studio look" },
     { "n": 8, "date": "2026-11-08", "title": "Layer looks, task bar, match filter" },
     { "n": 9, "date": "2026-11-08", "title": "Game audio fix, crash fix, montages, auto posting" },
-    { "n": 10, "date": "2026-11-09", "title": "Streams restart after a crash (switch), safer Stop" }
+    { "n": 10, "date": "2026-11-09", "title": "Streams restart after a crash (switch), safer Stop" },
+    { "n": 11, "date": "2026-11-09", "title": "Live test kit: alerts in plain words, feedback after a stream" }
   ]
 }
