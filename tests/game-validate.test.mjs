@@ -79,6 +79,14 @@ test('game-validate: M3 catalogue must resolve in events.json', (t) => {
   expectError(t, 'events.json', (d) => d.catalogues[0].events.push({ ...d.catalogues[0].events[0] }), /duplicate event "Double Kill"/);
 });
 
+test('game-validate: match reel rules (D315) are checked', (t) => {
+  expectError(t, 'match-reels.json', (d) => { d.rules[0].when.result = 'WIN'; }, /won-top3: result "WIN" is not a pattern of W1/);
+  expectError(t, 'match-reels.json', (d) => d.rules.push({ ...d.rules[0] }), /duplicate rule id "won-top3"/);
+  expectError(t, 'match-reels.json', (d) => { d.rules[2].when.killsAbove = -1; }, /match-reels\.json: schema/);
+  expectError(t, 'match-reels.json', (d) => { d.rules[0].when.place = 3; }, /match-reels\.json: schema/);
+  expectError(t, 'match-reels.json', (d) => { d.game = 'other'; }, /game "other" does not match/);
+});
+
 test('game-validate: capture-plan detectors, modes and medals must exist', (t) => {
   expectError(t, 'capture-plan.json', (d) => { d.items[0].detector = 'K9'; }, /final_killcam_ign: detector "K9" does not exist/);
   expectError(t, 'capture-plan.json', (d) => { d.items.find((i) => i.medal).medal = 'Giga Kill'; }, /medal "Giga Kill" is not in catalogue "medals"/);

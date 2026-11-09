@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/match-reels.schema.json",
+  "title": "Ujwalam match reel rules",
+  "description": "data/games/<game-id>/match-reels.json: which matches get a won-match reel (D315). A match qualifies when any rule passes; a rule passes when every condition in `when` holds; a condition whose signal was not read makes the rule inert (never a reel). Evaluated by services/clip/match_gate.py reel_decide().",
+  "type": "object",
+  "required": ["version", "game", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "$comment": { "type": "string" },
+    "version": { "type": "integer", "minimum": 1 },
+    "game": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+    "decision": { "type": "string" },
+    "user": { "type": "string" },
+    "rules": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/rule" } }
+  },
+  "$defs": {
+    "rule": {
+      "type": "object",
+      "required": ["id", "label", "when", "status"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "label": { "type": "string", "minLength": 1 },
+        "when": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": false,
+          "properties": {
+            "modes": { "type": "array", "minItems": 1, "items": { "type": "string", "pattern": "^[a-z][a-z ]*$" } },
+            "result": { "type": "string", "minLength": 1 },
+            "maxPlace": { "type": "integer", "minimum": 1 },
+            "killsAbove": { "type": "integer", "minimum": 0 },
+            "roundKillsAtLeast": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "status": { "enum": ["approved", "unverified"] },
+        "note": { "type": "string" }
+      }
+    }
+  }
+}

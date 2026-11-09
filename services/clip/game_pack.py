@@ -7,7 +7,7 @@ in the shape the G1 tools use:
 
   version, engineVersion, game {id, name}, modes, taggingOnlyModes, gameArea, nameMatch, ocr,
   detectors (a detector with `catalogue` also gets the catalogue's events as `medals`),
-  suppressionRules, endScreenRule, screens, pairingRules
+  suppressionRules, endScreenRule, screens, pairingRules, matchReels (match-reels.json, when present)
 
 `path` may be the pack folder or its detectors.json. A single-file pack from before 0.3.0
 (detectors.json with a `game` object and inline M3 `medals`) is returned unchanged, so older
@@ -73,6 +73,12 @@ def load_pack(path):
     }
     if "endScreenRule" in det:
         merged["endScreenRule"] = det["endScreenRule"]
+    reels = os.path.join(folder, "match-reels.json")
+    if os.path.isfile(reels):  # D315; optional so older pack versions still load (no file = no reel rules)
+        doc = _read(reels)
+        if doc.get("game") != game["id"]:
+            raise ValueError(f"match-reels.json: game {doc.get('game')!r} does not match game.json id {game['id']!r}")
+        merged["matchReels"] = doc
     return merged
 
 

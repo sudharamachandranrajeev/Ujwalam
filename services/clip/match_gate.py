@@ -18,6 +18,9 @@ Stdlib only (g1_text), so the clipper can gate without the OCR venv. Four parts:
            the last end screen is a match with no end seen (the recording stopped mid-match).
   gate     a match passes when its own rank on the top-3 screen is 1-3 (top3 on) or its own kills reach minKills
            (minKills not null). A match whose end was not seen, or whose end screens were not read, keeps its clips.
+  reels    D315: reel_decide() applies the pack's match-reels.json rules (result, place, mode, own kills, kills per
+           round); a match gets a reel when any rule passes. Unlike the gate, an unread signal never passes: the
+           rule is inert. clip_montage.match_reels() cuts the reels of the qualifying matches.
 
 Settings: <data>/settings.json clips.matchGate {"top3": bool, "minKills": int 1..200 | null}
 (clip_common.match_gate_settings). Game-specific values (score pattern, kills headers, mode names, end-screen
@@ -299,7 +302,7 @@ def read_hits(path):
 
 def end_clusters(hits, cfg):
     """End-screen sequences: hits of cfg endScreenDetectors (M1 only inside its ROI) closer than endGapSec join.
-    -> [{t0, t1, results: Counter, hudModes: Counter}] sorted by time."""
+    -> [{t0, t1, results: Counter, hudModes: Counter, w1: [(t, tEnd, label, signalled)]}] sorted by time."""
     ids = set(cfg.get("endScreenDetectors") or [])
     gap = float(cfg.get("endGapSec") or 90)
     pts = []
@@ -319,10 +322,11 @@ def end_clusters(hits, cfg):
             c = out[-1]
             c["t1"] = max(c["t1"], t1)
         else:
-            c = {"t0": t0, "t1": t1, "results": Counter(), "hudModes": Counter()}
+            c = {"t0": t0, "t1": t1, "results": Counter(), "hudModes": Counter(), "w1": []}
             out.append(c)
         if h.get("detector") == "W1" and h.get("label") in ("VICTORY", "DEFEAT"):
             c["results"][h["label"]] += 2 if h.get("signal") else 1
+            c["w1"].append((t0, t1, h["label"], h.get("signal") is True))
         if h.get("mode") in ("mp", "br"):
             c["hudModes"][h["mode"]] += 1
     return out
@@ -334,7 +338,10 @@ def _mode_of(counter):
 
 def segment(hits, stats, duration, cfg):
     """Matches of a recording. stats: match-stats.json doc (or None). Each match: start, end, endSeen, result,
-    mode, ownRank, ownScore, top3Seen, ownKills, killsSource. No names."""
+    mode, ownRank, ownScore, top3Seen, ownKills, killsSource; for the reel rules (D315) also endScreenAt (first
+    end-screen hit), resultConfirmed (a signalled W1 box of that result), resultAt/resultEnd (that box's time),
+    gameMode (the mode name read on the top-3 screen, else None) and roundKills (own kills per round: no round
+    detector exists, always None). No names."""
     clusters = end_clusters(hits, cfg)
     readings = (stats or {}).get("readings") or []
     if stats and isinstance((stats.get("ownKills") or {}).get("times"), list):
@@ -354,11 +361,18 @@ def segment(hits, stats, duration, cfg):
         end = c["t1"] if c else float(duration)
         play_end = c["t0"] if c else float(duration)
         m = {"index": i, "start": round(start, 2), "end": round(end, 2), "endSeen": seen, "result": None,
-             "mode": None, "ownRank": None, "ownScore": None, "top3Seen": False, "ownKills": None, "killsSource": None}
+             "mode": None, "ownRank": None, "ownScore": None, "top3Seen": False, "ownKills": None, "killsSource": None,
+             "endScreenAt": round(c["t0"], 2) if c else None, "resultConfirmed": False, "resultAt": None,
+             "resultEnd": None, "gameMode": None, "roundKills": None}
         hud = Counter(h["mode"] for h in hits if h.get("mode") in ("mp", "br") and start <= float(h["t"]) <= end)
         if c:
             if c["results"]:
                 m["result"] = c["results"].most_common(1)[0][0]
+                sure = [w for w in c["w1"] if w[2] == m["result"] and w[3]]
+                if sure:
+                    m["resultConfirmed"] = True
+                    m["resultAt"] = round(min(w[0] for w in sure), 3)
+                    m["resultEnd"] = round(max(w[1] for w in sure), 3)
             win = [r for r in readings if c["t0"] - 1 <= float(r.get("t", -1)) <= c["t1"] + 1]
             tops = [r for r in win if r.get("kind") == "top3"]
             if tops:
@@ -371,6 +385,7 @@ def segment(hits, stats, duration, cfg):
                     m["ownScore"] = scores.most_common(1)[0][0] if scores else None
                 gm = Counter(r["gameMode"] for r in tops if r.get("gameMode"))
                 m["mode"] = _mode_of(gm)
+                m["gameMode"] = m["mode"]
         boards = [r for r in readings if r.get("kind") == "scoreboard" and start <= float(r.get("t", -1)) <= end
                   and isinstance(r.get("ownKills"), int)]
         if boards:
@@ -409,6 +424,78 @@ def decide(m, gate):
     if min_kills is not None:
         why.append(f"{k} kills (fewer than {min_kills})")
     return False, "; ".join(why)
+
+
+# ---------------------------------------------------------------- reel rules (D315)
+
+def reel_rules(pack):
+    """The pack's match reel rules (match-reels.json `rules`), or [] when the pack has none (then no reel)."""
+    return list(((pack or {}).get("matchReels") or {}).get("rules") or [])
+
+
+def _cond(m, key, want):
+    """One condition of a reel rule on match m -> ("pass"|"fail"|"inert", plain words). Inert = signal not read."""
+    if key == "modes":
+        gm = m.get("gameMode")
+        if not gm:
+            return "inert", "game mode not read"
+        return ("pass", f"mode {gm}") if gm in want else ("fail", f"mode {gm}")
+    if key == "result":
+        r = m.get("result")
+        if not r or not m.get("resultConfirmed"):
+            return "inert", "result not read"
+        return ("pass", r) if r == want else ("fail", r)
+    if key == "maxPlace":
+        if not m.get("top3Seen"):
+            return "inert", "top-3 screen not read"
+        rank = m.get("ownRank")
+        if rank is None:
+            return "fail", "not on the top-3 cards"
+        return ("pass", f"placed #{rank}") if rank <= want else ("fail", f"placed #{rank}")
+    if key == "killsAbove":
+        k = m.get("ownKills")
+        if k is None:
+            return "inert", "kills not read"
+        src = m.get("killsSource") or "unknown source"
+        return ("pass" if k > want else "fail"), f"{k} kills ({src}; needs more than {want})"
+    if key == "roundKillsAtLeast":
+        rk = m.get("roundKills")
+        if not isinstance(rk, list) or not rk:
+            return "inert", "kills per round not detected"
+        best = max(rk)
+        return ("pass" if best >= want else "fail"), f"best round {best} kills (needs {want})"
+    return "inert", f"unknown condition {key}"
+
+
+def reel_rule(m, rule):
+    """One rule on one match -> {id, outcome: pass|fail|inert, why}. Any failing condition fails the rule; else any
+    unread signal makes it inert (never a reel on a guess); else it passes."""
+    parts = [_cond(m, k, v) for k, v in (rule.get("when") or {}).items()]
+    fails = [w for o, w in parts if o == "fail"]
+    inert = [w for o, w in parts if o == "inert"]
+    if fails:
+        outcome, why = "fail", fails
+    elif inert or not parts:
+        outcome, why = "inert", inert or ["no condition"]
+    else:
+        outcome, why = "pass", [w for _, w in parts]
+    return {"id": rule.get("id"), "outcome": outcome, "why": "; ".join(why)}
+
+
+def reel_decide(m, rules):
+    """Reel decision for one match (D315): it qualifies when any rule passes. -> {qualifies, reason, rules: [...]}.
+    A match with no end screen seen never qualifies (its result and place are unknown)."""
+    if not m.get("endSeen"):
+        return {"qualifies": False, "reason": "no end screen seen (the recording stopped mid-match)", "rules": []}
+    if not rules:
+        return {"qualifies": False, "reason": "the game pack has no match reel rules", "rules": []}
+    ev = [reel_rule(m, r) for r in rules]
+    passed = [e for e in ev if e["outcome"] == "pass"]
+    if passed:
+        reason = "; ".join(f"{e['id']} ({e['why']})" for e in passed)
+    else:
+        reason = "no rule passed: " + "; ".join(f"{e['id']} {e['outcome']} ({e['why']})" for e in ev)
+    return {"qualifies": bool(passed), "reason": reason, "rules": ev}
 
 
 def match_of(t, matches):
