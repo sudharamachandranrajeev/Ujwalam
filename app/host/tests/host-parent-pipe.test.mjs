@@ -22,7 +22,8 @@ test('pipe closed: the host stops by itself (clean exit, discovery removed)', as
     for (let t0 = Date.now(); !/parent pipe: on/.test(h.log.join('')) && Date.now() - t0 < 10000;) await new Promise((r) => setTimeout(r, 50));
     assert.match(h.log.join(''), /parent pipe: on/);
     h.child.stdin.destroy(); // what Windows does to the pipe when the launcher dies
-    const code = await Promise.race([h.exit, new Promise((r) => setTimeout(() => r('timeout'), 60000))]);
+    let timer; // cleared on exit: a pending timer would keep this test process alive for the whole bound
+    const code = await Promise.race([h.exit, new Promise((r) => { timer = setTimeout(() => r('timeout'), 60000); })]).finally(() => clearTimeout(timer));
     assert.equal(code, 0, 'clean exit');
     assert.match(h.log.join(''), /shutdown \(launcher gone\)/);
     assert.equal(existsSync(path.join(dataDir, 'host.json')), false, 'discovery file removed');
