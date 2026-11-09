@@ -14,7 +14,8 @@
 //      tells the user to sign in again.
 //   4. signOut() deletes the stored refresh token and clears the in-memory access token.
 //
-// Scope requested: https://www.googleapis.com/auth/youtube.upload only (plan step 1). Client id/secret are read
+// Scope requested: https://www.googleapis.com/auth/youtube.upload only (plan step 1); plus youtube.readonly when the
+// caller passes opts.scope = SCHEDULE_SCOPES (flag post-schedule on, D310 proposed). Client id/secret are read
 // from Credential Manager (CLIENT_ID_TARGET/CLIENT_SECRET_TARGET) — set once by the user (plan "Needs from the
 // user"), never hardcoded, never in this repo.
 //
@@ -26,6 +27,10 @@ import { createServer } from 'node:http';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 
 export const SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
+// Optional second scope for scheduled posting (flag post-schedule, D310 proposed): read the channel's scheduled posts.
+// Requested only when that flag is on (opts.scope = SCHEDULE_SCOPES); without it the default stays upload-only.
+export const READONLY_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
+export const SCHEDULE_SCOPES = `${SCOPE} ${READONLY_SCOPE}`;
 export const REFRESH_TARGET = 'Ujwalam/posting/youtube-refresh';
 export const CLIENT_ID_TARGET = 'Ujwalam/posting/youtube-client-id';
 export const CLIENT_SECRET_TARGET = 'Ujwalam/posting/youtube-client-secret';
@@ -126,6 +131,9 @@ export function createYoutubeAuth(opts = {}) {
   const now = opts.now ?? (() => Date.now());
   const endpoints = { authUrl: opts.endpoints?.authUrl ?? GOOGLE_AUTH_URL, tokenUrl: opts.endpoints?.tokenUrl ?? GOOGLE_TOKEN_URL };
   let access = null; // { token, expiresAt } — memory only, never persisted
+  let granted = null; // the scopes Google says the token carries (token response `scope`), memory only
+  const scope = typeof opts.scope === 'string' && opts.scope ? opts.scope : SCOPE;
+  const noteScope = (tok) => { granted = typeof tok?.scope === 'string' && tok.scope.trim() ? tok.scope.trim().split(/\s+/) : null; };
 
   async function clientCreds() {
     const [id, secret] = await Promise.all([clientIdStore.get(), clientSecretStore.get()]);
@@ -137,7 +145,7 @@ export function createYoutubeAuth(opts = {}) {
     const { id: clientId, secret: clientSecret } = await clientCreds();
     const { port, redirectUri, result } = await loopbackListener();
     const { verifier, challenge, state } = makePkce();
-    const url = authUrl({ clientId, redirectUri, challenge, state, base: endpoints.authUrl });
+    const url = authUrl({ clientId, redirectUri, challenge, state, scope, base: endpoints.authUrl });
     if (typeof opts.browserOpen !== 'function') throw new OAuthError('oauth-no-browser-opener', 'opts.browserOpen is required');
     await opts.browserOpen(url);
     const { code, state: gotState } = await result;
@@ -148,7 +156,8 @@ export function createYoutubeAuth(opts = {}) {
     if (!tok.refresh_token) throw new OAuthError('oauth-no-refresh-token', 'Google did not return a refresh token (try signing out of the OAuth app in Google Account settings, then sign in again)');
     await refreshStore.set(tok.refresh_token);
     access = { token: tok.access_token, expiresAt: now() + (Number(tok.expires_in) || 3600) * 1000 };
-    return { port, scope: tok.scope ?? SCOPE };
+    noteScope(tok);
+    return { port, scope: tok.scope ?? scope };
   }
 
   async function refresh() {
@@ -162,7 +171,15 @@ export function createYoutubeAuth(opts = {}) {
       throw new OAuthError('oauth-reauth-needed', 'the refresh token was rejected; sign in again');
     }
     access = { token: tok.access_token, expiresAt: now() + (Number(tok.expires_in) || 3600) * 1000 };
+    noteScope(tok);
     return access.token;
+  }
+
+  /** The scopes the current token carries (array), or null when Google did not say (callers then fail closed).
+   *  Refreshes first when needed, so this reflects the stored sign-in, not a guess. */
+  async function grantedScopes() {
+    await accessToken();
+    return granted ? [...granted] : null;
   }
 
   async function accessToken() {
@@ -176,9 +193,9 @@ export function createYoutubeAuth(opts = {}) {
   }
 
   async function signOut() {
-    access = null;
+    access = null; granted = null;
     return refreshStore.delete();
   }
 
-  return { signIn, accessToken, status, signOut };
+  return { signIn, accessToken, grantedScopes, status, signOut };
 }

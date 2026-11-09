@@ -605,6 +605,7 @@
     if (!q) { setText($('posts-queue'), ''); return; }
     var bits = ['Upload queue: ' + (q.queued || 0) + ' waiting, ' + (q.uploading || 0) + ' uploading, ' + (q.done || 0) + ' done, ' + (q.failed || 0) + ' failed'];
     if (q.nextAt) bits.push('next retry ' + whenText(q.nextAt));
+    if (q.nextPublishAt) bits.push('next goes public ' + whenText(q.nextPublishAt) + (q.lastPublishAt && q.lastPublishAt !== q.nextPublishAt ? ', last scheduled ' + whenText(q.lastPublishAt) : ''));
     setText($('posts-queue'), bits.join('; ') + '.' + (q.message ? ' ' + q.message + '.' : ''));
   }
   function renderPostQueue(p) {
@@ -614,6 +615,7 @@
     if (p.queueReasonText) bits.push(p.queueReasonText);
     if (p.queueState === 'queued' && p.queueNextAt) bits.push('next try ' + whenText(p.queueNextAt));
     if (p.queueAttempts) bits.push(p.queueAttempts + ' failed attempt(s)');
+    if (p.queuePublishAt) bits.push((p.queueState === 'done' ? 'goes public ' : 'will go public ') + whenText(p.queuePublishAt));
     setText($('post-queue-info'), 'Auto-upload: ' + bits.join('. ') + '.');
     var l = $('post-queue-link'); clear(l);
     if (p.videoUrl) l.appendChild(el('a', { href: p.videoUrl, target: '_blank', rel: 'noopener noreferrer', text: 'Open the uploaded video (private)' }));
@@ -707,8 +709,9 @@
     var ul = $('posts-preview'); clear(ul); setText($('posts-preview-sum'), 'Checking...');
     Api.postsAutoPreview().then(function (r) {
       if (r.error) { setText($('posts-preview-sum'), 'Preview unavailable.'); return; }
-      setText($('posts-preview-sum'), 'Dry run: ' + r.queued.length + ' would be queued, ' + r.skipped.length + ' skipped. Nothing is written or sent.' + (r.blocked ? ' A stream looks live (' + r.blocked + '): a run would be refused.' : ''));
-      r.queued.forEach(function (q) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'would ' + q.actions.join(' + ') + ': ' + q.kind + ' to ' + q.target + ' | ' + q.title }), el('span', { class: 'muted', text: 'rule ' + q.ruleId + (q.score !== null ? ', score ' + q.score : '') })])); });
+      var sch = r.schedule && r.schedule.on ? (r.schedule.error === 'schedule-read-incomplete' ? ' Scheduled posting is on, but the channel has more uploads than are checked (raise maxPages in data/posting/schedule.json): nothing would upload.' : r.schedule.error ? ' Scheduled posting is on, but its settings file is not valid: nothing would upload.' : ' Scheduled posting is on (every ' + r.schedule.intervalHours + ' h); the public times are estimates, set for real when a clip is queued.') : '';
+      setText($('posts-preview-sum'), 'Dry run: ' + r.queued.length + ' would be queued, ' + r.skipped.length + ' skipped. Nothing is written or sent.' + (r.blocked ? ' A stream looks live (' + r.blocked + '): a run would be refused.' : '') + sch);
+      r.queued.forEach(function (q) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'would ' + q.actions.join(' + ') + ': ' + q.kind + ' to ' + q.target + ' | ' + q.title }), el('span', { class: 'muted', text: 'rule ' + q.ruleId + (q.score !== null ? ', score ' + q.score : '') + (q.publishAt ? ', goes public about ' + whenText(q.publishAt) : '') })])); });
       r.skipped.forEach(function (s) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'skip ' + (s.kind || '?') + ' ' + (s.target || '-') + (s.title ? ' | ' + s.title : '') }), el('span', { class: 'muted', text: s.reason + (s.detail ? ' (' + s.detail + ')' : '') })])); });
     }).catch(function () { setText($('posts-preview-sum'), 'Preview unavailable.'); });
   }

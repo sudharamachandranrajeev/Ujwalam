@@ -472,6 +472,27 @@ that takes both schemes. Kick (rtmps only) cannot use it and stays `rtmps`; a st
 refused at build time. The host is unchanged and re-checks the scheme against the chosen transport when it connects.
 Readiness accepts either scheme for Twitch and asks for a restart when the address changes scheme after start.
 
+**D310 (proposed 2026-11-09): Scheduled posting behind flag `post-schedule` (off).** Each clip the auto-post chain
+queues uploads to YouTube as private with `status.publishAt` (UTC). Slot = the later of the channel's latest future
+scheduled post (private + publishAt after now, read with youtube.readonly: channels.list mine -> uploads playlist ->
+playlistItems -> videos.list part=status, only when a clip needs a slot) and the latest slot already in the upload
+queue (any state), plus intervalHours; never sooner than now + minLeadHours + marginMinutes; rounded up to the
+minute. Settings in `data/posting/schedule.json` (6 h from the user; lead 1 h, margin 15 min, 20 x 50 pages: agent
+defaults). Slots go out in queue order and are saved on the queue item; a retry keeps its slot while it is still at
+least minLead ahead, and a failed item keeps its slot (the gap stays). The time is re-checked right before an upload
+session starts or resumes (>= now + minLead) and before every chunk (>= now + margin); every chunk request is aborted chunkDeadlineSeconds (120 s) before the time,
+and the final chunk only starts when its estimated transfer (slowest measured chunk, else fallbackKbps) fits;
+after an abort a progress query decides (finished = done, else re-slotted); a time too close drops an
+unfinished session and the clip gets a new slot at the end. Each session's publish time is saved with it; an
+unfinished session whose time differs from the slot is dropped and a new one started, and the time recorded as
+scheduled is always the one the finished session carried. A finished upload confirmed after its time passed is marked
+`went-public-early` with a plain message. `videos.update` after upload is not used (needs the broad youtube scope).
+Fail closed: without the readonly scope (sign-in again needed), on a failed read, on a read that hit the page cap
+(`schedule-read-incomplete`) or a bad settings file, the clip waits without a slot and nothing uploads; no attempt is
+used. Sign-in asks for upload + readonly only while the flag is on. Nothing reads, slots or uploads while live. With
+the flag on, `auto --run` only approves; the studio queue uploads. `youtube upload --id` (manual) stays an unscheduled
+private upload. Evidence: `docs/evidence/2026-11-09-scheduled-posting.md`.
+
 ## Files changed
 
 - `app/host/lib/outputs-plan.mjs`

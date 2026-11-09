@@ -13,6 +13,7 @@ import {
   CANVAS_TAIL, LEDGER_NAME, NAME_DATE, UPLOAD_KINDS, checkLimits, cleanProfile, createLedger, createPostStore, loadLimits,
   loadTemplates, pickYoutubeTarget, renderText, sha256File, unresolvedKeys,
 } from './index.mjs';
+import { loadScheduleConfig, nextSlot, ownLastSlot, savedChannelLast, toIso } from './schedule.mjs';
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isFile = (f) => { try { return statSync(f).isFile(); } catch { return false; } };
@@ -125,7 +126,27 @@ export async function previewRules(opts) {
     else { const w = whyNoRule(p, rulesDoc.rules); skipped.push({ ...head(p), reason: w.reason, detail: w.detail, ...text(p) }); }
   }
   for (const q of queued) if (!UPLOAD_TARGETS.includes(q.target)) q.note = 'not a YouTube upload target: approval only';
-  return { mode: describeMode({ flagOn: opts.flagOn === true, rules: rulesDoc }), blocked, queued, skipped, generatedAt: now.toISOString(), note: 'dry run: nothing written, nothing sent' };
+  const schedule = opts.scheduleOn === true ? estimateSlots({ dataDir: opts.dataDir, queued, nowMs: now.getTime(), file: opts.scheduleFile }) : { on: false };
+  return { mode: describeMode({ flagOn: opts.flagOn === true, rules: rulesDoc }), blocked, queued, skipped, schedule, generatedAt: now.toISOString(), note: 'dry run: nothing written, nothing sent' };
+}
+
+/** post-schedule estimate (read-only, no network): the upload queue's own slots plus the channel schedule saved by the
+ *  last real run. Sets q.publishAt (UTC ISO) on each item that would upload. The real slot is decided when the item
+ *  is queued, after a fresh read of the channel, so it can be later than this estimate. */
+function estimateSlots({ dataDir, queued, nowMs, file }) {
+  let cfg;
+  try { cfg = file ? loadScheduleConfig(file) : loadScheduleConfig(); } catch { return { on: true, error: 'schedule-config-bad' }; }
+  const qdoc = readJson(path.join(dataDir, 'posting', 'upload-queue.json'));
+  if (qdoc?.schedule?.truncated === true) return { on: true, error: 'schedule-read-incomplete' }; // same as the queue: no time is guessed
+  const items = isPlain(qdoc?.items) ? Object.values(qdoc.items) : [];
+  const channelLast = savedChannelLast(qdoc, nowMs);
+  let own = ownLastSlot(items); // same as the queue: a failed item's slot is never given back
+  for (const q of queued) {
+    if (!q.actions.includes('upload') || !UPLOAD_TARGETS.includes(q.target)) continue;
+    own = nextSlot({ channelLast, ownLast: own, nowMs, cfg });
+    q.publishAt = toIso(own);
+  }
+  return { on: true, intervalHours: cfg.intervalHours, minLeadHours: cfg.minLeadHours, channelReadAt: typeof qdoc?.schedule?.readAt === 'string' ? qdoc.schedule.readAt : null, estimate: true };
 }
 
 /** Plain-text report for the CLI. */
@@ -134,8 +155,14 @@ export function formatPreview(r) {
   L.push(`auto-post preview (dry run, nothing written or sent): ${r.mode.enabled ? 'on' : 'off'}, ${r.mode.ruleCount} rule(s), autoUpload ${r.mode.autoUpload}, privacy private`);
   if (r.blocked) L.push(`LIVE CHECK: a run would be refused now (${r.blocked}); everything below would be held`);
   L.push(`would queue: ${r.queued.length}`);
+  if (r.schedule?.on) {
+    L.push(r.schedule.error === 'schedule-read-incomplete' ? 'scheduled posting: on, but the channel has more uploads than are checked (raise maxPages in data/posting/schedule.json); nothing would upload'
+      : r.schedule.error ? 'scheduled posting: on, but the settings file data/posting/schedule.json is not valid (nothing would upload)'
+      : `scheduled posting: on, every ${r.schedule.intervalHours} h; publish times below are estimates (UTC)${r.schedule.channelReadAt ? `, channel last read ${r.schedule.channelReadAt}` : ', channel not read yet'}; the real time is set when the clip is queued`);
+  }
   for (const q of r.queued) {
     L.push(`  [${q.actions.join('+')}] ${q.kind} -> ${q.target} (rule ${q.ruleId}${q.score !== null ? `, score ${q.score}` : ''}) ${q.id}${q.note ? ` | ${q.note}` : ''}`);
+    if (q.publishAt) L.push(`      goes public: ${q.publishAt} (estimate)`);
     L.push(`      title: ${q.title}`);
     for (const line of String(q.description).split('\n')) L.push(`      | ${line}`);
   }
