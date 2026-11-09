@@ -298,3 +298,36 @@ After a clip job that made clips, with flags `posting` and `auto-post` on and a 
 ## D301 (2026-11-08) Montage and won-reel posting; upload queue in the UI
 
 The auto-post chain also packages montages and won-match reels from `<data>\clips\uploads.json` (kinds short, montage, won-reel), into `<data>\posting\packages`. Target by length and aspect from data/posting/limits.json: vertical within `youtube-shorts.video.maxDurationSec` (60, agent default, unverified) goes to youtube-shorts, anything longer or horizontal to a new `youtube-video` target; aspect is read from the file name's canvas token. Auto-post rules gain `kinds` (default short only; minScore applies to shorts only); the committed rules stay empty. Uploads stay private through the same ledger and queue. The control page and the Qt Posts view show the queue (counts, next retry, plain reason, per-item state, link when done) with Retry now (`POST /ui/api/posts/queue/retry`: session + CSRF, requeue only, refused while live or when live state is unreadable). Evidence: docs/evidence/2026-11-08-auto-post-chain.md.
+
+**D303 (2026-11-09) Stream recovery after a host crash.** Flag `stream-recovery` (off by default). When the host
+crashes while live, the launcher restarts the host, reloads the project and starts the recording in a new file. It
+then starts again exactly the stream sinks its last `outputs.status` poll saw starting, live or retrying, and only
+when all of these hold: the launcher's go-live authority is armed and the sink was not stopped by the guard; the project reloaded; the host was ready
+within `maxGapMs`; and fewer than `maxRecoveries` recoveries happened in `windowMs` (`data/live/recovery.json`,
+proposed values 2 / 10 min / 90 s).
+
+The launcher alone owns the go-live authority, in memory; nothing on disk is read for a decision. The UI server uses
+it over the launcher's IPC channel:
+
+- `begin` before a confirmed "yes, on air" start, a generation check right before the host call (a stale start is
+  not sent), and `arm(generation)` after the host accepted it. If a Stop came in meanwhile, the arm is refused and
+  the UI server stops those streams again at once, so the Stop wins.
+- `revoke` before a confirmed Stop or End all reaches the host. It takes effect at once, and its answer waits for any
+  recovery start in flight.
+
+The recovery decision and its `stream.start` run in one serialized section. If a revoke overtook the start, the
+launcher stops those sinks again. A revoke without an answer within 10 s closes the channel, and a closed channel or
+an exited UI server closes the authority for the session (fail closed). The live-test guard excludes the sinks it
+stops and revokes before stopping everything. A new launcher starts with a new, unarmed authority, so a launcher
+restart never goes live by itself.
+
+Past the limit, the streams stay off, the authority is revoked (`recovery-limit`) and the page says to check the host
+log. Every decision is logged, added to the restart marker and shown on the control page
+(`<data>/live/stream-recovery.json`, no keys or URLs; `stream-authority.json` is a diagnostic mirror only). Platform
+grace windows are UNVERIFIED. Evidence: docs/evidence/2026-11-09-stream-recovery.md.
+
+**D304 (2026-11-09) Match gate on the "while" clip path.** `record-clips` live-review jobs pass the H recording to
+`clipper.py live-review`. When the D286 match gate is on in Settings and no `--matches` file is given, live-review
+runs the detector pass on the recording, segments and decides matches with `match_gate`, writes `matches.json` and
+drops saves inside gated-out matches. A gate that is off, a missing recording or any error keeps every save, with a
+reason. The runtime of the detect pass on a long recording is UNVERIFIED. Evidence: docs/evidence/2026-11-09-stream-recovery.md.
