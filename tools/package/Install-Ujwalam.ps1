@@ -244,6 +244,8 @@ Write-Pointer $currentFile $version
 Copy-Item -LiteralPath (Join-Path $pkg 'Ujwalam.cmd') -Destination (Join-Path $InstallRoot 'Ujwalam.cmd') -Force
 # The shortcuts' target: a windowless exe that runs the version in current.txt (no console window, D191; 2026-11-08).
 Copy-Item -LiteralPath (Join-Path $pkg 'ujwalam-start.exe') -Destination (Join-Path $InstallRoot 'ujwalam-start.exe') -Force
+# The shortcuts' icon (app/studio/res/ujwalam.ico), kept in the install root so it survives version switches.
+if (Test-Path -LiteralPath (Join-Path $pkg 'ujwalam.ico')) { Copy-Item -LiteralPath (Join-Path $pkg 'ujwalam.ico') -Destination (Join-Path $InstallRoot 'ujwalam.ico') -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'data') | Out-Null
 Say "installed: current $version$(if ($cur -and $cur -ne $version) { ", previous $cur (Install-Ujwalam.ps1 -Rollback switches back)" })"
 
@@ -252,12 +254,15 @@ if (-not $NoShortcuts) {
   if (-not $StartMenuDir) { $StartMenuDir = [Environment]::GetFolderPath('Programs') }
   if (-not $DesktopDir) { $DesktopDir = [Environment]::GetFolderPath('Desktop') }
   $shell = New-Object -ComObject WScript.Shell
+  $iconFile = Join-Path $InstallRoot 'ujwalam.ico'
+  $iconLoc = if (Test-Path -LiteralPath $iconFile) { "$iconFile,0" } else { (Join-Path $InstallRoot 'ujwalam-start.exe') + ',0' }
   foreach ($dir in @($StartMenuDir, $DesktopDir)) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $lnk = $shell.CreateShortcut((Join-Path $dir $ShortcutName))
     $lnk.TargetPath = Join-Path $InstallRoot 'ujwalam-start.exe'
     $lnk.Arguments = '--allow-devices' # capture card, facecam, mic (user, 2026-11-08, D282)
     $lnk.WorkingDirectory = $InstallRoot
+    $lnk.IconLocation = $iconLoc
     $lnk.Description = 'Ujwalam alpha with devices (runs the version in current.txt)'
     $lnk.Save()
     Say "shortcut: $(Join-Path $dir $ShortcutName)"
@@ -265,6 +270,7 @@ if (-not $NoShortcuts) {
     $lnk.TargetPath = Join-Path $InstallRoot 'ujwalam-start.exe'
     $lnk.Arguments = '--live --allow-devices'
     $lnk.WorkingDirectory = $InstallRoot
+    $lnk.IconLocation = $iconLoc
     $lnk.Description = 'Ujwalam alpha, stream targets set up (going live still needs Start stream and the typed yes, on air)'
     $lnk.Save()
     Say "shortcut: $(Join-Path $dir $LiveShortcutName)"

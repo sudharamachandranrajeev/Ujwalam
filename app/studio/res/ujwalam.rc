@@ -1,0 +1,3 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// App icon (tools/make-icon.mjs draws it). Id 1 is the lowest group icon id, so Explorer, shortcuts and the taskbar use it.
+1 ICON "ujwalam.ico"

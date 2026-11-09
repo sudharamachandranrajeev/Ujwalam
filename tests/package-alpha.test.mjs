@@ -11,7 +11,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFile
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { START_EXE } from '../app/studio/tools/build.mjs';
+import { EXE as STUDIO_EXE, START_EXE } from '../app/studio/tools/build.mjs';
 import { changelogExcerpt, releaseInfo } from '../tools/package/build-alpha.mjs';
 import { allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
 import { peInfo } from '../tools/package/pe.mjs';
@@ -20,6 +20,7 @@ import { CLIP_MAKER_FIX, clipTools } from '../services/studio-ui/record-clips.mj
 import { extractEntry, readZip, writeZip } from '../tools/package/zip.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const ICO = path.join(REPO, 'app', 'studio', 'res', 'ujwalam.ico');
 const tmp = (p) => mkdtempSync(path.join(os.tmpdir(), `ujw-pkg-${p}-`));
 const sha = (b) => createHash('sha256').update(b).digest('hex');
 
@@ -205,9 +206,10 @@ function fakePackage(root, version) {
   // The real start stub when it is built (npm run build:studio); otherwise a stand-in file the installer only copies.
   if (existsSync(START_EXE)) copyFileSync(START_EXE, path.join(pkg, 'ujwalam-start.exe'));
   else writeFileSync(path.join(pkg, 'ujwalam-start.exe'), 'stand-in\n');
+  copyFileSync(ICO, path.join(pkg, 'ujwalam.ico'));
   writeFileSync(path.join(pkg, 'release.json'), JSON.stringify({ version, nodeMin: '22.13.0' }));
   writeFileSync(path.join(pkg, 'tools', 'package', 'run-installed.mjs'), `// ${version}\nconsole.log('fake ${version}');\n`);
-  const rels = ['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'release.json', 'tools/package/run-installed.mjs'];
+  const rels = ['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'ujwalam.ico', 'release.json', 'tools/package/run-installed.mjs'];
   writeFileSync(path.join(pkg, 'SHA256SUMS.txt'), rels.map((r) => `${sha(readFileSync(path.join(pkg, r)))}  ${r}\n`).join(''));
   return pkg;
 }
@@ -228,16 +230,18 @@ test('Install-Ujwalam.ps1 on a fake package: install, shortcuts, tamper refused,
     assert.equal(r.code, 0, r.out);
     assert.equal(readFileSync(path.join(ir, 'current.txt'), 'utf8'), '0.1.0-alpha.1\r\n');
     assert.ok(!existsSync(path.join(ir, 'previous.txt')));
-    for (const f of ['0.1.0-alpha.1/release.json', 'Ujwalam.cmd', 'ujwalam-start.exe', 'data']) assert.ok(existsSync(path.join(ir, f)), f);
+    for (const f of ['0.1.0-alpha.1/release.json', 'Ujwalam.cmd', 'ujwalam-start.exe', 'ujwalam.ico', 'data']) assert.ok(existsSync(path.join(ir, f)), f);
     for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha).lnk')), d);
     for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha, LIVE).lnk')), `${d} LIVE (D281)`);
     // Arguments: devices on both (D282), stream targets only on LIVE (read back through the shell COM object).
     // Target: the windowless ujwalam-start.exe, not Ujwalam.cmd, so no console window opens (D191; 2026-11-08).
     const lnks = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      `$s = New-Object -ComObject WScript.Shell; foreach ($n in 'Ujwalam (alpha).lnk','Ujwalam (alpha, LIVE).lnk') { $l = $s.CreateShortcut((Join-Path '${path.join(root, 'start')}' $n)); $l.Arguments; $l.TargetPath }`],
+      `$s = New-Object -ComObject WScript.Shell; foreach ($n in 'Ujwalam (alpha).lnk','Ujwalam (alpha, LIVE).lnk') { $l = $s.CreateShortcut((Join-Path '${path.join(root, 'start')}' $n)); $l.Arguments; $l.TargetPath; $l.IconLocation }`],
     { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
-    assert.deepEqual([lnks[0], lnks[2]], ['--allow-devices', '--live --allow-devices']);
-    for (const target of [lnks[1], lnks[3]]) assert.equal(target.toLowerCase(), path.join(ir, 'ujwalam-start.exe').toLowerCase());
+    assert.deepEqual([lnks[0], lnks[3]], ['--allow-devices', '--live --allow-devices']);
+    for (const target of [lnks[1], lnks[4]]) assert.equal(target.toLowerCase(), path.join(ir, 'ujwalam-start.exe').toLowerCase());
+    // Both shortcuts carry the app icon (the .ico copied into the install root).
+    for (const loc of [lnks[2], lnks[5]]) assert.equal(loc.toLowerCase(), `${path.join(ir, 'ujwalam.ico')},0`.toLowerCase());
     // The root launcher follows current.txt to that version's launcher and on to its run-installed.mjs.
     let run = spawnSync('cmd.exe', ['/d', '/c', path.join(ir, 'Ujwalam.cmd')], { encoding: 'utf8', windowsHide: true });
     assert.equal(run.stdout.trim(), 'fake 0.1.0-alpha.1');
@@ -318,7 +322,7 @@ test('full build (real host exe + OBS runtime)', { skip: process.env.UJWALAM_PAC
     const names = readZip(r.zip).map((e) => e.name.replace(/^[^/]+\//, ''));
     assert.deepEqual(allowProblems(names), []);
     assert.deepEqual(forbiddenProblems(names, { fontNames: ['Corbel', 'Consolas'] }), []);
-    for (const n of ['bin/ujwalam-host.exe', 'studio/ujwalam-studio.exe', 'studio/platforms/qwindows.dll', 'studio/platforms/qoffscreen.dll', 'studio/Qt6Network.dll', 'studio/Qt6Widgets.dll', 'Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'SHA256SUMS.txt', 'notices/GPL-2.0.txt', 'notices/SOURCE-OFFER.txt']) assert.ok(names.includes(n), n);
+    for (const n of ['ujwalam.ico', 'bin/ujwalam-host.exe', 'studio/ujwalam-studio.exe', 'studio/platforms/qwindows.dll', 'studio/platforms/qoffscreen.dll', 'studio/Qt6Network.dll', 'studio/Qt6Widgets.dll', 'Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'SHA256SUMS.txt', 'notices/GPL-2.0.txt', 'notices/SOURCE-OFFER.txt']) assert.ok(names.includes(n), n);
   } finally { rmSync(out, { recursive: true, force: true }); }
 });
 
@@ -389,4 +393,60 @@ test('HOW-TO.md ships in the zip: allowlisted top file, built from docs/how-to.m
   assert.match(doc, /^# Ujwalam how-to/);
   const build = readFileSync(path.join(REPO, 'tools', 'package', 'build-alpha.mjs'), 'utf8');
   assert.match(build, /put\('HOW-TO\.md', 'generated', \{ src: path\.join\(REPO, 'docs', 'how-to\.md'\) \}\)/);
+});
+
+// ---- app icon (tools/make-icon.mjs) ----------------------------------------------------------------------------------
+// Top-level resource types of a PE file (RT_ICON = 3, RT_GROUP_ICON = 14), read from its resource directory.
+function peResourceTypes(file) {
+  const b = readFileSync(file);
+  const pe = b.readUInt32LE(0x3c);
+  const nSec = b.readUInt16LE(pe + 6), optSize = b.readUInt16LE(pe + 20), opt = pe + 24;
+  const dd = opt + (b.readUInt16LE(opt) === 0x20b ? 112 : 96);
+  const rva = b.readUInt32LE(dd + 2 * 8);
+  if (!rva) return [];
+  let off = -1;
+  for (let i = 0; i < nSec; i++) {
+    const s = opt + optSize + i * 40, va = b.readUInt32LE(s + 12), raw = b.readUInt32LE(s + 20), len = Math.max(b.readUInt32LE(s + 8), b.readUInt32LE(s + 16));
+    if (rva >= va && rva < va + len) off = raw + (rva - va);
+  }
+  if (off < 0) return [];
+  const nNamed = b.readUInt16LE(off + 12), nId = b.readUInt16LE(off + 14), ids = [];
+  for (let i = 0; i < nNamed + nId; i++) if (i >= nNamed) ids.push(b.readUInt32LE(off + 16 + i * 8));
+  return ids;
+}
+
+test('app icon: .ico has all sizes as PNG entries, matches the generator, and ships (allowlist, installer, packager)', async () => {
+  const { build, ICO_SIZES } = await import('../tools/make-icon.mjs');
+  const ico = readFileSync(ICO);
+  assert.equal(ico.readUInt16LE(2), 1, 'type = icon');
+  const n = ico.readUInt16LE(4);
+  const sizes = [];
+  for (let i = 0; i < n; i++) {
+    const o = 6 + 16 * i, w = ico[o] || 256, len = ico.readUInt32LE(o + 8), off = ico.readUInt32LE(o + 12);
+    assert.equal(ico.subarray(off, off + 8).toString('hex'), '89504e470d0a1a0a', `entry ${w} is a PNG`);
+    assert.equal(ico.readUInt32BE(off + 16), w, 'PNG width = entry width');
+    assert.ok(off + len <= ico.length);
+    sizes.push(w);
+  }
+  assert.deepEqual(sizes, [16, 20, 24, 32, 40, 48, 64, 256]);
+  assert.deepEqual(sizes, [...ICO_SIZES]);
+  assert.ok(build().ico.equals(ico), 'committed .ico equals the generator output (run node tools/make-icon.mjs)');
+  assert.ok(readFileSync(path.join(REPO, 'app', 'studio', 'res', 'ujwalam.svg'), 'utf8').startsWith('<svg'));
+  assert.ok(readFileSync(path.join(REPO, 'ui', 'favicon.svg'), 'utf8').startsWith('<svg'));
+  assert.match(readFileSync(path.join(REPO, 'ui', 'index.html'), 'utf8'), /<link rel="icon"[^>]*href="\/favicon\.svg"/);
+  assert.deepEqual(allowProblems(['ujwalam.ico', 'ui/favicon.svg']), []);
+  const ps = readFileSync(path.join(REPO, 'tools', 'package', 'Install-Ujwalam.ps1'), 'utf8');
+  assert.equal((ps.match(/\.IconLocation = \$iconLoc/g) ?? []).length, 2, 'both shortcuts set IconLocation');
+  assert.match(readFileSync(path.join(REPO, 'tools', 'package', 'build-alpha.mjs'), 'utf8'), /put\('ujwalam\.ico'/);
+  const cm = readFileSync(path.join(REPO, 'app', 'studio', 'CMakeLists.txt'), 'utf8');
+  assert.equal((cm.match(/res\/ujwalam\.rc/g) ?? []).length, 2, 'both exes get the .rc');
+});
+
+test('app icon: the built studio and start exes carry an icon resource', (t) => {
+  const exes = [STUDIO_EXE, START_EXE].filter((f) => existsSync(f));
+  if (exes.length < 2) { t.skip('build the studio first (npm run build:studio)'); return; }
+  for (const f of exes) {
+    const ids = peResourceTypes(f);
+    assert.ok(ids.includes(14) && ids.includes(3), `${path.basename(f)} has RT_GROUP_ICON and RT_ICON (types: ${ids})`);
+  }
 });
