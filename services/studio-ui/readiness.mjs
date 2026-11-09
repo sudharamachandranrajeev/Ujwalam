@@ -267,7 +267,10 @@ export async function defaultAudioCheck(ctx) {
     const missing = e?.code === 'RPC_-32601' || e?.code === 'NO_METHOD' || /method.not.found/i.test(String(e?.message));
     return audioUnreadable(missing ? 'the host cannot report it (update the studio)' : 'the host did not answer', mutedNote);
   }
-  const sources = Array.isArray(r?.sources) ? r.sources : [];
+  // An answer without a sources list (null, {}, a string) is unreadable state, not "no sources" (2026-11-09 failure
+  // sims): it fails like a host that cannot report it. An empty list is a real answer (no device audio): warn below.
+  if (!Array.isArray(r?.sources)) return audioUnreadable('the host\'s answer cannot be read', mutedNote);
+  const sources = r.sources;
   if (!sources.length) return item('audio', 'warn', `The host reports no audio sources.${mutedNote}`);
   const nameOf = (s) => String(s?.name ?? s?.id ?? 'source').slice(0, 40);
   const bad = sources.filter((s) => ctx.config.audio.failStates.includes(s?.state));
