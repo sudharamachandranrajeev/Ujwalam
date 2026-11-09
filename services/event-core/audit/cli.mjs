@@ -13,7 +13,7 @@
 import { createWriteStream, existsSync } from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
-import { resolveDataDir } from '../config.mjs';
+import { dataDirNote, resolveCliDataDir } from '../config.mjs';
 import { acquireLock } from './lock.mjs';
 import { AuditError, DB_NAME, DEFAULT_RETENTION_DAYS, REPO_ROOT, backupAudit, isInside, openStore } from './store.mjs';
 
@@ -30,7 +30,7 @@ async function typedConfirm(io) {
 export async function auditCommand(args, io = { out: (s) => console.log(s) }) {
   const sub = args._[1];
   let dataDir;
-  try { dataDir = resolveDataDir({ dataDir: args['data-dir'] }); } catch (e) { io.out(`audit: ${e.message}`); return 1; }
+  try { const r = resolveCliDataDir({ dataDir: args['data-dir'] }); dataDir = r.dir; if (r.source !== 'option') io.out(`audit: ${dataDirNote(r)}`); } catch (e) { io.out(`audit: ${e.message}`); return 1; }
   const file = path.join(dataDir, DB_NAME);
   try {
     if (sub === 'purge') return await purgeCmd(args, io, dataDir, file);

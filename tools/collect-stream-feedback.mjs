@@ -141,8 +141,10 @@ async function main() {
   const a = parseArgs(process.argv.slice(2));
   let dbFile = a.db;
   if (!dbFile) {
-    const { resolveDataDir } = await import('../services/event-core/config.mjs');
-    dbFile = path.join(resolveDataDir({ dataDir: a['data-dir'] }), 'event-core.db');
+    const { resolveCliDataDir, dataDirNote } = await import('../services/event-core/config.mjs');
+    const r = resolveCliDataDir({ dataDir: a['data-dir'] });
+    if (r.source !== 'option') console.log(`collect-stream-feedback: ${dataDirNote(r)}`);
+    dbFile = path.join(r.dir, 'event-core.db');
   }
   // Defaults for the question prefix and the marker come from data/live/test-kit.json (D305 proposed) when it reads.
   let kit = null;
