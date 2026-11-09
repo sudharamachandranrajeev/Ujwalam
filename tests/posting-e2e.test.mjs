@@ -289,7 +289,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
   /** A settings file in the test's data folder: the repo defaults with `over` applied. */
   const schedFile = (e, over) => {
     const p = path.join(e.dataDir, 'schedule.json');
-    writeFileSync(p, JSON.stringify({ intervalHours: 6, minLeadHours: 1, marginMinutes: 15, chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 20, pageSize: 50, ...over }));
+    writeFileSync(p, JSON.stringify({ intervalHours: 6, minLeadHours: 1, marginMinutes: 15, chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 20, pageSize: 50, maxAheadDays: 730, minGapMinutes: 60, ...over }));
     return p;
   };
 
@@ -564,4 +564,75 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
       scheduleFile: schedFile(e2, { marginMinutes: 1, chunkDeadlineSeconds: 59.5, fallbackKbps: 1000 }) }).afterRun(e2.runDir, IDLE);
     assert.deepEqual(sent(g2), [iso(SLOT)]);
   });
+  // D314 (user 2026-11-09): a retry less than 1 h from its time gets now + lead + margin; later queued clips re-chain 6 h apart.
+  test('D314: a retry 45 min from its time gets now + 1 h 15 and the later queued clips re-chain 6 h apart from it', async () => {
+    const g = await fakeGoogle(); const e = setup(); const c = schedChain(e, g);
+    g.opt.initFailures = 3; // every session start fails once: three queued clips with slots, no session, backing off
+    await c.afterRun(e.runDir, IDLE);
+    assert.equal(g.videos.length, 0);
+    assert.deepEqual(e.queue().items().map((i) => [i.publishAt, i.session ?? null]), [[iso(FIRST), null], [iso(FIRST + 6 * HOUR), null], [iso(FIRST + 12 * HOUR), null]]);
+    e.clock.t = T0 + 30 * MIN; // the first slot (T0 + 1 h 15) is now 45 min away: less than the 1 h lead
+    await c.tick(IDLE);
+    const now = T0 + 30 * MIN; const R = now + HOUR + 15 * MIN;
+    assert.deepEqual(sent(g), [iso(R), iso(R + 6 * HOUR), iso(R + 12 * HOUR)]);
+    assert.deepEqual(e.queue().items().map((i) => i.state), ['done', 'done', 'done']);
+    assert.ok(e.queue().items().every((i) => !i.reslot));
+    assert.equal(readQueueSummary(e.dataDir, null, now).nextPublishAt, iso(R), 'the control page shows the new time');
+  });
+
+  test('D314: uploaded clips keep their times; a new later clip goes 6 h after the latest uploaded one, not after the retry', async () => {
+    const g = await fakeGoogle(); const e = setup(); const c = schedChain(e, g);
+    g.opt.initFailures = 1; // the first clip's session start fails; the other two upload at FIRST + 6 h and FIRST + 12 h
+    await c.afterRun(e.runDir, IDLE);
+    assert.deepEqual(sent(g), [iso(FIRST + 6 * HOUR), iso(FIRST + 12 * HOUR)]);
+    e.clock.t = T0 + 30 * MIN; addRow(e, { name: 'codm_montage_20261109-100000_kills-7_03_v.mp4', kind: 'montage', seconds: 45 });
+    await c.afterRun(e.runDir, IDLE);
+    const R = T0 + 30 * MIN + HOUR + 15 * MIN;
+    const items = e.queue().items();
+    assert.equal(items[1].sentPublishAt, iso(FIRST + 6 * HOUR)); assert.equal(items[2].sentPublishAt, iso(FIRST + 12 * HOUR));
+    assert.equal(items[0].sentPublishAt, iso(R), 'the retry: now + 1 h 15');
+    // the later clip: never earlier than the channel's latest scheduled post (the uploaded FIRST + 12 h) + 6 h
+    assert.equal(items[3].sentPublishAt, iso(FIRST + 18 * HOUR));
+  });
+
+  test('D314: a clip with an open session keeps its time (Google applies the session time); only the retry moves', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0], ROWS[2]]); g.opt.hideOwnUploads = true; const c = schedChain(e, g);
+    g.opt.initFailures = 1; g.opt.chunkFailOnce = true; // clip 1: no session; clip 2: session open, first chunk failed
+    await c.afterRun(e.runDir, IDLE);
+    const before = e.queue().items();
+    assert.equal(before[0].session ?? null, null); assert.ok(before[1].session); assert.equal(before[1].sessionPublishAt, iso(FIRST + 6 * HOUR));
+    e.clock.t = T0 + 30 * MIN;
+    await c.tick(IDLE);
+    const R = T0 + 30 * MIN + HOUR + 15 * MIN;
+    assert.deepEqual(e.queue().items().map((i) => i.sentPublishAt), [iso(R), iso(FIRST + 6 * HOUR)]);
+    assert.equal(g.videos.length, 2); assert.equal(g.count('init'), 3, 'clip 2 resumed its session, no new one');
+  });
+
+  test('D314 gap: a retry whose floor equals a channel post goes 1 h after it (read from the fake channel)', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]); const c = schedChain(e, g);
+    g.opt.initFailures = 1;
+    await c.afterRun(e.runDir, IDLE);
+    g.opt.channel = [vid('p1', 'private', iso(T0 + HOUR + 45 * MIN))]; // exactly the retry floor at now = T0 + 30 min
+    e.clock.t = T0 + 30 * MIN; await c.tick(IDLE);
+    assert.deepEqual(sent(g), [iso(T0 + 2 * HOUR + 45 * MIN)]);
+    assert.deepEqual(qfile(e).schedule.channelTimes, [iso(T0 + HOUR + 45 * MIN)]);
+  });
+
+  test('D314 cap: a slot more than maxAheadDays ahead is not given; the clip waits (plain reason, no attempt) and goes up later', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]);
+    g.opt.channel = [vid('s1', 'private', iso(T0 + 20 * HOUR))]; // next slot T0 + 26 h, past a 1-day cap
+    const c = schedChain(e, g, { scheduleFile: schedFile(e, { maxAheadDays: 1 }) });
+    await c.afterRun(e.runDir, IDLE);
+    let it = e.queue().items()[0];
+    assert.equal(g.count('init'), 0); assert.equal(it.state, 'queued'); assert.equal(it.publishAt, null);
+    assert.equal(it.reason, 'schedule-beyond-cap'); assert.equal(it.attempts, 0);
+    assert.match(readQueueSummary(e.dataDir, null, T0).message, /more than the allowed time ahead \(maxAheadDays/);
+    const reads = g.count('channels');
+    e.clock.t = T0 + HOUR; await c.tick(IDLE);
+    assert.equal(g.count('channels'), reads, 'a capped clip does not re-read the channel before its wait ends');
+    e.clock.t = T0 + 6 * HOUR + MIN; await c.tick(IDLE); // the cap is now T0 + 30 h: the slot fits
+    it = e.queue().items()[0];
+    assert.equal(it.state, 'done'); assert.deepEqual(sent(g), [iso(T0 + 26 * HOUR)]);
+  });
+
 });

@@ -12,7 +12,7 @@ import { main as cli } from '../services/posting/cli.mjs';
 import { READONLY_SCOPE, SCHEDULE_SCOPES, SCOPE, authUrl, createYoutubeAuth } from '../services/posting/oauth.mjs';
 import { formatPreview, previewRules } from '../services/posting/preview.mjs';
 import {
-  DEFAULT_SCHEDULE, HOUR_MS, SCHEDULE_FLAG, latestFutureSchedule, loadScheduleConfig, leadOk, nextSlot, ownLastSlot, planSlots, slotTooClose,
+  DEFAULT_SCHEDULE, HOUR_MS, SCHEDULE_FLAG, latestFutureSchedule, loadScheduleConfig, leadOk, nextSlot, ownLastSlot, planQueueSlots, planSlots, slotTooClose,
 } from '../services/posting/schedule.mjs';
 import { UploadError, uploadMetadata } from '../services/posting/youtube.mjs';
 
@@ -21,7 +21,7 @@ const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-sched-')); tmp.push(d); return d; };
 after(() => { for (const d of tmp) rmSync(d, { recursive: true, force: true }); });
 const PROFILE = { handles: { youtube: '@example-channel', twitch: 'example-channel' }, links: { discord: 'https://example.invalid/d' } };
-const CFG = { intervalHours: 6, minLeadHours: 1, marginMinutes: 15, chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 4, pageSize: 50 };
+const CFG = { intervalHours: 6, minLeadHours: 1, marginMinutes: 15, chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 4, pageSize: 50, maxAheadDays: 730, minGapMinutes: 60 };
 const T0 = Date.parse('2026-11-09T10:00:00Z');
 const iso = (t) => new Date(t).toISOString();
 
@@ -94,6 +94,74 @@ describe('slot math (UTC, pure)', () => {
     const fresh = iso(nextSlot({ nowMs: T0, cfg: CFG }));
     assert.equal(slotTooClose(fresh, T0 + 15 * 60000, CFG), false); assert.equal(slotTooClose(fresh, T0 + 16 * 60000, CFG), true);
     assert.equal(leadOk(fresh, T0, 75 * 60000), true); assert.equal(leadOk(null, T0, 0), false);
+  });
+  // D314 (user 2026-11-09): retry close to its time, re-chain, 2-year cap.
+  const Q = (id, publishAt, extra = {}) => ({ id, state: 'queued', publishAt: publishAt === null ? null : iso(publishAt), session: null, ...extra });
+  const planOf = (args) => Object.fromEntries(planQueueSlots({ nowMs: T0, cfg: CFG, ...args }).map((p) => [p.id, p.at === null ? null : iso(p.at)]));
+  test('D314: a retry less than 1 h from its time gets now + 1 h 15 (lead + margin); later queued clips re-chain 6 h apart', () => {
+    const items = [Q('a', T0 + 30 * 60000), Q('b', T0 + 6.5 * HOUR_MS), Q('c', T0 + 12.5 * HOUR_MS), Q('d', null)];
+    assert.deepEqual(planOf({ items }), { a: '2026-11-09T11:15:00.000Z', b: '2026-11-09T17:15:00.000Z', c: '2026-11-09T23:15:00.000Z', d: '2026-11-10T05:15:00.000Z' });
+    const p = planQueueSlots({ items, nowMs: T0, cfg: CFG });
+    assert.deepEqual(p.map((x) => [x.id, x.retry, x.rechain]), [['a', true, true], ['b', false, true], ['c', false, true], ['d', false, true]]);
+    // rounded up to the minute; a dropped too-close time (reslot, or the old 'slot-passed' reason) is a retry too
+    assert.equal(planOf({ items: [Q('a', null, { reslot: true })], nowMs: T0 + 1500 }).a, '2026-11-09T11:16:00.000Z');
+    assert.equal(planOf({ items: [Q('a', null, { reason: 'slot-passed' })] }).a, '2026-11-09T11:15:00.000Z');
+    // backing off after an error: the floor counts from when it may next try
+    assert.equal(planOf({ items: [Q('a', T0 + 30 * 60000, { nextAt: iso(T0 + 2 * HOUR_MS), reason: 'upload-failed' })] }).a, '2026-11-09T13:15:00.000Z');
+  });
+  test('D314: uploaded, failed and in-session clips keep their times; the re-chain never goes before the latest fixed time + 6 h', () => {
+    const items = [
+      { id: 'up', state: 'done', publishAt: iso(T0 + 8 * HOUR_MS), sentPublishAt: iso(T0 + 8 * HOUR_MS) },
+      Q('a', T0 + 20 * 60000),
+      Q('s', T0 + 40 * 60000, { session: 'https://example.invalid/s', sessionPublishAt: iso(T0 + 40 * 60000) }),
+      Q('b', T0 + 14 * HOUR_MS),
+      { id: 'f', state: 'failed', publishAt: iso(T0 + 3 * HOUR_MS) },
+    ];
+    const p = planOf({ items, channelLast: T0 + 8 * HOUR_MS });
+    assert.deepEqual(Object.keys(p).sort(), ['a', 'b'], 'done, failed and the open session are not touched');
+    assert.equal(p.a, '2026-11-09T11:40:00.000Z', 'the floor 11:15 is 35 min from the open session (10:40): moved to 10:40 + 1 h gap');
+    assert.equal(p.b, '2026-11-10T00:00:00.000Z', 'b: 6 h after the uploaded clip (T0 + 8 h), not 6 h after the retry');
+    // a later channel post pushes the re-chain further out, never earlier
+    assert.equal(planOf({ items, channelLast: T0 + 20 * HOUR_MS }).b, '2026-11-10T12:00:00.000Z');
+    // queued clips before the first retry in queue order keep their times and count as fixed
+    const q2 = [Q('early', T0 + 3 * HOUR_MS), Q('a', T0 + 10 * 60000), Q('b', T0 + 9 * HOUR_MS)];
+    assert.deepEqual(planOf({ items: q2 }), { a: '2026-11-09T11:15:00.000Z', b: '2026-11-09T19:00:00.000Z' });
+  });
+  test('D314 gap: a retry whose floor equals an uploaded clip time moves to the first free time (taken + minGapMinutes)', () => {
+    const items = [{ id: 'up', state: 'done', publishAt: iso(T0 + 75 * 60000), sentPublishAt: iso(T0 + 75 * 60000) }, Q('a', T0 + 30 * 60000), Q('b', T0 + 6 * HOUR_MS)];
+    assert.deepEqual(planOf({ items }), { a: '2026-11-09T12:15:00.000Z', b: '2026-11-09T18:15:00.000Z' });
+  });
+  test('D314 gap: a retry whose floor equals a channel post moves past every post within the gap', () => {
+    const items = [Q('a', T0 + 30 * 60000), Q('b', null)];
+    const p = planOf({ items, channelLast: T0 + 105 * 60000, channelTimes: [T0 + 75 * 60000, T0 + 105 * 60000] });
+    assert.deepEqual(p, { a: '2026-11-09T12:45:00.000Z', b: '2026-11-09T18:45:00.000Z' }, '11:15 taken -> 12:15, 30 min from 11:45 -> 12:45');
+    // a post 1 h or more away does not move it
+    assert.equal(planOf({ items, channelTimes: [T0 + 15 * 60000] }).a, '2026-11-09T11:15:00.000Z');
+  });
+  test('D314 gap: a new item and a retry in the same pass never share a time', () => {
+    const p = planQueueSlots({ items: [Q('n', null), Q('a', T0 + 30 * 60000)], nowMs: T0, cfg: CFG });
+    assert.deepEqual(p.map((x) => [x.id, iso(x.at)]), [['n', '2026-11-09T11:15:00.000Z'], ['a', '2026-11-09T12:15:00.000Z']]);
+    const at = p.map((x) => x.at); assert.ok(Math.abs(at[0] - at[1]) >= HOUR_MS);
+    const d = mk(); const f2 = path.join(d, 's.json');
+    for (const bad of [0, 361, 'x']) { writeFileSync(f2, JSON.stringify({ ...CFG, minGapMinutes: bad })); assert.throws(() => loadScheduleConfig(f2), (e) => e.code === 'schedule-config-bad'); }
+    assert.equal(loadScheduleConfig().minGapMinutes, 60);
+  });
+  test('D314: no retry = the D310 rule unchanged (only new clips get a slot, after the latest one)', () => {
+    const items = [Q('a', T0 + 5 * HOUR_MS), Q('b', null)];
+    assert.deepEqual(planOf({ items }), { b: '2026-11-09T21:00:00.000Z' });
+    assert.deepEqual(planOf({ items: [Q('a', T0 + 5 * HOUR_MS)] }), {});
+  });
+  test('D314 cap: no slot more than maxAheadDays ahead (repo: 730 days = 2 years); everything after it waits too', () => {
+    assert.equal(loadScheduleConfig().maxAheadDays, 730);
+    const cfg = { ...CFG, maxAheadDays: 1 };
+    assert.deepEqual(planOf({ items: [Q('a', T0 + 30 * 60000), Q('b', T0 + 7 * HOUR_MS), Q('c', null), Q('d', null), Q('e', null)], cfg }),
+      { a: '2026-11-09T11:15:00.000Z', b: '2026-11-09T17:15:00.000Z', c: '2026-11-09T23:15:00.000Z', d: '2026-11-10T05:15:00.000Z', e: null });
+    assert.deepEqual(planOf({ items: [Q('n', null)], channelLast: T0 + 730 * 24 * HOUR_MS - 5 * HOUR_MS }), { n: null }, 'past 2 years: waits');
+    assert.deepEqual(planOf({ items: [Q('n', null)], channelLast: T0 + 730 * 24 * HOUR_MS - 6 * HOUR_MS }), { n: iso(T0 + 730 * 24 * HOUR_MS) }, 'exactly 2 years: allowed');
+    const d = mk(); const f = path.join(d, 's.json');
+    for (const bad of [0, 3651, 'x']) { writeFileSync(f, JSON.stringify({ ...CFG, maxAheadDays: bad })); assert.throws(() => loadScheduleConfig(f), (e) => e.code === 'schedule-config-bad'); }
+    const missing = { ...CFG }; delete missing.maxAheadDays; writeFileSync(f, JSON.stringify(missing));
+    assert.throws(() => loadScheduleConfig(f), (e) => e.code === 'schedule-config-bad', 'never defaulted');
   });
   test('schedule.mjs has no network, auth or write code (the preview imports it)', () => {
     const src = readFileSync(path.join(ROOT, 'services', 'posting', 'schedule.mjs'), 'utf8').replace(/^\/\/.*$/gm, '');
@@ -176,6 +244,33 @@ describe('preview: planned publish time (estimate, read-only)', () => {
     assert.equal(r.schedule.channelReadAt, '2026-11-09T09:00:00.000Z');
     const text = formatPreview(r);
     assert.match(text, /scheduled posting: on, every 6 h/); assert.match(text, /goes public: 2026-11-10T04:00:00.000Z \(estimate\)/);
+  });
+  test('D314: the preview shows the retry and re-chained times, and a clip past maxAheadDays as waiting', async () => {
+    const f = fixture(); const now = () => new Date(T0);
+    mkdirSync(path.join(f.dataDir, 'posting'), { recursive: true });
+    writeFileSync(path.join(f.dataDir, 'posting', 'upload-queue.json'), JSON.stringify({ version: 1, note: null,
+      items: { a: { id: 'a', state: 'queued', publishAt: iso(T0 + 30 * 60000), session: null }, b: { id: 'b', state: 'queued', publishAt: iso(T0 + 6.5 * HOUR_MS), session: null } },
+      schedule: { channelLast: null, readAt: '2026-11-09T09:00:00.000Z' } }));
+    let r = await previewRules({ dataDir: f.dataDir, rules: f.rules, profile: PROFILE, now, log: [], scheduleOn: true });
+    assert.deepEqual(r.queued.map((q) => q.publishAt), ['2026-11-09T23:15:00.000Z', '2026-11-10T05:15:00.000Z'], 'after a (11:15) and b (17:15)');
+    // the preview uses the saved channel post times for the gap, like the queue
+    const qd = JSON.parse(readFileSync(path.join(f.dataDir, 'posting', 'upload-queue.json'), 'utf8'));
+    qd.schedule.channelTimes = [iso(T0 + 75 * 60000)]; writeFileSync(path.join(f.dataDir, 'posting', 'upload-queue.json'), JSON.stringify(qd));
+    r = await previewRules({ dataDir: f.dataDir, rules: f.rules, profile: PROFILE, now, log: [], scheduleOn: true });
+    assert.deepEqual(r.queued.map((q) => q.publishAt), ['2026-11-10T00:15:00.000Z', '2026-11-10T06:15:00.000Z'], 'a moved to 12:15, b 18:15');
+    delete qd.schedule.channelTimes; writeFileSync(path.join(f.dataDir, 'posting', 'upload-queue.json'), JSON.stringify(qd));
+    assert.equal(r.schedule.retries, 1); assert.equal(r.schedule.rechained, 2);
+    assert.match(formatPreview(r), /1 queued clip\(s\) came within 1 h of their time and would get a new time about 1 h from now, 2 queued clip\(s\) re-timed 6 h apart/);
+    const cap = path.join(f.dataDir, 'cap.json'); writeFileSync(cap, JSON.stringify({ ...CFG, maxAheadDays: 1 }));
+    r = await previewRules({ dataDir: f.dataDir, rules: f.rules, profile: PROFILE, now, log: [], scheduleOn: true, scheduleFile: cap });
+    assert.deepEqual(r.queued.map((q) => q.publishAt), ['2026-11-09T23:15:00.000Z', '2026-11-10T05:15:00.000Z']);
+    // cap T0 + 24 h: an uploaded clip at T0 + 20 h is fixed, so b and both new clips would be past the cap
+    const q =JSON.parse(readFileSync(path.join(f.dataDir, 'posting', 'upload-queue.json'), 'utf8'));
+    q.items.c = { id: 'c', state: 'done', publishAt: iso(T0 + 20 * HOUR_MS) }; // fixed: the re-chain goes after it
+    writeFileSync(path.join(f.dataDir, 'posting', 'upload-queue.json'), JSON.stringify(q));
+    r = await previewRules({ dataDir: f.dataDir, rules: f.rules, profile: PROFILE, now, log: [], scheduleOn: true, scheduleFile: cap });
+    assert.deepEqual(r.queued.map((q2) => [q2.publishAt ?? null, q2.publishNote ?? null]), [[null, 'beyond-cap'], [null, 'beyond-cap']]);
+    assert.match(formatPreview(r), /waits: its public time would be more than 1 days ahead \(maxAheadDays\)/);
   });
   test('the last channel read hit the page cap: no time is estimated, and the preview says why', async () => {
     const f = fixture();

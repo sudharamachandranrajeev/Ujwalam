@@ -15,6 +15,25 @@
 // Check before every chunk: publishAt >= now + marginMinutes, so an upload never finishes with a past time.
 // Bound on every chunk (youtube.mjs): the request is aborted at publishAt - chunkDeadlineSeconds, and the final chunk
 // only starts when its estimated transfer (slowest measured chunk speed, else fallbackKbps) fits before that deadline.
+//
+// Retry close to its time (D314, user 2026-11-09; planQueueSlots below):
+//   A queued clip with no open upload session whose time is less than minLeadHours away (or whose too-close time was
+//   already dropped: `reslot`) is a RETRY. The first retry in queue order gets the floor again: now + minLeadHours +
+//   marginMinutes, rounded up to the minute (1 h 15 min with the defaults). The user asked for "1 hour away"; exactly
+//   1 h cannot pass the session check (>= now + minLeadHours when the upload session starts, a moment later), so the
+//   closest safe value is the existing floor. If the clip is backing off after an error (nextAt later than now), the
+//   floor counts from nextAt, because it cannot start sooner. The retry ignores the other anchors (the user's rule).
+//   Every LATER queued clip in queue order that has no session yet is re-chained intervalHours apart from that time.
+//   FIXED times never move: the channel's latest future scheduled post (channelLast), clips already uploaded, clips
+//   with an open session (its publishAt is what Google will apply), failed clips (a failed slot stays a gap, D310) and
+//   queued clips before the first retry in queue order. Each re-chained slot after the retry is at least intervalHours
+//   after the previous chain slot AND after the latest fixed time, so a re-chain never moves a slot earlier than the
+//   channel's latest scheduled post + intervalHours, and never into the gap after an uploaded clip.
+//   Gap (Codex review 2026-11-09): the retry never lands within minGapMinutes (1 h) of a TAKEN time: every future
+//   scheduled post read from the channel (channelTimes), every fixed queue time and every slot given to a new item in the
+//   same pass. If the floor is taken it moves to the first free time after it (taken time + gap, rounded up). The later
+//   chain slots are intervalHours after the latest of all of these, so they cannot collide either.
+//   Cap: a slot more than maxAheadDays (730 = 2 years) ahead is not assigned; the clip waits ('schedule-beyond-cap').
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,7 +66,11 @@ export function loadScheduleConfig(file = DEFAULT_SCHEDULE) {
     fallbackKbps: num('fallbackKbps', 64, 1000000),
     maxPages: Math.floor(num('maxPages', 1, 100)),
     pageSize: Math.floor(num('pageSize', 1, 50)),
+    maxAheadDays: num('maxAheadDays', 1, 3650),
+    minGapMinutes: num('minGapMinutes', 1, 24 * 60),
   };
+  // The D314 retry keeps minGapMinutes from every taken time; the chain itself keeps intervalHours, which must not be smaller.
+  if (cfg.minGapMinutes > cfg.intervalHours * 60) throw new ScheduleError('schedule-config-bad', 'schedule setting minGapMinutes must not be more than intervalHours');
   // A chunk may only start with at least marginMinutes left, and must end chunkDeadlineSeconds before the time:
   // a deadline at or past the margin would stop every final chunk.
   if (cfg.chunkDeadlineSeconds >= cfg.marginMinutes * 60) throw new ScheduleError('schedule-config-bad', 'schedule setting chunkDeadlineSeconds must be less than marginMinutes');
@@ -96,6 +119,17 @@ export function latestFutureSchedule(videos, nowMs) {
   return { last, count };
 }
 
+/** Every future publish time (ms, sorted) among YouTube video resources that are private with a publishAt after now. */
+export function futureScheduleTimes(videos, nowMs) {
+  const out = [];
+  for (const v of videos ?? []) {
+    if (!isPlain(v) || v.status?.privacyStatus !== 'private') continue;
+    const t = ms(v.status?.publishAt);
+    if (t !== null && t > nowMs) out.push(t);
+  }
+  return out.sort((a, b) => a - b);
+}
+
 /** True when publishAt is at least needMs ahead of now (unreadable = false). */
 export const leadOk = (publishAt, nowMs, needMs) => { const t = ms(publishAt); return t !== null && t - nowMs >= needMs; };
 /** A saved slot can no longer start or resume an upload session: less than minLeadHours ahead (or unreadable). */
@@ -106,6 +140,75 @@ export const marginMs = (cfg) => cfg.marginMinutes * MINUTE_MS;
 export const chunkDeadlineMs = (cfg) => cfg.chunkDeadlineSeconds * 1000;
 /** Assumed upload speed (bytes/s) for the final-chunk estimate when no chunk was timed yet in this run. */
 export const fallbackBps = (cfg) => (cfg.fallbackKbps * 1000) / 8;
+
+/** Latest time (ms) a slot may have: now + maxAheadDays (D314). */
+export const maxAheadMs = (nowMs, cfg) => nowMs + cfg.maxAheadDays * 24 * HOUR_MS;
+
+/** D314 retry: a queued clip with no session whose time is too close to start an upload, or whose too-close time was
+ *  already dropped (`reslot` saved on the item, or the 'slot-passed' reason from before D314). */
+export const isRetry = (i, nowMs, cfg) => isPlain(i) && i.state === 'queued' && !i.session
+  && (typeof i.publishAt === 'string' && i.publishAt ? slotTooClose(i.publishAt, nowMs, cfg) : (i.reslot === true || i.reason === 'slot-passed'));
+
+/**
+ * The slots to give out now over a whole queue (items in queue order, any state; see the D314 rule at the top). Pure.
+ * Returns [{ id, at: ms | null, retry, rechain }] for every item that gets a new slot or must wait: `at` null = beyond
+ * maxAheadDays (the item waits without a slot). Items not listed keep what they have.
+ *   - new items (queued, no slot) before the first retry: the D310 rule (after the latest slot anywhere, after the channel).
+ *   - the first retry: the floor (counted from its nextAt when that is later than now).
+ *   - every later queued item with no session (retries, slotted, new): previous chain slot + interval, but never before
+ *     the latest fixed time + interval.
+ */
+export function planQueueSlots({ items, channelLast = null, channelTimes = [], nowMs, cfg }) {
+  const list = (items ?? []).filter(isPlain);
+  const queued = list.filter((i) => i.state === 'queued');
+  const first = queued.findIndex((i) => isRetry(i, nowMs, cfg));
+  const chain = first >= 0 ? queued.slice(first).filter((i) => !i.session) : [];
+  const inChain = new Set(chain.map((i) => i.id));
+  const fresh = queued.filter((i) => !inChain.has(i.id) && !i.publishAt);
+  const moving = new Set([...inChain, ...fresh.map((i) => i.id)]);
+  const cap = maxAheadMs(nowMs, cfg);
+  const out = [];
+  // taken = every time the retry must keep minGapMinutes from (channel posts, fixed queue times, new slots below)
+  const taken = [...(channelTimes ?? []), channelLast].filter((v) => Number.isFinite(v));
+  for (const i of list) {
+    if (moving.has(i.id)) continue;
+    for (const k of ['publishAt', 'sentPublishAt', 'sessionPublishAt']) { const v = ms(i[k]); if (v !== null) taken.push(v); }
+  }
+  // fixed = every time that stays (D310 anchors: any state, past or future; the floor makes the past ones irrelevant)
+  let own = ownLastSlot(list, moving);
+  for (const i of fresh) {
+    const s = nextSlot({ channelLast, ownLast: own, nowMs, cfg });
+    if (s > cap) { out.push({ id: i.id, at: null, retry: false, rechain: false }); continue; }
+    out.push({ id: i.id, at: s, retry: false, rechain: false }); own = s; taken.push(s);
+  }
+  let prev = null;
+  for (const i of chain) {
+    let s;
+    if (prev === null) {
+      const next = typeof i.nextAt === 'string' ? Date.parse(i.nextAt) : NaN;
+      s = clearOfTaken(nextSlot({ nowMs: Number.isFinite(next) && next > nowMs ? next : nowMs, cfg }), taken, cfg);
+    } else {
+      s = nextSlot({ channelLast, ownLast: own === null ? prev : Math.max(own, prev), nowMs, cfg });
+    }
+    // prev advances even past the cap, so every later item is past it too (and none becomes a second 'first').
+    out.push({ id: i.id, at: s > cap ? null : s, retry: isRetry(i, nowMs, cfg), rechain: true }); prev = s;
+  }
+  return out;
+}
+
+/** The first time at or after s that is at least minGapMinutes from every taken time (rounded up to the minute). */
+export function clearOfTaken(s, taken, cfg) {
+  const gap = cfg.minGapMinutes * MINUTE_MS;
+  for (const t of [...taken].sort((a, b) => a - b)) if (Math.abs(s - t) < gap) s = Math.ceil((t + gap) / MINUTE_MS) * MINUTE_MS;
+  return s;
+}
+
+/** Future channel post times saved by the chain's last read (for the preview); falls back to the saved latest one. */
+export function savedChannelTimes(queueDoc, nowMs) {
+  const a = Array.isArray(queueDoc?.schedule?.channelTimes) ? queueDoc.schedule.channelTimes.map(ms).filter((t) => t !== null && t > nowMs) : [];
+  const last = savedChannelLast(queueDoc, nowMs);
+  return last !== null && !a.includes(last) ? [...a, last] : a;
+}
 
 /** The channel's last known schedule as saved by the chain (for the preview's estimate); null when unknown or past. */
 export function savedChannelLast(queueDoc, nowMs) {

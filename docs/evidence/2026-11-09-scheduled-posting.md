@@ -40,7 +40,8 @@ branch takes D310 first, renumber at merge.
   - a failed upload keeps its slot; the next clip goes after it, so that time stays empty on the channel;
   - the slot is re-checked right before an upload session starts or resumes (inside `uploadVideo`, so also when an
     expired session is restarted): it must be at least minLeadHours ahead. Otherwise no session is started
-    (`slot-passed`), the slot is dropped and the clip gets a new slot at the end on the next pass (no attempt used).
+    (`slot-passed`), the slot is dropped and on the next pass the clip gets now + minLeadHours + marginMinutes and
+    the later queued clips are re-chained (D314, see below; no attempt used).
     This covers a later clip in a batch whose slot came close while earlier clips uploaded, a long stream, and long
     backoffs;
   - before every chunk the time must still be at least marginMinutes ahead. Otherwise the upload stops between chunks
@@ -181,6 +182,83 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
   setTimeout takes at most 2^31-1 ms (about 24.8 days; longer fires after 1 ms), so no timer is set for a deadline
   further away; the fit check still uses the real deadline. The test failed before the fix.
 
+## D314: retry close to its time, re-chain, 2-year cap (user 2026-11-09)
+
+User's words: "post 1 hour away and the next clip 6 hours from the 1 hour mark. can schedule upto 2 years ahead".
+Code: `planQueueSlots` in `services/posting/schedule.mjs` (pure; the queue and the preview both use it).
+
+Rules chosen:
+
+- **Retry.** A queued clip with no upload session whose time is less than minLeadHours (1 h) away is a retry. So is a
+  clip whose too-close time was already dropped (`reslot` saved on the item, or the older `slot-passed` reason).
+- **Retry time = the existing floor**, now + minLeadHours + marginMinutes rounded up to the minute: **1 h 15 min**,
+  not exactly 1 h. Exactly 1 h cannot pass the check made when the upload session starts (time >= now + 1 h, a moment
+  later). The margin also covers the time to start the session after earlier uploads in the same pass. This is the
+  closest safe value. If the clip is backing off after an error (its next try is later than now), the 1 h 15 min counts
+  from that next try, because the upload cannot start sooner.
+- **The retry does not wait 6 h after other posts**, as the user asked ("post 1 hour away"). It may therefore land less
+  than 6 h from a post that is already fixed. Ujwalam cannot move fixed posts (that needs the broad youtube scope).
+- **Gap (Codex review, MEDIUM, 2026-11-09):** the retry never lands within `minGapMinutes` (60, in
+  `data/posting/schedule.json`; at most intervalHours x 60) of a taken time. Taken times are every future scheduled
+  post read from the channel (the read now keeps all of them, `channelTimes`, saved with the queue for the preview),
+  every fixed queue time (uploaded, open session, failed, earlier queued) and every slot given to a new item in the
+  same pass. If the floor is taken, the retry moves to the first free time after it (taken time + gap, rounded up to
+  the minute, repeated while another taken time is within the gap). The later chain slots are 6 h after the latest
+  of all of these, so nothing planned in the same pass collides. The preview uses the same rule.
+- **Re-chain.** Every later queued clip in queue order that has no session yet is re-timed. This covers clips with a
+  slot, clips without one and other retries. Each one gets the later of two times: the previous chain slot + 6 h, and
+  the latest fixed time + 6 h. So a re-chain never moves a slot earlier than the channel's latest scheduled post + 6 h.
+- **Fixed (never moved):** the channel's latest future scheduled post (read from YouTube Studio), uploaded clips, clips
+  with an open session (Google applies the session's time), failed clips (D310: a failed slot stays a gap, and Retry now
+  reuses it), and queued clips before the first retry in queue order.
+- **No retry:** the D310 rule is unchanged. Only new clips get a slot, 6 h after the latest slot anywhere.
+- **Cap:** `maxAheadDays` in `data/posting/schedule.json` (730 = 2 years; required, 1 to 3650, never defaulted). A slot
+  more than that ahead is not given out. The clip waits without a slot. No attempt is used, and the reason is
+  `schedule-beyond-cap` ("Waiting: the next free public time is more than the allowed time ahead (maxAheadDays ...)").
+  It is planned again after 6 h, and a capped clip does not trigger a channel read before then. Every clip after it in
+  the chain waits too. Exactly 730 days ahead is allowed.
+- **Shown times:** the queue saves the new times, so the Posts view and the control-page queue line ("next goes public",
+  "will go public") show them. The preview (CLI and control page) runs the same plan. It says how many queued clips
+  would be re-timed, and a would-queue clip past the cap shows "waits: its public time would be more than N days ahead".
+
+Tests (worktree `post/retry-rechain`, 2026-11-09):
+
+```
+node --test tests/posting-schedule.test.mjs tests/posting-e2e.test.mjs
+  tests 57, pass 57, fail 0   (before the preview test was added)
+node --test tests/posting-schedule.test.mjs
+  tests 28, pass 28, fail 0
+node --test tests/posting-*.test.mjs
+  tests 144, pass 144, fail 0
+after the gap fix:
+node --test tests/posting-schedule.test.mjs
+  tests 31, pass 31, fail 0
+node --test tests/posting-*.test.mjs
+  tests 148, pass 148, fail 0
+node tools/ci.mjs --quick
+  ci: 9/9 passed (build, lint, build-host, build-studio, validate-registry, validate-outputs, validate-games, private-scan, legacy-verify)
+```
+
+New tests:
+
+- `tests/posting-schedule.test.mjs`, pure: a retry 30 min from its time gets 11:15 when now is 10:00, and the later
+  clips get 17:15, 23:15 and 05:15. Times round up to the minute. Dropped-time retries are covered, and so is a retry
+  in backoff, which counts from its next try. Uploaded, failed and in-session clips are untouched. The re-chain goes
+  6 h after the uploaded clip, not 6 h after the retry. A later channel post pushes it further out. A queued clip
+  before the retry stays fixed. With no retry, the D310 result is unchanged. Cap tests: 1-day cap, 2 years exact or
+  past, bad and missing `maxAheadDays` refused. Preview: the retry and re-chained times, the counts and text, and
+  clips past the cap.
+- `tests/posting-e2e.test.mjs`, against the local fake Google: (1) three clips whose session starts failed are
+  checked at now = T0 + 30 min. The first time is 45 min away, so the clips go up at T0 + 1 h 45, + 7 h 45 and
+  + 13 h 45, and the control page shows the new next time. (2) Two clips already uploaded keep their times, the retry
+  gets now + 1 h 15, and a new clip goes 6 h after the latest uploaded one. (3) A clip with an open session keeps its
+  time and resumes its session (no new session); only the retry moves. (4) Cap: a 1-day cap with a channel post at
+  T0 + 20 h means the clip waits (`schedule-beyond-cap`, 0 attempts, plain message, no early re-read). It goes up at
+  T0 + 26 h once the cap allows it. (5) Gap: a channel post at the retry floor moves the retry 1 h after it.
+- Gap tests, pure: a retry floor equal to an uploaded clip's time; a retry floor equal to a channel post, with a
+  second post 30 min later (moves twice); a new item and a retry in the same pass (11:15 and 12:15, never shared);
+  bad `minGapMinutes` refused; the preview moves the retry past a saved channel post.
+
 ## Review fixes (Codex review, 2026-11-09)
 
 1. HIGH, past publishAt: fixed. The time is re-checked inside `uploadVideo` right before a session starts or
@@ -216,6 +294,11 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
   page per read.
 - The studio window (Qt) change was compiled by `build-studio` but not looked at on screen.
 
+- D314: the retry time is now + 1 h 15 min, not exactly 1 h (see the D314 section). The user has not confirmed the
+  15 min margin, or that the retry may land less than 6 h from a post that is already fixed.
+- D314: YouTube's own furthest allowed `publishAt` is not checked. 730 days is the user's limit; if Google allows less,
+  the upload start fails and the clip backs off like any other failure.
+
 ## What the user must do
 
 1. Google Cloud console > your OAuth app > Data Access (scopes): add
@@ -249,3 +332,6 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
 - `tests/posting-auto-chain.test.mjs`, `tests/posting-uploads.test.mjs` (keep post-schedule off)
 - `docs/plan/2026-10-29-v1-decisions.md` (D310 proposed)
 - `docs/evidence/2026-11-09-scheduled-posting.md` (this file)
+- D314 (branch `post/retry-rechain`): `services/posting/schedule.mjs`, `services/posting/schedule-read.mjs`, `services/posting/auto-chain.mjs`,
+  `services/posting/preview.mjs`, `data/posting/schedule.json`, `ui/js/app.js`, `tests/posting-schedule.test.mjs`,
+  `tests/posting-e2e.test.mjs`, this file
