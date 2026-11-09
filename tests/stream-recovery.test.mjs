@@ -1,20 +1,23 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Stream recovery after a host crash (D303 proposed, flag stream-recovery; services/studio-ui/stream-recovery.mjs and
-// launch.mjs superviseHost). Unit tests of the decision rules, the intent file and the status text; then the launcher
+// launch.mjs superviseHost). Unit tests of the decision rules, the launcher-owned go-live authority (with its races:
+// a revoke that fails closes it, a slow start never arms after a newer stop, a stop waits for an in-flight recovery
+// start) and the status text; then the launcher
 // end to end with the fake host (no libobs, no devices, mock Streamer.bot, loopback-only fake stream sinks, nothing
 // reaches a network): the go-live is the control page's own confirm flow ("yes, on air" through the UI server API,
 // logged in by the headless scripted browser), the crash is the fake host exiting with code 3.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  activeStreams, appendRecoveryEvent, clearIntent, eventText, INTENT_FILE, labelsOf, loadRecoveryConfig, readIntent,
-  readRecoveryStatus, recoveryPolicy, RECOVERY_CONFIG_FILE, sinkLabel, STATUS_FILE, waitStreamsUp, writeIntent,
+  activeStreams, appendRecoveryEvent, AUTHORITY_FILE, authorityClient, createLiveAuthority, eventText, labelsOf, loadRecoveryConfig,
+  readRecoveryStatus, recoveryPolicy, RECOVERY_CONFIG_FILE, serveAuthority, sinkLabel, STATUS_FILE, waitStreamsUp,
 } from '../services/studio-ui/stream-recovery.mjs';
 import { loadDefinitions } from '../services/flags/index.mjs';
 
@@ -57,41 +60,125 @@ test('labels: platform plus canvas; unknown platforms keep the id', () => {
   assert.deepEqual(activeStreams(o), ['youtube-h', 'twitch']);
 });
 
-test('decisions: only an armed intent of this session, only live sinks, within the gap, at most maxRecoveries per window', () => {
+test('decisions: only an armed authority, only live sinks not stopped on purpose, within the gap, at most maxRecoveries per window', () => {
   const cfg = { maxRecoveries: 2, windowMs: 600_000, maxGapMs: 90_000 };
-  const armed = { session: S1, armed: true };
+  const armed = { gen: 1, armed: true, reason: 'stream.start', closed: false, excluded: [] };
   const p = recoveryPolicy(cfg);
   const t = 10_000_000;
-  const go = (o) => p.decide({ now: t, crashAt: t - 5000, flagOn: true, intent: armed, session: S1, streams: ['youtube-h', 'twitch'], ...o });
+  const go = (o) => p.decide({ now: t, crashAt: t - 5000, flagOn: true, authority: armed, streams: ['youtube-h', 'twitch'], ...o });
   assert.deepEqual(go({ streams: [] }), { restart: [], reason: 'none-live' });
   assert.equal(go({ flagOn: false }).reason, 'flag-off');
-  assert.equal(go({ intent: null }).reason, 'no-confirmation');
-  assert.equal(go({ session: S2 }).reason, 'no-confirmation', 'another launcher session (a launcher restart) is no authority');
-  assert.equal(go({ session: null }).reason, 'no-confirmation');
-  assert.equal(go({ intent: { session: S1, armed: false } }).reason, 'stopped', 'Stop / End all disarms');
+  assert.equal(go({ authority: null }).reason, 'no-confirmation');
+  assert.equal(go({ authority: { ...armed, armed: false, reason: 'none' } }).reason, 'no-confirmation', 'a new launcher: never armed');
+  assert.equal(go({ authority: { ...armed, armed: false, reason: 'end-all' } }).reason, 'stopped', 'Stop / End all revokes');
+  assert.equal(go({ authority: { ...armed, armed: false, reason: 'recovery-limit' } }).reason, 'limit-earlier');
+  assert.equal(go({ authority: { ...armed, armed: false, closed: true, reason: 'ui-link-lost' } }).reason, 'authority-lost');
+  assert.equal(go({ authority: { ...armed, excluded: ['youtube-h', 'twitch'] } }).reason, 'stopped', 'every live sink was stopped on purpose');
   assert.equal(go({ crashAt: t - 90_001 }).reason, 'too-late');
   // none of the refusals above counted as a recovery
-  assert.deepEqual(go({}), { restart: ['youtube-h', 'twitch'], reason: 'restart', attempt: 1, max: 2 });
+  assert.deepEqual(go({ authority: { ...armed, excluded: ['youtube-h'] } }), { restart: ['twitch'], reason: 'restart', attempt: 1, max: 2 });
   assert.equal(go({ now: t + 1000 }).attempt, 2);
-  const lim = p.decide({ now: t + 2000, crashAt: t + 1500, flagOn: true, intent: armed, session: S1, streams: ['twitch'] });
+  const lim = p.decide({ now: t + 2000, crashAt: t + 1500, flagOn: true, authority: armed, streams: ['twitch'] });
   assert.deepEqual(lim, { restart: [], reason: 'limit', recoveries: 2 });
   // past the window the oldest recovery ages out
-  assert.equal(p.decide({ now: t + 600_001, crashAt: t + 600_000, flagOn: true, intent: armed, session: S1, streams: ['twitch'] }).reason, 'restart');
-  assert.equal(recoveryPolicy({ ...cfg, maxRecoveries: 0 }).decide({ now: t, crashAt: t, flagOn: true, intent: armed, session: S1, streams: ['x'] }).reason, 'limit');
+  assert.equal(p.decide({ now: t + 600_001, crashAt: t + 600_000, flagOn: true, authority: armed, streams: ['twitch'] }).reason, 'restart');
+  assert.equal(recoveryPolicy({ ...cfg, maxRecoveries: 0 }).decide({ now: t, crashAt: t, flagOn: true, authority: armed, streams: ['x'] }).reason, 'limit');
 });
 
-test('intent file: written, read, session-checked, cleared; status events per session with plain text', () => {
+test('authority: arms only for the generation a start began in; a revoke wins at once and is answered after an in-flight run', async () => {
+  const seen = [];
+  const a = createLiveAuthority({ onChange: (st) => seen.push(st) });
+  assert.deepEqual(a.state(), { gen: 0, armed: false, reason: 'none', closed: false, excluded: [] }, 'unarmed at start');
+  // Race 2: a slow Start, then a Stop before the Start's answer: the Start must not arm afterwards.
+  const g0 = a.begin();
+  await a.revoke('stream.stop');
+  assert.deepEqual(a.arm(g0), { armed: false, gen: 1 });
+  assert.equal(a.state().armed, false);
+  const g1 = a.begin();
+  assert.equal(a.arm(g1).armed, true);
+  // Race 3: a recovery start in flight, then a Stop: the authority is gone at once, the answer waits for the run.
+  let release;
+  const run = a.run(async (st) => { assert.equal(st.armed, true); await new Promise((r) => { release = r; }); return 'started'; });
+  await sleep(10);
+  let answered = false;
+  const rv = a.revoke('end-all').then(() => { answered = true; });
+  await sleep(30);
+  assert.equal(answered, false, 'the stop waits for the start in flight');
+  assert.equal(a.state().armed, false, 'but the authority is gone at once');
+  release();
+  const r = await run;
+  assert.deepEqual(r, { value: 'started', revoked: true, excluded: [] }, 'the run learns it was overtaken (the launcher stops those sinks)');
+  await rv;
+  assert.equal(answered, true);
+  // A run after the revoke sees no authority.
+  assert.equal((await a.run(async (st) => st.armed)).value, false);
+  // Guard stops: excluded until the next confirmed start.
+  a.arm(a.begin());
+  await a.exclude(['twitch']);
+  assert.deepEqual(a.state().excluded, ['twitch']);
+  a.arm(a.begin());
+  assert.deepEqual(a.state().excluded, [], 'a new confirmed start starts every sink');
+  // Fail closed: closed for good.
+  a.close('ui-link-lost');
+  assert.equal(a.begin(), null);
+  assert.equal(a.arm(a.state().gen).armed, false);
+  assert.deepEqual([a.state().armed, a.state().closed, a.state().reason], [false, true, 'ui-link-lost']);
+  assert.ok(seen.length >= 6 && seen.every((x) => typeof x.gen === 'number'), 'every change mirrored');
+});
+
+// Two fake processes joined like the launcher (child) and the UI server (proc) over Node IPC.
+function ipcPair({ launcherAnswers = true } = {}) {
+  const proc = new EventEmitter(); const child = new EventEmitter();
+  proc.connected = true; child.connected = true;
+  proc.send = (m) => { if (launcherAnswers) setImmediate(() => child.emit('message', structuredClone(m))); };
+  child.send = (m) => setImmediate(() => proc.emit('message', structuredClone(m)));
+  proc.disconnect = () => { proc.connected = false; child.connected = false; setImmediate(() => { proc.emit('disconnect'); child.emit('disconnect'); }); };
+  return { proc, child };
+}
+
+test('authority over IPC: begin/arm/revoke reach the launcher; a revoke that is not answered closes the channel and the authority (fail closed)', async () => {
+  const a = createLiveAuthority();
+  const { proc, child } = ipcPair();
+  serveAuthority(child, a);
+  const c = authorityClient({ proc, timeoutMs: 2000 });
+  const g = await c.begin();
+  assert.equal(g, 0);
+  assert.equal(await c.arm(g), true);
+  assert.equal(a.state().armed, true);
+  const g2 = await c.begin();
+  assert.equal(await c.revoke('stream.stop'), true);
+  assert.equal(a.state().armed, false);
+  assert.equal(await c.arm(g2), false, 'a start that began before the stop does not arm');
+  assert.equal(await c.arm('x'), false);
+
+  // Race 1: the revoke cannot be confirmed (the launcher does not answer): the UI server closes the channel and the
+  // launcher closes the authority for the rest of the session. No armed state survives a failed revoke.
+  const b = createLiveAuthority();
+  const lost = ipcPair({ launcherAnswers: false });
+  serveAuthority(lost.child, b);
+  b.arm(b.begin()); // armed earlier (a confirmed start)
+  const c2 = authorityClient({ proc: lost.proc, timeoutMs: 100 });
+  assert.equal(await c2.revoke('stream.stop'), false);
+  assert.equal(lost.proc.connected, false, 'the UI server closed the channel');
+  await sleep(10);
+  assert.deepEqual([b.state().armed, b.state().closed, b.state().reason], [false, true, 'ui-link-lost']);
+  assert.equal(recoveryPolicy({ maxRecoveries: 2, windowMs: 600_000, maxGapMs: 90_000 }).decide({ now: 1, crashAt: 0, flagOn: true, authority: b.state(), streams: ['twitch'] }).reason, 'authority-lost');
+  assert.equal(await c2.begin(), null, 'a closed channel never arms again');
+
+  // The UI server exiting (or its channel breaking) closes the authority too.
+  const d = createLiveAuthority();
+  const gone = ipcPair();
+  serveAuthority(gone.child, d);
+  d.arm(d.begin());
+  gone.child.emit('exit', 1);
+  assert.equal(d.state().closed, true);
+  // Without a channel (started by hand, tests) there is no client.
+  assert.equal(authorityClient({ proc: { send: undefined } }), null);
+});
+
+test('status events per session with plain text', () => {
   const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-rint-'));
   try {
-    assert.equal(readIntent(d), null);
-    assert.throws(() => writeIntent(d, { session: 'nope', armed: true, reason: 'x' }), /session/);
-    writeIntent(d, { session: S1, armed: true, reason: 'stream.start', at: new Date('2026-11-09T10:00:00Z') });
-    assert.deepEqual(readIntent(d), { session: S1, armed: true, reason: 'stream.start', at: '2026-11-09T10:00:00.000Z' });
-    writeFileSync(path.join(d, 'live', INTENT_FILE), '{"v":1,"session":"zz","armed":true}');
-    assert.equal(readIntent(d), null, 'malformed: no authority');
-    clearIntent(d);
-    assert.equal(existsSync(path.join(d, 'live', INTENT_FILE)), false);
-
     const crashAt = new Date(2026, 10, 9, 14, 2, 30).toISOString(); // 14:02 local
     const e1 = appendRecoveryEvent(d, { session: S1, crashAt, streams: ['YouTube H', 'Twitch'], result: 'restarted', reason: 'restart', restarted: ['YouTube H', 'Twitch'], failed: [] });
     assert.equal(e1.text, 'Host crashed at 14:02, streams restarted: YouTube H, Twitch');
@@ -101,6 +188,8 @@ test('intent file: written, read, session-checked, cleared; status events per se
     assert.equal(st.count, 1, 'only this session');
     assert.match(readRecoveryStatus(d, S2).text, /^Host crashed at 14:02; streams NOT restarted \(stream recovery is off \(feature flag stream-recovery\)\): Kick$/);
     assert.equal(readRecoveryStatus(d, 'c'.repeat(32)), null);
+    assert.match(eventText({ crashAt, result: 'cancelled', failed: ['Twitch'] }), /streams started again, then stopped because you pressed Stop or End all: Twitch$/);
+    assert.match(eventText({ crashAt, result: 'not-restarted', reason: 'authority-lost', streams: ['Twitch'] }), /lost its link to the launcher/);
     assert.match(eventText({ crashAt, result: 'partial', restarted: ['Twitch'], failed: ['Kick'] }), /restarted: Twitch; NOT restarted: Kick/);
     assert.match(eventText({ crashAt, result: 'not-restarted', reason: 'limit', recoveries: 2, windowMs: 600_000, streams: ['Twitch'] }), /again \(2 stream restart\(s\) already in 10 min\): streams NOT restarted: Twitch/);
     for (let i = 0; i < 30; i++) appendRecoveryEvent(d, { session: S1, crashAt, streams: [], result: 'restarted', restarted: [], failed: [] });
@@ -150,6 +239,7 @@ function launch(name, { flag = true, crashRuns = '1,2', extraEnv = {}, before = 
   s.exited = new Promise((r) => child.on('exit', (c) => { s.code = c; r(c); }));
   s.calls = () => { try { return readFileSync(`${rec}.calls.jsonl`, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
   s.crash = () => writeFileSync(crashFile, 'x');
+  s.authority = () => { try { return JSON.parse(readFileSync(path.join(dataDir, 'live', AUTHORITY_FILE), 'utf8')); } catch { return null; } };
   s.until = async (fn, what, ms = 60_000) => {
     const end = Date.now() + ms;
     while (Date.now() < end) { const v = fn(); if (v) return v; if (s.code !== null) break; await sleep(100); }
@@ -190,6 +280,12 @@ function launch(name, { flag = true, crashRuns = '1,2', extraEnv = {}, before = 
     assert.equal(r.body.verdict, 'allow', JSON.stringify(r.body));
     return r.body;
   };
+  // Request + confirm with whatever phrase the page asks for (used while another action is in flight).
+  s.confirmAny = async (route, body) => {
+    const c = await s.req('POST', route, body);
+    assert.equal(c.body?.verdict, 'confirm', JSON.stringify(c.body));
+    return s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: c.body.pending.phrase });
+  };
   s.goLive = async () => {
     await s.confirmed('/ui/api/host', { method: 'stream.start', params: {} }, 'yes, on air');
     // the launcher's outputs.status poll (200 ms here) must have seen the streams live
@@ -220,12 +316,10 @@ test('crash while live (flag on): the streams that were live come back, the reco
   const s = launch('on');
   try {
     await s.login();
-    // An intent left by an earlier launcher was cleared at start.
-    assert.equal(readIntent(s.dataDir), null);
+    // A new launcher: a new, unarmed authority.
+    assert.deepEqual([s.authority().armed, s.authority().reason], [false, 'none']);
     await s.goLive();
-    const intent = readIntent(s.dataDir);
-    assert.equal(intent.armed, true);
-    assert.equal(intent.reason, 'stream.start');
+    assert.deepEqual([s.authority().armed, s.authority().reason], [true, 'stream.start']);
     assert.deepEqual(streamStarts(s).map((x) => [x.run, x.params]), [[1, {}]], 'the user\'s own start: all stream sinks');
 
     s.crash();
@@ -249,8 +343,7 @@ test('crash while live (flag on): the streams that were live come back, the reco
     await sleep(500);
     const end = await s.confirmed('/ui/api/streams/end-all', {}, 'yes, on air');
     assert.equal(end.endAll.allStopped, true, JSON.stringify(end));
-    assert.equal(readIntent(s.dataDir).armed, false);
-    assert.equal(readIntent(s.dataDir).reason, 'end-all');
+    assert.deepEqual([s.authority().armed, s.authority().reason], [false, 'end-all']);
     await sleep(600);
     s.crash();
     await s.until(() => /restart 2 of 3/.test(s.out) && /host restarted \(attempt 2\)/.test(s.out), 'the second host restart');
@@ -277,7 +370,7 @@ test('crash while live with the flag off: streams are not restarted, the page sa
   } finally { await s.stop(); }
 });
 
-test('repeated crashes while live: two recoveries, the third crash leaves the streams off and disarms the intent', { timeout: 240_000 }, async () => {
+test('repeated crashes while live: two recoveries, the third crash leaves the streams off and revokes the authority', { timeout: 240_000 }, async () => {
   const s = launch('limit', { crashRuns: '1,2,3' });
   try {
     await s.login();
@@ -289,20 +382,64 @@ test('repeated crashes while live: two recoveries, the third crash leaves the st
     }
     assert.deepEqual(streamStarts(s).map((x) => x.run), [1, 2, 3], 'restarted after crash 1 and 2 only');
     assert.match(s.out, /Host crashed at \d\d:\d\d again \(2 stream restart\(s\) already in 10 min\): streams NOT restarted: YouTube H, YouTube V, Twitch\. Check the host log/);
-    assert.equal(readIntent(s.dataDir).armed, false);
-    assert.equal(readIntent(s.dataDir).reason, 'recovery-limit');
+    assert.deepEqual([s.authority().armed, s.authority().reason], [false, 'recovery-limit']);
     const st = { recovery: await s.recovery(3) };
     assert.equal(st.recovery.reason, 'limit');
     assert.equal(st.recovery.count, 3);
   } finally { await s.stop(); }
 });
 
-test('a launcher start clears an intent left by an earlier launcher (no go-live after a launcher restart)', { timeout: 120_000 }, async () => {
-  const s = launch('stale', { crashRuns: '', before: (d) => writeIntent(d, { session: S1, armed: true, reason: 'stream.start' }) });
+test('a launcher start is never armed, whatever an earlier launcher left on disk (no go-live after a launcher restart)', { timeout: 120_000 }, async () => {
+  const s = launch('stale', { crashRuns: '', before: (d) => {
+    mkdirSync(path.join(d, 'live'), { recursive: true });
+    writeFileSync(path.join(d, 'live', AUTHORITY_FILE), JSON.stringify({ v: 1, session: 'a'.repeat(32), gen: 3, armed: true, reason: 'stream.start', closed: false, excluded: [] }));
+    writeFileSync(path.join(d, 'live', 'stream-intent.json'), JSON.stringify({ v: 1, session: 'a'.repeat(32), armed: true, reason: 'stream.start' }));
+  } });
   try {
     await s.until(() => /\[studio\] UI at /.test(s.out), 'the UI line');
-    assert.equal(readIntent(s.dataDir), null, 'cleared at start');
+    assert.deepEqual([s.authority().armed, s.authority().reason, s.authority().gen], [false, 'none', 0], 'the mirror shows the new, unarmed authority');
     await sleep(500);
     assert.deepEqual(streamStarts(s), [], 'nothing goes live by itself');
+  } finally { await s.stop(); }
+});
+
+test('race: a slow Start answered after a newer Stop does not arm; a crash then restarts nothing', { timeout: 180_000 }, async () => {
+  const s = launch('slowstart', { crashRuns: '1', extraEnv: { UJWALAM_FAKE_HOST_START_DELAY_MS: '2500' } });
+  try {
+    await s.login();
+    const start = s.confirmed('/ui/api/host', { method: 'stream.start', params: {} }, 'yes, on air');
+    await s.until(() => streamStarts(s).length === 1, 'the start reaching the host');
+    const stop = await s.confirmAny('/ui/api/host', { method: 'stream.stop', params: {} });
+    assert.equal(stop.body.verdict, 'allow', JSON.stringify(stop.body));
+    await start; // answered after the stop; the fake host turned the sinks live on that late answer
+    await s.until(() => s.calls().some((x) => x.method === 'stream.start.done'), 'the late start answer');
+    assert.deepEqual([s.authority().armed, s.authority().reason], [false, 'stream.stop'], 'the later Stop wins over the slow Start');
+    await sleep(800); // the poll sees the sinks live (the host applied the start last)
+    s.crash();
+    await s.until(() => /streams NOT restarted \(you had stopped them\)/.test(s.out), 'the refusal line');
+    assert.deepEqual(streamStarts(s).map((x) => x.run), [1], 'no stream.start after the crash');
+    assert.equal((await s.recovery(1)).reason, 'stopped');
+  } finally { await s.stop(); }
+});
+
+test('race: End all while the recovery start is in flight: the stop reaches the host after it and wins; the launcher stops them too', { timeout: 180_000 }, async () => {
+  const s = launch('inflight', { crashRuns: '1', extraEnv: { UJWALAM_FAKE_HOST_START_DELAY_MS: '2500' } });
+  try {
+    await s.login();
+    await s.goLive();
+    await sleep(800);
+    s.crash();
+    await s.until(() => s.calls().some((x) => x.method === 'stream.start' && x.run === 2), 'the recovery start reaching the restarted host');
+    const end = await s.confirmed('/ui/api/streams/end-all', {}, 'yes, on air');
+    assert.equal(end.endAll.allStopped, true, JSON.stringify(end));
+    const run2 = s.calls().filter((x) => x.run === 2 && /^stream\./.test(x.method ?? ''));
+    const done = run2.findIndex((x) => x.method === 'stream.start.done');
+    const stops = run2.map((x, i) => (x.method === 'stream.stop' ? i : -1)).filter((i) => i >= 0);
+    assert.ok(done >= 0 && stops.length >= 1 && stops.every((i) => i > done), `every stop after the start answer: ${JSON.stringify(run2)}`);
+    assert.ok(run2.some((x) => x.method === 'stream.stop' && Array.isArray(x.params.sinks) && x.params.sinks.join() === 'youtube-h,youtube-v,twitch'), 'the launcher stopped the restarted sinks');
+    assert.ok(run2.some((x) => x.method === 'stream.stop' && x.params.sinks === undefined), 'End all reached the host');
+    await s.until(() => /streams started again, then stopped because you pressed Stop or End all: YouTube H, YouTube V, Twitch/.test(s.out), 'the cancelled line');
+    assert.equal((await s.recovery(1)).result, 'cancelled');
+    assert.deepEqual([s.authority().armed, s.authority().reason], [false, 'end-all']);
   } finally { await s.stop(); }
 });

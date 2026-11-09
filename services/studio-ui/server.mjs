@@ -45,7 +45,7 @@ import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings }
 import { createTasks } from './tasks.mjs';
 import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
 import { clipTools } from './record-clips.mjs';
-import { readRecoveryStatus, SESSION_ENV, SESSION_RE, writeIntent } from './stream-recovery.mjs';
+import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
 
@@ -244,14 +244,16 @@ export function createStudioServer(opts) {
   const history = opts.history ?? createEditHistory();
   // Feature flags (D149) and the post-stream feedback form (D150). opts.flags / opts.feedback are test seams.
   const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir }) : null);
-  // Stream recovery (D303 proposed, stream-recovery.mjs): the launcher's session id (environment). A confirmed
-  // "yes, on air" start arms <dataDir>/live/stream-intent.json; a confirmed Stop or End all disarms it BEFORE the host
-  // is asked (a stop while the host is down still counts). Written whatever the flag; the launcher reads the flag.
+  // Stream recovery (D303 proposed, stream-recovery.mjs): the launcher owns the go-live authority; this server reaches
+  // it over the IPC channel the launcher opens (only when started by the launcher: parent pipe and session id). A
+  // confirmed "yes, on air" start takes a generation before the host call and arms it after (refused when a Stop came
+  // in between); a confirmed Stop or End all revokes it BEFORE the host is asked and waits for the answer, so an
+  // in-flight recovery start reaches the host first and the stop wins. A revoke the launcher does not answer closes
+  // the channel, which closes the authority (fail closed). Done whatever the flag; the launcher reads the flag.
+  // opts.authority: test seam ({ begin, arm, revoke } or null).
   const liveSession = (() => { const v = opts.liveSession ?? process.env[SESSION_ENV]; return typeof v === 'string' && SESSION_RE.test(v) ? v : null; })();
-  const streamIntent = (armed, reason) => {
-    if (!liveSession || typeof opts.dataDir !== 'string') return;
-    try { writeIntent(opts.dataDir, { session: liveSession, armed, reason }); } catch { /* recovery then refuses: no authority on file */ }
-  };
+  const authority = opts.authority !== undefined ? opts.authority
+    : liveSession && process.env.UJWALAM_PARENT_PIPE === '1' ? authorityClient() : null;
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
   // Export-only posting (P16a, flag `posting`): packages are listed from <dataDir>/posting/ledger.json. Nothing is uploaded.
   const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME) }) : null);
@@ -1003,19 +1005,20 @@ export function createStudioServer(opts) {
           // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
           let overrideLogged;
           if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
-          if (p.method === 'stream.stop') streamIntent(false, 'stream.stop');
+          if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
+          const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
           const before = await readBefore(p.method, p.params);
           const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
           let out;
           try { out = await callHost(p.method, p.params); } catch (e) { ht?.fail('Did not finish'); throw e; }
           ht?.done();
-          if (p.method === 'stream.start') streamIntent(true, 'stream.start');
+          if (p.method === 'stream.start' && authority) await authority.arm(startGen);
           remember(p.method, p.params, before);
           // A layout change confirmed while live autosaves like an instant one (P5b).
           const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
         }
-        if (p.kind === 'end-all') { streamIntent(false, 'end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
+        if (p.kind === 'end-all') { if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });
         return json(res, 200, await handleCoreOutcome(r, p.summary));
       } catch (e) { return json(res, 502, { error: 'backend-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }

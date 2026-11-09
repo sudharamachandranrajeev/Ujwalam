@@ -75,6 +75,8 @@ const withRecordSink = process.env.UJWALAM_FAKE_HOST_RECORDING === '1';
 let recordState = withRecordSink && run === 1 ? 'live' : 'idle';
 const fakeStreams = (process.env.UJWALAM_FAKE_HOST_STREAMS ?? '').split(',').filter(Boolean).map((x) => { const [id, platform] = x.split(':'); return { id, platform }; });
 const streamFail = new Set((process.env.UJWALAM_FAKE_HOST_STREAM_FAIL ?? '').split(',').filter(Boolean));
+// UJWALAM_FAKE_HOST_START_DELAY_MS=N: stream.start applies and answers after N ms (logged as stream.start.done).
+const startDelayMs = Number(process.env.UJWALAM_FAKE_HOST_START_DELAY_MS ?? 0);
 const streamState = new Map(fakeStreams.map((x) => [x.id, 'idle']));
 const callLog = (o) => appendFileSync(`${process.env.UJWALAM_FAKE_HOST_RECORD}.calls.jsonl`, `${JSON.stringify({ run, ...o })}\n`);
 callLog({ event: 'start' });
@@ -125,8 +127,10 @@ const methods = {
   'stream.start': (p) => {
     callLog({ method: 'stream.start', params: p });
     const ids = Array.isArray(p.sinks) && p.sinks.length ? p.sinks : fakeStreams.map((x) => x.id);
-    for (const id of ids) if (streamState.has(id)) streamState.set(id, streamFail.has(id) ? 'failed' : 'live');
-    return { started: ids };
+    const apply = () => { for (const id of ids) if (streamState.has(id)) streamState.set(id, streamFail.has(id) ? 'failed' : 'live'); return { started: ids }; };
+    if (!(startDelayMs > 0)) return apply();
+    // A slow start (race tests): the sinks go live and the answer comes only after the delay.
+    return new Promise((r) => setTimeout(() => { const out = apply(); callLog({ method: 'stream.start.done', params: p }); r(out); }, startDelayMs));
   },
   'stream.stop': (p) => {
     callLog({ method: 'stream.stop', params: p });
@@ -196,11 +200,9 @@ const server = http.createServer((req, res) => {
     record.calls.push(m.method);
     save();
     const fn = methods[m.method];
-    try {
-      send({ jsonrpc: '2.0', id: m.id, result: fn ? fn(m.params ?? {}) : {} });
-    } catch (e) {
-      send({ jsonrpc: '2.0', id: m.id, error: { code: e.code ?? -32603, message: e.message } });
-    }
+    Promise.resolve().then(() => (fn ? fn(m.params ?? {}) : {})).then(
+      (result) => send({ jsonrpc: '2.0', id: m.id, result }),
+      (e) => send({ jsonrpc: '2.0', id: m.id, error: { code: e.code ?? -32603, message: e.message } }));
   });
 });
 server.listen(0, '127.0.0.1', () => {
