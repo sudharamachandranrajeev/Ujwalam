@@ -8,6 +8,7 @@
 #include "motion.h"
 #include "stats_cards.h"
 #include "taskbar.h"
+#include "tray.h"
 #include "theme.h"
 
 #include <QCheckBox>
@@ -21,6 +22,9 @@
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QApplication>
+#include <QIcon>
+#include <QJsonDocument>
+#include <cstdio>
 #include <QInputDialog>
 #include <QJsonArray>
 #include <QLabel>
@@ -344,7 +348,88 @@ void MainWindow::closeEvent(QCloseEvent *e)
 			return e->ignore();
 		}
 	}
+	// Tasks still running or waiting (user 2026-11-09, D310 proposed): nothing may go on unseen after the window is
+	// gone, so the user picks: keep them in the tray (icon, progress, time left), stop them now, or keep the window.
+	const int n = tasks_ ? tasks_->active() : 0;
+	if (n > 0 && !live_) {
+		QStringList names;
+		for (const QJsonValue &v : tasks_->tasks()) {
+			const QJsonObject t = v.toObject();
+			const QString st = t.value(QStringLiteral("state")).toString();
+			if (st == QStringLiteral("running") || st == QStringLiteral("waiting"))
+				names << QStringLiteral("- %1 (%2)").arg(t.value(QStringLiteral("title")).toString(), tasktime::text(t));
+		}
+		QMessageBox box(this);
+		box.setObjectName(QStringLiteral("closeTasks"));
+		box.setIcon(QMessageBox::Question);
+		box.setWindowTitle(QStringLiteral("Close Ujwalam"));
+		closeAsked_ = QStringLiteral("%1 task%2 still running:\n%3\n\nWhat should happen to %4?")
+				      .arg(n)
+				      .arg(n == 1 ? QStringLiteral(" is") : QStringLiteral("s are"))
+				      .arg(names.mid(0, 8).join(QLatin1Char('\n')))
+				      .arg(n == 1 ? QStringLiteral("it") : QStringLiteral("them"));
+		box.setText(closeAsked_);
+		QPushButton *keep = box.addButton(QStringLiteral("Keep running in the tray"), QMessageBox::AcceptRole);
+		QPushButton *stop = box.addButton(QStringLiteral("Stop them and close"), QMessageBox::DestructiveRole);
+		QPushButton *cancel = box.addButton(QStringLiteral("Do not close"), QMessageBox::RejectRole);
+		keep->setObjectName(QStringLiteral("closeTray"));
+		stop->setObjectName(QStringLiteral("closeStop"));
+		cancel->setObjectName(QStringLiteral("closeCancel"));
+		box.setDefaultButton(keep);
+		box.setEscapeButton(cancel);
+		box.exec();
+		if (box.clickedButton() == keep) {
+			closeChoice_ = QStringLiteral("tray");
+			e->ignore();
+			QTimer::singleShot(0, this, &MainWindow::enterTray);
+			return;
+		}
+		if (box.clickedButton() != stop) {
+			closeChoice_ = QStringLiteral("cancel");
+			note(QStringLiteral("Ujwalam was not closed; the tasks keep running."));
+			return e->ignore();
+		}
+		closeChoice_ = QStringLiteral("stop");
+		// Stop: the window ends with exit 0 and the launcher ends every task's whole process tree (python, ffmpeg).
+		std::printf("studio close: stop tasks (%d)\n", n);
+		std::fflush(stdout);
+	}
+	if (tray_ && tray_->active())
+		tray_->end();
 	e->accept();
+}
+
+// Keep running in the tray (D310 proposed): the window hides (its previews with it), the polls go on, the tray shows
+// the tasks. The app no longer quits on the last window; it ends when the tasks finish or on Stop all.
+void MainWindow::enterTray()
+{
+	QApplication::setQuitOnLastWindowClosed(false);
+	hide();
+	tray_->begin(tasks_->tasks());
+	std::printf("studio tray: on (%d task(s))\n", tasks_->active());
+	std::fflush(stdout);
+}
+
+void MainWindow::leaveTray()
+{
+	tray_->end();
+	QApplication::setQuitOnLastWindowClosed(true);
+	setAttribute(Qt::WA_ShowWithoutActivating, true); // shown, never activated (D219)
+	if (qEnvironmentVariable("UJWALAM_HEADLESS") != QStringLiteral("1"))
+		show();
+	std::printf("studio tray: off (window open again)\n");
+	std::fflush(stdout);
+}
+
+// Stop all from the tray: asked first on a real click (a long clip job is not ended by a slip of the mouse).
+void MainWindow::stopAllFromTray(bool ask)
+{
+	if (ask && QMessageBox::question(nullptr, QStringLiteral("Stop all"),
+					  QStringLiteral("Stop every running task and quit Ujwalam?\nUnfinished clip jobs run again at the next start.")) != QMessageBox::Yes)
+		return;
+	std::printf("studio tray: stop all\n");
+	std::fflush(stdout);
+	QApplication::exit(0); // the launcher ends every task's whole process tree
 }
 
 void PreviewSlot::schedule()
@@ -436,6 +521,21 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	statusBar()->addWidget(note_, 1);
 	tasks_ = new TaskBar(this);
 	statusBar()->insertPermanentWidget(0, tasks_->chip()); // before host / event core; hidden while nothing runs
+	{
+		// Tray icon (D310 proposed): the app icon when the build has one (app/studio/res/ujwalam.ico), else a standard one.
+		QIcon ico(QStringLiteral(":/app/ujwalam.ico"));
+		if (ico.isNull())
+			ico = style()->standardIcon(QStyle::SP_ComputerIcon);
+		tray_ = new TrayKeeper(ico, this);
+		connect(tray_, &TrayKeeper::openRequested, this, &MainWindow::leaveTray);
+		connect(tray_, &TrayKeeper::stopAllRequested, this, [this]() { stopAllFromTray(true); });
+		connect(tray_, &TrayKeeper::allFinished, this, [this]() {
+			std::printf("studio tray: all tasks finished; exiting\n");
+			std::printf("studio tray probe: %s\n", QJsonDocument(tray_->probe()).toJson(QJsonDocument::Compact).constData());
+			std::fflush(stdout);
+			QApplication::exit(0); // exit 0: the launcher stops everything else (D280)
+		});
+	}
 	resize(1400, 860);
 	// Tips and tour (D294 proposed): the parts of the window they point at, by name (data/guide/*.json).
 	guide_ = new Guide(this, api_);
@@ -1884,6 +1984,8 @@ void MainWindow::pollStatus()
 			       h.value(QStringLiteral("droppedFrames")).toInt(), live_, recording_);
 		updateAlerts(s.value(QStringLiteral("alerts")).toArray());
 		tasks_->update(s.value(QStringLiteral("tasks")).toArray(), s.value(QStringLiteral("at")).toDouble());
+		if (tray_ && tray_->active())
+			tray_->update(tasks_->tasks());
 		updateClips(s.value(QStringLiteral("clips")).toObject());
 		guide_->onStatus(s);
 		// A layer moved or resized with the mouse on the embedded preview (D230): select it, reload layers + inspector.
@@ -3575,6 +3677,10 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("clipAsks"), clips_.value(QStringLiteral("asks")).toArray().size());
 	o.insert(QStringLiteral("clipSettings"), clips_.value(QStringLiteral("settings")));
 	o.insert(QStringLiteral("tasks"), tasks_->probe());
+	QJsonObject tray = tray_->probe();
+	tray.insert(QStringLiteral("closeAsked"), closeAsked_);
+	tray.insert(QStringLiteral("closeChoice"), closeChoice_);
+	o.insert(QStringLiteral("tray"), tray);
 	o.insert(QStringLiteral("windowShown"), isVisible()); // UJWALAM_STUDIO_PROBE_SHOW: animations ran (2026-11-08 crash test)
 	o.insert(QStringLiteral("guide"), guide_->probe());
 	o.insert(QStringLiteral("stats"), QJsonObject{{QStringLiteral("samples"), stats_->samples()}, {QStringLiteral("session"), stats_->sessionText()}});
@@ -3812,6 +3918,36 @@ bool MainWindow::probeAction(const QString &action)
 	}
 	if (p.size() == 3 && p[0] == QStringLiteral("clip-modes")) { // D284: Settings > Clips, saved as the dialog does
 		saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), p[1]}, {QStringLiteral("live"), p[2]}}}});
+		return true;
+	}
+	// D310 proposed: close the window (as its X does; the question opens on the next turn), answer the close question,
+	// and the tray's own choices (click the icon, Open Ujwalam, Stop all without the extra question).
+	if (p.size() == 1 && p[0] == QStringLiteral("close")) {
+		QTimer::singleShot(0, this, [this]() { close(); });
+		return true;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("close-choice")) {
+		auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
+		if (!box || box->objectName() != QStringLiteral("closeTasks"))
+			return false;
+		const QString name = p[1] == QStringLiteral("tray") ? QStringLiteral("closeTray") : p[1] == QStringLiteral("stop") ? QStringLiteral("closeStop") : QStringLiteral("closeCancel");
+		if (auto *b = box->findChild<QPushButton *>(name)) {
+			b->click();
+			return true;
+		}
+		return false;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("tray")) {
+		if (!tray_->active())
+			return false;
+		if (p[1] == QStringLiteral("click"))
+			tray_->showList();
+		else if (p[1] == QStringLiteral("open"))
+			leaveTray();
+		else if (p[1] == QStringLiteral("stop"))
+			stopAllFromTray(false);
+		else
+			return false;
 		return true;
 	}
 	if (p.size() == 2 && p[0] == QStringLiteral("tasks")) { // D287: open / close the task list, dismiss the first finished task

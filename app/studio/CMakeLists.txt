@@ -47,6 +47,8 @@ add_executable(ujwalam-studio WIN32
 	../host/src/crash.h
 	src/taskbar.cpp
 	src/taskbar.h
+	src/tray.cpp
+	src/tray.h
 	src/theme.cpp
 	src/theme.h)
 # Built-in theme packs (D293): data/themes/*.json embedded as :/themes/<id>.json. A file with the same id next to the
@@ -54,6 +56,10 @@ add_executable(ujwalam-studio WIN32
 file(GLOB UJW_THEME_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes/*.json")
 list(FILTER UJW_THEME_FILES EXCLUDE REGEX "\.schema\.json$")
 qt_add_resources(ujwalam-studio themes PREFIX "/themes" BASE "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes" FILES ${UJW_THEME_FILES})
+# The tray icon (D310 proposed) uses the app icon when the build has one (another branch adds res/ujwalam.ico).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/res/ujwalam.ico")
+	qt_add_resources(ujwalam-studio appicon PREFIX "/app" BASE "${CMAKE_CURRENT_SOURCE_DIR}/res" FILES "${CMAKE_CURRENT_SOURCE_DIR}/res/ujwalam.ico")
+endif()
 target_link_libraries(ujwalam-studio PRIVATE Qt6::Widgets Qt6::Network)
 if(WIN32)
 	target_link_libraries(ujwalam-studio PRIVATE user32 dbghelp)

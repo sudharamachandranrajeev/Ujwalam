@@ -33,6 +33,7 @@ class QMenu;
 class QToolButton;
 class QCheckBox;
 class TaskBar;
+class TrayKeeper;
 class LookPanel;
 class StatsCards;
 class Guide;
@@ -231,6 +232,12 @@ private:
 	QPushButton *helpBtn_ = nullptr;
 	QWidget *moreBtn_ = nullptr;
 	TaskBar *tasks_ = nullptr;     // task chip, list and toasts (D287)
+	TrayKeeper *tray_ = nullptr;  // tasks kept running in the tray after the window closed (D310 proposed)
+	QString closeAsked_;          // the last close question's text (probe)
+	QString closeChoice_;         // tray | stop | cancel: the answer to it (probe)
+	void enterTray();
+	void leaveTray();
+	void stopAllFromTray(bool ask);
 	StatsCards *stats_ = nullptr;  // session time, GPU, CPU, fps with history
 	QJsonObject clips_;           // status.clips: settings, state, asks, last result (D284)
 	QStringList asked_;           // "make clips?" questions already shown this session
