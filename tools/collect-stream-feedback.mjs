@@ -4,13 +4,15 @@
 //
 //   node tools/collect-stream-feedback.mjs --date YYYY-MM-DD [--since ISO --until ISO] [--marker fb:]
 //        [--window-min 10] [--question-prefix TEXT] [--bot-name NAME] [--question-at ISO[,ISO...]]
-//        [--data-dir DIR | --db FILE] [--out-dir DIR]
+//        [--data-dir DIR | --db FILE] [--out-dir DIR] [--json]
 //
 // A chat row counts as feedback when (a) it starts with the marker (default "fb:", case-insensitive), or (b) it was
 // received after a question and within --window-min minutes of it. A question is a row whose text starts with
 // --question-prefix (case-insensitive; optionally only from --bot-name), or a time in --question-at. Question rows
 // are not feedback. Chat text is untrusted data: it is escaped, stripped of control characters, capped, and only
 // ever written as text. Re-running never duplicates a message (keyed on the stored event id).
+// Without --question-prefix / --marker / --window-min the values of data/live/test-kit.json are used. With the flag
+// live-test-kit on, the studio UI server runs collectFeedback by itself when a stream ends (live-test-kit.mjs).
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
@@ -129,6 +131,7 @@ function parseArgs(argv) {
   const a = {};
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith('--')) throw new Error(`unexpected argument ${argv[i]}`);
+    if (argv[i] === '--json') { a.json = true; continue; } // one JSON line as the result (live-test-kit.mjs child run)
     a[argv[i].slice(2)] = argv[++i];
   }
   return a;
@@ -141,10 +144,14 @@ async function main() {
     const { resolveDataDir } = await import('../services/event-core/config.mjs');
     dbFile = path.join(resolveDataDir({ dataDir: a['data-dir'] }), 'event-core.db');
   }
+  // Defaults for the question prefix and the marker come from data/live/test-kit.json (D305 proposed) when it reads.
+  let kit = null;
+  try { kit = (await import('../services/studio-ui/live-test-kit.mjs')).loadTestKitConfig(); } catch { kit = null; }
   const r = collectFeedback({
-    dbFile, date: a.date, since: a.since, until: a.until, marker: a.marker, windowMin: a['window-min'] === undefined ? undefined : Number(a['window-min']),
-    questionPrefix: a['question-prefix'], botName: a['bot-name'], questionTimes: a['question-at'] ? a['question-at'].split(',') : [], outDir: a['out-dir'],
+    dbFile, date: a.date, since: a.since, until: a.until, marker: a.marker ?? kit?.marker, windowMin: a['window-min'] === undefined ? kit?.windowMin : Number(a['window-min']),
+    questionPrefix: a['question-prefix'] ?? kit?.questionPrefix, botName: a['bot-name'], questionTimes: a['question-at'] ? a['question-at'].split(',') : [], outDir: a['out-dir'],
   });
+  if (a.json) { console.log(JSON.stringify({ file: r.file, total: r.total, added: r.added, counts: r.counts })); return; }
   console.log(`stream feedback: ${r.total} messages (+${r.added} new; youtube ${r.counts.youtube}, twitch ${r.counts.twitch}, kick ${r.counts.kick}) -> ${path.relative(process.cwd(), r.file)}`);
 }
 

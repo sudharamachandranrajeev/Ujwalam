@@ -1,0 +1,21 @@
+{
+  "$comment": "Live test kit (flag 'live-test-kit', D305 proposed; services/studio-ui/live-test-kit.mjs). Texts and names for a one-hour test stream (AGENTS.md 'Live stream testing'). Ujwalam never posts in chat, never speaks and never triggers a Streamer.bot action: the user's own Streamer.bot action (setup: docs/tests/2026-11-04-A0-S1-streamerbot-test-action.md) posts the question and has Speaker.bot read the announcement. Ujwalam only reminds the user to start that action, and collects the replies read-only into feedback/YYYY-MM-DD-stream-feedback.md (gitignored) when the stream ends.",
+  "version": "0.1.0",
+  "status": "unverified",
+  "checked": "2026-11-09",
+  "streamerbotAction": "Ujwalam test stream",
+  "announcement": "Test broadcast: we are trying new streaming software. Tell us in chat how the video, sound and scenes look.",
+  "question": "Test stream feedback: how do the video, sound and scenes look? Anything broken or laggy? Start your reply with fb:",
+  "questionPrefix": "Test stream feedback:",
+  "marker": "fb:",
+  "windowMin": 10,
+  "reminderMin": 10,
+  "source": {
+    "streamerbotAction": "action name from the BM4 setup steps (docs/tests/2026-11-04-A0-S1-streamerbot-test-action.md); the user creates it in Streamer.bot. UNVERIFIED that it exists on the laptop under this name and that its Speaker.bot step speaks (BM4 was set up without the spoken step for the first stream).",
+    "announcement": "settled text, bot manager plan 2026-11-03 (user: use the defaults).",
+    "question": "settled text, BM4 setup steps; the feedback collector finds the question by questionPrefix.",
+    "marker": "BM5 default (D195).",
+    "windowMin": "BM5 default (D195): replies within 10 min after a question count as feedback.",
+    "reminderMin": "agent default: the control page reminds the user to start the Streamer.bot action for the first 10 min after going live."
+  }
+}
