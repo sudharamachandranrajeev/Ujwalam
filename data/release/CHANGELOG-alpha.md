@@ -2,6 +2,10 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.14 — 2026-11-09
+
+- If clips can't be made on this PC (the clip maker's Python is missing; the download does not include Python), Ujwalam says so at start, in the control page and in the studio window, with how to fix it.
+- "Ready to go live?" now fails when the sound state can't be read at all, instead of only warning.
 ## 0.1.0-alpha.13 — 2026-11-09
 
 - Clips found while you play are at least 20 s long (they start a little earlier when needed).
