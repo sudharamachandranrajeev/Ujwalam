@@ -11,6 +11,11 @@
 // 1500) after the discovery file is written. UJWALAM_FAKE_HOST_RECORDING=1 adds a record sink "record" that is live in
 // run 1 (idle in later runs until record.start). Each run's start and crash, and record.start / marker.add with their
 // params, are appended to <UJWALAM_FAKE_HOST_RECORD>.calls.jsonl.
+// Stream recovery (D303): UJWALAM_FAKE_HOST_STREAMS="youtube-h:youtube,twitch:twitch" adds stream sinks (idle at
+// start); stream.start / stream.stop ({ sinks } or all) switch them live / stopped and are logged with their params;
+// host.status reports live while one is live. UJWALAM_FAKE_HOST_STREAM_FAIL="kick" makes those sinks go 'failed' on
+// stream.start. UJWALAM_FAKE_HOST_CRASH_ON=<file>: a crash run exits (code 3) once that file exists (the file is
+// removed), instead of after UJWALAM_FAKE_HOST_CRASH_MS.
 // Live-test guard simulation: UJWALAM_FAKE_HOST_STREAM_AFTER_MS=N makes every planned sink (streams and recordings) go
 // live N ms after start (as if the user started them with "yes, on air"), with 60 fps frame counters, 6000 kbps and
 // UJWALAM_FAKE_HOST_DROP_PCT % network-dropped and UJWALAM_FAKE_HOST_SKIP_PCT % encoder-skipped frames (default 0;
@@ -20,7 +25,7 @@
 // like the real host's markers role; any other method with it answers -32001 forbidden. Recorded: shape ok, whether it
 // equals the api token or appears in argv (never the value).
 import http from 'node:http';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const argv = process.argv.slice(2);
@@ -68,6 +73,9 @@ record.run = run;
 const crashRuns = (process.env.UJWALAM_FAKE_HOST_CRASH_RUNS ?? '').split(',').filter(Boolean).map(Number);
 const withRecordSink = process.env.UJWALAM_FAKE_HOST_RECORDING === '1';
 let recordState = withRecordSink && run === 1 ? 'live' : 'idle';
+const fakeStreams = (process.env.UJWALAM_FAKE_HOST_STREAMS ?? '').split(',').filter(Boolean).map((x) => { const [id, platform] = x.split(':'); return { id, platform }; });
+const streamFail = new Set((process.env.UJWALAM_FAKE_HOST_STREAM_FAIL ?? '').split(',').filter(Boolean));
+const streamState = new Map(fakeStreams.map((x) => [x.id, 'idle']));
 const callLog = (o) => appendFileSync(`${process.env.UJWALAM_FAKE_HOST_RECORD}.calls.jsonl`, `${JSON.stringify({ run, ...o })}\n`);
 callLog({ event: 'start' });
 const save = () => writeFileSync(process.env.UJWALAM_FAKE_HOST_RECORD, JSON.stringify(record, null, 2));
@@ -114,6 +122,18 @@ const methods = {
   },
   'preview.list': () => ({ previews: (arg('--preview') ?? '').split(',').filter(Boolean).map((c) => ({ canvas: c.toUpperCase(), open: true })) }),
   'log.tail': () => ({ lines: [], total: 0, capacity: 1000 }),
+  'stream.start': (p) => {
+    callLog({ method: 'stream.start', params: p });
+    const ids = Array.isArray(p.sinks) && p.sinks.length ? p.sinks : fakeStreams.map((x) => x.id);
+    for (const id of ids) if (streamState.has(id)) streamState.set(id, streamFail.has(id) ? 'failed' : 'live');
+    return { started: ids };
+  },
+  'stream.stop': (p) => {
+    callLog({ method: 'stream.stop', params: p });
+    const ids = Array.isArray(p.sinks) && p.sinks.length ? p.sinks : fakeStreams.map((x) => x.id);
+    for (const id of ids) if (streamState.has(id)) streamState.set(id, 'stopped');
+    return { stopped: ids };
+  },
   'record.start': (p) => { callLog({ method: 'record.start', params: p }); recordState = 'live'; return { started: p.sinks ?? [] }; },
   'marker.add': (p) => { callLog({ method: 'marker.add', params: p }); return { marker: { v: 1, source: p.source, note: p.note }, file: 'fake.jsonl' }; },
   'outputs.stop': (p) => {
@@ -123,11 +143,12 @@ const methods = {
     return { stopped: ids };
   },
   'host.info': () => ({ name: 'ujwalam-host', version: 'fake', obsVersion: '0.0.0', adapter: 'fake adapter', encoders: ['fake_enc'], run }),
-  'host.status': () => ({ run, uptimeMs: 1 }),
+  'host.status': () => ({ run, uptimeMs: 1, ...(fakeStreams.length ? { live: [...streamState.values()].includes('live'), outputsReady: { stream: true, record: withRecordSink } } : {}) }),
   'outputs.status': () => ({
     allowLive: argv.includes('--allow-live'),
     twitchBandwidthTest: argv.includes('--twitch-bandwidth-test'),
-    sinks: [...(withRecordSink ? [{ id: 'record', kind: 'record', platform: 'local', container: 'mkv', path: 'C:/fake/rec.mkv', state: recordState }] : []), ...(outputs?.sinks ?? []).map((s) => {
+    sinks: [...(withRecordSink ? [{ id: 'record', kind: 'record', platform: 'local', container: 'mkv', path: 'C:/fake/rec.mkv', state: recordState }] : []),
+      ...fakeStreams.map((x) => ({ id: x.id, kind: 'stream', platform: x.platform, target: 'loopback', state: streamState.get(x.id) })), ...(outputs?.sinks ?? []).map((s) => {
       const t = s.target ?? {};
       if (s.proto === 'file') return sim(s, { id: s.id, kind: 'record', platform: s.platform, container: 'mkv', state: 'idle' });
       const o = { id: s.id, kind: 'stream', platform: s.platform, target: t.keyRef || t.urlRef ? 'live' : 'loopback', keyRef: t.keyRef ?? null, keyPresent: t.keyRef ? false : null, state: 'idle' };
@@ -187,5 +208,8 @@ server.listen(0, '127.0.0.1', () => {
   console.log(`fake host: rpc on 127.0.0.1:${port}`);
   writeFileSync(arg('--discovery'), JSON.stringify({ port, pid: process.pid, startedAt: new Date().toISOString(), token: null, path: '/rpc', apiVersion: 1 }) + '\n');
   if (process.env.UJWALAM_FAKE_HOST_EXIT0_MS) setTimeout(() => { callLog({ event: 'exit0' }); save(); process.exit(0); }, Number(process.env.UJWALAM_FAKE_HOST_EXIT0_MS));
-  if (crashRuns.includes(run)) setTimeout(() => { callLog({ event: 'crash' }); save(); process.exit(3); }, Number(process.env.UJWALAM_FAKE_HOST_CRASH_MS ?? 1500));
+  const crashOn = process.env.UJWALAM_FAKE_HOST_CRASH_ON;
+  if (crashRuns.includes(run) && crashOn) {
+    setInterval(() => { if (existsSync(crashOn)) { try { rmSync(crashOn); } catch { /* next tick */ return; } callLog({ event: 'crash' }); save(); process.exit(3); } }, 100);
+  } else if (crashRuns.includes(run)) setTimeout(() => { callLog({ event: 'crash' }); save(); process.exit(3); }, Number(process.env.UJWALAM_FAKE_HOST_CRASH_MS ?? 1500));
 });

@@ -1,0 +1,18 @@
+{
+  "$comment": "Stream recovery after a host crash (services/studio-ui/stream-recovery.mjs, flag 'stream-recovery', D303 proposed). Every limit the recovery uses lives here, never in code. status 'proposed' = agent defaults derived as noted below, not yet approved by the user or tried on a real stream.",
+  "version": "0.1.0",
+  "status": "proposed",
+  "checked": "2026-11-09",
+  "maxRecoveries": 2,
+  "windowMs": 600000,
+  "maxGapMs": 90000,
+  "startCheckMs": 15000,
+  "pollMs": 500,
+  "source": {
+    "maxRecoveries": "design value, UNVERIFIED on a real stream. The host restart policy (launch.mjs HOST_RESTART_MAX) allows 3 restarts in 5 min and stops on the 4th crash. Streams come back on at most 2 of those restarts in windowMs: a host that crashes a third time while live is treated as unstable, the streams stay off and the user decides (a stream that flaps on and off is worse for viewers than one clean stop).",
+    "windowMs": "design value: 10 min, twice the host restart window, so two quick crashes and a third one a few minutes later still count as 'repeating'.",
+    "maxGapMs": "design value, UNVERIFIED against platform behaviour: the streams are started again only when the restarted host is ready within 90 s of the crash. The host backoff is 2/5/10 s and a healthy host start (discovery file) takes a few seconds; 90 s leaves room for a slow project reload. After that the user has most likely noticed, and a stream that comes back on by itself much later would be a surprise. How long YouTube, Twitch and Kick keep a broadcast open after the ingest drops is not checked here (UNVERIFIED).",
+    "startCheckMs": "how long the launcher waits for each restarted stream sink to report starting/live/retrying in outputs.status before it reports that sink as not restarted. Matches readiness.json endAll waitMs order of magnitude; a real RTMP connect usually reports 'starting' within a second (UNVERIFIED per platform).",
+    "pollMs": "outputs.status poll interval while waiting (startCheckMs)."
+  }
+}
