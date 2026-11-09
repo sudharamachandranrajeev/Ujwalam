@@ -17,35 +17,53 @@ branch takes D310 first, renumber at merge.
 - **Slot rule** (`services/posting/schedule.mjs`, pure):
   - anchor = the later of (a) the latest FUTURE publish time already scheduled on the channel and (b) the latest
     slot already in the upload queue (any state);
-  - slot = anchor + intervalHours, but never sooner than now + minLeadHours;
-  - with no anchor at all: now + minLeadHours;
+  - floor = now + minLeadHours + marginMinutes;
+  - slot = anchor + intervalHours, but never sooner than the floor;
+  - with no anchor at all: the floor (now + 1 h 15 min with the shipped settings);
   - rounded up to the whole minute. All math is in UTC milliseconds, so time zones and DST do not matter.
 - **Settings** are in `data/posting/schedule.json` (source + date), never hardcoded:
   - `intervalHours` 6 (from the user);
-  - `minLeadHours` 1, `staleMinutes` 15, `maxPages` 4, `pageSize` 50 (agent defaults).
+  - `minLeadHours` 1, `marginMinutes` 15, `maxPages` 20, `pageSize` 50 (agent defaults).
   A bad file is refused (`schedule-config-bad`), never defaulted.
 - **Reading YouTube Studio's schedule** (`services/posting/schedule-read.mjs`):
   - `channels.list part=contentDetails mine=true` gives the uploads playlist;
   - then, per page, `playlistItems.list` and `videos.list part=status`. Titles and descriptions are not read.
   - Only videos that are private and have a `publishAt` after now count. Past, public and unlisted videos are ignored.
   - Quota: 1 + 2 x pages units. The read happens only when a queued clip needs a slot, at most once per chain pass,
-    and is capped at maxPages x pageSize (200) newest uploads. The result is saved on the queue
+    and is capped at maxPages x pageSize (1000) newest uploads (41 quota units). If the channel has more uploads than that, nothing is scheduled (see Fail closed). The result is saved on the queue
     (`schedule: { channelLast, count, scanned, truncated, readAt }`) for the preview.
 - **Queue order, persistence, no double booking.** Slots are given out in queue order (the order the chain already
   queues, same as before). Each slot becomes the next anchor. The slot is saved on the queue item (`publishAt`,
-  `slotAt`) before the upload starts. A retry, a backoff or a restart reuses it; the channel is not read again.
+  `slotAt`) before the upload starts. A retry, a backoff or a restart reuses it while it is still at least minLeadHours ahead; the channel is not read again.
 - **Failure behaviour (nothing is released silently):**
   - a failed upload keeps its slot; the next clip goes after it, so that time stays empty on the channel;
-  - "Retry now" keeps the slot while it is still more than staleMinutes ahead;
-  - a slot that is within staleMinutes of now while no upload session exists yet (e.g. the stream ran long, or every
-    upload try failed before a session opened) is replaced by a new slot at the end of the schedule;
-  - once a resumable session exists, Google already holds the time with it, so the slot stays.
+  - the slot is re-checked right before an upload session starts or resumes (inside `uploadVideo`, so also when an
+    expired session is restarted): it must be at least minLeadHours ahead. Otherwise no session is started
+    (`slot-passed`), the slot is dropped and the clip gets a new slot at the end on the next pass (no attempt used).
+    This covers a later clip in a batch whose slot came close while earlier clips uploaded, a long stream, and long
+    backoffs;
+  - before every chunk the time must still be at least marginMinutes ahead. Otherwise the upload stops between chunks
+    (`slot-passed-mid`); the next try drops the unfinished session and gets a new slot. An upload never finishes
+    with a passed time;
+  - each session's own publish time is saved with it (`sessionPublishAt`; null = sent without one). An unfinished
+    session whose time differs from the slot (e.g. started before `post-schedule` was switched on) or is too close
+    is dropped and a new session is started. A FINISHED session is recorded with the time it really carried
+    (`sentPublishAt`, `posted[].publishAt`), never the planned one;
+  - if a finished session is only confirmed after its time passed (answer lost, then the progress query failed for a
+    while), the clip is marked `went-public-early` and the page says plainly "may have gone public early ... check
+    YouTube Studio" (never silent);
+  - fixing the time after upload with `videos.update status.publishAt` was evaluated and not used: it needs the
+    broad `youtube` / `youtube.force-ssl` scope (manage the whole account), not `youtube.upload` + `youtube.readonly`.
 - **Fail closed:**
   - the stored sign-in lacks youtube.readonly, Google does not say which scopes it has, or Google answers 401 or
     403 insufficientPermissions: the clip waits with reason `schedule-scope-missing`. The page says "Sign in again
     to allow reading scheduled posts (node services/posting/cli.mjs youtube signin)". It retries after 30 min and
     uses no attempt;
   - any other read failure: `schedule-read-failed`, retry after 5 min, no attempt used;
+  - the page cap was hit (the channel has more uploads than maxPages x pageSize): `schedule-read-incomplete`, the page
+    says "raise maxPages in data/posting/schedule.json", retry after 30 min. An older scheduled post could be past the
+    pages read, so no slot is given out. The preview says the same;
+  - a bad settings file: every queued clip waits (the re-check needs the settings);
   - a clip without a slot never uploads, and no slot is guessed.
 - **Live:** unchanged. While a stream sink is live or the state cannot be read, nothing is approved, read, slotted
   or uploaded. Clips from live and montages after live are packaged from uploads.json as before. They are queued,
@@ -72,11 +90,11 @@ Commands (worktree `post/schedule`, 2026-11-09):
 
 ```
 node --test tests/posting-schedule.test.mjs tests/posting-e2e.test.mjs
-  tests 38, pass 38, fail 0
-node --test tests/posting*.test.mjs tests/studio-ui-posting*.test.mjs tests/guide.test.mjs tests/flags*.test.mjs
-  tests 182, pass 182, fail 0
+  tests 44, pass 44, fail 0
+node --test tests/posting*.test.mjs tests/studio-ui-posting*.test.mjs tests/guide.test.mjs tests/flags.test.mjs
+  tests 188, pass 188, fail 0
 node --test tests/test-broadcast.test.mjs tests/studio-ui-readiness.test.mjs tests/studio-ui-bots.test.mjs tests/stream-day.test.mjs tests/report-button.test.mjs tests/flags.test.mjs
-  tests 87, pass 87, fail 0
+  tests 87, pass 87, fail 0 (first round; flags.json unchanged since)
 node tools/ci.mjs --quick
   ci: 9/9 passed (build, lint, build-host, build-studio, validate-*, private-scan, legacy-verify)
 ```
@@ -84,57 +102,86 @@ node tools/ci.mjs --quick
 `tests/posting-schedule.test.mjs` (pure, no network):
 
 - settings loaded from the data file (6 h, source and date present); bad or missing settings are refused;
-- empty channel gives now + 1 h, rounded up to the minute;
+- empty channel gives now + 1 h 15 min (lead + margin), rounded up to the minute;
 - a future channel schedule gives +6 h; the later of channel and own queue wins;
-- an anchor whose +6 h falls inside the lead time gives the lead time;
+- an anchor whose +6 h falls inside the floor gives the floor;
 - `planSlots` gives 4 in order, 6 h apart;
 - DST: starting just before the EU (2026-03-29) and US (2026-11-01) changes, slots stay exactly 6 h apart and end in
   `Z`;
 - channel filter: past, public, no-publishAt and bad values are ignored;
 - own last slot counts failed items;
-- stale margin;
+- too-close rule: less than 1 h ahead is too close; a fresh slot passes the check for the whole 15 min margin;
 - `schedule.mjs` has no network, auth or write code (the preview imports it);
 - `uploadMetadata`: publishAt sits next to `private`; a bad time is refused; privacy is never taken from post.json;
 - `authUrl` carries both scopes; `grantedScopes` reads the token answer, and gives null when Google omits `scope`;
   without a sign-in it throws `oauth-reauth-needed`;
 - CLI signin asks for both scopes only with the flag on, and warns when readonly was not granted;
-- preview estimate: no times with the flag off; with it on, times in order after the saved queue slots and the saved
-  channel read; approval-only rules get no time; a bad settings file is reported.
+- preview estimate:
+  - no times with the flag off;
+  - with it on, times in order after the saved queue slots and the saved channel read;
+  - approval-only rules get no time;
+  - a bad settings file is reported;
+  - a saved read that hit the page cap gives no times and says "raise maxPages".
 
 `tests/posting-e2e.test.mjs`: the local fake Google (127.0.0.1 only) gained `channels`, `playlistItems` (paged) and
 multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New tests:
 
-- empty channel: 3 clips go up private at +1 h, +7 h, +13 h in queue order. The channel is read once per pass and
-  not at all when nothing needs a slot. `posted` rows and the summary carry the times. No token is in the queue file;
+- empty channel: 3 clips go up private at +1 h 15, +7 h 15, +13 h 15 in queue order.
+  - The channel is read once per pass, and not at all when nothing needs a slot.
+  - Recorded `sentPublishAt`, the `posted` rows and the summary carry the times. No token is in the queue file;
 - an existing schedule in Studio (past private, future private x2, public with publishAt, unlisted) gives the
   latest future + 6 h;
 - another clip 30 min later (channel list hiding our own upload) gives own last slot + 6 h;
 - a failed item keeps its slot, and the next clip goes after it;
-- retries never re-slot: two failed inits, then success with the same publishAt and one channel read;
+- a retry while the time is still more than 1 h ahead keeps the same publishAt and makes no new channel read;
 - missing readonly scope (only upload, null, no `grantedScopes`): zero requests, no slot, no upload, 0 attempts,
   plain message;
-- 403 insufficientPermissions, then 500, then OK: no upload until the read works, then the slot is now + 1 h;
+- 403 insufficientPermissions, then 500, then OK: no upload until the read works, then the slot is the floor;
 - live: zero requests during live and with an unreadable state; after the stream the slot is set and the clip
   uploads;
-- stale slot with no session is re-slotted after a 10 h stream; with an open session it keeps the original time
-  (one init);
-- pagination cap: maxPages 2 x 50 reads 2 pages. A scheduled post on page 2 is seen; one on page 3 is not. The read
-  is saved as `truncated: true, scanned: 100`.
+- review fix 1 (time too close before the session starts):
+  - the second clip of a batch whose slot came within 55 min while the first uploaded starts no session
+    (`slot-passed`, 0 attempts);
+  - the next pass gives it a new slot at least 1 h ahead;
+- review fix 1 (time too close during the upload): stopped after the first chunk, then the unfinished session is
+  dropped (progress query), then a new slot and a new session. One video; the first session never became a video;
+- review fix 1 (long stream): a passed slot with no session gets a new slot. With an unfinished session open, the
+  session is dropped first, then a new slot and a new session (2 inits);
+- review fix 1 (confirmed late): a scheduled upload that finished but was confirmed only after its time passed is
+  `went-public-early`. The summary has `attention: 1` and "may have gone public early";
+- review fix 3 (session metadata): an unfinished session started with the flag off (`sessionPublishAt: null`) is
+  dropped when the flag is on. A new session is sent with the slot, and posted carries that slot. A FINISHED
+  unscheduled session is recorded with no publishAt (one init, nothing shown as scheduled);
+- review fix 2 (pagination cap): maxPages 2 x 50 on a 160-upload channel reads 2 pages, then:
+  - schedules and uploads nothing: `schedule-read-incomplete`, 0 attempts, "raise maxPages";
+  - saves `truncated: true, scanned: 100`.
+  With 90 uploads (within the cap), the scheduled post on page 2 is found.
+
+## Review fixes (Codex review, 2026-11-09)
+
+1. HIGH, past publishAt: fixed. The time is re-checked inside `uploadVideo` right before a session starts or
+   resumes (>= now + minLead), so a later batch item or a restarted expired session can never send a passed or
+   too-close time. It is also re-checked before every chunk (>= now + margin). An unfinished session is dropped
+   and the clip re-slotted. A finished one confirmed late is marked `went-public-early` with a plain message.
+   `videos.update` after upload needs the broad `youtube` scope, so it was not used.
+2. MEDIUM, truncated read: now fails closed (`schedule-read-incomplete`, plain message). The default page cap was
+   raised to 20 x 50 = 1000 uploads; the settings file allows up to 100 pages.
+3. MEDIUM, unscheduled session resumed as scheduled: each session's publish time is saved
+   (`sessionPublishAt`). A mismatch drops an unfinished session and starts a new one with the slot. The time
+   recorded is always the one the finished session carried (`sentPublishAt`, `posted[].publishAt`).
 
 ## UNVERIFIED
 
 - That real Google returns `scope` in the refresh-token answer. Google's OAuth docs list it. If Google omits it, the
   chain fails closed and the clip waits with the sign-in message.
-- That the uploads playlist lists newest uploads first. A scheduled video uploaded long ago (beyond 200 newer
-  uploads) would not be seen. The cap is in the settings file.
+- That Google never turns an unfinished resumable upload session into a video. Dropping such a session relies on it.
 - That YouTube accepts `publishAt` on a resumable insert for Shorts, and the minimum lead it requires. 1 h is our own
-  margin.
-- What YouTube does when a session that already carries a passed publishAt finishes later (publishes at once, or
-  refuses). The chain keeps the slot in that case, because a new session could upload the video twice.
+  lead.
 - 403 reasons other than insufficientPermissions or scope (e.g. quotaExceeded) are treated as a read failure and
   retried every 5 min. They are not treated as a scope problem.
+- A channel with more than 1000 uploads schedules nothing until maxPages is raised. That costs 1 + 2 quota units per
+  page per read.
 - The studio window (Qt) change was compiled by `build-studio` but not looked at on screen.
-
 ## What the user must do
 
 1. Google Cloud console > your OAuth app > Data Access (scopes): add
@@ -145,7 +192,7 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
    On Google's consent screen, tick both permissions (upload, and view your YouTube account). The CLI says so if
    reading was not allowed.
 4. Rules: `data/posting/auto-post-rules.json` needs `"autoUpload": true` and at least one rule (as before).
-   Optionally tune `data/posting/schedule.json` (interval, lead time).
+   Optionally tune `data/posting/schedule.json` (interval, lead time, margin, page cap).
 5. Check with "Preview auto-post rules" (or `node services/posting/cli.mjs auto --preview`). After the first real
    upload, check in YouTube Studio > Content that the video shows "Scheduled" with the expected time.
 
