@@ -13,7 +13,7 @@ import {
   CANVAS_TAIL, LEDGER_NAME, NAME_DATE, UPLOAD_KINDS, checkLimits, cleanProfile, createLedger, createPostStore, loadLimits,
   loadTemplates, pickYoutubeTarget, renderText, sha256File, unresolvedKeys,
 } from './index.mjs';
-import { isRetry, loadScheduleConfig, planQueueSlots, savedChannelLast, toIso } from './schedule.mjs';
+import { isRetry, loadScheduleConfig, planQueueSlots, savedChannelLast, savedChannelTimes, toIso } from './schedule.mjs';
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isFile = (f) => { try { return statSync(f).isFile(); } catch { return false; } };
@@ -145,7 +145,7 @@ function estimateSlots({ dataDir, queued, nowMs, file }) {
   const ups = queued.filter((q) => q.actions.includes('upload') && UPLOAD_TARGETS.includes(q.target) && !known.has(q.id));
   const virtual = ups.map((q) => ({ id: q.id, state: 'queued', publishAt: null, session: null }));
   const retries = items.filter((i) => isRetry(i, nowMs, cfg)).length;
-  const plan = new Map(planQueueSlots({ items: [...items, ...virtual], channelLast, nowMs, cfg }).map((p) => [p.id, p]));
+  const plan = new Map(planQueueSlots({ items: [...items, ...virtual], channelLast, channelTimes: savedChannelTimes(qdoc, nowMs), nowMs, cfg }).map((p) => [p.id, p]));
   const rechained = [...plan.values()].filter((p) => known.has(p.id) && p.rechain).length;
   for (const q of ups) {
     const p = plan.get(q.id);

@@ -196,8 +196,15 @@ Rules chosen:
   later). The margin also covers the time to start the session after earlier uploads in the same pass. This is the
   closest safe value. If the clip is backing off after an error (its next try is later than now), the 1 h 15 min counts
   from that next try, because the upload cannot start sooner.
-- **The retry itself ignores the other anchors**, as the user asked ("post 1 hour away"). It may therefore land less
+- **The retry does not wait 6 h after other posts**, as the user asked ("post 1 hour away"). It may therefore land less
   than 6 h from a post that is already fixed. Ujwalam cannot move fixed posts (that needs the broad youtube scope).
+- **Gap (Codex review, MEDIUM, 2026-11-09):** the retry never lands within `minGapMinutes` (60, in
+  `data/posting/schedule.json`; at most intervalHours x 60) of a taken time. Taken times are every future scheduled
+  post read from the channel (the read now keeps all of them, `channelTimes`, saved with the queue for the preview),
+  every fixed queue time (uploaded, open session, failed, earlier queued) and every slot given to a new item in the
+  same pass. If the floor is taken, the retry moves to the first free time after it (taken time + gap, rounded up to
+  the minute, repeated while another taken time is within the gap). The later chain slots are 6 h after the latest
+  of all of these, so nothing planned in the same pass collides. The preview uses the same rule.
 - **Re-chain.** Every later queued clip in queue order that has no session yet is re-timed. This covers clips with a
   slot, clips without one and other retries. Each one gets the later of two times: the previous chain slot + 6 h, and
   the latest fixed time + 6 h. So a re-chain never moves a slot earlier than the channel's latest scheduled post + 6 h.
@@ -223,6 +230,11 @@ node --test tests/posting-schedule.test.mjs
   tests 28, pass 28, fail 0
 node --test tests/posting-*.test.mjs
   tests 144, pass 144, fail 0
+after the gap fix:
+node --test tests/posting-schedule.test.mjs
+  tests 31, pass 31, fail 0
+node --test tests/posting-*.test.mjs
+  tests 148, pass 148, fail 0
 node tools/ci.mjs --quick
   ci: 9/9 passed (build, lint, build-host, build-studio, validate-registry, validate-outputs, validate-games, private-scan, legacy-verify)
 ```
@@ -242,7 +254,10 @@ New tests:
   gets now + 1 h 15, and a new clip goes 6 h after the latest uploaded one. (3) A clip with an open session keeps its
   time and resumes its session (no new session); only the retry moves. (4) Cap: a 1-day cap with a channel post at
   T0 + 20 h means the clip waits (`schedule-beyond-cap`, 0 attempts, plain message, no early re-read). It goes up at
-  T0 + 26 h once the cap allows it.
+  T0 + 26 h once the cap allows it. (5) Gap: a channel post at the retry floor moves the retry 1 h after it.
+- Gap tests, pure: a retry floor equal to an uploaded clip's time; a retry floor equal to a channel post, with a
+  second post 30 min later (moves twice); a new item and a retry in the same pass (11:15 and 12:15, never shared);
+  bad `minGapMinutes` refused; the preview moves the retry past a saved channel post.
 
 ## Review fixes (Codex review, 2026-11-09)
 
@@ -317,6 +332,6 @@ New tests:
 - `tests/posting-auto-chain.test.mjs`, `tests/posting-uploads.test.mjs` (keep post-schedule off)
 - `docs/plan/2026-10-29-v1-decisions.md` (D310 proposed)
 - `docs/evidence/2026-11-09-scheduled-posting.md` (this file)
-- D314 (branch `post/retry-rechain`): `services/posting/schedule.mjs`, `services/posting/auto-chain.mjs`,
+- D314 (branch `post/retry-rechain`): `services/posting/schedule.mjs`, `services/posting/schedule-read.mjs`, `services/posting/auto-chain.mjs`,
   `services/posting/preview.mjs`, `data/posting/schedule.json`, `ui/js/app.js`, `tests/posting-schedule.test.mjs`,
   `tests/posting-e2e.test.mjs`, this file

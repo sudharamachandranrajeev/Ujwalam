@@ -289,7 +289,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
   /** A settings file in the test's data folder: the repo defaults with `over` applied. */
   const schedFile = (e, over) => {
     const p = path.join(e.dataDir, 'schedule.json');
-    writeFileSync(p, JSON.stringify({ intervalHours: 6, minLeadHours: 1, marginMinutes: 15, chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 20, pageSize: 50, maxAheadDays: 730, ...over }));
+    writeFileSync(p, JSON.stringify({ intervalHours: 6, minLeadHours: 1, marginMinutes: 15, chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 20, pageSize: 50, maxAheadDays: 730, minGapMinutes: 60, ...over }));
     return p;
   };
 
@@ -606,6 +606,16 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     const R = T0 + 30 * MIN + HOUR + 15 * MIN;
     assert.deepEqual(e.queue().items().map((i) => i.sentPublishAt), [iso(R), iso(FIRST + 6 * HOUR)]);
     assert.equal(g.videos.length, 2); assert.equal(g.count('init'), 3, 'clip 2 resumed its session, no new one');
+  });
+
+  test('D314 gap: a retry whose floor equals a channel post goes 1 h after it (read from the fake channel)', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]); const c = schedChain(e, g);
+    g.opt.initFailures = 1;
+    await c.afterRun(e.runDir, IDLE);
+    g.opt.channel = [vid('p1', 'private', iso(T0 + HOUR + 45 * MIN))]; // exactly the retry floor at now = T0 + 30 min
+    e.clock.t = T0 + 30 * MIN; await c.tick(IDLE);
+    assert.deepEqual(sent(g), [iso(T0 + 2 * HOUR + 45 * MIN)]);
+    assert.deepEqual(qfile(e).schedule.channelTimes, [iso(T0 + HOUR + 45 * MIN)]);
   });
 
   test('D314 cap: a slot more than maxAheadDays ahead is not given; the clip waits (plain reason, no attempt) and goes up later', async () => {

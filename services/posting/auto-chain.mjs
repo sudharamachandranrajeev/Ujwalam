@@ -252,11 +252,11 @@ export function createPostChain(opts) {
       wait(code, code === 'schedule-scope-missing' ? SIGNIN_WAIT_MS : BASE_DELAY_MS);
       return cfg;
     }
-    queue.setSchedule({ channelLast: read.last !== null ? toIso(read.last) : null, count: read.count, scanned: read.scanned, truncated: read.truncated, readAt: toIso(t) });
+    queue.setSchedule({ channelLast: read.last !== null ? toIso(read.last) : null, channelTimes: (read.times ?? []).map(toIso), count: read.count, scanned: read.scanned, truncated: read.truncated, readAt: toIso(t) });
     // Page cap hit: an older scheduled post could be past the pages read, so no slot is given out (never a guess).
     if (read.truncated) { wait('schedule-read-incomplete', SIGNIN_WAIT_MS); return cfg; }
     // D310 slots for new items, and the D314 retry + re-chain (rule in schedule.mjs, planQueueSlots).
-    const plan = planQueueSlots({ items: queue.items(), channelLast: read.last, nowMs: t, cfg });
+    const plan = planQueueSlots({ items: queue.items(), channelLast: read.last, channelTimes: read.times ?? [], nowMs: t, cfg });
     let given = 0; let moved = 0; let capped = 0;
     for (const p of plan) {
       const i = queue.get(p.id); if (!i) continue;

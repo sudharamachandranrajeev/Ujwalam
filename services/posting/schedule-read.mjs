@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Reads the channel's scheduled posts (what YouTube Studio shows as "Scheduled") for the post-schedule flag (D310 proposed).
 // Needs the youtube.readonly scope; the caller checks the granted scopes first and fails closed without it.
-//   readChannelSchedule({ accessToken, fetchImpl?, nowMs, cfg }) -> { last (ms|null), count, scanned, pages, truncated }
+//   readChannelSchedule({ accessToken, fetchImpl?, nowMs, cfg }) -> { last (ms|null), count, times (ms[], sorted), scanned, pages, truncated }
 // Calls (YouTube Data API v3, 1 quota unit each): channels.list mine=true -> the uploads playlist; then per page
 // (cap cfg.maxPages x cfg.pageSize): playlistItems.list -> video ids, videos.list part=status -> privacyStatus + publishAt.
 // Only part=status is read (no titles or descriptions). Nothing is written; tokens never leave memory.
 // Any failure throws ScheduleError: 'schedule-scope-missing' (403 insufficient permissions / 401) or 'schedule-read-failed'.
 // The caller never guesses a slot when this throws.
-import { ScheduleError, latestFutureSchedule } from './schedule.mjs';
+import { ScheduleError, futureScheduleTimes, latestFutureSchedule } from './schedule.mjs';
 
 const API = 'https://www.googleapis.com/youtube/v3';
 
@@ -44,5 +44,5 @@ export async function readChannelSchedule({ accessToken, fetchImpl = fetch, nowM
     pageToken = typeof page?.nextPageToken === 'string' && page.nextPageToken ? page.nextPageToken : null;
   } while (pageToken && pages < cfg.maxPages);
   const { last, count } = latestFutureSchedule(videos, nowMs);
-  return { last, count, scanned, pages, truncated: Boolean(pageToken) };
+  return { last, count, times: futureScheduleTimes(videos, nowMs), scanned, pages, truncated: Boolean(pageToken) };
 }
