@@ -586,6 +586,29 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		}
 		return a.studio->test_audio_config(q.str("id", 64), set);
 	});
+	// preview.placeSim {work: {x, y, w, h}, want: {x, y, w, h}}: the stand-alone preview's placement maths
+	// (pplace::fit_in, D316) without a window. --test-hooks only.
+	add("preview.placeSim", [&a](const json::Value &p) {
+		Params q(p, {"work", "want"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "preview.placeSim needs a host started with --test-hooks");
+		auto rect = [](const json::Value &o) {
+			Params r(o, {"x", "y", "w", "h"});
+			pplace::Rect out;
+			out.x = (long)r.integer("x", -65536, 65536);
+			out.y = (long)r.integer("y", -65536, 65536);
+			out.w = (long)r.integer("w", 0, 65536);
+			out.h = (long)r.integer("h", 0, 65536);
+			return out;
+		};
+		const pplace::Rect got = pplace::fit_in(rect(q.obj("work")), rect(q.obj("want")));
+		json::Value o = json::Value::object();
+		o.set("x", (int)got.x);
+		o.set("y", (int)got.y);
+		o.set("w", (int)got.w);
+		o.set("h", (int)got.h);
+		return o;
+	});
 	// preview.editSim {canvas, width, height, steps: [{event: down|move|up|cancel, x, y, shift?, alt?}]}: runs the
 	// window procedure's editor calls for a preview of width x height client px, without a window (headless tests).
 	// Returns the selection after each step and the edit seq. --test-hooks only.

@@ -5,7 +5,8 @@
 //
 // Focus and placement (user, 2026-11-09, D316): a stand-alone preview is a normal window. It opens on the main
 // display (also with one display), shows in the taskbar and activates when shown or clicked. A given x/y that lies
-// on any display is kept; otherwise it is clamped into the main display's work area. Embedded previews (parent set)
+// on a display picks that display (else the main one); the whole window is then kept inside that display's work area
+// (shrunk if larger, pplace::fit_in), so it never hangs off an edge or under the taskbar. Embedded previews (parent set)
 // stay WS_CHILD windows of the studio's preview slot and leave activation to the studio window. Headless
 // (--headless / UJWALAM_HEADLESS=1, used by every test run): open() refuses with CONFLICT and no window exists.
 //
@@ -23,6 +24,34 @@
 #include <mutex>
 #include <string>
 #include <thread>
+
+// Window placement (pure, no Win32; tested through preview.placeSim). Screen pixels, w/h are the full window frame.
+namespace pplace {
+struct Rect {
+	long x = 0, y = 0, w = 0, h = 0;
+};
+// Puts a window of want.w x want.h at want.x,want.y fully inside work: a frame larger than the work area shrinks to
+// fit (aspect kept), then the whole rectangle is moved inside (right/bottom edges and the taskbar included).
+inline Rect fit_in(const Rect &work, const Rect &want)
+{
+	Rect r = want;
+	if (work.w <= 0 || work.h <= 0)
+		return r;
+	r.w = r.w < 1 ? 1 : r.w;
+	r.h = r.h < 1 ? 1 : r.h;
+	if (r.w > work.w || r.h > work.h) {
+		const double sw = (double)work.w / r.w, sh = (double)work.h / r.h, s = sw < sh ? sw : sh;
+		r.w = (long)(r.w * s);
+		r.h = (long)(r.h * s);
+		r.w = r.w < 1 ? 1 : (r.w > work.w ? work.w : r.w);
+		r.h = r.h < 1 ? 1 : (r.h > work.h ? work.h : r.h);
+	}
+	const long maxx = work.x + work.w - r.w, maxy = work.y + work.h - r.h;
+	r.x = r.x < work.x ? work.x : (r.x > maxx ? maxx : r.x);
+	r.y = r.y < work.y ? work.y : (r.y > maxy ? maxy : r.y);
+	return r;
+}
+} // namespace pplace
 
 class Previews {
 public:

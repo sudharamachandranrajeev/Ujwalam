@@ -12,7 +12,7 @@ process (`windowsHide`, `CREATE_NO_WINDOW`, the `hidden-window` lint, `ujwalam-s
 |---|---|---|
 | Studio window (app/studio/src/main.cpp) | moved to the second screen when there was one; `WA_ShowWithoutActivating` | shown where Windows places it (main display), then `raise()` + `activateWindow()` like any app the user starts. No saved placement exists yet, so there is nothing to restore. |
 | Studio window back from the tray (main_window.cpp `leaveTray`) | shown without activation | shown, raised and activated (the user asked for it); headless still shows nothing |
-| Stand-alone host preview (app/host/src/preview.cpp) | refused with one display ("no preview: one display"); second display only; `WS_EX_NOACTIVATE \| WS_EX_TOOLWINDOW`; `SW_SHOWNOACTIVATE`; clicks never activate | opens with any number of displays, on the main display; normal window (taskbar entry), `SW_SHOWNORMAL` + `SetForegroundWindow`; a click activates it; a given x/y is kept when it lies on any display, else clamped into the main display's work area; `preview.focus` restores and brings it to the front |
+| Stand-alone host preview (app/host/src/preview.cpp) | refused with one display ("no preview: one display"); second display only; `WS_EX_NOACTIVATE \| WS_EX_TOOLWINDOW`; `SW_SHOWNOACTIVATE`; clicks never activate | opens with any number of displays, on the main display; normal window (taskbar entry), `SW_SHOWNORMAL` + `SetForegroundWindow`; a click activates it; a given x/y picks the display under it (else the main display) and the whole window is kept inside that display's work area, shrunk with its aspect kept if larger (`pplace::fit_in`, review fix below); `preview.focus` restores and brings it to the front |
 | Embedded preview (studio slot) | `WS_CHILD`, `WS_EX_NOACTIVATE`, clicks leave activation alone | unchanged; `preview.focus` on it only reorders it among its siblings |
 | Headless | refuses every preview with CONFLICT | unchanged (checked before the embedded path) |
 | Host log line (app/host/src/main.cpp) | `previews: on (second display only, never take focus)` | `previews: on (normal windows, main display)` |
@@ -37,6 +37,20 @@ headless refusal comes before the embedded path and embedded previews stay `WS_C
 move, no `WA_ShowWithoutActivating` outside the headless offscreen probe, and is raised and activated (also when it
 comes back from the tray). No existing test asserted the old second-display behaviour, so none needed changing.
 
+## Review fix (Codex, MEDIUM, preview.cpp placement)
+
+Finding: only the top-left point was checked, so a window near the right or bottom edge, or with its top-left on the
+taskbar, could end up mostly off screen. Fix: the display is picked with `MonitorFromPoint(..., MONITOR_DEFAULTTOPRIMARY)`
+from the given point, then the whole frame rectangle goes through the pure function `pplace::fit_in` (preview.h):
+shrink to the work area with the aspect kept if larger, then move it fully inside. Test hook `preview.placeSim`
+(`--test-hooks` only) runs that function without a window.
+
+| Command | Result |
+|---|---|
+| `node --test app/host/tests/host-preview-edit.test.mjs` | tests 11, pass 11 (new: right edge 1800 -> 944; top-left on the taskbar y 1050 -> 461; negative -> 0,0; 4000x2000 -> 1920x960; second display at negative x; missing params refused) |
+| `npm run test:host` (after the fix) | tests 145, pass 135, fail 0, skipped 10 (same skips as above) |
+| `node tools/ci.mjs --quick` (after the fix) | 9/9 passed |
+
 ## UNVERIFIED
 
 - Real on-screen behaviour: the studio window opening activated on the main display, a stand-alone preview opening
@@ -50,6 +64,8 @@ comes back from the tray). No existing test asserted the old second-display beha
 - app/host/src/preview.cpp
 - app/host/src/preview.h
 - app/host/src/main.cpp
+- app/host/src/methods.cpp (preview.placeSim, test hook)
+- app/host/tests/host-preview-edit.test.mjs (placement tests)
 - app/studio/src/main.cpp
 - app/studio/src/main_window.cpp
 - app/studio/src/main_window.h

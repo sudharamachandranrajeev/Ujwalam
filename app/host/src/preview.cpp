@@ -274,15 +274,15 @@ struct Display {
 	RECT work = {};
 };
 
-// The display a stand-alone preview opens on (D316): the main display, like any normal window. The second-display
-// preference and the "one display" refusal (D191 window part) are gone.
-Display main_display()
+// The display a stand-alone preview opens on (D316): the one under the given point, else the main display, like any
+// normal window. The second-display preference and the "one display" refusal (D191 window part) are gone.
+Display display_at(bool given, LONG x, LONG y)
 {
 	Display d;
 	MONITORINFOEXW mi = {};
 	mi.cbSize = sizeof(mi);
-	const POINT origin = {0, 0};
-	if (GetMonitorInfoW(MonitorFromPoint(origin, MONITOR_DEFAULTTOPRIMARY), &mi)) {
+	const POINT at = given ? POINT{x, y} : POINT{0, 0};
+	if (GetMonitorInfoW(MonitorFromPoint(at, MONITOR_DEFAULTTOPRIMARY), &mi)) {
 		d.device = mi.szDevice;
 		d.work = mi.rcWork;
 	} else
@@ -414,7 +414,8 @@ json::Value Previews::open(const OpenArgs &a)
 				return win_json(found->second);
 			}
 		}
-		const Display disp = main_display();
+		const bool given = a.x >= 0 && a.y >= 0;
+		const Display disp = display_at(given, a.x, a.y);
 		Win *&w = wins_[a.canvas];
 		if (!w) {
 			w = new Win;
@@ -449,16 +450,16 @@ json::Value Previews::open(const OpenArgs &a)
 			fw = r.right - r.left;
 			fh = r.bottom - r.top;
 		}
-		// Default spot: H at the main display's left edge, V at its right edge. A given x/y is kept when it lies on
-		// any display (a window the user placed on another screen comes back there); otherwise it is clamped into the
-		// main display's work area, so a stale position never puts the window off screen.
+		// Default spot: H at the display's left edge, V at its right edge. A given x/y picks the display under it (a
+		// window the user placed on another screen comes back there, else the main display); the whole window is then
+		// kept inside that display's work area, so it never hangs off an edge or sits under the taskbar.
 		LONG x = a.x >= 0 ? a.x : (a.canvas == "H" ? disp.work.left + 16 : disp.work.right - fw - 16);
 		LONG y = a.y >= 0 ? a.y : disp.work.top + 16;
-		const POINT at = {x, y};
-		if (!(a.x >= 0 && a.y >= 0 && MonitorFromPoint(at, MONITOR_DEFAULTTONULL))) {
-			x = std::clamp<LONG>(x, disp.work.left, std::max<LONG>(disp.work.left, disp.work.right - fw));
-			y = std::clamp<LONG>(y, disp.work.top, std::max<LONG>(disp.work.top, disp.work.bottom - fh));
-		}
+		const pplace::Rect placed = pplace::fit_in({disp.work.left, disp.work.top, ww, wh}, {x, y, fw, fh});
+		x = placed.x;
+		y = placed.y;
+		fw = placed.w;
+		fh = placed.h;
 		std::wstring title = L"Ujwalam preview - " + std::wstring(a.canvas.begin(), a.canvas.end()) + L" (" +
 				     std::to_wstring(bw) + L"x" + std::to_wstring(bh) + L")";
 		HWND hwnd = CreateWindowExW(ex, kClass, title.c_str(), style, x, y, fw, fh, nullptr, nullptr,

@@ -231,3 +231,27 @@ test('bad input is refused', async () => {
   await assert.rejects(c.call('preview.editSim', { canvas: 'X', width: 640, height: 400, steps: [] }));
   await assert.rejects(c.call('preview.setEditing', {}));
 });
+
+// Stand-alone preview placement (D316, pplace::fit_in through preview.placeSim; no window): the whole window stays inside
+// the chosen display's work area. Work area 1920x1040 at 0,0 (a 1080p screen with a 40 px taskbar at the bottom).
+test('placement (D316): the whole window is kept inside the work area, shrunk if larger', async () => {
+  const work = { x: 0, y: 0, w: 1920, h: 1040 };
+  const place = (want, w = work) => c.call('preview.placeSim', { work: w, want });
+  // inside: unchanged
+  assert.deepEqual(await place({ x: 100, y: 100, w: 976, h: 579 }), { x: 100, y: 100, w: 976, h: 579 });
+  // near the right edge: moved left until the right edge fits
+  assert.deepEqual(await place({ x: 1800, y: 100, w: 976, h: 579 }), { x: 944, y: 100, w: 976, h: 579 });
+  // top-left on the taskbar: moved up until the bottom edge is above it
+  assert.deepEqual(await place({ x: 100, y: 1050, w: 976, h: 579 }), { x: 100, y: 461, w: 976, h: 579 });
+  // left of / above the work area: moved in
+  assert.deepEqual(await place({ x: -500, y: -20, w: 400, h: 300 }), { x: 0, y: 0, w: 400, h: 300 });
+  // larger than the work area: shrunk with the aspect kept (4000x2000 -> 1920x960), then placed inside
+  assert.deepEqual(await place({ x: 50, y: 50, w: 4000, h: 2000 }), { x: 0, y: 50, w: 1920, h: 960 });
+  // a second display to the left (negative coordinates)
+  assert.deepEqual(await place({ x: -100, y: 900, w: 600, h: 400 }, { x: -1280, y: 0, w: 1280, h: 984 }), { x: -600, y: 584, w: 600, h: 400 });
+});
+
+test('preview.placeSim needs its parameters', async () => {
+  await assert.rejects(c.call('preview.placeSim', { work: { x: 0, y: 0, w: 10, h: 10 } }));
+  await assert.rejects(c.call('preview.placeSim', { work: { x: 0, y: 0, w: 10 }, want: { x: 0, y: 0, w: 1, h: 1 } }));
+});

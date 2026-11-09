@@ -24,7 +24,8 @@ test('host preview: no one-display refusal and no second-display pick (D316)', (
   assert.doesNotMatch(p, /"one display"\s*;|"no preview: "/);
   assert.doesNotMatch(p, /pick_display|internal_devices|"second display"|"laptop display"/);
   assert.doesNotMatch(p, /previews open only on a second display/);
-  assert.match(p, /main_display\(\)/);
+  assert.match(p, /display_at\(given, a\.x, a\.y\)/);
+  assert.match(p, /pplace::fit_in\(/); // the whole window is kept inside the work area (review fix)
 });
 
 test('host preview: a stand-alone window is a normal window (no NOACTIVATE / TOOLWINDOW / SHOWNOACTIVATE)', () => {
