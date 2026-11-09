@@ -75,5 +75,79 @@ class LiveChainTests(unittest.TestCase):
         self.assertEqual(run(LiveChain(r, LIVE), frames, 80), [])
 
 
+class MinimumClipLengthTests(unittest.TestCase):
+    """The user's minimum clip length (live-clips.json minClipSec, 20 s) holds for live windows. Synthetic feed: one
+    sampled frame per second; the worker derives startBack/endBack as (save moment - start/end), done here too."""
+
+    def live(self, **kw):
+        return {**LIVE, **kw}
+
+    def windows(self, live, frames, until=200):
+        out = []
+        for a in run(LiveChain(RANKING, live), frames, until):
+            out.append((a, a["end"] - a["start"], round(a["at"] - a["start"], 2), round(max(0.0, a["at"] - a["end"]), 2)))
+        return out
+
+    def test_config_minimum_is_the_users_20_s(self):
+        self.assertEqual(LIVE["minClipSec"], 20.0)
+
+    def test_single_card_window_is_at_least_the_minimum_with_shipped_config(self):
+        [(a, length, back, _)] = self.windows(LIVE, {100: [medal("Triple Kill")]})
+        self.assertGreaterEqual(length, LIVE["minClipSec"])
+        self.assertLessEqual(back, LIVE["replaySec"], "start still inside the replay buffer")
+
+    def test_short_pre_roll_is_extended_to_the_minimum_not_hardcoded(self):
+        for pre, minimum in ((15.0, 20.0), (15.0, 25.0), (10.0, 30.0)):
+            live = self.live(preSec=pre, minClipSec=minimum)
+            [(a, length, _, _)] = self.windows(live, {100: [medal("Triple Kill")]})
+            self.assertEqual(length, minimum, (pre, minimum))
+            self.assertEqual(a["end"], 100 + live["postSec"])
+            self.assertEqual(a["start"], a["end"] - minimum)
+
+    def test_minimum_zero_keeps_the_plain_preroll(self):
+        live = self.live(preSec=15.0, minClipSec=0.0)
+        [(a, length, _, _)] = self.windows(live, {100: [medal("Triple Kill")]})
+        self.assertEqual(length, 15.0 + live["postSec"])
+
+    def test_long_window_is_untouched(self):
+        frames = {100: [medal("Triple Kill")], 108: [medal("Fury Kill")]}
+        [(a, length, _, _)] = self.windows(LIVE, frames)
+        self.assertEqual(a["start"], 100 - LIVE["preSec"])
+        self.assertEqual(length, 8 + LIVE["preSec"] + LIVE["postSec"])
+
+    def test_death_close_extends_the_start_back(self):
+        frames = {100: [medal("Triple Kill")], 103: [DEATH], 104: [DEATH]}
+        [(a, length, _, _)] = self.windows(LIVE, frames)
+        self.assertEqual(a["reason"], "death")
+        self.assertEqual(a["end"], 101.0)  # death.endBeforeSec before the KILLCAM hit; unchanged
+        self.assertEqual(length, LIVE["minClipSec"], "start moved earlier to reach the minimum")
+
+    def test_extension_stops_at_the_previous_killcam(self):
+        frames = {50: [DEATH], 51: [DEATH], 100: [medal("Triple Kill")], 103: [DEATH]}
+        live = self.live(preSec=5.0)
+        acts = [w for w in self.windows(live, frames) if w[0]["reason"] == "death"]
+        a = acts[0][0]
+        self.assertEqual(a["start"], a["end"] - LIVE["minClipSec"], "floor 55 is not reached: only the missing seconds")
+        frames2 = {90: [DEATH], 100: [medal("Triple Kill")], 103: [DEATH]}
+        a2 = [w for w in self.windows(self.live(preSec=5.0), frames2) if w[0]["reason"] == "death"][0][0]
+        self.assertEqual(a2["start"], 90 + LIVE["repeatSec"], "never back into the earlier KILLCAM")
+
+    def test_extension_stays_inside_the_replay_buffer(self):
+        live = self.live(preSec=5.0, minClipSec=40.0, replaySec=60, forceMarginSec=5.0)
+        [(a, _, back, _)] = self.windows(live, {100: [medal("Triple Kill")]})
+        self.assertLessEqual(back, live["replaySec"] - live["forceMarginSec"])
+
+    def test_minimum_longer_than_the_buffer_is_refused(self):
+        with self.assertRaises(ValueError):
+            LiveChain(RANKING, self.live(minClipSec=58.0))
+
+    def test_force_save_windows_meet_the_minimum(self):
+        labels = ["Triple Kill", "Fury Kill", "Frenzy Kill", "Super Kill", "Mega Kill", "Ultra Kill",
+                  "Merciless", "Ruthless", "Relentless", "Brutal", "Nuclear", "Ultimate Terminator"]
+        frames = {10 + 6 * i: [medal(lab)] for i, lab in enumerate(labels)}
+        for a, length, _, _ in self.windows(LIVE, frames, 120):
+            self.assertGreaterEqual(length, LIVE["minClipSec"], a["reason"])
+
+
 if __name__ == "__main__":
     unittest.main()

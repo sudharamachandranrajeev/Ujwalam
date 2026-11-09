@@ -13,6 +13,9 @@ weights, sumKinds, minScore, death detectors); the timing is live-only (data/cli
                      D225);
              force:  the chain has run so long that the replay buffer would lose its start: save now, keep counting
                      the same chain into the next save.
+  length     a window shorter than minClipSec (live-clips.json, the user's minimum clip length) starts earlier, by the
+             missing seconds, but never before the replay buffer's start (replaySec - forceMarginSec back from the save)
+             and never inside the previous death's KILLCAM. A death can leave it short: the end is fixed then.
   save       only when the chain's score reaches minScore. The action carries the clip window in worker seconds;
              the worker turns it into a trim of the saved replay file (the file ends at the save moment).
 
@@ -37,12 +40,17 @@ class LiveChain:
         self.quiet = float(live["quietSec"])
         self.pre = float(live["preSec"])
         self.post = float(live["postSec"])
+        self.min_clip = float(live.get("minClipSec", 0.0))
+        self.buffer = float(live["replaySec"]) - float(live["forceMarginSec"])
+        if self.min_clip > self.buffer:
+            raise ValueError("live-clips: minClipSec longer than the replay buffer allows (replaySec - forceMarginSec)")
         self.force_after = float(live["replaySec"]) - self.pre - float(live["forceMarginSec"])
         if self.force_after <= self.quiet:
             raise ValueError("live-clips: replaySec too short for preSec + forceMarginSec + quietSec")
         self.seen = {}       # (detector, label) -> last time seen (any frame), for repeatSec
         self.chain = None    # {"start", "last", "seg_start", "medals": [(t, kind, label, w)]}
         self.in_death = None  # time of the last death hit while its KILLCAM is still on screen
+        self.last_death = None  # time of the last death hit ever seen: a clip never starts before it ends (+repeat)
 
     def _score(self, medals):
         per = {}
@@ -55,6 +63,11 @@ class LiveChain:
         medals = [m for m in c["medals"] if m[0] >= c["seg_start"]]
         score = self._score(c["medals"])
         start = max(c["seg_start"] - self.pre, c["start"] - self.pre)
+        if end - start < self.min_clip:
+            floor = t - self.buffer
+            if self.last_death is not None:
+                floor = max(floor, self.last_death + self.repeat)
+            start = min(start, max(end - self.min_clip, floor))
         if score < self.min_score or end <= start:
             return None
         return {"save": True, "reason": reason, "at": t, "start": round(start, 2), "end": round(end, 2),
@@ -70,7 +83,9 @@ class LiveChain:
             if self.chain and first:
                 act = self._action("death", min(t - self.end_before, self.chain["last"] + self.post), t)
                 self.chain = None
+                self.last_death = t
                 return act
+            self.last_death = t
             return None
         out = None
         for h in hits:
