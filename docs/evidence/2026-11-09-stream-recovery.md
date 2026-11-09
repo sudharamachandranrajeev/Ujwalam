@@ -74,6 +74,10 @@ The final design has one owner and one serialized authority:
       `stopped-meanwhile`).
     - If the host accepted the start but `arm(g)` is refused, the server sends `stream.stop` at once. The page gets
       `refuse`, `stopped-meanwhile`, `stoppedAgain`.
+    - The third review found that a failed compensating stop was swallowed. The stop is now tried 3 times, waiting
+      300 ms and then 1 s between tries. If every try fails, the UI server logs a WARNING. The page gets HTTP 502
+      with the error "Streams may still be live: press Stop or End all" (detail `stop-again-failed`) and shows it as
+      "Confirmation failed: …".
     So a newer Stop always ends with the streams off. Between the late start and its compensating stop, the streams
     can be live for a moment.
   - `revoke(reason)` is sent before a confirmed Stop or End all goes to the host, and the UI server waits for the
@@ -137,7 +141,7 @@ window):
 
 ```
 UJWALAM_HEADLESS=1 node --test --test-concurrency=1 tests/stream-recovery.test.mjs
-ℹ tests 15   ℹ pass 15   ℹ fail 0   (after the authority redesign and the start re-check)
+ℹ tests 17   ℹ pass 17   ℹ fail 0   (after the authority redesign, the start re-check and the stop retry)
 UJWALAM_HEADLESS=1 node --test --test-concurrency=2 tests/live-guard.test.mjs tests/studio-ui-alpha.test.mjs \
   tests/studio-ui-crash-recovery.test.mjs tests/studio-ui-live-test.test.mjs tests/studio-ui-readiness.test.mjs \
   tests/studio-ui-server.test.mjs tests/studio-ui-flags-feedback.test.mjs tests/studio-qt-shell.test.mjs \
@@ -145,7 +149,7 @@ UJWALAM_HEADLESS=1 node --test --test-concurrency=2 tests/live-guard.test.mjs te
 ℹ tests 186   ℹ pass 183   ℹ fail 0   ℹ skipped 3   (skips: no Qt shell, package or venv build in this worktree)
 ```
 
-`tests/stream-recovery.test.mjs` has 15 tests.
+`tests/stream-recovery.test.mjs` has 17 tests.
 
 - **Unit tests:**
   - config checks;
@@ -181,6 +185,12 @@ UJWALAM_HEADLESS=1 node --test --test-concurrency=2 tests/live-guard.test.mjs te
   `stream.start.done` (the sinks turn live last), then the server's compensating `stream.stop`. The Start answers
   `refuse` / `stopped-meanwhile` / `stoppedAgain`, and the authority stays revoked. A crash then finds no live stream
   and restarts nothing.
+- **Compensating stop retried:** this runs the slow-start race with the fake host refusing `stream.stop` calls from
+  the 2nd on (`UJWALAM_FAKE_HOST_STOP_FAIL_FROM` / `_COUNT`).
+  - Refused once: the host sees the user's stop, one failed try, then the retry, which wins. The Start answers
+    `refuse` / `stoppedAgain: true`, and no warning is logged.
+  - Refused always: the host sees the user's stop and 3 failed tries. The answer is 502 with "Streams may still be
+    live: press Stop or End all", the WARNING line is in the log, and the authority was never armed.
 - **Race 2, end to end, before the host call** (the re-review case): a test-only pause
   (`UJWALAM_TEST_START_PAUSE_MS`) holds a confirmed Start after it took its generation. A Stop is confirmed during
   the pause. The Start answers `refuse` / `stopped-meanwhile`, and its `stream.start` never reaches the host; the only

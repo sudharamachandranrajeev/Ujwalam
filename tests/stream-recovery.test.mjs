@@ -428,6 +428,44 @@ test('race: a Stop while a slow Start is at the host: the Start does not arm and
   } finally { await s.stop(); }
 });
 
+// The slow-start race with the host refusing stream.stop calls from the 2nd on (the user's stop is the 1st): the
+// compensating stop is retried; when every try fails the page gets a loud error and the log says so.
+async function overtakenStart(name, failCount) {
+  const extraEnv = { UJWALAM_FAKE_HOST_START_DELAY_MS: '2500', UJWALAM_FAKE_HOST_STOP_FAIL_FROM: '2' };
+  if (failCount !== null) extraEnv.UJWALAM_FAKE_HOST_STOP_FAIL_COUNT = String(failCount);
+  const s = launch(name, { crashRuns: '', extraEnv });
+  await s.login();
+  const c = await s.req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
+  const start = s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+  await s.until(() => streamStarts(s).length === 1, 'the start reaching the host');
+  const stop = await s.confirmAny('/ui/api/host', { method: 'stream.stop', params: {} });
+  assert.equal(stop.body.verdict, 'allow', JSON.stringify(stop.body));
+  const r = await start;
+  const stops = s.calls().filter((x) => x.method === 'stream.stop').map((x) => (x.failed ? 'failed' : 'ok'));
+  return { s, r, stops };
+}
+
+test('race: the compensating stop is retried when the host refuses it once', { timeout: 180_000 }, async () => {
+  const { s, r, stops } = await overtakenStart('stopretry', 1);
+  try {
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual([r.body.verdict, r.body.reason, r.body.stoppedAgain], ['refuse', 'stopped-meanwhile', true]);
+    assert.deepEqual(stops, ['ok', 'failed', 'ok'], 'user stop, a failed try, then the retry wins');
+    assert.ok(!/could not be stopped again/.test(s.out));
+  } finally { await s.stop(); }
+});
+
+test('race: a compensating stop that keeps failing is a loud error on the page and in the log', { timeout: 180_000 }, async () => {
+  const { s, r, stops } = await overtakenStart('stopfail', null);
+  try {
+    assert.equal(r.status, 502, JSON.stringify(r.body));
+    assert.deepEqual(r.body, { error: 'Streams may still be live: press Stop or End all', detail: 'stop-again-failed' });
+    assert.deepEqual(stops, ['ok', 'failed', 'failed', 'failed'], 'three tries');
+    await s.until(() => /WARNING: a start overtaken by a Stop could not be stopped again \(.+\); streams may still be live/.test(s.out), 'the log line');
+    assert.equal(s.authority().armed, false, 'never armed');
+  } finally { await s.stop(); }
+});
+
 test('race: a Stop during the pause before a confirmed Start reaches the host: the Start is not sent', { timeout: 180_000 }, async () => {
   const s = launch('prestart', { crashRuns: '1', extraEnv: { UJWALAM_TEST_START_PAUSE_MS: '2500' } });
   try {

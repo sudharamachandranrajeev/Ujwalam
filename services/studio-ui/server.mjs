@@ -231,6 +231,11 @@ export function audioReadiness(ah) {
   return { ok: warnings.length === 0, warnings, sources };
 }
 
+// A confirmed start overtaken by a Stop is stopped again (D303): waits between the tries, and the page's text when
+// every try failed.
+const STOP_AGAIN_WAITS = [300, 1000];
+const STOP_AGAIN_FAILED = 'Streams may still be live: press Stop or End all';
+
 export function createStudioServer(opts) {
   const limits = { ...LIMITS, ...(opts.limits ?? {}) };
   const now = opts.now ?? Date.now;
@@ -256,6 +261,7 @@ export function createStudioServer(opts) {
   const liveSession = (() => { const v = opts.liveSession ?? process.env[SESSION_ENV]; return typeof v === 'string' && SESSION_RE.test(v) ? v : null; })();
   const authority = opts.authority !== undefined ? opts.authority
     : liveSession && process.env.UJWALAM_PARENT_PIPE === '1' ? authorityClient() : null;
+  const log = typeof opts.log === 'function' ? opts.log : (m) => console.log(m);
   // Test only (race tests): a pause right before a confirmed stream.start goes to the host. 0 = none.
   const startPauseMs = Math.min(10_000, Math.max(0, Number(opts.startPauseMs ?? process.env.UJWALAM_TEST_START_PAUSE_MS ?? 0) || 0));
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
@@ -1024,9 +1030,18 @@ export function createStudioServer(opts) {
           if (Number.isInteger(startGen) && !(await authority.arm(startGen))) {
             // A Stop / End all came in while this start was on its way to the host (after the check above): the newer
             // stop wins, so the streams this start turned on are stopped again at once.
-            let stoppedAgain = true;
-            try { await callHost('stream.stop', {}); } catch { stoppedAgain = false; }
-            return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', stoppedAgain });
+            // Tried STOP_AGAIN_WAITS.length + 1 times; if every try fails the streams may still be live: a loud error.
+            let lastErr = null;
+            for (let i = 0; ; i++) {
+              try { await callHost('stream.stop', {}); lastErr = null; break; } catch (e) { lastErr = e; }
+              if (i >= STOP_AGAIN_WAITS.length) break;
+              await new Promise((r) => setTimeout(r, STOP_AGAIN_WAITS[i]));
+            }
+            if (lastErr) {
+              log(`[studio-ui] WARNING: a start overtaken by a Stop could not be stopped again (${String(lastErr?.code ?? lastErr?.message ?? 'error').slice(0, 80)}); streams may still be live`);
+              return json(res, 502, { error: STOP_AGAIN_FAILED, detail: 'stop-again-failed' });
+            }
+            return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', stoppedAgain: true });
           }
           remember(p.method, p.params, before);
           // A layout change confirmed while live autosaves like an instant one (P5b).

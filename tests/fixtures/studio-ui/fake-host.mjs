@@ -77,6 +77,11 @@ const fakeStreams = (process.env.UJWALAM_FAKE_HOST_STREAMS ?? '').split(',').fil
 const streamFail = new Set((process.env.UJWALAM_FAKE_HOST_STREAM_FAIL ?? '').split(',').filter(Boolean));
 // UJWALAM_FAKE_HOST_START_DELAY_MS=N: stream.start applies and answers after N ms (logged as stream.start.done).
 const startDelayMs = Number(process.env.UJWALAM_FAKE_HOST_START_DELAY_MS ?? 0);
+// UJWALAM_FAKE_HOST_STOP_FAIL_FROM=k [UJWALAM_FAKE_HOST_STOP_FAIL_COUNT=n]: stream.stop calls k .. k+n-1 (1-based, per
+// run) fail (logged with failed: true). Default n: every call from k on.
+const stopFailFrom = Number(process.env.UJWALAM_FAKE_HOST_STOP_FAIL_FROM ?? Infinity);
+const stopFailCount = Number(process.env.UJWALAM_FAKE_HOST_STOP_FAIL_COUNT ?? Infinity);
+let stopCalls = 0;
 const streamState = new Map(fakeStreams.map((x) => [x.id, 'idle']));
 const callLog = (o) => appendFileSync(`${process.env.UJWALAM_FAKE_HOST_RECORD}.calls.jsonl`, `${JSON.stringify({ run, ...o })}\n`);
 callLog({ event: 'start' });
@@ -133,6 +138,11 @@ const methods = {
     return new Promise((r) => setTimeout(() => { const out = apply(); callLog({ method: 'stream.start.done', params: p }); r(out); }, startDelayMs));
   },
   'stream.stop': (p) => {
+    stopCalls += 1;
+    if (stopCalls >= stopFailFrom && stopCalls < stopFailFrom + stopFailCount) {
+      callLog({ method: 'stream.stop', params: p, failed: true });
+      throw Object.assign(new Error('fake stream.stop failure'), { code: -32603 });
+    }
     callLog({ method: 'stream.stop', params: p });
     const ids = Array.isArray(p.sinks) && p.sinks.length ? p.sinks : fakeStreams.map((x) => x.id);
     for (const id of ids) if (streamState.has(id)) streamState.set(id, 'stopped');
