@@ -23,7 +23,9 @@ function fakeAuth(overrides = {}) {
 test('youtube: unknown subcommand is a usage error (exit 2), posting-flag gate still applies first', async () => {
   const data = mk();
   const lines = [];
-  assert.equal(await cli(['youtube', 'bogus'], quiet, (s) => lines.push(s), { createYoutubeAuth: () => fakeAuth(), outputsStatus: async () => ({ sinks: [] }) }), EXIT_FLAG_OFF);
+  // Explicit empty data dir: without --data-dir the CLI reads the real event-core data dir, whose posting flag can be
+  // on (the user switches it from the control page), which made this assertion flaky across machines and moments.
+  assert.equal(await cli(['youtube', 'bogus', '--data-dir', data], quiet, (s) => lines.push(s), { createYoutubeAuth: () => fakeAuth(), outputsStatus: async () => ({ sinks: [] }) }), EXIT_FLAG_OFF);
   flagOn(data);
   const lines2 = [];
   assert.equal(await cli(['youtube', 'bogus', '--data-dir', data], quiet, (s) => lines2.push(s), { createYoutubeAuth: () => fakeAuth() }), 2);
