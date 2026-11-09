@@ -14,8 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { createFlags, loadDefinitions } from '../services/flags/index.mjs';
-import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from '../services/studio-ui/live-test-kit.mjs';
-import { collectFeedback } from '../tools/collect-stream-feedback.mjs';
+import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig, runCollectorChild } from '../services/studio-ui/live-test-kit.mjs';
 import { REPO_FILES } from '../tools/package/manifest.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
@@ -112,22 +111,47 @@ function mkDb(dir, t0) {
   return file;
 }
 
+const until = async (pred, ms = 15_000) => {
+  const end = Date.now() + ms;
+  while (!pred()) { if (Date.now() > end) assert.fail('timed out waiting'); await new Promise((r) => setTimeout(r, 25)); }
+};
+// Stand-ins for the collector script: busy for ms (blocks its own process only), then one JSON result line.
+function slowScript(dir, ms) {
+  const f = path.join(dir, `slow-${ms}.mjs`);
+  writeFileSync(f, `const end = Date.now() + ${ms}; while (Date.now() < end) {}
+console.log(JSON.stringify({ file: 'x/2026-11-09-stream-feedback.md', total: 1, added: 1, counts: { youtube: 1, twitch: 0, kick: 0, other: 0 } }));
+`);
+  return f;
+}
+
 describe('createFeedbackAutoCollect', () => {
   const tick = () => new Promise((r) => setImmediate(r));
-  test('live -> offline with the flag on: replies of that stream are collected once, read-only, into the feedback folder', async () => {
+  test('runCollectorChild: a collector that runs too long is killed and reported', async () => {
+    const d = mk();
+    const t0 = Date.now();
+    await assert.rejects(runCollectorChild({ dbFile: 'x', date: '2026-11-09', since: 'a', until: 'b', marker: 'fb:', windowMin: 10, questionPrefix: 'q', outDir: d },
+      { script: slowScript(d, 10_000), timeoutMs: 400 }), /collector timed out after 0 s/);
+    assert.ok(Date.now() - t0 < 5000, 'not waited out');
+  });
+  test('runCollectorChild: the collector source starts its children hidden', () => {
+    const src = readFileSync(path.join(REPO, 'services', 'studio-ui', 'live-test-kit.mjs'), 'utf8');
+    assert.match(src, /spawn\(execPath, args, \{ windowsHide: true/);
+  });
+  test('live -> offline with the flag on: replies of that stream are collected once (child process), read-only, into the feedback folder', async () => {
     const d = mk();
     const t0 = Date.parse('2026-11-09T18:00:00Z');
     mkDb(d, t0);
     let t = t0; let on = true;
     const outDir = path.join(d, 'feedback');
-    const fc = createFeedbackAutoCollect({ collect: collectFeedback, dbFile: path.join(d, 'event-core.db'), outDir, kit: () => KIT, enabled: () => on, now: () => t });
+    // no collect seam: the default runs tools/collect-stream-feedback.mjs in a child process
+    const fc = createFeedbackAutoCollect({ dbFile: path.join(d, 'event-core.db'), outDir, kit: () => KIT, enabled: () => on, now: () => t });
     fc.observe(false);
     fc.observe(true);
     assert.equal(fc.liveSince(), t0);
     t = t0 + 60 * 60_000;
     fc.observe(true);
     fc.observe(false);
-    await tick(); await tick();
+    await until(() => fc.last() !== null);
     const last = fc.last();
     assert.equal(last.ok, true, JSON.stringify(last));
     assert.equal(last.total, 3);
@@ -153,9 +177,9 @@ describe('createFeedbackAutoCollect', () => {
   test('a missing database is a failed result, never a throw', async () => {
     const d = mk();
     let t = 1_000;
-    const fc = createFeedbackAutoCollect({ collect: collectFeedback, dbFile: path.join(d, 'nope.db'), outDir: d, kit: () => KIT, enabled: () => true, now: () => t });
+    const fc = createFeedbackAutoCollect({ dbFile: path.join(d, 'nope.db'), outDir: d, kit: () => KIT, enabled: () => true, now: () => t });
     fc.observe(true); t += 1000; fc.observe(false);
-    await new Promise((r) => setImmediate(r));
+    await until(() => fc.last() !== null);
     assert.equal(fc.last().ok, false);
     assert.match(fc.last().error, /chat database not found/);
   });
@@ -176,7 +200,7 @@ function raw(port, { url = '/', headers = {} } = {}) {
 const servers = [];
 after(async () => { for (const s of servers) await s.close(); });
 
-async function boot({ flagOn }) {
+async function boot({ flagOn, collectImpl = null }) {
   const dataDir = mk();
   if (flagOn) createFlags({ dataDir }).set(TEST_KIT_FLAG, true);
   const fake = createFakeHost({ outputsReady: true });
@@ -190,7 +214,7 @@ async function boot({ flagOn }) {
   };
   const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
   const collected = [];
-  const collect = (o) => { collected.push(o); return { file: path.join(o.outDir, `${o.date}-stream-feedback.md`), total: 2, added: 2, counts: { youtube: 1, twitch: 0, kick: 1, other: 0 } }; };
+  const collect = collectImpl ? (o) => { collected.push(o); return collectImpl(o); } : (o) => { collected.push(o); return { file: path.join(o.outDir, `${o.date}-stream-feedback.md`), total: 2, added: 2, counts: { youtube: 1, twitch: 0, kick: 1, other: 0 } }; };
   const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, feedbackDir: path.join(dataDir, 'fb'), testKit: { kit: KIT, collect }, limits: { statusPollMs: 30 }, log: () => {} });
   servers.push(srv);
   const { port } = await srv.listen();
@@ -235,5 +259,27 @@ describe('server: status alerts', () => {
     assert.equal(c.questionPrefix, KIT.questionPrefix);
     assert.equal(c.marker, KIT.marker);
     assert.ok(Date.parse(c.since) < Date.parse(c.until));
+  });
+  test('a slow collection (child process busy 2.5 s) never stalls the status poll', async () => {
+    const d = mk();
+    const script = slowScript(d, 2500);
+    let childDone = false;
+    const s = await boot({ flagOn: true, collectImpl: (o) => runCollectorChild(o, { script }).finally(() => { childDone = true; }) });
+    s.st.live = true;
+    await s.until((x) => Array.isArray(x.alerts) && x.alerts.some((a) => a.id === 'test-action'), 'live');
+    s.st.live = false;
+    await until(() => s.collected.length === 1, 3000);
+    const times = [];
+    while (!childDone) {
+      const t0 = Date.now();
+      const snap = await s.status();
+      times.push(Date.now() - t0);
+      assert.equal(snap.host.live, false);
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    assert.ok(times.length >= 10, `polled ${times.length} times while the collector ran`);
+    assert.ok(Math.max(...times) < 500, `slowest status answer ${Math.max(...times)} ms`);
+    const after = await s.until((x) => Array.isArray(x.alerts) && x.alerts.some((a) => a.id === 'feedback'), 'result recorded');
+    assert.match(after.alerts.find((a) => a.id === 'feedback').text, /Viewer feedback saved: 1 message\(s\)/);
   });
 });

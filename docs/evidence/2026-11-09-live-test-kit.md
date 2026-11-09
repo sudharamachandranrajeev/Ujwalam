@@ -52,7 +52,10 @@ Already there: `tools/collect-stream-feedback.mjs` (BM5, D195), read-only on `ev
 
 - With the flag on, the studio UI server watches `host.status.live`; when a stream ends (live -> offline) it runs
   the collector for exactly that stream's time span, with the prefix, marker and window from `test-kit.json`, into
-  the launcher's feedback folder. It runs after the status poll (never blocks it) and never throws: a failure shows
+  the launcher's feedback folder. The collector runs as its own Node process (`runCollectorChild`: `node
+  tools/collect-stream-feedback.mjs --json ...`, `windowsHide`, killed after 60 s), so a large chat database or a slow
+  disk never stalls the UI server's event loop (status polls, stream control; Codex review, MEDIUM, fixed). Its result
+  is recorded when the child ends. It never throws: a failure (including the time limit) shows
   as a warning line ("Viewer feedback was not collected: ... Run tools/collect-stream-feedback.mjs by hand.").
 - After the stream the strip shows: `Viewer feedback saved: N message(s) (YouTube a, Twitch b, Kick c) in
   feedback/<date>-stream-feedback.md`. Counts and the file name only; no viewer text or names leave that file.
@@ -76,7 +79,7 @@ Already there: `tools/collect-stream-feedback.mjs` (BM5, D195), read-only on `ev
 
 | Command | Result |
 |---|---|
-| `node --test tests/live-test-kit.test.mjs` | 13/13 pass: config + sources, no texts in code, bad config refused, flag off by default, package list; `liveAlerts` cases; auto-collect on a temp DB with placeholder names (3 replies kept, question/unrelated/pre-stream rows left out, once only, flag off = nothing, missing DB = failed result); server flag off = no `alerts`, flag on = sound line + reminder while live, feedback line after |
+| `node --test tests/live-test-kit.test.mjs` | 16/16 pass (after the child-process change): a collector over the time limit is killed and reported; the child is started hidden; a 2.5 s busy collection while the status route is polled every 50 ms: every answer under 500 ms, the result recorded afterwards; plus: config + sources, no texts in code, bad config refused, flag off by default, package list; `liveAlerts` cases; auto-collect on a temp DB with placeholder names (3 replies kept, question/unrelated/pre-stream rows left out, once only, flag off = nothing, missing DB = failed result); server flag off = no `alerts`, flag on = sound line + reminder while live, feedback line after |
 | `node --test tests/studio-qt-alerts.test.mjs` (shell built with `node app/studio/tools/build.mjs`) | 2/2 pass: flag off = strip hidden; flag on = 3 lines (recovery text, sound line, reminder with the action name), level `error` |
 | touched suites (stream-feedback, studio-qt-shell, package-alpha, studio-ui-server, test-broadcast, studio-ui-readiness, stream-recovery, studio-ui-alpha, studio-ui-live-test) | 204 tests: 201 pass, 2 skipped (pre-existing skips), 1 fail = `test-broadcast` "registry validates", caused by the worktree having no `legacy/` (legacySource paths missing); after linking `legacy/` to the main checkout, `tests/test-broadcast.test.mjs` 14/14 pass |
 | `node tools/ci.mjs --quick` | 8/8 pass in 27.4 s (build, lint, build-host, validate-registry, validate-outputs, validate-games, private-scan, legacy-verify) |

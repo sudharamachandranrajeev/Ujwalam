@@ -47,7 +47,6 @@ import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCi
 import { clipTools } from './record-clips.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
-import { collectFeedback } from '../../tools/collect-stream-feedback.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
 
@@ -278,7 +277,7 @@ export function createStudioServer(opts) {
     return kitCfg;
   };
   const feedbackCollect = createFeedbackAutoCollect({
-    collect: opts.testKit?.collect ?? collectFeedback,
+    ...(opts.testKit?.collect ? { collect: opts.testKit.collect } : {}), // default: the collector in a child process
     dbFile: typeof opts.dataDir === 'string' ? path.join(opts.dataDir, 'event-core.db') : null,
     outDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR,
     kit: () => { const k = testKit(); if (!k) throw new Error('data/live/test-kit.json could not be read'); return k; },
