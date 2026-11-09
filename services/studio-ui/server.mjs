@@ -45,7 +45,7 @@ import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
 import { createTasks } from './tasks.mjs';
 import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
-import { clipTools } from './record-clips.mjs';
+import { STOP_TASKS_FILE, clipTools } from './record-clips.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
@@ -470,6 +470,26 @@ export function createStudioServer(opts) {
     return json(res, 200, { ok: true });
   }
 
+  // May the studio quit now (tray exits, D310 proposed)? A fresh host.status, never the cached snapshot. Fail closed:
+  // a stream or recording running, or a status that cannot be read, means "no" (quitting would stop them).
+  async function quitCheck(res) {
+    let hs = null;
+    try { hs = await host.call('host.status', {}); } catch { hs = null; }
+    if (!hs || typeof hs.live !== 'boolean' || typeof hs.recording !== 'boolean') return json(res, 200, { canQuit: false, reason: 'unreadable' });
+    const reason = hs.live ? 'live' : hs.recording ? 'recording' : null;
+    return json(res, 200, { canQuit: !reason, reason, live: hs.live, recording: hs.recording });
+  }
+  // Stop the background tasks only (the tray's Stop all while live or recording): the launcher reads the request
+  // (<dataDir>/clips/stop-tasks.json) and ends the clip job's whole tree and any upload; the studio and host stay.
+  function stopTasks(res) {
+    if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+    const dir = path.join(opts.dataDir, 'clips');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'stop-tasks.json.tmp'), JSON.stringify({ atMs: now() }));
+    renameSync(path.join(dir, 'stop-tasks.json.tmp'), path.join(dir, STOP_TASKS_FILE));
+    return json(res, 200, { ok: true });
+  }
+
   // ---- status snapshot (text-free: counts, flags and numbers only; never chat text) ----
   async function snapshot() {
     const h = host.describe();
@@ -766,6 +786,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/status') return json(res, 200, lastSnapshot ?? await snapshot());
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
+    if (req.method === 'GET' && route === '/ui/api/quit-check') return quitCheck(res);
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/guide') return json(res, 200, guideData()); // guide (D294 proposed)
     if (req.method === 'GET' && route === '/ui/api/readiness') {
@@ -852,6 +873,7 @@ export function createStudioServer(opts) {
     }
     if (route === '/ui/api/settings') return settingsRoute(res, body);
     if (route === '/ui/api/clips/answer') return clipAnswer(res, body);
+    if (route === '/ui/api/tasks/stop') return stopTasks(res);
     if (route === '/ui/api/clips/open') {
       if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
       const dir = clipsFolder(opts.dataDir);

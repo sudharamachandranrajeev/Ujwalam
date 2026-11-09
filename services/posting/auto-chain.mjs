@@ -99,6 +99,7 @@ const REASON_TEXT = {
   'output-state-unreadable': 'Waiting: could not confirm that no stream is live',
   'credentials-unreadable': 'Not signed in to YouTube: the saved sign-in could not be read',
   interrupted: 'Resuming after a restart',
+  'stopped-by-user': 'Stopped by you; tried again at the next start',
 };
 
 /** Plain words for a queue reason code (or a failure code). */
@@ -168,7 +169,7 @@ export function createPostChain(opts) {
   const autoLogFile = path.join(dataDir, 'posting', AUTO_LOG_NAME);
   const queue = createUploadQueue(path.join(dataDir, 'posting', QUEUE_NAME), nowMs);
   const flags = opts.flags ?? createFlags({ dataDir });
-  let latest = null; let busy = false; let lastTick = 0; let recovered = false;
+  let latest = null; let busy = false; let lastTick = 0; let recovered = false; let halted = false;
   const flagsOn = () => flags.isOn(POSTING_FLAG) && flags.isOn(AUTO_FLAG);
   const outputsStatus = streamOnly(async () => { if (!latest) throw new Error('no output status yet'); return latest; });
   const getAuth = () => opts.auth ?? createYoutubeAuth({ browserOpen: async () => { throw new Error('sign-in is never started from the background'); } });
@@ -199,6 +200,7 @@ export function createPostChain(opts) {
       return;
     }
     for (const item of due) {
+      if (halted) return;
       if (await liveBlock(outputsStatus)) { queue.setNote({ blocked: 'stream-live' }); return; }
       const post = store.get(item.id);
       if (!post) { queue.patch(item.id, { state: 'failed', reason: 'unknown-post' }); continue; }
@@ -220,6 +222,7 @@ export function createPostChain(opts) {
         const r = await uploadPost({
           id: item.id, store, auth, outputsStatus, fetchImpl: opts.fetchImpl, chunkSize: opts.chunkSize, sessions,
           beforeChunk: async (pr) => {
+            if (halted) { taskEnd = { state: 'failed', note: 'Stopped by you; it is tried again at the next start' }; throw new UploadError('stopped-by-user', 'stopped'); }
             const b = await liveBlock(outputsStatus);
             if (b) { taskEnd = { state: 'waiting', note: 'Paused while the stream runs; it resumes after' }; throw new UploadError('stream-active', b); }
             if (pr && Number.isFinite(pr.total) && pr.total > 0) {
@@ -239,6 +242,9 @@ export function createPostChain(opts) {
           const v = store.get(item.id)?.videoId ?? null;
           queue.patch(item.id, { state: 'done', videoId: v, reason: null, session: null });
           if (v) await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: v, at: new Date(nowMs()).toISOString(), target: post.target });
+        } else if (code === 'stopped-by-user') {
+          queue.patch(item.id, { state: 'queued', reason: 'stopped-by-user' });
+          return;
         } else if (code === 'stream-active') {
           queue.patch(item.id, { state: 'queued', reason: 'stream-live' });
           queue.setNote({ blocked: 'stream-live' });
@@ -265,6 +271,7 @@ export function createPostChain(opts) {
   /** Approvals by the rules, enqueue of auto-approved posts, then the due uploads. Safe to call often. */
   async function step() {
     if (!flagsOn()) return { skipped: 'flag-off' };
+    if (halted) return { skipped: 'stopped' };
     let rules;
     try { rules = (opts.rulesFile ? loadRules(opts.rulesFile) : loadRules()); } catch (e) { return { skipped: 'bad-rules', detail: e?.code ?? 'error' }; }
     if (!rules.rules.length) return { skipped: 'no-rules' };
@@ -315,6 +322,8 @@ export function createPostChain(opts) {
         return { packaged: packedClips + packedVideos, ...(await step()) };
       });
     },
+    /** The tray's Stop all (D310 proposed): the upload in progress stops at its next chunk; nothing new starts this session. */
+    stopTasks() { halted = true; },
     /** Called with each host status: remembers it, and every TICK_EVERY_MS retries what is due. */
     tick(status) {
       if (status) latest = status;

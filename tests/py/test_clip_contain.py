@@ -119,6 +119,23 @@ class ParentPipe(unittest.TestCase):
             self.assertIn("creationflags", calls[0][1])
         self.assertEqual(calls[-1], ("exit", 1))
 
+    def test_end_own_tree_exits_even_when_taskkill_fails(self):
+        # taskkill timing out (15 s) or failing to start raises: the job must still end itself, never run on unseen.
+        exits = []
+        orig = os._exit
+
+        def boom(args, **kw):
+            raise subprocess.TimeoutExpired(args, 15)
+        try:
+            os._exit = lambda code: exits.append(code)
+            try:
+                cc.end_own_tree(pid=4242, run=boom)
+            except subprocess.TimeoutExpired:
+                pass  # with the real os._exit the process is gone before this
+        finally:
+            os._exit = orig
+        self.assertEqual(exits, [1])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -8,13 +8,13 @@
 // The clipper's own half (it ends itself and its ffmpeg when the launcher's pipe closes) is in tests/py.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { killChildTree, killTree } from '../services/common/kill-tree.mjs';
-import { createRecordClips } from '../services/studio-ui/record-clips.mjs';
+import { STOP_TASKS_FILE, createRecordClips } from '../services/studio-ui/record-clips.mjs';
 import { writeSettings } from '../services/studio-ui/user-settings.mjs';
 import { findStrays, listNodeProcesses } from '../tools/stray-procs.mjs';
 
@@ -129,4 +129,53 @@ test('killTree contract: Windows runs System32 taskkill /T /F /PID hidden; 128 (
   assert.equal(killTree(77, { platform: 'linux', kill: (pid, sig) => posix.push([pid, sig]) }), true);
   assert.deepEqual(posix, [[-77, 'SIGKILL']], 'its process group elsewhere');
   for (const bad of [0, -1, 1.5, null, '12']) assert.equal(killTree(bad), false);
+});
+
+test('an exited child is never targeted, also when a signal ended it (exitCode null, signalCode set): its PID may be reused', async () => {
+  const calls = [];
+  const opts = { platform: 'win32', spawnSyncFn: (...a) => { calls.push(a); return { status: 0 }; }, kill: (...a) => calls.push(a) };
+  for (const gone of [{ pid: 4242, exitCode: null, signalCode: 'SIGTERM' }, { pid: 4242, exitCode: 0, signalCode: null }, { pid: 4242, exitCode: null, signalCode: 'SIGKILL', kill: () => calls.push('kill') }]) {
+    assert.equal(killChildTree(gone, opts), true, 'already ended');
+  }
+  assert.deepEqual(calls, [], 'no taskkill, no kill on a PID that is not ours any more');
+  // the real case: child.kill() ends it with a signal; Node reports exitCode null, signalCode SIGTERM
+  const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore', windowsHide: true });
+  await new Promise((r) => c.once('spawn', r));
+  c.kill();
+  await new Promise((r) => c.once('exit', r));
+  assert.equal(c.exitCode, null);
+  assert.equal(c.signalCode, 'SIGTERM');
+  assert.equal(killChildTree(c, opts), true);
+  assert.deepEqual(calls, [], 'the exited child was not targeted');
+  // still running: targeted
+  assert.equal(killChildTree({ pid: 4243, exitCode: null, signalCode: null }, opts), true);
+  assert.equal(calls.length, 1);
+});
+
+test('record-clips: Stop all while live or recording (D310 proposed) ends the clip job\'s whole tree, keeps it for the next start, and starts nothing new', async () => {
+  const s = clipSetup();
+  try {
+    const rc = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: () => {}, spawnFn: s.spawnFn });
+    // a leftover request from before this launcher started is ignored
+    mkdirSync(path.join(s.dataDir, 'clips'), { recursive: true });
+    writeFileSync(path.join(s.dataDir, 'clips', STOP_TASKS_FILE), JSON.stringify({ atMs: Date.now() - 60_000 }));
+    rc.feed(s.S('live')); rc.feed(s.S('stopped'));
+    assert.equal(s.spawned.length, 1, 'the stale request did not stop it');
+    const { c } = s.spawned[0];
+    const kid = await childOf(c);
+    assert.ok(kid);
+    writeFileSync(path.join(s.dataDir, 'clips', STOP_TASKS_FILE), JSON.stringify({ atMs: Date.now() }));
+    rc.feed(s.S('stopped'));
+    assert.ok(await waitFor(() => !alive(kid) && !alive(c.pid)), 'parent and child ended');
+    assert.ok(await waitFor(() => treeProcs().length === 0), `strays: ${JSON.stringify(treeProcs())}`);
+    const tdir = path.join(s.dataDir, 'tasks');
+    const t = readdirSync(tdir).map((n) => JSON.parse(readFileSync(path.join(tdir, n), 'utf8'))).find((x) => x.kind === 'clips');
+    assert.deepEqual([t.state, t.note], ['failed', 'Stopped by you; it runs again at the next start'], 'the tray sees it end');
+    rc.feed(s.S('stopped')); rc.feed(s.S('stopped'));
+    assert.equal(s.spawned.length, 1, 'nothing new started in this session');
+    const st = JSON.parse(readFileSync(path.join(s.dataDir, 'clips', 'status.json'), 'utf8'));
+    assert.ok(st.running, 'the job is kept in the status: the next start runs it again');
+    assert.equal(st.state, 'queued');
+    rc.stop();
+  } finally { for (const x of s.spawned) killChildTree(x.c); rmSync(s.d, { recursive: true, force: true }); }
 });

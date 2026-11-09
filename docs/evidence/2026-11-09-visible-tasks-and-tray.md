@@ -109,6 +109,15 @@ While live, the existing "yes, on air" question comes first and stays as it was.
 - **When the last task finishes:** a "all tasks finished" notification shows. After 3 s the studio exits 0 and the
   launcher stops the rest.
 
+## Review fixes (Codex review, 2026-11-09)
+
+| Severity | Finding | Fix | Test |
+|---|---|---|---|
+| HIGH | Two tray paths exited without checking `live_`: the "all finished" exit and Stop all. A stream started from the control page while the window was in the tray would have been ended by the launcher's cleanup. | Every tray exit first calls the new `GET /ui/api/quit-check`. It reads `host.status` fresh, never the cached snapshot. It fails closed: a stream, a recording, or a status that cannot be read means "do not quit". **All finished but busy:** the studio stays and the window comes back. **Stop all while busy:** it stops the tasks only. `POST /ui/api/tasks/stop` writes `<dataDir>/clips/stop-tasks.json`. The launcher's record-clips then ends the clip job's tree and marks its task "Stopped by you". The job is kept for the next start and nothing new starts. The upload chain stops at its next chunk; the upload stays queued and the session is kept. A request older than the launcher is ignored. | `tests/studio-tray.test.mjs`: staying open while live, staying open when unreadable, Stop all while live stops the tasks only. `tests/kill-tree.test.mjs`: record-clips stop request. `tests/posting-auto-chain.test.mjs`: upload stopped. |
+| HIGH | `killChildTree` checked `exitCode` but not `signalCode`. A child ended by a signal (exitCode null) could get `taskkill /T /F` on its PID, which may have been reused by then. | `hasExited` checks both codes. Node sets them when it reaps the process. Until then libuv holds the process handle, so Windows cannot reuse the PID. An exited child's PID is never targeted. On the Python side, identity is handle-based (the clipper's kill-on-close job object). | `tests/kill-tree.test.mjs`: an exited child, including a real `child.kill()` (exitCode null, signalCode SIGTERM), is never targeted. |
+| MEDIUM | `finishing_` in the tray was never cleared when new tasks appeared, so the pending timer exited anyway. | A new active task cancels the countdown (a generation counter) and shows "still working" again. The callback checks again, when it fires, that it is still the same countdown, the tray is still active and nothing is running. `UJWALAM_TRAY_FINISH_MS` sets the countdown for tests. | `tests/studio-tray.test.mjs`: a task starting during the countdown cancels it. |
+| MEDIUM | `end_own_tree` never reached `os._exit(1)` if `subprocess.run(taskkill)` raised (for example the 15 s timeout). | `os._exit(1)` now runs in `finally`. | `tests/py/test_clip_contain.py`: exits even when taskkill fails. |
+
 ## Proposed decision D310 (default on)
 
 > D310 (proposed, 2026-11-09): Nothing Ujwalam starts runs on unseen.
@@ -118,6 +127,8 @@ While live, the existing "yes, on air" question comes first and stays as it was.
 > - Closing the window with tasks running asks: keep running in the tray, stop them, or do not close.
 > - Stopping ends each job's whole process tree: taskkill /T, a kill-on-close job in the clipper, and the parent pipe.
 > - The tray shows each task and exits with a notification when the last one ends.
+> - A tray exit never ends a stream or a recording. It asks the host first and fails closed. While busy, Stop all
+>   stops the tasks only.
 > - The launcher never stays running without a window unless something is live.
 > - The `hidden-window` lint rule also flags PowerShell shortcuts and `Start-Process` calls that start console
 >   programs.
@@ -127,12 +138,12 @@ While live, the existing "yes, on air" question comes first and stays as it was.
 
 | What | Test | Result |
 |---|---|---|
-| Root cause: plain kill leaves the child; killChildTree leaves no strays (`tools/stray-procs.mjs`); record-clips stop and pause-for-live end the whole tree; stdin pipe + env marker; killTree contract | `node --test tests/kill-tree.test.mjs` | 5 pass |
-| Python: without the job the child outlives a killed clipper; with `contain_children()` it ends; parent-pipe EOF; no marker no watch; `end_own_tree` runs hidden taskkill | `python -I -m unittest discover -s tests/py -t tests/py -p test_clip_contain.py` | 5 pass |
+| Root cause: plain kill leaves the child; killChildTree leaves no strays (`tools/stray-procs.mjs`); record-clips stop and pause-for-live end the whole tree; stdin pipe + env marker; killTree contract | `node --test tests/kill-tree.test.mjs` | 7 pass (after the review fixes) |
+| Python: without the job the child outlives a killed clipper; with `contain_children()` it ends; parent-pipe EOF; no marker no watch; `end_own_tree` runs hidden taskkill | `python -I -m unittest discover -s tests/py -t tests/py -p test_clip_contain.py` | 6 pass |
 | Task timing: progress, ETA math, stage reset, finished tasks | `node --test tests/studio-tasks.test.mjs` | pass |
-| Upload task written and ends done | `node --test tests/posting-auto-chain.test.mjs` | 13 pass |
+| Upload task written and ends done | `node --test tests/posting-auto-chain.test.mjs` | 14 pass |
 | Lint catches `.TargetPath = ...\Ujwalam.cmd` and a visible `Start-Process` (fixture lines 4, 6, 8); accepts `**cc.NO_WINDOW` (a false positive in the rule, fixed in the rule) | `node --test tests/lint.test.mjs` | 33 pass |
-| Close question with cancel, stop, tray; tray rows, menu, tooltip, click opens list once; tray exits when the last task finishes; Stop all; Open; no tasks means no question; taskbar elapsed + ETA | `node --test tests/studio-tray.test.mjs` | 8 pass |
+| Close question with cancel, stop, tray; tray rows, menu, tooltip, click opens list once; tray exits when the last task finishes; Stop all; Open; no tasks means no question; taskbar elapsed + ETA | `node --test tests/studio-tray.test.mjs` | 12 pass |
 | Regression: existing studio shell probes (task bar, toasts, crash regression), together with the task, record-clips, auto-chain, lint and kill-tree tests | `node --test --test-concurrency=1 tests/studio-qt-shell.test.mjs tests/studio-tasks.test.mjs tests/record-clips.test.mjs tests/posting-auto-chain.test.mjs tests/lint.test.mjs tests/kill-tree.test.mjs` | 119 pass, 0 fail, 0 skipped |
 | Quick CI | `node tools/ci.mjs --quick` (pre-commit hook, every commit on this branch) | 9/9 passed |
 

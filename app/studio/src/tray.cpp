@@ -14,6 +14,7 @@
 #include <QSystemTrayIcon>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -35,6 +36,10 @@ QString line(const QJsonObject &t)
 
 TrayKeeper::TrayKeeper(const QIcon &icon, QObject *parent) : QObject(parent), icon_(icon)
 {
+	bool ok = false;
+	const int ms = qEnvironmentVariableIntValue("UJWALAM_TRAY_FINISH_MS", &ok);
+	if (ok && ms >= 0)
+		finishMs_ = std::min(ms, 60000);
 }
 
 TrayKeeper::~TrayKeeper()
@@ -81,6 +86,7 @@ void TrayKeeper::end()
 {
 	active_ = false;
 	finishing_ = false;
+	finishGen_++; // a pending "all finished" countdown ends with the tray
 	if (list_)
 		list_->hide();
 	if (tray_)
@@ -102,16 +108,29 @@ void TrayKeeper::update(const QJsonArray &tasks)
 	if (tray_)
 		tray_->setToolTip(tip_.left(120)); // Windows cuts tray tooltips at 127 characters
 	rebuild();
+	if (n > 0 && finishing_) {
+		// A new task started during the "all finished" countdown: the countdown is cancelled, the tray stays.
+		finishing_ = false;
+		finishGen_++;
+		cancels_++;
+		if (tray_)
+			tray_->showMessage(QStringLiteral("Ujwalam is still working"), QStringLiteral("A new task started; Ujwalam stays in the tray."),
+					   QSystemTrayIcon::Information, 4000);
+		messages_++;
+		lastMessage_ = QStringLiteral("still working");
+	}
 	if (n == 0 && !finishing_) {
 		finishing_ = true;
+		const int gen = ++finishGen_;
 		if (tray_)
 			tray_->showMessage(QStringLiteral("Ujwalam: all tasks finished"), QStringLiteral("Nothing is running any more; Ujwalam has closed."),
 					   QSystemTrayIcon::Information, 4000);
 		messages_++;
 		lastMessage_ = QStringLiteral("all finished");
 		// Time to read the notification; then the studio ends (and the launcher stops the rest).
-		QTimer::singleShot(tray_ ? 3000 : 300, this, [this]() {
-			if (active_ && finishing_)
+		QTimer::singleShot(finishMs_ >= 0 ? finishMs_ : tray_ ? 3000 : 300, this, [this, gen]() {
+			// Checked again when it fires: still this countdown, still in the tray, still nothing running.
+			if (active_ && finishing_ && gen == finishGen_ && activeCount(tasks_) == 0)
 				emit allFinished();
 		});
 	}
@@ -216,6 +235,7 @@ QJsonObject TrayKeeper::probe() const
 	o.insert(QStringLiteral("tooltip"), tip_);
 	o.insert(QStringLiteral("running"), activeCount(tasks_));
 	o.insert(QStringLiteral("finishing"), finishing_);
+	o.insert(QStringLiteral("cancels"), cancels_);
 	o.insert(QStringLiteral("listShown"), list_ && list_->isVisible());
 	o.insert(QStringLiteral("listShows"), listShows_);
 	o.insert(QStringLiteral("messages"), messages_);

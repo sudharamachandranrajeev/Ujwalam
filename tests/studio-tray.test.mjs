@@ -11,7 +11,7 @@
 // No system tray on the offscreen platform: the icon itself is not shown here (UNVERIFIED on a real desktop).
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
@@ -20,6 +20,7 @@ import { createFakeBots, createFakeHost } from '../services/studio-ui/backends.m
 import { createFlags } from '../services/flags/index.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { writeTaskFile } from '../services/studio-ui/tasks.mjs';
+import { STOP_TASKS_FILE } from '../services/studio-ui/record-clips.mjs';
 import { EXE, qtDir } from '../app/studio/tools/build.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
@@ -37,11 +38,13 @@ describe('Qt studio: close with tasks running, and the tray (D310 proposed)', { 
 
   // Runs the shell once. o.prepare(dataDir) writes task files first; o.onStatus(n, dataDir) runs on each status request;
   // o.onOut(out, dataDir) on each stdout chunk. Returns the exit code, output and both probe lines (null when absent).
-  async function run({ ms = 7000, actions = '', show = true, prepare, onStatus, onOut } = {}) {
+  async function run({ ms = 7000, actions = '', show = true, prepare, onStatus, onOut, outputsReady = false, env = {} } = {}) {
     const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-tray-')); dirs.push(dataDir);
     if (prepare) prepare(dataDir);
-    const fake = createFakeHost({});
-    const host = { describe: () => fake.describe(), call: (m, p) => fake.call(m, p) };
+    const fake = createFakeHost({ outputsReady });
+    // ctl.statusFails: host.status throws from then on (the host cannot be read: fail closed)
+    const ctl = { statusFails: false };
+    const host = { describe: () => fake.describe(), call: (m, p) => (ctl.statusFails && m === 'host.status' ? Promise.reject(new Error('host gone')) : fake.call(m, p)) };
     const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
     const key = 't'.repeat(40);
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags: createFlags({ dataDir }), bots: createFakeBots(), limits: { statusPollMs: 50 } });
@@ -57,17 +60,17 @@ describe('Qt studio: close with tasks running, and the tray (D310 proposed)', { 
           env: {
             ...process.env, ...(QT ? { PATH: `${path.join(QT, 'bin')}${path.delimiter}${process.env.PATH}` } : {}), UJWALAM_HEADLESS: '1',
             UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms),
-            UJWALAM_STUDIO_PROBE_ACTIONS: actions, ...(show ? { UJWALAM_STUDIO_PROBE_SHOW: '1' } : {}),
+            UJWALAM_STUDIO_PROBE_ACTIONS: actions, ...(show ? { UJWALAM_STUDIO_PROBE_SHOW: '1' } : {}), ...env,
           },
         });
         let out = '', err = '';
-        child.stdout.on('data', (d) => { out += d; onOut?.(out, dataDir); });
+        child.stdout.on('data', (d) => { out += d; onOut?.(out, dataDir, fake, ctl); });
         child.stderr.on('data', (d) => { err += d; });
         const t = setTimeout(() => child.kill(), ms + 20_000);
         child.on('close', (code) => {
           clearTimeout(t);
           const line = (re) => { const m = re.exec(out); return m ? JSON.parse(m[1]) : null; };
-          resolve({ code, out, err, probe: line(/^studio probe: (.+)$/m), trayProbe: line(/^studio tray probe: (.+)$/m) });
+          resolve({ code, out, err, dataDir, probe: line(/^studio probe: (.+)$/m), trayProbe: line(/^studio tray probe: (.+)$/m) });
         });
       });
     } finally { srv.close(); }
@@ -125,6 +128,58 @@ describe('Qt studio: close with tasks running, and the tray (D310 proposed)', { 
     assert.ok(t, r.out);
     assert.deepEqual([t.active, t.running, t.finishing, t.lastMessage, t.messages], [true, 0, true, 'all finished', 2]);
     assert.equal(t.tooltip, 'Ujwalam: all tasks finished');
+  });
+
+  // Codex review (2026-11-09): a stream started from the control page while the window is in the tray must never be
+  // ended by a tray exit (exit 0 makes the launcher stop the host). Every tray exit asks the host fresh, fail closed.
+  const once = (re, fn) => { let done = false; return (out, ...a) => { if (!done && re.test(out)) { done = true; fn(...a); } }; };
+  test('tray: the last task finishing while a stream runs (started in tray mode) does not quit; the window comes back', async () => {
+    const r = await run({
+      ms: 12000, outputsReady: true, actions: 'close,close-choice:tray', prepare: (d) => task(d, RUNNING),
+      onOut: once(/^studio tray: on/m, async (d, fake) => { await fake.call('stream.start', {}); task(d, { ...RUNNING, state: 'done', done: 10 }); }),
+    });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^studio tray: all tasks finished; staying open \(live\)$/m);
+    assert.doesNotMatch(r.out, /all tasks finished; exiting/);
+    assert.ok(r.probe, 'still running at the probe time');
+    assert.deepEqual([r.probe.tray.active, r.probe.tray.stay], [false, 'live'], 'out of the tray: the window is back');
+  });
+  test('tray: a host that cannot be read counts as live (fail closed): no quit', async () => {
+    const r = await run({
+      ms: 12000, actions: 'close,close-choice:tray', prepare: (d) => task(d, RUNNING),
+      onOut: once(/^studio tray: on/m, (d, fake, ctl) => { ctl.statusFails = true; task(d, { ...RUNNING, state: 'done', done: 10 }); }),
+    });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^studio tray: all tasks finished; staying open \(unreadable\)$/m);
+    assert.ok(r.probe);
+    assert.equal(r.probe.tray.stay, 'unreadable');
+  });
+  test('tray: Stop all while live stops the tasks only (a request to the launcher); the studio and host stay', async () => {
+    const r = await run({
+      ms: 9000, outputsReady: true, actions: 'close,close-choice:tray,tray:stop', prepare: (d) => task(d, RUNNING),
+      onOut: once(/^studio tray: on/m, (d, fake) => { void fake.call('stream.start', {}); }),
+    });
+    assert.equal(r.code, 0, r.err);
+    assert.match(r.out, /^studio tray: stop tasks only \(live\)$/m);
+    assert.doesNotMatch(r.out, /^studio tray: stop all$/m);
+    assert.ok(r.probe, 'the studio did not quit');
+    const req = JSON.parse(readFileSync(path.join(r.dataDir, 'clips', STOP_TASKS_FILE), 'utf8'));
+    assert.ok(Number.isFinite(req.atMs), 'the stop request for the launcher (record-clips reads it)');
+    assert.equal(r.probe.tray.active, true, 'the tray stays until the stopped tasks show as ended');
+  });
+  test('tray: a task that starts during the "all finished" countdown cancels it; the tray stays', async () => {
+    let doneAt = 0;
+    const r = await run({
+      ms: 14000, actions: 'close,close-choice:tray', prepare: (d) => task(d, RUNNING), env: { UJWALAM_TRAY_FINISH_MS: '6000' },
+      onOut: once(/^studio tray: on/m, (d) => { task(d, { ...RUNNING, state: 'done', done: 10 }); doneAt = 1; }),
+      // two status polls after the finish (the tray has seen "done" and is counting down): a new upload starts
+      onStatus: (n, d) => { if (doneAt && ++doneAt === 3) task(d, { id: 'upload-x', kind: 'upload', title: 'Uploading a clip to YouTube (private)', state: 'running' }); },
+    });
+    assert.equal(r.code, 0, r.err);
+    assert.doesNotMatch(r.out, /all tasks finished/);
+    const t = r.probe.tray;
+    assert.deepEqual([t.active, t.finishing, t.running, t.lastMessage], [true, false, 1, 'still working']);
+    assert.ok(t.cancels >= 1, JSON.stringify(t));
   });
 
   test('tray: Stop all ends the studio with exit 0', async () => {

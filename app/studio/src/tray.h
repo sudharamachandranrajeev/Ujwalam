@@ -48,6 +48,8 @@ private:
 	QJsonArray tasks_;
 	QString tip_;
 	bool active_ = false, finishing_ = false;
-	int listShows_ = 0, messages_ = 0;
+	int finishGen_ = 0;   // each "all finished" countdown; a new active task cancels it (the old timer then does nothing)
+	int finishMs_ = -1;   // countdown length: 3 s with a tray, 0.3 s without; UJWALAM_TRAY_FINISH_MS overrides (tests)
+	int listShows_ = 0, messages_ = 0, cancels_ = 0;
 	QString lastMessage_;
 };

@@ -238,6 +238,10 @@ private:
 	void enterTray();
 	void leaveTray();
 	void stopAllFromTray(bool ask);
+	// Fresh "may the studio quit?" (the UI server asks the host now; fail closed: a stream or recording running, or no
+	// answer, is "no"). Every tray-triggered exit goes through it (D310 proposed).
+	void checkQuit(std::function<void(bool canQuit, const QString &reason)> then);
+	QString trayStay_;            // why the tray did not quit (live | recording | unreadable; probe)
 	StatsCards *stats_ = nullptr;  // session time, GPU, CPU, fps with history
 	QJsonObject clips_;           // status.clips: settings, state, asks, last result (D284)
 	QStringList asked_;           // "make clips?" questions already shown this session

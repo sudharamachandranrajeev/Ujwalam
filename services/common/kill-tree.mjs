@@ -27,9 +27,17 @@ export function killTree(pid, { platform = process.platform, spawnSyncFn = spawn
   }
 }
 
-/** killTree for a ChildProcess that may already have exited; never throws. */
+/**
+ * Whether a ChildProcess has exited. Node sets exitCode OR signalCode when it reaps the process, before 'exit' fires; a
+ * child ended by a signal (child.kill()) has exitCode null and signalCode set. Until then libuv holds the process
+ * handle open, so Windows cannot give its PID to another process: the PID is only targeted while it is still ours.
+ */
+export const hasExited = (child) => (child.exitCode !== null && child.exitCode !== undefined) || (child.signalCode !== null && child.signalCode !== undefined);
+
+/** killTree for a ChildProcess that may already have exited; never throws. An exited child's PID is never targeted
+ *  (it may belong to another process by now). */
 export function killChildTree(child, opts) {
-  if (!child || child.exitCode !== null && child.exitCode !== undefined) return true;
+  if (!child || hasExited(child)) return true;
   if (!Number.isInteger(child.pid)) { try { child.kill(); } catch { /* gone */ } return true; }
   const ok = killTree(child.pid, opts);
   if (!ok) { try { child.kill(); } catch { /* gone */ } }

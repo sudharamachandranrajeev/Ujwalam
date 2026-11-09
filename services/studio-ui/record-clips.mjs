@@ -28,6 +28,8 @@ import { clipsFolder, readSettings, writeSettings } from './user-settings.mjs';
 import { writeTaskFile } from './tasks.mjs';
 
 const ACTIVE = new Set(['starting', 'live', 'reconnecting', 'retrying']);
+/** The tray's "Stop all" while live or recording (D310 proposed): <dataDir>/clips/<this>, written by the UI server. */
+export const STOP_TASKS_FILE = 'stop-tasks.json';
 
 const canvasOf = (status, rungId) => (Array.isArray(status?.rungs) ? status.rungs : []).find((r) => r.id === rungId)?.canvas ?? null;
 const sinksOf = (status, kind) => (Array.isArray(status?.sinks) ? status.sinks : []).filter((s) => s.kind === kind && typeof s.id === 'string');
@@ -148,9 +150,11 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
   const statusFile = path.join(stateDir, 'status.json');
   const answerFile = path.join(stateDir, 'answer.json');
   const workerFile = path.join(stateDir, 'live-worker.json');
+  const stopFile = path.join(stateDir, STOP_TASKS_FILE);
+  const createdAt = now();
   const queue = []; let asks = [];
   let prev = null; let child = null; let current = null; let last = null; let stopped = false;
-  let lastStatus = null; let progress = null; let liveNow = false; let recStart = null; let recSawLive = false; let liveStart = null; let liveHadRecording = false; let workerOn = null;
+  let halted = false; let lastStatus = null; let progress = null; let liveNow = false; let recStart = null; let recSawLive = false; let liveStart = null; let liveHadRecording = false; let workerOn = null;
 
   // A run cut short by closing Ujwalam (or queued, or still to be answered) comes back at the next start.
   try {
@@ -177,6 +181,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
       note: j === current ? 'Paused while the stream runs' : liveNow ? 'Waiting until the stream ends' : 'Waiting for its turn' };
   };
   const writeTasks = () => {
+    if (halted) return; // stopped by the user: the task files say so; the jobs run again at the next start
     for (const j of queue) { j.taskStart ??= now(); writeTaskFile(dataDir, taskFor(j, progress)); }
   };
   const finishTask = (j, ok, note) => writeTaskFile(dataDir, { id: taskId(j), kind: 'clips', title: ok ? `Clips ready from ${j.name}` : `Clips from ${j.name} did not finish`, state: ok ? 'done' : 'failed', note, startedAt: j.taskStart ?? now(), updatedAt: now() });
@@ -185,7 +190,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
     writeTasks();
     const s = readSettings(dataDir);
     const t = clipTools({ clipRoot });
-    const out = { at: iso(now()), state: current ? 'running' : queue.length ? 'queued' : 'idle', available: !!t.py, reason: t.reason, fix: t.fix, missing: t.missing,
+    const out = { at: iso(now()), state: current && !halted ? 'running' : queue.length ? 'queued' : 'idle', available: !!t.py, reason: t.reason, fix: t.fix, missing: t.missing,
       settings: s.clips, folder: clipsFolder(dataDir, s),
       running: current ? pickJob(current) : null, queued: queue.filter((q) => q !== current).map(pickJob), asks, last };
     try {
@@ -253,6 +258,20 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
       start();
     });
   };
+  // Stop the tasks only (the tray's Stop all while a stream or recording runs, so the studio and host stay): the clip
+  // job's whole tree ends now, the queue is kept for the next start (as when Ujwalam closes), each task says so, and
+  // nothing new starts in this session. A request older than this launcher is a leftover and is dropped.
+  const readStop = () => {
+    let r = null;
+    try { r = JSON.parse(readFileSync(stopFile, 'utf8')); } catch { return; }
+    try { rmSync(stopFile, { force: true }); } catch { /* read again next tick */ }
+    if (halted || !(Number(r?.atMs) >= createdAt)) return;
+    halted = true; stopped = true;
+    if (child) killTreeFn(child);
+    for (const j of queue) finishTask(j, false, 'Stopped by you; it runs again at the next start');
+    log(`clips: stopped by you (${queue.length} job(s) run again at the next start)`);
+    postChain?.stopTasks?.();
+  };
   const readAnswer = (s) => {
     let a = null;
     try { a = JSON.parse(readFileSync(answerFile, 'utf8')); } catch { return; }
@@ -301,6 +320,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
       }
       prev = status; lastStatus = status;
       readAnswer(s);
+      readStop();
       if (live && child && current && !current.pausedForLive) { current.pausedForLive = true; killTreeFn(child); } // the whole tree: ffmpeg must not encode while live
       if (!live) start();
       if (postChain) void Promise.resolve(postChain.tick(status)).catch(() => {}); // retries of queued uploads; the chain itself refuses while a stream is live

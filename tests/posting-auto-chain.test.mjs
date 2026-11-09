@@ -141,6 +141,25 @@ describe('chain', () => {
     assert.equal(y4.count('init'), 1, 'a local recording does not block');
   });
 
+  test('Stop all from the tray while live or recording (D310 proposed): the upload stops at its next chunk, the task says so, nothing new starts', async () => {
+    const e = env(); const yt = fakeYt(); const clock = { t: T0 };
+    let c = null;
+    const stopAfterFirst = async (url, o) => { const r = await yt.fetchImpl(url, o); if (yt.count('chunk') === 1) c.stopTasks(); return r; };
+    ({ c } = chain(e, { yt: { fetchImpl: stopAfterFirst }, time: clock, chunkSize: 10 }));
+    await c.tick(RECORDING);
+    assert.equal(yt.count('chunk'), 1, 'no chunk after the stop');
+    assert.equal(e.store().get(e.ids.a).status, 'approved', 'not uploaded');
+    const it = e.queue().get(e.ids.a);
+    assert.deepEqual([it.state, it.reason], ['queued', 'stopped-by-user'], 'queued again for the next start');
+    assert.ok(it.session, 'the session is kept for a resume');
+    const tdir = tasksDir(e.dataDir);
+    const [t] = readdirSync(tdir).map((n) => JSON.parse(readFileSync(path.join(tdir, n), 'utf8')));
+    assert.deepEqual([t.kind, t.state, t.note], ['upload', 'failed', 'Stopped by you; it is tried again at the next start'], 'the tray sees it end');
+    clock.t += MAX_DELAY_MS;
+    assert.deepEqual(await c.tick(IDLE), { skipped: 'stopped' }, 'nothing new in this session');
+    assert.equal(yt.count('init'), 1);
+  });
+
   test('unreadable output state fails closed', async () => {
     const e = env(); const yt = fakeYt(); const { c } = chain(e, { yt });
     for (const bad of [null, { nope: 1 }, { sinks: [null] }]) await c.tick(bad);

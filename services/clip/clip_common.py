@@ -77,12 +77,16 @@ def end_own_tree(pid=None, run=None):
     """Ends this process and every process it started (ffmpeg, workers). Windows: taskkill /T /F from System32, no
     console window (D191); elsewhere SIGKILL to the process. Never returns when it works."""
     pid = os.getpid() if pid is None else pid
-    if os.name == "nt":
-        root = os.environ.get("SystemRoot", "")
-        exe = os.path.join(root, "System32", "taskkill.exe") if root else ""
-        if exe and os.path.isfile(exe):
-            (run or subprocess.run)([exe, "/T", "/F", "/PID", str(pid)], capture_output=True, timeout=15, **NO_WINDOW)
-    os._exit(1)
+    try:
+        if os.name == "nt":
+            root = os.environ.get("SystemRoot", "")
+            exe = os.path.join(root, "System32", "taskkill.exe") if root else ""
+            if exe and os.path.isfile(exe):
+                (run or subprocess.run)([exe, "/T", "/F", "/PID", str(pid)], capture_output=True, timeout=15, **NO_WINDOW)
+    finally:
+        # Always: taskkill missing, timing out or failing must not leave the job running unseen. The kill-on-close
+        # job (contain_children) then ends ffmpeg with us.
+        os._exit(1)
 
 
 def end_tree_when_parent_gone(env=None, stdin=None, on_gone=None):

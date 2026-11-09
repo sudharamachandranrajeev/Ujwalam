@@ -427,9 +427,34 @@ void MainWindow::stopAllFromTray(bool ask)
 	if (ask && QMessageBox::question(nullptr, QStringLiteral("Stop all"),
 					  QStringLiteral("Stop every running task and quit Ujwalam?\nUnfinished clip jobs run again at the next start.")) != QMessageBox::Yes)
 		return;
-	std::printf("studio tray: stop all\n");
-	std::fflush(stdout);
-	QApplication::exit(0); // the launcher ends every task's whole process tree
+	checkQuit([this](bool can, const QString &why) {
+		if (can) {
+			std::printf("studio tray: stop all\n");
+			std::fflush(stdout);
+			QApplication::exit(0); // the launcher ends every task's whole process tree
+			return;
+		}
+		// Live, recording or unknown: quitting would stop them. Stop the tasks only; the studio and host stay, and the
+		// tray ends when the stopped tasks show as ended (allFinished, checked again).
+		trayStay_ = why;
+		std::printf("studio tray: stop tasks only (%s)\n", qUtf8Printable(why));
+		std::fflush(stdout);
+		api_->post(QStringLiteral("ui/api/tasks/stop"), {}, [this](bool ok, const QJsonObject &, const QString &err) {
+			if (!ok)
+				note(QStringLiteral("Could not stop the tasks: ") + err);
+		});
+	});
+}
+
+void MainWindow::checkQuit(std::function<void(bool, const QString &)> then)
+{
+	api_->get(QStringLiteral("ui/api/quit-check"), [then](bool ok, const QJsonObject &r, const QString &) {
+		const QJsonValue can = r.value(QStringLiteral("canQuit"));
+		if (!ok || !can.isBool())
+			return then(false, QStringLiteral("unreadable"));
+		const QString why = r.value(QStringLiteral("reason")).toString();
+		then(can.toBool(), can.toBool() ? QString() : (why.isEmpty() ? QStringLiteral("unreadable") : why));
+	});
 }
 
 void PreviewSlot::schedule()
@@ -530,10 +555,23 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 		connect(tray_, &TrayKeeper::openRequested, this, &MainWindow::leaveTray);
 		connect(tray_, &TrayKeeper::stopAllRequested, this, [this]() { stopAllFromTray(true); });
 		connect(tray_, &TrayKeeper::allFinished, this, [this]() {
-			std::printf("studio tray: all tasks finished; exiting\n");
-			std::printf("studio tray probe: %s\n", QJsonDocument(tray_->probe()).toJson(QJsonDocument::Compact).constData());
-			std::fflush(stdout);
-			QApplication::exit(0); // exit 0: the launcher stops everything else (D280)
+			// Exit 0 makes the launcher stop the host: never while a stream or recording runs (it may have been started
+			// from the control page while the window was in the tray). Then the window comes back instead.
+			checkQuit([this](bool can, const QString &why) {
+				if (!tray_->active())
+					return;
+				if (!can) {
+					trayStay_ = why;
+					std::printf("studio tray: all tasks finished; staying open (%s)\n", qUtf8Printable(why));
+					std::fflush(stdout);
+					note(QStringLiteral("All tasks finished. Ujwalam stays open: %1.").arg(why == QStringLiteral("unreadable") ? QStringLiteral("could not confirm that nothing is live") : why));
+					return leaveTray();
+				}
+				std::printf("studio tray: all tasks finished; exiting\n");
+				std::printf("studio tray probe: %s\n", QJsonDocument(tray_->probe()).toJson(QJsonDocument::Compact).constData());
+				std::fflush(stdout);
+				QApplication::exit(0); // exit 0: the launcher stops everything else (D280)
+			});
 		});
 	}
 	resize(1400, 860);
@@ -3680,6 +3718,7 @@ QJsonObject MainWindow::probe() const
 	QJsonObject tray = tray_->probe();
 	tray.insert(QStringLiteral("closeAsked"), closeAsked_);
 	tray.insert(QStringLiteral("closeChoice"), closeChoice_);
+	tray.insert(QStringLiteral("stay"), trayStay_);
 	o.insert(QStringLiteral("tray"), tray);
 	o.insert(QStringLiteral("windowShown"), isVisible()); // UJWALAM_STUDIO_PROBE_SHOW: animations ran (2026-11-08 crash test)
 	o.insert(QStringLiteral("guide"), guide_->probe());
