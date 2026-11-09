@@ -27,6 +27,7 @@ const UPLOAD_INIT_URL = 'https://www.googleapis.com/upload/youtube/v3/videos?upl
 const THUMBNAIL_URL = (videoId) => `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`;
 const DEFAULT_CHUNK = 8 * 1024 * 1024; // 8 MiB, a multiple of 256 KiB as Google's resumable protocol requires
 const MAX_RETRIES = 5;
+const FALLBACK_BPS = 8000; // 64 kbit/s: deliberately slow guess for the final-chunk estimate when no setting is passed
 const VIDEOS_URL = (videoId) => `https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=${encodeURIComponent(videoId)}`;
 const ACTIVE_STATES = new Set(['starting', 'live', 'retrying']);
 
@@ -96,24 +97,49 @@ async function queryProgress(fetchImpl, sessionUrl, totalBytes) {
   throw new UploadError('upload-resume-query-failed', `HTTP ${res.status} checking upload progress`);
 }
 
+/** After a chunk was aborted at its deadline: asks Google whether the session finished anyway (the last byte may have
+ *  arrived just before the abort). Finished = its resource; otherwise (or unknown) stop with 'slot-passed-mid' and keep
+ *  the session, so the next pass checks it again and drops it if it is still unfinished. */
+async function afterDeadline(fetchImpl, sessionUrl, totalBytes) {
+  let p = null;
+  try { p = await queryProgress(fetchImpl, sessionUrl, totalBytes); } catch { /* unknown: checked again on the next pass */ }
+  if (p && typeof p === 'object') return p.resource;
+  throw new UploadError('slot-passed-mid', 'the upload did not finish in time before the planned public time; stopped so it does not go public at once');
+}
+
 /** Uploads the whole file in chunks, resuming from the last acknowledged byte on a dropped connection.
- *  Returns the finished video resource (parsed JSON) once Google responds 200/201. */
-async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSize, startOffset = 0, beforeChunk = null) {
+ *  Returns the finished video resource (parsed JSON) once Google responds 200/201.
+ *  guard (scheduled uploads only): { deadline (ms, on the nowMs clock), nowMs, fallbackBps }. Every chunk request is
+ *  aborted at the deadline, so no byte is sent after it: Google gets the final byte before the deadline or never. The
+ *  final chunk only starts when its estimated transfer time (slowest chunk measured in this run, else fallbackBps) fits. */
+async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSize, startOffset = 0, beforeChunk = null, guard = null) {
   if (typeof startOffset === 'object') return startOffset.resource; // the session had already finished
   let offset = startOffset;
   let attempt = 0;
+  let slowestBps = null; // bytes per second of the slowest accepted chunk in this run
   while (offset < totalBytes) {
     if (beforeChunk) await beforeChunk(); // throws to stop (a stream started); the session stays valid for a later resume
     const end = Math.min(offset + chunkSize, totalBytes);
+    let stop = null; let timer = null;
+    if (guard) {
+      const left = guard.deadline - guard.nowMs();
+      const needMs = end === totalBytes ? ((end - offset) / (slowestBps ?? guard.fallbackBps)) * 1000 : 0;
+      if (left <= 0 || needMs > left) throw new UploadError('slot-passed-mid', 'the rest of the upload might not arrive before the planned public time; stopped so it does not go public at once');
+      stop = new AbortController();
+      timer = setTimeout(() => stop.abort(), left);
+    }
     let res;
+    const started = performance.now();
     try {
       const body = await readRange(filePath, offset, end);
       res = await fetchImpl(sessionUrl, {
         method: 'PUT',
         headers: { 'Content-Length': String(body.length), 'Content-Range': `bytes ${offset}-${end - 1}/${totalBytes}` },
         body,
+        ...(stop ? { signal: stop.signal } : {}),
       });
     } catch (e) {
+      if (stop?.signal.aborted) return afterDeadline(fetchImpl, sessionUrl, totalBytes);
       attempt++;
       if (attempt > MAX_RETRIES) throw new UploadError('upload-failed', `network error after ${MAX_RETRIES} retries: ${e?.message ?? e}`);
       await sleep(Math.min(1000 * 2 ** attempt, 30000));
@@ -121,8 +147,14 @@ async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSi
       if (typeof p === 'object') return p.resource;
       offset = p;
       continue;
+    } finally {
+      clearTimeout(timer); // the request is over (answered or failed): no abort after this
     }
-    if (res.status === 308) { offset = end; attempt = 0; continue; } // chunk accepted, more to send
+    if (res.status === 308) { // chunk accepted, more to send
+      const bps = (end - offset) / Math.max((performance.now() - started) / 1000, 0.001);
+      slowestBps = slowestBps === null ? bps : Math.min(slowestBps, bps);
+      offset = end; attempt = 0; continue;
+    }
     if (res.ok) return res.json(); // 200/201: upload complete
     if (res.status >= 500 || res.status === 0) {
       attempt++;
@@ -202,7 +234,10 @@ export async function uploadVideo(opts) {
     if (opts.beforeChunk) await opts.beforeChunk();
     if (!ahead(sent, opts.marginMs ?? 0)) throw new UploadError('slot-passed-mid', 'the planned public time came too close during the upload; stopped so it does not go public at once');
   };
-  const resource = await uploadChunks(fetchImpl, sessionUrl, opts.videoPath, bytes, chunkSize, offset, beforeChunk);
+  // A scheduled session's chunks must end opts.chunkDeadlineMs before its time (aborted otherwise; see uploadChunks).
+  // FALLBACK_BPS only applies when a caller passes no setting (auto-chain always passes data/posting/schedule.json's).
+  const guard = sent === null ? null : { deadline: Date.parse(sent) - (opts.chunkDeadlineMs ?? 0), nowMs, fallbackBps: opts.fallbackBps ?? FALLBACK_BPS };
+  const resource = await uploadChunks(fetchImpl, sessionUrl, opts.videoPath, bytes, chunkSize, offset, beforeChunk, guard);
   const videoId = resource?.id;
   if (typeof videoId !== 'string' || !videoId) throw new UploadError('upload-failed', 'no video id in the finished response');
 
@@ -236,7 +271,7 @@ export async function uploadPost(opts) {
   const accessToken = await auth.accessToken();
   const r = await uploadVideo({
     post, sha256, videoPath: video.file, coverPath: cover?.file, accessToken,
-    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now, sessions: opts.sessions, publishAt: opts.publishAt ?? null, minLeadMs: opts.minLeadMs, marginMs: opts.marginMs, nowMs: opts.nowMs, beforeChunk: opts.beforeChunk, chunkSize: opts.chunkSize,
+    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now, sessions: opts.sessions, publishAt: opts.publishAt ?? null, minLeadMs: opts.minLeadMs, marginMs: opts.marginMs, chunkDeadlineMs: opts.chunkDeadlineMs, fallbackBps: opts.fallbackBps, nowMs: opts.nowMs, beforeChunk: opts.beforeChunk, chunkSize: opts.chunkSize,
     recordUploaded: async ({ videoId }) => { store.ledger.annotate(sha256, post.target, { videoId }); },
   });
   return { ...r, hasCover: !!cover };

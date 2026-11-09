@@ -20,7 +20,8 @@
 //     item waits without a slot (no attempt used), nothing is uploaded and no slot is guessed.
 //   - a slot is never given back: a failed upload keeps it (that time stays empty on the channel).
 //   - the slot is re-checked right before a session starts or resumes (>= now + minLeadHours) and before every chunk
-//     (>= now + marginMinutes) in youtube.mjs. Too close: the upload stops ('slot-passed' / 'slot-passed-mid'), an
+//     (>= now + marginMinutes) in youtube.mjs; every chunk request is aborted chunkDeadlineSeconds before the time,
+//     and the final chunk only starts if its estimated transfer fits. Too close: the upload stops ('slot-passed' / 'slot-passed-mid'), an
 //     unfinished session is dropped, and the item gets a new slot at the end on the next pass. Nothing finishes with a
 //     passed time. Each session's own publish time is saved (sessionPublishAt) and the time recorded as posted is the
 //     one Google really got; a finished upload whose time had already passed is marked plainly ('went-public-early').
@@ -33,7 +34,7 @@ import { LEDGER_NAME, POSTING_FLAG, createPostStore, packageRun, packageUploads,
 import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, liveBlock, loadRules, runAuto } from './auto-post.mjs';
 import { READONLY_SCOPE, createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
-import { SCHEDULE_FLAG, ScheduleError, loadScheduleConfig, marginMs, minLeadMs, nextSlot, ownLastSlot, slotTooClose, toIso } from './schedule.mjs';
+import { SCHEDULE_FLAG, ScheduleError, chunkDeadlineMs, fallbackBps, loadScheduleConfig, marginMs, minLeadMs, nextSlot, ownLastSlot, slotTooClose, toIso } from './schedule.mjs';
 import { readChannelSchedule } from './schedule-read.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -298,7 +299,8 @@ export function createPostChain(opts) {
       try {
         const r = await uploadPost({
           id: item.id, store, auth, outputsStatus, fetchImpl: opts.fetchImpl, chunkSize: opts.chunkSize, sessions, publishAt,
-          minLeadMs: cfg ? minLeadMs(cfg) : 0, marginMs: cfg ? marginMs(cfg) : 0, nowMs,
+          minLeadMs: cfg ? minLeadMs(cfg) : 0, marginMs: cfg ? marginMs(cfg) : 0,
+          chunkDeadlineMs: cfg ? chunkDeadlineMs(cfg) : 0, fallbackBps: cfg ? fallbackBps(cfg) : undefined, nowMs,
           beforeChunk: async () => { const b = await liveBlock(outputsStatus); if (b) throw new UploadError('stream-active', b); },
         });
         // Record only the time Google really got with this video (the session's), never the planned one.

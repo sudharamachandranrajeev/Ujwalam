@@ -13,6 +13,8 @@
 // Check before an upload session starts or resumes: publishAt >= now + minLeadHours (leadOk). The margin in the floor
 // is what lets a slot given out now pass that check when its upload starts a little later in the same batch.
 // Check before every chunk: publishAt >= now + marginMinutes, so an upload never finishes with a past time.
+// Bound on every chunk (youtube.mjs): the request is aborted at publishAt - chunkDeadlineSeconds, and the final chunk
+// only starts when its estimated transfer (slowest measured chunk speed, else fallbackKbps) fits before that deadline.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,13 +39,19 @@ export function loadScheduleConfig(file = DEFAULT_SCHEDULE) {
     if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) throw new ScheduleError('schedule-config-bad', `schedule setting ${k} must be a number from ${min} to ${max}`);
     return v;
   };
-  return {
+  const cfg = {
     intervalHours: num('intervalHours', 0.25, 24 * 30),
     minLeadHours: num('minLeadHours', 0.25, 24 * 30),
     marginMinutes: num('marginMinutes', 1, 4 * 60),
+    chunkDeadlineSeconds: num('chunkDeadlineSeconds', 1, 3600),
+    fallbackKbps: num('fallbackKbps', 64, 1000000),
     maxPages: Math.floor(num('maxPages', 1, 100)),
     pageSize: Math.floor(num('pageSize', 1, 50)),
   };
+  // A chunk may only start with at least marginMinutes left, and must end chunkDeadlineSeconds before the time:
+  // a deadline at or past the margin would stop every final chunk.
+  if (cfg.chunkDeadlineSeconds >= cfg.marginMinutes * 60) throw new ScheduleError('schedule-config-bad', 'schedule setting chunkDeadlineSeconds must be less than marginMinutes');
+  return cfg;
 }
 
 const ms = (iso) => { const t = typeof iso === 'string' ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : null; };
@@ -94,6 +102,10 @@ export const leadOk = (publishAt, nowMs, needMs) => { const t = ms(publishAt); r
 export const slotTooClose = (publishAt, nowMs, cfg) => !leadOk(publishAt, nowMs, cfg.minLeadHours * HOUR_MS);
 export const minLeadMs = (cfg) => cfg.minLeadHours * HOUR_MS;
 export const marginMs = (cfg) => cfg.marginMinutes * MINUTE_MS;
+/** Every chunk request is aborted this long before the publish time (so the last byte arrives before it or never). */
+export const chunkDeadlineMs = (cfg) => cfg.chunkDeadlineSeconds * 1000;
+/** Assumed upload speed (bytes/s) for the final-chunk estimate when no chunk was timed yet in this run. */
+export const fallbackBps = (cfg) => (cfg.fallbackKbps * 1000) / 8;
 
 /** The channel's last known schedule as saved by the chain (for the preview's estimate); null when unknown or past. */
 export function savedChannelLast(queueDoc, nowMs) {

@@ -21,7 +21,7 @@ const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-sched-')); tmp.push(d); return d; };
 after(() => { for (const d of tmp) rmSync(d, { recursive: true, force: true }); });
 const PROFILE = { handles: { youtube: '@example-channel', twitch: 'example-channel' }, links: { discord: 'https://example.invalid/d' } };
-const CFG = { intervalHours: 6, minLeadHours: 1, marginMinutes: 15, maxPages: 4, pageSize: 50 };
+const CFG = { intervalHours: 6, minLeadHours: 1, marginMinutes: 15, chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 4, pageSize: 50 };
 const T0 = Date.parse('2026-11-09T10:00:00Z');
 const iso = (t) => new Date(t).toISOString();
 
@@ -30,12 +30,14 @@ describe('slot math (UTC, pure)', () => {
     const cfg = loadScheduleConfig();
     assert.equal(cfg.intervalHours, 6);
     assert.ok(cfg.minLeadHours > 0 && cfg.marginMinutes > 0 && cfg.maxPages >= 1 && cfg.pageSize <= 50);
+    assert.equal(cfg.chunkDeadlineSeconds, 120); assert.ok(cfg.chunkDeadlineSeconds < cfg.marginMinutes * 60 && cfg.fallbackKbps >= 64);
     const raw = JSON.parse(readFileSync(DEFAULT_SCHEDULE, 'utf8'));
     assert.match(raw.source, /user request 2026-11-09/); assert.equal(raw.checked, '2026-11-09');
   });
   test('a bad settings file is refused, never defaulted', () => {
     const d = mk(); const f = path.join(d, 's.json');
-    for (const bad of [{ ...CFG, intervalHours: 0 }, { ...CFG, minLeadHours: 'x' }, { ...CFG, pageSize: 51 }, {}]) {
+    for (const bad of [{ ...CFG, intervalHours: 0 }, { ...CFG, minLeadHours: 'x' }, { ...CFG, pageSize: 51 }, { ...CFG, chunkDeadlineSeconds: 0 }, { ...CFG, fallbackKbps: 10 },
+      { ...CFG, marginMinutes: 2, chunkDeadlineSeconds: 120 }, {}]) {
       writeFileSync(f, JSON.stringify(bad));
       assert.throws(() => loadScheduleConfig(f), (e) => e.code === 'schedule-config-bad');
     }
