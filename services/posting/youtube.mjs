@@ -71,7 +71,10 @@ function readRange(file, start, end) {
   });
 }
 
-/** Asks Google how many bytes of a resumable session it already has (for resuming after a drop). */
+/** Asks Google how many bytes of a resumable session it already has (for resuming after a drop).
+ *  Returns a byte count, or { resource } when the session already finished (the answer to the last chunk was lost):
+ *  Google answers a progress query on a completed session with the video resource (UNVERIFIED against real Google).
+ *  404/410 = the session is gone (expired): code 'upload-session-gone'; any other failure is transient and keeps the session. */
 async function queryProgress(fetchImpl, sessionUrl, totalBytes) {
   const res = await fetchImpl(sessionUrl, { method: 'PUT', headers: { 'Content-Range': `bytes */${totalBytes}` } });
   if (res.status === 308) {
@@ -79,13 +82,15 @@ async function queryProgress(fetchImpl, sessionUrl, totalBytes) {
     const m = range ? /bytes=0-(\d+)/.exec(range) : null;
     return m ? Number(m[1]) + 1 : 0;
   }
-  if (res.ok) return totalBytes; // already complete
+  if (res.ok) { let resource = null; try { resource = await res.json(); } catch { /* no body */ } return { resource }; } // already complete
+  if (res.status === 404 || res.status === 410) throw new UploadError('upload-session-gone', `HTTP ${res.status}: the upload session no longer exists`);
   throw new UploadError('upload-resume-query-failed', `HTTP ${res.status} checking upload progress`);
 }
 
 /** Uploads the whole file in chunks, resuming from the last acknowledged byte on a dropped connection.
  *  Returns the finished video resource (parsed JSON) once Google responds 200/201. */
 async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSize, startOffset = 0, beforeChunk = null) {
+  if (typeof startOffset === 'object') return startOffset.resource; // the session had already finished
   let offset = startOffset;
   let attempt = 0;
   while (offset < totalBytes) {
@@ -103,7 +108,9 @@ async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSi
       attempt++;
       if (attempt > MAX_RETRIES) throw new UploadError('upload-failed', `network error after ${MAX_RETRIES} retries: ${e?.message ?? e}`);
       await sleep(Math.min(1000 * 2 ** attempt, 30000));
-      offset = await queryProgress(fetchImpl, sessionUrl, totalBytes); // resume from Google's own count, not our guess
+      const p = await queryProgress(fetchImpl, sessionUrl, totalBytes); // resume from Google's own count, not our guess
+      if (typeof p === 'object') return p.resource;
+      offset = p;
       continue;
     }
     if (res.status === 308) { offset = end; attempt = 0; continue; } // chunk accepted, more to send
@@ -112,7 +119,9 @@ async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSi
       attempt++;
       if (attempt > MAX_RETRIES) throw new UploadError('upload-failed', `HTTP ${res.status} after ${MAX_RETRIES} retries`);
       await sleep(Math.min(1000 * 2 ** attempt, 30000));
-      offset = await queryProgress(fetchImpl, sessionUrl, totalBytes);
+      const p = await queryProgress(fetchImpl, sessionUrl, totalBytes);
+      if (typeof p === 'object') return p.resource;
+      offset = p;
       continue;
     }
     throw new UploadError('upload-failed', `HTTP ${res.status} (not retryable)`);
@@ -158,7 +167,8 @@ export async function uploadVideo(opts) {
   let sessionUrl = opts.sessions?.get(opts.sha256) ?? null;
   let offset = 0;
   if (sessionUrl) {
-    try { offset = await queryProgress(fetchImpl, sessionUrl, bytes); } catch { sessionUrl = null; offset = 0; }
+    // Only a vanished session starts a new one. Any other failure keeps it: a second session could upload the video twice.
+    try { offset = await queryProgress(fetchImpl, sessionUrl, bytes); } catch (e) { if (e?.code !== 'upload-session-gone') throw e; sessionUrl = null; offset = 0; }
   }
   if (!sessionUrl) {
     sessionUrl = await initiateSession(fetchImpl, opts.accessToken, metadata, bytes);
