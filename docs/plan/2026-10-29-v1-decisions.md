@@ -480,7 +480,9 @@ queue (any state), plus intervalHours; never sooner than now + minLeadHours + ma
 minute. Settings in `data/posting/schedule.json` (6 h from the user; lead 1 h, margin 15 min, 20 x 50 pages: agent
 defaults). Slots go out in queue order and are saved on the queue item; a retry keeps its slot while it is still at
 least minLead ahead, and a failed item keeps its slot (the gap stays). The time is re-checked right before an upload
-session starts or resumes (>= now + minLead) and before every chunk (>= now + margin); a time too close drops an
+session starts or resumes (>= now + minLead) and before every chunk (>= now + margin); every chunk request is aborted chunkDeadlineSeconds (120 s) before the time,
+and the final chunk only starts when its estimated transfer (slowest measured chunk, else fallbackKbps) fits;
+after an abort a progress query decides (finished = done, else re-slotted); a time too close drops an
 unfinished session and the clip gets a new slot at the end. Each session's publish time is saved with it; an
 unfinished session whose time differs from the slot is dropped and a new one started, and the time recorded as
 scheduled is always the one the finished session carried. A finished upload confirmed after its time passed is marked

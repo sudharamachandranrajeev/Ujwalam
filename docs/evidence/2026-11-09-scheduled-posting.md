@@ -23,7 +23,8 @@ branch takes D310 first, renumber at merge.
   - rounded up to the whole minute. All math is in UTC milliseconds, so time zones and DST do not matter.
 - **Settings** are in `data/posting/schedule.json` (source + date), never hardcoded:
   - `intervalHours` 6 (from the user);
-  - `minLeadHours` 1, `marginMinutes` 15, `maxPages` 20, `pageSize` 50 (agent defaults).
+  - `minLeadHours` 1, `marginMinutes` 15, `maxPages` 20, `pageSize` 50 (agent defaults);
+  - `chunkDeadlineSeconds` 120 (about 2 min, from the round-2 review) and `fallbackKbps` 1000 (agent default).
   A bad file is refused (`schedule-config-bad`), never defaulted.
 - **Reading YouTube Studio's schedule** (`services/posting/schedule-read.mjs`):
   - `channels.list part=contentDetails mine=true` gives the uploads playlist;
@@ -45,6 +46,14 @@ branch takes D310 first, renumber at merge.
   - before every chunk the time must still be at least marginMinutes ahead. Otherwise the upload stops between chunks
     (`slot-passed-mid`); the next try drops the unfinished session and gets a new slot. An upload never finishes
     with a passed time;
+  - every chunk request (the final one above all) is aborted at publishAt - chunkDeadlineSeconds with an
+    AbortSignal. No byte is sent after that, so Google gets the final byte before the time or never. There was no
+    per-chunk fetch timeout before; the deadline is the only one. After an abort, Ujwalam asks Google for the
+    session's progress: finished = recorded as done now (with the session's time); not finished (or unknown) =
+    `slot-passed-mid`, so the next pass drops the unfinished session and gives a new slot;
+  - the final chunk only starts when its estimated transfer time fits before that deadline. The estimate uses the
+    slowest chunk measured in this upload, or fallbackKbps when none was measured yet (a one-chunk file, a resume).
+    chunkDeadlineSeconds must be less than marginMinutes x 60, or the settings file is refused;
   - each session's own publish time is saved with it (`sessionPublishAt`; null = sent without one). An unfinished
     session whose time differs from the slot (e.g. started before `post-schedule` was switched on) or is too close
     is dropped and a new session is started. A FINISHED session is recorded with the time it really carried
@@ -90,9 +99,9 @@ Commands (worktree `post/schedule`, 2026-11-09):
 
 ```
 node --test tests/posting-schedule.test.mjs tests/posting-e2e.test.mjs
-  tests 44, pass 44, fail 0
+  tests 48, pass 48, fail 0
 node --test tests/posting*.test.mjs tests/studio-ui-posting*.test.mjs tests/guide.test.mjs tests/flags.test.mjs
-  tests 188, pass 188, fail 0
+  tests 192, pass 192, fail 0
 node --test tests/test-broadcast.test.mjs tests/studio-ui-readiness.test.mjs tests/studio-ui-bots.test.mjs tests/stream-day.test.mjs tests/report-button.test.mjs tests/flags.test.mjs
   tests 87, pass 87, fail 0 (first round; flags.json unchanged since)
 node tools/ci.mjs --quick
@@ -156,6 +165,18 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
   - schedules and uploads nothing: `schedule-read-incomplete`, 0 attempts, "raise maxPages";
   - saves `truncated: true, scanned: 100`.
   With 90 uploads (within the cap), the scheduled post on page 2 is found.
+- round 2 (chunk deadline), each with margin 1 min, deadline 59.5 s and the clock jumped to 60 s before the slot after
+  the first chunk, so each chunk request has 500 ms of real time:
+  - the final chunk stalls (Google holds it, never finishes): aborted after about 500 ms (asserted 400 ms to 5 s), one
+    progress query, `slot-passed`, 0 attempts. The next pass drops the session; the one after gives a new slot and a
+    new session. One video, and the stalled session never became one;
+  - the final chunk stalls but Google had finished it: after the abort the progress query returns the video, which
+    is recorded as done with its slot (no new session, no `went-public-early`);
+  - a fast final chunk under the same deadline: done with its slot, no progress query, one session;
+  - one-chunk file, no speed measured, fallbackKbps 64 (about 46 ms for about 370 bytes) with only 10 ms left: no
+    byte is sent and the clip is re-slotted (`slot-passed`). With fallbackKbps 1000 and 500 ms left it goes up.
+- settings: chunkDeadlineSeconds 0, fallbackKbps 10, and a chunkDeadlineSeconds not below marginMinutes x 60 are
+  each refused.
 
 ## Review fixes (Codex review, 2026-11-09)
 
@@ -169,12 +190,21 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
 3. MEDIUM, unscheduled session resumed as scheduled: each session's publish time is saved
    (`sessionPublishAt`). A mismatch drops an unfinished session and starts a new one with the slot. The time
    recorded is always the one the finished session carried (`sentPublishAt`, `posted[].publishAt`).
+4. HIGH (round 2), a final chunk could finish after its time: every chunk request now has an abort deadline at
+   publishAt - chunkDeadlineSeconds (120 s), and the final chunk only starts when its estimated transfer time fits.
+   After an abort, a progress query decides: finished = done; otherwise re-slotted as in fix 1.
 
 ## UNVERIFIED
 
 - That real Google returns `scope` in the refresh-token answer. Google's OAuth docs list it. If Google omits it, the
   chain fails closed and the clip waits with the sign-in message.
 - That Google never turns an unfinished resumable upload session into a video. Dropping such a session relies on it.
+- Whether Google finalizes a session whose last byte arrived just before the abort. If it does, the progress query
+  after the abort sees it and records it as done before its time; if that query fails, the next pass asks again,
+  and a late confirmation is marked `went-public-early`.
+- That aborting the request really stops the bytes at the deadline on a real network (Node's fetch closes the
+  connection; bytes already in OS or network buffers may still arrive). The 2 min deadline is the safety margin for
+  this.
 - That YouTube accepts `publishAt` on a resumable insert for Shorts, and the minimum lead it requires. 1 h is our own
   lead.
 - 403 reasons other than insufficientPermissions or scope (e.g. quotaExceeded) are treated as a read failure and
@@ -182,6 +212,7 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
 - A channel with more than 1000 uploads schedules nothing until maxPages is raised. That costs 1 + 2 quota units per
   page per read.
 - The studio window (Qt) change was compiled by `build-studio` but not looked at on screen.
+
 ## What the user must do
 
 1. Google Cloud console > your OAuth app > Data Access (scopes): add
@@ -192,7 +223,7 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
    On Google's consent screen, tick both permissions (upload, and view your YouTube account). The CLI says so if
    reading was not allowed.
 4. Rules: `data/posting/auto-post-rules.json` needs `"autoUpload": true` and at least one rule (as before).
-   Optionally tune `data/posting/schedule.json` (interval, lead time, margin, page cap).
+   Optionally tune `data/posting/schedule.json` (interval, lead time, margin, chunk deadline, fallback speed, page cap).
 5. Check with "Preview auto-post rules" (or `node services/posting/cli.mjs auto --preview`). After the first real
    upload, check in YouTube Studio > Content that the video shows "Scheduled" with the expected time.
 
