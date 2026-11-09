@@ -92,6 +92,7 @@ private:
 	void loadLayers();
 	void loadMixer();
 	void pollStatus();
+	void updateAlerts(const QJsonArray &alerts); // live alert strip (flag live-test-kit, D305 proposed)
 	void pollMeters();
 	void renderScenes();
 	void renderLayers();
@@ -222,6 +223,8 @@ private:
 	bool undoBusy_ = false;
 	QLabel *pillLive_ = nullptr, *pillRec_ = nullptr, *pillStats_ = nullptr, *pillHost_ = nullptr, *pillCore_ = nullptr, *pillClips_ = nullptr;
 	QLabel *note_ = nullptr;
+	QLabel *alertBar_ = nullptr; // live alerts (D305 proposed); hidden while empty
+	QString alertLevel_;         // worst level shown: info, warn, error; empty when hidden
 	QList<PreviewSlot *> slots_;
 	QPushButton *settingsBtn_ = nullptr, *clipsFolderBtn_ = nullptr;
 	Guide *guide_ = nullptr;       // tips, tour and help (D294 proposed)

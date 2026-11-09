@@ -354,6 +354,14 @@
       rp.hidden = !(rv && rv.text);
       if (rv && rv.text) { pill(rp, rv.text, rv.result === 'restarted' ? 'ok' : 'warn'); rp.title = rv.count > 1 ? rv.count + ' host crash(es) while live this session' : ''; }
     }
+    // Live test kit (D305 proposed, flag live-test-kit): the Streamer.bot test-action reminder and the feedback result.
+    // Sound and recovery lines already have their own pills above.
+    var tk = $('st-testkit');
+    if (tk) {
+      var kitLines = (Array.isArray(s.alerts) ? s.alerts : []).filter(function (a) { return a && (a.id === 'test-action' || a.id === 'feedback'); });
+      tk.hidden = kitLines.length === 0;
+      if (kitLines.length) pill(tk, kitLines.map(function (a) { return a.text; }).join(' | '), kitLines.some(function (a) { return a.level !== 'info'; }) ? 'warn' : 'ok');
+    }
     var banner = $('banner');
     banner.hidden = !h.blockedOnHost;
     // A layer moved or resized with the mouse on a host preview (D230): select it and reload the list and inspector.

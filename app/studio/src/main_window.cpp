@@ -406,6 +406,16 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	auto *outer = new QVBoxLayout(central);
 	outer->setContentsMargins(6, 6, 6, 6);
 	outer->addWidget(buildTop());
+	// Live alerts (flag live-test-kit, D305 proposed): plain-words lines from the status snapshot ("alerts"): a sound
+	// source that stopped, a stream restarted (or not) after a host crash, the Streamer.bot test-action reminder, the
+	// viewer feedback result. Hidden while there is nothing to say. Text only (Qt::PlainText): nothing in it is markup.
+	alertBar_ = new QLabel(central);
+	alertBar_->setObjectName(QStringLiteral("alertBar"));
+	alertBar_->setTextFormat(Qt::PlainText);
+	alertBar_->setWordWrap(true);
+	alertBar_->setContentsMargins(10, 6, 10, 6);
+	alertBar_->hide();
+	outer->addWidget(alertBar_);
 	auto *split = new QSplitter(Qt::Horizontal, central);
 	split->addWidget(buildLeft());
 	auto *mid = new QSplitter(Qt::Vertical, split); // previews over the mixer strip (D285)
@@ -1806,6 +1816,34 @@ void MainWindow::pollMeters()
 	});
 }
 
+// The live alert strip (D305 proposed): one line per alert, the worst level colours the strip (danger for an error,
+// accent for a warning, the panel colour for information). Empty or missing (flag off): hidden.
+void MainWindow::updateAlerts(const QJsonArray &alerts)
+{
+	QStringList lines;
+	int worst = 0; // 0 info, 1 warn, 2 error
+	for (const auto &x : alerts) {
+		const QJsonObject a = x.toObject();
+		const QString t = a.value(QStringLiteral("text")).toString().left(400);
+		if (t.isEmpty())
+			continue;
+		const QString lv = a.value(QStringLiteral("level")).toString();
+		worst = std::max(worst, lv == QStringLiteral("error") ? 2 : lv == QStringLiteral("warn") ? 1 : 0);
+		lines.append(t);
+		if (lines.size() >= 8)
+			break;
+	}
+	alertLevel_ = lines.isEmpty() ? QString() : QString::fromLatin1(worst == 2 ? "error" : worst == 1 ? "warn" : "info");
+	const QString text = lines.join(QLatin1Char('\n'));
+	if (text == alertBar_->text() && alertBar_->isHidden() == lines.isEmpty())
+		return;
+	alertBar_->setText(text);
+	const QColor edge = theme::color(worst == 2 ? QStringLiteral("danger") : worst == 1 ? QStringLiteral("accent") : QStringLiteral("border"));
+	alertBar_->setStyleSheet(QStringLiteral("QLabel#alertBar { background: %1; color: %2; border: 1px solid %3; border-radius: 6px; }")
+					 .arg(theme::color(QStringLiteral("panel")).name(), theme::color(QStringLiteral("text")).name(), edge.name()));
+	alertBar_->setVisible(!lines.isEmpty());
+}
+
 void MainWindow::pollStatus()
 {
 	api_->get(QStringLiteral("ui/api/status"), [this](bool ok, const QJsonObject &s, const QString &err) {
@@ -1844,6 +1882,7 @@ void MainWindow::pollStatus()
 		pillCore_->setText(c.value(QStringLiteral("available")).toBool() ? QStringLiteral("Event core: up") : QStringLiteral("Event core: down"));
 		stats_->sample(h.value(QStringLiteral("cpuPct")).toDouble(), h.value(QStringLiteral("gpuPct")).toDouble(), h.value(QStringLiteral("fps")).toDouble(),
 			       h.value(QStringLiteral("droppedFrames")).toInt(), live_, recording_);
+		updateAlerts(s.value(QStringLiteral("alerts")).toArray());
 		tasks_->update(s.value(QStringLiteral("tasks")).toArray(), s.value(QStringLiteral("at")).toDouble());
 		updateClips(s.value(QStringLiteral("clips")).toObject());
 		guide_->onStatus(s);
@@ -3523,6 +3562,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("undoEnabled"), undoBtn_->isEnabled());
 	o.insert(QStringLiteral("live"), live_);
 	o.insert(QStringLiteral("note"), note_->text());
+	o.insert(QStringLiteral("alerts"), QJsonObject{{QStringLiteral("shown"), !alertBar_->isHidden()}, {QStringLiteral("text"), alertBar_->text()}, {QStringLiteral("level"), alertLevel_}});
 	o.insert(QStringLiteral("clips"), pillClips_->text());
 	o.insert(QStringLiteral("clipAsks"), clips_.value(QStringLiteral("asks")).toArray().size());
 	o.insert(QStringLiteral("clipSettings"), clips_.value(QStringLiteral("settings")));
