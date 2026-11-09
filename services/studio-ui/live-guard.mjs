@@ -311,9 +311,10 @@ export function formatReport(r) {
 
 /**
  * Runs the guard against a host client until it ends. getClient() returns the current client (the launcher swaps it
- * after a host restart). Never calls outputs.start. Returns { code, report, text }.
+ * after a host restart). Never calls outputs.start. onStop(sinks | null) runs before each stop it sends (the launcher
+ * takes those sinks, or all, out of the go-live authority first: D303 stream recovery). Returns { code, report, text }.
  */
-export async function runGuard({ getClient, budget, minutes, sinkMinutes = {}, log = console.log, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), isCancelled = () => false }) {
+export async function runGuard({ getClient, budget, minutes, sinkMinutes = {}, log = console.log, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), isCancelled = () => false, onStop = async () => {} }) {
   const g = createGuard({ budget, minutes, sinkMinutes });
   log(`[guard] waiting for the first stream to start (control page, "yes, on air"); then ${minutes} min, polling every ${budget.pollMs} ms`);
   const status = async () => { try { return await getClient().call('outputs.status'); } catch { return null; } };
@@ -323,6 +324,7 @@ export async function runGuard({ getClient, budget, minutes, sinkMinutes = {}, l
     if (r.armedNow) log(`[guard] ARMED: a stream started; the test ends in ${minutes} min, sooner if a destination fails or drops frames past the budget`);
     if (r.action === 'stop-sinks') {
       log(`[guard] sink time limit reached: stopping ${r.sinks.join(', ')}`);
+      try { await onStop(r.sinks); } catch { /* the stop still goes out */ }
       try { await getClient().call('outputs.stop', { sinks: r.sinks }); } catch (e) { log(`[guard] WARNING: stopping ${r.sinks.join(', ')} failed: ${e.message}`); }
     }
     if (r.action === 'stop-all') break;
@@ -330,6 +332,7 @@ export async function runGuard({ getClient, budget, minutes, sinkMinutes = {}, l
   }
   const e = g.ended();
   log(`[guard] ${e.code === 0 ? 'END' : 'ABORT'}: ${e.reason}${e.sink ? ` (sink ${e.sink})` : ''}${e.detail ? `: ${e.detail}` : ''}; stopping all outputs`);
+  try { await onStop(null); } catch { /* the stop still goes out */ }
   try { await getClient().call('outputs.stop', {}); } catch (err) { log(`[guard] WARNING: outputs.stop failed: ${err.message}`); }
   const until = now() + budget.stopWaitSec * 1000;
   for (;;) {

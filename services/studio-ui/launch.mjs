@@ -59,8 +59,16 @@
 // in that window stops everything (exit code 3), writes a diagnostics bundle to <data dir>/diag/ and reports it.
 // After a restart: the alpha project is loaded again (unchanged file), a recording that was running (record sinks
 // seen starting/live/retrying by the outputs.status poll, every UJWALAM_HOST_WATCH_MS, default 2000) is started again
-// (a new .mkv file; the old one stays playable, mkv is crash-safe), streams are NOT restarted (they need "yes, on
-// air" on the control page) and a marker (source api) records the restart. Every exit is a line in
+// (a new .mkv file; the old one stays playable, mkv is crash-safe) and a marker (source api) records the restart.
+// Streams (D303 proposed, flag stream-recovery, off by default; stream-recovery.mjs): with the flag on, the stream
+// sinks that were live before the crash are started again when this launcher's go-live authority is armed (it owns
+// it in memory; the UI server arms it after a confirmed "yes, on air" start and revokes it before Stop / End all, over
+// the IPC channel), the restarted host is ready within maxGapMs of the crash and the recovery limit
+// (data/live/recovery.json) is not reached; never a sink that was not live, never after Stop / End all, never after a
+// launcher restart (a new launcher has a new, unarmed authority). The decision and the stream.start run in the
+// authority's serialized section; a Stop that arrives meanwhile is answered after it, and the launcher stops the
+// restarted sinks again. Every decision is logged, written to <data dir>/live/stream-recovery.json (shown on
+// the control page) and to the marker. With the flag off streams are NOT restarted (start them by hand). Every exit is a line in
 // <data dir>/logs/host-crashes.jsonl; <data dir>/logs/host-snapshot.json holds host.info / host.status / outputs
 // presence flags for the diagnostics bundle (tools/diag/bundle.mjs). UJWALAM_HOST_RESTART_BACKOFF_MS overrides the
 // backoff (tests).
@@ -91,6 +99,7 @@ import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
 import { writeZip } from '../../tools/package/zip.mjs';
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
+import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
 import { GUARD_ABORT_EXIT, LIVE_TEST_BUDGET, loadBudget, MAX_TEST_MINUTES, parseMinutes, parseSinkMinutes, runGuard } from './live-guard.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -663,13 +672,69 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // Crash recovery (see the header). Arms an exit handler on the running host child and on every restarted one.
 function superviseHost(o) {
-  const { logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost, getChild, isStopping, onClient, endSession, embedded = false } = o;
+  const { logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost, getChild, isStopping, onClient, endSession, embedded = false, liveSession = null, authority = null } = o;
   const backoffEnv = Number(process.env.UJWALAM_HOST_RESTART_BACKOFF_MS);
   const policy = restartPolicy(Number.isFinite(backoffEnv) && backoffEnv >= 0 ? { backoffMs: [backoffEnv] } : {});
   const watchMs = Math.max(100, Number(process.env.UJWALAM_HOST_WATCH_MS ?? 2000) || 2000);
   let client = o.initialClient;
   let lastOutputs = null;
   let busy = false;
+  // Stream recovery (D303 proposed): the streams seen live before the crash wait here until a restarted host is ready
+  // (a host that is not ready keeps them for the next attempt; the crash time stays the first one).
+  let carry = null;
+  let recCfg = null;
+  try { recCfg = loadRecoveryConfig(); } catch (e) { console.log(`[studio] WARNING: data/live/recovery.json not usable (${e.message}); streams are not restarted after a crash`); }
+  const recPolicy = recCfg ? recoveryPolicy(recCfg) : null;
+  const flagOn = () => { try { return createFlags({ dataDir }).isOn(RECOVERY_FLAG); } catch { return false; } };
+  const recoveryEvent = (ev) => {
+    const full = appendRecoveryEvent(dataDir, { session: liveSession, at: new Date().toISOString(), ...ev });
+    console.log(`[studio] ${full.result === 'restarted' ? '' : 'WARNING: '}${full.text}`);
+    return full;
+  };
+  async function recoverStreams(c, projectOk) {
+    const { crashAt, streams, labels } = carry;
+    carry = null;
+    const label = (ids) => ids.map((id) => labels[streams.indexOf(id)] ?? id);
+    const base = { crashAt: new Date(crashAt).toISOString(), streams: labels };
+    const refused = (reason, extra = {}) => {
+      recoveryEvent({ ...base, result: 'not-restarted', reason, restarted: [], failed: labels, ...extra });
+      return { restarted: [], byHand: labels };
+    };
+    if (!recPolicy) return refused('config');
+    if (!projectOk) return refused('project-failed');
+    if (!authority) return refused('no-confirmation');
+    // Decide and send stream.start alone: a revoke (Stop / End all) is answered only after this, so the user's stop
+    // reaches the host after the restart and wins.
+    const r = await authority.run(async (st) => {
+      const d = recPolicy.decide({ now: Date.now(), crashAt, flagOn: flagOn(), authority: st, streams });
+      if (!d.restart.length) {
+        // Repeating crashes while live: the go-live authority ends here; only the user can go live again.
+        if (d.reason === 'limit') authority.revoke('recovery-limit');
+        return { d, started: false };
+      }
+      try { await c.call('stream.start', { sinks: d.restart }); return { d, started: true }; }
+      catch (e) { console.log(`[studio] WARNING: stream.start after the restart failed: ${e.message}`); return { d, started: false, failed: true }; }
+    });
+    const { d, started } = r.value;
+    if (!d.restart.length) return refused(d.reason, d.reason === 'limit' ? { recoveries: d.recoveries, windowMs: recCfg.windowMs } : {});
+    // A Stop / End all (or a guard stop) arrived while the start was on its way: stop those sinks again here too.
+    const late = r.revoked ? d.restart : d.restart.filter((id) => r.excluded.includes(id));
+    if (started && late.length) {
+      try { await c.call('stream.stop', { sinks: late }); } catch (e) { console.log(`[studio] WARNING: stream.stop after a cancelled restart failed: ${e.message}`); }
+    }
+    if (started && r.revoked) {
+      recoveryEvent({ ...base, result: 'cancelled', reason: 'stopped', attempt: d.attempt, max: d.max, restarted: [], failed: label(d.restart) });
+      return { restarted: [], byHand: [] };
+    }
+    const want = d.restart.filter((id) => !late.includes(id));
+    let up = []; let down = want;
+    if (started) {
+      try { ({ up, down } = await waitStreamsUp((m) => c.call(m), want, recCfg)); } catch { /* reported as not restarted */ }
+    }
+    recoveryEvent({ ...base, result: !down.length ? 'restarted' : up.length ? 'partial' : 'not-restarted', reason: down.length && !up.length ? 'start-failed' : 'restart',
+      attempt: d.attempt, max: d.max, restarted: label(up), failed: label(down) });
+    return { restarted: label(up), byHand: label(down) };
+  }
   const crashLog = (rec) => {
     try { mkdirSync(logsDir, { recursive: true }); appendFileSync(path.join(logsDir, CRASH_LOG_FILE), `${JSON.stringify(rec)}\n`); } catch { /* best effort */ }
   };
@@ -690,6 +755,7 @@ function superviseHost(o) {
     const at = new Date();
     const recording = activeSinks(lastOutputs, 'record');
     const streams = activeSinks(lastOutputs, 'stream');
+    if (streams.length && !carry) carry = { crashAt: at.getTime(), streams, labels: labelsOf(lastOutputs, streams) };
     const base = { at: at.toISOString(), exit: exitText(code, signal), recording, streams };
     if (code === 0 && !signal) {
       console.log('[studio] the host shut itself down (code 0): ending the session');
@@ -702,6 +768,10 @@ function superviseHost(o) {
     if (!d.restart) {
       crashLog({ ...base, action: 'gave-up', exits: d.exits });
       clearInterval(poll);
+      if (carry) {
+        recoveryEvent({ crashAt: new Date(carry.crashAt).toISOString(), streams: carry.labels, result: 'not-restarted', reason: 'host-gave-up', restarted: [], failed: carry.labels });
+        carry = null;
+      }
       let diag = null;
       try {
         const files = await collectDiag({ dataDir, hostData: hostCfg.dataDir, profile: typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'), release: path.join(REPO, 'release.json') });
@@ -728,9 +798,10 @@ function superviseHost(o) {
     client = new HostClient({ port: disc.port, token: hostToken });
     onClient(client);
     console.log(`[studio] host restarted (attempt ${d.attempt})`);
+    let projectOk = true;
     try {
       if (alpha) await alphaProject({ client, dataDir, args, hostCfg, embedded });
-    } catch (e) { console.log(`[studio] WARNING: project reload after the restart failed: ${e.message}`); }
+    } catch (e) { projectOk = false; console.log(`[studio] WARNING: project reload after the restart failed: ${e.message}`); }
     let resumed = [];
     if (recording.length) {
       try {
@@ -739,10 +810,12 @@ function superviseHost(o) {
         console.log(`[studio] recording started again in a new file (${recording.join(', ')}); the file before the crash stays playable (mkv)`);
       } catch (e) { console.log(`[studio] WARNING: recording could not be started again: ${e.message}`); }
     }
-    if (streams.length) console.log(`[studio] WARNING: streams ${streams.join(', ')} are NOT restarted automatically: start them from the control page ("yes, on air")`);
-    const note = `host restarted after an unexpected exit (${base.exit}); restart ${d.attempt} of ${d.max}; recording resumed: ${resumed.join(', ') || 'none'}; streams to restart by hand: ${streams.join(', ') || 'none'}`;
+    // A host without its scenes would broadcast an empty picture: streams come back only after a good project load.
+    const sr = carry ? await recoverStreams(client, projectOk) : { restarted: [], byHand: [] };
+    if (sr.byHand.length) console.log(`[studio] WARNING: streams ${sr.byHand.join(', ')} are NOT running: start them from the control page ("yes, on air")`);
+    const note = `host restarted after an unexpected exit (${base.exit}); restart ${d.attempt} of ${d.max}; recording resumed: ${resumed.join(', ') || 'none'}; ${sr.restarted.length ? `streams restarted: ${sr.restarted.join(', ')}; ` : ''}streams to restart by hand: ${sr.byHand.join(', ') || 'none'}`;
     try { await client.call('marker.add', { source: 'api', note: note.slice(0, 500) }); } catch (e) { console.log(`[studio] WARNING: restart marker not written: ${e.message}`); }
-    crashLog({ at: new Date().toISOString(), action: 'restarted', attempt: d.attempt, resumed, streams });
+    crashLog({ at: new Date().toISOString(), action: 'restarted', attempt: d.attempt, resumed, streams, streamsRestarted: sr.restarted, streamsByHand: sr.byHand });
     if (alpha) await alphaStatus(client);
     await writeSnapshot(client, logsDir);
     busy = false;
@@ -810,6 +883,12 @@ export async function main(argv = process.argv.slice(2)) {
   const hostClipsToken = hex(32);
   const coreTokens = { api: hex(32), system: hex(32) };
   const launchKey = hex(32);
+  // Stream recovery (D303 proposed): this launcher owns the go-live authority (in memory, unarmed at start, so a
+  // launcher restart never goes live by itself); the UI server arms and revokes it over its IPC channel. liveSession
+  // tags this launcher's recovery events for the control page.
+  const liveSession = hex(16);
+  const authority = createLiveAuthority({ onChange: (st) => writeAuthorityMirror(dataDir, liveSession, st) });
+  writeAuthorityMirror(dataDir, liveSession, authority.state());
   // Face link key (D295): the host gets it by environment, the face worker on its stdin (faceControlLine), nobody else.
   const faceKey = hex(32);
   let faceChild = null;
@@ -1004,7 +1083,7 @@ export async function main(argv = process.argv.slice(2)) {
         getChild: () => hostChild, isStopping: () => stopping,
         initialClient: alphaClient ?? new HostClient({ port: disc.port, token: hostToken }),
         onClient: (c) => { if (alpha) alphaClient = c; },
-        endSession,
+        endSession, liveSession, authority,
       });
     }
   } else {
@@ -1020,10 +1099,11 @@ export async function main(argv = process.argv.slice(2)) {
   // P5b autosave: layer edits accepted by the host are written into the alpha project file (project-sync.mjs).
   else if (alpha) uiArgs.push('--project', alphaFile(dataDir));
   const ui = spawn(process.execPath, uiArgs, {
-    stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true, // stdin: the parent pipe (D234)
-    env: { ...process.env, ...PARENT_PIPE, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' },
+    stdio: ['pipe', 'pipe', 'inherit', 'ipc'], windowsHide: true, // stdin: the parent pipe (D234); ipc: the go-live authority (D303)
+    env: { ...process.env, ...PARENT_PIPE, [SESSION_ENV]: liveSession, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' },
   });
   children.push(ui);
+  serveAuthority(ui, authority);
   const uiPort = await portFrom(ui, /listening on http:\/\/127\.0\.0\.1:(\d+)\//);
   if (!uiPort) { console.log('[studio] UI server did not start; stopping'); await stopAll(); return 1; }
 
@@ -1099,7 +1179,8 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (lt.minutes !== null) {
       // Live-test guard: never starts outputs; arms on the first stream started from the control page.
-      runGuard({ getClient: () => alphaClient, budget: lt.budget, minutes: lt.minutes, sinkMinutes: lt.sinkMinutes, isCancelled: () => stopping, log: (l) => console.log(`[studio] ${l}`) })
+      runGuard({ getClient: () => alphaClient, budget: lt.budget, minutes: lt.minutes, sinkMinutes: lt.sinkMinutes, isCancelled: () => stopping, log: (l) => console.log(`[studio] ${l}`),
+        onStop: (sinks) => (sinks ? authority.exclude(sinks) : authority.revoke('live-guard')) })
         .then((r) => {
           if (!r) return;
           const stamp = stampOf(new Date());
@@ -1113,7 +1194,7 @@ export async function main(argv = process.argv.slice(2)) {
           for (const l of r.text.trimEnd().split('\n')) console.log(`[studio] ${l}`);
           endSession(r.code);
         })
-        .catch((e) => { console.log(`[studio] live-test guard failed: ${e.message}; stopping all outputs`); alphaClient.call('outputs.stop', {}).catch(() => {}).finally(() => endSession(GUARD_ABORT_EXIT)); });
+        .catch((e) => { console.log(`[studio] live-test guard failed: ${e.message}; stopping all outputs`); authority.revoke('live-guard').then(() => alphaClient.call('outputs.stop', {})).catch(() => {}).finally(() => endSession(GUARD_ABORT_EXIT)); });
     }
   }
   if (args['stop-on-stdin'] === true) {

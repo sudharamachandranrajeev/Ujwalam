@@ -79,6 +79,9 @@ export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(data
     argv.push('live-review', '--saves', s);
     if (job.since) argv.push('--since', job.since);
     if (job.until) argv.push('--until', job.until);
+    // Match gate on the "while" path (D304 proposed): the stream's own H recording, when there is one, gives the
+    // matches (detect + segment in live-review); saves in skipped matches are dropped. Without it every save is kept.
+    if (typeof job.h === 'string' && job.h && exists(job.h)) argv.push('--recording', job.h, '--threads', '4');
     argv.push('--encoder', 'h264_nvenc', '--publish', outRoot, '--drop-used-saves', '--out', out);
   } else {
     if (!job.h) return { spec: null, reason: 'there is no recording to make clips from' };

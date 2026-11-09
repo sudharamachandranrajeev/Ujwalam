@@ -88,6 +88,12 @@ test('clipRunSpec: whole recording (after) and moments found while it ran (while
   const rv = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job, saves: 'D/live-clips/s1', exists: has([script, gpu]) });
   assert.deepEqual(rv.spec.argv.slice(4), ['live-review', '--saves', 'D/live-clips/s1', '--since', job.since, '--until', job.until, '--encoder', 'h264_nvenc',
     '--publish', 'E:/clips', '--drop-used-saves', '--out', path.join('D', 'clips', 'runs', 'live-1')]);
+  // D304 proposed: a stream that was recorded gives live-review its H recording, so the match gate applies.
+  const withRec = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { ...job, h: 'C:/r/h.mkv', v: 'C:/r/v.mkv' }, saves: 'D/live-clips/s1', exists: has([script, gpu, 'C:/r/h.mkv']) });
+  assert.deepEqual(withRec.spec.argv.slice(4), ['live-review', '--saves', 'D/live-clips/s1', '--since', job.since, '--until', job.until,
+    '--recording', 'C:/r/h.mkv', '--threads', '4', '--encoder', 'h264_nvenc', '--publish', 'E:/clips', '--drop-used-saves', '--out', path.join('D', 'clips', 'runs', 'live-1')]);
+  const goneRec = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { ...job, h: 'C:/r/h.mkv' }, saves: 'D/live-clips/s1', exists: has([script, gpu]) });
+  assert.ok(!goneRec.spec.argv.includes('--recording'), 'a recording that is gone: no gate input, every save kept');
 });
 
 function setup() {

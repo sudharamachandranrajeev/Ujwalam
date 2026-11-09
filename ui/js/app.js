@@ -348,6 +348,12 @@
     }
     pill($('st-core'), c.available ? 'Event core: up' : 'Event core: down', c.available ? 'ok' : 'warn');
     pill($('st-host'), h.blockedOnHost ? 'BLOCKED-ON-HOST (fake)' : (h.available ? 'Host: up' : 'Host: down'), h.blockedOnHost ? 'blocked' : (h.available ? 'ok' : 'warn'));
+    // Stream recovery after a host crash (D303 proposed, flag stream-recovery): the newest event of this session.
+    var rv = s.recovery, rp = $('st-recovery');
+    if (rp) {
+      rp.hidden = !(rv && rv.text);
+      if (rv && rv.text) { pill(rp, rv.text, rv.result === 'restarted' ? 'ok' : 'warn'); rp.title = rv.count > 1 ? rv.count + ' host crash(es) while live this session' : ''; }
+    }
     var banner = $('banner');
     banner.hidden = !h.blockedOnHost;
     // A layer moved or resized with the mouse on a host preview (D230): select it and reload the list and inspector.

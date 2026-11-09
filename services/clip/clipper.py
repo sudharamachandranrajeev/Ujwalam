@@ -31,10 +31,14 @@
   tidy        --recordings DIR --clips DIR [--dry-run | --apply]  -> lists (default) or does the moves that bring
               older folders to the layout: analysis files to <data>/clips/runs/<run>/, finished clips renamed by the
               convention, the live clipper's used replay saves deleted. Never overwrites; --apply is required to act.
-  live-review --saves DIR --out DIR [--layouts ...] [--encoder ...] [--matches FILE]
+  live-review --saves DIR --out DIR [--layouts ...] [--encoder ...] [--matches FILE | --recording FILE [detect options]]
               -> DIR/clips/<id>/<layout>.mp4 + DIR/render.json from the live clipper's replay saves
               (DIR/saves.jsonl, live_worker.py); overlapping saves are merged; then `validate --out DIR`.
               --matches: matches.json of the same session's recording; saves inside skipped matches are dropped.
+              --recording (D304 proposed, the studio's "while" clips): the H recording of the same stream; when the
+              window has saves and the match gate is on, `detect` runs on it (unless DIR already holds its hits) and
+              its matches are written to DIR/matches.json and applied like --matches. When detection cannot run, every
+              save is kept and render.json matchGate says why.
               [--publish CLIPS] validate + publish; [--drop-used-saves] then delete the replay saves of the window
               (host-named live clipper intermediates) when every clip rendered.
 
@@ -475,6 +479,48 @@ def saves_between(rows, since=None, until=None):
     return [r for r in rows if (not since or str(r.get("at", "")) >= since) and (not until or str(r.get("at", "")) <= until)]
 
 
+def _live_matches(a):
+    """Matches for live-review from the stream's own recording (--recording, D304 proposed): the detector pass (skipped
+    when DIR already holds hits of that recording), then the end-screen segmentation and the gate decision of `gate`.
+    -> (path of DIR/matches.json, None) or (None, plain reason why the gate is not applied)."""
+    gate = match_gate_settings(resolve_data_dir(a.data_dir))
+    if not gate.get("top3") and gate.get("minKills") is None:
+        return None, "match gate off in Settings: every save kept"
+    try:
+        if not os.path.isfile(a.recording):
+            return None, "the stream's recording was not found: every save kept"
+        if not _own_hits(a):
+            cmd_detect(a)
+        hits_path = _own_hits(a)
+        if not hits_path:
+            return None, "no detector hits for the stream's recording: every save kept"
+        import detector_pass as dp
+        duration = float(load_json(os.path.join(a.out, dp.SUMMARY)).get("duration") or 0.0)
+        start = sig.recording_start(a.recording, getattr(a, "record_start", None))
+    except (ClipError, ImportError, OSError, ValueError) as e:
+        return None, f"match detection on the stream's recording failed ({str(e)[:120]}): every save kept"
+    pack = _gate_pack(a) or {}
+    stats = _match_stats(a)
+    matches = mg.segment(mg.read_hits(hits_path), stats, duration, mg.stats_config(pack))
+    for m in matches:
+        m["passed"], m["reason"] = mg.decide(m, gate)
+        m["startUtc"] = _iso_ms(start.timestamp() + m["start"])
+        m["endUtc"] = _iso_ms(start.timestamp() + m["end"])
+    path = os.path.join(a.out, mg.MATCHES)
+    write_json_atomic(path, {
+        "tool": "clipper.live-review", "toolVersion": mg.TOOL_VERSION, "createdAt": _now(),
+        "recording": os.path.basename(a.recording),
+        "recordStartUtc": start.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"), "duration": duration,
+        "gate": gate, "packVersion": pack.get("version"),
+        "inputs": {"hits": os.path.basename(hits_path), "matchStats": mg.STATS if stats else None,
+                   "killsFallback": None if stats else "kill-feed hit instances (undercount close kills)"},
+        "matches": matches,
+    })
+    print(f"live-review: {len(matches)} match(es) in the stream's recording "
+          f"({sum(1 for m in matches if m['endSeen'])} with an end screen), {sum(1 for m in matches if m['passed'])} kept")
+    return path, None
+
+
 def cmd_live_review(a):
     ffmpeg, ffprobe = _tools(a)
     path = os.path.join(a.saves, "saves.jsonl")
@@ -489,9 +535,18 @@ def cmd_live_review(a):
                     eprint("live-review: skipped a bad saves.jsonl line")
     rows = saves_between(rows, a.since, a.until)
     window_files = [fl.get("path") for r in rows for fl in r.get("files", []) if fl.get("path")]
-    gate_info = {"applied": False, "reason": "no matches.json given (--matches): every save kept"}
-    if a.matches:
-        mdoc = load_json(a.matches)
+    gate_info = {"applied": False, "reason": "no matches.json (--matches) and no recording (--recording): every save kept"}
+    matches_path = a.matches
+    if not matches_path and getattr(a, "recording", None):
+        if rows:
+            matches_path, why = _live_matches(a)
+            if why:
+                gate_info = {"applied": False, "reason": why}
+                print(f"live-review: {why}")
+        else:
+            gate_info = {"applied": False, "reason": "no saves in the window: nothing to gate"}
+    if matches_path:
+        mdoc = load_json(matches_path)
         gate = match_gate_settings(resolve_data_dir(a.data_dir))
         progress_line("gate", 0, 1, "sorting saves by match")
         rows, dropped = mg.gate_saves(rows, mdoc.get("matches") or [], gate, sig.parse_iso)
@@ -809,6 +864,9 @@ def build_parser():
     s.add_argument("--layouts"); s.add_argument("--encoder", default="auto")
     s.add_argument("--matches", type=os.path.abspath,
                    help="matches.json of the same session's recording (`run`): saves in skipped matches are dropped")
+    s.add_argument("--recording", type=os.path.abspath,
+                   help="H recording of the same stream: its matches (detect + gate) drop saves in skipped matches")
+    s.add_argument("--record-start"); detect_args(s)
     s.add_argument("--no-decode", action="store_true"); publish_arg(s)
     s.add_argument("--drop-used-saves", action="store_true",
                    help="delete the window's replay saves (live clipper intermediates) once every clip rendered")

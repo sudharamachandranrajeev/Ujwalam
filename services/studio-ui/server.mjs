@@ -45,6 +45,7 @@ import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings }
 import { createTasks } from './tasks.mjs';
 import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
 import { clipTools } from './record-clips.mjs';
+import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
 
@@ -230,6 +231,11 @@ export function audioReadiness(ah) {
   return { ok: warnings.length === 0, warnings, sources };
 }
 
+// A confirmed start overtaken by a Stop is stopped again (D303): waits between the tries, and the page's text when
+// every try failed.
+const STOP_AGAIN_WAITS = [300, 1000];
+const STOP_AGAIN_FAILED = 'Streams may still be live: press Stop or End all';
+
 export function createStudioServer(opts) {
   const limits = { ...LIMITS, ...(opts.limits ?? {}) };
   const now = opts.now ?? Date.now;
@@ -243,6 +249,21 @@ export function createStudioServer(opts) {
   const history = opts.history ?? createEditHistory();
   // Feature flags (D149) and the post-stream feedback form (D150). opts.flags / opts.feedback are test seams.
   const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir }) : null);
+  // Stream recovery (D303 proposed, stream-recovery.mjs): the launcher owns the go-live authority; this server reaches
+  // it over the IPC channel the launcher opens (only when started by the launcher: parent pipe and session id). A
+  // confirmed "yes, on air" start takes a generation before the host call and arms it after (refused when a Stop came
+  // in between); a confirmed Stop or End all revokes it BEFORE the host is asked and waits for the answer, so an
+  // in-flight recovery start reaches the host first and the stop wins. A revoke the launcher does not answer closes
+  // the channel, which closes the authority (fail closed). Done whatever the flag; the launcher reads the flag.
+  // A start whose generation is no longer current right before the host call is not sent; one that the host accepted
+  // but that can no longer arm (a Stop came in meanwhile) is stopped again at once, so the newer Stop always wins.
+  // opts.authority: test seam ({ begin, arm, revoke } or null).
+  const liveSession = (() => { const v = opts.liveSession ?? process.env[SESSION_ENV]; return typeof v === 'string' && SESSION_RE.test(v) ? v : null; })();
+  const authority = opts.authority !== undefined ? opts.authority
+    : liveSession && process.env.UJWALAM_PARENT_PIPE === '1' ? authorityClient() : null;
+  const log = typeof opts.log === 'function' ? opts.log : (m) => console.log(m);
+  // Test only (race tests): a pause right before a confirmed stream.start goes to the host. 0 = none.
+  const startPauseMs = Math.min(10_000, Math.max(0, Number(opts.startPauseMs ?? process.env.UJWALAM_TEST_START_PAUSE_MS ?? 0) || 0));
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
   // Export-only posting (P16a, flag `posting`): packages are listed from <dataDir>/posting/ledger.json. Nothing is uploaded.
   const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME) }) : null);
@@ -448,6 +469,7 @@ export function createStudioServer(opts) {
         ...(previewLast ? { previewEdit: previewLast } : {}),
         effectEditing: !!flags && flags.isOn('effect-editor') },
       clips: clipStatus(),
+      recovery: typeof opts.dataDir === 'string' ? readRecoveryStatus(opts.dataDir, liveSession) : null,
       tasks: tasks.list(),
       core: { available: cs !== null, ...(cs ? { liveState: typeof cs.live?.liveState === 'string' ? cs.live.liveState : null, panic: cs.live?.panic === true } : {}) },
     };
@@ -993,17 +1015,40 @@ export function createStudioServer(opts) {
           // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
           let overrideLogged;
           if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
+          if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
+          const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
           const before = await readBefore(p.method, p.params);
+          if (Number.isInteger(startGen)) {
+            if (startPauseMs) await new Promise((r) => setTimeout(r, startPauseMs));
+            // A Stop / End all confirmed since this start began wins: the start is not sent.
+            if ((await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
+          }
           const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
           let out;
           try { out = await callHost(p.method, p.params); } catch (e) { ht?.fail('Did not finish'); throw e; }
           ht?.done();
+          if (Number.isInteger(startGen) && !(await authority.arm(startGen))) {
+            // A Stop / End all came in while this start was on its way to the host (after the check above): the newer
+            // stop wins, so the streams this start turned on are stopped again at once.
+            // Tried STOP_AGAIN_WAITS.length + 1 times; if every try fails the streams may still be live: a loud error.
+            let lastErr = null;
+            for (let i = 0; ; i++) {
+              try { await callHost('stream.stop', {}); lastErr = null; break; } catch (e) { lastErr = e; }
+              if (i >= STOP_AGAIN_WAITS.length) break;
+              await new Promise((r) => setTimeout(r, STOP_AGAIN_WAITS[i]));
+            }
+            if (lastErr) {
+              log(`[studio-ui] WARNING: a start overtaken by a Stop could not be stopped again (${String(lastErr?.code ?? lastErr?.message ?? 'error').slice(0, 80)}); streams may still be live`);
+              return json(res, 502, { error: STOP_AGAIN_FAILED, detail: 'stop-again-failed' });
+            }
+            return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', stoppedAgain: true });
+          }
           remember(p.method, p.params, before);
           // A layout change confirmed while live autosaves like an instant one (P5b).
           const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
         }
-        if (p.kind === 'end-all') return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() });
+        if (p.kind === 'end-all') { if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });
         return json(res, 200, await handleCoreOutcome(r, p.summary));
       } catch (e) { return json(res, 502, { error: 'backend-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
