@@ -68,7 +68,9 @@ export async function launchHost({
   throw new Error('host did not become ready in time');
 }
 
-export async function stopHost(h, timeoutMs = 20000) {
+// The wait ends the moment the host exits, so a long bound costs nothing when healthy. 20 s was too tight for a host
+// with the CEF overlay child under full-CI load (host-browser after hook, 2026-11-08); a real hang still ends at 60 s.
+export async function stopHost(h, timeoutMs = 60000) {
   try { await h.client.call('host.shutdown'); } catch { /* already gone */ }
   const code = await Promise.race([h.exit, new Promise((r) => setTimeout(() => r('timeout'), timeoutMs))]);
   if (code === 'timeout') {
