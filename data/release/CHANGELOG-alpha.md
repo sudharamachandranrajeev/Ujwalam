@@ -2,6 +2,10 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.12 — 2026-11-09
+
+- Auto posting: if YouTube received a whole video but its answer got lost, the video is now recorded as posted instead of being retried and marked failed, and it is never uploaded twice.
+- New end-to-end checks for auto posting and for clip making.
 ## 0.1.0-alpha.11 — 2026-11-09
 
 - Live test kit (switch "live-test-kit", off): a strip under the top bar of the studio window says in plain words when game or mic sound is missing, when streams were restarted after a crash, and what happened to chat feedback.
