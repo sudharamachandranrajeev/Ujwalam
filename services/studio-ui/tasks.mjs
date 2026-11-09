@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // What the software is doing, in plain words, for the studio window's task bar (it only informs; it never blocks).
 // A task: { id, title, kind, state: running|done|failed|waiting, done, total (null = unknown), stage, note,
-// startedAt, updatedAt }. Two sources: files <dataDir>/tasks/<id>.json written by launcher-side jobs (writeTaskFile,
+// startedAt, updatedAt } plus, in list(), progress (0..1 | null), elapsedMs and etaMs (null = unknown; D310 proposed). Two sources: files <dataDir>/tasks/<id>.json written by launcher-side jobs (writeTaskFile,
 // atomic), and in-memory tasks of the UI server for its own long actions (createTasks().track). Finished or silent
 // tasks are dropped after PRUNE_MS. Text only: no chat text, no viewer names, no paths beyond the clips folder.
 
@@ -69,12 +69,61 @@ export function readTaskFiles(dataDir, nowMs = Date.now()) {
   return out;
 }
 
+// ---- progress, elapsed time and time left (user 2026-11-09, D310 proposed) ----
+// Every task in the list carries: progress (0..1, or null = unknown amount of work), elapsedMs (since it started; a
+// finished task: up to its last update) and etaMs (time left, or null = unknown). The time left comes only from the
+// measured rate of the current stage: (time since the first sample of this stage) * (work left / work done since then).
+// No rate yet (fewer than ETA_MIN_MS of samples, no progress since, unknown total, waiting): unknown, never a guess.
+export const ETA_MIN_MS = 3000;
+
+/** 0..1 for a task, or null when the amount of work is unknown. A finished "done" task is 1. */
+export function progressOf(t) {
+  if (t?.state === 'done') return 1;
+  if (!Number.isFinite(t?.total) || t.total <= 0 || !Number.isFinite(t?.done)) return null;
+  return Math.min(1, Math.max(0, t.done / t.total));
+}
+
+/** Time left in ms from a stage's first sample { at, p } and the current progress p at now; null = unknown. */
+export function etaFrom(first, p, now) {
+  if (!first || !Number.isFinite(p) || !Number.isFinite(first.p) || !Number.isFinite(first.at)) return null;
+  const dt = now - first.at;
+  const dp = p - first.p;
+  if (dt < ETA_MIN_MS || dp <= 0 || p >= 1) return p >= 1 ? 0 : null;
+  return Math.round(dt * (1 - p) / dp);
+}
+
+/**
+ * A rate tracker: timing(task) -> { progress, elapsedMs, etaMs }. One sample per task and stage is kept (the first one
+ * seen); it starts again when the stage changes or the progress goes back. Forgotten tasks are dropped by keep(ids).
+ */
+export function createTiming(now = Date.now) {
+  const first = new Map();
+  function timing(t) {
+    const n = now();
+    const p = progressOf(t);
+    const start = Number.isFinite(t.startedAt) ? t.startedAt : null;
+    const end = t.state === 'done' || t.state === 'failed' ? (t.updatedAt ?? n) : n;
+    const elapsedMs = start === null ? null : Math.max(0, end - start);
+    let etaMs = null;
+    if (t.state === 'running' && p !== null) {
+      const stage = t.stage ?? '';
+      let f = first.get(t.id);
+      if (!f || f.stage !== stage || p < f.p) { f = { stage, at: n, p }; first.set(t.id, f); }
+      etaMs = etaFrom(f, p, n);
+    } else first.delete(t.id);
+    return { progress: p, elapsedMs, etaMs };
+  }
+  function keep(ids) { for (const id of [...first.keys()]) if (!ids.has(id)) first.delete(id); }
+  return { timing, keep };
+}
+
 const RANK = { running: 0, waiting: 1, failed: 2, done: 3 };
 const order = (a, b) => RANK[a.state] - RANK[b.state] || (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
 
 /** opts: { dataDir?, now? }. start() returns a handle; track() runs a function as a task. */
 export function createTasks({ dataDir = null, now = Date.now } = {}) {
   const mem = new Map();
+  const clock = createTiming(now);
   let seq = 0;
   const prune = () => {
     const t = now();
@@ -110,7 +159,9 @@ export function createTasks({ dataDir = null, now = Date.now } = {}) {
     prune();
     const all = [...mem.values()].map((x) => ({ ...x }));
     if (dataDir) all.push(...readTaskFiles(dataDir, now()));
-    return all.sort(order).slice(0, MAX_TASKS);
+    const out = all.sort(order).slice(0, MAX_TASKS).map((t) => ({ ...t, ...clock.timing(t) }));
+    clock.keep(new Set(out.map((t) => t.id)));
+    return out;
   }
   return { start, track, list, isFinished: (t) => FINISHED.has(t.state) };
 }

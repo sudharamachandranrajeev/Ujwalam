@@ -20,6 +20,7 @@ import { LEDGER_NAME, POSTING_FLAG, createPostStore, packageRun, packageUploads,
 import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, liveBlock, loadRules, runAuto } from './auto-post.mjs';
 import { createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
+import { removeTaskFile, writeTaskFile } from '../studio-ui/tasks.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const QUEUE_NAME = 'upload-queue.json';
@@ -210,17 +211,31 @@ export function createPostChain(opts) {
         queue.patch(item.id, { sha, run });
       }
       queue.patch(item.id, { state: 'uploading', reason: null, nextAt: null });
+      // Task bar and tray (D310 proposed): an upload in progress is a task with its own progress (MB sent of MB).
+      const task = { id: `upload-${String(item.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60)}`, kind: 'upload', title: 'Uploading a clip to YouTube (private)', startedAt: nowMs() };
+      const taskSay = (p) => writeTaskFile(dataDir, { ...task, updatedAt: nowMs(), ...p });
+      taskSay({ state: 'running', note: 'Starting the upload' });
+      let taskEnd = { state: 'failed', note: 'Did not finish; it will be tried again' };
       try {
         const r = await uploadPost({
           id: item.id, store, auth, outputsStatus, fetchImpl: opts.fetchImpl, chunkSize: opts.chunkSize, sessions,
-          beforeChunk: async () => { const b = await liveBlock(outputsStatus); if (b) throw new UploadError('stream-active', b); },
+          beforeChunk: async (pr) => {
+            const b = await liveBlock(outputsStatus);
+            if (b) { taskEnd = { state: 'waiting', note: 'Paused while the stream runs; it resumes after' }; throw new UploadError('stream-active', b); }
+            if (pr && Number.isFinite(pr.total) && pr.total > 0) {
+              const mb = (n) => Math.round(n / 1048576);
+              taskSay({ state: 'running', done: mb(pr.offset), total: Math.max(1, mb(pr.total)), note: `${mb(pr.offset)} of ${mb(pr.total)} MB sent` });
+            }
+          },
         });
+        taskEnd = { state: 'done', note: 'Uploaded (private)' };
         queue.patch(item.id, { state: 'done', videoId: r.videoId, reason: null, session: null });
         await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: r.videoId, at: new Date(nowMs()).toISOString(), target: post.target });
         log(`posting: uploaded ${item.id} (private)`);
       } catch (e) {
         const code = String(e?.code ?? 'error');
         if (code === 'already-uploaded') {
+          taskEnd = { state: 'done', note: 'Already uploaded' };
           const v = store.get(item.id)?.videoId ?? null;
           queue.patch(item.id, { state: 'done', videoId: v, reason: null, session: null });
           if (v) await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: v, at: new Date(nowMs()).toISOString(), target: post.target });
@@ -239,6 +254,10 @@ export function createPostChain(opts) {
           else queue.patch(item.id, { state: 'queued', attempts, reason: code.slice(0, 40), nextAt: new Date(nowMs() + backoffMs(attempts)).toISOString() });
           log(`posting: upload of ${item.id} failed (${code}); retry ${attempts < MAX_ATTEMPTS ? 'later' : 'not planned'}`);
         }
+      } finally {
+        // A paused upload leaves the task bar: it is queued again (resumes after the stream, or at the next start) and
+        // the control page's upload queue shows it.
+        if (taskEnd.state === 'waiting') removeTaskFile(dataDir, task.id); else taskSay(taskEnd);
       }
     }
   }

@@ -94,7 +94,7 @@ async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSi
   let offset = startOffset;
   let attempt = 0;
   while (offset < totalBytes) {
-    if (beforeChunk) await beforeChunk(); // throws to stop (a stream started); the session stays valid for a later resume
+    if (beforeChunk) await beforeChunk({ offset, total: totalBytes }); // progress for the task bar; throws to stop (a stream started); the session stays valid for a later resume
     const end = Math.min(offset + chunkSize, totalBytes);
     let res;
     try {

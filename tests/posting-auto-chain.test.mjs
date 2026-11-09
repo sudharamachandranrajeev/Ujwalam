@@ -2,12 +2,13 @@
 // D300 auto-post chain. Fakes only: no network, no Google, no Credential Manager, no real folders (temp dirs).
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { BASE_DELAY_MS, MAX_ATTEMPTS, MAX_DELAY_MS, backoffMs, createPostChain, createUploadQueue, readQueueSummary, streamOnly } from '../services/posting/auto-chain.mjs';
 import { createPostStore, postId } from '../services/posting/index.mjs';
+import { tasksDir } from '../services/studio-ui/tasks.mjs';
 
 const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-d300-')); tmp.push(d); return d; };
@@ -106,6 +107,12 @@ describe('chain', () => {
     assert.deepEqual({ ...row.posted[0], at: 'T' }, { platform: 'youtube', target: 'youtube-shorts', id: e.ids.a, videoId: 'vid1', url: 'https://youtu.be/vid1', at: 'T', privacy: 'private' });
     for (const f of ['posting/upload-queue.json', 'clips/uploads.json', 'posting/auto-log.json']) assert.ok(!/fake-access/.test(readFileSync(path.join(e.dataDir, f), 'utf8')), f);
     assert.match(readQueueSummary(e.dataDir).message, /uploaded to YouTube \(private\)/);
+    // D310 proposed: the upload was a task in the task bar and the tray; it ends "done" with its time.
+    const tdir = tasksDir(e.dataDir);
+    const tasks = readdirSync(tdir).map((n) => JSON.parse(readFileSync(path.join(tdir, n), 'utf8')));
+    assert.equal(tasks.length, 1);
+    assert.deepEqual([tasks[0].kind, tasks[0].state, tasks[0].title], ['upload', 'done', 'Uploading a clip to YouTube (private)']);
+    assert.ok(Number.isFinite(tasks[0].startedAt));
   });
 
   test('a live stream blocks approval and upload; a running recording does not', async () => {
