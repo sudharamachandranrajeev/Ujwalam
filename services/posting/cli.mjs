@@ -11,8 +11,9 @@ import { fileURLToPath } from 'node:url';
 import { dataDirNote, resolveCliDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, PostingError, createPostStore, packageRun } from './index.mjs';
-import { createYoutubeAuth } from './oauth.mjs';
+import { READONLY_SCOPE, SCHEDULE_SCOPES, SCOPE, createYoutubeAuth } from './oauth.mjs';
 import { uploadPost, UploadError } from './youtube.mjs';
+import { SCHEDULE_FLAG } from './schedule.mjs';
 import { streamOnly } from './auto-chain.mjs';
 import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, loadRules, planAuto, runAuto } from './auto-post.mjs';
 import { formatPreview, previewRules } from './preview.mjs';
@@ -137,7 +138,7 @@ async function autoMain(a, out, err, deps) {
       let profile = {};
       try { if (existsSync(profileFile)) profile = JSON.parse(readFileSync(profileFile, 'utf8')); } catch { /* placeholders stay unresolved and are shown */ }
       const r = await previewRules({
-        dataDir, rules, profile, flagOn, log: createAutoLog(logFile).list(), now: deps.now,
+        dataDir, rules, profile, flagOn, log: createAutoLog(logFile).list(), now: deps.now, scheduleOn: flags.isOn(SCHEDULE_FLAG),
         outputsStatus: streamOnly(deps.outputsStatus ?? outputsStatusFor(dataDir)),
       });
       out(a.json === true ? JSON.stringify(r, null, 2) : formatPreview(r));
@@ -151,7 +152,11 @@ async function autoMain(a, out, err, deps) {
     }
     if (!flagOn) { err(`auto-post: the '${POSTING_FLAG}' and '${AUTO_FLAG}' feature flags must both be on`); return EXIT_FLAG_OFF; }
     if (!rules.rules.length) { out('auto-post: no rules; nothing to do'); return 0; }
-    const auth = rules.autoUpload ? (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen }) : null;
+    // post-schedule on: this command only approves; the background queue uploads with a publish time (D310 proposed),
+    // so nothing goes up here without a slot.
+    const scheduled = flags.isOn(SCHEDULE_FLAG);
+    if (scheduled && rules.autoUpload) out('auto-post: scheduled posting is on; approved clips are uploaded by the studio queue with a publish time');
+    const auth = rules.autoUpload && !scheduled ? (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen }) : null;
     // D300: only stream sinks block (a local recording does not); an unreadable state still refuses.
     const outputsStatus = streamOnly(deps.outputsStatus ?? outputsStatusFor(dataDir));
     const r = await runAuto({
@@ -171,11 +176,19 @@ async function autoMain(a, out, err, deps) {
 /** `youtube signin|status|signout|upload`. Always behind the posting flag -- same gate as `package`. */
 async function youtubeMain(a, out, err, deps) {
   const dataDir = cliDataDir(a, out);
-  if (!createFlags({ dataDir }).isOn(POSTING_FLAG)) { err(`posting: the '${POSTING_FLAG}' feature flag is off (switch it on from the control page)`); return EXIT_FLAG_OFF; }
-  const auth = (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen });
+  const flags = createFlags({ dataDir });
+  if (!flags.isOn(POSTING_FLAG)) { err(`posting: the '${POSTING_FLAG}' feature flag is off (switch it on from the control page)`); return EXIT_FLAG_OFF; }
+  // post-schedule on: also ask for read access, to see the channel's scheduled posts (D310 proposed).
+  const scheduled = flags.isOn(SCHEDULE_FLAG);
+  const auth = (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen, scope: scheduled ? SCHEDULE_SCOPES : SCOPE });
   const sub = a._[1];
   try {
-    if (sub === 'signin') { const r = await auth.signIn(); out(`youtube: signed in (scope: ${r.scope})`); return 0; }
+    if (sub === 'signin') {
+      const r = await auth.signIn();
+      out(`youtube: signed in (scope: ${r.scope})`);
+      if (scheduled && !String(r.scope ?? '').split(/\s+/).includes(READONLY_SCOPE)) out('youtube: reading scheduled posts was not allowed, so scheduled posting waits; sign in again and allow it');
+      return 0;
+    }
     if (sub === 'status') { const s = await auth.status(); out(`youtube: signed in: ${s.signedIn}, OAuth client set: ${s.hasClient}`); return 0; }
     if (sub === 'signout') { await auth.signOut(); out('youtube: signed out'); return 0; }
     if (sub === 'upload') {

@@ -72,7 +72,7 @@ const authOk = { status: async () => ({ signedIn: true, hasClient: true }), acce
 
 function chain(e, { yt, auth = authOk, flagsOn = true, time, chunkSize } = {}) {
   const clock = time ?? { t: T0 };
-  const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: () => flagsOn }, rulesFile: e.rulesFile, auth, fetchImpl: yt?.fetchImpl, now: () => clock.t, tickEveryMs: 0, chunkSize,
+  const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: (id) => flagsOn && id !== 'post-schedule' }, rulesFile: e.rulesFile, auth, fetchImpl: yt?.fetchImpl, now: () => clock.t, tickEveryMs: 0, chunkSize,
     profileFile: path.join(e.dataDir, 'none.json'), packageImpl: async () => ({ packaged: [], skipped: [] }) });
   return { c, clock };
 }
@@ -144,10 +144,16 @@ describe('chain', () => {
   test('Stop all from the tray while live or recording (D311 proposed): the upload stops at its next chunk, the task says so, nothing new starts', async () => {
     const e = env(); const yt = fakeYt(); const clock = { t: T0 };
     let c = null;
-    const stopAfterFirst = async (url, o) => { const r = await yt.fetchImpl(url, o); if (yt.count('chunk') === 1) c.stopTasks(); return r; };
+    let mid = null; // the task file while the first chunk is sent: progress reaches the task bar through youtube.mjs's hook
+    const stopAfterFirst = async (url, o) => {
+      const r = await yt.fetchImpl(url, o);
+      if (yt.count('chunk') === 1) { const d = tasksDir(e.dataDir); mid = JSON.parse(readFileSync(path.join(d, readdirSync(d)[0]), 'utf8')); c.stopTasks(); }
+      return r;
+    };
     ({ c } = chain(e, { yt: { fetchImpl: stopAfterFirst }, time: clock, chunkSize: 10 }));
     await c.tick(RECORDING);
     assert.equal(yt.count('chunk'), 1, 'no chunk after the stop');
+    assert.deepEqual([mid.state, mid.done, mid.total], ['running', 0, 1]); assert.match(mid.note, /^0 of 0 MB sent$/);
     assert.equal(e.store().get(e.ids.a).status, 'approved', 'not uploaded');
     const it = e.queue().get(e.ids.a);
     assert.deepEqual([it.state, it.reason], ['queued', 'stopped-by-user'], 'queued again for the next start');

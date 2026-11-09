@@ -14,6 +14,7 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QIcon>
 #include <QLayout>
 #include <QWidget>
 #include <QJsonDocument>
@@ -54,6 +55,12 @@ int main(int argc, char **argv)
 	if (logs.crash && !studiolog::reassert())
 		qWarning("crash reporter: Qt start-up had replaced the unhandled-exception filter; ours is back on top");
 	QApplication::setApplicationName(QStringLiteral("Ujwalam Studio"));
+	{ // app icon for every window and dialog (res/png, embedded; the exe icon comes from res/ujwalam.rc)
+		QIcon appIcon;
+		for (const int n : {16, 24, 32, 48, 64, 256})
+			appIcon.addFile(QStringLiteral(":/icon/ujwalam-%1.png").arg(n), QSize(n, n));
+		QApplication::setWindowIcon(appIcon);
+	}
 	theme::apply(app);
 	motion::installHover(app); // hover glow on buttons and cards (D287)
 	interaction::install(app); // depth effects, captions, backdrops, popup fades (D293)

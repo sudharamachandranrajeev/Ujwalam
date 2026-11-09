@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
 import { readFileSync } from 'node:fs';
-import { plan, planFile, validLiveUrl } from '../lib/outputs-plan.mjs';
+import { plan, planFile, readServerSchemes, validLiveUrl } from '../lib/outputs-plan.mjs';
 import { HOST_DIR, REPO_ROOT } from '../lib/config.mjs';
 
 const O1 = path.join(HOST_DIR, 'outputs', 'o1-loopback.json');
@@ -71,7 +71,9 @@ test('alpha-live plan: YouTube H 1080p60 17 Mbps (D182) + V direct, Multi rung -
   const t = Object.fromEntries(params.sinks.map((s) => [s.id, s.target]));
   assert.deepEqual(t['youtube-h'], { transport: 'rtmps', url: 'rtmps://a.rtmps.youtube.com:443/live2', keyRef: 'Ujwalam/stream/youtube-h' });
   assert.deepEqual(t.kick, { transport: 'rtmps', urlRef: 'Ujwalam/stream/kick-server', keyRef: 'Ujwalam/stream/kick' });
-  assert.deepEqual(t.twitch, { transport: 'rtmps', urlRef: 'Ujwalam/stream/twitch-server', keyRef: 'Ujwalam/stream/twitch' });
+  // Twitch is "auto" (D309 proposed): unresolved without the stored scheme (validation only; the host refuses "auto").
+  assert.deepEqual(t.twitch, { transport: 'auto', urlRef: 'Ujwalam/stream/twitch-server', keyRef: 'Ujwalam/stream/twitch' });
+  assert.deepEqual(alpha().unresolved, ['twitch']);
   assert.deepEqual(t.record, { transport: 'file', name: 'alpha.mkv' });
   const text = readFileSync(ALPHA, 'utf8');
   assert.equal(/"(key|streamKey|stream_key|password|secret)"\s*:/i.test(text), false, 'no key fields in the committed plan');
@@ -135,4 +137,79 @@ test('loopback rtmp may carry a keyRef instead of a stream name (key path test);
   const { params, live } = plan(config, { ...wrapper.targets, kick: { transport: 'rtmp', port: 19453, app: 'live', keyRef: 'Ujwalam/stream/test-x' } });
   assert.deepEqual(live, []);
   assert.deepEqual(params.sinks.find((s) => s.id === 'kick').target, { transport: 'rtmp', port: 19453, app: 'live', keyRef: 'Ujwalam/stream/test-x' });
+});
+
+// ---- Twitch either scheme (D309 proposed): "auto" follows the stored server address's scheme ----------------------
+const SECRET_HOST = 'secret-ingest-zz9.example'; // stands for the stored address; must never appear in a plan or error
+const facts = (scheme) => ({ present: true, scheme });
+const live = (schemes, select) => planFile(ALPHA, { allowLive: true, schemes, ...(select ? { select } : {}) });
+
+test('twitch "auto": a stored rtmp:// or rtmps:// address picks the transport (sink proto follows); kick stays rtmps', () => {
+  for (const sch of ['rtmp', 'rtmps']) {
+    const r = live({ 'Ujwalam/stream/twitch-server': facts(sch), 'Ujwalam/stream/kick-server': facts('rtmps') });
+    const tw = r.params.sinks.find((s) => s.id === 'twitch');
+    assert.deepEqual(tw.target, { transport: sch, urlRef: 'Ujwalam/stream/twitch-server', keyRef: 'Ujwalam/stream/twitch' });
+    assert.equal(tw.proto, sch, 'the host requires proto = transport');
+    assert.deepEqual(r.unresolved, []);
+    const k = r.params.sinks.find((s) => s.id === 'kick');
+    assert.equal(k.target.transport, 'rtmps'); assert.equal(k.proto, 'rtmps');
+  }
+});
+
+test('twitch "auto": another scheme, no scheme, no stored address or an unreadable one is refused, naming the target only', () => {
+  const kick = { 'Ujwalam/stream/kick-server': facts('rtmps') };
+  const cases = [
+    [{ ...kick, 'Ujwalam/stream/twitch-server': facts('https') }, /sink "twitch": the server address in Windows Credential Manager target Ujwalam\/stream\/twitch-server starts with https:\/\/, but twitch takes only rtmp:\/\/ or rtmps:\/\/\. Set it again with: node services\/event-core\/cli\.mjs credential set --target Ujwalam\/stream\/twitch-server/],
+    [{ ...kick, 'Ujwalam/stream/twitch-server': facts(null) }, /starts with no rtmp:\/\/ or rtmps:\/\/, but twitch takes only/],
+    [{ ...kick, 'Ujwalam/stream/twitch-server': { present: false, scheme: null } }, /no server address is stored in Windows Credential Manager target Ujwalam\/stream\/twitch-server\. Set it \(rtmp:\/\/ or rtmps:\/\/\)/],
+    [{ ...kick, 'Ujwalam/stream/twitch-server': { error: true } }, /target Ujwalam\/stream\/twitch-server could not be read/],
+    [{ ...kick }, /twitch-server could not be read/],
+  ];
+  for (const [schemes, re] of cases) {
+    let err;
+    try { live(schemes); } catch (e) { err = e; }
+    assert.ok(err, JSON.stringify(schemes));
+    assert.match(err.message, re);
+    assert.ok(!err.message.includes(SECRET_HOST));
+  }
+  // leaving twitch out (--sinks) does not need its address
+  assert.deepEqual(live({}, ['youtube-h']).unresolved, []);
+});
+
+test('kick (named rtmps): a stored rtmp:// address is refused at build time; missing/unreadable left to host + readiness', () => {
+  const tw = { 'Ujwalam/stream/twitch-server': facts('rtmps') };
+  assert.throws(() => live({ ...tw, 'Ujwalam/stream/kick-server': facts('rtmp') }),
+    /sink "kick": the server address in Windows Credential Manager target Ujwalam\/stream\/kick-server starts with rtmp:\/\/, but this output sends rtmps:\/\/ \(kick takes rtmps:\/\/\)/);
+  assert.equal(live({ ...tw, 'Ujwalam/stream/kick-server': { present: false, scheme: null } }).params.sinks.find((s) => s.id === 'kick').target.transport, 'rtmps');
+  assert.equal(live({ ...tw, 'Ujwalam/stream/kick-server': { error: true } }).params.sinks.find((s) => s.id === 'kick').target.transport, 'rtmps');
+});
+
+test('"auto" rules: serverRef only, a platform with both rtmp and rtmps, never a loopback form', () => {
+  const { config, wrapper } = alpha();
+  const go = (patch) => plan(config, { ...wrapper.targets, ...patch }, { allowLive: true });
+  assert.throws(() => go({ kick: { transport: 'auto', serverRef: 'Ujwalam/stream/kick-server', keyRef: 'Ujwalam/stream/kick' } }),
+    /sink "kick": transport "auto" needs a platform that takes both rtmp and rtmps; kick takes rtmps/);
+  assert.throws(() => go({ 'youtube-h': { transport: 'auto', server: 'primary-rtmps', keyRef: 'Ujwalam/stream/youtube-h' } }), /transport "auto" needs serverRef/);
+  assert.throws(() => go({ twitch: { transport: 'auto', port: 19452, app: 'live', stream: 'twitch' } }), /an auto target is a real target \(serverRef, and keyRef\)/);
+});
+
+test('readServerSchemes: reads only the plan\'s (selected) serverRefs, keeps scheme facts only, a failed read is { error }', async () => {
+  const asked = [];
+  const values = { 'Ujwalam/stream/twitch-server': `rtmp://${SECRET_HOST}/app`, 'Ujwalam/stream/kick-server': null };
+  const readFacts = async (ref) => {
+    asked.push(ref);
+    const v = values[ref];
+    return { present: typeof v === 'string', scheme: typeof v === 'string' ? v.slice(0, v.indexOf(':')) : undefined };
+  };
+  const all = await readServerSchemes(ALPHA, readFacts);
+  assert.deepEqual(asked.sort(), ['Ujwalam/stream/kick-server', 'Ujwalam/stream/twitch-server']);
+  assert.deepEqual(all, { 'Ujwalam/stream/twitch-server': { present: true, scheme: 'rtmp' }, 'Ujwalam/stream/kick-server': { present: false, scheme: null } });
+  assert.ok(!JSON.stringify(all).includes(SECRET_HOST));
+  asked.length = 0;
+  assert.deepEqual(await readServerSchemes(ALPHA, readFacts, { select: ['youtube-h', 'twitch'] }), { 'Ujwalam/stream/twitch-server': { present: true, scheme: 'rtmp' } });
+  assert.deepEqual(asked, ['Ujwalam/stream/twitch-server']);
+  assert.deepEqual(await readServerSchemes(ALPHA, async () => { throw new Error(`boom ${SECRET_HOST}`); }, { select: ['twitch'] }), { 'Ujwalam/stream/twitch-server': { error: true } });
+  const r = planFile(ALPHA, { allowLive: true, schemes: all, select: ['youtube-h', 'twitch'] });
+  assert.equal(r.params.sinks.find((s) => s.id === 'twitch').target.transport, 'rtmp');
+  assert.ok(!JSON.stringify(r.params).includes(SECRET_HOST));
 });

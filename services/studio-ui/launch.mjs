@@ -953,10 +953,22 @@ export async function main(argv = process.argv.slice(2)) {
     if (planPath) {
       // An O1 plan file (app/host/outputs/*.json): validated against data/platforms, configured at host start, nothing
       // started. Real targets only with --live (alpha-live.json; the host then runs with --allow-live).
-      const { planFile } = await import('../../app/host/lib/outputs-plan.mjs');
+      const { planFile, readServerSchemes } = await import('../../app/host/lib/outputs-plan.mjs');
       let planned;
-      try { planned = planFile(planPath, { allowLive: args.live === true, ...(lt.select ? { select: lt.select } : {}) }); } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
+      try {
+        // Real host + --live: the stored server addresses' schemes (only the scheme, the value is dropped at once)
+        // choose "auto" transports (Twitch: rtmp or rtmps) and check named ones. A stand-in (script) host reaches no
+        // platform, so nothing is read for it and "auto" stays unresolved.
+        let schemes;
+        if (args.live === true && !/\.m?js$/i.test(hostExe)) {
+          const [{ createCredentialStore }, { credentialFacts }] = await Promise.all([import('../event-core/streamerbot/credential.mjs'), import('./readiness.mjs')]);
+          schemes = await readServerSchemes(planPath, (ref) => credentialFacts(createCredentialStore(ref), { scheme: true }), lt.select ? { select: lt.select } : {});
+        }
+        planned = planFile(planPath, { allowLive: args.live === true, ...(lt.select ? { select: lt.select } : {}), ...(schemes ? { schemes } : {}) });
+      } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
       const { params, report } = planned;
+      if (planned.unresolved?.length) console.log(`[studio] outputs: ${planned.unresolved.join(', ')} transport "auto" not chosen (stand-in host: no server address read)`);
+      else if (args.live === true) for (const s of params.sinks) if (s.target?.urlRef) console.log(`[studio] sink ${s.id}: transport ${s.target.transport} (the scheme of the server address in ${s.target.urlRef})`);
       const ltp = liveTestPlanProblems(lt, params.sinks);
       if (ltp.length) { for (const p of ltp) console.log(`[studio] ${p}`); await stopAll(); return 2; }
       if (lt.select) console.log(`[studio] LIVE sinks: ${params.sinks.map((s) => s.id).join(', ')} (--sinks)`);

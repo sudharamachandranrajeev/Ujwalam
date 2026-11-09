@@ -461,3 +461,47 @@ Streamer.bot or Speaker.bot stays BM8 (P15, ADR and security review).
 **D307 (2026-11-09) Live clip minimum length and auto-post preview.** Live clip windows are extended to `minClipSec` (20 s, `data/clip/live-clips.json`) by starting earlier, bounded by the replay buffer and the previous KILLCAM; a missing key means 0. `node services/posting/cli.mjs auto --preview` and `GET /ui/api/posts/auto/preview` (behind `posting`) show what the rules would queue and why others are skipped; zero network, zero writes. Won-match reels are not filtered by the match gate (current behaviour, locked by a test; open question to the user). Evidence: `docs/evidence/2026-11-09-live-window-and-match-gate.md`, `docs/evidence/2026-11-09-auto-post-preview.md`.
 
 **D308 (2026-11-09) Failure simulations and clip maker check.** Host test seam `audio.testHangDestroy` exists only with `--test-hooks` (never passed by the launcher) and only for the fake `ujw_test_audio` source; `host-audio-failsim.test.mjs` drives the shipped `data/audio/health.json` values (no data 5 s, 3 recreates, parked 12, shutdown guard 20 s). Readiness: a malformed or unreadable audio answer now fails (an empty list stays a warning). When the clip maker's Python, folder or script is missing, the start-up line, the control page and the Qt window say which part and how to fix it. Flaky tests: the posting CLI test uses its own data dir; `stopHost` waits up to 60 s. Evidence: `docs/evidence/2026-11-09-failure-sims-and-clipmaker-check.md`, `docs/evidence/2026-11-09-flaky-tests.md`.
+
+**D309 (2026-11-09): Twitch takes either rtmp:// or rtmps://.** The Twitch live target uses
+`"transport": "auto"` (`data/outputs/alpha-live.json`). At output build time, the launcher reads only the scheme of
+the server address stored in `Ujwalam/stream/twitch-server`. The value is dropped at once and never logged,
+persisted or put in params. That scheme picks the transport, if it is one of the platform's rtmp/rtmps protocols in
+`data/platforms/twitch.json`. Anything else (another scheme, no scheme, no stored address, unreadable) refuses the
+plan with a plain message that names the credential target, not its value. `auto` needs `serverRef` and a platform
+that takes both schemes. Kick (rtmps only) cannot use it and stays `rtmps`; a stored `rtmp://` Kick address is
+refused at build time. The host is unchanged and re-checks the scheme against the chosen transport when it connects.
+Readiness accepts either scheme for Twitch and asks for a restart when the address changes scheme after start.
+
+**D310 (proposed 2026-11-09): Scheduled posting behind flag `post-schedule` (off).** Each clip the auto-post chain
+queues uploads to YouTube as private with `status.publishAt` (UTC). Slot = the later of the channel's latest future
+scheduled post (private + publishAt after now, read with youtube.readonly: channels.list mine -> uploads playlist ->
+playlistItems -> videos.list part=status, only when a clip needs a slot) and the latest slot already in the upload
+queue (any state), plus intervalHours; never sooner than now + minLeadHours + marginMinutes; rounded up to the
+minute. Settings in `data/posting/schedule.json` (6 h from the user; lead 1 h, margin 15 min, 20 x 50 pages: agent
+defaults). Slots go out in queue order and are saved on the queue item; a retry keeps its slot while it is still at
+least minLead ahead, and a failed item keeps its slot (the gap stays). The time is re-checked right before an upload
+session starts or resumes (>= now + minLead) and before every chunk (>= now + margin); every chunk request is aborted chunkDeadlineSeconds (120 s) before the time,
+and the final chunk only starts when its estimated transfer (slowest measured chunk, else fallbackKbps) fits;
+after an abort a progress query decides (finished = done, else re-slotted); a time too close drops an
+unfinished session and the clip gets a new slot at the end. Each session's publish time is saved with it; an
+unfinished session whose time differs from the slot is dropped and a new one started, and the time recorded as
+scheduled is always the one the finished session carried. A finished upload confirmed after its time passed is marked
+`went-public-early` with a plain message. `videos.update` after upload is not used (needs the broad youtube scope).
+Fail closed: without the readonly scope (sign-in again needed), on a failed read, on a read that hit the page cap
+(`schedule-read-incomplete`) or a bad settings file, the clip waits without a slot and nothing uploads; no attempt is
+used. Sign-in asks for upload + readonly only while the flag is on. Nothing reads, slots or uploads while live. With
+the flag on, `auto --run` only approves; the studio queue uploads. `youtube upload --id` (manual) stays an unscheduled
+private upload. Evidence: `docs/evidence/2026-11-09-scheduled-posting.md`.
+
+## Files changed
+
+- `app/host/lib/outputs-plan.mjs`
+- `app/host/tests/outputs-plan.test.mjs`
+- `data/outputs/alpha-live.json`
+- `data/platforms/twitch.json` (note text only)
+- `services/studio-ui/launch.mjs`
+- `services/studio-ui/readiness.mjs`
+- `tests/studio-ui-alpha.test.mjs`
+- `tests/studio-ui-readiness.test.mjs`
+- `tools/outputs-validate-presets.mjs`
+- `docs/evidence/2026-11-09-twitch-either-scheme.md` (this file)

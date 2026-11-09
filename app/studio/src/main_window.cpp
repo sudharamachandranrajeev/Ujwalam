@@ -568,8 +568,9 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	tasks_ = new TaskBar(this);
 	statusBar()->insertPermanentWidget(0, tasks_->chip()); // before host / event core; hidden while nothing runs
 	{
-		// Tray icon (D311 proposed): the app icon when the build has one (app/studio/res/ujwalam.ico), else a standard one.
-		QIcon ico(QStringLiteral(":/app/ujwalam.ico"));
+		// Tray icon (D311 proposed): the app icon main() set from the embedded PNGs (res/png, no imageformats plugin
+		// needed), else a standard one.
+		QIcon ico = QApplication::windowIcon();
 		if (ico.isNull())
 			ico = style()->standardIcon(QStyle::SP_ComputerIcon);
 		tray_ = new TrayKeeper(ico, this);
@@ -2404,6 +2405,9 @@ void MainWindow::openPosts()
 			bits << p.value(QStringLiteral("queueReasonText")).toString();
 		if (qs == QStringLiteral("queued") && !p.value(QStringLiteral("queueNextAt")).toString().isEmpty())
 			bits << QStringLiteral("next try ") + QDateTime::fromString(p.value(QStringLiteral("queueNextAt")).toString(), Qt::ISODate).toLocalTime().toString(Qt::TextDate);
+		if (!p.value(QStringLiteral("queuePublishAt")).toString().isEmpty()) // post-schedule (D310 proposed)
+			bits << (qs == QStringLiteral("done") ? QStringLiteral("goes public ") : QStringLiteral("will go public ")) +
+					QDateTime::fromString(p.value(QStringLiteral("queuePublishAt")).toString(), Qt::ISODate).toLocalTime().toString(Qt::TextDate);
 		if (!p.value(QStringLiteral("videoUrl")).toString().isEmpty())
 			bits << QStringLiteral("link (private): ") + p.value(QStringLiteral("videoUrl")).toString();
 		queueSel->setText(bits.join(QStringLiteral(". ")) + QLatin1Char('.'));

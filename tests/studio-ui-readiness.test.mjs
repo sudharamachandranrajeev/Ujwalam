@@ -118,6 +118,41 @@ describe('runReadiness', () => {
     assert.ok(!JSON.stringify(r).includes('secret-ingest'), 'the stored address leaked');
   });
 
+  test('twitch "auto" (D309 proposed): not live, rtmp:// and rtmps:// pass, another scheme or none is a problem naming the allowed schemes', async () => {
+    const sinks = LIVE_SINKS.map((s) => (s.kind === 'stream' ? { ...s, target: 'loopback', keyRef: undefined, urlRef: undefined } : s));
+    const all = { 'Ujwalam/stream/youtube-h': SECRET_KEY, 'Ujwalam/stream/youtube-v': SECRET_KEY, 'Ujwalam/stream/twitch': SECRET_KEY, 'Ujwalam/stream/kick': SECRET_KEY, ...GOOD_STORE };
+    for (const v of ['rtmp://secret-ingest-zz9.example/app', 'rtmps://secret-ingest-zz9.example/app']) {
+      assert.equal(byId(await runReadiness(deps({ hostOpts: { sinks }, store: { ...all, 'Ujwalam/stream/twitch-server': v } })), 'credentials').status, 'pass', v);
+    }
+    for (const [v, starts] of [['https://secret-ingest-zz9.example/app', 'https://'], ['secret-ingest-zz9.example/app', 'no rtmp:// or rtmps://']]) {
+      const c = byId(await runReadiness(deps({ hostOpts: { sinks }, store: { ...all, 'Ujwalam/stream/twitch-server': v } })), 'credentials');
+      assert.equal(c.status, 'warn');
+      assert.ok(c.message.includes(`Twitch (twitch): server address starts with ${starts}, but this output takes only rtmp:// or rtmps://`), c.message);
+      assert.ok(!JSON.stringify(c).includes('secret-ingest'), 'the stored address leaked');
+    }
+  });
+
+  test('twitch "auto" live: an address changed to the other allowed scheme after start says restart; another scheme says what Twitch takes', async () => {
+    const c = byId(await runReadiness(deps({ store: { ...GOOD_STORE, 'Ujwalam/stream/twitch-server': SECRET_URL } })), 'credentials');
+    assert.match(c.message, /Twitch: server address starts with rtmp:\/\/ but this output sends rtmps:\/\/\. The address was changed after the studio started; restart the studio with --live to use it/);
+    const sinks = LIVE_SINKS.map((s) => (s.id === 'twitch' ? { ...s, transport: 'rtmp' } : s));
+    assert.equal(byId(await runReadiness(deps({ hostOpts: { sinks }, store: { ...GOOD_STORE, 'Ujwalam/stream/twitch-server': SECRET_URL } })), 'credentials').status, 'pass', 'host chose rtmp from an rtmp:// address');
+    const bad = byId(await runReadiness(deps({ store: { ...GOOD_STORE, 'Ujwalam/stream/twitch-server': 'srt://secret-ingest-zz9.example/app' } })), 'credentials');
+    assert.equal(bad.status, 'fail');
+    assert.match(bad.message, /starts with srt:\/\/ but this output sends rtmps:\/\/\. Twitch takes only rtmp:\/\/ or rtmps:\/\//);
+    const kick = byId(await runReadiness(deps({ store: { ...GOOD_STORE, 'Ujwalam/stream/kick-server': 'rtmp://secret-ingest-zz9.example/app' } })), 'credentials');
+    assert.match(kick.message, /Kick: server address starts with rtmp:\/\/ but this output sends rtmps:\/\/\. Set it again with rtmps:\/\//);
+    for (const x of [c, bad, kick]) assert.ok(!JSON.stringify(x).includes('secret-ingest'), 'the stored address leaked');
+  });
+
+  test('planTargets: twitch is "auto" with the schemes data/platforms allows; kick names rtmps', () => {
+    const t = Object.fromEntries(planTargets().map((x) => [x.id, x]));
+    assert.equal(t.twitch.transport, 'auto');
+    assert.deepEqual(t.twitch.schemes, ['rtmp', 'rtmps']);
+    assert.equal(t.kick.transport, 'rtmps');
+    assert.equal('schemes' in t.kick, false);
+  });
+
   test('a missing key (host keyPresent false) fails; a missing server address fails; bandwidth test warns', async () => {
     const sinks = LIVE_SINKS.map((s) => (s.id === 'kick' ? { ...s, keyPresent: false } : s));
     assert.match(byId(await runReadiness(deps({ hostOpts: { sinks } })), 'credentials').message, /Kick: stream key not found/);
@@ -136,11 +171,13 @@ describe('runReadiness', () => {
     assert.equal(byId(r, 'host').status, 'warn');
     assert.match(byId(r, 'host').message, /--live/);
     assert.equal(byId(r, 'credentials').status, 'pass');
-    const r2 = await runReadiness(deps({ hostOpts: { sinks }, store: { ...all, 'Ujwalam/stream/twitch': `${SECRET_KEY}?bandwidthtest=true`, 'Ujwalam/stream/twitch-server': SECRET_URL } }));
+    // Twitch is "auto" (D309 proposed): an rtmp:// address is fine; Kick (rtmps only) with rtmp:// is not.
+    const r2 = await runReadiness(deps({ hostOpts: { sinks }, store: { ...all, 'Ujwalam/stream/twitch': `${SECRET_KEY}?bandwidthtest=true`, 'Ujwalam/stream/twitch-server': SECRET_URL, 'Ujwalam/stream/kick-server': SECRET_URL } }));
     const c2 = byId(r2, 'credentials');
     assert.equal(c2.status, 'warn'); // never a fail without a live configuration
     assert.match(c2.message, /"\?" ending/);
-    assert.match(c2.message, /rtmp:\/\/ but the plan sends rtmps:\/\//);
+    assert.match(c2.message, /Kick \(kick\): server address starts with rtmp:\/\/ but the plan sends rtmps:\/\//);
+    assert.ok(!/Twitch \(twitch\): server address/.test(c2.message), 'twitch rtmp:// is accepted');
     const text = JSON.stringify(r2);
     for (const bad of [SECRET_KEY, 'secret-ingest', 'bandwidthtest=true']) assert.ok(!text.includes(bad), `leaked ${bad}`);
   });

@@ -3,6 +3,9 @@
 # (docs/plan/2026-11-06-p5a-qt-shell-plan.md). libobs stays in ujwalam-host; this links Qt only.
 cmake_minimum_required(VERSION 3.24)
 project(ujwalam-studio LANGUAGES CXX)
+if(WIN32)
+	enable_language(RC)
+endif()
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -56,11 +59,13 @@ add_executable(ujwalam-studio WIN32
 file(GLOB UJW_THEME_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes/*.json")
 list(FILTER UJW_THEME_FILES EXCLUDE REGEX "\.schema\.json$")
 qt_add_resources(ujwalam-studio themes PREFIX "/themes" BASE "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes" FILES ${UJW_THEME_FILES})
-# The tray icon (D311 proposed) uses the app icon when the build has one (another branch adds res/ujwalam.ico).
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/res/ujwalam.ico")
-	qt_add_resources(ujwalam-studio appicon PREFIX "/app" BASE "${CMAKE_CURRENT_SOURCE_DIR}/res" FILES "${CMAKE_CURRENT_SOURCE_DIR}/res/ujwalam.ico")
-endif()
+# App icon: PNG sizes embedded for the window icon (QIcon needs no imageformats plugin); the .rc embeds the .ico in the exes.
+file(GLOB UJW_ICON_PNGS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/png/ujwalam-*.png")
+qt_add_resources(ujwalam-studio appicon PREFIX "/icon" BASE "${CMAKE_CURRENT_SOURCE_DIR}/res/png" FILES ${UJW_ICON_PNGS})
 target_link_libraries(ujwalam-studio PRIVATE Qt6::Widgets Qt6::Network)
+if(WIN32)
+	target_sources(ujwalam-studio PRIVATE res/ujwalam.rc)
+endif()
 if(WIN32)
 	target_link_libraries(ujwalam-studio PRIVATE user32 dbghelp)
 endif()
@@ -71,7 +76,7 @@ endif()
 # ujwalam-start.exe (2026-11-08): the shortcuts' target. Starts the launcher with no console window, its output in a log
 # file (src/start_stub.cpp). Win32 only, no Qt.
 if(WIN32)
-	add_executable(ujwalam-start WIN32 src/start_stub.cpp)
+	add_executable(ujwalam-start WIN32 src/start_stub.cpp res/ujwalam.rc)
 	target_link_libraries(ujwalam-start PRIVATE shell32 user32)
 	if(MSVC)
 		target_compile_options(ujwalam-start PRIVATE /W4 /permissive- /utf-8)

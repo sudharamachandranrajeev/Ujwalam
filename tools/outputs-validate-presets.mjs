@@ -28,7 +28,8 @@ for (const f of plans) {
     for (const s of params.sinks) {
       const t = s.target;
       const where = t.url ? `url ${t.url}` : t.urlRef ? `urlRef ${t.urlRef}` : t.transport === 'file' ? `file ${t.name}` : `loopback ${t.transport}`;
-      console.log(`  ${s.id} -> rung ${s.rung} (${s.platform} ${s.proto}) ${where}${t.keyRef ? ` keyRef ${t.keyRef}` : ''}`);
+      const proto = t.transport === 'auto' ? 'auto: rtmp or rtmps from the stored server address at start' : s.proto;
+      console.log(`  ${s.id} -> rung ${s.rung} (${s.platform} ${proto}) ${where}${t.keyRef ? ` keyRef ${t.keyRef}` : ''}`);
     }
     console.log(`  real targets (need --allow-live): ${live.length ? live.join(', ') : 'none'}`);
   } catch (e) {

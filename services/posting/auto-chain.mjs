@@ -12,14 +12,30 @@
 //   - queue states: queued -> uploading -> done | failed. A failed try backs off (5 min, doubling, capped at 6 h);
 //     "not signed in" and "stream live" waits cost no attempts. After MAX_ATTEMPTS the item is failed (kept for the user).
 //   - tokens are never written: the queue holds post ids, states, times, the video id and the resumable session URL.
+// Scheduled posting (flag `post-schedule`, off; D310 proposed; settings data/posting/schedule.json):
+//   - every queued item gets a slot (publishAt, UTC) before its upload starts: next slot after the later of the channel's
+//     latest future scheduled post (read once per pass, only when an item needs a slot) and the latest slot already in
+//     this queue; slots go out in queue order and are saved on the item, so a retry or restart reuses the same slot.
+//   - fail closed: no readonly scope, a failed or incomplete (page cap hit) channel read or a bad settings file -> the
+//     item waits without a slot (no attempt used), nothing is uploaded and no slot is guessed.
+//   - a slot is never given back: a failed upload keeps it (that time stays empty on the channel).
+//   - the slot is re-checked right before a session starts or resumes (>= now + minLeadHours) and before every chunk
+//     (>= now + marginMinutes) in youtube.mjs; every chunk request is aborted chunkDeadlineSeconds before the time,
+//     and the final chunk only starts if its estimated transfer fits. Too close: the upload stops ('slot-passed' / 'slot-passed-mid'), an
+//     unfinished session is dropped, and the item gets a new slot at the end on the next pass. Nothing finishes with a
+//     passed time. Each session's own publish time is saved (sessionPublishAt) and the time recorded as posted is the
+//     one Google really got; a finished upload whose time had already passed is marked plainly ('went-public-early').
+//   - live: nothing changes. Approvals, slots and uploads all wait for the stream to end (same fail-closed check).
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore, packageRun, packageUploads, sha256File } from './index.mjs';
 import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, liveBlock, loadRules, runAuto } from './auto-post.mjs';
-import { createYoutubeAuth } from './oauth.mjs';
+import { READONLY_SCOPE, createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
+import { SCHEDULE_FLAG, ScheduleError, chunkDeadlineMs, fallbackBps, loadScheduleConfig, marginMs, minLeadMs, nextSlot, ownLastSlot, slotTooClose, toIso } from './schedule.mjs';
+import { readChannelSchedule } from './schedule-read.mjs';
 import { removeTaskFile, writeTaskFile } from '../studio-ui/tasks.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -29,7 +45,7 @@ export const MAX_DELAY_MS = 6 * 60 * 60 * 1000;
 export const SIGNIN_WAIT_MS = 30 * 60 * 1000;
 export const MAX_ATTEMPTS = 8;
 export const TICK_EVERY_MS = 30 * 1000;
-const PERMANENT = new Set(['not-approved', 'video-changed', 'over-limit', 'unresolved-placeholders', 'unknown-post', 'video-missing']);
+const PERMANENT = new Set(['not-approved', 'video-changed', 'over-limit', 'unresolved-placeholders', 'unknown-post', 'video-missing', 'bad-publish-at']);
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 
 export const backoffMs = (attempts) => Math.min(MAX_DELAY_MS, BASE_DELAY_MS * 2 ** Math.max(0, attempts - 1));
@@ -62,6 +78,9 @@ export function createUploadQueue(file, now = () => Date.now()) {
     get: (id) => read().items[id] ?? null,
     note: () => read().note ?? null,
     setNote(note) { const j = read(); j.note = note ? { ...note, at: new Date(now()).toISOString() } : null; write(j); },
+    /** Last channel schedule read (post-schedule): { channelLast, count, scanned, truncated, readAt }. Used by the preview. */
+    schedule: () => read().schedule ?? null,
+    setSchedule(s) { const j = read(); j.schedule = s; write(j); },
     /** Adds a queued item unless the id is already known (in any state). */
     add(id) {
       const j = read();
@@ -99,6 +118,11 @@ const REASON_TEXT = {
   'output-state-unreadable': 'Waiting: could not confirm that no stream is live',
   'credentials-unreadable': 'Not signed in to YouTube: the saved sign-in could not be read',
   interrupted: 'Resuming after a restart',
+  'schedule-scope-missing': 'Sign in again to allow reading scheduled posts (node services/posting/cli.mjs youtube signin)',
+  'schedule-read-failed': 'Waiting: could not read the scheduled posts in YouTube Studio; will try again',
+  'schedule-config-bad': 'Waiting: the schedule settings (data/posting/schedule.json) are not valid',
+  'schedule-read-incomplete': 'Waiting: the channel has more uploads than Ujwalam checks for scheduled posts; raise maxPages in data/posting/schedule.json',
+  'slot-passed': 'Getting a new public time: the planned one came too close before the upload could finish',
   'stopped-by-user': 'Stopped by you; tried again at the next start',
 };
 
@@ -110,14 +134,18 @@ const FAIL_TEXT = {
   'video-missing': 'The video file is missing',
   'not-approved': 'The package is not approved',
   'unknown-post': 'The package was not found',
+  'went-public-early': 'Uploaded, but its planned public time had already passed, so YouTube may have made it public at once; check it in YouTube Studio',
 };
 export function reasonText(code) {
   if (!code) return null;
   return REASON_TEXT[code] ?? FAIL_TEXT[code] ?? `Upload failed (${String(code).slice(0, 40)})`;
 }
 
+/** The publish time to show for a queue item: for an uploaded one, the time Google really got (null = none). */
+export const shownPublishAt = (i) => (i?.state === 'done' ? (i.sentPublishAt ?? null) : (i?.publishAt ?? null));
+
 /** Plain-language state for the control page. Counts and short fixed texts only. */
-export function readQueueSummary(dataDir, flags = null) {
+export function readQueueSummary(dataDir, flags = null, nowMs = Date.now()) {
   const q = createUploadQueue(path.join(dataDir, 'posting', QUEUE_NAME));
   const items = q.items();
   const count = (s) => items.filter((i) => i.state === s).length;
@@ -125,18 +153,23 @@ export function readQueueSummary(dataDir, flags = null) {
   const reason = waiting.find((i) => i.reason && REASON_TEXT[i.reason])?.reason ?? q.note()?.blocked ?? null;
   const failed = items.filter((i) => i.state === 'failed');
   const s = { enabled: flags ? flags.isOn(POSTING_FLAG) && flags.isOn(AUTO_FLAG) : null, queued: count('queued'), uploading: count('uploading'), done: count('done'), failed: failed.length,
-    reason, message: null, nextAt: waiting.map((i) => i.nextAt).filter(Boolean).sort()[0] ?? null };
+    reason, message: null, nextAt: waiting.map((i) => i.nextAt).filter(Boolean).sort()[0] ?? null, nextPublishAt: null, lastPublishAt: null };
+  // post-schedule: the earliest and latest publish time still ahead (UTC ISO; the page shows them in local time).
+  const ahead = items.filter((i) => i.state !== 'failed').map(shownPublishAt).filter((p) => typeof p === 'string' && Date.parse(p) > nowMs).sort();
+  if (ahead.length) { s.nextPublishAt = ahead[0]; s.lastPublishAt = ahead[ahead.length - 1]; }
   if (s.uploading) s.message = `Uploading ${s.uploading} clip(s) to YouTube (private)`;
   else if (s.queued) s.message = `${s.queued} clip(s) waiting to upload. ${REASON_TEXT[reason] ?? (s.nextAt ? 'Will retry after an error' : 'Waiting for its turn')}`;
   else if (s.failed) s.message = `${s.failed} upload(s) failed; see the Posts view`;
   else if (s.done) s.message = `${s.done} clip(s) uploaded to YouTube (private)`;
+  s.attention = items.filter((i) => i.reason === 'went-public-early').length;
+  if (s.attention) s.message = `${s.attention} clip(s) may have gone public early (planned time had passed); check YouTube Studio. ${s.message ?? ''}`.trim();
   return s;
 }
 
 // ---------------------------------------------------------------- uploads.json (the finished-video list)
 
 /** Fills `posted` on the uploads.json row(s) whose file is the uploaded video. Matches by run + content hash. */
-export async function markPosted({ dataDir, run, sha256, postIdValue, videoId, at, privacy = 'private', target = UPLOAD_TARGET }) {
+export async function markPosted({ dataDir, run, sha256, postIdValue, videoId, at, privacy = 'private', target = UPLOAD_TARGET, publishAt = null }) {
   const file = path.join(dataDir, 'clips', 'uploads.json');
   const doc = readJson(file);
   if (!isPlain(doc) || !Array.isArray(doc.files)) return 0;
@@ -147,7 +180,7 @@ export async function markPosted({ dataDir, run, sha256, postIdValue, videoId, a
     if (row.posted.some((p) => p?.platform === 'youtube' && p?.videoId === videoId)) continue;
     let h; try { h = await sha256File(row.file); } catch { continue; }
     if (h !== sha256) continue;
-    row.posted.push({ platform: 'youtube', target, id: postIdValue, videoId, url: `https://youtu.be/${videoId}`, at, privacy });
+    row.posted.push({ platform: 'youtube', target, id: postIdValue, videoId, url: `https://youtu.be/${videoId}`, at, privacy, ...(publishAt ? { publishAt } : {}) });
     n++;
   }
   if (n) writeJsonAtomic(file, doc);
@@ -171,13 +204,61 @@ export function createPostChain(opts) {
   const flags = opts.flags ?? createFlags({ dataDir });
   let latest = null; let busy = false; let lastTick = 0; let recovered = false; let halted = false;
   const flagsOn = () => flags.isOn(POSTING_FLAG) && flags.isOn(AUTO_FLAG);
+  const scheduleOn = () => flags.isOn(SCHEDULE_FLAG);
   const outputsStatus = streamOnly(async () => { if (!latest) throw new Error('no output status yet'); return latest; });
   const getAuth = () => opts.auth ?? createYoutubeAuth({ browserOpen: async () => { throw new Error('sign-in is never started from the background'); } });
 
   const sessions = {
     get: (sha) => queue.items().find((i) => i.sha === sha)?.session ?? null,
-    set: (sha, url) => { const it = queue.items().find((i) => i.sha === sha); if (it) queue.patch(it.id, { session: url }); },
+    // The session's own publish time (null = sent without one) is saved with it: it is what Google will apply.
+    set: (sha, url, publishAt = null) => { const it = queue.items().find((i) => i.sha === sha); if (it) queue.patch(it.id, { session: url, sessionPublishAt: url ? publishAt : null }); },
+    publishAtOf: (sha) => queue.items().find((i) => i.sha === sha)?.sessionPublishAt ?? null,
   };
+  const scheduleCfg = () => { try { return opts.scheduleFile ? loadScheduleConfig(opts.scheduleFile) : loadScheduleConfig(); } catch { return null; } };
+
+  /** post-schedule: every queued item without a usable slot gets the next slot, in queue order. The channel is read once,
+   *  and only when some item needs a slot. On any doubt (scope, read, settings) the items wait without a slot. */
+  async function ensureSlots(auth) {
+    const t = nowMs();
+    const queued = queue.items().filter((i) => i.state === 'queued');
+    const cfg = scheduleCfg();
+    if (!cfg) {
+      for (const i of queued) queue.patch(i.id, { reason: 'schedule-config-bad', nextAt: new Date(t + SIGNIN_WAIT_MS).toISOString() });
+      log(`posting: ${REASON_TEXT['schedule-config-bad']}`);
+      return null;
+    }
+    const need = queued.filter((i) => !i.publishAt || (!i.session && slotTooClose(i.publishAt, t, cfg)));
+    if (!need.length) return cfg;
+    const wait = (code, delay) => {
+      // A too-close slot is dropped here (it can no longer be used); nothing else is released.
+      for (const i of need) queue.patch(i.id, { publishAt: null, reason: code, nextAt: new Date(t + delay).toISOString() });
+      log(`posting: ${REASON_TEXT[code] ?? code}; ${need.length} clip(s) wait for a publish time`);
+    };
+    let accessToken;
+    try {
+      const scopes = typeof auth.grantedScopes === 'function' ? await auth.grantedScopes() : null;
+      if (!Array.isArray(scopes) || !scopes.includes(READONLY_SCOPE)) { wait('schedule-scope-missing', SIGNIN_WAIT_MS); return cfg; }
+      accessToken = await auth.accessToken();
+    } catch (e) { wait(e?.code === 'oauth-no-client' ? 'no-oauth-client' : 'not-signed-in', SIGNIN_WAIT_MS); return cfg; }
+    let read;
+    try { read = await readChannelSchedule({ accessToken, fetchImpl: opts.fetchImpl ?? fetch, nowMs: t, cfg }); } catch (e) {
+      const code = e instanceof ScheduleError ? e.code : 'schedule-read-failed';
+      wait(code, code === 'schedule-scope-missing' ? SIGNIN_WAIT_MS : BASE_DELAY_MS);
+      return cfg;
+    }
+    queue.setSchedule({ channelLast: read.last !== null ? toIso(read.last) : null, count: read.count, scanned: read.scanned, truncated: read.truncated, readAt: toIso(t) });
+    // Page cap hit: an older scheduled post could be past the pages read, so no slot is given out (never a guess).
+    if (read.truncated) { wait('schedule-read-incomplete', SIGNIN_WAIT_MS); return cfg; }
+    let own = ownLastSlot(queue.items(), new Set(need.map((i) => i.id)));
+    for (const i of need) {
+      const slot = nextSlot({ channelLast: read.last, ownLast: own, nowMs: t, cfg });
+      own = slot;
+      const clear = typeof i.reason === 'string' && (i.reason.startsWith('schedule-') || i.reason === 'slot-passed' || i.reason === 'not-signed-in' || i.reason === 'no-oauth-client');
+      queue.patch(i.id, { publishAt: toIso(slot), slotAt: toIso(t), ...(clear ? { reason: null, nextAt: null } : {}) });
+    }
+    log(`posting: gave ${need.length} clip(s) a publish time (every ${cfg.intervalHours} h)`);
+    return cfg;
+  }
 
   async function processQueue(store, rules) {
     const due = queue.items().filter((i) => i.state === 'queued' && (!i.nextAt || Date.parse(i.nextAt) <= nowMs()));
@@ -199,12 +280,17 @@ export function createPostChain(opts) {
       log(`posting: ${REASON_TEXT[stateReason]}; ${due.length} clip(s) stay queued`);
       return;
     }
+    let cfg = null;
+    if (scheduleOn()) { cfg = await ensureSlots(auth); if (!cfg) return; } // no valid settings: nothing can be re-checked, so nothing uploads
     for (const item of due) {
       if (halted) return;
       if (await liveBlock(outputsStatus)) { queue.setNote({ blocked: 'stream-live' }); return; }
       const post = store.get(item.id);
       if (!post) { queue.patch(item.id, { state: 'failed', reason: 'unknown-post' }); continue; }
       if (post.status === 'uploaded') { queue.patch(item.id, { state: 'done', videoId: post.videoId, reason: null, session: null }); continue; }
+      // post-schedule: only an item with a slot uploads (the slot is fixed before the upload starts, never guessed).
+      let publishAt = null;
+      if (scheduleOn()) { publishAt = queue.get(item.id)?.publishAt ?? null; if (!publishAt) continue; }
       let sha = item.sha; let run = item.run;
       if (!sha) {
         const dir = store.dir(item.id);
@@ -220,7 +306,10 @@ export function createPostChain(opts) {
       let taskEnd = { state: 'failed', note: 'Did not finish; it will be tried again' };
       try {
         const r = await uploadPost({
-          id: item.id, store, auth, outputsStatus, fetchImpl: opts.fetchImpl, chunkSize: opts.chunkSize, sessions,
+          id: item.id, store, auth, outputsStatus, fetchImpl: opts.fetchImpl, chunkSize: opts.chunkSize, sessions, publishAt,
+          minLeadMs: cfg ? minLeadMs(cfg) : 0, marginMs: cfg ? marginMs(cfg) : 0,
+          chunkDeadlineMs: cfg ? chunkDeadlineMs(cfg) : 0, fallbackBps: cfg ? fallbackBps(cfg) : undefined, nowMs,
+          // Runs before every chunk, ahead of youtube.mjs's own slot check (post-schedule): Stop all, the live pause, progress.
           beforeChunk: async (pr) => {
             if (halted) { taskEnd = { state: 'failed', note: 'Stopped by you; it is tried again at the next start' }; throw new UploadError('stopped-by-user', 'stopped'); }
             const b = await liveBlock(outputsStatus);
@@ -231,13 +320,17 @@ export function createPostChain(opts) {
             }
           },
         });
-        taskEnd = { state: 'done', note: 'Uploaded (private)' };
-        queue.patch(item.id, { state: 'done', videoId: r.videoId, reason: null, session: null });
-        await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: r.videoId, at: new Date(nowMs()).toISOString(), target: post.target });
-        log(`posting: uploaded ${item.id} (private)`);
+        // Record only the time Google really got with this video (the session's), never the planned one.
+        const sent = r.publishAt ?? null;
+        const early = sent !== null && Date.parse(sent) <= nowMs();
+        taskEnd = { state: 'done', note: early ? 'Uploaded; its public time had passed, check it in YouTube Studio' : sent ? 'Uploaded (private until its public time)' : 'Uploaded (private)' };
+        queue.patch(item.id, { state: 'done', videoId: r.videoId, reason: early ? 'went-public-early' : null, session: null, sentPublishAt: sent });
+        await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: r.videoId, at: new Date(nowMs()).toISOString(), target: post.target, publishAt: sent });
+        log(`posting: uploaded ${item.id} (private${sent ? `, goes public ${sent}` : ''}${early ? '; its time had passed, check it in YouTube Studio' : ''})`);
       } catch (e) {
         const code = String(e?.code ?? 'error');
         if (code === 'already-uploaded') {
+          // Uploaded earlier (e.g. by hand): which publish time it carried is unknown here, so none is recorded.
           taskEnd = { state: 'done', note: 'Already uploaded' };
           const v = store.get(item.id)?.videoId ?? null;
           queue.patch(item.id, { state: 'done', videoId: v, reason: null, session: null });
@@ -245,7 +338,19 @@ export function createPostChain(opts) {
         } else if (code === 'stopped-by-user') {
           queue.patch(item.id, { state: 'queued', reason: 'stopped-by-user' });
           return;
+        } else if (code === 'slot-passed') {
+          // No session runs now: the slot is too close to use; the next pass gives a new one at the end (no attempt used).
+          taskEnd = { state: 'waiting', note: 'Waiting: new public time' };
+          queue.patch(item.id, { state: 'queued', publishAt: null, reason: 'slot-passed', nextAt: null });
+          log(`posting: ${item.id}: ${REASON_TEXT['slot-passed']}`);
+        } else if (code === 'slot-passed-mid') {
+          // Stopped between chunks or aborted at the chunk deadline (not a failure); the next try drops the unfinished
+          // session and gets a new slot.
+          taskEnd = { state: 'waiting', note: 'Waiting: new public time' };
+          queue.patch(item.id, { state: 'queued', reason: 'slot-passed', nextAt: null });
+          log(`posting: ${item.id}: ${REASON_TEXT['slot-passed']}`);
         } else if (code === 'stream-active') {
+          taskEnd = { state: 'waiting', note: 'Paused while the stream runs; it resumes after' }; // also the check before the first chunk
           queue.patch(item.id, { state: 'queued', reason: 'stream-live' });
           queue.setNote({ blocked: 'stream-live' });
           return;
@@ -261,8 +366,8 @@ export function createPostChain(opts) {
           log(`posting: upload of ${item.id} failed (${code}); retry ${attempts < MAX_ATTEMPTS ? 'later' : 'not planned'}`);
         }
       } finally {
-        // A paused upload leaves the task bar: it is queued again (resumes after the stream, or at the next start) and
-        // the control page's upload queue shows it.
+        // A paused or re-slotted upload leaves the task bar: it is queued again (resumes after the stream, at the next
+        // start, or with its new public time) and the control page's upload queue shows it.
         if (taskEnd.state === 'waiting') removeTaskFile(dataDir, task.id); else taskSay(taskEnd);
       }
     }
@@ -295,7 +400,7 @@ export function createPostChain(opts) {
 
   return {
     queue,
-    summary: () => readQueueSummary(dataDir, flags),
+    summary: () => readQueueSummary(dataDir, flags, nowMs()),
     /** After a successful clip job: package the run's finished clips, then step(). */
     afterRun(runDir, status) {
       if (status) latest = status;

@@ -158,6 +158,6 @@
     "severity": "warning",
     "source": "https://dev.twitch.tv/docs/video-broadcast/ and https://ingest.twitch.tv/ingests",
     "checked": "2026-11-04",
-    "note": "Page: URL format \"rtmp://<ingest-server>/app/<stream-key>\"; the live ingests endpoint additionally gives url_template_secure (\"rtmps://<ingest-server>/app/<stream-key>\") for every server, same host. The user picks the server and stores its URL (now rtmps, same host as before) in Credential Manager (serverRef), so no server is hardcoded here."
+    "note": "Page: URL format \"rtmp://<ingest-server>/app/<stream-key>\"; the live ingests endpoint additionally gives url_template_secure (\"rtmps://<ingest-server>/app/<stream-key>\") for every server, same host. The user picks the server and stores its URL (rtmp or rtmps, same host; the live plan's transport \"auto\" follows the stored scheme, D309 proposed 2026-11-09) in Credential Manager (serverRef), so no server is hardcoded here."
   }
 }

@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 14,
+  "current": 15,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -25,6 +25,7 @@
     { "n": 11, "date": "2026-11-09", "title": "Live test kit: alerts in plain words, feedback after a stream" },
     { "n": 12, "date": "2026-11-09", "title": "Safer YouTube uploads" },
     { "n": 13, "date": "2026-11-09", "title": "20 s live clips, auto-post preview" },
-    { "n": 14, "date": "2026-11-09", "title": "Clip maker check, stricter audio readiness" }
+    { "n": 14, "date": "2026-11-09", "title": "Clip maker check, stricter audio readiness" },
+    { "n": 15, "date": "2026-11-09", "title": "App icon, Twitch rtmp or rtmps, YouTube sign-in fix" }
   ]
 }

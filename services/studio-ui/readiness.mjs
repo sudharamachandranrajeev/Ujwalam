@@ -12,7 +12,9 @@
 // Secrets: stream keys and per-account server addresses stay in Windows Credential Manager. The host reports
 // keyPresent / urlPresent for configured sinks (it reads them itself). Only the server address of a sink with a urlRef
 // (twitch-server, kick-server) is read here, in memory, to compare its scheme (rtmp / rtmps) with the plan's transport;
-// the value is dropped at once and only the scheme is ever reported. When the host has no live outputs (started
+// the value is dropped at once and only the scheme is ever reported. A plan target with transport "auto" (Twitch, D309
+// proposed) takes any of its platform's rtmp/rtmps protocols; the host's transport is the one chosen at start, so a
+// changed address with another allowed scheme needs a restart. When the host has no live outputs (started
 // without --live, or down), the plan file's credential targets are checked for presence directly. Messages, results
 // and the override log never carry a key, an address or a credential target's value.
 //
@@ -25,6 +27,8 @@ import { appendFileSync, mkdirSync, readFileSync, statfsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { systemTool } from '../event-core/config.mjs';
+import { loadPlatforms } from '../outputs/validate.mjs';
+import { liveSchemesOf } from '../../app/host/lib/outputs-plan.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const READINESS_FLAG = 'readiness';
@@ -83,6 +87,7 @@ const sinkLabel = (s) => {
   return s.id && s.id !== s.platform ? `${base} (${s.id})` : base;
 };
 const roundGB = (b) => Math.round((b / GB) * 10) / 10;
+const schemesText = (list) => (list ?? []).map((x) => `${x}://`).join(' or ');
 
 /** Scheme of a URL-like string ('rtmp', 'rtmps', ...) or null. The caller drops the value. */
 export function schemeOf(value) {
@@ -162,7 +167,14 @@ async function checkCredentials(ctx) {
         let f;
         try { f = await credentialFacts(ctx.store(s.urlRef), { scheme: true }); } catch { warns.push(`${label}: server address could not be read to check rtmp/rtmps`); continue; }
         if (!f.present) { problems.push(`${label}: server address not found in Windows Credential Manager`); continue; }
-        if (s.transport && f.scheme !== s.transport) { problems.push(`${label}: server address starts with ${f.scheme ? `${f.scheme}://` : 'no rtmp:// or rtmps://'} but this output sends ${s.transport}://. Set it again with ${s.transport}://`); continue; }
+        if (s.transport && f.scheme !== s.transport) {
+          const pt = ctx.planTargets.find((x) => x.id === s.id);
+          const head = `${label}: server address starts with ${f.scheme ? `${f.scheme}://` : 'no rtmp:// or rtmps://'} but this output sends ${s.transport}://`;
+          if (pt?.transport !== 'auto') problems.push(`${head}. Set it again with ${s.transport}://`);
+          else if (pt.schemes.includes(f.scheme)) problems.push(`${head}. The address was changed after the studio started; restart the studio with --live to use it`);
+          else problems.push(`${head}. ${label} takes only ${schemesText(pt.schemes)}; set it again with one of those`);
+          continue;
+        }
       }
       okNames.push(label);
     }
@@ -184,7 +196,9 @@ async function checkCredentials(ctx) {
       if (t.serverRef) {
         const u = await credentialFacts(ctx.store(t.serverRef), { scheme: true });
         if (!u.present) { problems.push(`${label}: server address not set`); continue; }
-        if (t.transport && u.scheme !== t.transport) { problems.push(`${label}: server address starts with ${u.scheme ? `${u.scheme}://` : 'no rtmp:// or rtmps://'} but the plan sends ${t.transport}://`); continue; }
+        if (t.transport === 'auto') {
+          if (!t.schemes.includes(u.scheme)) { problems.push(`${label}: server address starts with ${u.scheme ? `${u.scheme}://` : 'no rtmp:// or rtmps://'}, but this output takes only ${schemesText(t.schemes) || 'what data/platforms allows'}`); continue; }
+        } else if (t.transport && u.scheme !== t.transport) { problems.push(`${label}: server address starts with ${u.scheme ? `${u.scheme}://` : 'no rtmp:// or rtmps://'} but the plan sends ${t.transport}://`); continue; }
       }
       okNames.push(label);
     } catch { warns.push(`${label}: could not be read from Windows Credential Manager`); }
@@ -336,12 +350,25 @@ export async function runReadiness(deps) {
   return { at: new Date(now()).toISOString(), ok: counts.fail === 0, counts, items };
 }
 
-/** Credential targets of a live plan file: [{ id, transport, keyRef?, serverRef? }] (stream targets only). */
-export function planTargets(file = DEFAULT_PLAN_FILE) {
+/**
+ * Credential targets of a live plan file: [{ id, transport, keyRef?, serverRef?, schemes? }] (stream targets only).
+ * schemes (transport "auto" only): the rtmp/rtmps protocols of the sink's platform (data/platforms), [] if unknown.
+ */
+export function planTargets(file = DEFAULT_PLAN_FILE, platformsDir = path.join(REPO, 'data', 'platforms')) {
   try {
     const j = JSON.parse(readFileSync(file, 'utf8'));
+    const autoSchemes = (id) => {
+      try {
+        const cfg = typeof j.config === 'string' ? JSON.parse(readFileSync(path.resolve(REPO, j.config), 'utf8')) : j.config;
+        const sink = [...(cfg?.sinks ?? []), ...(j.extraSinks ?? [])].find((x) => x.id === id);
+        return sink ? liveSchemesOf(loadPlatforms(platformsDir)[sink.platform]) : [];
+      } catch { return []; }
+    };
     return Object.entries(j.targets ?? {}).filter(([, t]) => t && (t.keyRef || t.serverRef))
-      .map(([id, t]) => ({ id, transport: typeof t.transport === 'string' ? t.transport : null, ...(t.keyRef ? { keyRef: t.keyRef } : {}), ...(t.serverRef ? { serverRef: t.serverRef } : {}) }));
+      .map(([id, t]) => ({
+        id, transport: typeof t.transport === 'string' ? t.transport : null, ...(t.keyRef ? { keyRef: t.keyRef } : {}), ...(t.serverRef ? { serverRef: t.serverRef } : {}),
+        ...(t.transport === 'auto' ? { schemes: autoSchemes(id) } : {}),
+      }));
   } catch { return []; }
 }
 

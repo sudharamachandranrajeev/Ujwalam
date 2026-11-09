@@ -227,7 +227,7 @@ export function selectObsRuntime(runtime, { hostExe, disabled, cefLocales = ['en
 }
 
 // ujwalam-start.exe: the shortcuts' windowless start (app/studio/src/start_stub.cpp; 2026-11-08, no console window).
-export const TOP_FILES = Object.freeze(['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'README.txt', 'HOW-TO.md', 'CHANGELOG-alpha.md', 'SHA256SUMS.txt', 'release.json', 'package.json', 'LICENSE']);
+export const TOP_FILES = Object.freeze(['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'ujwalam.ico', 'README.txt', 'HOW-TO.md', 'CHANGELOG-alpha.md', 'SHA256SUMS.txt', 'release.json', 'package.json', 'LICENSE']);
 
 /** Every packaged path must match the allowlist (package-relative, '/' separators). */
 export function allowProblems(paths) {

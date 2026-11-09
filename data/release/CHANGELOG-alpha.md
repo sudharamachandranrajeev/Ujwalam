@@ -2,6 +2,12 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.15 — 2026-11-09
+
+- Ujwalam has its own icon: shortcuts, task bar, windows and the control page tab.
+- Twitch works with a saved server address that starts with rtmp:// or rtmps:// (Kick stays rtmps://).
+- YouTube sign-in opens the full Google page (it was cut short and Google refused it); the link is also printed to paste by hand.
+- Commands run from the project folder use the installed app's settings and say which folder they used.
 ## 0.1.0-alpha.14 — 2026-11-09
 
 - If clips can't be made on this PC (the clip maker's Python is missing; the download does not include Python), Ujwalam says so at start, in the control page and in the studio window, with how to fix it.

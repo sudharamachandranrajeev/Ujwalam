@@ -260,6 +260,7 @@ export async function buildAlpha(opts = {}) {
     put('Install-Ujwalam.ps1', 'repo', { src: path.join(REPO, 'tools', 'package', 'Install-Ujwalam.ps1') });
     put('Ujwalam.cmd', 'repo', { src: path.join(REPO, 'tools', 'package', 'Ujwalam.cmd') });
     put('ujwalam-start.exe', 'host', { src: startExe }); // the shortcuts run it: no console window (D191)
+    put('ujwalam.ico', 'repo', { src: path.join(REPO, 'app', 'studio', 'res', 'ujwalam.ico') }); // the shortcuts' icon (IconLocation)
     const hostSha = sha256(readFileSync(hostExe));
     const release = {
       product: rel.product, version, n, date: build.date, title: build.title, nodeMin: rel.nodeMin,

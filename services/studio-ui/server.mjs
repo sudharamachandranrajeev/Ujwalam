@@ -31,9 +31,10 @@ import { BOTS, BOT_LABELS, GRACEFUL_MS, createBots } from '../bots/index.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
-import { QUEUE_NAME, createUploadQueue, readQueueSummary, reasonText, streamOnly } from '../posting/auto-chain.mjs';
+import { QUEUE_NAME, createUploadQueue, readQueueSummary, reasonText, shownPublishAt, streamOnly } from '../posting/auto-chain.mjs';
 import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, liveBlock, loadRules, planAuto } from '../posting/auto-post.mjs';
 import { previewRules } from '../posting/preview.mjs';
+import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
@@ -860,7 +861,7 @@ export function createStudioServer(opts) {
       if (typeof opts.dataDir === 'string') {
         try { qs = new Map(createUploadQueue(path.join(opts.dataDir, 'posting', QUEUE_NAME)).items().map((i) => [i.id, i])); queue = readQueueSummary(opts.dataDir, flags); } catch { /* the list still works */ }
       }
-      return json(res, 200, { posts: posting.list().map((p) => { const q = qs.get(p.id); const url = p.videoId ? `https://youtu.be/${p.videoId}` : null; return q ? { ...p, videoUrl: url, queueState: q.state, queueAttempts: q.attempts, queueNextAt: q.nextAt, queueReason: q.reason, queueReasonText: reasonText(q.reason) } : { ...p, videoUrl: url }; }), queue });
+      return json(res, 200, { posts: posting.list().map((p) => { const q = qs.get(p.id); const url = p.videoId ? `https://youtu.be/${p.videoId}` : null; return q ? { ...p, videoUrl: url, queueState: q.state, queueAttempts: q.attempts, queueNextAt: q.nextAt, queueReason: q.reason, queueReasonText: reasonText(q.reason), queuePublishAt: shownPublishAt(q) } : { ...p, videoUrl: url }; }), queue });
     }
     if (req.method === 'GET' && route === '/ui/api/posts/auto/preview') {
       // Read-only dry run: what the rules WOULD queue, with rendered text and skip reasons. No write, no request to Google.
@@ -869,7 +870,7 @@ export function createStudioServer(opts) {
         let profile = {};
         try { if (opts.profileFile && existsSync(opts.profileFile)) profile = JSON.parse(readFileSync(opts.profileFile, 'utf8')); } catch { /* placeholders show as unresolved */ }
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
-        return json(res, 200, await previewRules({ dataDir: opts.dataDir, rules, profile, log, flagOn: !!flags && flags.isOn(AUTO_FLAG), now: () => new Date(now()), outputsStatus: streamOnly(ytOutputsStatus) }));
+        return json(res, 200, await previewRules({ dataDir: opts.dataDir, rules, profile, log, flagOn: !!flags && flags.isOn(AUTO_FLAG), now: () => new Date(now()), outputsStatus: streamOnly(ytOutputsStatus), scheduleOn: !!flags && flags.isOn(SCHEDULE_FLAG), scheduleFile: opts.scheduleFile }));
       } catch { return json(res, 200, { error: 'preview-unavailable', queued: [], skipped: [] }); }
     }
     if (req.method === 'GET' && route === '/ui/api/posts/auto') {

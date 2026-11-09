@@ -554,6 +554,9 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(h.argv[h.argv.indexOf('--outputs') + 1], path.join(root, 'host', 'outputs-params.json'));
     assert.deepEqual(h.outputsParams.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record']);
     for (const s of h.outputsParams.sinks) assert.ok(!Object.hasOwn(s.target, 'key'), `${s.id}: no key field`);
+    // Twitch "auto" (D309 proposed): a stand-in (script) host reaches no platform, so no server address is read.
+    assert.equal(h.outputsParams.sinks.find((s) => s.id === 'twitch').target.transport, 'auto');
+    assert.match(r.out, /outputs: twitch transport "auto" not chosen \(stand-in host: no server address read\)/);
     assert.match(r.out, /LIVE plan: data[\\/]outputs[\\/]alpha-live\.json/);
     assert.match(r.out, /\[studio\] outputs: real targets ALLOWED \(--live\); 5 sink\(s\)/);
     assert.match(r.out, /sink youtube-h: youtube live, keyPresent no, idle/);
