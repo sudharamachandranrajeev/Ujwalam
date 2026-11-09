@@ -99,9 +99,9 @@ Commands (worktree `post/schedule`, 2026-11-09):
 
 ```
 node --test tests/posting-schedule.test.mjs tests/posting-e2e.test.mjs
-  tests 48, pass 48, fail 0
+  tests 49, pass 49, fail 0
 node --test tests/posting*.test.mjs tests/studio-ui-posting*.test.mjs tests/guide.test.mjs tests/flags.test.mjs
-  tests 192, pass 192, fail 0
+  tests 193, pass 193, fail 0
 node --test tests/test-broadcast.test.mjs tests/studio-ui-readiness.test.mjs tests/studio-ui-bots.test.mjs tests/stream-day.test.mjs tests/report-button.test.mjs tests/flags.test.mjs
   tests 87, pass 87, fail 0 (first round; flags.json unchanged since)
 node tools/ci.mjs --quick
@@ -177,6 +177,9 @@ multi-id `videos` endpoints, and echoes publishAt from the upload metadata. New 
     byte is sent and the clip is re-slotted (`slot-passed`). With fallbackKbps 1000 and 500 ms left it goes up.
 - settings: chunkDeadlineSeconds 0, fallbackKbps 10, and a chunkDeadlineSeconds not below marginMinutes x 60 are
   each refused.
+- round 3 (timer limit): a slot 30 days ahead uploads normally in several chunks with no abort and no progress query.
+  setTimeout takes at most 2^31-1 ms (about 24.8 days; longer fires after 1 ms), so no timer is set for a deadline
+  further away; the fit check still uses the real deadline. The test failed before the fix.
 
 ## Review fixes (Codex review, 2026-11-09)
 

@@ -27,6 +27,7 @@ const UPLOAD_INIT_URL = 'https://www.googleapis.com/upload/youtube/v3/videos?upl
 const THUMBNAIL_URL = (videoId) => `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`;
 const DEFAULT_CHUNK = 8 * 1024 * 1024; // 8 MiB, a multiple of 256 KiB as Google's resumable protocol requires
 const MAX_RETRIES = 5;
+const MAX_TIMER_MS = 2 ** 31 - 1; // largest delay setTimeout accepts
 const FALLBACK_BPS = 8000; // 64 kbit/s: deliberately slow guess for the final-chunk estimate when no setting is passed
 const VIDEOS_URL = (videoId) => `https://www.googleapis.com/youtube/v3/videos?part=status,processingDetails&id=${encodeURIComponent(videoId)}`;
 const ACTIVE_STATES = new Set(['starting', 'live', 'retrying']);
@@ -126,7 +127,9 @@ async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSi
       const needMs = end === totalBytes ? ((end - offset) / (slowestBps ?? guard.fallbackBps)) * 1000 : 0;
       if (left <= 0 || needMs > left) throw new UploadError('slot-passed-mid', 'the rest of the upload might not arrive before the planned public time; stopped so it does not go public at once');
       stop = new AbortController();
-      timer = setTimeout(() => stop.abort(), left);
+      // setTimeout takes at most 2^31-1 ms (about 24.8 days); a longer delay would fire after 1 ms. No chunk request
+      // lasts that long, so a deadline further away needs no timer (the checks above still use the real deadline).
+      if (left <= MAX_TIMER_MS) timer = setTimeout(() => stop.abort(), left);
     }
     let res;
     const started = performance.now();

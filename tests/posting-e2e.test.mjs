@@ -529,6 +529,17 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.equal(g.count('query'), 0); assert.equal(g.count('init'), 1);
   });
 
+  test('a slot 30 days ahead (beyond the setTimeout limit of about 24.8 days) uploads normally with no abort', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]);
+    g.opt.channel = [vid('far', 'private', iso(T0 + 30 * 24 * HOUR - 6 * HOUR))];
+    await schedChain(e, g).afterRun(e.runDir, IDLE);
+    const it = e.queue().items()[0];
+    assert.equal(it.state, 'done'); assert.equal(it.reason, null);
+    assert.deepEqual(sent(g), [iso(T0 + 30 * 24 * HOUR)]);
+    assert.equal(g.count('query'), 0, 'no abort, so no progress query'); assert.equal(g.count('init'), 1);
+    assert.ok(g.count('chunk') > 1, 'several chunks, each with the far deadline');
+  });
+
   test('the final chunk does not start when its estimated transfer time does not fit before the deadline', async () => {
     // One chunk (no speed measured yet): fallbackKbps 64 = 8000 B/s, ~370 bytes needs ~46 ms; only 10 ms are left.
     const g = await fakeGoogle(); const e = setup([ROWS[0]]); g.opt.hideOwnUploads = true;
