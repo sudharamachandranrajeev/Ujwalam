@@ -12,7 +12,7 @@ import { main as cli } from '../services/posting/cli.mjs';
 import { READONLY_SCOPE, SCHEDULE_SCOPES, SCOPE, authUrl, createYoutubeAuth } from '../services/posting/oauth.mjs';
 import { formatPreview, previewRules } from '../services/posting/preview.mjs';
 import {
-  DEFAULT_SCHEDULE, HOUR_MS, SCHEDULE_FLAG, latestFutureSchedule, loadScheduleConfig, nextSlot, ownLastSlot, planSlots, slotStale,
+  DEFAULT_SCHEDULE, HOUR_MS, SCHEDULE_FLAG, latestFutureSchedule, loadScheduleConfig, leadOk, nextSlot, ownLastSlot, planSlots, slotTooClose,
 } from '../services/posting/schedule.mjs';
 import { UploadError, uploadMetadata } from '../services/posting/youtube.mjs';
 
@@ -21,7 +21,7 @@ const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-sched-')); tmp.push(d); return d; };
 after(() => { for (const d of tmp) rmSync(d, { recursive: true, force: true }); });
 const PROFILE = { handles: { youtube: '@example-channel', twitch: 'example-channel' }, links: { discord: 'https://example.invalid/d' } };
-const CFG = { intervalHours: 6, minLeadHours: 1, staleMinutes: 15, maxPages: 4, pageSize: 50 };
+const CFG = { intervalHours: 6, minLeadHours: 1, marginMinutes: 15, maxPages: 4, pageSize: 50 };
 const T0 = Date.parse('2026-11-09T10:00:00Z');
 const iso = (t) => new Date(t).toISOString();
 
@@ -29,7 +29,7 @@ describe('slot math (UTC, pure)', () => {
   test('settings come from data/posting/schedule.json (6 h, with source and date)', () => {
     const cfg = loadScheduleConfig();
     assert.equal(cfg.intervalHours, 6);
-    assert.ok(cfg.minLeadHours > 0 && cfg.staleMinutes > 0 && cfg.maxPages >= 1 && cfg.pageSize <= 50);
+    assert.ok(cfg.minLeadHours > 0 && cfg.marginMinutes > 0 && cfg.maxPages >= 1 && cfg.pageSize <= 50);
     const raw = JSON.parse(readFileSync(DEFAULT_SCHEDULE, 'utf8'));
     assert.match(raw.source, /user request 2026-11-09/); assert.equal(raw.checked, '2026-11-09');
   });
@@ -41,11 +41,11 @@ describe('slot math (UTC, pure)', () => {
     }
     assert.throws(() => loadScheduleConfig(path.join(d, 'missing.json')), (e) => e.code === 'schedule-config-bad');
   });
-  test('empty channel and empty queue: now + minLead', () => {
-    assert.equal(iso(nextSlot({ nowMs: T0, cfg: CFG })), '2026-11-09T11:00:00.000Z');
+  test('empty channel and empty queue: now + minLead + margin', () => {
+    assert.equal(iso(nextSlot({ nowMs: T0, cfg: CFG })), '2026-11-09T11:15:00.000Z');
   });
   test('rounded up to the whole minute', () => {
-    assert.equal(iso(nextSlot({ nowMs: T0 + 1500, cfg: CFG })), '2026-11-09T11:01:00.000Z');
+    assert.equal(iso(nextSlot({ nowMs: T0 + 1500, cfg: CFG })), '2026-11-09T11:16:00.000Z');
   });
   test('future channel schedule: 6 h after the latest one', () => {
     assert.equal(iso(nextSlot({ channelLast: T0 + 10 * HOUR_MS, nowMs: T0, cfg: CFG })), '2026-11-10T02:00:00.000Z');
@@ -54,8 +54,8 @@ describe('slot math (UTC, pure)', () => {
     assert.equal(iso(nextSlot({ channelLast: T0 + 2 * HOUR_MS, ownLast: T0 + 9 * HOUR_MS, nowMs: T0, cfg: CFG })), '2026-11-10T01:00:00.000Z');
   });
   test('an anchor so close that +6 h is still sooner than the lead time uses the lead time', () => {
-    // own slot went public 5.5 h ago: +6 h = now + 30 min < now + 1 h
-    assert.equal(iso(nextSlot({ ownLast: T0 - 5.5 * HOUR_MS, nowMs: T0, cfg: CFG })), '2026-11-09T11:00:00.000Z');
+    // own slot went public 5.5 h ago: +6 h = now + 30 min < now + 1 h 15 min
+    assert.equal(iso(nextSlot({ ownLast: T0 - 5.5 * HOUR_MS, nowMs: T0, cfg: CFG })), '2026-11-09T11:15:00.000Z');
   });
   test('planSlots: in order, 6 h apart, never the same slot twice', () => {
     const s = planSlots({ count: 4, channelLast: T0 + 3 * HOUR_MS, nowMs: T0, cfg: CFG });
@@ -85,10 +85,13 @@ describe('slot math (UTC, pure)', () => {
     assert.equal(ownLastSlot(items, new Set(['b'])), T0 + HOUR_MS);
     assert.equal(ownLastSlot([]), null);
   });
-  test('stale: within staleMinutes of now (or unreadable)', () => {
-    assert.equal(slotStale(iso(T0 + 10 * 60000), T0, CFG), true);
-    assert.equal(slotStale(iso(T0 + 20 * 60000), T0, CFG), false);
-    assert.equal(slotStale('x', T0, CFG), true);
+  test('too close: less than minLead ahead (or unreadable); a fresh slot passes the check for the whole margin', () => {
+    assert.equal(slotTooClose(iso(T0 + 59 * 60000), T0, CFG), true);
+    assert.equal(slotTooClose(iso(T0 + 60 * 60000), T0, CFG), false);
+    assert.equal(slotTooClose('x', T0, CFG), true);
+    const fresh = iso(nextSlot({ nowMs: T0, cfg: CFG }));
+    assert.equal(slotTooClose(fresh, T0 + 15 * 60000, CFG), false); assert.equal(slotTooClose(fresh, T0 + 16 * 60000, CFG), true);
+    assert.equal(leadOk(fresh, T0, 75 * 60000), true); assert.equal(leadOk(null, T0, 0), false);
   });
   test('schedule.mjs has no network, auth or write code (the preview imports it)', () => {
     const src = readFileSync(path.join(ROOT, 'services', 'posting', 'schedule.mjs'), 'utf8').replace(/^\/\/.*$/gm, '');
@@ -161,7 +164,7 @@ describe('preview: planned publish time (estimate, read-only)', () => {
     const off = await previewRules({ dataDir: f.dataDir, rules: f.rules, profile: PROFILE, now, log: [] });
     assert.equal(off.schedule.on, false); assert.ok(off.queued.every((q) => !q.publishAt));
     let r = await previewRules({ dataDir: f.dataDir, rules: f.rules, profile: PROFILE, now, log: [], scheduleOn: true });
-    assert.deepEqual(r.queued.map((q) => q.publishAt), ['2026-11-09T11:00:00.000Z', '2026-11-09T17:00:00.000Z']);
+    assert.deepEqual(r.queued.map((q) => q.publishAt), ['2026-11-09T11:15:00.000Z', '2026-11-09T17:15:00.000Z']);
     mkdirSync(path.join(f.dataDir, 'posting'), { recursive: true });
     writeFileSync(path.join(f.dataDir, 'posting', 'upload-queue.json'), JSON.stringify({ version: 1, note: null,
       items: { x: { id: 'x', state: 'done', publishAt: '2026-11-09T20:00:00.000Z' } },
@@ -171,6 +174,15 @@ describe('preview: planned publish time (estimate, read-only)', () => {
     assert.equal(r.schedule.channelReadAt, '2026-11-09T09:00:00.000Z');
     const text = formatPreview(r);
     assert.match(text, /scheduled posting: on, every 6 h/); assert.match(text, /goes public: 2026-11-10T04:00:00.000Z \(estimate\)/);
+  });
+  test('the last channel read hit the page cap: no time is estimated, and the preview says why', async () => {
+    const f = fixture();
+    mkdirSync(path.join(f.dataDir, 'posting'), { recursive: true });
+    writeFileSync(path.join(f.dataDir, 'posting', 'upload-queue.json'), JSON.stringify({ version: 1, note: null, items: {},
+      schedule: { channelLast: null, truncated: true, scanned: 200, readAt: '2026-11-09T09:00:00.000Z' } }));
+    const r = await previewRules({ dataDir: f.dataDir, rules: f.rules, profile: PROFILE, now: () => new Date(T0), log: [], scheduleOn: true });
+    assert.equal(r.schedule.error, 'schedule-read-incomplete'); assert.ok(r.queued.every((q) => !q.publishAt));
+    assert.match(formatPreview(r), /raise maxPages/);
   });
   test('approval-only rules (no autoUpload) get no time; a bad settings file says so', async () => {
     const f = fixture();

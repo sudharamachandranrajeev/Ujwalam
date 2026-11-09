@@ -137,6 +137,7 @@ function estimateSlots({ dataDir, queued, nowMs, file }) {
   let cfg;
   try { cfg = file ? loadScheduleConfig(file) : loadScheduleConfig(); } catch { return { on: true, error: 'schedule-config-bad' }; }
   const qdoc = readJson(path.join(dataDir, 'posting', 'upload-queue.json'));
+  if (qdoc?.schedule?.truncated === true) return { on: true, error: 'schedule-read-incomplete' }; // same as the queue: no time is guessed
   const items = isPlain(qdoc?.items) ? Object.values(qdoc.items) : [];
   const channelLast = savedChannelLast(qdoc, nowMs);
   let own = ownLastSlot(items); // same as the queue: a failed item's slot is never given back
@@ -155,7 +156,8 @@ export function formatPreview(r) {
   if (r.blocked) L.push(`LIVE CHECK: a run would be refused now (${r.blocked}); everything below would be held`);
   L.push(`would queue: ${r.queued.length}`);
   if (r.schedule?.on) {
-    L.push(r.schedule.error ? 'scheduled posting: on, but the settings file data/posting/schedule.json is not valid (nothing would upload)'
+    L.push(r.schedule.error === 'schedule-read-incomplete' ? 'scheduled posting: on, but the channel has more uploads than are checked (raise maxPages in data/posting/schedule.json); nothing would upload'
+      : r.schedule.error ? 'scheduled posting: on, but the settings file data/posting/schedule.json is not valid (nothing would upload)'
       : `scheduled posting: on, every ${r.schedule.intervalHours} h; publish times below are estimates (UTC)${r.schedule.channelReadAt ? `, channel last read ${r.schedule.channelReadAt}` : ', channel not read yet'}; the real time is set when the clip is queued`);
   }
   for (const q of r.queued) {

@@ -6,9 +6,13 @@
 // Slot rule (settings in data/posting/schedule.json, never hardcoded):
 //   anchor = the later of (a) the latest FUTURE publish time already scheduled on the channel (YouTube Studio) and
 //            (b) the latest slot Ujwalam itself already gave out (queue items in any state, past or future);
-//   slot   = anchor + intervalHours, but never earlier than now + minLeadHours; with no anchor at all, now + minLeadHours.
+//   floor  = now + minLeadHours + marginMinutes;
+//   slot   = anchor + intervalHours, but never earlier than the floor; with no anchor at all, the floor.
 //   The result is rounded UP to the whole minute and is always UTC (RFC 3339 'Z'), so time zones and DST never matter.
 // Slots are given out one by one in queue order; each new slot becomes the next anchor, so two clips never share a slot.
+// Check before an upload session starts or resumes: publishAt >= now + minLeadHours (leadOk). The margin in the floor
+// is what lets a slot given out now pass that check when its upload starts a little later in the same batch.
+// Check before every chunk: publishAt >= now + marginMinutes, so an upload never finishes with a past time.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,8 +40,8 @@ export function loadScheduleConfig(file = DEFAULT_SCHEDULE) {
   return {
     intervalHours: num('intervalHours', 0.25, 24 * 30),
     minLeadHours: num('minLeadHours', 0.25, 24 * 30),
-    staleMinutes: num('staleMinutes', 1, 24 * 60),
-    maxPages: Math.floor(num('maxPages', 1, 20)),
+    marginMinutes: num('marginMinutes', 1, 4 * 60),
+    maxPages: Math.floor(num('maxPages', 1, 100)),
     pageSize: Math.floor(num('pageSize', 1, 50)),
   };
 }
@@ -47,7 +51,7 @@ export const toIso = (t) => new Date(t).toISOString(); // always UTC with 'Z'
 
 /** The next slot (ms since epoch) from the anchors. channelLast/ownLast: ms or null. Pure. */
 export function nextSlot({ channelLast = null, ownLast = null, nowMs, cfg }) {
-  const floor = nowMs + cfg.minLeadHours * HOUR_MS;
+  const floor = nowMs + cfg.minLeadHours * HOUR_MS + cfg.marginMinutes * MINUTE_MS;
   const anchors = [channelLast, ownLast].filter((v) => Number.isFinite(v));
   const t = anchors.length ? Math.max(Math.max(...anchors) + cfg.intervalHours * HOUR_MS, floor) : floor;
   return Math.ceil(t / MINUTE_MS) * MINUTE_MS;
@@ -84,8 +88,12 @@ export function latestFutureSchedule(videos, nowMs) {
   return { last, count };
 }
 
-/** A saved slot is too close (or past) to still be used for a NEW upload session: within staleMinutes of now. */
-export const slotStale = (publishAt, nowMs, cfg) => { const t = ms(publishAt); return t === null || t <= nowMs + cfg.staleMinutes * MINUTE_MS; };
+/** True when publishAt is at least needMs ahead of now (unreadable = false). */
+export const leadOk = (publishAt, nowMs, needMs) => { const t = ms(publishAt); return t !== null && t - nowMs >= needMs; };
+/** A saved slot can no longer start or resume an upload session: less than minLeadHours ahead (or unreadable). */
+export const slotTooClose = (publishAt, nowMs, cfg) => !leadOk(publishAt, nowMs, cfg.minLeadHours * HOUR_MS);
+export const minLeadMs = (cfg) => cfg.minLeadHours * HOUR_MS;
+export const marginMs = (cfg) => cfg.marginMinutes * MINUTE_MS;
 
 /** The channel's last known schedule as saved by the chain (for the preview's estimate); null when unknown or past. */
 export function savedChannelLast(queueDoc, nowMs) {

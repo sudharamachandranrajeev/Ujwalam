@@ -170,20 +170,39 @@ export async function uploadVideo(opts) {
   if (isStreamLive(live)) throw new UploadError('stream-active', 'a stream sink is active; uploads never compete with a live stream');
 
   const bytes = statSync(opts.videoPath).size;
-  const metadata = uploadMetadata(opts.post, { publishAt: opts.publishAt ?? null });
-  // opts.sessions ({ get(sha), set(sha, url) }) keeps the resumable session across a stop or restart (D300): a known
-  // session is asked how many bytes Google has and continues from there; a dead one (expired) starts a new session.
+  const publishAt = opts.publishAt ?? null;
+  const metadata = uploadMetadata(opts.post, { publishAt });
+  // post-schedule (D310 proposed): the publish time must still be minLeadMs ahead when a session starts or resumes, and
+  // marginMs ahead before every chunk, so an upload never finishes with a passed time (YouTube would publish at once).
+  const nowMs = opts.nowMs ?? (() => Date.now());
+  const ahead = (iso, need) => iso === null || Date.parse(iso) - nowMs() >= need;
+  // opts.sessions ({ get(sha), set(sha, url, publishAt), publishAtOf?(sha) }) keeps the resumable session across a stop
+  // or restart (D300): a known session is asked how many bytes Google has and continues from there; a dead one (expired)
+  // starts a new session. The session's own publish time is saved with it: it is what Google will apply, never a guess.
   let sessionUrl = opts.sessions?.get(opts.sha256) ?? null;
+  let sent = sessionUrl ? (opts.sessions?.publishAtOf?.(opts.sha256) ?? null) : null;
   let offset = 0;
   if (sessionUrl) {
     // Only a vanished session starts a new one. Any other failure keeps it: a second session could upload the video twice.
     try { offset = await queryProgress(fetchImpl, sessionUrl, bytes); } catch (e) { if (e?.code !== 'upload-session-gone') throw e; sessionUrl = null; offset = 0; }
+    // An unfinished session whose publish time differs from the slot (e.g. started before scheduling was switched on) or
+    // is now too close is dropped: Google never turns an unfinished resumable upload into a video (UNVERIFIED against
+    // real Google), so this cannot post twice. A FINISHED session is recorded with the time it really carried.
+    if (sessionUrl && typeof offset !== 'object' && (sent !== publishAt || !ahead(sent, opts.minLeadMs ?? 0))) {
+      sessionUrl = null; offset = 0; opts.sessions?.set(opts.sha256, null, null);
+    }
   }
   if (!sessionUrl) {
+    if (!ahead(publishAt, opts.minLeadMs ?? 0)) throw new UploadError('slot-passed', 'the planned public time is too close to start this upload');
     sessionUrl = await initiateSession(fetchImpl, opts.accessToken, metadata, bytes);
-    opts.sessions?.set(opts.sha256, sessionUrl);
+    sent = publishAt;
+    opts.sessions?.set(opts.sha256, sessionUrl, sent);
   }
-  const resource = await uploadChunks(fetchImpl, sessionUrl, opts.videoPath, bytes, chunkSize, offset, opts.beforeChunk ?? null);
+  const beforeChunk = async () => {
+    if (opts.beforeChunk) await opts.beforeChunk();
+    if (!ahead(sent, opts.marginMs ?? 0)) throw new UploadError('slot-passed-mid', 'the planned public time came too close during the upload; stopped so it does not go public at once');
+  };
+  const resource = await uploadChunks(fetchImpl, sessionUrl, opts.videoPath, bytes, chunkSize, offset, beforeChunk);
   const videoId = resource?.id;
   if (typeof videoId !== 'string' || !videoId) throw new UploadError('upload-failed', 'no video id in the finished response');
 
@@ -196,7 +215,8 @@ export async function uploadVideo(opts) {
   let thumbnailOk = null;
   if (opts.coverPath) thumbnailOk = await setThumbnail(fetchImpl, opts.accessToken, videoId, opts.coverPath);
 
-  return { videoId, thumbnailOk, uploadStatus: typeof resource?.status?.uploadStatus === 'string' ? resource.status.uploadStatus : null };
+  // publishAt = the time this video was really sent with (the session's), which may differ from opts.publishAt.
+  return { videoId, thumbnailOk, uploadStatus: typeof resource?.status?.uploadStatus === 'string' ? resource.status.uploadStatus : null, publishAt: sent };
 }
 
 /**
@@ -216,7 +236,7 @@ export async function uploadPost(opts) {
   const accessToken = await auth.accessToken();
   const r = await uploadVideo({
     post, sha256, videoPath: video.file, coverPath: cover?.file, accessToken,
-    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now, sessions: opts.sessions, publishAt: opts.publishAt ?? null, beforeChunk: opts.beforeChunk, chunkSize: opts.chunkSize,
+    ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now, sessions: opts.sessions, publishAt: opts.publishAt ?? null, minLeadMs: opts.minLeadMs, marginMs: opts.marginMs, nowMs: opts.nowMs, beforeChunk: opts.beforeChunk, chunkSize: opts.chunkSize,
     recordUploaded: async ({ videoId }) => { store.ledger.annotate(sha256, post.target, { videoId }); },
   });
   return { ...r, hasCover: !!cover };
