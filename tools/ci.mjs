@@ -80,6 +80,9 @@ export const STEPS = [
   { name: 'build', run: buildStep },
   { name: 'lint', cmd: 'npm', args: ['run', 'lint', '--silent'], shell: true },
   npmRun('build-host', 'build:host'),
+  // The Qt studio shell (incremental): the Qt suites run the built exe, so a stale one failed them after a merge
+  // that changed app/studio (2026-11-09).
+  npmRun('build-studio', 'build:studio'),
   // Benchmarks fail CI only on a QUIET machine. On a noisy one the bench prints "bench: advisory (noisy: ...)", exits 0,
   // and the step shows as advisory with the reasons (regressions are listed in its output). Until ENFORCE_FROM in
   // tools/bench/run.mjs (v1 window) a quiet-run regression is advisory too: "bench: advisory (v1 window: ...)".
@@ -112,6 +115,7 @@ export const isCloud = (env = process.env) => env.UJWALAM_CI_ENV === 'cloud' || 
 export const LAPTOP_ONLY = {
   build: 'needs the MSVC + libobs spike build dir (app/spike/build) and the OBS source tree',
   'build-host': 'needs the OBS runtime and source paths from app/host/host.local.json (vendored OBS, not in the repo)',
+  'build-studio': 'needs the Qt kit from app/studio/studio.local.json and VS Build Tools',
   'test-host': 'starts the libobs host with NVENC on the GPU; no GPU or OBS runtime on the runner',
   'test-py': 'needs the OCR venv packages (numpy, opencv, rapidocr, onnxruntime); no .venv on the runner',
   'test-ocr': 'needs .venv (RapidOCR and onnxruntime wheels)',
@@ -145,7 +149,7 @@ export function summaryLines({ results, skipped = [], cloud = false, seconds = 0
 
 // D190 batching: the pre-commit hook runs only these (about 30 s). The full list runs about once an hour and before a
 // push; a full pass on an unchanged tree writes the stamp that the pre-push hook requires (tools/ci-stamp.mjs).
-export const QUICK = ['build', 'lint', 'build-host', 'validate-registry', 'validate-outputs', 'validate-games', 'private-scan', 'legacy-verify'];
+export const QUICK = ['build', 'lint', 'build-host', 'build-studio', 'validate-registry', 'validate-outputs', 'validate-games', 'private-scan', 'legacy-verify'];
 
 function runCommand(step, root) {
   return new Promise((resolve) => {
