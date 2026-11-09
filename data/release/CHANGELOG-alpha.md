@@ -2,6 +2,11 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.10 — 2026-11-09
+
+- Streams can restart by themselves after a host crash (switch "stream-recovery", off): only streams you started with "yes, on air", at most 2 times in 10 minutes, and never if you pressed Stop or End all.
+- Stop and End all always win over a Start that is still on its way; if streams cannot be stopped, the control page says so.
+- Clips made while you play use the same match filter as clips made after the recording.
 ## 0.1.0-alpha.9 — 2026-11-08
 
 - Game audio no longer drops out at start (the capture card's sound could stop for a whole session). If game or mic sound stops anyway, Ujwalam says "Game audio missing" and restarts it.
