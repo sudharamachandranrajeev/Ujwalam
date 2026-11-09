@@ -2,6 +2,10 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.13 — 2026-11-09
+
+- Clips found while you play are at least 20 s long (they start a little earlier when needed).
+- Auto-post preview (Posts > Preview auto-post rules, with the "posting" switch on; or `node services/posting/cli.mjs auto --preview`): shows what your rules would upload, where, with which title, and why anything is skipped. Nothing is uploaded.
 ## 0.1.0-alpha.12 — 2026-11-09
 
 - Auto posting: if YouTube received a whole video but its answer got lost, the video is now recorded as posted instead of being retried and marked failed, and it is never uploaded twice.

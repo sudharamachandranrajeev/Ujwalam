@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 12,
+  "current": 13,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -23,6 +23,7 @@
     { "n": 9, "date": "2026-11-08", "title": "Game audio fix, crash fix, montages, auto posting" },
     { "n": 10, "date": "2026-11-09", "title": "Streams restart after a crash (switch), safer Stop" },
     { "n": 11, "date": "2026-11-09", "title": "Live test kit: alerts in plain words, feedback after a stream" },
-    { "n": 12, "date": "2026-11-09", "title": "Safer YouTube uploads" }
+    { "n": 12, "date": "2026-11-09", "title": "Safer YouTube uploads" },
+    { "n": 13, "date": "2026-11-09", "title": "20 s live clips, auto-post preview" }
   ]
 }
