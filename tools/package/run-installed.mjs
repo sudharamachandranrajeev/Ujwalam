@@ -82,6 +82,15 @@ export function pruneLaunchLogs(dir, keep = 10) {
   return old;
 }
 
+/**
+ * The start-up clip maker check (the zip ships no Python, D283): one plain line when clips cannot be made, else null.
+ * t = record-clips.mjs clipTools() for the folder the launcher will use (clipRoot from ujwalam.json, else the install).
+ */
+export function clipMakerNote(t) {
+  if (!t || t.py) return null;
+  return `[ujwalam] Clips can't be made on this PC yet: ${t.reason}.${t.fix ? ` ${t.fix}.` : ''} Everything else works.`;
+}
+
 export async function main(args = process.argv.slice(2)) {
   let release;
   try { release = JSON.parse(readFileSync(path.join(INSTALL, 'release.json'), 'utf8')); } catch { console.log('[ujwalam] release.json missing: run Ujwalam.cmd from an installed or unzipped build'); return 2; }
@@ -113,6 +122,11 @@ export async function main(args = process.argv.slice(2)) {
   }
   Object.assign(process.env, spec.env);
   console.log(`[ujwalam] ${release.version} from ${spec.install}; data ${spec.dataRoot}; overlays ${existsSync(spec.overlayRoot) ? spec.overlayRoot : 'off (no overlay folder)'}; profile ${existsSync(spec.profile) ? 'found' : 'none'}`);
+  try {
+    const { clipTools } = await import(pathToFileURL(path.join(INSTALL, 'services', 'studio-ui', 'record-clips.mjs')).href);
+    const note = clipMakerNote(clipTools({ clipRoot: spec.clipRoot ?? INSTALL })); // the launcher's CLIP_ROOT rule
+    if (note) console.log(note);
+  } catch { /* the check only informs; the launcher reports clips itself */ }
   const { main: launch } = await import(pathToFileURL(path.join(INSTALL, 'services', 'studio-ui', 'launch.mjs')).href);
   return launch(spec.argv);
 }

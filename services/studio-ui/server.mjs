@@ -428,12 +428,12 @@ export function createStudioServer(opts) {
   function clipStatus() {
     if (typeof opts.dataDir !== 'string') return null;
     const st = readSettings(opts.dataDir);
-    const base = { settings: st.clips, settingsSaved: st.exists, folder: clipsFolder(opts.dataDir, st), available: null, reason: null, state: 'idle', running: null, queued: 0, asks: [], last: null };
+    const base = { settings: st.clips, settingsSaved: st.exists, folder: clipsFolder(opts.dataDir, st), available: null, reason: null, fix: null, missing: null, state: 'idle', running: null, queued: 0, asks: [], last: null };
     try {
       const s = JSON.parse(readFileSync(path.join(opts.dataDir, 'clips', 'status.json'), 'utf8'));
       const str = (v, n) => (typeof v === 'string' ? v.slice(0, n) : null);
       const l = s.last && typeof s.last === 'object' ? s.last : null;
-      return { ...base, available: s.available === true, reason: str(s.reason, 200), state: str(s.state, 16) ?? 'idle',
+      return { ...base, available: s.available === true, reason: str(s.reason, 200), fix: str(s.fix, 200), missing: ['root', 'python', 'script'].includes(s.missing) ? s.missing : null, state: str(s.state, 16) ?? 'idle',
         running: s.running ? { name: str(s.running.name, 120), kind: str(s.running.kind, 16) } : null,
         queued: Array.isArray(s.queued) ? s.queued.length : 0,
         asks: (Array.isArray(s.asks) ? s.asks : []).slice(0, 5).map((a) => ({ id: str(a.id, 160), name: str(a.name, 120), kind: str(a.kind, 16), minutes: Number.isFinite(a.minutes) ? a.minutes : null })),

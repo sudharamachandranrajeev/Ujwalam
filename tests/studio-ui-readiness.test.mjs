@@ -187,6 +187,11 @@ describe('runReadiness', () => {
     const c = byId(await runReadiness(deps({ clip: { py: null, reason: 'the clip maker is missing in X' } })), 'clips');
     assert.equal(c.status, 'warn');
     assert.match(c.message, /missing/);
+    // the zip ships no Python: the item carries the clip maker's plain reason and the fix
+    const np = byId(await runReadiness(deps({ clip: { py: null, reason: "the clip maker's Python is missing (the Ujwalam download does not include Python; looked in X)", fix: 'To make clips, run Y' } })), 'clips');
+    assert.equal(np.status, 'warn');
+    assert.match(np.message, /^Clips cannot be made: the clip maker's Python is missing/);
+    assert.equal(np.fix, 'To make clips, run Y');
   });
 
   test('audio: host up without the state call = unreadable (fail); a missing source fails; a muted mix source warns; pluggable', async () => {

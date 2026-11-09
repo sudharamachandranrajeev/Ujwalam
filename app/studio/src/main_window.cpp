@@ -3142,7 +3142,9 @@ void MainWindow::updateClips(const QJsonObject &cl)
 	else if (allOff)
 		t = QStringLiteral("Clips: off");
 	else if (cl.value(QStringLiteral("available")).isBool() && !cl.value(QStringLiteral("available")).toBool())
-		t = QStringLiteral("Clips: not set up");
+		// The Alpha zip ships no Python: say so in plain words (the reason and the fix are in the tooltip).
+		t = cl.value(QStringLiteral("missing")).toString() == QStringLiteral("python") ? QStringLiteral("Clips: Python not found")
+											: QStringLiteral("Clips: not set up");
 	else if (last.value(QStringLiteral("result")).toString() == QStringLiteral("done"))
 		t = QStringLiteral("%1 new clip(s)").arg(last.value(QStringLiteral("clips")).toInt());
 	else if (last.value(QStringLiteral("result")).toString() == QStringLiteral("failed"))
@@ -3155,6 +3157,8 @@ void MainWindow::updateClips(const QJsonObject &cl)
 		      QStringLiteral("\nClips folder: ") + cl.value(QStringLiteral("folder")).toString();
 	if (!cl.value(QStringLiteral("reason")).toString().isEmpty())
 		tip += QStringLiteral("\n") + cl.value(QStringLiteral("reason")).toString();
+	if (!cl.value(QStringLiteral("fix")).toString().isEmpty())
+		tip += QStringLiteral("\n") + cl.value(QStringLiteral("fix")).toString();
 	if (!last.value(QStringLiteral("reason")).toString().isEmpty())
 		tip += QStringLiteral("\nLast time: ") + last.value(QStringLiteral("reason")).toString();
 	pillClips_->setToolTip(tip);
@@ -3310,7 +3314,10 @@ void MainWindow::openSettings(bool firstRun)
 		cf->addRow(QStringLiteral("When I record:"), rec);
 		cf->addRow(QStringLiteral("When I stream live:"), liv);
 		if (cl.value(QStringLiteral("available")).isBool() && !cl.value(QStringLiteral("available")).toBool()) {
-			auto *warn = new QLabel(QStringLiteral("Clips can't be made on this PC yet: ") + cl.value(QStringLiteral("reason")).toString(), clipBox);
+			QString why = QStringLiteral("Clips can't be made on this PC yet: ") + cl.value(QStringLiteral("reason")).toString();
+			if (!cl.value(QStringLiteral("fix")).toString().isEmpty())
+				why += QStringLiteral(". ") + cl.value(QStringLiteral("fix")).toString();
+			auto *warn = new QLabel(why, clipBox);
 			warn->setWordWrap(true);
 			cf->addRow(warn);
 		}
@@ -3564,6 +3571,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("note"), note_->text());
 	o.insert(QStringLiteral("alerts"), QJsonObject{{QStringLiteral("shown"), !alertBar_->isHidden()}, {QStringLiteral("text"), alertBar_->text()}, {QStringLiteral("level"), alertLevel_}});
 	o.insert(QStringLiteral("clips"), pillClips_->text());
+	o.insert(QStringLiteral("clipsTip"), pillClips_->toolTip());
 	o.insert(QStringLiteral("clipAsks"), clips_.value(QStringLiteral("asks")).toArray().size());
 	o.insert(QStringLiteral("clipSettings"), clips_.value(QStringLiteral("settings")));
 	o.insert(QStringLiteral("tasks"), tasks_->probe());

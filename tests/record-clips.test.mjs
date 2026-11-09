@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { clipRunSpec, countClips, createRecordClips, finishedRecording, isLive, parseProgress } from '../services/studio-ui/record-clips.mjs';
+import { CLIP_MAKER_FIX, clipRunSpec, clipTools, countClips, createRecordClips, finishedRecording, isLive, parseProgress } from '../services/studio-ui/record-clips.mjs';
 import { folderProblem, readSettings, settingsProblems, writeSettings } from '../services/studio-ui/user-settings.mjs';
 
 const RUNGS = [{ id: 'rec-h', canvas: 'H' }, { id: 'rec-v', canvas: 'V' }];
@@ -75,6 +75,11 @@ test('clipRunSpec: whole recording (after) and moments found while it ran (while
   const gpu = path.join(root, '.venv-gpu', 'Scripts', 'python.exe');
   assert.match(clipRunSpec({ clipRoot: null, dataDir: 'D', job: { type: 'full', h: 'a', name: 'a' } }).reason, /not set up/);
   assert.match(clipRunSpec({ clipRoot: root, dataDir: 'D', job: { type: 'full', h: 'a', name: 'a' }, exists: has([script]) }).reason, /missing/);
+  // the zip ships no Python (D283): plain reason, a fix, and which part is missing
+  const noPy = clipTools({ clipRoot: root, exists: has([script]) });
+  assert.deepEqual([noPy.py, noPy.missing, noPy.fix], [null, 'python', CLIP_MAKER_FIX]);
+  assert.match(noPy.reason, /Python is missing \(the Ujwalam download does not include Python/);
+  assert.deepEqual([clipTools({ clipRoot: root, exists: has([gpu]) }).missing, clipTools({ clipRoot: null }).missing, clipTools({ clipRoot: root, exists: has([script, gpu]) }).missing], ['script', 'root', null]);
   const r = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { type: 'full', h: 'C:/r/h.mkv', v: 'C:/r/v.mkv', name: 'h' }, exists: has([script, gpu]) });
   assert.equal(r.spec.exe, gpu);
   assert.deepEqual(r.spec.argv, ['-I', script, '--data-dir', 'D', 'run', '--detect', '--threads', '4', '--encoder', 'h264_nvenc',

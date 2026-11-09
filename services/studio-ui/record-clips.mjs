@@ -47,13 +47,23 @@ export function finishedRecording(prev, cur) {
   return files.h ? files : null;
 }
 
-/** Python + clipper in clipRoot, or the reason clips cannot be made. */
+// What to do when the clip maker cannot run. The Alpha zip ships no Python (D283), so an installed copy needs a folder
+// that has services/clip and its venv (a checkout): the updater writes it to ujwalam.json as clipRoot. No install.
+export const CLIP_MAKER_FIX = 'To make clips, point Ujwalam at a folder that has the clip maker and its Python: Install-Ujwalam.ps1 -SettingsOnly -ClipMaker <folder>';
+
+/**
+ * Python + clipper in clipRoot, or the plain reason clips cannot be made: { py, script, reason, fix, missing }.
+ * missing: null (ready) | 'root' (no clip root set) | 'python' (no .venv-gpu / .venv python.exe) | 'script' (no clipper.py).
+ */
 export function clipTools({ clipRoot, exists = existsSync }) {
-  if (!clipRoot) return { py: null, script: null, reason: 'the clip maker is not set up on this PC' };
+  const no = (missing, reason) => ({ py: null, script: null, reason, fix: CLIP_MAKER_FIX, missing });
+  if (!clipRoot) return no('root', 'the clip maker is not set up on this PC');
   const py = ['.venv-gpu', '.venv'].map((x) => path.join(clipRoot, x, 'Scripts', 'python.exe')).find((p) => exists(p));
   const script = path.join(clipRoot, 'services', 'clip', 'clipper.py');
-  if (!py || !exists(script)) return { py: null, script: null, reason: `the clip maker is missing in ${clipRoot}` };
-  return { py, script, reason: null };
+  // Python first: an installed copy has neither, and Python is the part the download cannot bring.
+  if (!py) return no('python', `the clip maker's Python is missing (the Ujwalam download does not include Python; looked in ${clipRoot})`);
+  if (!exists(script)) return no('script', `the clip maker is missing in ${clipRoot} (no services\\clip\\clipper.py)`);
+  return { py, script, reason: null, fix: null, missing: null };
 }
 
 /** The live clipper's newest session folder (holds saves.jsonl), or null. */
@@ -173,7 +183,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
     writeTasks();
     const s = readSettings(dataDir);
     const t = clipTools({ clipRoot });
-    const out = { at: iso(now()), state: current ? 'running' : queue.length ? 'queued' : 'idle', available: !!t.py, reason: t.reason,
+    const out = { at: iso(now()), state: current ? 'running' : queue.length ? 'queued' : 'idle', available: !!t.py, reason: t.reason, fix: t.fix, missing: t.missing,
       settings: s.clips, folder: clipsFolder(dataDir, s),
       running: current ? pickJob(current) : null, queued: queue.filter((q) => q !== current).map(pickJob), asks, last };
     try {

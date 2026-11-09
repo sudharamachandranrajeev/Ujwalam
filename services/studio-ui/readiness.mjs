@@ -243,7 +243,7 @@ async function checkLoopback(ctx) {
 async function checkClips(ctx) {
   const t = ctx.clipTools();
   const lc = ctx.flagOn('live-clips') ? 'on' : 'off';
-  if (!t.py) return item('clips', 'warn', `Clips cannot be made: ${t.reason}. Live clipping is ${lc}.`);
+  if (!t.py) return item('clips', 'warn', `Clips cannot be made: ${t.reason}. Live clipping is ${lc}.`, t.fix ? { fix: t.fix } : {});
   return item('clips', 'pass', `Clip maker ready. Live clipping is ${lc}.`);
 }
 

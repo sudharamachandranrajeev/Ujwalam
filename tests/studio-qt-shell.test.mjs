@@ -158,6 +158,24 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.ok(p.calls.some(([m]) => m === 'replay.save'), 'replay.save called');
     assert.ok(p.calls.some(([m, q]) => m === 'marker.add' && q?.source === 'api'), 'marker.add {source: api} called');
   });
+  test('clip maker without Python (the zip ships none): the pill says so in plain words, the tooltip has the reason and the fix', async () => {
+    const reason = "the clip maker's Python is missing (the Ujwalam download does not include Python; looked in C:\\Ujwalam\\app)";
+    const fix = 'To make clips, point Ujwalam at a folder that has the clip maker and its Python: Install-Ujwalam.ps1 -SettingsOnly -ClipMaker <folder>';
+    const p = await probe([], 5000, '', (d) => {
+      mkdirSync(path.join(d, 'clips'), { recursive: true });
+      writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ clips: { recording: 'after', live: 'off' } }));
+      writeFileSync(path.join(d, 'clips', 'status.json'), JSON.stringify({ state: 'idle', available: false, reason, fix, missing: 'python', asks: [], queued: [], last: null }));
+    });
+    assert.equal(p.clips, 'Clips: Python not found');
+    assert.ok(p.clipsTip.includes(reason), p.clipsTip);
+    assert.ok(p.clipsTip.includes(fix), p.clipsTip);
+    const q = await probe([], 5000, '', (d) => {
+      mkdirSync(path.join(d, 'clips'), { recursive: true });
+      writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ clips: { recording: 'after', live: 'off' } }));
+      writeFileSync(path.join(d, 'clips', 'status.json'), JSON.stringify({ state: 'idle', available: false, reason: 'the clip maker is not set up on this PC', fix, missing: 'root', asks: [], queued: [], last: null }));
+    });
+    assert.equal(q.clips, 'Clips: not set up');
+  });
   test('clip choices (D284): Settings saves the modes; a "make clips?" question is answered from the window', async () => {
     const ask = { id: 'practice-h-1-1', name: 'practice-h-1', kind: 'recording', minutes: 8 };
     const p = await probe([], 6000, 'clip-modes:after:while,answer:yes', (d) => {

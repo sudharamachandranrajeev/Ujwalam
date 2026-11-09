@@ -15,7 +15,8 @@ import { START_EXE } from '../app/studio/tools/build.mjs';
 import { changelogExcerpt, releaseInfo } from '../tools/package/build-alpha.mjs';
 import { allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
 import { peInfo } from '../tools/package/pe.mjs';
-import { installedSpec, nodeOk, pruneLaunchLogs } from '../tools/package/run-installed.mjs';
+import { clipMakerNote, installedSpec, nodeOk, pruneLaunchLogs } from '../tools/package/run-installed.mjs';
+import { CLIP_MAKER_FIX, clipTools } from '../services/studio-ui/record-clips.mjs';
 import { extractEntry, readZip, writeZip } from '../tools/package/zip.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -123,6 +124,53 @@ test('installed spec: data dirs under the data root, OBS runtime and host exe fr
     writeFileSync(path.join(dataRoot, 'ujwalam.json'), JSON.stringify({ overlayRoot: install }));
     assert.throws(() => installedSpec({ install, dataRoot }), /install dir/);
     assert.throws(() => installedSpec({ install, dataRoot: path.join(install, 'data') }), /install dir/);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('clip maker check: the package ships no Python, so an installed copy says so in plain words and names the fix', () => {
+  // the repo part of the zip has no Python, no venv and no clipper (manifest.mjs repoFiles; the allowlist refuses them)
+  const files = repoFiles(REPO);
+  for (const f of files) assert.ok(!/(^|\/)\.venv|python\.exe$|\.py$|(^|\/)services\/clip\//.test(f), f);
+  assert.ok(allowProblems(['.venv/Scripts/python.exe']).length > 0 && allowProblems(['python/python.exe']).length > 0, 'a Python in the zip would be refused');
+  const d = tmp('clipcheck');
+  try {
+    const install = path.join(d, 'Ujwalam', '0.1.0-alpha.1');
+    const dataRoot = path.join(d, 'Ujwalam', 'data');
+    mkdirSync(path.join(install, 'services', 'studio-ui'), { recursive: true });
+    mkdirSync(dataRoot, { recursive: true });
+    // 1) no clipRoot in ujwalam.json: the launcher uses the install dir, which has no Python
+    const spec = installedSpec({ install, dataRoot });
+    assert.equal(spec.clipRoot, null);
+    const t = clipTools({ clipRoot: spec.clipRoot ?? install });
+    assert.deepEqual([t.py, t.missing], [null, 'python']);
+    assert.match(t.reason, /^the clip maker's Python is missing \(the Ujwalam download does not include Python; looked in /);
+    assert.equal(t.fix, CLIP_MAKER_FIX);
+    const note = clipMakerNote(t);
+    assert.match(note, /^\[ujwalam\] Clips can't be made on this PC yet: the clip maker's Python is missing/);
+    assert.ok(note.includes('Install-Ujwalam.ps1 -SettingsOnly -ClipMaker <folder>'), note);
+    assert.match(note, /Everything else works\.$/);
+    // 2) clipRoot names a folder with Python but no clipper: the clipper is named
+    const maker = path.join(d, 'checkout');
+    mkdirSync(path.join(maker, '.venv', 'Scripts'), { recursive: true });
+    writeFileSync(path.join(maker, '.venv', 'Scripts', 'python.exe'), '');
+    writeFileSync(path.join(dataRoot, 'ujwalam.json'), JSON.stringify({ clipRoot: maker }));
+    const s2 = installedSpec({ install, dataRoot });
+    const t2 = clipTools({ clipRoot: s2.clipRoot });
+    assert.deepEqual([t2.py, t2.missing], [null, 'script']);
+    assert.match(t2.reason, /clipper\.py/);
+    // 3) a folder with both: ready, no note
+    mkdirSync(path.join(maker, 'services', 'clip'), { recursive: true });
+    writeFileSync(path.join(maker, 'services', 'clip', 'clipper.py'), '');
+    const t3 = clipTools({ clipRoot: s2.clipRoot });
+    assert.equal(t3.py, path.join(maker, '.venv', 'Scripts', 'python.exe'));
+    assert.equal(t3.missing, null);
+    assert.equal(clipMakerNote(t3), null);
+    // 4) the GPU venv wins when both exist (the clip maker's own preference)
+    mkdirSync(path.join(maker, '.venv-gpu', 'Scripts'), { recursive: true });
+    writeFileSync(path.join(maker, '.venv-gpu', 'Scripts', 'python.exe'), '');
+    assert.equal(clipTools({ clipRoot: maker }).py, path.join(maker, '.venv-gpu', 'Scripts', 'python.exe'));
+    // 5) nothing set at all (a checkout run with clipRoot null is never passed; a null root says "not set up")
+    assert.deepEqual([clipTools({ clipRoot: null }).missing, clipMakerNote(clipTools({ clipRoot: null })).includes('not set up')], ['root', true]);
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 
