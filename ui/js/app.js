@@ -691,6 +691,16 @@
       (r.plan || []).forEach(function (x) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'would ' + x.action + ' ' + x.id }), el('span', { class: 'muted', text: x.ruleId + ': ' + x.reason })])); });
     }).catch(function () { setText($('posts-auto'), ''); });
   }
+  // Rules preview (read-only dry run): what the rules would queue, with the rendered text, and what is skipped and why.
+  function loadPreview() {
+    var ul = $('posts-preview'); clear(ul); setText($('posts-preview-sum'), 'Checking...');
+    Api.postsAutoPreview().then(function (r) {
+      if (r.error) { setText($('posts-preview-sum'), 'Preview unavailable.'); return; }
+      setText($('posts-preview-sum'), 'Dry run: ' + r.queued.length + ' would be queued, ' + r.skipped.length + ' skipped. Nothing is written or sent.' + (r.blocked ? ' A stream looks live (' + r.blocked + '): a run would be refused.' : ''));
+      r.queued.forEach(function (q) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'would ' + q.actions.join(' + ') + ': ' + q.kind + ' to ' + q.target + ' | ' + q.title }), el('span', { class: 'muted', text: 'rule ' + q.ruleId + (q.score !== null ? ', score ' + q.score : '') })])); });
+      r.skipped.forEach(function (s) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'skip ' + (s.kind || '?') + ' ' + (s.target || '-') + (s.title ? ' | ' + s.title : '') }), el('span', { class: 'muted', text: s.reason + (s.detail ? ' (' + s.detail + ')' : '') })])); });
+    }).catch(function () { setText($('posts-preview-sum'), 'Preview unavailable.'); });
+  }
   function openPosts() {
     $('posts').hidden = false; ps.sel = null; $('post-form').hidden = true;
     guard(Api.posts().then(function (r) { ps.posts = r.posts || []; ps.queue = r.queue || null; renderPosts(); }));
@@ -709,6 +719,7 @@
   function wirePosts() {
     wireInspector();
     $('btn-posts').addEventListener('click', openPosts);
+    $('posts-preview-btn').addEventListener('click', loadPreview);
     $('btn-report').addEventListener('click', reportClick);
     $('posts-close').addEventListener('click', function () { $('posts').hidden = true; clear($('post-media')); });
     $('post-form').addEventListener('submit', function (e) {

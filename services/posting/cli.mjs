@@ -15,6 +15,7 @@ import { createYoutubeAuth } from './oauth.mjs';
 import { uploadPost, UploadError } from './youtube.mjs';
 import { streamOnly } from './auto-chain.mjs';
 import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, loadRules, planAuto, runAuto } from './auto-post.mjs';
+import { formatPreview, previewRules } from './preview.mjs';
 import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
 
@@ -83,7 +84,7 @@ export async function main(argv, out = (s) => console.log(s), err = (s) => conso
   if (a._[0] === 'youtube') return youtubeMain(a, out, err, deps);
   if (a._[0] === 'auto') return autoMain(a, out, err, deps);
   if (a._[0] !== 'package' || typeof a.run !== 'string') {
-    err('usage: node services/posting/cli.mjs package --run <clip run folder> [--data-dir DIR] [--profile FILE] [--ffmpeg FILE] [--targets a,b]\n       node services/posting/cli.mjs youtube signin|status|signout\n       node services/posting/cli.mjs youtube upload --id <post id> [--data-dir DIR]\n       node services/posting/cli.mjs auto [--run] [--data-dir DIR] [--rules FILE]');
+    err('usage: node services/posting/cli.mjs package --run <clip run folder> [--data-dir DIR] [--profile FILE] [--ffmpeg FILE] [--targets a,b]\n       node services/posting/cli.mjs youtube signin|status|signout\n       node services/posting/cli.mjs youtube upload --id <post id> [--data-dir DIR]\n       node services/posting/cli.mjs auto [--run | --preview [--json]] [--data-dir DIR] [--rules FILE]');
     return 2;
   }
   try {
@@ -120,6 +121,18 @@ async function autoMain(a, out, err, deps) {
     const store = createPostStore({ ledgerFile: path.join(dataDir, 'posting', LEDGER_NAME) });
     const logFile = path.join(dataDir, 'posting', AUTO_LOG_NAME);
     const mode = describeMode({ flagOn, rules });
+    if (a.preview === true) {
+      // Read-only: never opens a browser or auth, never uploads. Live state is read from the local host only (127.0.0.1).
+      const profileFile = typeof a.profile === 'string' ? a.profile : path.join(REPO, 'data', 'profile.local.json');
+      let profile = {};
+      try { if (existsSync(profileFile)) profile = JSON.parse(readFileSync(profileFile, 'utf8')); } catch { /* placeholders stay unresolved and are shown */ }
+      const r = await previewRules({
+        dataDir, rules, profile, flagOn, log: createAutoLog(logFile).list(), now: deps.now,
+        outputsStatus: streamOnly(deps.outputsStatus ?? outputsStatusFor(dataDir)),
+      });
+      out(a.json === true ? JSON.stringify(r, null, 2) : formatPreview(r));
+      return 0;
+    }
     if (a.run !== true) {
       const plan = planAuto({ posts: store.list(), rules: rules.rules, autoUpload: rules.autoUpload, log: createAutoLog(logFile).list(), now: (deps.now ?? (() => new Date()))() });
       out(`auto-post (dry run): ${mode.enabled ? 'on' : 'off'} (flags posting+auto-post: ${flagOn}), ${mode.ruleCount} rule(s), autoUpload ${mode.autoUpload}, privacy private`);

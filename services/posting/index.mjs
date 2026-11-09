@@ -332,8 +332,8 @@ export async function packageRun(opts) {
 // ---------------------------------------------------------------- finished videos (uploads.json, D301)
 
 export const UPLOAD_KINDS = Object.freeze(['short', 'montage', 'won-reel']);
-const CANVAS_TAIL = /_(\d{2})_(v(?:-[a-z0-9-]+)?|h)\.[a-z0-9]+$/i;
-const NAME_DATE = /_(\d{4})(\d{2})(\d{2})-\d{6}_/;
+export const CANVAS_TAIL = /_(\d{2})_(v(?:-[a-z0-9-]+)?|h)\.[a-z0-9]+$/i;
+export const NAME_DATE =/_(\d{4})(\d{2})(\d{2})-\d{6}_/;
 
 /** Target for one finished video, from data/posting/limits.json (never hardcoded): vertical and not longer than the
  *  Shorts limit -> the target that carries `video`; anything else -> `youtube-video`. */

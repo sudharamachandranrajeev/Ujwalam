@@ -43,6 +43,7 @@
     reportUrl: function (title, note) { return request('GET', '/ui/api/report-url?title=' + encodeURIComponent(title || '') + '&note=' + encodeURIComponent(note || '')); },
     posts: function () { return request('GET', '/ui/api/posts'); },
     postsAuto: function () { return request('GET', '/ui/api/posts/auto'); },
+    postsAutoPreview: function () { return request('GET', '/ui/api/posts/auto/preview'); },
     postMediaUrl: function (id, kind) { return '/ui/api/posts/media?id=' + encodeURIComponent(id) + '&kind=' + encodeURIComponent(kind); },
     postEdit: function (id, fields) { var b = { id: id }; Object.keys(fields).forEach(function (k) { b[k] = fields[k]; }); return request('POST', '/ui/api/posts/edit', b); },
     postStatus: function (id, status) { return request('POST', '/ui/api/posts/status', { id: id, status: status }); },
