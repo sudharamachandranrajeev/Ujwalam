@@ -8,7 +8,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { resolveDataDir } from '../event-core/config.mjs';
+import { dataDirNote, resolveCliDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, PostingError, createPostStore, packageRun } from './index.mjs';
 import { createYoutubeAuth } from './oauth.mjs';
@@ -82,6 +82,13 @@ function parseArgs(argv) {
   return out;
 }
 
+/** The data dir for this run (--data-dir, else the installed app's, else the profile's); says which one it used. */
+function cliDataDir(a, out) {
+  const r = resolveCliDataDir({ dataDir: typeof a['data-dir'] === 'string' ? a['data-dir'] : undefined });
+  if (r.source !== 'option') out(`posting: ${dataDirNote(r)}`); // an explicit --data-dir needs no echo
+  return r.dir;
+}
+
 export async function main(argv, out = (s) => console.log(s), err = (s) => console.error(s), deps = {}) {
   const a = parseArgs(argv);
   if (a._[0] === 'youtube') return youtubeMain(a, out, err, deps);
@@ -91,7 +98,7 @@ export async function main(argv, out = (s) => console.log(s), err = (s) => conso
     return 2;
   }
   try {
-    const dataDir = resolveDataDir({ dataDir: typeof a['data-dir'] === 'string' ? a['data-dir'] : undefined });
+    const dataDir = cliDataDir(a, out);
     if (!createFlags({ dataDir }).isOn(POSTING_FLAG)) { err(`posting: the '${POSTING_FLAG}' feature flag is off (switch it on from the control page)`); return EXIT_FLAG_OFF; }
     const profileFile = typeof a.profile === 'string' ? a.profile : path.join(REPO, 'data', 'profile.local.json');
     let profile = {};
@@ -117,7 +124,7 @@ export async function main(argv, out = (s) => console.log(s), err = (s) => conso
  *  Review-first stays the default: with no rules, or a flag off, nothing happens. */
 async function autoMain(a, out, err, deps) {
   try {
-    const dataDir = resolveDataDir({ dataDir: typeof a['data-dir'] === 'string' ? a['data-dir'] : undefined });
+    const dataDir = cliDataDir(a, out);
     const flags = createFlags({ dataDir });
     const flagOn = flags.isOn(POSTING_FLAG) && flags.isOn(AUTO_FLAG);
     const rules = deps.rules ?? loadRules(typeof a.rules === 'string' ? a.rules : undefined);
@@ -163,7 +170,7 @@ async function autoMain(a, out, err, deps) {
 
 /** `youtube signin|status|signout|upload`. Always behind the posting flag -- same gate as `package`. */
 async function youtubeMain(a, out, err, deps) {
-  const dataDir = resolveDataDir({ dataDir: typeof a['data-dir'] === 'string' ? a['data-dir'] : undefined });
+  const dataDir = cliDataDir(a, out);
   if (!createFlags({ dataDir }).isOn(POSTING_FLAG)) { err(`posting: the '${POSTING_FLAG}' feature flag is off (switch it on from the control page)`); return EXIT_FLAG_OFF; }
   const auth = (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen });
   const sub = a._[1];

@@ -35,6 +35,32 @@ export function resolveDataDir({ dataDir, profilePath = path.join(REPO, 'data', 
   throw new Error('event core needs a data dir: pass dataDir or set paths.event_core_data in data/profile.local.json');
 }
 
+/** Folder the installed app keeps its event-core data in: <data root>/core, data root = UJWALAM_DATA_ROOT, else
+ *  %LOCALAPPDATA%/Ujwalam/data (same rule as tools/package/run-installed.mjs). null when none of its files exist. */
+export function installedDataDir(env = process.env) {
+  let root;
+  if (env.UJWALAM_DATA_ROOT) root = path.resolve(env.UJWALAM_DATA_ROOT);
+  else if (env.LOCALAPPDATA) root = path.join(path.resolve(env.LOCALAPPDATA), 'Ujwalam', 'data');
+  else return null;
+  const core = path.join(root, 'core');
+  return ['flags.local.json', 'event-core.db', KEY_FILE].some((f) => existsSync(path.join(core, f))) ? core : null;
+}
+
+/** For user-facing CLIs. Order: 1 explicit dataDir (--data-dir), 2 the installed app's data dir (when one exists),
+ *  3 paths.event_core_data in the profile. Returns { dir, source: 'option' | 'installed' | 'profile' }.
+ *  Never creates or changes anything. Library code keeps using resolveDataDir. */
+export function resolveCliDataDir({ dataDir, env = process.env, profilePath } = {}) {
+  if (typeof dataDir === 'string' && dataDir) return { dir: path.resolve(dataDir), source: 'option' };
+  const inst = installedDataDir(env);
+  if (inst) return { dir: inst, source: 'installed' };
+  return { dir: resolveDataDir({ profilePath }), source: 'profile' };
+}
+
+/** One line telling which data dir a CLI used. */
+export function dataDirNote(r) {
+  return `data dir (${r.source === 'option' ? '--data-dir' : r.source === 'installed' ? 'installed app' : 'profile'}): ${r.dir}`;
+}
+
 // Review E8-09: Windows system tools are run by absolute path from a validated %SystemRoot%\System32, never by bare
 // name (PATH order). SystemRoot must be a local absolute path (X:\...), agree with %windir% when that is set, and the
 // tool must exist there as a file; otherwise systemTool() throws and callers fail closed.

@@ -31,8 +31,8 @@
 // <dataDir>/stalls.jsonl, rotated at 1 MiB).
 
 import { randomBytes } from 'node:crypto';
-import { createEventCore, resolveDataDir } from './index.mjs';
-import { ensureSecureDir } from './config.mjs';
+import { createEventCore } from './index.mjs';
+import { dataDirNote, ensureSecureDir, resolveCliDataDir } from './config.mjs';
 import { createFixtureRecorder } from './streamerbot/anonymise.mjs';
 import { checkUrl, createStreamerbotConnector, DEFAULT_URL, isLoopback } from './streamerbot/connector.mjs';
 import { startService } from './api/service.mjs';
@@ -88,7 +88,9 @@ export async function listen(args, io = { out: (s) => console.log(s), signal: nu
   let recorder = null;
   if (!args['no-fixtures']) {
     try {
-      const dir = resolveDataDir({ dataDir: args['data-dir'] });
+      const r = resolveCliDataDir({ dataDir: args['data-dir'] });
+      const dir = r.dir;
+      if (r.source !== 'option') io.out(`[listen] ${dataDirNote(r)}`);
       if (ensureSecureDir(dir).protection === 'acl-failed') io.out('[listen] warn: could not restrict the data dir to the current user (ACL_FAILED); fixtures off');
       else recorder = createFixtureRecorder({ dir });
     } catch { recorder = null; }
