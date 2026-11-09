@@ -40,7 +40,7 @@ class Guide;
 
 // A native child widget the host draws a canvas preview into (P5a step 4): the host makes its preview a child
 // window of this widget's handle and resizes it when the slot changes size. If the host refuses (no canvas yet, host
-// down), the slot shows why and the "Own window" button still opens a host window. Display rule: D219.
+// down), the slot shows why and the "Own window" button still opens a host window. Window rule: D316 (normal windows).
 class PreviewSlot : public QWidget {
 public:
 	PreviewSlot(ApiClient *api, QString canvas, QWidget *parent);

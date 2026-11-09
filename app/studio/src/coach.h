@@ -2,7 +2,8 @@
 // Coach marks (D294 proposed): a floating card with an arrow that points at a part of the studio window, a soft dim
 // around it, "step N of M", Back / Next / Skip, "Don't show this again" and a close button. The tour text is data
 // (data/guide/tour.json, served by the UI server). Everything is a child widget of the main window: no top-level
-// window, no focus (every control is NoFocus), the dim lets mouse clicks through, only the card takes them (D191).
+// window, no focus (every control is NoFocus), the dim lets mouse clicks through, only the card takes them (a design choice;
+// D316 dropped the old no-focus rule).
 // The same Bubble is the hints' card (hints.h). Colours come through guidecol:: so the data-driven themes (branch
 // ui/themes: theme::color(name)) swap in with one change in coach.cpp.
 #pragma once
