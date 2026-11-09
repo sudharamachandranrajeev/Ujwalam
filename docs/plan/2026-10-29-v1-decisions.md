@@ -455,3 +455,5 @@ Streamer.bot or Speaker.bot stays BM8 (P15, ADR and security review).
 - Changed: `data/flags.json`, `services/studio-ui/server.mjs`, `tools/collect-stream-feedback.mjs`,
   `tools/package/manifest.mjs`, `ui/index.html`, `ui/js/app.js`, `app/studio/src/main_window.cpp`,
   `app/studio/src/main_window.h`.
+
+**D306 (2026-11-09) Posting and clip pipeline end-to-end tests.** `tests/posting-e2e.test.mjs` runs the auto-post chain against a local fake YouTube; `tests/py/test_clip_e2e.py` runs the clip maker on a generated recording. Found and fixed: a resumable upload whose final answer was lost was retried 8 times and could post twice. Now a finished session's video resource is recorded, and a new session starts only on 404/410. UNVERIFIED against real YouTube (the fake models Google's documented behaviour). Evidence: `docs/evidence/2026-11-09-posting-e2e.md`, `docs/evidence/2026-11-09-clip-pipeline-e2e.md`.
