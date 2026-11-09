@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+$shell = New-Object -ComObject WScript.Shell
+$lnk = $shell.CreateShortcut('a.lnk')
+$lnk.TargetPath = Join-Path $InstallRoot 'Ujwalam.cmd'
+$lnk.TargetPath = Join-Path $InstallRoot 'ujwalam-start.exe'
+$lnk.TargetPath = 'C:\Windows\System32\cmd.exe'
+$lnk.TargetPath = 'x.cmd' # console window: the user asked for a terminal here
+Start-Process node -ArgumentList 'a.mjs'
+Start-Process node -ArgumentList 'a.mjs' -WindowStyle Hidden
+Start-Process python.exe -NoNewWindow
+Start-Process explorer.exe $dir
+# $lnk.TargetPath = 'old.cmd' (a comment)

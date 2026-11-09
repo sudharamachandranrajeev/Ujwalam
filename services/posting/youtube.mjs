@@ -119,7 +119,7 @@ async function uploadChunks(fetchImpl, sessionUrl, filePath, totalBytes, chunkSi
   let attempt = 0;
   let slowestBps = null; // bytes per second of the slowest accepted chunk in this run
   while (offset < totalBytes) {
-    if (beforeChunk) await beforeChunk(); // throws to stop (a stream started); the session stays valid for a later resume
+    if (beforeChunk) await beforeChunk({ offset, total: totalBytes }); // progress for the task bar; throws to stop (a stream started); the session stays valid for a later resume
     const end = Math.min(offset + chunkSize, totalBytes);
     let stop = null; let timer = null;
     if (guard) {
@@ -233,8 +233,9 @@ export async function uploadVideo(opts) {
     sent = publishAt;
     opts.sessions?.set(opts.sha256, sessionUrl, sent);
   }
-  const beforeChunk = async () => {
-    if (opts.beforeChunk) await opts.beforeChunk();
+  // The caller's hook (live pause, Stop all, task-bar progress) runs first and gets { offset, total }; then the slot check.
+  const beforeChunk = async (progress) => {
+    if (opts.beforeChunk) await opts.beforeChunk(progress);
     if (!ahead(sent, opts.marginMs ?? 0)) throw new UploadError('slot-passed-mid', 'the planned public time came too close during the upload; stopped so it does not go public at once');
   };
   // A scheduled session's chunks must end opts.chunkDeadlineMs before its time (aborted otherwise; see uploadChunks).

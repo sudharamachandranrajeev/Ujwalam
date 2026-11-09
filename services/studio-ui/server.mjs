@@ -46,7 +46,7 @@ import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
 import { createTasks } from './tasks.mjs';
 import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
-import { clipTools } from './record-clips.mjs';
+import { STOP_TASKS_FILE, clipTools } from './record-clips.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
@@ -156,6 +156,8 @@ export const SCENE_EDIT_FLAG = 'scene-edit';
 // refused while live). Removing a scene or layer and the project-file move stay behind the flag.
 const FREE_STRUCTURE_OPS = ['scene.add', 'layer.add', 'layer.duplicate', 'layer.rename', 'scene.duplicate', 'scene.rename'];
 const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove', 'layer.move', ...FREE_STRUCTURE_OPS];
+/** Host calls that start a stream or a recording: refused while Ujwalam is closing (closing lock, D311 proposed). */
+const START_METHODS = new Set(['stream.start', 'record.start']);
 const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'], 'layer.move': ['scene', 'layer', 'canvas', 'direction'],
   'layer.duplicate': ['scene', 'layer'], 'layer.rename': ['scene', 'layer', 'name'], 'scene.duplicate': ['scene'], 'scene.rename': ['scene', 'name'] };
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
@@ -468,6 +470,69 @@ export function createStudioServer(opts) {
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, 'answer.json.tmp'), JSON.stringify({ id: body.id, make: body.make, remember: body.remember === true }));
     renameSync(path.join(dir, 'answer.json.tmp'), path.join(dir, 'answer.json'));
+    return json(res, 200, { ok: true });
+  }
+
+  // Closing lock (tray exits, D311 proposed; Codex review round 2). The studio quits only with a granted lock, and
+  // quitting makes the launcher stop the host, so the grant and every stream/recording start are serialized here (the
+  // one writer of starts to the host; the go-live authority is revoked too, so no stream recovery starts meanwhile):
+  //   - quitBegin sets the lock FIRST (synchronously), so every start that arrives after it is refused (409 closing);
+  //   - a start already under way (or one that ended in the last RECENT_START_MS, the host may still report it idle)
+  //     refuses the grant;
+  //   - then a fresh host.status: a stream or recording running, or a status that cannot be read, refuses (fail closed);
+  //   - a refused or cancelled quit releases the lock;
+  //   - a granted lock never expires (round 3): only a cancel with its token, or the end of this process, releases
+  //     it. A studio that hangs holding it leaves every start refused ("Ujwalam is closing"): fail safe, never a quit
+  //     that ends a stream. The lock exists before its grant only while quitBegin itself runs, and each of its waits
+  //     is bounded (QUIT_WAIT_MS: no answer = refused and released), so nothing can expire or clear it meanwhile;
+  //   - the studio exits only after quitCommit confirms, at that moment, that its token is still the held, granted lock.
+  const RECENT_START_MS = 5000; const QUIT_WAIT_MS = Number.isFinite(limits.quitWaitMs) && limits.quitWaitMs > 0 ? limits.quitWaitMs : 10_000; // limits.quitWaitMs: tests
+  let closing = null; let startsInFlight = 0; let lastStartAt = -Infinity;
+  const isClosing = () => !!closing;
+  const CLOSING_REFUSAL = { error: 'closing', detail: 'Ujwalam is closing' };
+  const bounded = (p) => Promise.race([Promise.resolve(p), new Promise((_, rej) => { const t = setTimeout(() => rej(new Error('timeout')), QUIT_WAIT_MS); t.unref?.(); })]);
+  async function quitBegin(res) {
+    if (isClosing()) return json(res, 200, { granted: false, reason: 'already-closing' });
+    const token = randomBytes(16).toString('hex');
+    const lock = { token, granted: false };
+    closing = lock;
+    const refuse = (reason) => { if (closing === lock) closing = null; return json(res, 200, { granted: false, reason }); };
+    if (startsInFlight > 0 || now() - lastStartAt < RECENT_START_MS) return refuse('starting');
+    let hs = null;
+    try { hs = await bounded(host.call('host.status', {})); } catch { hs = null; }
+    if (closing !== lock) return json(res, 200, { granted: false, reason: 'cancelled' });
+    if (!hs || typeof hs.live !== 'boolean' || typeof hs.recording !== 'boolean') return refuse('unreadable');
+    if (hs.live) return refuse('live');
+    if (hs.recording) return refuse('recording');
+    if (startsInFlight > 0) return refuse('starting'); // cannot happen (starts are refused while closing): fail closed anyway
+    if (authority) {
+      let revoked = false;
+      try { revoked = (await bounded(authority.revoke('closing'))) !== false; } catch { revoked = false; }
+      if (closing !== lock) return json(res, 200, { granted: false, reason: 'cancelled' });
+      if (!revoked) return refuse('unreadable'); // the launcher did not confirm: no grant (the revoke itself fails closed)
+    }
+    lock.granted = true;
+    return json(res, 200, { granted: true, token });
+  }
+  function quitCancel(res, body) {
+    if (typeof body.token !== 'string' || Object.keys(body).some((k) => k !== 'token')) return json(res, 400, { error: 'bad-params' });
+    if (closing?.token === body.token) closing = null;
+    return json(res, 200, { ok: true });
+  }
+  // Right before it exits, the studio checks that its grant still stands (synchronous: no start can slip in between).
+  function quitCommit(res, body) {
+    if (typeof body.token !== 'string' || Object.keys(body).some((k) => k !== 'token')) return json(res, 400, { error: 'bad-params' });
+    if (!closing || !closing.granted || closing.token !== body.token) return json(res, 409, { error: 'stale-quit', detail: 'This quit is no longer granted' });
+    return json(res, 200, { ok: true });
+  }
+  // Stop the background tasks only (the tray's Stop all while live or recording): the launcher reads the request
+  // (<dataDir>/clips/stop-tasks.json) and ends the clip job's whole tree and any upload; the studio and host stay.
+  function stopTasks(res) {
+    if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+    const dir = path.join(opts.dataDir, 'clips');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, 'stop-tasks.json.tmp'), JSON.stringify({ atMs: now() }));
+    renameSync(path.join(dir, 'stop-tasks.json.tmp'), path.join(dir, STOP_TASKS_FILE));
     return json(res, 200, { ok: true });
   }
 
@@ -853,6 +918,10 @@ export function createStudioServer(opts) {
     }
     if (route === '/ui/api/settings') return settingsRoute(res, body);
     if (route === '/ui/api/clips/answer') return clipAnswer(res, body);
+    if (route === '/ui/api/tasks/stop') return stopTasks(res);
+    if (route === '/ui/api/quit/begin') return quitBegin(res);
+    if (route === '/ui/api/quit/cancel') return quitCancel(res, body);
+    if (route === '/ui/api/quit/commit') return quitCommit(res, body);
     if (route === '/ui/api/clips/open') {
       if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
       const dir = clipsFolder(opts.dataDir);
@@ -868,6 +937,7 @@ export function createStudioServer(opts) {
       const bad = validate(spec.schema, params);
       if (bad) return json(res, 400, { error: bad });
       if (spec.flag && !(flags && flags.isOn(spec.flag))) return json(res, 404, { error: `${spec.flag}-off` });
+      if (START_METHODS.has(body.method) && isClosing()) return json(res, 409, CLOSING_REFUSAL);
       if (spec.confirm || (live && spec.liveConfirm)) {
         // Stream and recording changes need a typed phrase; while live, the on-air phrase (also for layout changes).
         let phrase = (live || spec.confirm === 'onair') ? 'yes, on air' : 'yes';
@@ -1043,6 +1113,12 @@ export function createStudioServer(opts) {
           return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, forced: r.forced === true, bots: await bots.statusAll() });
         }
         if (p.kind === 'host') {
+          // A stream or recording start: refused while Ujwalam is closing; counted from here (before any await) so a
+          // quit request in between sees it (closing lock above).
+          const starting = START_METHODS.has(p.method);
+          if (starting && isClosing()) return json(res, 409, CLOSING_REFUSAL);
+          if (starting) startsInFlight += 1;
+          try {
           const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse
           if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
           // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
@@ -1080,6 +1156,7 @@ export function createStudioServer(opts) {
           // A layout change confirmed while live autosaves like an instant one (P5b).
           const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
+          } finally { if (starting) { startsInFlight -= 1; lastStartAt = now(); } }
         }
         if (p.kind === 'end-all') { if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });

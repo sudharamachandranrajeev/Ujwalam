@@ -32,17 +32,70 @@ QColor stateColour(const QString &s)
 		return theme::color(QStringLiteral("muted"));
 	return theme::color(QStringLiteral("accent"));
 }
-// 0..1, or -1 when the amount of work is unknown.
 double fractionOf(const QJsonObject &t)
 {
-	const double total = t.value(QStringLiteral("total")).toDouble(-1);
+	return tasktime::fraction(t);
+}
+// Long jobs get a toast when they start (D311 proposed); the studio's own quick actions (saving settings, a preview)
+// only when they finish, as before.
+bool longJob(const QJsonObject &t)
+{
+	const QString k = t.value(QStringLiteral("kind")).toString();
+	return !t.value(QStringLiteral("id")).toString().startsWith(QStringLiteral("ui-")) || k == QStringLiteral("upload") || k == QStringLiteral("import");
+}
+} // namespace
+
+// ---- tasktime ----
+
+double tasktime::fraction(const QJsonObject &t)
+{
 	if (t.value(QStringLiteral("state")).toString() == QStringLiteral("done"))
 		return 1.0;
+	const QJsonValue p = t.value(QStringLiteral("progress"));
+	if (p.isDouble())
+		return std::clamp(p.toDouble(), 0.0, 1.0);
+	const double total = t.value(QStringLiteral("total")).toDouble(-1);
 	if (total <= 0 || t.value(QStringLiteral("done")).isNull())
 		return -1.0;
 	return std::clamp(t.value(QStringLiteral("done")).toDouble() / total, 0.0, 1.0);
 }
-} // namespace
+
+QString tasktime::duration(double ms)
+{
+	const qint64 s = qint64(std::max(0.0, ms) / 1000.0);
+	const qint64 h = s / 3600, m = (s % 3600) / 60, sec = s % 60;
+	if (h > 0)
+		return QStringLiteral("%1:%2:%3").arg(h).arg(m, 2, 10, QLatin1Char('0')).arg(sec, 2, 10, QLatin1Char('0'));
+	return QStringLiteral("%1:%2").arg(m).arg(sec, 2, 10, QLatin1Char('0'));
+}
+
+QString tasktime::text(const QJsonObject &t)
+{
+	const QString st = t.value(QStringLiteral("state")).toString();
+	const QJsonValue el = t.value(QStringLiteral("elapsedMs"));
+	QString out = el.isDouble() ? QStringLiteral("%1 elapsed").arg(duration(el.toDouble())) : QString();
+	if (st == QStringLiteral("done") || st == QStringLiteral("failed"))
+		return el.isDouble() ? QStringLiteral("took %1").arg(duration(el.toDouble())) : QString();
+	QString left;
+	if (st == QStringLiteral("waiting"))
+		left = QStringLiteral("waiting its turn");
+	else {
+		const QJsonValue eta = t.value(QStringLiteral("etaMs"));
+		if (!eta.isDouble())
+			left = QStringLiteral("time left unknown");
+		else {
+			const double sec = eta.toDouble() / 1000.0;
+			const QString step = t.value(QStringLiteral("stage")).toString().isEmpty() ? QString() : QStringLiteral("this step: ");
+			if (sec < 60)
+				left = step + QStringLiteral("less than a minute left");
+			else if (sec < 3600)
+				left = step + QStringLiteral("about %1 min left").arg(qint64(std::ceil(sec / 60.0)));
+			else
+				left = step + QStringLiteral("about %1 h %2 min left").arg(qint64(sec / 3600)).arg(qint64(std::fmod(sec, 3600.0) / 60.0));
+		}
+	}
+	return out.isEmpty() ? left : out + QStringLiteral(" · ") + left;
+}
 
 // ---- SmoothBar ----
 
@@ -240,6 +293,9 @@ TaskRow::TaskRow(const QString &id, QWidget *parent) : QFrame(parent), id_(id)
 	v->addWidget(note_);
 	bar_ = new SmoothBar(5, this);
 	v->addWidget(bar_);
+	time_ = new QLabel(this); // elapsed and time left (D311 proposed)
+	time_->setObjectName(QStringLiteral("muted"));
+	v->addWidget(time_);
 }
 
 void TaskRow::setTask(const QJsonObject &t)
@@ -267,6 +323,9 @@ void TaskRow::setTask(const QJsonObject &t)
 	note_->setText(n);
 	note_->setVisible(!n.isEmpty());
 	close_->setVisible(finished_);
+	const QString tt = tasktime::text(t);
+	time_->setText(tt);
+	time_->setVisible(!tt.isEmpty());
 	bar_->setProgress(st, st == QStringLiteral("waiting") ? 0.0 : fractionOf(t));
 }
 
@@ -370,6 +429,11 @@ void TaskBar::update(const QJsonArray &tasks, double serverNowMs)
 		const double age = serverNowMs - t.value(QStringLiteral("updatedAt")).toDouble(0);
 		if (finished && !dismissed_.contains(id) && (wasActive || (was.isEmpty() && !first_ && age >= 0 && age < 6000)))
 			toast(t.value(QStringLiteral("title")).toString(), t.value(QStringLiteral("note")).toString(), st == QStringLiteral("failed"));
+		// A toast when a long job starts (one we did not see before, after the first poll: no burst at window open).
+		if (!finished && was.isEmpty() && !first_ && longJob(t)) {
+			startToasts_++;
+			toast(QStringLiteral("Started: %1").arg(t.value(QStringLiteral("title")).toString()), QStringLiteral("Its progress is in the task list."), false);
+		}
 		lastState_[id] = st;
 		if (st == QStringLiteral("running")) {
 			running_++;
@@ -590,9 +654,13 @@ QJsonObject TaskBar::probe() const
 	o.insert(QStringLiteral("chipText"), chip_->text());
 	o.insert(QStringLiteral("panelOpen"), open_);
 	o.insert(QStringLiteral("toasts"), int(toasts_.size()));
-	QJsonArray titles;
-	for (const QJsonValue &v : tasks_)
+	o.insert(QStringLiteral("startToasts"), startToasts_);
+	QJsonArray titles, times;
+	for (const QJsonValue &v : tasks_) {
 		titles.append(v.toObject().value(QStringLiteral("title")).toString());
+		times.append(tasktime::text(v.toObject()));
+	}
 	o.insert(QStringLiteral("titles"), titles);
+	o.insert(QStringLiteral("times"), times);
 	return o;
 }

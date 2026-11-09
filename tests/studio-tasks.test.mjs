@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { cleanTask, createTasks, PRUNE_MS, readTaskFiles, tasksDir, writeTaskFile } from '../services/studio-ui/tasks.mjs';
+import { cleanTask, createTasks, createTiming, ETA_MIN_MS, etaFrom, progressOf, PRUNE_MS, readTaskFiles, tasksDir, writeTaskFile } from '../services/studio-ui/tasks.mjs';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -56,6 +56,64 @@ test('createTasks: start/update/done/fail, track(), order, pruning, file tasks m
     const b = tasks.start({ title: 'Now', kind: 'x' });
     assert.deepEqual(tasks.list().map((x) => x.state), ['running', 'waiting', 'failed', 'done'], 'running, waiting, failed, done');
     t += PRUNE_MS + 1; assert.equal(tasks.list().length, 0); void b;
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+// ---- progress, elapsed, time left (user 2026-11-09, D311 proposed) ----
+test('progressOf: done/total, done = 1, unknown amount = null', () => {
+  assert.equal(progressOf({ state: 'running', done: 1, total: 4 }), 0.25);
+  assert.equal(progressOf({ state: 'done', done: null, total: null }), 1);
+  assert.equal(progressOf({ state: 'running', done: null, total: 4 }), null);
+  assert.equal(progressOf({ state: 'running', done: 2, total: null }), null);
+  assert.equal(progressOf({ state: 'running', done: 9, total: 4 }), 1, 'capped');
+});
+
+test('etaFrom: from the measured rate only; unknown before ETA_MIN_MS, without progress, or going back', () => {
+  assert.equal(etaFrom({ at: 0, p: 0.1 }, 0.3, 10_000), 35_000, '0.2 in 10 s, 0.7 left -> 35 s');
+  assert.equal(etaFrom({ at: 0, p: 0 }, 0.5, 60_000), 60_000);
+  assert.equal(etaFrom({ at: 0, p: 0.1 }, 0.3, ETA_MIN_MS - 1), null, 'too soon to measure');
+  assert.equal(etaFrom({ at: 0, p: 0.3 }, 0.3, 60_000), null, 'no progress since: unknown, never a guess');
+  assert.equal(etaFrom({ at: 0, p: 0.5 }, 0.4, 60_000), null);
+  assert.equal(etaFrom({ at: 0, p: 0.5 }, 1, 60_000), 0, 'finished: nothing left');
+  assert.equal(etaFrom(null, 0.5, 1), null);
+});
+
+test('createTiming: elapsed for running and finished tasks; ETA per stage; waiting and unknown amounts have none', () => {
+  let t = 1_000_000;
+  const { timing, keep } = createTiming(() => t);
+  const base = { id: 'clip-a', state: 'running', stage: 'detect', total: 10, startedAt: t - 30_000 };
+  assert.deepEqual(timing({ ...base, done: 2 }), { progress: 0.2, elapsedMs: 30_000, etaMs: null }, 'first sample: no rate yet');
+  t += 5000;
+  assert.deepEqual(timing({ ...base, done: 4 }), { progress: 0.4, elapsedMs: 35_000, etaMs: 15_000 }, '0.2 per 5 s, 0.6 left');
+  t += 5000;
+  const r = timing({ ...base, stage: 'render', done: 1, total: 4 });
+  assert.equal(r.etaMs, null, 'a new stage starts a new measurement');
+  t += 4000;
+  assert.equal(timing({ ...base, stage: 'render', done: 2, total: 4 }).etaMs, 8000);
+  assert.deepEqual(timing({ id: 'w', state: 'waiting', startedAt: t - 1000 }), { progress: null, elapsedMs: 1000, etaMs: null });
+  assert.deepEqual(timing({ id: 'u', state: 'running', startedAt: t - 2000, total: null, done: null }), { progress: null, elapsedMs: 2000, etaMs: null }, 'unknown amount of work: unknown time left');
+  assert.deepEqual(timing({ id: 'd', state: 'done', startedAt: t - 9000, updatedAt: t - 4000 }), { progress: 1, elapsedMs: 5000, etaMs: null }, 'finished: elapsed stops at its end');
+  keep(new Set());
+  t += 4000;
+  assert.equal(timing({ ...base, stage: 'render', done: 3, total: 4 }).etaMs, null, 'forgotten: measured again');
+});
+
+test('createTasks list(): every task carries progress, elapsedMs and etaMs (files and the server own tasks)', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-tasks-eta-'));
+  try {
+    let t = 7_000_000;
+    const tasks = createTasks({ dataDir: d, now: () => t });
+    writeTaskFile(d, { id: 'clip-b', title: 'Editing clips', kind: 'clips', state: 'running', stage: 'render', done: 1, total: 5, startedAt: t - 60_000, updatedAt: t });
+    const a = tasks.start({ title: 'Upload', kind: 'upload', total: 100 });
+    let l = tasks.list();
+    assert.deepEqual(l.map((x) => [x.id.startsWith('ui-') ? 'ui' : x.id, x.progress, x.elapsedMs, x.etaMs]), [['ui', 0, 0, null], ['clip-b', 0.2, 60_000, null]]);
+    t += 10_000;
+    a.update({ done: 50 });
+    writeTaskFile(d, { id: 'clip-b', title: 'Editing clips', kind: 'clips', state: 'running', stage: 'render', done: 3, total: 5, startedAt: t - 70_000, updatedAt: t });
+    l = tasks.list();
+    const by = Object.fromEntries(l.map((x) => [x.id.startsWith('ui-') ? 'ui' : x.id, x]));
+    assert.equal(by.ui.etaMs, 10_000, 'half in 10 s: 10 s left');
+    assert.equal(by['clip-b'].etaMs, 10_000, '0.2 to 0.6 in 10 s, 0.4 left: 10 s');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 

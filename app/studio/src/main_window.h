@@ -33,6 +33,7 @@ class QMenu;
 class QToolButton;
 class QCheckBox;
 class TaskBar;
+class TrayKeeper;
 class LookPanel;
 class StatsCards;
 class Guide;
@@ -231,6 +232,21 @@ private:
 	QPushButton *helpBtn_ = nullptr;
 	QWidget *moreBtn_ = nullptr;
 	TaskBar *tasks_ = nullptr;     // task chip, list and toasts (D287)
+	TrayKeeper *tray_ = nullptr;  // tasks kept running in the tray after the window closed (D311 proposed)
+	QString closeAsked_;          // the last close question's text (probe)
+	QString closeChoice_;         // tray | stop | cancel: the answer to it (probe)
+	void enterTray();
+	void leaveTray();
+	void stopAllFromTray(bool ask);
+	// The closing lock (D311 proposed): the UI server grants it only when no stream or recording runs or is starting
+	// (fresh host status, fail closed) and from then refuses every start. Every tray-triggered exit takes it first;
+	// then() gets granted, the reason when not, and the lock's token (release it with releaseQuit when not exiting).
+	void requestQuit(std::function<void(bool granted, const QString &reason, const QString &token)> then);
+	void releaseQuit(const QString &token);
+	// Right before exiting: the UI server confirms the grant still stands. exitNow() only on that answer; otherwise
+	// the lock is released and stay() runs (the studio keeps running).
+	void commitQuit(const QString &token, std::function<void()> exitNow, std::function<void()> stay);
+	QString trayStay_;            // why the tray did not quit (live | recording | unreadable; probe)
 	StatsCards *stats_ = nullptr;  // session time, GPU, CPU, fps with history
 	QJsonObject clips_;           // status.clips: settings, state, asks, last result (D284)
 	QStringList asked_;           // "make clips?" questions already shown this session

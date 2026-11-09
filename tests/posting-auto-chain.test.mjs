@@ -2,12 +2,13 @@
 // D300 auto-post chain. Fakes only: no network, no Google, no Credential Manager, no real folders (temp dirs).
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { BASE_DELAY_MS, MAX_ATTEMPTS, MAX_DELAY_MS, backoffMs, createPostChain, createUploadQueue, readQueueSummary, streamOnly } from '../services/posting/auto-chain.mjs';
 import { createPostStore, postId } from '../services/posting/index.mjs';
+import { tasksDir } from '../services/studio-ui/tasks.mjs';
 
 const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-d300-')); tmp.push(d); return d; };
@@ -106,6 +107,12 @@ describe('chain', () => {
     assert.deepEqual({ ...row.posted[0], at: 'T' }, { platform: 'youtube', target: 'youtube-shorts', id: e.ids.a, videoId: 'vid1', url: 'https://youtu.be/vid1', at: 'T', privacy: 'private' });
     for (const f of ['posting/upload-queue.json', 'clips/uploads.json', 'posting/auto-log.json']) assert.ok(!/fake-access/.test(readFileSync(path.join(e.dataDir, f), 'utf8')), f);
     assert.match(readQueueSummary(e.dataDir).message, /uploaded to YouTube \(private\)/);
+    // D311 proposed: the upload was a task in the task bar and the tray; it ends "done" with its time.
+    const tdir = tasksDir(e.dataDir);
+    const tasks = readdirSync(tdir).map((n) => JSON.parse(readFileSync(path.join(tdir, n), 'utf8')));
+    assert.equal(tasks.length, 1);
+    assert.deepEqual([tasks[0].kind, tasks[0].state, tasks[0].title], ['upload', 'done', 'Uploading a clip to YouTube (private)']);
+    assert.ok(Number.isFinite(tasks[0].startedAt));
   });
 
   test('a live stream blocks approval and upload; a running recording does not', async () => {
@@ -132,6 +139,31 @@ describe('chain', () => {
     const e4 = env(); const y4 = fakeYt(); const { c: c4 } = chain(e4, { yt: y4 });
     await c4.tick(RECORDING);
     assert.equal(y4.count('init'), 1, 'a local recording does not block');
+  });
+
+  test('Stop all from the tray while live or recording (D311 proposed): the upload stops at its next chunk, the task says so, nothing new starts', async () => {
+    const e = env(); const yt = fakeYt(); const clock = { t: T0 };
+    let c = null;
+    let mid = null; // the task file while the first chunk is sent: progress reaches the task bar through youtube.mjs's hook
+    const stopAfterFirst = async (url, o) => {
+      const r = await yt.fetchImpl(url, o);
+      if (yt.count('chunk') === 1) { const d = tasksDir(e.dataDir); mid = JSON.parse(readFileSync(path.join(d, readdirSync(d)[0]), 'utf8')); c.stopTasks(); }
+      return r;
+    };
+    ({ c } = chain(e, { yt: { fetchImpl: stopAfterFirst }, time: clock, chunkSize: 10 }));
+    await c.tick(RECORDING);
+    assert.equal(yt.count('chunk'), 1, 'no chunk after the stop');
+    assert.deepEqual([mid.state, mid.done, mid.total], ['running', 0, 1]); assert.match(mid.note, /^0 of 0 MB sent$/);
+    assert.equal(e.store().get(e.ids.a).status, 'approved', 'not uploaded');
+    const it = e.queue().get(e.ids.a);
+    assert.deepEqual([it.state, it.reason], ['queued', 'stopped-by-user'], 'queued again for the next start');
+    assert.ok(it.session, 'the session is kept for a resume');
+    const tdir = tasksDir(e.dataDir);
+    const [t] = readdirSync(tdir).map((n) => JSON.parse(readFileSync(path.join(tdir, n), 'utf8')));
+    assert.deepEqual([t.kind, t.state, t.note], ['upload', 'failed', 'Stopped by you; it is tried again at the next start'], 'the tray sees it end');
+    clock.t += MAX_DELAY_MS;
+    assert.deepEqual(await c.tick(IDLE), { skipped: 'stopped' }, 'nothing new in this session');
+    assert.equal(yt.count('init'), 1);
   });
 
   test('unreadable output state fails closed', async () => {

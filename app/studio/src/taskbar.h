@@ -22,6 +22,15 @@ class QToolButton;
 class QVBoxLayout;
 class QVariantAnimation;
 
+namespace tasktime {
+// "2:13 elapsed · about 4 min left" from a task's elapsedMs / etaMs (services/studio-ui/tasks.mjs, D311 proposed);
+// "time left unknown" when the server could not measure a rate. Shared by the task list and the tray.
+QString text(const QJsonObject &t);
+QString duration(double ms); // m:ss, or h:mm:ss
+// 0..1, or -1 when the amount of work is unknown
+double fraction(const QJsonObject &t);
+} // namespace tasktime
+
 // A thin progress bar whose value glides to its target (220 ms, OutCubic); fraction < 0 = unknown, shown as a sweep.
 class SmoothBar : public QWidget {
 public:
@@ -85,7 +94,7 @@ signals:
 private:
 	QString id_;
 	bool finished_ = false;
-	QLabel *title_, *state_, *note_;
+	QLabel *title_, *state_, *note_, *time_;
 	SmoothBar *bar_;
 	QToolButton *close_;
 };
@@ -110,6 +119,8 @@ public:
 	bool panelOpen() const { return open_; }
 	void dismissFirstFinished();
 	QJsonObject probe() const;
+	int active() const { return running_ + waiting_; } // running + waiting (the close question, D311 proposed)
+	const QJsonArray &tasks() const { return tasks_; }
 
 private:
 	void rebuildRows();
@@ -128,5 +139,5 @@ private:
 	QVector<Toast *> toasts_;
 	QPointer<QVariantAnimation> panelAnim_; // the list's slide (self-deleting); a new slide stops the old one
 	bool open_ = false, first_ = true;
-	int running_ = 0, waiting_ = 0, shown_ = 0;
+	int running_ = 0, waiting_ = 0, shown_ = 0, startToasts_ = 0;
 };

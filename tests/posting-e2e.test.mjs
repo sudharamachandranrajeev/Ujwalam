@@ -4,13 +4,14 @@
 // The only seams used: fetchImpl (rewrites the googleapis host to the local server) and a fake token provider (auth).
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { createPostChain, createUploadQueue, readQueueSummary } from '../services/posting/auto-chain.mjs';
 import { createPostStore } from '../services/posting/index.mjs';
 import { checkPostStatus } from '../services/posting/youtube.mjs';
+import { tasksDir } from '../services/studio-ui/tasks.mjs';
 import { READONLY_SCOPE, SCOPE } from '../services/posting/oauth.mjs';
 
 const tmp = [];
@@ -120,6 +121,13 @@ const ROWS = [
   { name: 'codm_montage_20261109-100000_kills-9_02_h.mp4', kind: 'montage', seconds: 90 },
   { name: 'codm_won-reel_20261109-100000_victory-kills-4_01_v-full-crop.mp4', kind: 'won-reel', seconds: 50 },
 ];
+
+// Task bar (D311 proposed): a re-slotted or deadline-stopped upload is waiting, not failed, so its task file is removed.
+const failedUploadTasks = (e) => {
+  let names = []; try { names = readdirSync(tasksDir(e.dataDir)); } catch { /* no task file written */ }
+  return names.filter((n) => n.endsWith('.json')).map((n) => JSON.parse(readFileSync(path.join(tasksDir(e.dataDir), n), 'utf8')))
+    .filter((t) => t.kind === 'upload' && t.state === 'failed');
+};
 
 function setup(rows = ROWS) {
   const dataDir = mk(); const clips = mk();
@@ -384,6 +392,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.equal(g.videos.length, 1); assert.equal(g.count('init'), 1, 'no session started with a too-close time');
     const it = e.queue().items()[1];
     assert.equal(it.state, 'queued'); assert.equal(it.publishAt, null); assert.equal(it.reason, 'slot-passed'); assert.equal(it.attempts, 0);
+    assert.deepEqual(failedUploadTasks(e), [], 'a re-slot is not shown as a failed task');
     await c.tick(IDLE);
     assert.equal(g.videos.length, 2);
     const now = T0 + 6 * HOUR + 20 * MIN;
@@ -397,7 +406,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     const c = schedChain(e, g, { fetchImpl });
     await c.afterRun(e.runDir, IDLE);
     assert.equal(g.count('chunk'), 1, 'stopped after the first chunk (10 min left < 15 min margin)'); assert.equal(g.videos.length, 0);
-    assert.equal(e.queue().items()[0].reason, 'slot-passed');
+    assert.equal(e.queue().items()[0].reason, 'slot-passed'); assert.deepEqual(failedUploadTasks(e), []);
     await c.tick(IDLE); // drops the unfinished session (progress query), clears the slot
     assert.equal(g.count('query'), 1); assert.equal(e.queue().items()[0].publishAt, null); assert.equal(e.queue().items()[0].session, null);
     await c.tick(IDLE); // new slot, new session
@@ -502,6 +511,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.equal(g.count('query'), 1, 'asked Google once whether it finished anyway');
     const it = e.queue().items()[0];
     assert.equal(it.state, 'queued'); assert.equal(it.reason, 'slot-passed'); assert.equal(it.attempts ?? 0, 0);
+    assert.deepEqual(failedUploadTasks(e), [], 'a deadline abort is not shown as a failed task');
     g.opt.stallFinal = null;
     await c.tick(IDLE); // the session (60 s from its time) is dropped, the slot cleared
     assert.equal(e.queue().items()[0].publishAt, null); assert.equal(e.queue().items()[0].session, null);

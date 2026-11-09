@@ -50,6 +50,8 @@ add_executable(ujwalam-studio WIN32
 	../host/src/crash.h
 	src/taskbar.cpp
 	src/taskbar.h
+	src/tray.cpp
+	src/tray.h
 	src/theme.cpp
 	src/theme.h)
 # Built-in theme packs (D293): data/themes/*.json embedded as :/themes/<id>.json. A file with the same id next to the

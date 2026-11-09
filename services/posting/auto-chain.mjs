@@ -36,6 +36,7 @@ import { READONLY_SCOPE, createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
 import { SCHEDULE_FLAG, ScheduleError, chunkDeadlineMs, fallbackBps, loadScheduleConfig, marginMs, minLeadMs, nextSlot, ownLastSlot, slotTooClose, toIso } from './schedule.mjs';
 import { readChannelSchedule } from './schedule-read.mjs';
+import { removeTaskFile, writeTaskFile } from '../studio-ui/tasks.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const QUEUE_NAME = 'upload-queue.json';
@@ -122,6 +123,7 @@ const REASON_TEXT = {
   'schedule-config-bad': 'Waiting: the schedule settings (data/posting/schedule.json) are not valid',
   'schedule-read-incomplete': 'Waiting: the channel has more uploads than Ujwalam checks for scheduled posts; raise maxPages in data/posting/schedule.json',
   'slot-passed': 'Getting a new public time: the planned one came too close before the upload could finish',
+  'stopped-by-user': 'Stopped by you; tried again at the next start',
 };
 
 /** Plain words for a queue reason code (or a failure code). */
@@ -200,7 +202,7 @@ export function createPostChain(opts) {
   const autoLogFile = path.join(dataDir, 'posting', AUTO_LOG_NAME);
   const queue = createUploadQueue(path.join(dataDir, 'posting', QUEUE_NAME), nowMs);
   const flags = opts.flags ?? createFlags({ dataDir });
-  let latest = null; let busy = false; let lastTick = 0; let recovered = false;
+  let latest = null; let busy = false; let lastTick = 0; let recovered = false; let halted = false;
   const flagsOn = () => flags.isOn(POSTING_FLAG) && flags.isOn(AUTO_FLAG);
   const scheduleOn = () => flags.isOn(SCHEDULE_FLAG);
   const outputsStatus = streamOnly(async () => { if (!latest) throw new Error('no output status yet'); return latest; });
@@ -281,6 +283,7 @@ export function createPostChain(opts) {
     let cfg = null;
     if (scheduleOn()) { cfg = await ensureSlots(auth); if (!cfg) return; } // no valid settings: nothing can be re-checked, so nothing uploads
     for (const item of due) {
+      if (halted) return;
       if (await liveBlock(outputsStatus)) { queue.setNote({ blocked: 'stream-live' }); return; }
       const post = store.get(item.id);
       if (!post) { queue.patch(item.id, { state: 'failed', reason: 'unknown-post' }); continue; }
@@ -296,16 +299,31 @@ export function createPostChain(opts) {
         queue.patch(item.id, { sha, run });
       }
       queue.patch(item.id, { state: 'uploading', reason: null, nextAt: null });
+      // Task bar and tray (D311 proposed): an upload in progress is a task with its own progress (MB sent of MB).
+      const task = { id: `upload-${String(item.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60)}`, kind: 'upload', title: 'Uploading a clip to YouTube (private)', startedAt: nowMs() };
+      const taskSay = (p) => writeTaskFile(dataDir, { ...task, updatedAt: nowMs(), ...p });
+      taskSay({ state: 'running', note: 'Starting the upload' });
+      let taskEnd = { state: 'failed', note: 'Did not finish; it will be tried again' };
       try {
         const r = await uploadPost({
           id: item.id, store, auth, outputsStatus, fetchImpl: opts.fetchImpl, chunkSize: opts.chunkSize, sessions, publishAt,
           minLeadMs: cfg ? minLeadMs(cfg) : 0, marginMs: cfg ? marginMs(cfg) : 0,
           chunkDeadlineMs: cfg ? chunkDeadlineMs(cfg) : 0, fallbackBps: cfg ? fallbackBps(cfg) : undefined, nowMs,
-          beforeChunk: async () => { const b = await liveBlock(outputsStatus); if (b) throw new UploadError('stream-active', b); },
+          // Runs before every chunk, ahead of youtube.mjs's own slot check (post-schedule): Stop all, the live pause, progress.
+          beforeChunk: async (pr) => {
+            if (halted) { taskEnd = { state: 'failed', note: 'Stopped by you; it is tried again at the next start' }; throw new UploadError('stopped-by-user', 'stopped'); }
+            const b = await liveBlock(outputsStatus);
+            if (b) { taskEnd = { state: 'waiting', note: 'Paused while the stream runs; it resumes after' }; throw new UploadError('stream-active', b); }
+            if (pr && Number.isFinite(pr.total) && pr.total > 0) {
+              const mb = (n) => Math.round(n / 1048576);
+              taskSay({ state: 'running', done: mb(pr.offset), total: Math.max(1, mb(pr.total)), note: `${mb(pr.offset)} of ${mb(pr.total)} MB sent` });
+            }
+          },
         });
         // Record only the time Google really got with this video (the session's), never the planned one.
         const sent = r.publishAt ?? null;
         const early = sent !== null && Date.parse(sent) <= nowMs();
+        taskEnd = { state: 'done', note: early ? 'Uploaded; its public time had passed, check it in YouTube Studio' : sent ? 'Uploaded (private until its public time)' : 'Uploaded (private)' };
         queue.patch(item.id, { state: 'done', videoId: r.videoId, reason: early ? 'went-public-early' : null, session: null, sentPublishAt: sent });
         await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: r.videoId, at: new Date(nowMs()).toISOString(), target: post.target, publishAt: sent });
         log(`posting: uploaded ${item.id} (private${sent ? `, goes public ${sent}` : ''}${early ? '; its time had passed, check it in YouTube Studio' : ''})`);
@@ -313,18 +331,26 @@ export function createPostChain(opts) {
         const code = String(e?.code ?? 'error');
         if (code === 'already-uploaded') {
           // Uploaded earlier (e.g. by hand): which publish time it carried is unknown here, so none is recorded.
+          taskEnd = { state: 'done', note: 'Already uploaded' };
           const v = store.get(item.id)?.videoId ?? null;
           queue.patch(item.id, { state: 'done', videoId: v, reason: null, session: null });
           if (v) await markPosted({ dataDir, run, sha256: sha, postIdValue: item.id, videoId: v, at: new Date(nowMs()).toISOString(), target: post.target });
+        } else if (code === 'stopped-by-user') {
+          queue.patch(item.id, { state: 'queued', reason: 'stopped-by-user' });
+          return;
         } else if (code === 'slot-passed') {
           // No session runs now: the slot is too close to use; the next pass gives a new one at the end (no attempt used).
+          taskEnd = { state: 'waiting', note: 'Waiting: new public time' };
           queue.patch(item.id, { state: 'queued', publishAt: null, reason: 'slot-passed', nextAt: null });
           log(`posting: ${item.id}: ${REASON_TEXT['slot-passed']}`);
         } else if (code === 'slot-passed-mid') {
-          // Stopped between chunks; the next try drops the unfinished session and gets a new slot.
+          // Stopped between chunks or aborted at the chunk deadline (not a failure); the next try drops the unfinished
+          // session and gets a new slot.
+          taskEnd = { state: 'waiting', note: 'Waiting: new public time' };
           queue.patch(item.id, { state: 'queued', reason: 'slot-passed', nextAt: null });
           log(`posting: ${item.id}: ${REASON_TEXT['slot-passed']}`);
         } else if (code === 'stream-active') {
+          taskEnd = { state: 'waiting', note: 'Paused while the stream runs; it resumes after' }; // also the check before the first chunk
           queue.patch(item.id, { state: 'queued', reason: 'stream-live' });
           queue.setNote({ blocked: 'stream-live' });
           return;
@@ -339,6 +365,10 @@ export function createPostChain(opts) {
           else queue.patch(item.id, { state: 'queued', attempts, reason: code.slice(0, 40), nextAt: new Date(nowMs() + backoffMs(attempts)).toISOString() });
           log(`posting: upload of ${item.id} failed (${code}); retry ${attempts < MAX_ATTEMPTS ? 'later' : 'not planned'}`);
         }
+      } finally {
+        // A paused or re-slotted upload leaves the task bar: it is queued again (resumes after the stream, at the next
+        // start, or with its new public time) and the control page's upload queue shows it.
+        if (taskEnd.state === 'waiting') removeTaskFile(dataDir, task.id); else taskSay(taskEnd);
       }
     }
   }
@@ -346,6 +376,7 @@ export function createPostChain(opts) {
   /** Approvals by the rules, enqueue of auto-approved posts, then the due uploads. Safe to call often. */
   async function step() {
     if (!flagsOn()) return { skipped: 'flag-off' };
+    if (halted) return { skipped: 'stopped' };
     let rules;
     try { rules = (opts.rulesFile ? loadRules(opts.rulesFile) : loadRules()); } catch (e) { return { skipped: 'bad-rules', detail: e?.code ?? 'error' }; }
     if (!rules.rules.length) return { skipped: 'no-rules' };
@@ -396,6 +427,8 @@ export function createPostChain(opts) {
         return { packaged: packedClips + packedVideos, ...(await step()) };
       });
     },
+    /** The tray's Stop all (D311 proposed): the upload in progress stops at its next chunk; nothing new starts this session. */
+    stopTasks() { halted = true; },
     /** Called with each host status: remembers it, and every TICK_EVERY_MS retries what is due. */
     tick(status) {
       if (status) latest = status;

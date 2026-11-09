@@ -77,7 +77,7 @@ import clip_validate as val  # noqa: E402
 import game_pack  # noqa: E402
 import match_gate as mg  # noqa: E402
 from clip_common import (  # noqa: E402
-    CLIP_DATA, EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, clips_allowed, corpus_dir, eprint, find_tool, flag_on, load_config,
+    CLIP_DATA, EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, clips_allowed, contain_children, corpus_dir, end_tree_when_parent_gone, eprint, find_tool, flag_on, load_config,
     load_json, lower_own_priority, match_gate_settings, media_info, progress_line, resolve_data_dir, write_json_atomic,
 )
 
@@ -885,6 +885,8 @@ def main(argv=None):
             a.out = os.path.abspath(a.out)
             check_out_dir(a.out, corpus_dir())
         lower_own_priority()
+        contain_children()  # ffmpeg and other children end with this process, however it ends (D311 proposed)
+        end_tree_when_parent_gone()  # started by Ujwalam: ends with it, ffmpeg children included (D311 proposed)
         return a.fn(a)
     except ClipError as e:
         eprint(f"clipper: {e}")
