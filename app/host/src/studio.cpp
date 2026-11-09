@@ -2073,6 +2073,26 @@ json::Value Studio::test_audio_stall(const std::string &id, bool stall)
 	throw Error(rpc::INVALID_PARAMS, "no such audio source");
 }
 
+json::Value Studio::test_audio_hang_destroy(const std::string &id)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	for (auto &g : globals_)
+		if (g.src->audio_id == id) {
+			if (strcmp(obs_source_get_id(g.src->src), "ujw_test_audio") != 0)
+				throw Error(rpc::CONFLICT, "not a test audio source");
+			obs_data_t *d = obs_data_create();
+			obs_data_set_bool(d, "hangDestroy", true);
+			obs_source_update(g.src->src, d);
+			obs_data_release(d);
+			json::Value r = json::Value::object();
+			r.set("id", "audio:" + id);
+			r.set("hangDestroy", true);
+			r.set("source", obs_source_get_name(g.src->src));
+			return r;
+		}
+	throw Error(rpc::INVALID_PARAMS, "no such audio source");
+}
+
 json::Value Studio::test_audio_config(const std::string &id, const json::Value &set)
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);
