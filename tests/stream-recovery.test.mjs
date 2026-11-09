@@ -403,22 +403,49 @@ test('a launcher start is never armed, whatever an earlier launcher left on disk
   } finally { await s.stop(); }
 });
 
-test('race: a slow Start answered after a newer Stop does not arm; a crash then restarts nothing', { timeout: 180_000 }, async () => {
+test('race: a Stop while a slow Start is at the host: the Start does not arm and its streams are stopped again; a crash restarts nothing', { timeout: 180_000 }, async () => {
   const s = launch('slowstart', { crashRuns: '1', extraEnv: { UJWALAM_FAKE_HOST_START_DELAY_MS: '2500' } });
   try {
     await s.login();
-    const start = s.confirmed('/ui/api/host', { method: 'stream.start', params: {} }, 'yes, on air');
+    const c = await s.req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
+    assert.equal(c.body.pending.phrase, 'yes, on air');
+    const start = s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
     await s.until(() => streamStarts(s).length === 1, 'the start reaching the host');
     const stop = await s.confirmAny('/ui/api/host', { method: 'stream.stop', params: {} });
     assert.equal(stop.body.verdict, 'allow', JSON.stringify(stop.body));
-    await start; // answered after the stop; the fake host turned the sinks live on that late answer
-    await s.until(() => s.calls().some((x) => x.method === 'stream.start.done'), 'the late start answer');
+    // The host answers the start last (and turns the sinks live last): the start must not arm, and is undone.
+    const r = await start;
+    assert.deepEqual([r.body.verdict, r.body.reason, r.body.stoppedAgain], ['refuse', 'stopped-meanwhile', true], JSON.stringify(r.body));
+    const run1 = s.calls().filter((x) => x.run === 1 && /^stream\./.test(x.method ?? '')).map((x) => x.method);
+    assert.deepEqual(run1, ['stream.start', 'stream.stop', 'stream.start.done', 'stream.stop'], 'the compensating stop comes after the late start');
     assert.deepEqual([s.authority().armed, s.authority().reason], [false, 'stream.stop'], 'the later Stop wins over the slow Start');
-    await sleep(800); // the poll sees the sinks live (the host applied the start last)
+    await sleep(800);
     s.crash();
-    await s.until(() => /streams NOT restarted \(you had stopped them\)/.test(s.out), 'the refusal line');
+    await s.until(() => /host restarted \(attempt 1\)/.test(s.out), 'the host restart');
+    await sleep(800);
+    assert.ok(!/streams were on/.test(s.out), 'no stream was live at the crash');
     assert.deepEqual(streamStarts(s).map((x) => x.run), [1], 'no stream.start after the crash');
-    assert.equal((await s.recovery(1)).reason, 'stopped');
+  } finally { await s.stop(); }
+});
+
+test('race: a Stop during the pause before a confirmed Start reaches the host: the Start is not sent', { timeout: 180_000 }, async () => {
+  const s = launch('prestart', { crashRuns: '1', extraEnv: { UJWALAM_TEST_START_PAUSE_MS: '2500' } });
+  try {
+    await s.login();
+    const c = await s.req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
+    const start = s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+    await sleep(800); // the start has its generation and waits before the host call
+    const stop = await s.confirmAny('/ui/api/host', { method: 'stream.stop', params: {} });
+    assert.equal(stop.body.verdict, 'allow', JSON.stringify(stop.body));
+    const r = await start;
+    assert.deepEqual([r.body.verdict, r.body.reason], ['refuse', 'stopped-meanwhile'], JSON.stringify(r.body));
+    assert.deepEqual(streamStarts(s), [], 'the stale start never reached the host');
+    assert.deepEqual(s.calls().filter((x) => x.method === 'stream.stop').map((x) => x.params), [{}], 'only the user\'s stop');
+    assert.deepEqual([s.authority().armed, s.authority().reason], [false, 'stream.stop']);
+    // After that the user can still go live normally.
+    await s.goLive();
+    assert.equal(s.authority().armed, true);
+    assert.equal(streamStarts(s).length, 1);
   } finally { await s.stop(); }
 });
 

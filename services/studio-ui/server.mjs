@@ -250,10 +250,14 @@ export function createStudioServer(opts) {
   // in between); a confirmed Stop or End all revokes it BEFORE the host is asked and waits for the answer, so an
   // in-flight recovery start reaches the host first and the stop wins. A revoke the launcher does not answer closes
   // the channel, which closes the authority (fail closed). Done whatever the flag; the launcher reads the flag.
+  // A start whose generation is no longer current right before the host call is not sent; one that the host accepted
+  // but that can no longer arm (a Stop came in meanwhile) is stopped again at once, so the newer Stop always wins.
   // opts.authority: test seam ({ begin, arm, revoke } or null).
   const liveSession = (() => { const v = opts.liveSession ?? process.env[SESSION_ENV]; return typeof v === 'string' && SESSION_RE.test(v) ? v : null; })();
   const authority = opts.authority !== undefined ? opts.authority
     : liveSession && process.env.UJWALAM_PARENT_PIPE === '1' ? authorityClient() : null;
+  // Test only (race tests): a pause right before a confirmed stream.start goes to the host. 0 = none.
+  const startPauseMs = Math.min(10_000, Math.max(0, Number(opts.startPauseMs ?? process.env.UJWALAM_TEST_START_PAUSE_MS ?? 0) || 0));
   const feedback = opts.feedback ?? createFeedback({ feedbackDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR, now: () => new Date(now()) });
   // Export-only posting (P16a, flag `posting`): packages are listed from <dataDir>/posting/ledger.json. Nothing is uploaded.
   const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME) }) : null);
@@ -1008,11 +1012,22 @@ export function createStudioServer(opts) {
           if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
           const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
           const before = await readBefore(p.method, p.params);
+          if (Number.isInteger(startGen)) {
+            if (startPauseMs) await new Promise((r) => setTimeout(r, startPauseMs));
+            // A Stop / End all confirmed since this start began wins: the start is not sent.
+            if ((await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
+          }
           const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
           let out;
           try { out = await callHost(p.method, p.params); } catch (e) { ht?.fail('Did not finish'); throw e; }
           ht?.done();
-          if (p.method === 'stream.start' && authority) await authority.arm(startGen);
+          if (Number.isInteger(startGen) && !(await authority.arm(startGen))) {
+            // A Stop / End all came in while this start was on its way to the host (after the check above): the newer
+            // stop wins, so the streams this start turned on are stopped again at once.
+            let stoppedAgain = true;
+            try { await callHost('stream.stop', {}); } catch { stoppedAgain = false; }
+            return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', stoppedAgain });
+          }
           remember(p.method, p.params, before);
           // A layout change confirmed while live autosaves like an instant one (P5b).
           const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;

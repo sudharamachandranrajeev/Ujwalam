@@ -67,6 +67,15 @@ The final design has one owner and one serialized authority:
   - `begin` is sent before a confirmed `stream.start` goes to the host. It returns the current generation `g`.
   - `arm(g)` is sent after the host accepted that start. It arms only if `g` is still the current generation. Any
     revoke since `begin` raised it, so a newer Stop always wins over a slow Start (issue 2).
+  - Codex's re-review of `ba51281` found one more window. A Start took `g`, then awaited before its host call. A Stop
+    could revoke and finish its own host stop in that time, and then the Start turned the streams on again. `arm(g)`
+    refused it, but nothing stopped those streams. The UI server now handles this in two places:
+    - Right before the host call, it checks the generation again. If it changed, the start is not sent (`refuse`,
+      `stopped-meanwhile`).
+    - If the host accepted the start but `arm(g)` is refused, the server sends `stream.stop` at once. The page gets
+      `refuse`, `stopped-meanwhile`, `stoppedAgain`.
+    So a newer Stop always ends with the streams off. Between the late start and its compensating stop, the streams
+    can be live for a moment.
   - `revoke(reason)` is sent before a confirmed Stop or End all goes to the host, and the UI server waits for the
     answer. The generation goes up and the authority is disarmed at once. The answer comes only after any recovery
     start in flight has returned, so the user's stop reaches the host after it and wins (issue 3).
@@ -128,7 +137,7 @@ window):
 
 ```
 UJWALAM_HEADLESS=1 node --test --test-concurrency=1 tests/stream-recovery.test.mjs
-ℹ tests 14   ℹ pass 14   ℹ fail 0   (after the authority redesign)
+ℹ tests 15   ℹ pass 15   ℹ fail 0   (after the authority redesign and the start re-check)
 UJWALAM_HEADLESS=1 node --test --test-concurrency=2 tests/live-guard.test.mjs tests/studio-ui-alpha.test.mjs \
   tests/studio-ui-crash-recovery.test.mjs tests/studio-ui-live-test.test.mjs tests/studio-ui-readiness.test.mjs \
   tests/studio-ui-server.test.mjs tests/studio-ui-flags-feedback.test.mjs tests/studio-qt-shell.test.mjs \
@@ -136,7 +145,7 @@ UJWALAM_HEADLESS=1 node --test --test-concurrency=2 tests/live-guard.test.mjs te
 ℹ tests 186   ℹ pass 183   ℹ fail 0   ℹ skipped 3   (skips: no Qt shell, package or venv build in this worktree)
 ```
 
-`tests/stream-recovery.test.mjs` has 14 tests.
+`tests/stream-recovery.test.mjs` has 15 tests.
 
 - **Unit tests:**
   - config checks;
@@ -167,9 +176,15 @@ UJWALAM_HEADLESS=1 node --test --test-concurrency=2 tests/live-guard.test.mjs te
   `armed: false, reason: recovery-limit`.
 - **New launcher:** an armed authority mirror and an old `stream-intent.json` are left on disk. The new launcher
   shows generation 0, unarmed, and nothing goes live.
-- **Race 2, end to end:** the fake host's start is slow (2.5 s). The user confirms Start, then Stop while the Start is
-  in flight. The Start answers late, and the host turns the sinks live last, but the authority stays revoked. A crash
-  then restarts nothing (reason `stopped`).
+- **Race 2, end to end, at the host:** the fake host's start is slow (2.5 s). The user confirms Start, then Stop
+  while the Start is at the host. The host runs, in order: `stream.start`, the user's `stream.stop`, then
+  `stream.start.done` (the sinks turn live last), then the server's compensating `stream.stop`. The Start answers
+  `refuse` / `stopped-meanwhile` / `stoppedAgain`, and the authority stays revoked. A crash then finds no live stream
+  and restarts nothing.
+- **Race 2, end to end, before the host call** (the re-review case): a test-only pause
+  (`UJWALAM_TEST_START_PAUSE_MS`) holds a confirmed Start after it took its generation. A Stop is confirmed during
+  the pause. The Start answers `refuse` / `stopped-meanwhile`, and its `stream.start` never reaches the host; the only
+  `stream.stop` the host sees is the user's. A normal go-live afterwards works.
 - **Race 3, end to end:** End all is confirmed while the recovery start (slow, 2.5 s) is in flight on the restarted
   host. In the host's call log, every `stream.stop` comes after `stream.start.done`: the launcher's own stop of the
   restarted sinks and End all's stop. The event is `cancelled`, and End all reports that every stream stopped.
@@ -254,6 +269,10 @@ The full CI was not run (per the task). `npm run test:host` now includes the new
   host crashes, within one poll interval (`UJWALAM_HOST_WATCH_MS`, default 2 s). The last poll still showed it live,
   so it can be restarted. The user's Stop and End all, and the guard's stops, cannot be overtaken: they go through
   the authority first.
+- **Brief blip.** In the late-start case above, the streams the slow start turned on run until the compensating
+  stop: about one host round trip. On a real platform this could show as a very short broadcast start.
+- **Test seam.** `UJWALAM_TEST_START_PAUSE_MS` is a test-only pause in the UI server, capped at 10 s and 0 by
+  default.
 - **Revoke wait.** A Stop or End all waits for the launcher's answer: at most the length of a recovery
   `stream.start` that is in flight, and never more than 10 s. After 10 s, the stop goes out anyway and the authority
   closes for the session. The 10 s value is a design value.
@@ -281,8 +300,9 @@ proposed values 2 / 10 min / 90 s).
 The launcher alone owns the go-live authority, in memory; nothing on disk is read for a decision. The UI server uses
 it over the launcher's IPC channel:
 
-- `begin` before a confirmed "yes, on air" start, and `arm(generation)` after the host accepted it; a Stop in between
-  wins.
+- `begin` before a confirmed "yes, on air" start, a generation check right before the host call (a stale start is
+  not sent), and `arm(generation)` after the host accepted it. If a Stop came in meanwhile, the arm is refused and
+  the UI server stops those streams again at once, so the Stop wins.
 - `revoke` before a confirmed Stop or End all reaches the host. It takes effect at once, and its answer waits for any
   recovery start in flight.
 
