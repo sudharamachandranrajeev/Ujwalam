@@ -123,10 +123,65 @@ UJWALAM_HEADLESS=1 node --test tests/studio-ui-alpha.test.mjs tests/record-clips
 ℹ skipped 1
 ```
 
+## LC2: Record while live (D334), soak probes H and V
+
+- **Record while live** (`services/studio-ui/record-live.mjs`, `server.mjs`, `user-settings.mjs`): new setting
+  `clips.recordLive`, default on. Once the host accepts a stream start and the stop-wins checks pass, the UI server
+  starts the recording (H and V). When the stream ends, it stops that recording: by Stop stream, End all, or the
+  status poll seeing no stream sink running (30 s grace when the stream was never seen running). The launcher's
+  finishedRecording then fires and the review job runs with `--v-recording` and `--montage`. These rules hold:
+  - A recording already running is left alone.
+  - A Record or Stop recording click hands the recording back to the user.
+  - A failed `record.start` leaves the stream live. The answer carries a warning and the task panel a failed row.
+  - A Stop that arrives during `record.start` wins.
+  - The UI server needs a data folder for the setting. Without one (older tests) nothing changes.
+- **End all**: the answer adds `recordingStopped: true`. The control page says "The recording started with the
+  stream stopped too." The End all summary now says that a recording you started keeps running.
+- **Qt Settings > Clips**: a "WHILE I STREAM" box with the "Record while live" switch row and its explanation. The
+  switch is a draft until Save (D332). The probe reports it, and the probe action `settings-record-live:on|off`
+  clicks it.
+- **Text judgement**: the coordinator's wording said "to your clips folder". Recordings are saved to the recordings
+  folder (Settings > Folders), so the explanation reads "Records the stream (H and V) to your recordings folder so
+  reels can be made after it ends. Uses about 10 GB per hour."
+- **Fake host** (`backends.mjs`): `record-...` ids count as record sinks, as on the real host.
+- **live-soak** (`tools/soak/live-soak.mjs`): every file sink is checked: it must have started, been live in every
+  sample, and have its own stamped file probed for gaps and coverage. `recordingFileFor()` matches
+  `<base>-YYYYMMDD-HHMMSS.<ext>`, so "alpha" never takes "alpha-v-...". The soak itself was not run (brief).
+
+```
+UJWALAM_HEADLESS=1 node --test tests/studio-qt-shell.test.mjs
+# tests 64
+# pass 64
+# fail 0
+
+UJWALAM_HEADLESS=1 node --test tests/record-live.test.mjs tests/record-clips.test.mjs tests/user-settings-match-gate.test.mjs tests/user-settings-theme.test.mjs tests/guide.test.mjs tests/studio-ui-server.test.mjs tests/studio-ui-readiness.test.mjs tests/studio-ui-alpha.test.mjs tests/live-soak.test.mjs tests/stream-recovery.test.mjs tests/studio-tasks.test.mjs tests/stream-day.test.mjs tests/stream-setup.test.mjs tests/studio-launch-d327.test.mjs tests/studio-qt-d327.test.mjs tests/package-alpha.test.mjs app/host/tests/outputs-plan.test.mjs
+ℹ tests 260
+ℹ pass 258
+ℹ fail 0
+ℹ skipped 2   (the same two environment gates as above)
+```
+
+New tests:
+- `tests/studio-ui-server.test.mjs` "record while live" (6):
+  - auto start and stop;
+  - a hand-started recording is untouched, and a Record click takes the recording over;
+  - a `record.start` failure leaves the stream live with a warning and a task note;
+  - setting off gives the old behaviour;
+  - End all, and the host reporting every stream stopped;
+  - Stop wins during `record.start`.
+- `tests/record-live.test.mjs` (4): off or closing; unreadable outputs or no record sink; grace and reconnecting;
+  stop-wins and handOff.
+- `tests/studio-qt-shell.test.mjs`: the Settings switch.
+- `tests/live-soak.test.mjs`: `recordingFileFor`.
+- Settings tests: the `recordLive` default, validation and merge.
+
+UNVERIFIED for LC2: a real stream started from the studio that records H and V by itself and makes the reels after
+it ends.
+
 ## Not checked (UNVERIFIED)
 
 - A real stream: H + V recording, the live clipper and the task panel rows on a real live session.
 - OCR GPU cost of the live clipper next to NVENC with three encoders running.
 - A real montage (kill montage and match reel) made from a live H + V recording.
-- `tools/soak` live-soak checks only the first file sink; it does not ffprobe the V recording.
-- Going live does not start recording by itself (unchanged); reels need Record pressed during the stream.
+- `tools/soak` live-soak now probes every file sink (LC2); the soak itself was not run.
+- Going live now records by itself (LC2, D334, on by default); before LC2 the reels needed Record pressed.

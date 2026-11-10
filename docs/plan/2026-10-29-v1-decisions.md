@@ -809,5 +809,29 @@ and a live stream recorded only H, so reels from a stream were never made. Decid
   could not run (no V recording).
 - No feature flag. Same recorded exception as D330–D332: the user asked for it directly. No typed confirmation and
   no new "are you sure" (D332).
-Not changed: going live does not start recording by itself; the reels need Record pressed during the stream.
+Not changed here: going live did not start recording by itself (D334 changes that).
 Evidence: `docs/evidence/2026-11-10-lc1-live-clips-ready.md`.
+
+## D334 — Record while live, on by default (2026-11-10, user request)
+
+Same user request as D333 ("auto clipping feature while live and reel creation in the background from clips"). The
+reels are cut from the H and V recordings, and Start stream did not record, so a stream made no reels unless Record
+was also pressed. Decided:
+- Setting Settings > Clips > "Record while live" (switch row with its explanation, N2 style), stored as
+  `clips.recordLive` (true or false) in settings.json. **Default on**, because the user asked for reels from live
+  streams directly. Switching it off restores the old behaviour.
+- With it on, after a stream start the host accepted (the stop-wins checks passed), the UI server starts the
+  recording (`record.start`: every record sink, H and V) if none is running, and remembers that it started it.
+  When that stream ends (Stop stream, End all, or the status poll seeing no stream sink running) it stops that
+  recording, so the launcher sees the finished recording and runs the after-stream review and montage job.
+- A recording the user started by hand is never started again or stopped by this. A Record or Stop recording click
+  during a recording started with the stream hands it back to the user.
+- A failed `record.start` never fails or stops the stream: the answer carries a warning ("The stream is live, but it
+  is not being recorded (...)") and the task panel a failed "Recording the stream for reels" row with the reason.
+- A Stop or End all that arrives while `record.start` is on its way wins: the recording is stopped again at once.
+  No start while Ujwalam is closing (the start is inside the closing-lock count). No confirmation (D332).
+- Disk: about 10.4 GB (1024^3) per hour at the alpha-live bitrates (D333); the readiness disk check already counts
+  the H and V recordings.
+- No feature flag (same exception as D330–D333: the user asked for it directly).
+Code: `services/studio-ui/record-live.mjs`, `server.mjs`, `user-settings.mjs`, the Qt Settings > Clips page.
+Evidence: `docs/evidence/2026-11-10-lc1-live-clips-ready.md` (LC2 section).
