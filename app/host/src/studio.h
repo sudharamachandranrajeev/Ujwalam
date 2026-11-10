@@ -151,7 +151,7 @@ public:
 
 	static std::string norm_canvas(const std::string &c); // "h" -> "H"; "" if not H/V
 
-	// ---- device hot-plug (D328; device_watch.h) ----
+	// ---- device hot-plug (D329; device_watch.h) ----
 	// The device list every project build and the watcher use: the --test-hooks fake list when one is set
 	// (devices.testSet), else devices::enumerate() with --allow-devices, else nothing (has = false; D38).
 	devices::List list_devices(bool &has) const;
@@ -179,7 +179,7 @@ private:
 		std::string audio_id; // project audio source id bound to it
 		std::string audio_name; // its project name ("Mic", "Game"): the mixer row name
 		uint64_t created_ns = 0; // os_gettime_ns at wrap (start-up grace for the audio watchdog)
-		// Capture layers (D328): the project device id, the win-dshow id the source was given, and whether it waits for
+		// Capture layers (D329): the project device id, the win-dshow id the source was given, and whether it waits for
 		// its device (built without one, or the device was unplugged). Guarded by the studio mutex.
 		std::string device, bound_id, problem, matched_by;
 		bool waiting = false;

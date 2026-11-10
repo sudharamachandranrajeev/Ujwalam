@@ -58,7 +58,7 @@ Entry make_entry(const std::string &kind, const std::string &name, const std::st
 // whose video category failed proves nothing about a device being gone.
 bool video_listed(const List &l);
 
-// Hot-plug binding of one capture source (D328). After every device list change each capture source is reconciled:
+// Hot-plug binding of one capture source (D329). After every device list change each capture source is reconciled:
 //   bound and its entry (same obs_id, a fitting kind) still listed      -> None (sticky: a second device with the same
 //                                                                           name never moves a working source)
 //   bound, entry gone, video category not listed (enumeration error)    -> None (never unbind on a failed listing)

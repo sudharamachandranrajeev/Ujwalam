@@ -157,7 +157,7 @@ json::Value host_status_json(App &a)
 	json::Value ah = a.studio ? a.studio->audio_health() : json::Value::object();
 	ah.set("rtwqHeld", obsrt::rtwq_held());
 	r.set("audioHealth", std::move(ah));
-	// Device hot-plug (D328): the UI server and the studio refresh device pickers and layer lists when seq moves.
+	// Device hot-plug (D329): the UI server and the studio refresh device pickers and layer lists when seq moves.
 	// Never lists devices here (the newest list of a build or watcher pass is used).
 	json::Value dv = a.studio ? a.studio->devices_status() : json::Value::object();
 	dv.set("watcher", a.device_watch ? a.device_watch->status() : json::Value());
@@ -360,7 +360,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		r.set("devicesEnabled", a.allow_devices);
 		return r;
 	});
-	// devices.testSet {devices: [{kind, name, path}] | null} (--test-hooks only, D328): replaces the device list the
+	// devices.testSet {devices: [{kind, name, path}] | null} (--test-hooks only, D329): replaces the device list the
 	// host sees with a fake one (null: back to the real list) and runs one hot-plug pass at once, as a plug-in or
 	// unplug would. Capture layers then build on ujw_test_capture (opens nothing). Returns the pass result.
 	add("devices.testSet", [&a](const json::Value &p) {

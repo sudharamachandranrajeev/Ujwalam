@@ -885,7 +885,7 @@ model::Options Studio::model_options(const json::Value &doc, const LoadOptions &
 	return mo;
 }
 
-// ---- device hot-plug (D328) ----
+// ---- device hot-plug (D329) ----
 
 devices::List Studio::list_devices(bool &has) const
 {
@@ -1217,7 +1217,7 @@ std::shared_ptr<Studio::Src> Studio::make_src(const model::Source &spec, const s
 	if (obs_source_get_output_flags(src) & OBS_SOURCE_AUDIO)
 		obs_source_set_audio_mixers(src, 0); // no audio.sources entry: no tracks
 	auto w = wrap(src, layer);
-	if (spec.type == "capture") { // D328: the watcher binds / rebinds it
+	if (spec.type == "capture") { // D329: the watcher binds / rebinds it
 		w->device = spec.device;
 		const json::Value *id = spec.settings.find("video_device_id");
 		w->bound_id = id && id->is_string() ? id->as_string() : "";
@@ -1238,7 +1238,7 @@ std::shared_ptr<Studio::Src> Studio::find_src(const std::string &owner)
 	return nullptr;
 }
 
-// A plan.unavailable entry as the sentence the studio shows (D328: what is missing, what to do).
+// A plan.unavailable entry as the sentence the studio shows (D329: what is missing, what to do).
 static std::string plain_unavailable(const json::Value &u)
 {
 	std::string lid = u.find("layer") && u.find("layer")->is_string() ? u.find("layer")->as_string() : "?";
@@ -1338,7 +1338,7 @@ json::Value Studio::layer_add_model(const json::Value &doc, const std::string &s
 	r.set("scene", sid);
 	r.set("layer", lid);
 	r.set("canvases", std::move(cvs));
-	// D328: a capture layer whose device is not connected is added waiting; the studio shows the message.
+	// D329: a capture layer whose device is not connected is added waiting; the studio shows the message.
 	std::string src_layer = lid;
 	for (auto &t : todo)
 		src_layer = t.pi->source_layer;
@@ -1441,7 +1441,7 @@ json::Value Studio::layer_json(const Scene &s, const Layer &l) const
 	o.set("width", src ? obs_source_get_width(src) : 0u);
 	o.set("height", src ? obs_source_get_height(src) : 0u);
 	o.set("audio", l.src && l.src->meter != nullptr);
-	if (l.src && !l.src->device.empty()) { // capture layer (D328)
+	if (l.src && !l.src->device.empty()) { // capture layer (D329)
 		json::Value d = json::Value::object();
 		d.set("id", l.src->device);
 		d.set("state", l.src->waiting ? "waiting" : "connected");

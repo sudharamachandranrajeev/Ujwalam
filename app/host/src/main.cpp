@@ -494,7 +494,7 @@ int wmain(int argc, wchar_t **wargv)
 			app.studio->set_audio_health(hc);
 			if (app.test_hooks) {
 				ahealth::register_test_audio_type();
-				devwatch::register_test_capture_type(); // D328: capture layers on fake devices (devices.testSet)
+				devwatch::register_test_capture_type(); // D329: capture layers on fake devices (devices.testSet)
 			}
 			if (ah.no_data_ms && ah.check_interval_ms) {
 				Studio *st = app.studio.get();
@@ -505,7 +505,7 @@ int wmain(int argc, wchar_t **wargv)
 				   ah.enabled ? "watchdog on" : (ah.no_data_ms ? "report only" : "off"), ah.no_data_ms,
 				   ah.check_interval_ms, ah.max_recreates, ah.max_parked, ah.shutdown_guard_ms);
 		}
-		// Device hot-plug (D328): capture layers follow devices plugged in or out while the host runs. Listing is a
+		// Device hot-plug (D329): capture layers follow devices plugged in or out while the host runs. Listing is a
 		// device feature (D38): only with --allow-devices, or --test-hooks (fake lists).
 		if (app.allow_devices || app.test_hooks)
 			app.device_watch = std::make_unique<devwatch::Watcher>([&app]() { devices_pass(app, "watcher"); });

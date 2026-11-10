@@ -777,7 +777,7 @@ Plan build(const json::Value &doc, const Options &o)
 				} else if (m.problem == "unknown device kind") {
 					u = {"unavailable", "device " + did + ": " + m.problem};
 				} else {
-					// D328: built waiting (no device id: dshow_input opens nothing); the device watcher binds it.
+					// D329: built waiting (no device id: dshow_input opens nothing); the device watcher binds it.
 					src.waiting = true;
 					src.wait_problem = m.problem;
 					st.set("video_device_id", "");

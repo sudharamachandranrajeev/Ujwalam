@@ -46,7 +46,7 @@ struct App {
 	std::unique_ptr<Frames> frames;   // frames.grab readback (frames.h)
 	std::unique_ptr<face::Link> face; // face AI link (face.h, D295 proposed); also published through face::get()
 	std::unique_ptr<ahealth::Ticker> audio_watch; // audio health watchdog (audio_health.h); null when not configured
-	std::unique_ptr<devwatch::Watcher> device_watch; // device hot-plug (device_watch.h, D328); --allow-devices or --test-hooks
+	std::unique_ptr<devwatch::Watcher> device_watch; // device hot-plug (device_watch.h, D329); --allow-devices or --test-hooks
 
 	void *shutdown_event = nullptr; // HANDLE; set by host.shutdown or Ctrl+C
 	std::atomic<bool> shutting_down{false};
@@ -57,6 +57,6 @@ std::map<std::string, rpc::Method> make_methods(App &app);
 json::Value host_status_json(App &app); // host.status (methods.cpp); also the feedback moment's stats
 // Runs a hotkey's action (panic, feedback, marker); the hotkey thread and hotkeys.trigger call it.
 void on_hotkey(App &app, const std::string &name, const char *via);
-// One device hot-plug pass (D328): list (fake list with devices.testSet), list again after 1 s if a bound capture
+// One device hot-plug pass (D329): list (fake list with devices.testSet), list again after 1 s if a bound capture
 // device looks gone, then reconcile the capture layers. null when devices cannot be listed. Watcher thread or RPC.
 json::Value devices_pass(App &app, const char *why);

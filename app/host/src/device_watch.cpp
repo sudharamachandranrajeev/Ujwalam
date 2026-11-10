@@ -239,7 +239,7 @@ void register_test_capture_type()
 	obs_source_info i = {};
 	i.id = "ujw_test_capture";
 	i.type = OBS_SOURCE_TYPE_INPUT;
-	i.output_flags = OBS_SOURCE_ASYNC_VIDEO;
+	i.output_flags = OBS_SOURCE_ASYNC_VIDEO | OBS_SOURCE_AUDIO | OBS_SOURCE_DO_NOT_DUPLICATE; // as dshow_input
 	i.get_name = cap_name;
 	i.create = cap_create;
 	i.destroy = cap_destroy;
