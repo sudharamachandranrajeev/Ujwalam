@@ -349,7 +349,7 @@ def _follower(h, ids):
 
 def classify_banners(hits, cfg, duration=None):
     """Round end or match end for every signalled VICTORY/DEFEAT banner (W1). -> {id(hit): (kind, source)}.
-    kind "round" | "match" | None (unknown: treated as a match end, the behaviour before rounds existed).
+    kind "round" | "match" | None (unknown: never closes a match; end_clusters joins only match ends).
     source "geometry": the detector pass read the banner kind from the word's position (hit field `banner`, pack
     W1 banner.kinds). Hits without that field (detected before it existed) fall back to "follow-on" (pack
     banner.followers / followSec): a match end is followed within followSec by a post-match screen (FINAL KILLCAM,
@@ -384,7 +384,8 @@ def classify_banners(hits, cfg, duration=None):
 
 def end_clusters(hits, cfg, kinds=None):
     """End-screen sequences: hits of cfg endScreenDetectors (M1 only inside its ROI) closer than endGapSec join.
-    Round-end banners (classify_banners; kinds is its result, computed when None) never join: only match ends do.
+    Only banners classified as match ends join (classify_banners; kinds is its result, computed when None): round
+    ends and banners of unknown kind (recording ends too soon after them) do not.
     -> [{t0, t1, results: Counter, hudModes: Counter, w1: [(t, tEnd, label, signalled)], banners: [(t, source)]}]
     sorted by time."""
     ids = set(cfg.get("endScreenDetectors") or [])
@@ -398,8 +399,8 @@ def end_clusters(hits, cfg, kinds=None):
             continue
         if d == "M1" and "outside_roi" in (h.get("why") or []):
             continue
-        if kinds.get(id(h), (None,))[0] == "round":
-            continue
+        if _is_banner(h) and kinds.get(id(h), (None,))[0] != "match":
+            continue  # round ends never close a match, and neither does a banner of unknown kind (never guess)
         t0 = float(h["t"])
         t1 = float(h.get("tEnd", t0))
         pts.append((t0, t1, h))

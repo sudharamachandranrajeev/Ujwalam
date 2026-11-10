@@ -201,13 +201,14 @@ class FollowOnTests(unittest.TestCase):
         self.assertEqual(sum(1 for m in ms if m["endSeen"]), 6)
         self.assertEqual([len(m["rounds"]) for m in ms], [4, 6, 4, 1, 0, 1, 0])
 
-    def test_banner_at_the_end_of_the_recording_stays_a_match_end(self):
+    def test_banner_of_unknown_kind_at_the_end_never_closes_a_match(self):
+        # Codex review: a recording cut right after a round banner must not yield a false completed match.
         hs = [banner(100, "VICTORY"), banner(590, "DEFEAT")]
         kinds = mg.classify_banners(hs, CFG, 600.0)
         self.assertEqual(kinds[id(hs[0])], ("round", "follow-on"))
         self.assertEqual(kinds[id(hs[1])][0], None, "too close to the end to tell")
         ms = mg.segment(hs, None, 600.0, CFG)
-        self.assertEqual([(m["end"], m["endSeen"]) for m in ms], [(590.0, True), (600.0, False)])
+        self.assertEqual([(m["end"], m["endSeen"]) for m in ms], [(600.0, False)])
 
     def test_without_pack_banner_config_every_banner_ends_a_match(self):
         cfg = dict(CFG, banner={})
