@@ -639,9 +639,12 @@ def cmd_live_review(a):
     if getattr(a, "montage", False):
         status = _live_montage(a)
         rpath = os.path.join(a.out, RENDER)
-        rdoc = load_json(rpath)
-        rdoc["montage"] = status
-        write_json_atomic(rpath, rdoc)
+        try:  # the shorts are already published: a status write (disk full, locked file) must not fail the job
+            rdoc = load_json(rpath)
+            rdoc["montage"] = status
+            write_json_atomic(rpath, rdoc)
+        except (OSError, ValueError, ClipError) as e:
+            eprint(f"montage: status not saved to {RENDER} ({type(e).__name__})")
         if status["status"] != "made":
             print(f"montage: NOT MADE ({status['reason']}); the short clips are kept"
                   f"{' and published' if a.publish else ''}")
