@@ -60,7 +60,7 @@ const post = (c, route, body, extra = {}) => raw(c.port, {
 });
 const confirm = async (c, r, text = 'yes') => (await post(c, '/ui/api/confirm', { pendingId: r.json().pending.pendingId, text })).json();
 
-async function boot({ flagOn = true, live = false, liveSinks = [], stores = {}, browser } = {}) {
+async function boot({ flagOn = true, live = false, liveSinks = [], stores = {}, browser, storeWrap, hostWrap } = {}) {
   const dataDir = mk();
   if (flagOn) createFlags({ dataDir }).set('platform-connect', true);
   const mock = await startPlatformMock();
@@ -72,6 +72,7 @@ async function boot({ flagOn = true, live = false, liveSinks = [], stores = {}, 
     describe: () => fake.describe(),
     call: async (m, p) => {
       if (m === 'outputs.status') return { configured: true, sinks: state.liveSinks.map((id) => ({ id, kind: 'stream', state: 'live' })) };
+      if (hostWrap) await hostWrap(m);
       const r = await fake.call(m, p);
       return m === 'host.status' ? { ...r, live: state.live } : r;
     },
@@ -80,7 +81,7 @@ async function boot({ flagOn = true, live = false, liveSinks = [], stores = {}, 
   const logs = [];
   const srv = createStudioServer({
     uiRoot: UI, core, host, launchKey: KEY, dataDir, limits: { statusPollMs: 30 }, log: (m) => logs.push(String(m)),
-    connect: { storeFor: mem.storeFor, endpoints: mock.endpoints, sleep: async () => {}, browserOpen: (browser ?? googleBrowser)(mock) },
+    connect: { storeFor: storeWrap ? (t) => storeWrap(t, mem.storeFor(t)) : mem.storeFor, endpoints: mock.endpoints, sleep: async () => {}, browserOpen: (browser ?? googleBrowser)(mock) },
   });
   servers.push(srv);
   const { port } = await srv.listen();
@@ -222,7 +223,7 @@ describe('sign-in through the server (PC1)', () => {
     const d = await post(c, '/ui/api/connect/disconnect', { output: 'twitch' });
     assert.match(d.json().pending.summary, /Disconnect Twitch/);
     const out = await confirm(c, d);
-    assert.deepEqual(out.result.removed, { key: true, server: true, token: true });
+    assert.deepEqual(out.result.removed, { key: true, server: true, token: true, revoke: 'revoked' });
     assert.ok(!c.mem.map.has('Ujwalam/stream/twitch') && !c.mem.map.has(TARGETS.twitchRefresh));
     assert.equal((await get(c, '/ui/api/connect?fresh=1')).json().outputs.find((o) => o.id === 'twitch').state, 'missing');
     leakCheck(c);
@@ -259,5 +260,38 @@ describe('redaction (PC2)', () => {
     ];
     for (const l of lines) assertNoSecret(red(l), `redacted line "${l.slice(0, 20)}..."`);
     assert.equal(red('exit code 1168, 42 frames dropped'), 'exit code 1168, 42 frames dropped', 'ordinary text stays');
+  });
+});
+
+// Codex second review of D327, finding 1: a key update and a stream start never overlap (start gate in the server).
+describe('start gate (key writes and stream starts)', () => {
+  const deferred = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+  test('while a key is being written, a confirmed stream start is refused (409 credentials-updating)', async () => {
+    const hold = deferred(); let writing = false;
+    const c = await boot({ storeWrap: (t, s) => ({ ...s, set: async (v) => { if (t === 'Ujwalam/stream/kick') { writing = true; await hold.p; } return s.set(v); } }) });
+    const ask = await post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer });
+    const pasting = confirm(c, ask);
+    while (!writing) await new Promise((r) => setTimeout(r, 5));
+    const start = await post(c, '/ui/api/host', { method: 'stream.start', params: {} });
+    const r = await post(c, '/ui/api/confirm', { pendingId: start.json().pending.pendingId, text: start.json().pending.phrase });
+    assert.equal(r.status, 409);
+    assert.equal(r.json().error, 'credentials-updating');
+    hold.open();
+    assert.equal((await pasting).verdict, 'allow');
+    leakCheck(c);
+  });
+  test('while a stream start is on its way, a key write is refused (409 output-starting) and nothing is stored', async () => {
+    const hold = deferred(); let starting = false;
+    const c = await boot({ hostWrap: async (m) => { if (m === 'stream.start') { starting = true; await hold.p; } } });
+    const start = await post(c, '/ui/api/host', { method: 'stream.start', params: {} });
+    const going = post(c, '/ui/api/confirm', { pendingId: start.json().pending.pendingId, text: start.json().pending.phrase });
+    while (!starting) await new Promise((r) => setTimeout(r, 5));
+    const ask = await post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer });
+    const r = await post(c, '/ui/api/confirm', { pendingId: ask.json().pending.pendingId, text: ask.json().pending.phrase });
+    assert.equal(r.status, 409);
+    assert.equal(r.json().error, 'output-starting');
+    assert.ok(!c.mem.map.has('Ujwalam/stream/kick'));
+    hold.open();
+    await going;
   });
 });

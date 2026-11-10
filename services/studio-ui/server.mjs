@@ -356,13 +356,25 @@ export function createStudioServer(opts) {
     const busy = (s) => s.active === true || ['starting', 'live', 'retrying', 'stopping', 'reconnecting'].includes(s.state);
     return sinks.some((s) => busy(s) && (s.id === id || s.id === undefined)) ? 'live' : 'idle';
   }
+  // Start gate (Codex review, D327): a stream key / server update and a stream start never overlap. An update waits for no
+  // start to be on its way (else 'output-starting'), and while it holds the gate a confirmed start is refused (409
+  // credentials-updating). The service re-checks the output after its write and puts the old values back if it went live.
+  let credWrites = 0;
+  const connectGate = {
+    enter() {
+      if (startsInFlight > 0) throw Object.assign(new Error('output-starting'), { code: 'output-starting' });
+      credWrites += 1;
+      let left = false;
+      return () => { if (!left) { left = true; credWrites -= 1; } };
+    },
+  };
   function connect() {
     if (connectSvc) return connectSvc;
     const { connect: _ignored, ...extra } = opts.connect ?? {};
-    connectSvc = createConnect({ dataDir: opts.dataDir, outputs: outputsFromPlan(planTargets(opts.livePlanFile)), outputLive, ...extra });
+    connectSvc = createConnect({ dataDir: opts.dataDir, outputs: outputsFromPlan(planTargets(opts.livePlanFile)), outputLive, gate: connectGate, ...extra });
     return connectSvc;
   }
-  const CONNECT_STATUS = { 'output-live': 409, 'live-unknown': 409, 'sign-in-busy': 409, 'job-not-waiting': 409, 'unknown-output': 404, 'unknown-job': 404, 'unknown-stream': 404, 'sign-in-not-offered': 400, 'bad-client-id': 400, 'twitch-no-client': 409, 'oauth-no-client': 409 };
+  const CONNECT_STATUS = { 'output-starting': 409, cancelled: 409, 'output-live': 409, 'live-unknown': 409, 'sign-in-busy': 409, 'job-not-waiting': 409, 'unknown-output': 404, 'unknown-job': 404, 'unknown-stream': 404, 'sign-in-not-offered': 400, 'bad-client-id': 400, 'twitch-no-client': 409, 'oauth-no-client': 409 };
   const connectFail = (res, e) => {
     const code = typeof e?.code === 'string' ? e.code : 'connect-failed';
     const status = CONNECT_STATUS[code] ?? (Object.hasOwn(CONNECT_PROBLEM_TEXT, code) ? 400 : 502);
@@ -1233,6 +1245,7 @@ export function createStudioServer(opts) {
           // quit request in between sees it (closing lock above).
           const starting = START_METHODS.has(p.method);
           if (starting && isClosing()) return json(res, 409, CLOSING_REFUSAL);
+          if (starting && credWrites > 0) return json(res, 409, { error: 'credentials-updating', detail: 'A stream key is being changed; start again in a moment' });
           if (starting) startsInFlight += 1;
           try {
           const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse

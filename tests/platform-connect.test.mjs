@@ -21,14 +21,15 @@ afterEach(async () => { for (const m of mocks.splice(0)) await m.close(); });
 const OUTPUTS = outputsFromPlan(planTargets()); // the committed live plan: youtube-h, youtube-v, twitch, kick
 const TWITCH_CLIENT = 'mocktwitchclientid0000000000zz';
 
-async function setup({ live = {}, stores = {}, mockOpts, browser } = {}) {
+async function setup({ live = {}, stores = {}, mockOpts, browser, fetchWrap, now, gate, storeWrap } = {}) {
   const mock = await startPlatformMock(mockOpts);
   mocks.push(mock);
   const mem = createMemoryStores({ [CLIENT_ID_TARGET]: 'mock-google-client.apps.example', [CLIENT_SECRET_TARGET]: SECRETS.googleClientSecret, ...stores });
   const dataDir = mk();
   const liveState = { ...live };
   const c = createConnect({
-    dataDir, outputs: OUTPUTS, storeFor: mem.storeFor, endpoints: mock.endpoints, sleep: async () => {},
+    dataDir, outputs: OUTPUTS, storeFor: storeWrap ? (t) => storeWrap(t, mem.storeFor(t)) : mem.storeFor, endpoints: mock.endpoints, sleep: async () => {},
+    ...(fetchWrap ? { fetchImpl: (url, init) => fetchWrap(String(url), init, globalThis.fetch) } : {}), ...(now ? { now } : {}), ...(gate ? { gate } : {}),
     browserOpen: browser ? browser(mock) : googleBrowser(mock),
     outputLive: async (id) => { if (liveState[id] === 'error') throw new Error('x'); return liveState[id] ? 'live' : 'idle'; },
   });
@@ -108,7 +109,7 @@ describe('paste and disconnect (PC1 paste, PC2 storage, PC3)', () => {
   test('disconnect deletes the key and server; status says missing', async () => {
     const { c, mem } = await setup({ stores: { 'Ujwalam/stream/kick': SECRETS.kickKey, 'Ujwalam/stream/kick-server': SECRETS.kickServer } });
     const r = await c.disconnect('kick');
-    assert.deepEqual(r.removed, { key: true, server: true, token: false });
+    assert.deepEqual(r.removed, { key: true, server: true, token: false, revoke: 'not-needed' });
     assert.ok(!mem.map.has('Ujwalam/stream/kick') && !mem.map.has('Ujwalam/stream/kick-server'));
     assert.equal((await c.status({ fresh: true })).outputs.find((o) => o.id === 'kick').state, 'missing');
   });
@@ -262,7 +263,7 @@ describe('Twitch sign-in (PC1)', () => {
     assert.equal(mem.map.get(TARGETS.twitchClientId), TWITCH_CLIENT);
     assert.equal((await c.status({ fresh: true })).accounts.twitch.clientSet, true);
   });
-  test('expired Twitch sign-in: check marks it, the output shows token-expired; disconnect revokes and deletes the token', async () => {
+  test('expired Twitch sign-in: check marks it, the output shows token-expired; disconnect deletes the token (nothing left to revoke)', async () => {
     const { c, mock, mem } = await setup({ stores: twitchStores });
     await c.startSignIn('twitch', 'twitch');
     await settle(c);
@@ -274,7 +275,8 @@ describe('Twitch sign-in (PC1)', () => {
     const r = await c.disconnect('twitch');
     assert.equal(r.removed.token, true);
     assert.ok(!mem.map.has(TARGETS.twitchRefresh) && !mem.map.has('Ujwalam/stream/twitch'));
-    assert.equal(mock.st.requests.filter((x) => x.path === '/twitch/revoke').length, 1);
+    assert.equal(r.removed.revoke, 'not-needed', 'the refresh token is already invalid at Twitch');
+    assert.equal(mock.st.requests.filter((x) => x.path === '/twitch/revoke').length, 0);
   });
   test('one sign-in at a time', async () => {
     const { c, mem } = await setup({ stores: twitchStores, mockOpts: { twitchPendingPolls: 3 }, browser: () => async () => {} });
@@ -286,5 +288,173 @@ describe('Twitch sign-in (PC1)', () => {
     assert.ok(!mem.map.has('Ujwalam/stream/twitch'), 'nothing is written after a cancel');
     assert.equal((await c.startSignIn('twitch', 'twitch')).state, 'starting', 'a new sign-in may start');
     assert.equal((await settle(c)).state, 'done');
+  });
+});
+
+// Codex second review of D327 (2026-11-10): one regression test or more per finding.
+describe('review fixes: writes as a unit, ended jobs, concurrency, Twitch token lock, revoke', () => {
+  const twitchStores = { [TARGETS.twitchClientId]: TWITCH_CLIENT };
+  const deferred = () => { let open; const p = new Promise((r) => { open = r; }); return { p, open }; };
+
+  test('1. paste: the output starts between the server and the key write: the old pair comes back, refused', async () => {
+    const old = { 'Ujwalam/stream/kick': 'sk_us-west-2_OldKickKeyZZ9abcdef', 'Ujwalam/stream/kick-server': 'rtmps://old-mock-ingest.example.net:443/app' };
+    const box = {};
+    const { c, mem, liveState } = await setup({
+      stores: old,
+      storeWrap: (t, s) => ({ ...s, set: async (v) => { await s.set(v); if (t === 'Ujwalam/stream/kick-server') box.live.kick = true; } }),
+    });
+    box.live = liveState;
+    await assert.rejects(c.paste('kick', { key: SECRETS.kickKey, server: SECRETS.kickServer }), { code: 'output-live' });
+    assert.equal(mem.map.get('Ujwalam/stream/kick'), old['Ujwalam/stream/kick']);
+    assert.equal(mem.map.get('Ujwalam/stream/kick-server'), old['Ujwalam/stream/kick-server']);
+  });
+  test('1. the start gate: a start on its way refuses the write; the gate is held for the whole update', async () => {
+    let starting = true; let held = 0; const seen = [];
+    const gate = { enter() { if (starting) throw Object.assign(new Error('output-starting'), { code: 'output-starting' }); held += 1; return () => { held -= 1; }; } };
+    const { c, mem } = await setup({ gate, storeWrap: (t, s) => ({ ...s, set: async (v) => { seen.push([t, held]); await s.set(v); } }) });
+    await assert.rejects(c.paste('kick', { key: SECRETS.kickKey, server: SECRETS.kickServer }), { code: 'output-starting' });
+    assert.ok(!mem.map.has('Ujwalam/stream/kick'));
+    starting = false;
+    await c.paste('kick', { key: SECRETS.kickKey, server: SECRETS.kickServer });
+    assert.deepEqual(seen, [['Ujwalam/stream/kick-server', 1], ['Ujwalam/stream/kick', 1]]);
+    assert.equal(held, 0, 'released after the update');
+  });
+  test('1. disconnect: the output starts during the delete: the key and server come back, refused', async () => {
+    const box = {};
+    const { c, mem, liveState } = await setup({
+      stores: { 'Ujwalam/stream/kick': SECRETS.kickKey, 'Ujwalam/stream/kick-server': SECRETS.kickServer },
+      storeWrap: (t, s) => ({ ...s, delete: async () => { const r = await s.delete(); if (t === 'Ujwalam/stream/kick') box.live.kick = true; return r; } }),
+    });
+    box.live = liveState;
+    await assert.rejects(c.disconnect('kick'), { code: 'output-live' });
+    assert.equal(mem.map.get('Ujwalam/stream/kick'), SECRETS.kickKey);
+    assert.equal(mem.map.get('Ujwalam/stream/kick-server'), SECRETS.kickServer);
+  });
+  test('1. two pastes at once run one after the other (one lock for output writes)', async () => {
+    let inside = 0; let most = 0;
+    const { c } = await setup({ storeWrap: (t, s) => ({ ...s, set: async (v) => { inside += 1; most = Math.max(most, inside); await new Promise((r) => setTimeout(r, 5)); await s.set(v); inside -= 1; } }) });
+    await Promise.all([c.paste('kick', { key: SECRETS.kickKey, server: SECRETS.kickServer }), c.paste('twitch', { key: SECRETS.twitchKey })]);
+    assert.equal(most, 1);
+  });
+
+  test('2. choose() cancelled while YouTube answers: nothing stored, the job stays cancelled', async () => {
+    const hold = deferred();
+    const box = {};
+    const { c, mem } = await setup({
+      fetchWrap: async (url, init, f) => { if (url.includes('/yt/liveStreams') && url.includes('id=stream-h')) { box.c.cancelJob(box.c._job().id); await hold.p; } return f(url, init); },
+    });
+    box.c = c;
+    await c.startSignIn('youtube', 'youtube-h');
+    const j = await settle(c);
+    const pending = c.choose(j.id, 'stream-h');
+    hold.open();
+    await assert.rejects(pending, { code: 'cancelled' });
+    assert.ok(!mem.map.has('Ujwalam/stream/youtube-h'));
+    assert.equal(c.currentJob().state, 'cancelled');
+  });
+  test('2. Twitch: the token answer arrives after a cancel: the refresh token is not stored', async () => {
+    const box = {};
+    const { c, mem } = await setup({
+      stores: twitchStores,
+      fetchWrap: async (url, init, f) => {
+        const r = await f(url, init);
+        if (url.endsWith('/twitch/token') && String(init.body).includes('device_code') && r.status === 200) box.c.cancelJob(box.c._job().id);
+        return r;
+      },
+    });
+    box.c = c;
+    await c.startSignIn('twitch', 'twitch');
+    assert.equal((await settle(c)).state, 'cancelled');
+    assert.ok(!mem.map.has(TARGETS.twitchRefresh));
+    assert.ok(!mem.map.has('Ujwalam/stream/twitch'));
+  });
+  test('2. Google: a cancel after consent stores no refresh token; a cancel before closes the loopback listener', async () => {
+    const box = {};
+    const { c, mem } = await setup({
+      fetchWrap: async (url, init, f) => { const r = await f(url, init); if (url.endsWith('/google/token') && String(init.body).includes('authorization_code')) box.c.cancelJob(box.c._job().id); return r; },
+    });
+    box.c = c;
+    await c.startSignIn('youtube', 'youtube-h');
+    assert.equal((await settle(c)).state, 'cancelled');
+    assert.ok(!mem.map.has(TARGETS.youtubeRefresh));
+    let redirect = null;
+    const b = await setup({ browser: () => async (u) => { redirect = new URL(u).searchParams.get('redirect_uri'); } });
+    const j = await b.c.startSignIn('youtube', 'youtube-h');
+    while (!redirect) await new Promise((r) => setTimeout(r, 5));
+    b.c.cancelJob(j.id);
+    await settle(b.c);
+    await assert.rejects(fetch(redirect), 'the listener is closed at once, not after 3 minutes');
+  });
+  test('2. a job past its time limit is ended for good: choose() refuses and nothing is stored', async () => {
+    let t = 1_000_000;
+    const { c, mem } = await setup({ now: () => t });
+    await c.startSignIn('youtube', 'youtube-h');
+    const j = await settle(c);
+    assert.equal(j.state, 'choose');
+    t += 11 * 60_000;
+    await assert.rejects(c.choose(j.id, 'stream-h'), { code: 'job-not-waiting' });
+    assert.deepEqual([c.currentJob().state, c.currentJob().error], ['failed', 'timeout']);
+    assert.ok(!mem.map.has('Ujwalam/stream/youtube-h'));
+  });
+
+  test('3. two sign-in requests at once: one starts, the other is refused', async () => {
+    const { c } = await setup({ stores: twitchStores, browser: () => async () => {} });
+    const r = await Promise.allSettled([c.startSignIn('twitch', 'twitch'), c.startSignIn('youtube', 'youtube-h')]);
+    assert.deepEqual(r.map((x) => x.status).sort(), ['fulfilled', 'rejected']);
+    assert.equal(r.find((x) => x.status === 'rejected').reason.code, 'sign-in-busy');
+    c.cancelJob(c._job().id);
+    await settle(c);
+  });
+  test('3. two choose() calls at once: one saves, one is refused; one new stream is created', async () => {
+    const { c, mock } = await setup();
+    await c.startSignIn('youtube', 'youtube-h');
+    const j = await settle(c);
+    const r = await Promise.allSettled([c.choose(j.id, null), c.choose(j.id, null)]);
+    assert.deepEqual(r.map((x) => x.status).sort(), ['fulfilled', 'rejected']);
+    assert.equal(r.find((x) => x.status === 'rejected').reason.code, 'job-not-waiting');
+    assert.equal(mock.st.requests.filter((x) => x.path === '/yt/liveStreams' && x.method === 'POST').length, 1);
+  });
+
+  test('4. two Twitch refreshes at once share one exchange of the single-use refresh token', async () => {
+    const { c, mock, mem } = await setup({ stores: { ...twitchStores, [TARGETS.twitchRefresh]: SECRETS.twitchRefresh }, mockOpts: { twitchSingleUse: true } });
+    const [a, b] = await Promise.all([c.checkTokens(), c.checkTokens()]);
+    assert.deepEqual([a.twitch, b.twitch], ['ok', 'ok']);
+    assert.equal(mock.st.requests.filter((x) => x.path === '/twitch/token').length, 1);
+    assert.equal(mem.map.get(TARGETS.twitchRefresh), SECRETS.twitchRefresh2);
+  });
+  test('4. a refresh on its way when the user disconnects: the token is not stored again afterwards', async () => {
+    const hold = deferred();
+    const box = { armed: false, held: false };
+    const { c, mem } = await setup({
+      stores: { ...twitchStores, [TARGETS.twitchRefresh]: SECRETS.twitchRefresh },
+      // The held refresh goes on only after the sign-out deleted the token (the old race), or after 50 ms when the
+      // sign-out rightly waits for the refresh (account lock).
+      storeWrap: (t, s) => ({ ...s, delete: async () => { const r = await s.delete(); if (t === TARGETS.twitchRefresh) hold.open(); return r; } }),
+      fetchWrap: async (url, init, f) => {
+        const r = await f(url, init);
+        if (box.armed && !box.held && url.endsWith('/twitch/token') && String(init.body).includes('grant_type=refresh_token')) { box.held = true; await hold.p; }
+        return r;
+      },
+    });
+    await c.startSignIn('twitch', 'twitch'); // a stored sign-in: refresh, then the key; the output comes from Twitch
+    assert.equal((await settle(c)).state, 'done');
+    box.armed = true;
+    const check = c.checkTokens();
+    while (!box.held) await new Promise((r) => setTimeout(r, 2));
+    const disc = c.disconnect('twitch');
+    setTimeout(hold.open, 50);
+    await Promise.all([check, disc]);
+    assert.ok(!mem.map.has(TARGETS.twitchRefresh), 'the sign-out wins');
+  });
+
+  test('5. sign-out revokes the access token (never the refresh token) and reports a failed revoke apart from the local delete', async () => {
+    const { c, mock, mem } = await setup({ stores: twitchStores });
+    await c.startSignIn('twitch', 'twitch');
+    await settle(c);
+    mock.st.revokeStatus = 503;
+    const r = await c.disconnect('twitch');
+    assert.deepEqual([r.removed.token, r.removed.revoke], [true, 'failed']);
+    assert.deepEqual(mock.st.revoked, [SECRETS.twitchAccess]);
+    assert.ok(!mem.map.has(TARGETS.twitchRefresh));
   });
 });

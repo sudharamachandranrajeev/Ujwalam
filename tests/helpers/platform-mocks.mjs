@@ -31,6 +31,10 @@ export async function startPlatformMock(opts = {}) {
     twitchPendingPolls: opts.twitchPendingPolls ?? 1,
     twitchRefreshValid: true,
     twitchDeny: false,
+    twitchSingleUse: opts.twitchSingleUse ?? false, // Twitch public clients: a refresh token works once
+    usedRefresh: new Set(),
+    revokeStatus: 200,
+    revoked: [], // the tokens sent to /twitch/revoke
     streams: [
       { id: 'stream-h', snippet: { title: 'Default stream key' }, cdn: { ingestionType: 'rtmp', resolution: 'variable', frameRate: 'variable', ingestionInfo: { streamName: SECRETS.ytKeyH, rtmpsIngestionAddress: 'rtmps://a.rtmps.youtube.com/live2' } }, contentDetails: { isReusable: true } },
       { id: 'stream-hls', snippet: { title: 'HLS one' }, cdn: { ingestionType: 'hls', ingestionInfo: { streamName: 'hls-not-used-zz9' } } },
@@ -86,6 +90,7 @@ export async function startPlatformMock(opts = {}) {
         }
         if (form.grant_type === 'refresh_token') {
           if (!st.twitchRefreshValid || ![SECRETS.twitchRefresh, SECRETS.twitchRefresh2].includes(form.refresh_token)) return send(400, { status: 400, message: 'Invalid refresh token' });
+          if (st.twitchSingleUse) { if (st.usedRefresh.has(form.refresh_token)) return send(400, { status: 400, message: 'Invalid refresh token' }); st.usedRefresh.add(form.refresh_token); }
           return send(200, { access_token: SECRETS.twitchAccess, refresh_token: SECRETS.twitchRefresh2, expires_in: 14000, scope: ['channel:read:stream_key'] });
         }
       }
@@ -93,7 +98,11 @@ export async function startPlatformMock(opts = {}) {
         if (req.headers.authorization !== `OAuth ${SECRETS.twitchAccess}`) return send(401, { status: 401 });
         return send(200, { client_id: 'mocktwitchclientid0000000000zz', login: 'placeholder', user_id: '424242', scopes: ['channel:read:stream_key'], expires_in: 14000 });
       }
-      if (u.pathname === '/twitch/revoke') return send(200, {});
+      if (u.pathname === '/twitch/revoke') {
+        st.revoked.push(form?.token ?? null);
+        if (form?.token !== SECRETS.twitchAccess) return send(400, { status: 400, message: 'Invalid token' }); // Twitch revokes access tokens
+        return send(st.revokeStatus, {});
+      }
       if (u.pathname === '/helix/streams/key') {
         if (req.headers.authorization !== `Bearer ${SECRETS.twitchAccess}` || req.headers['client-id'] !== 'mocktwitchclientid0000000000zz' || u.searchParams.get('broadcaster_id') !== '424242') return send(401, { status: 401 });
         return send(200, { data: [{ stream_key: SECRETS.twitchKey }] });

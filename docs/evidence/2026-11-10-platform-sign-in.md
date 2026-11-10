@@ -69,6 +69,33 @@ Result: 75 tests, 75 pass, 0 fail.
   ends that sign-in (DoS, not takeover). The Twitch verify URL is origin-checked before the browser opens it.
 - Local API: session cookie, CSRF header and Origin check on every write; typed phrase for every credential write.
 - A pasted key waits in memory (pending closure) for up to 30 s until confirmed or cancelled; never on disk.
-- Open points: a cancelled YouTube sign-in leaves the loopback listener open up to 3 min; a Google refresh token is kept
-  if the sign-in is cancelled after consent; disconnect does not revoke the Google grant (same client as clip uploads,
-  revoking would end that too); the stored refresh token has the broad `youtube` scope.
+- Open points: disconnect does not revoke the Google grant (same client as clip uploads, revoking would end that too);
+  the stored refresh token has the broad `youtube` scope.
+
+## Codex second review (2026-11-10): five P2 findings, fixed
+
+Each has regression tests; the 14 new service tests in `tests/platform-connect.test.mjs` all fail on the code before
+the fix (checked) and pass after it.
+
+1. Check-then-write race. An output's key and server address now change as one update (`updateOutput`): under one
+   lock for all output writes and the studio-ui start gate, idle check, write, idle re-check; if the output went live,
+   the previous pair is restored and the update refused. While an update holds the gate, a confirmed stream start is
+   refused (409 `credentials-updating`); while a start is on its way, an update is refused (409 `output-starting`).
+   Tests: paste and disconnect with a start in between, gate held for the whole update, two pastes serialised, and two
+   server tests in `tests/studio-ui-connect.test.mjs`.
+2. Ended jobs writing. A job ends in done, failed or cancelled for good (also past 10 min, or superseded); ending it
+   aborts its AbortController (HTTP requests and the Google loopback listener stop at once) and every await and
+   credential write checks it. The Google refresh token is written through a guard tied to the job. Tests: cancel
+   during choose(), Twitch token answer after cancel, Google cancel after consent and before (listener closed), time-out.
+3. Concurrent requests. The job is reserved before the first await; choose() moves to saving before its first await.
+   Tests: two sign-ins at once, two choose() at once (one stream created).
+4. Twitch single-use refresh token. Read, exchange and replace run under one account lock; callers at the same time
+   share one refresh; a sign-out invalidates refreshes and device sign-ins already running. Tests: two refreshes, one
+   exchange; a refresh in flight during disconnect stores nothing afterwards.
+5. Revoke. Sign-out exchanges the refresh token for an access token and revokes that (Twitch's revoke takes an access
+   token), checks the answer, and reports `removed.token` (local delete) and `removed.revoke` (revoked | failed |
+   not-needed | skipped) apart. Test: revoke failing with 503 still deletes locally and reports `failed`.
+   UNVERIFIED: whether Twitch also invalidates the refresh token when its access token is revoked (deleted locally anyway).
+
+`services/posting/oauth.mjs`: `signIn({ signal })` and `loopbackListener({ signal })` are optional additions; posting's
+calls are unchanged (posting suites pass).

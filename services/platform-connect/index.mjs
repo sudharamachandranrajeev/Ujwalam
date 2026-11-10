@@ -159,13 +159,19 @@ function writeMeta(file, meta) {
 
 // ---- HTTP (fetch, timeout, codes only) ----
 
-async function httpJson(fetchImpl, url, { method = 'GET', headers = {}, form, json } = {}) {
+// signal: a sign-in job's abort signal (cancel, time-out, superseded): the request stops and 'cancelled' is thrown.
+async function httpJson(fetchImpl, url, { method = 'GET', headers = {}, form, json, signal } = {}) {
   const h = { Accept: 'application/json', ...headers };
   let body;
   if (form) { h['Content-Type'] = 'application/x-www-form-urlencoded'; body = new URLSearchParams(form).toString(); }
   if (json) { h['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
+  if (signal?.aborted) throw new ConnectError('cancelled');
+  const timeout = AbortSignal.timeout(HTTP_TIMEOUT_MS);
   let res;
-  try { res = await fetchImpl(url, { method, headers: h, body, redirect: 'error', signal: AbortSignal.timeout(HTTP_TIMEOUT_MS) }); } catch { throw new ConnectError('network-failed', 'the platform could not be reached'); }
+  try { res = await fetchImpl(url, { method, headers: h, body, redirect: 'error', signal: signal ? AbortSignal.any([signal, timeout]) : timeout }); } catch {
+    if (signal?.aborted) throw new ConnectError('cancelled');
+    throw new ConnectError('network-failed', 'the platform could not be reached');
+  }
   let data = null;
   try { const t = await res.text(); data = t ? JSON.parse(t) : null; } catch { data = null; }
   return { status: res.status, data };
@@ -214,15 +220,66 @@ export function createConnect(opts = {}) {
     if (r.status !== 200 || !r.data) throw new ConnectError('token-endpoint-failed', `HTTP ${r.status}`);
     return r.data;
   };
+  // The Google sign-in stores its refresh token itself (posting/oauth.mjs). That write goes through this guard, which
+  // the running YouTube job sets: a sign-in cancelled, timed out or superseded after consent stores nothing.
+  const ytRefresh = store(TARGETS.youtubeRefresh);
+  let ytWriteGuard = null;
+  const ytRefreshGuarded = {
+    get: () => ytRefresh.get(),
+    set: async (v) => { if (ytWriteGuard) ytWriteGuard(); return ytRefresh.set(v); },
+    delete: () => ytRefresh.delete(),
+  };
   const ytAuth = createYoutubeAuth({
-    clientIdStore: store(CLIENT_ID_TARGET), clientSecretStore: store(CLIENT_SECRET_TARGET), refreshStore: store(TARGETS.youtubeRefresh),
+    clientIdStore: store(CLIENT_ID_TARGET), clientSecretStore: store(CLIENT_SECRET_TARGET), refreshStore: ytRefreshGuarded,
     scope: YOUTUBE_SCOPE, browserOpen: (u) => browserOpen(u), now, endpoints: { authUrl: ep.googleAuth, tokenUrl: ep.googleToken }, request: formPost,
   });
+
+  // Serial sections: one chain per name. 'creds' covers every output key / server write (read state, write, re-check);
+  // 'twitch' covers the Twitch sign-in token (read, exchange, replace, revoke, delete): its refresh token is single use.
+  const chains = new Map();
+  const exclusive = (name, fn) => {
+    const run = (chains.get(name) ?? Promise.resolve()).then(fn, fn);
+    chains.set(name, run.catch(() => {}));
+    return run;
+  };
+  // Start gate (opts.gate, the studio-ui server): enter() throws ConnectError('output-starting') while a stream start
+  // is on its way, and while the returned leave() is pending every new start is refused there. Without a gate, only
+  // the re-check after the write below protects a start that slips in.
+  const gate = opts.gate && typeof opts.gate.enter === 'function' ? opts.gate : { enter: () => () => {} };
 
   async function assertWritable(output) {
     let st;
     try { st = await outputLive(output.id); } catch { throw new ConnectError('live-unknown', 'could not confirm that this output is not live'); }
     if (st !== 'idle') throw new ConnectError('output-live', `${output.label} is streaming: change its key after the stream`);
+  }
+  /**
+   * One update of an output's stored key and server address, as a unit: under the 'creds' lock and the start gate,
+   * the output must be idle, then apply() runs, then the output must still be idle; otherwise the previous values are
+   * put back and the update is refused. alive() (a sign-in job's check) runs before every step. The previous values
+   * are held in memory for the length of the update only.
+   */
+  function updateOutput(o, apply, alive = () => {}) {
+    return exclusive('creds', async () => {
+      alive();
+      const leave = gate.enter();
+      try {
+        await assertWritable(o);
+        alive();
+        const refs = [o.keyRef, ...(o.serverRef ? [o.serverRef] : [])];
+        let before = await Promise.all(refs.map((r) => store(r).get()));
+        const restore = async () => { for (let i = 0; i < refs.length; i++) { try { if (before[i]) await store(refs[i]).set(before[i]); else await store(refs[i]).delete(); } catch { /* best effort */ } } };
+        try {
+          alive();
+          const result = await apply();
+          let st; try { st = await outputLive(o.id); } catch { st = 'unknown'; }
+          if (st !== 'idle') { await restore(); throw new ConnectError(st === 'live' ? 'output-live' : 'live-unknown', 'the output started while its key was being changed; the previous key is back'); }
+          return result;
+        } catch (e) {
+          if (e?.code !== 'output-live' && e?.code !== 'live-unknown') await restore();
+          throw e;
+        } finally { before = null; invalidate(); }
+      } finally { leave(); }
+    });
   }
   function outputOf(id) {
     const o = typeof id === 'string' ? byId.get(id) : undefined;
@@ -238,12 +295,6 @@ export function createConnect(opts = {}) {
     const m = readMeta(metaFile);
     if (state) m.tokens[platform] = { state, checkedAt: iso() }; else delete m.tokens[platform];
     writeMeta(metaFile, m);
-  }
-  async function writeKey(output, key, source) {
-    await assertWritable(output); // checked again right before the write (the stream may have started meanwhile)
-    await store(output.keyRef).set(key);
-    noteOutput(output.id, source);
-    invalidate();
   }
 
   // ---- status ----
@@ -309,37 +360,64 @@ export function createConnect(opts = {}) {
     const o = outputOf(id);
     const bad = checkPaste(id, { key, server });
     if (bad) throw new ConnectError(bad, PROBLEM_TEXT[bad]);
-    await assertWritable(o);
-    if (server !== undefined) await store(o.serverRef).set(server.trim());
-    if (key !== undefined) await writeKey(o, key.trim(), 'pasted');
-    else { noteOutput(o.id, readMeta(metaFile).outputs[o.id]?.source ?? 'pasted'); invalidate(); }
+    // Key and server address change together (updateOutput): a start in between is refused, or the old pair returns.
+    await updateOutput(o, async () => {
+      if (server !== undefined) await store(o.serverRef).set(server.trim());
+      if (key !== undefined) await store(o.keyRef).set(key.trim());
+    });
+    noteOutput(o.id, key !== undefined ? 'pasted' : (readMeta(metaFile).outputs[o.id]?.source ?? 'pasted'));
+    invalidate();
     return { ok: true, output: o.id };
   }
 
   // ---- disconnect ----
   async function disconnect(id) {
     const o = outputOf(id);
-    await assertWritable(o);
     const source = readMeta(metaFile).outputs[o.id]?.source ?? null;
-    const removed = { key: await store(o.keyRef).delete(), server: o.serverRef ? await store(o.serverRef).delete() : false, token: false };
+    // A running sign-in for this output, or for the same account, would write again after the delete: it ends here.
+    if (job && !TERMINAL.has(job.state) && (job.output === o.id || job.platform === source)) endJob(job, 'cancelled');
+    const removed = await updateOutput(o, async () => ({ key: await store(o.keyRef).delete(), server: o.serverRef ? await store(o.serverRef).delete() : false, token: false, revoke: 'not-needed' }));
     noteOutput(o.id, null);
     // The platform token goes when no other output still comes from that sign-in.
     if (source === 'youtube' || source === 'twitch') {
       const others = Object.entries(readMeta(metaFile).outputs).some(([k, v]) => k !== o.id && v?.source === source);
-      if (!others) removed.token = await signOut(source);
+      if (!others) { const r = await signOut(source); removed.token = r.local; removed.revoke = r.remote; }
     }
     invalidate();
     return { ok: true, output: o.id, removed };
   }
+  /**
+   * Ends a platform sign-in. Returns { local: deleted here (bool), remote: 'revoked' | 'failed' | 'not-needed' | 'skipped' }.
+   * Google: local only ('skipped'; a revoke would end the posting sign-in too, same OAuth client). Twitch: under the
+   * account lock, the refresh token is exchanged for an access token, that access token is revoked (Twitch's revoke
+   * takes an access token) and its answer checked; the stored token is deleted whatever Twitch answers. Work already
+   * running for the account (a refresh, a device sign-in) is invalidated first so it cannot store a token afterwards.
+   */
   async function signOut(platform) {
-    if (platform === 'youtube') { const r = await ytAuth.signOut(); noteToken('youtube', null); return r; }
-    const t = store(TARGETS.twitchRefresh);
-    const rt = await t.get().catch(() => null);
-    const cid = await store(TARGETS.twitchClientId).get().catch(() => null);
-    if (rt && cid) { try { await httpJson(fetchImpl, ep.twitchRevoke, { method: 'POST', form: { client_id: cid, token: rt } }); } catch { /* best effort: deleted locally either way */ } }
-    const r = await t.delete();
-    noteToken('twitch', null);
-    return r;
+    if (platform === 'youtube') { const local = await ytAuth.signOut(); noteToken('youtube', null); return { local: local === true, remote: 'skipped' }; }
+    twitchGen += 1;
+    return exclusive('twitch', async () => {
+      const t = store(TARGETS.twitchRefresh);
+      const rt = await t.get().catch(() => null);
+      const cid = await store(TARGETS.twitchClientId).get().catch(() => null);
+      let remote = 'not-needed';
+      if (rt && !cid) remote = 'skipped';
+      else if (rt && cid) {
+        try {
+          const ex = await httpJson(fetchImpl, ep.twitchToken, { method: 'POST', form: { client_id: cid, grant_type: 'refresh_token', refresh_token: rt } });
+          if (ex.status === 400 || ex.status === 401) remote = 'not-needed'; // already invalid at Twitch
+          else if (ex.status !== 200 || typeof ex.data?.access_token !== 'string') remote = 'failed';
+          else {
+            const rv = await httpJson(fetchImpl, ep.twitchRevoke, { method: 'POST', form: { client_id: cid, token: ex.data.access_token } });
+            remote = rv.status === 200 ? 'revoked' : 'failed';
+          }
+        } catch { remote = 'failed'; }
+      }
+      let local = false;
+      try { local = (await t.delete()) === true; } catch { local = false; }
+      noteToken('twitch', null);
+      return { local, remote };
+    });
   }
 
   // ---- Twitch client id (a setting the user makes once; not a secret, kept with the other sign-in values) ----
@@ -351,7 +429,11 @@ export function createConnect(opts = {}) {
   }
 
   // ---- sign-in jobs (one at a time; state is memory only) ----
-  let job = null; // { id, platform, output, state, ... private: streams cache never holds keys }
+  // A job ends in done, failed or cancelled and never moves again. Ending it aborts its AbortController: its HTTP
+  // requests stop, and alive(j), checked after every await and before every credential write, throws. A job past
+  // JOB_TTL_MS, or no longer the current one, counts as ended too.
+  let job = null; // { id, platform, output, state, ac, startedAt, ... private: streams cache never holds keys }
+  const TERMINAL = new Set(['done', 'failed', 'cancelled']);
   const publicJob = (j) => (j ? {
     id: j.id, platform: j.platform, output: j.output, state: j.state,
     ...(j.userCode ? { userCode: j.userCode, verifyUrl: j.verifyUrl } : {}),
@@ -359,29 +441,37 @@ export function createConnect(opts = {}) {
     ...(j.error ? { error: j.error, message: j.message ?? null } : {}),
     ...(j.warnings?.length ? { warnings: j.warnings } : {}),
   } : null);
+  function endJob(j, state, code) {
+    if (TERMINAL.has(j.state)) return;
+    j.state = state;
+    if (state === 'failed') { j.error = code ?? 'failed'; j.message = ERROR_TEXT[j.error] ?? 'Sign-in did not finish.'; }
+    j.streams = null; j.userCode = null; j.verifyUrl = null;
+    j.ac.abort();
+  }
+  const expireIfDue = (j) => { if (j && !TERMINAL.has(j.state) && now() - j.startedAt > JOB_TTL_MS) endJob(j, 'failed', 'timeout'); };
+  function alive(j) {
+    expireIfDue(j);
+    if (j !== job || TERMINAL.has(j.state) || j.ac.signal.aborted) throw new ConnectError('cancelled');
+  }
   function currentJob() {
-    if (job && now() - job.startedAt > JOB_TTL_MS && !['done', 'failed', 'cancelled'].includes(job.state)) { job.state = 'failed'; job.error = 'timeout'; job.message = 'Sign-in took too long; try again.'; }
+    expireIfDue(job);
     return publicJob(job);
   }
-  const fail = (j, e) => {
-    if (j.state === 'cancelled') return;
-    j.state = 'failed';
-    j.error = typeof e?.code === 'string' ? e.code : 'failed';
-    j.message = ERROR_TEXT[j.error] ?? 'Sign-in did not finish.';
-  };
-  // Moves a job on; a cancelled job stays cancelled and its run stops here (nothing is written after a cancel).
-  const step = (j, s) => {
-    if (j.state === 'cancelled') throw new ConnectError('cancelled');
-    j.state = s;
-  };
+  const fail = (j, e) => endJob(j, 'failed', typeof e?.code === 'string' && e.code !== 'cancelled' ? e.code : 'failed');
+  // Moves a live job on; an ended job throws here and its run stops (nothing is written after it ended).
+  const step = (j, s) => { alive(j); j.state = s; };
+  // The key is stored: that is the outcome, also when a cancel or the time limit landed during the last write.
+  const stored = (j) => { j.state = 'done'; delete j.error; delete j.message; j.ac.abort(); };
 
   async function startSignIn(platform, id) {
     const o = outputOf(id);
     if (o.signIn !== platform) throw new ConnectError('sign-in-not-offered', `${o.label} has no ${PLATFORM_LABEL[platform] ?? platform} sign-in; paste the key instead`);
-    if (job && !['done', 'failed', 'cancelled'].includes(job.state) && now() - job.startedAt <= JOB_TTL_MS) throw new ConnectError('sign-in-busy', 'Another sign-in is still running.');
-    await assertWritable(o);
-    const j = { id: randomBytes(16).toString('hex'), platform, output: o.id, state: 'starting', startedAt: now(), warnings: [] };
+    expireIfDue(job);
+    if (job && !TERMINAL.has(job.state)) throw new ConnectError('sign-in-busy', 'Another sign-in is still running.');
+    // Reserved before the first await: a second request sees this job and is refused.
+    const j = { id: randomBytes(16).toString('hex'), platform, output: o.id, state: 'starting', startedAt: now(), warnings: [], ac: new AbortController() };
     job = j;
+    try { await assertWritable(o); alive(j); } catch (e) { fail(j, e); throw e; }
     const run = platform === 'youtube' ? runYoutube(j, o) : runTwitch(j, o);
     run.catch((e) => fail(j, e)).finally(invalidate);
     j.done = run;
@@ -389,29 +479,35 @@ export function createConnect(opts = {}) {
   }
   function cancelJob(jobId) {
     if (!job || job.id !== jobId) throw new ConnectError('unknown-job');
-    if (!['done', 'failed'].includes(job.state)) job.state = 'cancelled';
+    endJob(job, 'cancelled');
     return publicJob(job);
   }
 
   // YouTube: sign in (or reuse a stored sign-in), list the account's live streams, then the user picks one (choose()).
   async function runYoutube(j, o) {
+    const sig = j.ac.signal;
     let token = null;
     try { token = await ytAuth.accessToken(); } catch { token = null; }
+    alive(j);
     if (token) {
       const scopes = await ytAuth.grantedScopes().catch(() => null);
+      alive(j);
       if (scopes && !scopes.includes(YOUTUBE_SCOPE) && !scopes.includes(`${YOUTUBE_SCOPE}.force-ssl`)) token = null;
     }
     if (!token) {
       step(j, 'browser');
-      await ytAuth.signIn();
-      if (j.state === 'cancelled') return;
+      ytWriteGuard = () => alive(j); // the refresh token is stored only while this job still runs
+      try { await ytAuth.signIn({ signal: sig }); } finally { if (ytWriteGuard) ytWriteGuard = null; }
+      alive(j);
       const scopes = await ytAuth.grantedScopes().catch(() => null);
+      alive(j);
       if (!scopes || (!scopes.includes(YOUTUBE_SCOPE) && !scopes.includes(`${YOUTUBE_SCOPE}.force-ssl`))) throw new ConnectError('scope-missing');
       token = await ytAuth.accessToken();
+      alive(j);
     }
     noteToken('youtube', 'ok');
-    if (j.state === 'cancelled') return;
-    const r = await httpJson(fetchImpl, `${ep.youtubeApi}/liveStreams?part=id,snippet,cdn,contentDetails&mine=true&maxResults=50`, { headers: { Authorization: `Bearer ${token}` } });
+    const r = await httpJson(fetchImpl, `${ep.youtubeApi}/liveStreams?part=id,snippet,cdn,contentDetails&mine=true&maxResults=50`, { headers: { Authorization: `Bearer ${token}` }, signal: sig });
+    alive(j);
     if (r.status === 401) { noteToken('youtube', 'expired'); throw new ConnectError('youtube-unauthorized'); }
     if (r.status === 403) throw new ConnectError('youtube-live-not-enabled');
     if (r.status !== 200 || !Array.isArray(r.data?.items)) throw new ConnectError('youtube-api-failed', `HTTP ${r.status}`);
@@ -425,24 +521,28 @@ export function createConnect(opts = {}) {
   async function choose(jobId, streamId) {
     const j = job;
     if (!j || j.id !== jobId || j.platform !== 'youtube') throw new ConnectError('unknown-job');
+    expireIfDue(j);
     if (j.state !== 'choose') throw new ConnectError('job-not-waiting');
     if (streamId !== null && !(typeof streamId === 'string' && j.streams.some((s) => s.id === streamId))) throw new ConnectError('unknown-stream');
     const o = outputOf(j.output);
-    await assertWritable(o);
-    j.state = 'saving';
+    step(j, 'saving'); // before the first await: a second choose() sees 'saving' and is refused
+    const sig = j.ac.signal;
     try {
       const token = await ytAuth.accessToken();
+      alive(j);
       const auth = { Authorization: `Bearer ${token}` };
       let item;
       if (streamId === null) {
         const r = await httpJson(fetchImpl, `${ep.youtubeApi}/liveStreams?part=id,snippet,cdn,contentDetails`, {
-          method: 'POST', headers: auth,
+          method: 'POST', headers: auth, signal: sig,
           json: { snippet: { title: `Ujwalam ${o.label}` }, cdn: { ingestionType: 'rtmp', resolution: 'variable', frameRate: 'variable' }, contentDetails: { isReusable: true } },
         });
+        alive(j);
         if (r.status !== 200) throw new ConnectError(r.status === 403 ? 'youtube-live-not-enabled' : 'youtube-api-failed', `HTTP ${r.status}`);
         item = r.data;
       } else {
-        const r = await httpJson(fetchImpl, `${ep.youtubeApi}/liveStreams?part=id,cdn&id=${encodeURIComponent(streamId)}`, { headers: auth });
+        const r = await httpJson(fetchImpl, `${ep.youtubeApi}/liveStreams?part=id,cdn&id=${encodeURIComponent(streamId)}`, { headers: auth, signal: sig });
+        alive(j);
         if (r.status !== 200) throw new ConnectError('youtube-api-failed', `HTTP ${r.status}`);
         item = Array.isArray(r.data?.items) ? r.data.items.find((s) => s?.id === streamId) : null;
       }
@@ -451,10 +551,10 @@ export function createConnect(opts = {}) {
       // The host sends to the YouTube ingest in data/platforms/youtube.json; a different host in the answer is a warning.
       const ing = item?.cdn?.ingestionInfo?.rtmpsIngestionAddress;
       try { if (ytIngestHost && ing && new URL(ing).hostname.toLowerCase() !== ytIngestHost) j.warnings.push('YouTube gave a different RTMPS server than the one Ujwalam uses; streaming may still work, check YouTube Studio if it does not.'); } catch { /* not a URL: ignored */ }
-      await writeKey(o, key, 'youtube');
+      await updateOutput(o, async () => { alive(j); await store(o.keyRef).set(key); }, () => alive(j));
       key = null;
-      j.streams = null;
-      step(j, 'done');
+      noteOutput(o.id, 'youtube');
+      stored(j);
       return publicJob(j);
     } catch (e) { fail(j, e); invalidate(); throw e; }
   }
@@ -465,22 +565,45 @@ export function createConnect(opts = {}) {
     if (!id) throw new ConnectError('twitch-no-client');
     return id;
   }
-  async function twitchRefresh(clientId) {
-    const rt = await store(TARGETS.twitchRefresh).get();
-    if (!rt) return null;
-    const r = await httpJson(fetchImpl, ep.twitchToken, { method: 'POST', form: { client_id: clientId, grant_type: 'refresh_token', refresh_token: rt } });
-    if (r.status === 400 || r.status === 401) { noteToken('twitch', 'expired'); return null; }
-    if (r.status !== 200 || typeof r.data?.access_token !== 'string') throw new ConnectError('twitch-token-failed', `HTTP ${r.status}`);
-    // Public clients get a new, one-time refresh token on every refresh: store it before anything else.
-    if (typeof r.data.refresh_token === 'string' && r.data.refresh_token) await store(TARGETS.twitchRefresh).set(r.data.refresh_token);
-    noteToken('twitch', 'ok');
-    return r.data.access_token;
+  // The Twitch sign-in token. Twitch gives a public client a new, single-use refresh token on every refresh, so the
+  // read, the exchange and the replace run under the account lock, and callers at the same time share one refresh.
+  // twitchGen grows on every sign-out: work begun before it stores nothing afterwards.
+  let twitchGen = 0;
+  let twitchRefreshing = null;
+  function twitchRefresh(clientId) {
+    if (twitchRefreshing) return twitchRefreshing;
+    const gen = twitchGen;
+    twitchRefreshing = exclusive('twitch', async () => {
+      if (gen !== twitchGen) return null;
+      const rt = await store(TARGETS.twitchRefresh).get();
+      if (!rt) return null;
+      const r = await httpJson(fetchImpl, ep.twitchToken, { method: 'POST', form: { client_id: clientId, grant_type: 'refresh_token', refresh_token: rt } });
+      if (gen !== twitchGen) return null; // signed out meanwhile: nothing is stored again
+      if (r.status === 400 || r.status === 401) { noteToken('twitch', 'expired'); return null; }
+      if (r.status !== 200 || typeof r.data?.access_token !== 'string') throw new ConnectError('twitch-token-failed', `HTTP ${r.status}`);
+      if (typeof r.data.refresh_token === 'string' && r.data.refresh_token) await store(TARGETS.twitchRefresh).set(r.data.refresh_token);
+      noteToken('twitch', 'ok');
+      return r.data.access_token;
+    }).finally(() => { twitchRefreshing = null; });
+    return twitchRefreshing;
   }
+  // A new sign-in's refresh token, stored under the account lock, only while the job runs and no sign-out came since.
+  const storeTwitchToken = (j, gen, rt) => exclusive('twitch', async () => {
+    alive(j);
+    if (gen !== twitchGen) throw new ConnectError('cancelled');
+    await store(TARGETS.twitchRefresh).set(rt);
+    noteToken('twitch', 'ok');
+  });
   async function runTwitch(j, o) {
+    const sig = j.ac.signal;
+    const gen = twitchGen;
     const clientId = await twitchClientId();
+    alive(j);
     let access = await twitchRefresh(clientId).catch(() => null);
+    alive(j);
     if (!access) {
-      const d = await httpJson(fetchImpl, ep.twitchDevice, { method: 'POST', form: { client_id: clientId, scopes: TWITCH_SCOPE } });
+      const d = await httpJson(fetchImpl, ep.twitchDevice, { method: 'POST', form: { client_id: clientId, scopes: TWITCH_SCOPE }, signal: sig });
+      alive(j);
       if (d.status !== 200 || typeof d.data?.device_code !== 'string') throw new ConnectError(d.status === 400 ? 'twitch-bad-client' : 'twitch-device-failed', `HTTP ${d.status}`);
       const verify = String(d.data.verification_uri ?? '');
       const allowed = [...TWITCH_VERIFY_ORIGINS, new URL(ep.twitchDevice).origin];
@@ -496,12 +619,12 @@ export function createConnect(opts = {}) {
       const deviceCode = d.data.device_code;
       for (;;) {
         await sleep(interval);
-        if (j.state === 'cancelled') return;
+        alive(j);
         if (now() > until) throw new ConnectError('twitch-code-expired');
-        const t = await httpJson(fetchImpl, ep.twitchToken, { method: 'POST', form: { client_id: clientId, scopes: TWITCH_SCOPE, device_code: deviceCode, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' } });
+        const t = await httpJson(fetchImpl, ep.twitchToken, { method: 'POST', form: { client_id: clientId, scopes: TWITCH_SCOPE, device_code: deviceCode, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }, signal: sig });
+        alive(j);
         if (t.status === 200 && typeof t.data?.access_token === 'string') {
-          if (typeof t.data.refresh_token === 'string' && t.data.refresh_token) await store(TARGETS.twitchRefresh).set(t.data.refresh_token);
-          noteToken('twitch', 'ok');
+          if (typeof t.data.refresh_token === 'string' && t.data.refresh_token) await storeTwitchToken(j, gen, t.data.refresh_token);
           access = t.data.access_token;
           break;
         }
@@ -513,27 +636,36 @@ export function createConnect(opts = {}) {
     }
     j.userCode = null; j.verifyUrl = null;
     step(j, 'saving');
-    const v = await httpJson(fetchImpl, ep.twitchValidate, { headers: { Authorization: `OAuth ${access}` } });
+    const v = await httpJson(fetchImpl, ep.twitchValidate, { headers: { Authorization: `OAuth ${access}` }, signal: sig });
+    alive(j);
     if (v.status !== 200 || typeof v.data?.user_id !== 'string' || !/^\d{1,20}$/.test(v.data.user_id)) throw new ConnectError('twitch-token-failed');
     if (Array.isArray(v.data.scopes) && !v.data.scopes.includes(TWITCH_SCOPE)) throw new ConnectError('scope-missing');
-    const k = await httpJson(fetchImpl, `${ep.helix}/streams/key?broadcaster_id=${v.data.user_id}`, { headers: { Authorization: `Bearer ${access}`, 'Client-Id': clientId } });
+    const k = await httpJson(fetchImpl, `${ep.helix}/streams/key?broadcaster_id=${v.data.user_id}`, { headers: { Authorization: `Bearer ${access}`, 'Client-Id': clientId }, signal: sig });
+    alive(j);
     if (k.status === 401) { noteToken('twitch', 'expired'); throw new ConnectError('twitch-unauthorized'); }
     let key = Array.isArray(k.data?.data) ? k.data.data[0]?.stream_key : null;
     access = null;
     if (k.status !== 200 || keyProblem(key, 'twitch')) throw new ConnectError('twitch-no-key');
-    step(j, 'saving');
     // Server address: kept if one is stored (the user's choice); otherwise Twitch's default ingest, rtmps when offered.
+    let srv = null;
     if (o.serverRef && !(await facts(o.serverRef)).present) {
-      const srv = await twitchDefaultServer(o.schemes).catch(() => null);
-      if (srv) { await assertWritable(o); await store(o.serverRef).set(srv); } else j.warnings.push('No Twitch server address is stored; paste one (Twitch Dashboard > Settings > Stream, or the Twitch ingest list).');
+      srv = await twitchDefaultServer(o.schemes, sig).catch(() => null);
+      alive(j);
+      if (!srv) j.warnings.push('No Twitch server address is stored; paste one (Twitch Dashboard > Settings > Stream, or the Twitch ingest list).');
     }
-    step(j, 'saving');
-    await writeKey(o, key, 'twitch');
+    // Key and default server go in as one update (updateOutput), checked against the job before each write.
+    await updateOutput(o, async () => {
+      alive(j);
+      if (srv) await store(o.serverRef).set(srv);
+      alive(j);
+      await store(o.keyRef).set(key);
+    }, () => alive(j));
     key = null;
-    step(j, 'done');
+    noteOutput(o.id, 'twitch');
+    stored(j);
   }
-  async function twitchDefaultServer(schemes) {
-    const r = await httpJson(fetchImpl, ep.twitchIngests);
+  async function twitchDefaultServer(schemes, signal) {
+    const r = await httpJson(fetchImpl, ep.twitchIngests, { signal });
     const list = Array.isArray(r.data?.ingests) ? r.data.ingests : [];
     const pick = list.find((x) => x?.default === true) ?? list[0];
     for (const tpl of [pick?.url_template_secure, pick?.url_template]) {
@@ -594,6 +726,9 @@ export const ERROR_TEXT = Object.freeze({
   'token-endpoint-failed': 'The sign-in server did not answer as expected; try again.',
   'output-live': 'This output is streaming: change its key after the stream.',
   'live-unknown': 'Could not confirm that this output is not live, so nothing was changed.',
+  'output-starting': 'A stream is starting right now, so nothing was changed; try again when it is on air or stopped.',
+  cancelled: 'The sign-in was cancelled or ran out of time, so nothing was stored.',
+  'oauth-cancelled': 'The sign-in was cancelled.',
   'browser-open-failed': 'No browser could be opened.',
   timeout: 'Sign-in took too long; try again.',
 });
