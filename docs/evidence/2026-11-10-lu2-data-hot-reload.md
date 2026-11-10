@@ -1,4 +1,4 @@
-# LU2 data hot-reload (2026-11-10): PASS for the kinds below, theme reload UNVERIFIED until the studio is rebuilt
+# LU2 data hot-reload (2026-11-10): PASS for the kinds below (theme pack: headless probe PASS)
 
 Plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` (LU2, D324). Decisions: D325.
 
@@ -21,7 +21,7 @@ A file that is still being written (younger than 300 ms) is retried, not reporte
 | guide-tour, guide-hints | `data/guide/tour.json`, `hints.json` | studio UI server | guide and hints |
 | effect-guards | `data/effects/guards.json` | overlay child (overlay server guards) | effect budget, cooldowns, pools, regions, queue; plays in progress keep running |
 | flash-measurements | `data/effects/flash-measurements.json` | overlay child | measured flash rates for the flash guard |
-| theme pack | the pack in use in `data/themes/` (or `UJWALAM_THEMES_DIR`) | Qt studio | colours, type, geometry; broken pack keeps the last good look, notice in the task bar (UNVERIFIED, see below) |
+| theme pack | the pack in use in `data/themes/` (or `UJWALAM_THEMES_DIR`) | Qt studio | colours, type, geometry; broken pack keeps the last good look, warning in the studio log, notice in the task bar |
 
 `GET /ui/api/data` lists each source of the UI server (kind, base name, ok, version, rejected reason); the overlay child
 reports its sources in `overlay.stats` (`data`, plus a `guards` summary).
@@ -60,8 +60,23 @@ fixed file, each through a temp-file rename. Short run `2026-11-10-live-soak-sho
 12-320 ms of the write (a full valid, broken, fixed cycle took 0.3-1.3 s), every broken file kept the last good version with its notice, every fix cleared it; no sink dropped a frame.
 Render-lag numbers of that run are explained in the LU8 evidence (load outside the stack).
 
+## Qt studio theme pack
+
+`tests/studio-qt-theme-reload.test.mjs` runs the built studio headless (probe mode) against a temp theme folder:
+valid accent change, half-written file, fixed file. Studio built into a separate build folder
+(`UJWALAM_STUDIO_BUILD`, 4 build threads, BelowNormal):
+
+```
+✔ valid change applies live; broken file keeps the last good look and is reported; a fix applies again (9333 ms)
+ℹ tests 1  ℹ pass 1  ℹ fail 0
+```
+
+Probe result: accent `#778899` (the fixed file), reloads 2, rejects 1, last reject names the JSON error; the studio log
+has `warn: theme: lu-reload.json not applied, the last good look stays: ...`. (A GUI-subsystem Qt app sends warnings to
+the debugger, not stderr, so the test reads the studio log file.)
+
 ## UNVERIFIED
 
-- Qt studio theme reload (`app/studio/src/theme.cpp`, test `tests/studio-qt-theme-reload.test.mjs`): written, not yet
-  built or run. The studio build was not started while a detector job and Meld Studio ran on the machine.
+- Theme reload seen in the visible studio window while a stream runs (the test is headless; the soak gate does not
+  run the Qt studio).
 - Real stream use: none yet (awaiting a live test).

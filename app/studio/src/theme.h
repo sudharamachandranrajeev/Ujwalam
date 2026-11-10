@@ -119,14 +119,21 @@ Caption caption();
 void depth(QWidget *w, const QString &cls);
 
 // Emits changed() after a switch (theme, effects). Widgets that colour themselves in paintEvent just update().
+// LU2 (D324): the current pack file reloads when it changes on disk (directory watch, debounced). A valid file applies
+// at once (changed()); an invalid one keeps the last good look and emits rejected() with the reason (the window shows
+// it as a notification) plus a warning line in the log.
 class Notifier : public QObject {
 	Q_OBJECT
 signals:
 	void changed();
+	void rejected(const QString &title, const QString &why);
 };
 Notifier *notifier();
 
-// Probe (tests): applied theme id, effects mode, the font Qt really picked, counts.
+// Problems with a theme pack file's text for the given id (JSON, id, required parts, colour tokens); empty = usable.
+QString packProblem(const QByteArray &bytes, const QString &id);
+
+// Probe (tests): applied theme id, effects mode, the font Qt really picked, counts, accent, reloads and rejections.
 QJsonObject probe();
 bool probeAction(const QString &action); // theme:<id> | effects:<full|reduced>
 
