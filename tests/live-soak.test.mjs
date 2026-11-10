@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Pure parts of the live-soak gate (tools/soak/live-soak.mjs, LU8): arguments, timestamp gaps, error-level log
-// lines, the report. The gate itself runs the host and is a release gate, not part of this suite.
+// lines, the report, each file sink's recording file (LC2). The gate itself runs the host and is a release gate,
+// not part of this suite.
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { errorLines, missingRequiredStreams, noPaths, notLiveByStream, noteChange, parseSoakArgs, ptsGaps, recordingProblems, REQUIRED_STREAMS, report, sinkFps, stallLines } from '../tools/soak/live-soak.mjs';
+import { errorLines, missingRequiredStreams, noPaths, notLiveByStream, noteChange, parseSoakArgs, ptsGaps, recordingFileFor, recordingProblems, REQUIRED_STREAMS, report, sinkFps, stallLines } from '../tools/soak/live-soak.mjs';
 import { stageRuntime } from '../tools/soak/stage.mjs';
 
 test('arguments: 30 min by default, --short is 3 min, bad values refused', () => {
@@ -121,4 +122,22 @@ test('report: a table row per check, no paths', () => {
   assert.match(md, /\| a \| PASS \|/);
   assert.match(md, /\| b \| FAIL \| `\{"n":1\}` \|/);
   assert.doesNotMatch(md, /[A-Z]:\\/);
+});
+
+test('recordingFileFor (LC2): each file sink gets its own stamped file, H never takes the V file, clip saves are ignored', () => {
+  const d = path.join('C:', 'w', 'media', 'recordings');
+  const files = [
+    { f: path.join(d, 'alpha-v-20261110-170758.mkv'), size: 50 },
+    { f: path.join(d, 'alpha-20261110-170758.mkv'), size: 120 },
+    { f: path.join(d, 'alpha-20261110-160000.mkv'), size: 10 },
+    { f: path.join(d, 'replay-alpha-20261110-170800.mkv'), size: 500 },
+    { f: path.join(d, 'clip-20261110-170900.mp4'), size: 900 },
+  ];
+  const h = { id: 'record', target: { transport: 'file', name: 'alpha.mkv' } };
+  const v = { id: 'record-v', target: { transport: 'file', name: 'alpha-v.mkv' } };
+  assert.equal(path.basename(recordingFileFor(h, files).f), 'alpha-20261110-170758.mkv', 'the largest of its own name');
+  assert.equal(path.basename(recordingFileFor(v, files).f), 'alpha-v-20261110-170758.mkv');
+  assert.equal(recordingFileFor({ id: 'x', target: { transport: 'file', name: 'other.mkv' } }, files), null);
+  assert.equal(recordingFileFor({ id: 'x', target: { transport: 'file' } }, files), null);
+  assert.equal(recordingFileFor(v, [{ f: path.join(d, 'alpha-20261110-170758.mkv'), size: 1 }]), null, 'no V file: null (the check then fails)');
 });

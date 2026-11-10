@@ -121,6 +121,17 @@ export function recordingProblems({ start, sinkId, notLiveSamples, samples, prob
   return why;
 }
 
+/** The host's file for one file sink: the largest file named <target name base>-YYYYMMDD-HHMMSS.<ext> (the host
+ *  stamps each recording), or null (pure; tested). files: [{ f, size }]. "alpha" never takes "alpha-v-..." (LC2). */
+export function recordingFileFor(sink, files) {
+  const name = String(sink?.target?.name ?? '');
+  const dot = name.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const esc = (x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const re = new RegExp(`^${esc(name.slice(0, dot))}-\\d{8}-\\d{6}${esc(name.slice(dot))}$`, 'i');
+  return files.filter((x) => re.test(path.basename(x.f))).sort((a, b) => b.size - a.size)[0] ?? null;
+}
+
 /** Per required id, the samples where that sink was absent or not live (pure; tested). rows: [{ sinks: [{id,state}] }]. */
 export function notLiveByStream(rows, required = REQUIRED_STREAMS) {
   const out = Object.fromEntries(required.map((id) => [id, 0]));
@@ -250,15 +261,16 @@ export async function main(argv = process.argv.slice(2)) {
   const missingStreams = missingRequiredStreams(st.params);
   check(`the plan has every required stream (${REQUIRED_STREAMS.join(', ')})`, missingStreams.length === 0, { missing: missingStreams });
   const fpsBySink = sinkFps(st.params);
-  const recordSink = st.params.sinks.find((s) => s.target.transport === 'file') ?? null;
+  // Every file sink of the plan (H "record" and, since LC1, V "record-v"): each must run and be probed (LC2).
+  const recordSinks = st.params.sinks.filter((s) => s.target.transport === 'file');
   const before = await c.call('host.status');
   result.streamStart = await c.call('stream.start').then(() => 'ok', (e) => `error ${e.code ?? e.message}`);
   check('stream start accepted', result.streamStart === 'ok', result.streamStart);
   if (a.record) {
     result.recordStart = await c.call('record.start').then(() => 'ok', (e) => `error ${e.code ?? e.message}`);
-    check('recording start accepted', result.recordStart === 'ok' && !!recordSink, { start: result.recordStart, sink: recordSink?.id ?? null });
+    check('recording start accepted', result.recordStart === 'ok' && recordSinks.length > 0, { start: result.recordStart, sinks: recordSinks.map((x) => x.id) });
   }
-  const mustBeLive = [...REQUIRED_STREAMS, ...(a.record && recordSink ? [recordSink.id] : [])];
+  const mustBeLive = [...REQUIRED_STREAMS, ...(a.record ? recordSinks.map((x) => x.id) : [])];
   let allLive = false;
   for (let i = 0; i < 80 && !allLive; i++) { const o = await c.call('outputs.status').catch(() => null); allLive = !!o && mustBeLive.every((id) => o.sinks.find((s) => s.id === id)?.state === 'live'); if (!allLive) await sleep(250); }
   check(`every required stream${a.record ? ' and the recording' : ''} live within 20 s`, allLive, mustBeLive);
@@ -534,16 +546,21 @@ export async function main(argv = process.argv.slice(2)) {
   check('every required loopback listener received the whole run', streamIds.every((id) => (perSink[id]?.spanSec ?? 0) >= result.durationS - 15), Object.fromEntries(streamIds.map((id) => [id, Math.round(perSink[id]?.spanSec ?? 0)])));
   check('0 video timestamp gaps in what the listeners received (ffprobe, planned fps)', streamIds.every((id) => perSink[id]?.segments > 0) && Object.values(result.received).every((x) => !x.error && x.gaps === 0), Object.fromEntries(streamIds.map((id) => [id, perSink[id] ? { gaps: perSink[id].gaps, missingFrames: perSink[id].missingFrames, endGaps: perSink[id].endGaps } : 'nothing received'])));
 
-  // the recording: the longest video file in the recordings folder (clip saves are short), probed like a stream
+  // the recordings: each file sink's own file (H and V, LC2; clip saves have other names), probed like a stream
   if (a.record) {
-    const vids = filesUnder(recordingsDir, /\.(mkv|mp4|mov|flv|ts)$/i).map((f) => ({ f, size: statSync(f).size })).sort((x, y) => y.size - x.size);
-    let rec = null;
-    if (vids[0] && recordSink) {
-      try { rec = { file: path.basename(vids[0].f), sizeMB: Math.round(vids[0].size / 1048576), ...ptsGaps(videoPts(vids[0].f), { fps: fpsBySink[recordSink.id], tailSec: 0.5 }) }; } catch (e) { rec = { error: String(e.message).slice(0, 80) }; }
+    const vids = filesUnder(recordingsDir, /\.(mkv|mp4|mov|flv|ts)$/i).map((f) => ({ f, size: statSync(f).size }));
+    result.recordings = {};
+    if (!recordSinks.length) check('the recording: a file sink in the plan', false, recordingProblems({ start: result.recordStart, samples: samples.length, durationS: result.durationS }));
+    for (const sink of recordSinks) {
+      const file = recordingFileFor(sink, vids);
+      let rec = null;
+      if (file) {
+        try { rec = { file: path.basename(file.f), sizeMB: Math.round(file.size / 1048576), ...ptsGaps(videoPts(file.f), { fps: fpsBySink[sink.id], tailSec: 0.5 }) }; } catch (e) { rec = { error: String(e.message).slice(0, 80) }; }
+      }
+      result.recordings[sink.id] = rec;
+      const recWhy = recordingProblems({ start: result.recordStart, sinkId: sink.id, notLiveSamples: notLive[sink.id], samples: samples.length, probe: rec, durationS: result.durationS });
+      check(`the recording ${sink.id}: started, live throughout, covers the whole run with 0 video timestamp gaps (ffprobe, planned fps)`, recWhy.length === 0, recWhy.length ? recWhy : { spanSec: Math.round(rec.spanSec), packets: rec.packets, endGaps: rec.endGaps });
     }
-    result.recording = rec;
-    const recWhy = recordingProblems({ start: result.recordStart, sinkId: recordSink?.id, notLiveSamples: recordSink ? notLive[recordSink.id] : undefined, samples: samples.length, probe: rec, durationS: result.durationS });
-    check('the recording: started, live throughout, covers the whole run with 0 video timestamp gaps (ffprobe, planned fps)', recWhy.length === 0, recWhy.length ? recWhy : { spanSec: Math.round(rec.spanSec), packets: rec.packets, endGaps: rec.endGaps });
   }
 
   // crash reports, error-level log lines, strays
