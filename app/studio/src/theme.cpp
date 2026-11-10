@@ -4,6 +4,7 @@
 #include "depth.h"
 #include "icons.h"
 #include "interaction.h"
+#include "motion.h"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -40,13 +41,14 @@ struct Data {
 	bool dark = true;
 	bool custom = false;
 	QHash<QString, QColor> colors;
-	Grad gradWindow, gradAccent;
+	Grad gradWindow, gradAccent, gradPanel, gradControl; // panel / control: optional surface gradients (cards, buttons)
 	QString family;
 	QStringList fallbacks;
 	qreal base = 10, captionSize = 8, titleSize = 15, letterSpacing = 0, captionSpacing = 0;
 	int headingWeight = 600;
 	bool captionCaps = false;
 	int rs = 6, rm = 8, rl = 16, spS = 4, spM = 8, spL = 12, bw = 1, ctl = 18, round = 52;
+	int padY = 5, padX = 12; // button padding (optional geometry.controlPadding)
 	QHash<QString, DepthSpec> depth;
 	int fast = 120, normal = 180, slow = 260;
 	QString easing = QStringLiteral("outCubic");
@@ -199,6 +201,9 @@ Data parse(const QJsonObject &o, const Data *base)
 	const QJsonObject gr = o.value(QStringLiteral("gradients")).toObject();
 	d.gradWindow = grad(gr.value(QStringLiteral("window")), d.gradWindow);
 	d.gradAccent = grad(gr.value(QStringLiteral("accent")), d.gradAccent);
+	// Surface gradients are the pack's own: never inherited from the default pack (a flat pack stays flat).
+	d.gradPanel = grad(gr.value(QStringLiteral("panel")), Grad());
+	d.gradControl = grad(gr.value(QStringLiteral("control")), Grad());
 	const QJsonObject t = o.value(QStringLiteral("typography")).toObject();
 	d.family = str(t.value(QStringLiteral("family")), d.family);
 	if (t.value(QStringLiteral("fallbacks")).isArray()) {
@@ -225,6 +230,9 @@ Data parse(const QJsonObject &o, const Data *base)
 	d.bw = inum(g.value(QStringLiteral("borderWidth")), d.bw, 0, 3);
 	d.ctl = inum(g.value(QStringLiteral("controlHeight")), d.ctl, 14, 40);
 	d.round = inum(g.value(QStringLiteral("roundControl")), d.round, 36, 72);
+	const QJsonObject pad = g.value(QStringLiteral("controlPadding")).toObject();
+	d.padY = inum(pad.value(QStringLiteral("y")), 5, 2, 12);
+	d.padX = inum(pad.value(QStringLiteral("x")), 12, 4, 24);
 	const QJsonObject dp = o.value(QStringLiteral("depth")).toObject();
 	for (const QString &k : kDepthClasses)
 		d.depth[k] = depthSpec(dp.value(k), d.depth.value(k));
@@ -276,7 +284,7 @@ QString gradientQss(const Grad &g)
 
 // The stylesheet. @name is a token from the pack (colours, radii, sizes); nothing here is a literal colour.
 const char *kQss = R"(
-QToolButton { background: @field; color: @text; border: @bw solid @border; border-radius: @rm; padding: 5px 12px; }
+QToolButton { background: @controlFill; color: @text; border: @bw solid @border; border-radius: @rm; padding: @padY @padX; }
 QToolButton:hover { border-color: @accentHi; }
 QToolButton:pressed { background: @border; }
 QToolButton::menu-indicator { image: none; width: 0; }
@@ -285,14 +293,14 @@ QMenu::item { padding: 6px 18px; border-radius: @rs; }
 QMenu::item:selected { background: @accent; color: @onAccent; }
 QMenu::separator { height: 1px; background: @border; margin: 4px 8px; }
 QToolTip { background: @field; color: @text; border: @bw solid @border; padding: 4px; }
-QGroupBox { background: @panel; border: @bw solid @border; border-radius: @rl; margin-top: 22px; padding: 16px 12px 12px 12px; }
+QGroupBox { background: @panelFill; border: @bw solid @border; border-radius: @rl; margin-top: 22px; padding: 16px 12px 12px 12px; }
 QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 4px; padding: 0 4px; color: @muted;
   font-size: @cs; font-weight: @hw; }
 QFrame#strip { background: @field; border: @bw solid @border; border-radius: @rcard; }
 QFrame#strip QLabel { background: transparent; }
 QLabel#heading { color: @muted; font-size: @cs; font-weight: @hw; }
 QLabel#pill { background: @field; border: @bw solid @border; border-radius: @rpill; padding: 3px 10px; color: @text; }
-QPushButton { background: @field; color: @text; border: @bw solid @border; border-radius: @rm; padding: 5px 12px; min-height: @ctl; }
+QPushButton { background: @controlFill; color: @text; border: @bw solid @border; border-radius: @rm; padding: @padY @padX; min-height: @ctl; }
 QPushButton:hover { border-color: @accentHi; }
 QPushButton:pressed { background: @border; }
 QPushButton:focus { border-color: @accentHi; }
@@ -343,7 +351,7 @@ QWidget#taskChip[quiet="true"] { border-color: @border; }
 QWidget#taskChip[stalled="true"] { border: 2px solid @danger; }
 QWidget#taskChip QLabel { background: transparent; color: @text; font-weight: @hw; }
 QWidget#taskChip[quiet="true"] QLabel { color: @muted; font-weight: normal; }
-QFrame#taskPanel { background: @panel; border: @bw solid @border; border-radius: @rpanel; }
+QFrame#taskPanel { background: @panelFill; border: @bw solid @border; border-radius: @rpanel; }
 QFrame#taskRow { background: @field; border: @bw solid @border; border-radius: @rpill; }
 QFrame#taskRow[stalled="true"] { border: 2px solid @danger; }
 QFrame#taskRow QLabel { background: transparent; }
@@ -355,12 +363,12 @@ QFrame#toast[failed="true"] { border-color: @danger; }
 QFrame#toast QLabel { background: transparent; color: @text; }
 QLabel#toastTitle { font-weight: @hw; font-size: 11pt; }
 QLabel#toastNote { font-size: 10pt; }
-QFrame#statCard { background: @panel; border: @bw solid @border; border-radius: @rinner; }
+QFrame#statCard { background: @panelFill; border: @bw solid @border; border-radius: @rinner; }
 QFrame#statCard QLabel { background: transparent; }
 QLabel#statName { color: @muted; font-size: @cs; font-weight: @hw; }
 QLabel#statValue { color: @text; font-size: @fs; font-weight: @hw; }
 QLabel#statBig { color: @text; font-size: 20pt; font-weight: @hw; }
-QFrame#card { background: @panel; border: @bw solid @border; border-radius: @rl; }
+QFrame#card { background: @panelFill; border: @bw solid @border; border-radius: @rl; }
 QFrame#card QLabel { background: transparent; }
 QLabel#ctlCaption { color: @muted; font-size: @cs; background: transparent; }
 QLabel#brand { font-size: 14pt; font-weight: 700; color: @text; padding-right: 6px; background: transparent; }
@@ -415,7 +423,13 @@ QString buildQss(const Data &d)
 	t[QStringLiteral("cs")] = QStringLiteral("%1pt").arg(d.captionSize);
 	t[QStringLiteral("fs")] = QStringLiteral("%1pt").arg(d.base);
 	t[QStringLiteral("ts")] = QStringLiteral("%1pt").arg(d.titleSize);
-	t[QStringLiteral("accentFill")] = d.gradAccent.on ? gradientQss(d.gradAccent) : d.colors.value(QStringLiteral("accent")).name();
+	// High performance: flat fills only (a gradient brush costs more to paint than a solid one).
+	const bool flat = g_effects == QStringLiteral("performance");
+	t[QStringLiteral("accentFill")] = d.gradAccent.on && !flat ? gradientQss(d.gradAccent) : d.colors.value(QStringLiteral("accent")).name();
+	t[QStringLiteral("panelFill")] = d.gradPanel.on && !flat ? gradientQss(d.gradPanel) : d.colors.value(QStringLiteral("panel")).name();
+	t[QStringLiteral("controlFill")] = d.gradControl.on && !flat ? gradientQss(d.gradControl) : d.colors.value(QStringLiteral("field")).name();
+	t[QStringLiteral("padY")] = px(d.padY);
+	t[QStringLiteral("padX")] = px(d.padX);
 	static const QRegularExpression re(QStringLiteral("@([A-Za-z0-9]+)"));
 	QString qss = QString::fromUtf8(kQss);
 	QString out;
@@ -521,7 +535,7 @@ void apply(QApplication &app)
 	if (!g_cur.valid) // the embedded default is missing: Fusion's own look
 		return;
 	const QString fx = qEnvironmentVariable("UJWALAM_EFFECTS");
-	if (fx == QStringLiteral("reduced") || fx == QStringLiteral("full"))
+	if (fx == QStringLiteral("reduced") || fx == QStringLiteral("full") || fx == QStringLiteral("performance"))
 		g_effects = fx;
 	applyPalette(app, g_cur);
 	applyFont(app, g_cur);
@@ -547,10 +561,14 @@ QString currentId()
 
 void setEffects(const QString &mode)
 {
-	const QString m = mode == QStringLiteral("reduced") ? mode : QStringLiteral("full");
+	const QString m = (mode == QStringLiteral("reduced") || mode == QStringLiteral("performance")) ? mode : QStringLiteral("full");
 	if (m == g_effects)
 		return;
+	const bool flatChanged = (m == QStringLiteral("performance")) != (g_effects == QStringLiteral("performance"));
 	g_effects = m;
+	if (flatChanged && g_cur.valid) // gradients on or off: the stylesheet changes
+		qobject_cast<QApplication *>(QCoreApplication::instance())->setStyleSheet(buildQss(g_cur));
+	motion::dropHover(m == QStringLiteral("performance")); // hover overlays go (and come back) with High performance
 	depth::refreshAll();
 	for (QWidget *w : QApplication::allWidgets())
 		w->update();
@@ -564,7 +582,12 @@ QString effects()
 
 bool effectsOn()
 {
-	return g_effects != QStringLiteral("reduced");
+	return g_effects == QStringLiteral("full");
+}
+
+bool performance()
+{
+	return g_effects == QStringLiteral("performance");
 }
 
 QList<Info> available()
@@ -596,6 +619,9 @@ QList<Info> available()
 		i.field = d.colors.value(QStringLiteral("field"));
 		i.border = d.colors.value(QStringLiteral("border"));
 		i.text = d.colors.value(QStringLiteral("text"));
+		i.muted = d.colors.value(QStringLiteral("muted"));
+		i.ok = d.colors.value(QStringLiteral("ok"));
+		i.onAccent = d.colors.value(QStringLiteral("onAccent"));
 		i.accent = d.colors.value(QStringLiteral("accent"));
 		i.accentHi = d.colors.value(QStringLiteral("accentHi"));
 		i.danger = d.colors.value(QStringLiteral("danger"));
@@ -729,6 +755,9 @@ QJsonObject probe()
 	o.insert(QStringLiteral("depthWidgets"), depth::count());
 	o.insert(QStringLiteral("depthEligible"), depth::eligible());
 	o.insert(QStringLiteral("backgroundKind"), g_cur.bg.kind);
+	o.insert(QStringLiteral("performance"), performance());
+	o.insert(QStringLiteral("hoverOverlays"), motion::hoverCount());
+	o.insert(QStringLiteral("gradientsInStyle"), qApp->styleSheet().contains(QStringLiteral("qlineargradient")));
 	QJsonArray ids;
 	for (const Info &i : available())
 		ids.append(i.id);
@@ -742,7 +771,7 @@ bool probeAction(const QString &action)
 		return setCurrent(action.mid(6));
 	if (action.startsWith(QStringLiteral("effects:"))) {
 		const QString m = action.mid(8);
-		if (m != QStringLiteral("full") && m != QStringLiteral("reduced"))
+		if (m != QStringLiteral("full") && m != QStringLiteral("reduced") && m != QStringLiteral("performance"))
 			return false;
 		setEffects(m);
 		return true;

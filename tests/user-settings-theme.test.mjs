@@ -10,8 +10,9 @@ import { readSettings, settingsProblems, writeSettings } from '../services/studi
 const tmp = () => mkdtempSync(path.join(os.tmpdir(), 'ujw-theme-'));
 const withDir = (fn) => { const d = tmp(); try { return fn(d); } finally { rmSync(d, { recursive: true, force: true }); } };
 
-test('theme and effects checks: a theme id (any, custom ones too) and full|reduced, nothing else', () => {
+test('theme and effects checks: a theme id (any, custom ones too) and full|reduced|performance, nothing else', () => {
   assert.deepEqual(settingsProblems({ ui: { theme: 'neon-arcade', effects: 'reduced', motion: 'off' } }), []);
+  assert.deepEqual(settingsProblems({ ui: { theme: 'teal-grid', effects: 'performance' } }), [], 'High performance (2026-11-10)');
   assert.deepEqual(settingsProblems({ ui: { theme: 'my-own-2' } }), []);
   for (const bad of ['', 'Neon Arcade', '../x', 'a--b', '-a', 'a'.repeat(41), 5, null]) {
     assert.equal(settingsProblems({ ui: { theme: bad } }).length, 1, String(bad));

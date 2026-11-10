@@ -288,7 +288,7 @@ int eligible()
 	return n;
 }
 
-double measurePaint(QWidget *w, int repeats)
+double measurePaint(QWidget *w, int repeats, bool dropCaches)
 {
 	const qreal dpr = w->devicePixelRatioF();
 	QImage img((w->size() * dpr).expandedTo(QSize(1, 1)), QImage::Format_ARGB32_Premultiplied);
@@ -297,9 +297,10 @@ double measurePaint(QWidget *w, int repeats)
 	t.start();
 	for (int i = 0; i < repeats; i++) {
 		// Worst case: every effect's cached picture of its widget is dropped before each paint.
-		for (QWidget *c : w->findChildren<QWidget *>())
-			if (auto *g = c->graphicsEffect())
-				g->update();
+		if (dropCaches)
+			for (QWidget *c : w->findChildren<QWidget *>())
+				if (auto *g = c->graphicsEffect())
+					g->update();
 		img.fill(Qt::transparent);
 		w->render(&img);
 	}

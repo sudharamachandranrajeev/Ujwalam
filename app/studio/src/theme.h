@@ -58,7 +58,7 @@ struct Info {
 	QString id, name, topic;
 	bool dark = true;
 	bool custom = false; // not one of the embedded packs
-	QColor bg, panel, field, border, text, accent, accentHi, danger;
+	QColor bg, panel, field, border, text, muted, accent, accentHi, danger, ok, onAccent;
 	QColor gradFrom, gradTo; // accent gradient ends
 	int radiusSmall = 6, radiusMedium = 8, radiusLarge = 16;
 	QString family;
@@ -72,10 +72,13 @@ bool setCurrent(const QString &id);
 QString currentId();
 QList<Info> available();
 
-// "full" (depth effects as the pack says) or "reduced" (none: flat, cheaper to repaint).
+// "full" (depth effects as the pack says), "reduced" (no depth effects) or "performance" (High performance, 2026-11-10:
+// no depth effects, no gradients or backdrop pattern, no hover overlays and no animation: flat fills, the cheapest
+// paint and the fewest cached pictures). Any theme can run in any mode.
 void setEffects(const QString &mode);
 QString effects();
 bool effectsOn();
+bool performance();
 
 QColor color(const QString &token);
 QString hex(const QString &token);

@@ -14,6 +14,7 @@
 #include "theme.h"
 
 #include <QApplication>
+#include <QDialog>
 #include <QIcon>
 #include <QLayout>
 #include <QWidget>
@@ -26,6 +27,35 @@
 #include <algorithm>
 #include <memory>
 #include <cstdio>
+#ifdef Q_OS_WIN
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#include <psapi.h>
+#endif
+
+// Memory of this process in MiB (bench only): private working set (Task Manager's "Memory"), working set, private bytes.
+static QJsonObject processMemory()
+{
+	QJsonObject o;
+#ifdef Q_OS_WIN
+	struct Counters { // PROCESS_MEMORY_COUNTERS_EX2 (Windows 10 2004+), spelled out so no SDK version macro is needed
+		DWORD cb;
+		DWORD PageFaultCount;
+		SIZE_T PeakWorkingSetSize, WorkingSetSize, QuotaPeakPagedPoolUsage, QuotaPagedPoolUsage, QuotaPeakNonPagedPoolUsage,
+			QuotaNonPagedPoolUsage, PagefileUsage, PeakPagefileUsage, PrivateUsage, PrivateWorkingSetSize;
+		ULONG64 SharedCommitUsage;
+	} c{};
+	c.cb = sizeof(c);
+	const double mib = 1024.0 * 1024.0;
+	if (K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS *>(&c), c.cb)) {
+		o.insert(QStringLiteral("privateWorkingSet"), c.PrivateWorkingSetSize / mib);
+		o.insert(QStringLiteral("workingSet"), c.WorkingSetSize / mib);
+		o.insert(QStringLiteral("privateBytes"), c.PrivateUsage / mib);
+	}
+#endif
+	return o;
+}
 
 static QString takeEnv(const char *name)
 {
@@ -139,15 +169,31 @@ int main(int argc, char **argv)
 						sw->layout()->activate();
 						o.insert(QStringLiteral("settingsShot"), sw->grab().save(shot.left(shot.size() - 4) + QStringLiteral("-settings.png"), "PNG"));
 					}
+					int k = 0; // any other open dialog (Posts, add windows): its own picture each (2026-11-10 theme check)
+					for (QWidget *tl : QApplication::topLevelWidgets())
+						if (qobject_cast<QDialog *>(tl) && tl != win.settingsWindow() && tl->isVisible()) {
+							for (QWidget *w : tl->findChildren<QWidget *>())
+								if (w->layout())
+									w->layout()->activate();
+							if (tl->layout())
+								tl->layout()->activate();
+							tl->grab().save(shot.left(shot.size() - 4) + QStringLiteral("-dialog%1.png").arg(++k), "PNG");
+						}
+					o.insert(QStringLiteral("dialogShots"), k);
 				}
 				if (qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_BENCH") > 0) { // repaint cost of the depth effects (D293)
+					// Paint and memory of the window in the mode it runs (2026-11-10, High performance): one process per
+					// theme and mode, so memory is never carried over from another mode.
+					win.resize(1600, 900);
 					QJsonObject bench;
 					bench.insert(QStringLiteral("theme"), theme::currentId());
+					bench.insert(QStringLiteral("effects"), theme::effects());
 					bench.insert(QStringLiteral("depthWidgets"), depth::count());
-					bench.insert(QStringLiteral("full"), depth::measurePaint(&win, 100));
-					theme::setEffects(QStringLiteral("reduced"));
-					bench.insert(QStringLiteral("reduced"), depth::measurePaint(&win, 100));
-					bench.insert(QStringLiteral("unit"), QStringLiteral("ms per full-window paint, 1600x900, effect caches dropped each time"));
+					bench.insert(QStringLiteral("hoverOverlays"), motion::hoverCount());
+					bench.insert(QStringLiteral("paintMs"), depth::measurePaint(&win, 100, false));
+					bench.insert(QStringLiteral("paintWorstMs"), depth::measurePaint(&win, 100, true));
+					bench.insert(QStringLiteral("mem"), processMemory());
+					bench.insert(QStringLiteral("unit"), QStringLiteral("ms per full-window paint at 1600x900 (paintWorstMs: effect caches dropped before each paint); mem in MiB after the paints"));
 					o.insert(QStringLiteral("bench"), bench);
 				}
 				std::printf("studio probe: %s\n", QJsonDocument(o).toJson(QJsonDocument::Compact).constData());

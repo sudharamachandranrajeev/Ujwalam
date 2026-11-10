@@ -4020,6 +4020,10 @@ bool MainWindow::probeAction(const QString &action)
 		return look_->probeToggle(p[1], p[2] == QStringLiteral("on"));
 	if (p.size() == 4 && p[0] == QStringLiteral("look-set"))
 		return look_->probeSet(p[1], p[2], p[3].toDouble());
+	if (p.size() == 1 && p[0] == QStringLiteral("posts-open")) { // the Posts window (for the theme pictures, 2026-11-10)
+		openPosts();
+		return true;
+	}
 	if (p.size() == 1 && p[0] == QStringLiteral("settings-open")) {
 		openSettings(false);
 		return true;
@@ -4049,6 +4053,18 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-reduce-effects")) {
 			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsReduceEffects"))) {
+				cb->setChecked(p[1] == QStringLiteral("on"));
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-scroll")) { // Appearance page scrolled (for the picture)
+			if (auto *sa = settingsDlg_->findChild<QScrollArea *>(QStringLiteral("appearanceScroll"))) {
+				sa->verticalScrollBar()->setValue(p[1] == QStringLiteral("end") ? sa->verticalScrollBar()->maximum() : p[1].toInt());
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-performance")) { // High performance (2026-11-10)
+			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsPerformance"))) {
 				cb->setChecked(p[1] == QStringLiteral("on"));
 				return true;
 			}

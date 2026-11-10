@@ -1,0 +1,171 @@
+{
+  "$schema": "./theme.schema.json",
+  "id": "teal-grid",
+  "name": "Teal Grid",
+  "topic": "Deep teal drafting board with a faint grid: thin cyan edges that light up on the main action, coral for warnings and live.",
+  "version": 1,
+  "dark": true,
+  "colors": {
+    "bg": "#0b252b",
+    "panel": "#0f323a",
+    "field": "#0c2b32",
+    "border": "#21606b",
+    "text": "#e2f5f6",
+    "muted": "#97c3c7",
+    "accent": "#3fdce6",
+    "accentHi": "#8eeff4",
+    "danger": "#ff8069",
+    "ok": "#5fe0a0",
+    "onAccent": "#03262b",
+    "disabled": "#4d7a80"
+  },
+  "gradients": {
+    "window": {
+      "from": "#0e2d34",
+      "to": "#081f24",
+      "angle": 90
+    },
+    "accent": {
+      "from": "#5ce6ee",
+      "to": "#2fc9d4",
+      "angle": 90
+    }
+  },
+  "typography": {
+    "family": "Bahnschrift",
+    "fallbacks": [
+      "Segoe UI"
+    ],
+    "baseSize": 10,
+    "captionSize": 8.5,
+    "titleSize": 15,
+    "headingWeight": 600,
+    "letterSpacing": 0.3,
+    "captionLetterSpacing": 1.6,
+    "captionCaps": true
+  },
+  "geometry": {
+    "radius": {
+      "small": 4,
+      "medium": 8,
+      "large": 12
+    },
+    "spacing": {
+      "small": 4,
+      "medium": 8,
+      "large": 16
+    },
+    "borderWidth": 1,
+    "controlHeight": 20,
+    "roundControl": 52,
+    "controlPadding": {
+      "y": 6,
+      "x": 14
+    }
+  },
+  "depth": {
+    "card": {
+      "shadow": {
+        "blur": 16,
+        "offsetX": 0,
+        "offsetY": 4,
+        "color": "#000000",
+        "opacity": 0.4
+      }
+    },
+    "button": {},
+    "primaryButton": {
+      "shadow": {
+        "blur": 8,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#000000",
+        "opacity": 0.4
+      },
+      "glow": {
+        "blur": 14,
+        "color": "accent",
+        "opacity": 0.4,
+        "when": "always"
+      }
+    },
+    "roundControl": {
+      "shadow": {
+        "blur": 10,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#000000",
+        "opacity": 0.45
+      },
+      "glow": {
+        "blur": 20,
+        "color": "auto",
+        "opacity": 0.55,
+        "when": "active"
+      }
+    },
+    "toast": {
+      "shadow": {
+        "blur": 20,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 14,
+        "color": "accent",
+        "opacity": 0.25,
+        "when": "always"
+      }
+    },
+    "menu": {
+      "shadow": {
+        "blur": 16,
+        "offsetX": 0,
+        "offsetY": 4,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 10,
+        "color": "accent",
+        "opacity": 0.18,
+        "when": "always"
+      }
+    },
+    "taskPanel": {
+      "shadow": {
+        "blur": 20,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 12,
+        "color": "accent",
+        "opacity": 0.18,
+        "when": "always"
+      }
+    }
+  },
+  "motion": {
+    "fastMs": 100,
+    "normalMs": 160,
+    "slowMs": 220,
+    "easing": "outExpo",
+    "hoverLift": 1,
+    "pressSink": 1
+  },
+  "background": {
+    "kind": "pattern",
+    "pattern": "grid",
+    "patternColor": "#5fd9e3",
+    "patternOpacity": 0.06,
+    "patternSpacing": 24
+  },
+  "icons": {
+    "stroke": 1.6
+  }
+}

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Settings > Appearance (D293): the theme picker (a card per theme with a small drawn preview of its colours, corners,
-// glow and bevel), the "Reduce effects" switch and the motion choice (moved here from Advanced). Choosing a theme or
+// glow and bevel, and a row of its colour swatches), the "High performance" switch (2026-11-10: flat, no animation),
+// the "Reduce effects" switch and the motion choice (moved here from Advanced). The page scrolls. Choosing a theme or
 // switching the effects changes the whole window at once so it can be judged; Save keeps it, Cancel (revert()) puts the
 // old look back.
 #pragma once
@@ -31,6 +32,7 @@ private:
 	QString themeNow_, effectsNow_;
 	QString chosen_;
 	QCheckBox *reduce_ = nullptr;
+	QCheckBox *perf_ = nullptr;
 	QComboBox *motion_ = nullptr;
 };
 
