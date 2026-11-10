@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 17,
+  "current": 18,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -28,6 +28,7 @@
     { "n": 14, "date": "2026-11-09", "title": "Clip maker check, stricter audio readiness" },
     { "n": 15, "date": "2026-11-09", "title": "App icon, Twitch rtmp or rtmps, YouTube sign-in fix" },
     { "n": 16, "date": "2026-11-09", "title": "Visible tasks and tray, scheduled YouTube posting" },
-    { "n": 17, "date": "2026-11-10", "title": "Normal windows, match reel rules, caption timing, retry slots" }
+    { "n": 17, "date": "2026-11-10", "title": "Normal windows, match reel rules, caption timing, retry slots" },
+    { "n": 18, "date": "2026-11-10", "title": "Clip jobs no longer freeze, rules survive updates" }
   ]
 }

@@ -2,6 +2,12 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.18 — 2026-11-10
+
+- Clip making no longer freezes at the start. Since alpha.16 a clip job could stop before reading a single frame and stay at 0 % with no end.
+- Finding matches in a recording now reads only the game area of your layout, so the top-3 and mode reading land in the right place.
+- Your auto-post rules live in your own data folder and survive updates. `node services/posting/cli.mjs auto --init-rules` makes your copy. The Posts window shows where the file is and has a "Preview auto-post rules" button.
+- A privacy policy for the YouTube sign-in (PRIVACY.md).
 ## 0.1.0-alpha.17 — 2026-11-10
 
 - Windows behave normally: the studio opens on your main screen and comes to the front; preview windows also work with one screen and always fit fully on it.
