@@ -409,12 +409,18 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 	// Scene transitions (D239): per canvas, cut or fade (0-10000 ms). The UI server keeps them equal to flag
 	// `transitions` and the project's canvases[].transition; host.status reports them.
 	add("transitions.set", [&a](const json::Value &p) {
-		Params q(p, {"canvas", "type", "durationMs", "file", "pointMs", "audio"});
+		// easing (D327 TR1): a fade's curve id (transition_ease.h); absent = linear.
+		Params q(p, {"canvas", "type", "durationMs", "file", "pointMs", "audio", "easing"});
 		const json::Value *file = q.has("file") ? &q.obj("file") : nullptr;
 		return a.studio->transition_set(q.str("canvas", 8), q.str("type", 8), q.int_or("durationMs", 0, 0, 10000), file,
-						q.int_or("pointMs", 0, 0, 10000), q.bool_or("audio", true));
+						q.int_or("pointMs", 0, 0, 10000), q.bool_or("audio", true), q.str_or("easing", "linear", 32));
 	});
 	add("transitions.get", [&a](const json::Value &) { return a.studio->transitions(); });
+	// D327 TR1 "Force complete transition": a running transition on that canvas ends on its target scene now.
+	add("transitions.forceComplete", [&a](const json::Value &p) {
+		Params q(p, {"canvas"});
+		return a.studio->transition_force_complete(q.str("canvas", 8));
+	});
 
 	// ---- layers
 	add("layers.list", [&a](const json::Value &p) {

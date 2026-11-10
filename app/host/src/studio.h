@@ -23,6 +23,7 @@
 #include "json.h"
 #include "model.h"
 #include "preview_edit.h"
+#include "transition_ease.h"
 
 #include <obs.h>
 
@@ -69,9 +70,13 @@ public:
 	// type cut | fade (ms = duration) | stinger (file = pathRef {base, rel} of a video, resolved with the last load's
 	// bases; point_ms = when the scene changes under it; the stinger's own length is the duration; D242; audio = its own
 	// sound in the canvas mix, D244).
+	// easing (D327 TR1): a curve id of transition_ease.h for a fade ("linear" = the plain libobs fade).
 	json::Value transition_set(const std::string &canvas, const std::string &type, int64_t ms, const json::Value *file = nullptr,
-				   int64_t point_ms = 0, bool audio = true);
+				   int64_t point_ms = 0, bool audio = true, const std::string &easing = "linear");
 	json::Value transitions() const;
+	// transitions.forceComplete (D327 TR1): a running fade or stinger on that canvas jumps to its end scene now.
+	// { canvas, completed } (completed false when nothing was running).
+	json::Value transition_force_complete(const std::string &canvas);
 
 	json::Value layers_list(const std::string &scene, const std::string &canvas) const;
 	json::Value layer_add(const std::string &scene, const std::string &canvas, const json::Value &layer, int64_t index);
@@ -193,6 +198,7 @@ private:
 		obs_source_t *routed = nullptr; // the transition on channel 0
 		std::string tr_type = "cut";
 		uint32_t tr_ms = 0;
+		std::string tr_ease = "linear"; // fade easing curve (D327 TR1)
 		std::string st_ref; // "base:rel" of the stinger file
 		uint32_t st_point = 0;
 		bool st_audio = true; // the stinger's own sound in the canvas mix (Meld "audio" switch)
@@ -215,6 +221,7 @@ private:
 	std::string audio_state(const Global &g, uint64_t now, int64_t &last_ms) const;
 	bool parked_full() const { return health_.max_parked && parked_.size() >= health_.max_parked; }
 	mutable std::recursive_mutex m_;
+	std::unique_ptr<ease::Easer> easer_; // created at the first eased fade; reset in teardown (before the transitions go)
 	std::vector<Canvas> canvases_;
 	std::vector<Scene> scenes_;
 	std::vector<Global> globals_;
