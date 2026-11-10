@@ -743,7 +743,11 @@ the whole screen behind all layers". Decided:
   `<preset>/background` and puts the backdrop in its place in the stack (the V scene's existing, hidden backdrop is
   shown and moved there; the H backdrop is added). Only those layers change; the user's moved, edited and added layers
   stay. A copy of the file goes to `projects/_old/alpha-<stamp>.before-bg1.project.json` first. A project without the
-  retired background (a new build, a second start, or a user who removed it) is not changed. A failed upgrade never
+  retired background (a new build, a second start, or a user who removed it) is not changed. A background that another
+  layer or an audio source still uses is hidden, and its origin becomes `<preset>/background-retired-bg1`, so the
+  upgrade does not run again. While the game capture is still a placeholder (unbound), that scene is left as it is
+  and keeps its background; the upgrade runs on a later start, after the capture is bound. A V backdrop that was built
+  as a placeholder is then turned into the real blurred duplicate in place (same id and box). A failed upgrade never
   blocks the start: the project loads as it is and the reason is logged.
 - Live: the upgrade runs only at start, before the host load, so a running stream and its outputs are never touched.
   A studio that is already running gets the backdrop at its next start.

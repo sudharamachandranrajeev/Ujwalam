@@ -12,9 +12,11 @@
 // (built while it sat behind flag layer-effects, so hidden and without effects) keeps that layer: it is shown, moved
 // to the background's place, and given the preset's blur only when it has no blur of its own. The backdrop always
 // points at a real layer (never a duplicate of a duplicate: the alpha build turns the V game into a duplicate of the
-// H game). A game layer that is a placeholder (no capture device) leaves a transparent placeholder backdrop. A
-// background that another layer or an audio source still refers to is hidden instead of removed.
-// No game layer in that scene: nothing is changed there.
+// H game). An existing backdrop that is a transparent placeholder (built while the game was unbound) is turned into
+// the real backdrop in place (same id and box, preset crop and blur). A game layer that is still a placeholder (no
+// capture device) or missing: that scene is not changed and keeps its trigger, so the upgrade runs on a later start
+// after the user binds the capture. A background that another layer or an audio source still refers to is hidden
+// instead of removed, and its origin id becomes `<preset>/background-retired-bg1` so the trigger is gone.
 
 import { newId, validateProject } from './index.mjs';
 
@@ -46,30 +48,42 @@ function bg1Scene(doc, scene, preset, fresh) {
   const bgAt = find(layers, `${pid}/background`);
   if (bgAt < 0) return null;
   const game = layers[find(layers, `${pid}/${spec.of}`)];
-  if (!game) return null;
+  // a placeholder game (no capture device yet): nothing to show, so the scene and its trigger stay as they are and
+  // the upgrade runs on a later start, after the user binds the capture
+  if (!game || game.type === 'color') return null;
 
   // the layer the backdrop shows: the game itself, or the layer the game duplicates
-  const isPlaceholder = game.type === 'color';
   const target = game.type === 'duplicate' ? game.source?.layer : game.id;
   const bg = layers[bgAt];
   let bdAt = find(layers, `${pid}/game-backdrop`);
   let action;
   let backdrop;
+  const specBlur = () => structuredClone(spec.effects ?? []);
   if (bdAt >= 0) {
     backdrop = layers[bdAt];
     const px = backdrop.placements?.[canvasId];
     if (px) px.visible = true;
     else backdrop.placements = { ...backdrop.placements, [canvasId]: backdropPlacement(spec, canvas) };
-    if (!isPlaceholder && backdrop.type === 'duplicate') {
+    if (backdrop.type === 'color') {
+      // built while the game was unbound: becomes the real backdrop in place (same id and box, preset crop and blur)
+      backdrop.type = 'duplicate';
       backdrop.source = { layer: target };
-      if (!(backdrop.effects ?? []).some((e) => e.type === 'blur')) backdrop.effects = [...structuredClone(spec.effects ?? []), ...(backdrop.effects ?? [])];
+      const p = backdrop.placements[canvasId];
+      if (spec.crop) p.crop = { ...spec.crop }; else delete p.crop;
+      backdrop.effects = [...specBlur(), ...(backdrop.effects ?? [])];
+      if (!backdrop.effects.length) delete backdrop.effects;
+      action = 'backdrop-converted';
+    } else {
+      if (backdrop.type === 'duplicate') {
+        backdrop.source = { layer: target };
+        if (!(backdrop.effects ?? []).some((e) => e.type === 'blur')) backdrop.effects = [...specBlur(), ...(backdrop.effects ?? [])];
+      }
+      action = 'backdrop-shown';
     }
-    action = 'backdrop-shown';
   } else {
     const px = backdropPlacement(spec, canvas);
     backdrop = { id: fresh('lyr'), type: 'duplicate', name: String(spec.name).slice(0, 120), source: { layer: target }, placements: { [canvasId]: px }, origin: { importer: 'preset', id: `${pid}/game-backdrop` } };
-    if (isPlaceholder) { backdrop.type = 'color'; backdrop.source = { color: '#00000000' }; delete px.crop; }
-    else if (Array.isArray(spec.effects) && spec.effects.length) backdrop.effects = structuredClone(spec.effects);
+    if (Array.isArray(spec.effects) && spec.effects.length) backdrop.effects = specBlur();
     action = 'backdrop-added';
   }
 
@@ -79,12 +93,14 @@ function bg1Scene(doc, scene, preset, fresh) {
   if (bdAt >= 0) layers.splice(bdAt, 1);
   const at = layers.indexOf(bg);
   if (referenced) {
+    // kept (hidden) for whatever refers to it; its origin is retired so the trigger is gone and bg1 never runs again
     for (const px of Object.values(bg.placements ?? {})) px.visible = false;
+    bg.origin = { importer: bg.origin.importer, id: `${pid}/background-retired-bg1` };
     layers.splice(at, 0, backdrop);
   } else {
     layers.splice(at, 1, backdrop);
   }
-  return { upgrade: 'bg1', scene: scene.id, canvas: canvasId, preset: pid, action, backdrop: backdrop.id, background: referenced ? 'hidden' : 'removed', placeholder: isPlaceholder };
+  return { upgrade: 'bg1', scene: scene.id, canvas: canvasId, preset: pid, action, backdrop: backdrop.id, background: referenced ? 'hidden' : 'removed' };
 }
 
 export const SCENE_UPGRADES = [

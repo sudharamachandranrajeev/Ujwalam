@@ -47,8 +47,12 @@ Now, at studio start, before the project goes to the host:
      no blur of its own (a user who had layer-effects on keeps their blur).
    - H: a new `duplicate` layer, origin `scene-default-h/game-backdrop`, full canvas, preset blur.
    - The backdrop always points at the capture layer (never a duplicate of a duplicate: the alpha build turns the V
-     game into a duplicate of the H game). A placeholder game (no device) gives a transparent placeholder backdrop.
-   - The background is removed; if another layer or an audio source refers to it, it is hidden instead.
+     game into a duplicate of the H game).
+   - A game that is still a placeholder (no device bound): that scene is not changed and keeps its background (the
+     trigger), so the upgrade runs on a later start once the capture is bound. A V backdrop built as a transparent
+     placeholder is then converted in place: same id and box, shown, preset crop and blur.
+   - The background is removed; if another layer or an audio source refers to it, it is hidden instead and its origin
+     id becomes `<preset>/background-retired-bg1`, so the trigger is gone and later starts change nothing.
    - Every other layer, its order, placement and effects, devices and audio are not touched.
 3. When something changed: the file is first copied to `projects/_old/alpha-<stamp>.before-bg1.project.json` (the
    folder `--rebuild-alpha` already uses; never deleted), then the upgraded project is saved (atomic save, which also
@@ -72,19 +76,24 @@ them. On air the backdrop's blur can still be tuned live (Look panel, "yes, on a
 All headless (`UJWALAM_HEADLESS=1`), temp data dirs only.
 
 ```
-node --test tests/project-scene-upgrades.test.mjs        (new, 8 tests)
+node --test tests/project-scene-upgrades.test.mjs        (new, 10 tests; review fixes 2026-11-10 included)
 ✔ bg1: old project -> blurred backdrop at the bottom of H and V; browser backgrounds gone; other layers untouched
 ✔ bg1: the user's moved and added layers stay; the backdrop takes the background's place
 ✔ bg1: a V backdrop the user already blurred (layer-effects on) keeps its own effects
-✔ bg1: unbound game capture -> transparent placeholder backdrop
-✔ bg1: a background another layer still uses is hidden, not removed
+✔ bg1: game capture still unbound (placeholder) -> scene not changed, trigger kept for a later start
+✔ bg1: a V backdrop built as a placeholder while the game was unbound becomes the real backdrop in place once the game is bound
+✔ bg1: a background another layer still uses is hidden, not removed; its trigger is retired, so a second load changes nothing
+✔ bg1: a background an audio source still uses is hidden, not removed; its trigger is retired, so a second load changes nothing
 ✔ bg1: a project without the retired background (new build, or the user removed it) is not changed
 ✔ bg1 on load: backup in projects/_old first, upgraded file saved, second load does nothing
 ✔ bg1 on load: a failed upgrade never blocks the start; the file is left as it is
 
 node --test tests/project-*.test.mjs tests/studio-ui-alpha.test.mjs tests/hud-zones.test.mjs \
   tests/test-broadcast.test.mjs tests/studio-ui-flags-feedback.test.mjs tests/flags.test.mjs tests/registry*.test.mjs
-ℹ tests 304  ℹ pass 303  ℹ fail 0  ℹ skipped 1
+ℹ tests 304  ℹ pass 303  ℹ fail 0  ℹ skipped 1   (before the review fixes)
+
+after the review fixes: node --test tests/project-*.test.mjs tests/studio-ui-alpha.test.mjs
+ℹ tests 250  ℹ pass 249  ℹ fail 0  ℹ skipped 1
 
 node --test app/host/tests/host-project.test.mjs   (real host: duplicate item, blurred duplicate render, setEffects)
 ℹ tests 21  ℹ pass 21  ℹ fail 0

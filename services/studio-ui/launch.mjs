@@ -580,7 +580,7 @@ export async function alphaProject({ client, dataDir, args, hostCfg, embedded = 
     upgrade: (project) => upgradeScenes(project, { presets: upgradePresets(path.join(REPO, 'registry', 'presets')) }),
   });
   console.log(`[studio] alpha project ${r.action}: ${path.basename(r.file)}${r.moved ? ' (old one moved to projects/_old/)' : ''}`);
-  for (const c of r.upgraded ?? []) console.log(`[studio] scene upgrade ${c.upgrade}: ${c.canvas.toUpperCase()} ${c.action} (background ${c.background}${c.placeholder ? ', game is a placeholder' : ''})`);
+  for (const c of r.upgraded ?? []) console.log(`[studio] scene upgrade ${c.upgrade}: ${c.canvas.toUpperCase()} ${c.action} (background ${c.background})`);
   if (r.backup) console.log(`[studio] project before the upgrade kept in projects/_old/${path.basename(r.backup)}`);
   if (r.upgradeError) console.log(`[studio] WARNING: scene upgrade not applied (project loaded as it is): ${r.upgradeError}`);
   if (report) {

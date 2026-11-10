@@ -103,31 +103,69 @@ test('bg1: a V backdrop the user already blurred (layer-effects on) keeps its ow
   assert.equal(changes.find((c) => c.canvas === 'v').action, 'backdrop-shown');
 });
 
-test('bg1: unbound game capture -> transparent placeholder backdrop', () => {
-  const { project, changes } = upgrade(oldProject({ devices: false }));
-  assert.ok(validateProject(project).ok);
-  for (const pid of ['scene-default-h', 'scene-default-v']) {
-    const bd = byOrigin(project.scenes[0].layers, `${pid}/game-backdrop`);
-    assert.equal(bd.type, 'color');
-    assert.deepEqual(bd.source, { color: '#00000000' });
-    assert.equal(bd.effects, undefined);
-  }
-  assert.ok(changes.every((c) => c.placeholder));
+test('bg1: game capture still unbound (placeholder) -> scene not changed, trigger kept for a later start', () => {
+  const before = oldProject({ devices: false });
+  const r = upgrade(before);
+  assert.deepEqual(r.changes, []);
+  assert.equal(r.project, before, 'nothing changed');
+  for (const pid of ['scene-default-h', 'scene-default-v']) assert.ok(byOrigin(before.scenes[0].layers, `${pid}/background`), `${pid}: background (trigger) kept`);
 });
 
-test('bg1: a background another layer still uses is hidden, not removed', () => {
+test('bg1: a V backdrop built as a placeholder while the game was unbound becomes the real backdrop in place once the game is bound', () => {
   const before = oldProject();
-  const L = before.scenes[0].layers;
-  const bg = byOrigin(L, 'scene-default-h/background');
-  L.push({ id: 'lyr-copy', type: 'duplicate', name: 'Copy of background', source: { layer: bg.id }, placements: { h: { visible: true, x: 0, y: 0, width: 100, height: 100 } } });
+  const bd0 = byOrigin(before.scenes[0].layers, 'scene-default-v/game-backdrop');
+  const box = { x: bd0.placements.v.x, y: bd0.placements.v.y, width: bd0.placements.v.width, height: bd0.placements.v.height };
+  // as the loader builds it for an unbound game: transparent colour, no crop, no effects, hidden (flag off)
+  bd0.type = 'color'; bd0.source = { color: '#00000000' }; delete bd0.placements.v.crop; delete bd0.effects; bd0.placements.v.visible = false;
+  assert.ok(validateProject(before).ok);
   const { project, changes } = upgrade(before);
-  const U = project.scenes[0].layers;
-  const bg2 = byOrigin(U, 'scene-default-h/background');
-  assert.equal(bg2.placements.h.visible, false);
-  assert.equal(U.indexOf(byOrigin(U, 'scene-default-h/game-backdrop')), U.indexOf(bg2) - 1, 'backdrop under the hidden background');
-  assert.equal(changes.find((c) => c.canvas === 'h').background, 'hidden');
-  assert.ok(validateProject(project).ok);
+  assert.ok(validateProject(project).ok, JSON.stringify(validateProject(project).errors));
+  const L = project.scenes[0].layers;
+  const bd = byOrigin(L, 'scene-default-v/game-backdrop');
+  assert.equal(bd.id, bd0.id, 'same layer id');
+  assert.equal(bd.type, 'duplicate');
+  assert.equal(bd.source.layer, byOrigin(L, 'scene-default-h/game').id);
+  assert.deepEqual(bd.placements.v, { ...box, visible: true, crop: { left: 656, right: 656 } });
+  assert.deepEqual(bd.effects, [{ type: 'blur', strength: 40 }]);
+  assert.equal(onCanvas(L, 'v')[0], bd);
+  assert.equal(changes.find((c) => c.canvas === 'v').action, 'backdrop-converted');
 });
+
+for (const [kind, refer] of [
+  ['another layer', (doc, bg) => doc.scenes[0].layers.push({ id: 'lyr-copy', type: 'duplicate', name: 'Copy of background', source: { layer: bg.id }, placements: { h: { visible: true, x: 0, y: 0, width: 100, height: 100 } } })],
+  ['an audio source', (doc, bg) => doc.audio.sources.push({ id: 'aud-bg', name: 'Background page', layer: bg.id, volumeDb: 0, muted: false, monitoring: 'off', tracks: ['track1'] })],
+]) {
+  test(`bg1: a background ${kind} still uses is hidden, not removed; its trigger is retired, so a second load changes nothing`, async () => {
+    const before = oldProject();
+    const bg = byOrigin(before.scenes[0].layers, 'scene-default-h/background');
+    refer(before, bg);
+    assert.ok(validateProject(before).ok, JSON.stringify(validateProject(before).errors));
+    const { project, changes } = upgrade(before);
+    assert.ok(validateProject(project).ok, JSON.stringify(validateProject(project).errors));
+    const U = project.scenes[0].layers;
+    assert.equal(byOrigin(U, 'scene-default-h/background'), undefined, 'trigger gone');
+    const bg2 = U.find((l) => l.id === bg.id);
+    assert.deepEqual(bg2.origin, { importer: 'preset', id: 'scene-default-h/background-retired-bg1' });
+    assert.equal(bg2.placements.h.visible, false);
+    assert.equal(U.indexOf(byOrigin(U, 'scene-default-h/game-backdrop')), U.indexOf(bg2) - 1, 'backdrop under the hidden background');
+    assert.equal(changes.find((c) => c.canvas === 'h').background, 'hidden');
+    assert.deepEqual(upgrade(project).changes, [], 'second run: nothing');
+
+    // on disk: one backup, the second start leaves the file byte for byte (a later user edit stays)
+    const dataDir = tmp(`ref-${kind.replace(/\s/g, '-')}`);
+    await prepareAlphaProject({ dataDir, build: async () => before });
+    const b = await prepareAlphaProject({ dataDir, build: async () => before, upgrade, now: new Date('2026-11-10T12:00:00Z') });
+    assert.equal(b.action, 'upgraded');
+    const saved = JSON.parse(readFileSync(alphaFile(dataDir), 'utf8'));
+    byOrigin(saved.scenes[0].layers, 'scene-default-h/game-backdrop').placements.h.visible = false; // the user hides it later
+    writeFileSync(alphaFile(dataDir), JSON.stringify(saved, null, 2));
+    const edited = readFileSync(alphaFile(dataDir));
+    const c = await prepareAlphaProject({ dataDir, build: async () => before, upgrade, now: new Date('2026-11-10T13:00:00Z') });
+    assert.equal(c.action, 'loaded');
+    assert.deepEqual(readFileSync(alphaFile(dataDir)), edited, 'user edit kept, file untouched');
+    assert.equal(readdirSync(path.join(dataDir, 'projects', '_old')).length, 1, 'no second backup');
+  });
+}
 
 test('bg1: a project without the retired background (new build, or the user removed it) is not changed', () => {
   const fresh = buildAlphaProject({ presetsDir: PRESETS, profile: PROFILE, bindings: bindings(), devicesListed: true }).project;
