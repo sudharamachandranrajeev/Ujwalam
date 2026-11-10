@@ -41,7 +41,7 @@ KILLS = [20, 60, 100, 320, 360, 620, 660, 700, 920, 960, 1230]
 def hits():
     out = [hit(t, "M5", "MP kill feed") for t in KILLS]
     for _, (t, word) in END.items():
-        out.append(hit(t, "W1", word))
+        out.append(dict(hit(t, "W1", word), banner="match"))  # a match-end banner (detector pass 0.6.0)
     return out
 
 

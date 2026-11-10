@@ -107,13 +107,86 @@
           "properties": {
             "scoreRegex": { "type": "string", "description": "Applied to the normalised text (upper case, no separators); group 1 is the score." },
             "killsHeaders": { "type": "array", "items": { "type": "string", "minLength": 1 } },
-            "modeNames": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+            "modeNames": {
+              "type": "array",
+              "description": "Mode names as shown on the top-3 screen. A string is read as itself (lower case); {text, mode} reads a name written differently on screen (e.g. with an ampersand) as mode.",
+              "items": {
+                "oneOf": [
+                  { "type": "string", "minLength": 1 },
+                  {
+                    "type": "object",
+                    "required": ["text", "mode"],
+                    "additionalProperties": false,
+                    "properties": { "text": { "type": "string", "minLength": 1 }, "mode": { "type": "string", "minLength": 1 }, "note": { "type": "string" } }
+                  }
+                ]
+              }
+            },
             "endScreenDetectors": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" } },
             "endGapSec": { "type": "number", "minimum": 0 },
             "killLineHoldSec": { "type": "number", "minimum": 0 },
             "victimMatchMin": { "type": "number", "minimum": 0, "maximum": 1 },
             "status": { "$ref": "#/$defs/status" },
             "note": { "type": "string" }
+          }
+        },
+        "banner": {
+          "type": "object",
+          "description": "W1 only (services/clip/match_gate.py banner_kind, banner_subtitle, classify_banners): tells a round-end banner (more rounds follow) from a match-end banner. kinds: centre-y range of the VICTORY/DEFEAT word box per banner kind (game-area fractions). subtitleRoi and subtitles: the line under a round banner, read as the pack's own text. followers and followSec: fallback for hits detected without a banner kind (a match end is followed within followSec by one of these post-match screens).",
+          "required": ["kinds", "status"],
+          "additionalProperties": false,
+          "properties": {
+            "kinds": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["kind", "y0", "y1", "status"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "enum": ["round", "match"] },
+                  "y0": { "$ref": "#/$defs/fraction" },
+                  "y1": { "$ref": "#/$defs/fraction" },
+                  "status": { "$ref": "#/$defs/status" },
+                  "note": { "type": "string" }
+                }
+              }
+            },
+            "subtitleRoi": { "$ref": "#/$defs/roi" },
+            "subtitles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["text", "status"],
+                "additionalProperties": false,
+                "properties": {
+                  "text": { "type": "string", "minLength": 1 },
+                  "modes": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Game modes (lower case, as stats.modeNames) this subtitle points to; absent: no mode hint." },
+                  "status": { "$ref": "#/$defs/status" },
+                  "note": { "type": "string" }
+                }
+              }
+            },
+            "followers": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" } },
+            "followSec": { "type": "number", "minimum": 0 },
+            "sameBannerSec": { "type": "number", "minimum": 0, "description": "Round-end hits of the same result closer than this are one banner (OCR gaps split one banner into two hits)." },
+            "status": { "$ref": "#/$defs/status" },
+            "note": { "type": "string" }
+          }
+        },
+        "cues": {
+          "type": "array",
+          "description": "Game mode cues (C1): on-screen texts that only some modes show. A cue read inside the detector's ROIs is evidence that the match is one of `modes` (match_gate.game_mode).",
+          "items": {
+            "type": "object",
+            "required": ["text", "modes", "status"],
+            "additionalProperties": false,
+            "properties": {
+              "text": { "type": "string", "minLength": 1 },
+              "modes": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+              "status": { "$ref": "#/$defs/status" },
+              "note": { "type": "string" }
+            }
           }
         },
         "nameRequired": { "type": "boolean" },

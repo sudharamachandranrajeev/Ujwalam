@@ -1,6 +1,6 @@
 {
   "$schema": "../match-reels.schema.json",
-  "$comment": "Which matches get a won-match reel (W01..: every own kill of the match plus the result screen, V canvas; pieces in data/clip/montage.json). User decision D315 (2026-11-09), replacing the VICTORY-only selection of D237. A match gets a reel when any rule passes. Every condition of a rule must hold. A condition whose signal was not read leaves the rule inert: an inert rule never gives a reel (no guessing). Signals come from services/clip/match_gate.py segment(): result = W1 (a signalled VICTORY/DEFEAT box), place = the own card on the S1 top-3 screen, mode = the S1 mode_label read on the top-3 screen (lower case), kills = own kills (scoreboard if read, else the deduplicated own kill-feed lines). Per-round kills are not detected by any detector yet. Thresholds are the user's words; detector status is in detectors.json.",
+  "$comment": "Which matches get a won-match reel (W01..: every own kill of the match plus the result screen, V canvas; pieces in data/clip/montage.json). User decision D315 (2026-11-09), replacing the VICTORY-only selection of D237. A match gets a reel when any rule passes. Every condition of a rule must hold. A condition whose signal was not read leaves the rule inert: an inert rule never gives a reel (no guessing). Signals come from services/clip/match_gate.py segment(): result = W1 (a signalled VICTORY/DEFEAT box), place = the own card on the S1 top-3 screen, mode = the match mode from on-screen evidence (match_gate.game_mode: the S1 top-3 mode name, C1 mode cues and W1 round subtitles; none when they disagree), kills = own kills (scoreboard if read, else the deduplicated own kill-feed lines), roundKills = own kill-feed kills between W1 round-end banners (pack 0.6.0). Thresholds are the user's words; detector status is in detectors.json.",
   "version": 1,
   "game": "codm",
   "decision": "D315",
@@ -25,28 +25,28 @@
       "label": "more than 20 own kills in Hardpoint, Domination or Control",
       "when": { "modes": ["hardpoint", "domination", "control"], "killsAbove": 20 },
       "status": "approved",
-      "note": "User D315, won or defeated. Only 'hardpoint' has been read on a top-3 screen; 'control' is not in the S1 modeNames (no frame), so a Control match reads no mode and this rule stays inert for it."
+      "note": "User D315, won or defeated. Read on top-3 screens: 'hardpoint' (2026-11-08), 'domination' and 'control' (2026-11-09; CONTROL in the S1 modeNames from pack 0.6.0)."
     },
     {
       "id": "tdm-kills",
       "label": "more than 7 own kills in Team Deathmatch",
       "when": { "modes": ["team deathmatch"], "killsAbove": 7 },
       "status": "approved",
-      "note": "User D315: 'if it's TDM kills above 7'. Won or defeated. No TDM top-3 screen read yet."
+      "note": "User D315: 'if it's TDM kills above 7'. Won or defeated. A ranked TDM top-3 screen (RATING cards) was read on 2026-11-09 from pack 0.6.0."
     },
     {
       "id": "snd-won",
       "label": "won a Search and Destroy match",
       "when": { "modes": ["search and destroy"], "result": "VICTORY" },
       "status": "approved",
-      "note": "User D315: 'in search if it a win'. No Search and Destroy end screen read yet."
+      "note": "User D315: 'in search if it a win'. Search and Destroy top-3 screens read on 2026-11-09 ('SEARCH & DESTROY', modeNames alias from pack 0.6.0)."
     },
     {
       "id": "snd-round-multikill",
       "label": "at least 2 own kills within one Search and Destroy round",
       "when": { "modes": ["search and destroy"], "roundKillsAtLeast": 2 },
       "status": "approved",
-      "note": "User D315: 'muliple kills within a round' (multiple = at least 2). Inert until round boundaries are detected: needs labelled Search and Destroy footage with round start/end screens."
+      "note": "User D315: 'muliple kills within a round' (multiple = at least 2). Round boundaries come from W1 round-end banners (pack 0.6.0, status unverified; docs/evidence/2026-11-10-round-vs-match-end.md)."
     }
   ]
 }

@@ -14,6 +14,9 @@ attached as a reason to candidates opened by other signals, and it never opens o
 
 Hit row (one per detector instance; consecutive frames of the same detector and label within mergeGapSec merge):
   {t, tEnd, frames, detector, label, role, signal, why[], clipReason, weight, detectorStatus, mode, ocrScore}
+  plus, on W1 rows when the pack has a W1 `banner` config, `banner` ("round" / "match" / null, from the word's
+  vertical position on screen) and `subtitle` (the pack subtitle text read under the word, or null). Round and match banners
+  never merge with each other.
   label is a catalogue text, pattern text or a canonical form (e.g. "3X MULTI-KILL", "+254"); never raw OCR
   text, so no player name or IGN is ever written. `signal` true = the pack's rules for a positive clip reason hold
   (name where required, inside a pack ROI, not suppressed, not a reference medal); `why` lists the rules that
@@ -136,6 +139,8 @@ def _label(e, det):
         return f"+{e['points']}"
     if d == "W1":
         return e["result"]
+    if d == "C1":
+        return e["cue"]
     if d == "X1":
         up = e["box"]["text"].upper()  # raw upper case: normalise() drops the "+" of "5+ MULTI-KILL"
         m = _MULTI.search(up)
@@ -205,10 +210,15 @@ def frame_hits(boxes, pack, names, settings, mode=None, kill_keys=None):
         if (kill_keys is not None and not why and d in ("M5", "B1")
                 and mode != ("br" if d == "M5" else "mp")):
             kill_keys.append(match_gate.victim_key(e["box"]["text"]))
-        out.append({"detector": d, "label": _label(e, dd), "role": role, "signal": not why, "why": why,
-                    "clipReason": clip_reason and role == "positive", "weight": weight,
-                    "detectorStatus": dd.get("status", "unverified"), "mode": mode,
-                    "ocrScore": round(float(e["box"].get("score", 0.0)), 4)})
+        row = {"detector": d, "label": _label(e, dd), "role": role, "signal": not why, "why": why,
+               "clipReason": clip_reason and role == "positive", "weight": weight,
+               "detectorStatus": dd.get("status", "unverified"), "mode": mode,
+               "ocrScore": round(float(e["box"].get("score", 0.0)), 4)}
+        if d == "W1" and dd.get("banner"):
+            # round-end vs match-end banner (match_gate.banner_kind) and its subtitle; pack texts only
+            row["banner"] = match_gate.banner_kind(e["box"].get("g"), dd["banner"]) if not why else None
+            row["subtitle"] = match_gate.banner_subtitle(boxes, dd["banner"]) if not why else None
+        out.append(row)
     return out
 
 
@@ -221,12 +231,14 @@ def merge_hits(rows, gap, split_by_signal=()):
     open_, out = {}, []
     split = set(split_by_signal)
     for r in sorted(rows, key=lambda r: r["t"]):
-        k = (r["detector"], r["label"], bool(r["signal"]) if r["detector"] in split else None)
+        k = (r["detector"], r["label"], bool(r["signal"]) if r["detector"] in split else None, r.get("banner"))
         cur = open_.get(k)
         if cur and r["t"] - cur["tEnd"] <= gap + 1e-6:
             cur["tEnd"] = r["t"]
             cur["frames"] += 1
             cur["ocrScore"] = max(cur["ocrScore"], r["ocrScore"])
+            if r.get("subtitle") and not cur.get("subtitle"):
+                cur["subtitle"] = r["subtitle"]
             if r["signal"] and not cur["signal"]:
                 cur["signal"], cur["why"] = True, []
             elif not cur["signal"]:

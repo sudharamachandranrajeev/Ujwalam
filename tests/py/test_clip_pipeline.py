@@ -460,7 +460,7 @@ class EndToEndTests(unittest.TestCase):
         os.makedirs(d)
         _write(os.path.join(d, "detector-hits.jsonl"), "".join(json.dumps(h) + "\n" for h in (
             {"t": 3.0, "detector": "M5", "signal": True}, {"t": 5.0, "detector": "M5", "signal": True},
-            {"t": 9.0, "detector": "W1", "label": "VICTORY", "signal": True, "tEnd": 10.0})))
+            {"t": 9.0, "detector": "W1", "label": "VICTORY", "signal": True, "tEnd": 10.0, "banner": "match"})))
         # D315: a VICTORY gets a reel only with its place read (own card #1 on the top-3 screen, placeholder reading)
         _write(os.path.join(d, "match-stats.json"), json.dumps({
             "recording": os.path.basename(self.rec), "ownKills": {"times": [3.0, 5.0]},

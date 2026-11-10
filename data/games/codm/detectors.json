@@ -1,7 +1,7 @@
 {
   "$schema": "../detector-pack.schema.json",
   "$comment": "CODM detector pack. All ROIs, texts and colours are UNVERIFIED until G1/G2 check them on corpus footage (source: docs/evidence/2026-10-27-g1-live-reference.md). Weights, windows and cooldowns are null: G3 proposes them from labelled data. No private names here; names come from data/profile.local.json at runtime. `version` is the pack version for every file in this folder; version history: CHANGELOG.md.",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "engineVersion": "0.1.0",
   "game": "codm",
   "detectors": [
@@ -425,6 +425,74 @@
         "DEFEAT"
       ],
       "nameRequired": false,
+      "banner": {
+        "kinds": [
+          {
+            "kind": "round",
+            "y0": 0.31,
+            "y1": 0.38,
+            "status": "unverified",
+            "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR of every signalled W1 hit at t and t+3 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): 17 round-end banners (thin VICTORY/DEFEAT bar, team names, round score, three player cards): word centre y 0.342-0.344, height 0.061-0.065 (0.071 and 0.099 on the first frame of the 896 s and 985 s banners, still animating in)."
+          },
+          {
+            "kind": "match",
+            "y0": 0.39,
+            "y1": 0.47,
+            "status": "unverified",
+            "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR of every signalled W1 hit at t and t+3 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): 6 match-end banners (large emblem, final score, no round row, post-match screens follow): word centre y 0.423-0.425, height 0.098-0.129."
+          }
+        ],
+        "subtitleRoi": {
+          "id": "subtitle",
+          "label": "Round banner subtitle line under the VICTORY/DEFEAT bar",
+          "x0": 0.4,
+          "y0": 0.41,
+          "x1": 0.6,
+          "y1": 0.455,
+          "status": "unverified",
+          "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR of every signalled W1 hit at t and t+3 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): subtitle boxes x 0.449-0.550, y 0.420-0.445 on 17 of 17 round banners (896 s and 985 s only from the second frame); match-end banners have none. Inside the W1 OCR band."
+        },
+        "subtitles": [
+          {
+            "text": "ENEMIES ELIMINATED",
+            "status": "unverified",
+            "note": "Round won by elimination (2026-11-09: 23, 115, 187, 190, 282, 542, 829, 896, 985 s)."
+          },
+          {
+            "text": "SQUAD ELIMINATED",
+            "status": "unverified",
+            "note": "Round lost by elimination (2026-11-09: 703, 754, 1360, 1405, 1451 s)."
+          },
+          {
+            "text": "BOMB DEFUSED",
+            "modes": [
+              "search and destroy"
+            ],
+            "status": "unverified",
+            "note": "2026-11-09: 1602 s, a Search and Destroy match (the scoreboard has PLANTS and DEFUSES columns)."
+          },
+          {
+            "text": "SCORE LIMIT REACHED",
+            "status": "unverified",
+            "note": "2026-11-09: 2184 s, a half-time banner (SWITCHING SIDES at 2187 s; the match ends at 2395 s, 150 vs 130). Not a match end by itself."
+          },
+          {
+            "text": "ALL ZONES CAPTURED",
+            "status": "unverified",
+            "note": "2026-11-09: 2952 s, round end of a zone mode (SWITCHING SIDES at 2955 s)."
+          }
+        ],
+        "followers": [
+          "K1",
+          "M2",
+          "M1",
+          "S1"
+        ],
+        "followSec": 30,
+        "sameBannerSec": 10,
+        "status": "unverified",
+        "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR of every signalled W1 hit at t and t+3 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md). Banner kind from the word position separates all 23 signalled hits (17 round, 6 match). Fallback for hits without a kind (detected before 0.6.0): a post-match screen (FINAL KILLCAM, IMPACT PLAY, MVP, top 3) starts within followSec of the banner end at every match end (2-5 s after it) and at no round end (the nearest one 62 s after it), which also separates all 23. followSec 30 is between the two. sameBannerSec: round hits of the same result closer than this are one banner (2026-11-09: the 187 s and 190 s hits are one banner, the OCR missed it on 188-189 s; consecutive round banners were at least 45 s apart, 1360 to 1405 s)."
+      },
       "weight": null,
       "window": {
         "preSec": null,
@@ -499,11 +567,12 @@
         }
       ],
       "patterns": [
-        "SCORE"
+        "SCORE",
+        "RATING"
       ],
-      "regex": "^SCORE ?\\d{1,5}$",
+      "regex": "^(?:SCORE|RATING) ?\\d{1,5}$",
       "stats": {
-        "scoreRegex": "^SC[O0]RE(\\d{1,5})$",
+        "scoreRegex": "^(?:SC[O0]RE|RATING)(\\d{1,5})$",
         "killsHeaders": [
           "K",
           "KILLS"
@@ -513,7 +582,27 @@
           "DOMINATION",
           "SEARCH AND DESTROY",
           "TEAM DEATHMATCH",
-          "FREE FOR ALL"
+          "FREE FOR ALL",
+          {
+            "text": "SEARCH & DESTROY",
+            "mode": "search and destroy",
+            "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): the top-3 screen writes the mode with an ampersand (375-380 s and 1120-1130 s); 'SEARCH AND DESTROY' never matched it (ratio below 0.9)."
+          },
+          {
+            "text": "CONTROL",
+            "mode": "control",
+            "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): top-3 mode name at 3095-3105 s (x 0.180-0.234, y 0.044-0.077)."
+          },
+          {
+            "text": "KILL CONFIRMED",
+            "mode": "kill confirmed",
+            "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): seen only as a mode-select tile (2560 s); no top-3 screen yet."
+          },
+          {
+            "text": "FRONTLINE",
+            "mode": "frontline",
+            "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): seen only as a mode-select tile (1725 s, 2445 s); no top-3 screen yet."
+          }
         ],
         "endScreenDetectors": [
           "S1",
@@ -526,7 +615,7 @@
         "killLineHoldSec": 6,
         "victimMatchMin": 0.7,
         "status": "unverified",
-        "note": "scoreRegex runs on the normalised text (no spaces); SCORE read 9/9 on the 2026-11-08 frames. killsHeaders are an assumption (no scoreboard frame). modeNames: the MP mode cues of g1_scan; only HARDPOINT is seen on a top-3 screen. endGapSec: end-screen hits closer than this are one match end (2026-11-08: VICTORY at 437 s, top 3 until 475 s). killLineHoldSec: an own kill-feed line seen again within this time with a similar victim text (victimMatchMin) is the same kill; the on-screen time of a line is not measured."
+        "note": "scoreRegex runs on the normalised text (no spaces); SCORE read 9/9 on the 2026-11-08 frames. killsHeaders are an assumption (no scoreboard frame). modeNames: the MP mode cues of g1_scan; only HARDPOINT is seen on a top-3 screen. endGapSec: end-screen hits closer than this are one match end (2026-11-08: VICTORY at 437 s, top 3 until 475 s). killLineHoldSec: an own kill-feed line seen again within this time with a similar victim text (victimMatchMin) is the same kill; the on-screen time of a line is not measured. 0.6.0: ranked Team Deathmatch top-3 cards read RATING n, not SCORE n (2026-11-09 2795-2810 s), so scoreRegex also takes RATING; ownScore then holds the rating. modeNames: objects {text, mode} read an on-screen spelling as a mode."
       },
       "nameRequired": true,
       "nameSide": "any",
@@ -538,6 +627,76 @@
       "cooldownSec": null,
       "status": "unverified",
       "note": "D286 proposed (match gate). Context only: never a clip signal or weight. Per top-3 frame: rank (card position), score and whether the card holds a profile name (nameMin, the same fuzzy rule as the other detectors); names are never written. One match seen (own card rank 1); a DEFEAT top-3 screen and a full scoreboard are not seen yet."
+    },
+    {
+      "id": "C1",
+      "name": "Game mode cues",
+      "role": "context",
+      "modes": [
+        "mp"
+      ],
+      "screens": [
+        "mp_gameplay",
+        "mp_scoreboard"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "objective",
+          "label": "SnD round-start objective line, centre",
+          "x0": 0.42,
+          "y0": 0.26,
+          "x1": 0.58,
+          "y1": 0.31,
+          "status": "unverified",
+          "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): 'DESTROY TARGET (A) OR (B)' x 0.431-0.567, y 0.267-0.304 at 290, 835 and 1250 s."
+        },
+        {
+          "id": "scoreboard_head",
+          "label": "Mid-match scoreboard column headers (both teams)",
+          "x0": 0.33,
+          "y0": 0.27,
+          "x1": 0.84,
+          "y1": 0.325,
+          "status": "unverified",
+          "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md): PLANTS x 0.341-0.383 / 0.726-0.769 and DEFUSES x 0.391-0.437 / 0.777-0.823, y 0.284-0.314, at 194, 549, 992, 1445-1458 s (Search and Destroy scoreboards)."
+        }
+      ],
+      "cues": [
+        {
+          "text": "DESTROY TARGET",
+          "modes": [
+            "search and destroy"
+          ],
+          "status": "unverified",
+          "note": "Round-start objective, 2026-11-09: 290, 835, 1250 s (all Search and Destroy matches)."
+        },
+        {
+          "text": "PLANTS",
+          "modes": [
+            "search and destroy"
+          ],
+          "status": "unverified",
+          "note": "Scoreboard header, 2026-11-09 Search and Destroy only; other bomb modes are not seen yet."
+        },
+        {
+          "text": "DEFUSES",
+          "modes": [
+            "search and destroy"
+          ],
+          "status": "unverified",
+          "note": "Scoreboard header, as PLANTS."
+        }
+      ],
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Context only: never a clip signal or weight. match_gate.game_mode combines these cues with the top-3 mode name (S1) and round subtitles (W1 banner) into one mode per match, or none with the reason when they disagree. Mode-select menu tiles and the loading screen also show mode names, but in places that move or list several modes, so no ROI covers them. Evidence: 2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md). Not used: the post-match lobby header (mode name at x 0.508-0.636, y 0.020-0.057 after 5 of the 6 2026-11-09 match ends) is on the summary screen, where screens.json runs no detector; reading it needs a screen-model change."
     },
     {
       "id": "N1",

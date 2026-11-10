@@ -29,7 +29,8 @@ def fixture(result="VICTORY", place=None, mode="hardpoint", kills=0, top3=True, 
     readings = []
     if end:
         if result:
-            hits.append({"t": END, "tEnd": END + 2, "detector": "W1", "label": result, "signal": signal, "mode": "mp"})
+            hits.append({"t": END, "tEnd": END + 2, "detector": "W1", "label": result, "signal": signal, "mode": "mp",
+                         "banner": "match" if signal else None})
         else:  # end seen through another end-screen detector only
             hits.append({"t": END, "tEnd": END + 2, "detector": "K1", "label": "FINAL KILLCAM", "signal": True})
         if top3:
@@ -169,7 +170,7 @@ class SearchAndDestroy(unittest.TestCase):
         self.assertFalse(m["reel"]["qualifies"])
 
     def test_round_multikill_when_rounds_are_known(self):
-        # roundKills is never filled by segment() today; a future round detector sets it. Boundary 1 vs 2.
+        # segment() fills roundKills from W1 round-end banners (test_round_vs_match_end.py). Boundary 1 vs 2.
         m = decide(result="DEFEAT", place=None, mode="search and destroy", kills=3)
         m["roundKills"] = [1, 1, 1]
         d = mg.reel_decide(m, RULES)

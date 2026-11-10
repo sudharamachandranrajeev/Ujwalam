@@ -592,6 +592,10 @@ def find_events(boxes, pack, names, name_min):
             ev.append({"det": "W1", "box": b, "result": t})
         if gt.partial_ratio("HELPME", t) >= 0.84 or gt.partial_ratio("WAITINGFORREVIVALFLIGHT", t) >= 0.8:
             ev.append({"det": "N2", "box": b})
+        if "C1" in det:  # game mode cues (match_gate.game_mode): pack texts only, the whole cue within the box
+            cue = _mode_cue(t, det["C1"])
+            if cue:
+                ev.append({"det": "C1", "box": b, "cue": cue})
     for b in name_boxes:
         ev.append({"det": "NAME", "box": b})
     # kill feeds: boxes whose centre lies in the (slightly widened) feed ROI, grouped into lines
@@ -615,6 +619,21 @@ def find_events(boxes, pack, names, name_min):
 
 
 KILLFEED_SLACK = 0.03
+MODE_CUE_MIN = 0.85
+
+
+def _mode_cue(norm_text, c1):
+    """The C1 cue text a normalised OCR text reads as (partial ratio >= MODE_CUE_MIN, the box no more than twice
+    the cue's length), else None. Best match wins."""
+    best, label = 0.0, None
+    for q in c1.get("cues") or []:
+        n = gt.normalise(q["text"])
+        if not n or len(norm_text) > 2 * len(n):
+            continue
+        r = gt.partial_ratio(n, norm_text)
+        if r >= MODE_CUE_MIN and r > best:
+            best, label = r, q["text"]
+    return label
 
 
 def _k1_event(label_box, det, name_boxes):
