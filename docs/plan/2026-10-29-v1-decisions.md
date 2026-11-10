@@ -513,3 +513,39 @@ private upload. Evidence: `docs/evidence/2026-11-09-scheduled-posting.md`.
 **D315 (user 2026-11-09): Match reel rules (CODM; data in `data/games/<id>/`).** A match gets a reel when any rule holds: won and placed top 3; defeated and placed first on the scoreboard (reading of "if it's top"; UNVERIFIED, asked); own kills above 20 in Hardpoint, Domination or Control (won or defeated); own kills above 7 in TDM; Search and Destroy: a won match, or multiple own kills within one round. Replaces the top-3-only rule of D237.
 **D316 (user 2026-11-09): Second-display / no-focus window rule dropped.** User: "d191 was placed due to a bug. don't need that rule anymore." Dropped: app windows opening only on a second display, never taking focus, showing nothing with one display (D191 window part, D219 studio placement, host preview placement). Kept, because they are the fix for that bug (console windows seen after close): no child process opens a console window (`hidden-window` lint, windowsHide / CREATE_NO_WINDOW, the windowless `ujwalam-start.exe`), tests run headless (`UJWALAM_HEADLESS=1`), and a window that appears at random is traced to its process. Supersedes the tray exception in D313.
 **D315a (user 2026-11-09): Defeat reel placement.** A defeated match gets a reel when placed top 2 on the scoreboard (answers the D315 question; replaces the first-place reading).
+
+## D317 — Clip job hang at the first child process (2026-11-10)
+
+Since D311 (alpha.16) the clip job's parent-pipe watcher read stdin on a thread. On Windows a blocking read on a
+synchronous pipe blocks every other call on that handle, and `subprocess` duplicates the standard input handle for each
+child: the first ffprobe start hung forever (user's live-review stuck 38+ min at 0 %, 0.3 s CPU). Fix: the watcher reads
+its own non-inheritable copy of the pipe; fd 0 and the standard input handle become NUL (`clip_common._take_stdin_pipe`).
+Regression test `test_clip_contain.ParentPipe.test_child_starts_while_the_watcher_reads_the_pipe` hangs without the fix
+and passes with it. `live_worker.py` and `face_worker.py` have the same watcher pattern; they do not start children after
+it today (check before they do).
+
+## D318 — Clip jobs get the project layout (2026-11-10)
+
+The studio's clip jobs ran `detect` without `--project`, so detectors scanned the full H canvas instead of the game layer
+(S1 top-3 and mode ROIs off). `record-clips` now passes the alpha project file when it exists (both `run` and
+`live-review`). The project is read at job time, not at record time (UNVERIFIED risk if the layout changed in between).
+
+## D319 — Auto-post rules in the data dir (2026-11-10)
+
+The user's rules (`autoUpload`, `rules`) live in `<dataDir>/posting/auto-post-rules.json` and survive updates; the shipped
+file is the empty template; an explicit file wins; an invalid user file fails closed. `auto --init-rules` creates the copy
+(never overwrites). The Posts dialog shows the path and a read-only rules preview.
+
+## D320 — Google app in production; privacy policy (2026-11-10)
+
+User moved the OAuth app from Testing (7-day refresh tokens) to In production, unverified (personal use; "unverified
+app" warning at sign-in). `PRIVACY.md` in the repo is the policy. Branding verification failed (home page on github.com
+not owned); not needed for one user. UNVERIFIED: whether YouTube locks uploads from this unaudited API project to
+private (projects created after 2020-07-28); the first scheduled upload will show it. Fix if locked: YouTube API
+Services audit form.
+
+## D321 — Task panel (2026-11-10, user)
+
+User: task notification at the top right; the always-visible minimal task strip is replaced by a collapsible panel that
+shows each task in full (stage in words, step, done/total, percent, elapsed, ETA from the observed rate), and a stall
+warning when no progress arrives for N minutes. An indeterminate animation with no ETA "provides no insight".
