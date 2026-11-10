@@ -1,4 +1,4 @@
-# LU8 live-soak release gate (2026-11-10): gate built; RESULT PENDING (see "Runs")
+# LU8 live-soak release gate (2026-11-10): gate built; no PASS yet (every run disturbed by outside load, see "Runs")
 
 Plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` (LU8, D324). Decisions: D325.
 
@@ -43,7 +43,14 @@ lines, warning lines without paths, the staged runtime resolves every relative i
 | `2026-11-10-live-soak-short-1128` | short | FAIL 31/33 | Only the two render checks failed (lagged 333, skipped 367). Every lost frame came with another agent's detector job (python) at 31-48 % of all 16 cores, the stack at 5-13 %; the large burst at t 166-181 s started when the installed Ujwalam was launched on the same machine (its CEF and workers). 0 dropped on every sink, 0 timestamp gaps, all reloads, no error line. |
 | `2026-11-10-live-soak-short-1225` | short | FAIL 31/34 | Started on a quiet machine (start check empty). At t ~92 s another agent's clipper job started (process start 12:27:01) (the minute check saw it at t 122 s, "quiet machine" FAIL); from then on render lag 632 / encode skipped 2021, NVENC load up to 98 % (our three sessions plus theirs), "audio is lagging" warnings from t 96 s. 0 lost frames before t 92 s (first loss at 92.4 s). 0 dropped on every sink, 0 timestamp gaps, all 8 reloads passed, no error line. |
 
+| `2026-11-10-live-soak-short-1251` | short | FAIL 29/34 | Start check and every minute check empty (the installed Ujwalam had just closed at 12:51). System CPU 38-100 % and NVENC up to 98 % while the stack used 5-16 % and every process seen at sample time outside the stack 18-29 %: the rest was short-lived processes (builds and test runs of other agents working in parallel) that start and end between samples. Render lag 256, encode skipped 798, kick sink dropped 128 (65 timestamp gaps on kick only, the other three 0); "audio is lagging" warnings at t 40, 111, 118-123 s. 16 scene switches, 34 effects, 2 clip saves, all 8 reloads (applied in 15 ms and up), no error line, host exit 0, no process left. |
+
 Cause of the lost frames: load outside the stack while the stack runs BelowNormal (as the resource rules require for
 agent runs), not the scripted actions (no lost frame followed a scene switch, effect burst, clip save or reload except
 one frame at t 80 s next to a scene switch, under the same outside load). The soak-replay / soak-system flakes noted
 in `docs/evidence/2026-11-09-flaky-tests.md` are not part of this gate (it does not use the replay core child).
+
+The busy check names Meld Studio, the installed Ujwalam and detector jobs; it cannot see short-lived build and test
+processes. A passing run needs the machine free of other agents' work as well. The 30-minute run was not started: no
+quiet window came during this session, and it would have been a second heavy job next to theirs. Next step:
+`npm run soak -- --short`, then `npm run soak`, with nothing else running.

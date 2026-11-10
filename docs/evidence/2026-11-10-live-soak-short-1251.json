@@ -1,0 +1,2030 @@
+{
+  "id": "2026-11-10-live-soak-short-1251",
+  "mode": "short",
+  "minutes": 3,
+  "sampleS": 10,
+  "record": true,
+  "startedAt": "2026-11-10T12:51:58.382Z",
+  "checks": [
+    {
+      "name": "obs-nvenc.dll patched (build-obs-nvenc --check)",
+      "pass": true
+    },
+    {
+      "name": "host: devices off, real targets off",
+      "pass": true
+    },
+    {
+      "name": "every stream sink is a loopback target",
+      "pass": true,
+      "detail": [
+        "youtube-h:stream:loopback",
+        "youtube-v:stream:loopback",
+        "twitch:stream:loopback",
+        "kick:stream:loopback",
+        "record:record:mkv"
+      ]
+    },
+    {
+      "name": "UI server up and one-time login works",
+      "pass": true
+    },
+    {
+      "name": "event core subscribed to the mock Streamer.bot",
+      "pass": true
+    },
+    {
+      "name": "a colour scene to switch to on every canvas",
+      "pass": true,
+      "detail": {
+        "canvases": [
+          "H",
+          "V"
+        ]
+      }
+    },
+    {
+      "name": "all loopback streams live within 20 s",
+      "pass": true
+    },
+    {
+      "name": "a quiet machine: no Meld Studio, installed Ujwalam or detector job started during the run",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "name": "no process exited during the run (host, event core, UI server)",
+      "pass": true,
+      "detail": {
+        "host": null,
+        "core": null,
+        "ui": null
+      }
+    },
+    {
+      "name": "host stopped cleanly on shutdown (exit 0)",
+      "pass": true,
+      "detail": {
+        "exit": 0
+      }
+    },
+    {
+      "name": "0 dropped frames (host)",
+      "pass": false,
+      "detail": {
+        "max": 128
+      }
+    },
+    {
+      "name": "0 render-lagged frames",
+      "pass": false,
+      "detail": {
+        "max": 256
+      }
+    },
+    {
+      "name": "0 encode-skipped frames",
+      "pass": false,
+      "detail": {
+        "max": 798
+      }
+    },
+    {
+      "name": "0 dropped frames on every sink",
+      "pass": false,
+      "detail": {
+        "youtube-h": {
+          "dropped": 0,
+          "total": 11026
+        },
+        "youtube-v": {
+          "dropped": 0,
+          "total": 11021
+        },
+        "twitch": {
+          "dropped": 0,
+          "total": 11078
+        },
+        "kick": {
+          "dropped": 128,
+          "total": 11078
+        },
+        "record": {
+          "dropped": 0,
+          "total": 11026
+        }
+      }
+    },
+    {
+      "name": "every stream live in every sample",
+      "pass": true,
+      "detail": {
+        "samplesNotLive": 0,
+        "samplesWithError": 0
+      }
+    },
+    {
+      "name": "overlay server: no restart, no failure",
+      "pass": true
+    },
+    {
+      "name": "chat reached the event core",
+      "pass": true,
+      "detail": {
+        "sent": 130,
+        "noClient": 0
+      }
+    },
+    {
+      "name": "scene switches all applied",
+      "pass": true,
+      "detail": {
+        "ok": 16,
+        "failed": 0
+      }
+    },
+    {
+      "name": "effects fired and some played",
+      "pass": true,
+      "detail": {
+        "fired": 34,
+        "delivered": 4
+      }
+    },
+    {
+      "name": "clip saves all ok",
+      "pass": true,
+      "detail": [
+        true,
+        true
+      ]
+    },
+    {
+      "name": "one hot-reload of every data kind ran",
+      "pass": true,
+      "detail": {
+        "missing": []
+      }
+    },
+    {
+      "name": "reload flags-local: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 15,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload flags-definitions: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 308,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload posting-rules: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 6,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload studio-tasks: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 306,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload guide-tour: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 311,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload guide-hints: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 330,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload effect-guards: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 319,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload flash-measurements: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 314,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "every loopback listener received the whole run",
+      "pass": true,
+      "detail": {
+        "youtube-h": 184,
+        "youtube-v": 184,
+        "twitch": 185,
+        "kick": 185
+      }
+    },
+    {
+      "name": "0 video timestamp gaps in what the listeners received (ffprobe)",
+      "pass": false,
+      "detail": {
+        "kick": {
+          "gaps": 65,
+          "missingFrames": 128,
+          "endGaps": 0
+        },
+        "twitch": {
+          "gaps": 0,
+          "missingFrames": 0,
+          "endGaps": 0
+        },
+        "youtube-h": {
+          "gaps": 0,
+          "missingFrames": 0,
+          "endGaps": 0
+        },
+        "youtube-v": {
+          "gaps": 0,
+          "missingFrames": 0,
+          "endGaps": 0
+        }
+      }
+    },
+    {
+      "name": "no crash report",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "name": "no error-level log line (host, overlay child, event core, UI server)",
+      "pass": true,
+      "detail": {
+        "count": 0
+      }
+    },
+    {
+      "name": "no process left after the run",
+      "pass": true,
+      "detail": {
+        "host": 0,
+        "node": 0
+      }
+    }
+  ],
+  "notes": [],
+  "host": {
+    "obsVersion": "32.1.2",
+    "adapter": "NVIDIA GeForce RTX 4050 Laptop GPU"
+  },
+  "streamStart": "ok",
+  "recordStart": "ok",
+  "durationS": 185,
+  "streamStop": "ok",
+  "recordStop": "ok",
+  "hostExitAfterShutdown": 0,
+  "actions": {
+    "chat": {
+      "sent": 130,
+      "noClient": 0
+    },
+    "scenes": {
+      "ok": 16,
+      "failed": 0
+    },
+    "effects": {
+      "fired": 34,
+      "delivered": 4,
+      "refused": {
+        "busy": 13,
+        "region-busy": 1,
+        "budget": 16
+      }
+    },
+    "clips": [
+      {
+        "at": 72,
+        "ok": true,
+        "files": 2
+      },
+      {
+        "at": 151,
+        "ok": true,
+        "files": 2
+      }
+    ],
+    "reloads": [
+      {
+        "kind": "flags-local",
+        "owners": [
+          "ui",
+          "overlay"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 15,
+        "brokenKept": true,
+        "why": "not valid JSON",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 950
+      },
+      {
+        "kind": "flags-definitions",
+        "owners": [
+          "ui",
+          "overlay"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 308,
+        "brokenKept": true,
+        "why": "not valid JSON (line 77)",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1224
+      },
+      {
+        "kind": "posting-rules",
+        "owners": [
+          "ui"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 6,
+        "brokenKept": true,
+        "why": "rules file: not valid JSON",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 323
+      },
+      {
+        "kind": "studio-tasks",
+        "owners": [
+          "ui"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 306,
+        "brokenKept": true,
+        "why": "not valid JSON",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1220
+      },
+      {
+        "kind": "guide-tour",
+        "owners": [
+          "ui"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 311,
+        "brokenKept": true,
+        "why": "not valid JSON (line 85)",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1237
+      },
+      {
+        "kind": "guide-hints",
+        "owners": [
+          "ui"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 330,
+        "brokenKept": true,
+        "why": "not valid JSON (line 24)",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1259
+      },
+      {
+        "kind": "effect-guards",
+        "owners": [
+          "overlay"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 319,
+        "brokenKept": true,
+        "why": "not valid JSON",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1252
+      },
+      {
+        "kind": "flash-measurements",
+        "owners": [
+          "overlay"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 314,
+        "brokenKept": true,
+        "why": "not valid JSON (line 93)",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1238
+      }
+    ]
+  },
+  "samples": 18,
+  "end": {
+    "t": 184,
+    "sysCpuPct": 31.9,
+    "gpu": {
+      "sessions": 3,
+      "encFps": 120,
+      "memMB": 1467,
+      "gpuPct": 18,
+      "encPct": 58
+    },
+    "cpu": {
+      "treePct": 11.3,
+      "otherPct": 13.2,
+      "treeTop": [
+        [
+          "obs-browser-page.exe",
+          7.4
+        ],
+        [
+          "ujwalam-host.exe",
+          3.5
+        ],
+        [
+          "ffmpeg.exe",
+          0.2
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ],
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          5.4
+        ],
+        [
+          "caveman-proxy.exe",
+          2.1
+        ],
+        [
+          "MsMpEng.exe",
+          1.5
+        ]
+      ]
+    },
+    "hostCpuPct": 3.507100291321884,
+    "hostGpuPct": 17,
+    "fps": 60.0000024000001,
+    "dropped": 128,
+    "lagged": 256,
+    "skipped": 798,
+    "overlayRestarts": 0,
+    "overlayFailures": 0,
+    "sinks": [
+      {
+        "id": "youtube-h",
+        "state": "live",
+        "dropped": 0,
+        "total": 11026
+      },
+      {
+        "id": "youtube-v",
+        "state": "live",
+        "dropped": 0,
+        "total": 11021
+      },
+      {
+        "id": "twitch",
+        "state": "live",
+        "dropped": 0,
+        "total": 11078
+      },
+      {
+        "id": "kick",
+        "state": "live",
+        "dropped": 128,
+        "total": 11078
+      },
+      {
+        "id": "record",
+        "state": "live",
+        "dropped": 0,
+        "total": 11026
+      }
+    ]
+  },
+  "lagEvents": [
+    {
+      "t": 40.1,
+      "lagged": 6,
+      "skipped": 1,
+      "dropped": 0,
+      "before": [
+        "reload guide-tour: valid",
+        "reload guide-tour: broken",
+        "reload guide-tour: fixed",
+        "effect burst",
+        "scene home H",
+        "scene home V"
+      ],
+      "sysCpuPct": 48.5,
+      "gpuPct": 16,
+      "encPct": 53,
+      "treeCpuPct": 6.5,
+      "otherCpuPct": 18.8,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.9
+        ],
+        [
+          "MsMpEng.exe",
+          3.5
+        ],
+        [
+          "caveman-proxy.exe",
+          2.9
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          3.5
+        ],
+        [
+          "obs-browser-page.exe",
+          2.3
+        ],
+        [
+          "ffmpeg.exe",
+          0.3
+        ],
+        [
+          "node.exe",
+          0.3
+        ]
+      ]
+    },
+    {
+      "t": 41.1,
+      "lagged": 2,
+      "skipped": 7,
+      "dropped": 0,
+      "before": [
+        "reload guide-tour: valid",
+        "reload guide-tour: broken",
+        "reload guide-tour: fixed",
+        "effect burst",
+        "scene home H",
+        "scene home V"
+      ],
+      "sysCpuPct": 48.5,
+      "gpuPct": 16,
+      "encPct": 53,
+      "treeCpuPct": 6.5,
+      "otherCpuPct": 18.8,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.9
+        ],
+        [
+          "MsMpEng.exe",
+          3.5
+        ],
+        [
+          "caveman-proxy.exe",
+          2.9
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          3.5
+        ],
+        [
+          "obs-browser-page.exe",
+          2.3
+        ],
+        [
+          "ffmpeg.exe",
+          0.3
+        ],
+        [
+          "node.exe",
+          0.3
+        ]
+      ]
+    },
+    {
+      "t": 42.1,
+      "lagged": 3,
+      "skipped": 3,
+      "dropped": 0,
+      "before": [
+        "reload guide-tour: fixed",
+        "effect burst",
+        "scene home H",
+        "scene home V",
+        "reload guide-hints: valid"
+      ],
+      "sysCpuPct": 48.5,
+      "gpuPct": 16,
+      "encPct": 53,
+      "treeCpuPct": 6.5,
+      "otherCpuPct": 18.8,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.9
+        ],
+        [
+          "MsMpEng.exe",
+          3.5
+        ],
+        [
+          "caveman-proxy.exe",
+          2.9
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          3.5
+        ],
+        [
+          "obs-browser-page.exe",
+          2.3
+        ],
+        [
+          "ffmpeg.exe",
+          0.3
+        ],
+        [
+          "node.exe",
+          0.3
+        ]
+      ]
+    },
+    {
+      "t": 44.1,
+      "lagged": 4,
+      "skipped": 4,
+      "dropped": 0,
+      "before": [
+        "reload guide-hints: valid",
+        "reload guide-hints: broken",
+        "reload guide-hints: fixed"
+      ],
+      "sysCpuPct": 48.5,
+      "gpuPct": 16,
+      "encPct": 53,
+      "treeCpuPct": 6.5,
+      "otherCpuPct": 18.8,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.9
+        ],
+        [
+          "MsMpEng.exe",
+          3.5
+        ],
+        [
+          "caveman-proxy.exe",
+          2.9
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          3.5
+        ],
+        [
+          "obs-browser-page.exe",
+          2.3
+        ],
+        [
+          "ffmpeg.exe",
+          0.3
+        ],
+        [
+          "node.exe",
+          0.3
+        ]
+      ]
+    },
+    {
+      "t": 70.2,
+      "lagged": 6,
+      "skipped": 6,
+      "dropped": 0,
+      "before": [
+        "clip save"
+      ],
+      "sysCpuPct": 38.2,
+      "gpuPct": 8,
+      "encPct": 65,
+      "treeCpuPct": 8,
+      "otherCpuPct": 18.2,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          5.7
+        ],
+        [
+          "caveman-proxy.exe",
+          4.4
+        ],
+        [
+          "System",
+          2.5
+        ]
+      ],
+      "treeTop": [
+        [
+          "obs-browser-page.exe",
+          3.7
+        ],
+        [
+          "ujwalam-host.exe",
+          3.6
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.1
+        ]
+      ]
+    },
+    {
+      "t": 71.3,
+      "lagged": 20,
+      "skipped": 20,
+      "dropped": 0,
+      "before": [
+        "clip save"
+      ],
+      "sysCpuPct": 78.5,
+      "gpuPct": 8,
+      "encPct": 54,
+      "treeCpuPct": 5.3,
+      "otherCpuPct": 25.1,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          5.2
+        ],
+        [
+          "caveman-proxy.exe",
+          4.8
+        ],
+        [
+          "claude.exe",
+          4.2
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "ffmpeg.exe",
+          0.5
+        ],
+        [
+          "node.exe",
+          0.2
+        ],
+        [
+          "obs-ffmpeg-mux.exe",
+          0.1
+        ]
+      ]
+    },
+    {
+      "t": 72.4,
+      "lagged": 6,
+      "skipped": 6,
+      "dropped": 0,
+      "before": [
+        "clip save"
+      ],
+      "sysCpuPct": 78.5,
+      "gpuPct": 8,
+      "encPct": 54,
+      "treeCpuPct": 5.3,
+      "otherCpuPct": 25.1,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          5.2
+        ],
+        [
+          "caveman-proxy.exe",
+          4.8
+        ],
+        [
+          "claude.exe",
+          4.2
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "ffmpeg.exe",
+          0.5
+        ],
+        [
+          "node.exe",
+          0.2
+        ],
+        [
+          "obs-ffmpeg-mux.exe",
+          0.1
+        ]
+      ]
+    },
+    {
+      "t": 73.4,
+      "lagged": 13,
+      "skipped": 13,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 78.5,
+      "gpuPct": 8,
+      "encPct": 54,
+      "treeCpuPct": 5.3,
+      "otherCpuPct": 25.1,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          5.2
+        ],
+        [
+          "caveman-proxy.exe",
+          4.8
+        ],
+        [
+          "claude.exe",
+          4.2
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "ffmpeg.exe",
+          0.5
+        ],
+        [
+          "node.exe",
+          0.2
+        ],
+        [
+          "obs-ffmpeg-mux.exe",
+          0.1
+        ]
+      ]
+    },
+    {
+      "t": 74.4,
+      "lagged": 5,
+      "skipped": 5,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 78.5,
+      "gpuPct": 8,
+      "encPct": 54,
+      "treeCpuPct": 5.3,
+      "otherCpuPct": 25.1,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          5.2
+        ],
+        [
+          "caveman-proxy.exe",
+          4.8
+        ],
+        [
+          "claude.exe",
+          4.2
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "ffmpeg.exe",
+          0.5
+        ],
+        [
+          "node.exe",
+          0.2
+        ],
+        [
+          "obs-ffmpeg-mux.exe",
+          0.1
+        ]
+      ]
+    },
+    {
+      "t": 76.5,
+      "lagged": 4,
+      "skipped": 4,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 78.5,
+      "gpuPct": 8,
+      "encPct": 54,
+      "treeCpuPct": 5.3,
+      "otherCpuPct": 25.1,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          5.2
+        ],
+        [
+          "caveman-proxy.exe",
+          4.8
+        ],
+        [
+          "claude.exe",
+          4.2
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "ffmpeg.exe",
+          0.5
+        ],
+        [
+          "node.exe",
+          0.2
+        ],
+        [
+          "obs-ffmpeg-mux.exe",
+          0.1
+        ]
+      ]
+    },
+    {
+      "t": 97.6,
+      "lagged": 4,
+      "skipped": 4,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 75.6,
+      "gpuPct": 16,
+      "encPct": 62,
+      "treeCpuPct": 16.2,
+      "otherCpuPct": 29.2,
+      "otherTop": [
+        [
+          "MsMpEng.exe",
+          9.1
+        ],
+        [
+          "System",
+          5
+        ],
+        [
+          "Browser Shell.exe",
+          5
+        ]
+      ],
+      "treeTop": [
+        [
+          "obs-browser-page.exe",
+          9.8
+        ],
+        [
+          "ujwalam-host.exe",
+          5.4
+        ],
+        [
+          "ffmpeg.exe",
+          0.6
+        ],
+        [
+          "node.exe",
+          0.3
+        ]
+      ]
+    },
+    {
+      "t": 110.7,
+      "lagged": 2,
+      "skipped": 0,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 53.8,
+      "gpuPct": 8,
+      "encPct": 64,
+      "treeCpuPct": 5.2,
+      "otherCpuPct": 25.9,
+      "otherTop": [
+        [
+          "MsMpEng.exe",
+          6.5
+        ],
+        [
+          "caveman-proxy.exe",
+          5.8
+        ],
+        [
+          "Browser Shell.exe",
+          5
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4
+        ],
+        [
+          "obs-browser-page.exe",
+          0.5
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 111.8,
+      "lagged": 8,
+      "skipped": 10,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 53.8,
+      "gpuPct": 8,
+      "encPct": 64,
+      "treeCpuPct": 5.2,
+      "otherCpuPct": 25.9,
+      "otherTop": [
+        [
+          "MsMpEng.exe",
+          6.5
+        ],
+        [
+          "caveman-proxy.exe",
+          5.8
+        ],
+        [
+          "Browser Shell.exe",
+          5
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4
+        ],
+        [
+          "obs-browser-page.exe",
+          0.5
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 118.3,
+      "lagged": 120,
+      "skipped": 135,
+      "dropped": 128,
+      "before": [],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 119.5,
+      "lagged": 14,
+      "skipped": 52,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 120.5,
+      "lagged": 0,
+      "skipped": 95,
+      "dropped": 0,
+      "before": [
+        "effect burst",
+        "scene home H",
+        "scene home V"
+      ],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 121.5,
+      "lagged": 0,
+      "skipped": 91,
+      "dropped": 0,
+      "before": [
+        "effect burst",
+        "scene home H",
+        "scene home V"
+      ],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 122.8,
+      "lagged": 23,
+      "skipped": 86,
+      "dropped": 0,
+      "before": [
+        "effect burst",
+        "scene home H",
+        "scene home V"
+      ],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 123.8,
+      "lagged": 8,
+      "skipped": 85,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 124.8,
+      "lagged": 0,
+      "skipped": 84,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 125.9,
+      "lagged": 8,
+      "skipped": 77,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    },
+    {
+      "t": 126.9,
+      "lagged": 0,
+      "skipped": 10,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 96.6,
+      "gpuPct": 15,
+      "encPct": 98,
+      "treeCpuPct": 7.2,
+      "otherCpuPct": 19.3,
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          4.2
+        ],
+        [
+          "caveman-proxy.exe",
+          3.8
+        ],
+        [
+          "MsMpEng.exe",
+          3.1
+        ]
+      ],
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          4.4
+        ],
+        [
+          "obs-browser-page.exe",
+          2.1
+        ],
+        [
+          "ffmpeg.exe",
+          0.4
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ]
+    }
+  ],
+  "timeline": [
+    [
+      20,
+      "scene colour H"
+    ],
+    [
+      20,
+      "scene colour V"
+    ],
+    [
+      27,
+      "reload flags-local: valid"
+    ],
+    [
+      27,
+      "reload flags-local: broken"
+    ],
+    [
+      27.6,
+      "reload flags-local: fixed"
+    ],
+    [
+      30,
+      "reload flags-definitions: valid"
+    ],
+    [
+      30.3,
+      "reload flags-definitions: broken"
+    ],
+    [
+      30.9,
+      "reload flags-definitions: fixed"
+    ],
+    [
+      33.2,
+      "reload posting-rules: valid"
+    ],
+    [
+      33.2,
+      "reload posting-rules: broken"
+    ],
+    [
+      33.5,
+      "reload posting-rules: fixed"
+    ],
+    [
+      35.5,
+      "reload studio-tasks: valid"
+    ],
+    [
+      35.8,
+      "reload studio-tasks: broken"
+    ],
+    [
+      36.4,
+      "reload studio-tasks: fixed"
+    ],
+    [
+      38.7,
+      "reload guide-tour: valid"
+    ],
+    [
+      39,
+      "reload guide-tour: broken"
+    ],
+    [
+      39.6,
+      "reload guide-tour: fixed"
+    ],
+    [
+      40,
+      "effect burst"
+    ],
+    [
+      40,
+      "scene home H"
+    ],
+    [
+      40,
+      "scene home V"
+    ],
+    [
+      42,
+      "reload guide-hints: valid"
+    ],
+    [
+      42.3,
+      "reload guide-hints: broken"
+    ],
+    [
+      42.9,
+      "reload guide-hints: fixed"
+    ],
+    [
+      45,
+      "chat burst (15 messages)"
+    ],
+    [
+      45.2,
+      "reload effect-guards: valid"
+    ],
+    [
+      45.5,
+      "reload effect-guards: broken"
+    ],
+    [
+      46.2,
+      "reload effect-guards: fixed"
+    ],
+    [
+      48.5,
+      "reload flash-measurements: valid"
+    ],
+    [
+      48.8,
+      "reload flash-measurements: broken"
+    ],
+    [
+      49.4,
+      "reload flash-measurements: fixed"
+    ],
+    [
+      60,
+      "scene colour H"
+    ],
+    [
+      60,
+      "scene colour V"
+    ],
+    [
+      70,
+      "clip save"
+    ],
+    [
+      80,
+      "scene home H"
+    ],
+    [
+      80,
+      "scene home V"
+    ],
+    [
+      100,
+      "scene colour H"
+    ],
+    [
+      100,
+      "scene colour V"
+    ],
+    [
+      120,
+      "effect burst"
+    ],
+    [
+      120,
+      "scene home H"
+    ],
+    [
+      120,
+      "scene home V"
+    ],
+    [
+      140,
+      "scene colour H"
+    ],
+    [
+      140,
+      "scene colour V"
+    ],
+    [
+      150,
+      "clip save"
+    ],
+    [
+      160.1,
+      "scene home H"
+    ],
+    [
+      160.1,
+      "scene home V"
+    ]
+  ],
+  "hostWarnings": [
+    [
+      40,
+      "Source ujw:lyr-8e9aa1f9 audio is lagging (over by 30.07 ms) at max audio buffering. Restarting source audio."
+    ],
+    [
+      111,
+      "Source ujw:lyr-8e9aa1f9 audio is lagging (over by 151.07 ms) at max audio buffering. Restarting source audio."
+    ],
+    [
+      118,
+      "Source ujw:lyr-0dc25908 audio is lagging (over by 2822.07 ms) at max audio buffering. Restarting source audio."
+    ],
+    [
+      118,
+      "Source ujw:lyr-0dc25908 audio is lagging (over by 302.57 ms) at max audio buffering. Restarting source audio."
+    ],
+    [
+      118,
+      "Source ujw:lyr-8e9aa1f9 audio is lagging (over by 5817.53 ms) at max audio buffering. Restarting source audio."
+    ],
+    [
+      119,
+      "Source ujw:lyr-0dc25908 audio is lagging (over by 74.12 ms) at max audio buffering. Restarting source audio."
+    ],
+    [
+      119,
+      "Source ujw:lyr-8e9aa1f9 audio is lagging (over by 452.69 ms) at max audio buffering. Restarting source audio."
+    ],
+    [
+      123,
+      "Source ujw:lyr-8e9aa1f9 audio is lagging (over by 181.07 ms) at max audio buffering. Restarting source audio."
+    ]
+  ],
+  "load": {
+    "sysCpuPctMax": 100,
+    "stackCpuPctMax": 16.2,
+    "otherCpuPctMax": 29.2,
+    "gpuPctMax": 20,
+    "encPctMax": 98,
+    "vramMBMax": 1467,
+    "nvencSessionsMax": 3
+  },
+  "disturbed": [],
+  "received": {
+    "kick-1-000.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "kick-1-001.mkv": {
+      "sizeMB": 41,
+      "packets": 3472,
+      "gaps": 65,
+      "endGaps": 0,
+      "missingFrames": 128,
+      "maxStepMs": 50,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "kick-1-002.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "kick-1-003.mkv": {
+      "sizeMB": 3,
+      "packets": 297,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 4.93
+    },
+    "twitch-1-000.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "twitch-1-001.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "twitch-1-002.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "twitch-1-003.mkv": {
+      "sizeMB": 3,
+      "packets": 297,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 4.93
+    },
+    "youtube-h-1-000.mkv": {
+      "sizeMB": 122,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "youtube-h-1-001.mkv": {
+      "sizeMB": 122,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "youtube-h-1-002.mkv": {
+      "sizeMB": 122,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "youtube-h-1-003.mkv": {
+      "sizeMB": 8,
+      "packets": 245,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 4.07
+    },
+    "youtube-v-1-000.mkv": {
+      "sizeMB": 54,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "youtube-v-1-001.mkv": {
+      "sizeMB": 54,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "youtube-v-1-002.mkv": {
+      "sizeMB": 54,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 59.98
+    },
+    "youtube-v-1-003.mkv": {
+      "sizeMB": 4,
+      "packets": 239,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "spanSec": 3.97
+    }
+  },
+  "receivedBySink": {
+    "kick": {
+      "spanSec": 184.87,
+      "gaps": 65,
+      "endGaps": 0,
+      "missingFrames": 128,
+      "segments": 4
+    },
+    "twitch": {
+      "spanSec": 184.87,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "segments": 4
+    },
+    "youtube-h": {
+      "spanSec": 184.01,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "segments": 4
+    },
+    "youtube-v": {
+      "spanSec": 183.91,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "segments": 4
+    }
+  },
+  "logLines": {
+    "host": {
+      "lines": 697,
+      "errors": 0,
+      "benign": {
+        "libobs plugin probe (no OBS frontend in the host); logged at load, no effect": 1
+      }
+    },
+    "core": {
+      "lines": 6,
+      "errors": 0,
+      "benign": {}
+    },
+    "ui": {
+      "lines": 19,
+      "errors": 0,
+      "benign": {}
+    }
+  },
+  "errorLines": [],
+  "strays": 0,
+  "leftHostOrBrowser": 0,
+  "pass": false,
+  "endedAt": "2026-11-10T12:55:22.693Z"
+}
