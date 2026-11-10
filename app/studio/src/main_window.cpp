@@ -43,6 +43,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -1057,8 +1058,14 @@ QWidget *MainWindow::buildLeft()
 	// Feature flags (D149): new features ship off; switch them in Settings > Advanced (D290). Turning one on asks for
 	// the typed phrase ("yes, on air" while live), turning one off is instant. The list follows the server on every
 	// status poll; the widget lives here, hidden, and the Settings window borrows it while it is open.
-	flagList_ = new QListWidget(this);
-	flagList_->hide();
+	// It sits in a hidden holder, never directly in the window (2026-11-10 Advanced offset bug): the embedded previews
+	// carry native window handles (PreviewSlot), and Qt then gives every direct child of the main window its own native
+	// handle as well. A list with a native handle, moved into the Settings dialog, kept being placed as a separate
+	// child window (its own position, outside the dialog's fade and DPI scaling) and showed up shifted on the Advanced
+	// page. The holder takes that native handle; the list inside it stays an ordinary (alien) widget.
+	flagHome_ = new QWidget(this);
+	flagHome_->hide();
+	flagList_ = new QListWidget(flagHome_);
 	connect(flagList_, &QListWidget::itemChanged, this, [this](QListWidgetItem *it) {
 		setFlag(it->data(Qt::UserRole).toString(), it->checkState() == Qt::Checked);
 	});
@@ -3704,7 +3711,7 @@ void MainWindow::openSettings(bool firstRun)
 
 		connect(dlg, &QDialog::finished, this, [=](int result) {
 			// give the flag list back to the window before the dialog goes
-			flagList_->setParent(this);
+			flagList_->setParent(flagHome_);
 			flagList_->hide();
 			settingsDlg_.clear();
 			if (result != QDialog::Accepted) {
@@ -3882,7 +3889,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("controls"), QJsonObject{{QStringLiteral("stream"), streamBtn_->accessibleName()}, {QStringLiteral("record"), recordBtn_->accessibleName()},
 							{QStringLiteral("clip"), clipBtn_->accessibleName()}, {QStringLiteral("mark"), markBtn_->accessibleName()},
 							{QStringLiteral("streamIcon"), streamBtn_->property("iconState").toString()}});
-	o.insert(QStringLiteral("flagsInSettings"), flagList_->parentWidget() != this); // the list moved out of the main window (D290)
+	o.insert(QStringLiteral("flagsInSettings"), flagList_->parentWidget() != flagHome_); // the list moved out of the main window (D290)
 	if (settingsDlg_) {
 		QJsonArray sections;
 		if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")))
@@ -3890,9 +3897,22 @@ QJsonObject MainWindow::probe() const
 				sections.append(nav->item(i)->text());
 		auto *fx = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsLayerEffects"));
 		auto *mo = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsMotion"));
-		o.insert(QStringLiteral("settings"), QJsonObject{{QStringLiteral("sections"), sections}, {QStringLiteral("layerEffects"), fx ? QJsonValue(fx->isChecked()) : QJsonValue()},
-								{QStringLiteral("layerEffectsText"), fx ? fx->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
-								{QStringLiteral("motionChoices"), mo ? mo->count() : 0}});
+		QJsonObject s{{QStringLiteral("sections"), sections}, {QStringLiteral("layerEffects"), fx ? QJsonValue(fx->isChecked()) : QJsonValue()},
+			      {QStringLiteral("layerEffectsText"), fx ? fx->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
+			      {QStringLiteral("motionChoices"), mo ? mo->count() : 0}};
+		// Advanced page geometry (2026-11-10 offset bug): where the flag list sits in its box and in the dialog, and
+		// whether it carries its own native window handle.
+		if (QWidget *box = flagList_->parentWidget(); box && box != flagHome_) {
+			const QRect g = flagList_->geometry(), inDlg(flagList_->mapTo(settingsDlg_.data(), QPoint(0, 0)), flagList_->size());
+			const QRect bc = box->contentsRect();
+			s.insert(QStringLiteral("flagList"), QJsonObject{{QStringLiteral("native"), flagList_->internalWinId() != 0},
+									 {QStringLiteral("nativeAttr"), flagList_->testAttribute(Qt::WA_NativeWindow)},
+									 {QStringLiteral("x"), g.x()}, {QStringLiteral("y"), g.y()}, {QStringLiteral("w"), g.width()}, {QStringLiteral("h"), g.height()},
+									 {QStringLiteral("dlgX"), inDlg.x()}, {QStringLiteral("dlgY"), inDlg.y()},
+									 {QStringLiteral("insideBox"), bc.contains(g)}, {QStringLiteral("scrollY"), flagList_->verticalScrollBar()->value()},
+									 {QStringLiteral("scrollX"), flagList_->horizontalScrollBar()->value()}});
+		}
+		o.insert(QStringLiteral("settings"), s);
 	}
 	return o;
 }

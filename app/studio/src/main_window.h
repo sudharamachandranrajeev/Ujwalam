@@ -191,6 +191,7 @@ private:
 	QListWidget *sceneList_ = nullptr;
 	QListWidget *layerList_ = nullptr;
 	QListWidget *flagList_ = nullptr;
+	QWidget *flagHome_ = nullptr; // hidden holder of flagList_ while Settings is closed (keeps the list free of a native handle)
 	bool sceneEditOn_ = false, transitionsOn_ = false, botsOn_ = false;
 	int botPoll_ = 0; // bot status reads the process list: every 5th status poll (10 s), and after each action
 	QGroupBox *botBox_ = nullptr;

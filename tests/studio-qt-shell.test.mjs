@@ -360,6 +360,17 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.settings.motion, 'system');
     assert.equal(p.flagsInSettings, true, 'the feature flags list sits in Settings > Advanced');
   });
+  test('Settings > Advanced (2026-11-10 offset bug): with the window shown, the flag list has no native handle and sits inside its box, also on a second open', async () => {
+    const p = await probe([], 8000, 'settings-open,settings-page:5,settings-cancel,settings-open,settings-page:5', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    const f = p.settings.flagList;
+    assert.ok(f, 'the Advanced page reports the flag list');
+    assert.equal(f.native, false, 'a native handle made the list a separate child window placed off its box');
+    assert.equal(f.nativeAttr, false);
+    assert.equal(f.insideBox, true);
+    assert.ok(f.w > 300 && f.h >= 220, `laid out to the page: ${f.w}x${f.h}`);
+    assert.deepEqual([f.scrollX, f.scrollY], [0, 0]);
+  });
   test('Settings (D290): layer effects on asks for the typed "yes" and turns flag layer-effects on; animations Off is saved as ui.motion', async () => {
     const p = await probe([], 11000, 'settings-open,settings-layer-effects:on,settings-motion:off,settings-save,type:yes');
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true], ['type:yes', true]]);
