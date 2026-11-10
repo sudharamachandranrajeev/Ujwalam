@@ -21,9 +21,13 @@ const CFG = { runtime: 'C:/rt', dataDir: 'C:/hd', recordings: 'C:/hd/rec', overl
 test('plan selection: --sinks keeps the chosen real sinks and the recording; an unused rung is not created', () => {
   const all = planFile(ALPHA_LIVE_PLAN, { allowLive: true });
   assert.deepEqual(realSinkIds(all.config, all.wrapper.targets), ['youtube-h', 'youtube-v', 'twitch', 'kick']);
-  assert.deepEqual(all.params.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record']);
+  // The H and V recordings (record on yt-h, record-v on vert: LC1, D333).
+  assert.deepEqual(all.params.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record', 'record-v']);
   const three = planFile(ALPHA_LIVE_PLAN, { allowLive: true, select: ['youtube-h', 'youtube-v', 'twitch'] });
-  assert.deepEqual(three.params.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'record']);
+  assert.deepEqual(three.params.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'record', 'record-v']);
+  const noV = planFile(ALPHA_LIVE_PLAN, { allowLive: true, select: ['youtube-h', 'twitch'] });
+  assert.deepEqual(noV.params.sinks.map((s) => s.id), ['youtube-h', 'twitch', 'record'], 'record-v is optional: left out without the V stream');
+  assert.deepEqual(noV.params.rungs.map((r) => r.id), ['yt-h', 'reencode-tk'], 'no V encoder just for the V recording');
   assert.deepEqual(three.params.rungs.map((r) => r.id), ['yt-h', 'reencode-tk', 'vert']);
   const yt = planFile(ALPHA_LIVE_PLAN, { allowLive: true, select: ['youtube-h', 'youtube-v'] });
   assert.deepEqual(yt.params.rungs.map((r) => r.id), ['yt-h', 'vert'], 'no Twitch/Kick re-encode rung without its sinks');

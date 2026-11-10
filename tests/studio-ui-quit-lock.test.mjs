@@ -17,6 +17,7 @@ import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
+import { writeSettings } from '../services/studio-ui/user-settings.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 const KEY = 'q'.repeat(48);
@@ -38,9 +39,10 @@ function raw(port, { method = 'GET', url = '/', headers = {}, body } = {}) {
   });
 }
 
-/** A UI server over the fake host. ctl: { live, recording, statusFails, startDelayMs, revoke }; calls lists the host calls. */
+/** A UI server over the fake host. ctl: { live, recording, statusFails, startDelayMs, revoke, recordLive }; calls lists the host calls. */
 async function boot(ctl = {}) {
   const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-ql-')); dirs.push(dataDir);
+  if (ctl.recordLive !== undefined) writeSettings(dataDir, { clips: { recordLive: ctl.recordLive } });
   const fake = createFakeHost({ outputsReady: true });
   const calls = []; const revokes = [];
   const clock = { t: Date.now() };
@@ -108,7 +110,9 @@ test('after the grant every stream and recording start is refused with 409 "Ujwa
 });
 
 test('race: a start already on its way to the host refuses the quit; right after it the quit is still refused (the host may not show it yet)', async () => {
-  const s = await boot({ startDelayMs: 600 });
+  // Record while live off (LC2, D334): with it on, this stream start also starts a recording, and a quit while a
+  // recording runs is rightly refused ('recording'). This test is about the start race only.
+  const s = await boot({ startDelayMs: 600, recordLive: false });
   const starting = s.ask('stream.start'); // in flight: the host takes 600 ms
   await new Promise((r) => setTimeout(r, 150));
   assert.deepEqual((await s.post('/ui/api/quit/begin')).body, { granted: false, reason: 'starting' });
