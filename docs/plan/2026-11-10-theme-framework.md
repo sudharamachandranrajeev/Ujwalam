@@ -197,9 +197,13 @@ Designed from their own topic text with the same framework, so each still differ
 
 Each step on its own branch with a Codex review before merge.
 
-## 6. Questions for the user
+## 6. User answers (2026-11-10)
 
-1. Build all 9 themes as full designs, or only the 4 with reference images first?
-2. Fonts: keep installed Windows fonts by name (nothing bundled, today's rule), or bundle open-licence fonts (for
-   example Inter for A and C, a technical font for D)? Bundling adds files to the install.
-3. Illustration in B (smoke, cracks, drips): dropped as proposed?
+1. Scope: the 4 themes with reference images first (T2–T5), then the other 5 (T6).
+2. Fonts: **bundle open-licence fonts.** Only SIL Open Font Licence 1.1 families, each with its `OFL.txt` and source
+   recorded in `docs/third-party-notices.md`; loaded at start with `QFontDatabase::addApplicationFont` from the install,
+   never installed into Windows. Microsoft fonts stay forbidden. The packager's font ban becomes an allowlist of these
+   OFL files (rule change logged as a decision). Proposed families (checked against the references, UNVERIFIED until
+   downloaded and licence-checked): Inter (A, C), Barlow (B, caps-friendly humanist), Exo 2 (D, technical). Fonts for
+   T6 are chosen per theme in that step.
+3. Illustration in B: dropped (not answered separately; default from section 2).
