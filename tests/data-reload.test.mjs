@@ -125,6 +125,18 @@ describe('data source', () => {
     assert.equal(t.state, 'done');
     assert.equal(lines.length, 2);
   });
+
+  test('notifier: a file missing at start (never loaded) says nothing from it is in use, once, not "last good version"', () => {
+    const d = tmp(); const seen = [];
+    const s = createDataSource({ kind: 'posting-rules', file: path.join(d, 'auto-post-rules.json'), parse: (t) => parseJsonText(t), report: (e) => seen.push(e) });
+    assert.throws(() => s.get());
+    assert.equal(seen.length, 1);
+    assert.deepEqual([seen[0].ok, seen[0].loaded, seen[0].why], [false, false, 'file missing']);
+    const n = createDataNotifier({ dataDir: d, writeTask: (dir, t) => { mkdirSync(path.join(dir, 'tasks'), { recursive: true }); writeFileSync(path.join(dir, 'tasks', `${t.id}.json`), JSON.stringify(t)); return true; }, log: () => {} });
+    n(seen[0]);
+    const t = readTaskFiles(d)[0];
+    assert.equal(t.note, 'auto-post-rules.json: file missing. Nothing from this file is in use until it is fixed.');
+  });
 });
 
 describe('owners', () => {

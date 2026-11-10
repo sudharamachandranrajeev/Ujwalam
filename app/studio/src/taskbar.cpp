@@ -546,9 +546,18 @@ TaskBar::TaskBar(QMainWindow *host) : QObject(host), host_(host)
 	hideBtn->setObjectName(QStringLiteral("taskHide"));
 	hideBtn->setFocusPolicy(Qt::NoFocus);
 	connect(hideBtn, &QToolButton::clicked, this, [this]() { setPanelOpen(false); });
+	// Clears every finished (done or failed) task from the list at once; running and waiting tasks stay (user, 2026-11-10).
+	clearBtn_ = new QToolButton(panel_);
+	clearBtn_->setText(QStringLiteral("Clear finished"));
+	clearBtn_->setObjectName(QStringLiteral("taskClear"));
+	clearBtn_->setToolTip(QStringLiteral("Remove all finished and failed tasks from this list"));
+	clearBtn_->setFocusPolicy(Qt::NoFocus);
+	clearBtn_->hide();
+	connect(clearBtn_, &QToolButton::clicked, this, &TaskBar::clearFinished);
 	head->addWidget(ht);
 	head->addStretch(1);
 	head->addWidget(count_);
+	head->addWidget(clearBtn_);
 	head->addWidget(hideBtn);
 	pv->addLayout(head);
 	scroll_ = new QScrollArea(panel_);
@@ -655,6 +664,10 @@ void TaskBar::rebuildRows()
 			++it;
 	}
 	shown_ = int(want.size());
+	bool anyFinished = false;
+	for (const TaskRow *r : std::as_const(rowById_))
+		anyFinished = anyFinished || r->finished();
+	clearBtn_->setVisible(anyFinished);
 	empty_->setVisible(shown_ == 0);
 	count_->setText(shown_ ? QStringLiteral("%1 running, %2 listed").arg(running_).arg(shown_) : QString());
 	if (open_)
@@ -670,6 +683,22 @@ void TaskBar::dismissFirstFinished()
 			chip_->setState(running_, waiting_, shown_, stalled_, chip_->toolTip());
 			return;
 		}
+}
+
+void TaskBar::clearFinished()
+{
+	bool any = false;
+	for (auto it = rowById_.cbegin(); it != rowById_.cend(); ++it)
+		if (it.value()->finished()) {
+			dismissed_.insert(it.key());
+			any = true;
+		}
+	if (!any)
+		return;
+	rebuildRows();
+	chip_->setState(running_, waiting_, shown_, stalled_, chip_->toolTip());
+	if (open_ && shown_ == 0)
+		setPanelOpen(false); // nothing left to show: the panel folds away, as after the last dismiss
 }
 
 void TaskBar::clickFirstToast()
@@ -853,6 +882,7 @@ QJsonObject TaskBar::probe() const
 	o.insert(QStringLiteral("stalled"), stalled_);
 	o.insert(QStringLiteral("total"), int(tasks_.size()));
 	o.insert(QStringLiteral("rows"), shown_);
+	o.insert(QStringLiteral("clearShown"), !clearBtn_->isHidden());
 	o.insert(QStringLiteral("chipHidden"), chip_->isHidden());
 	o.insert(QStringLiteral("chipQuiet"), chip_->quiet());
 	o.insert(QStringLiteral("chipText"), chip_->text());

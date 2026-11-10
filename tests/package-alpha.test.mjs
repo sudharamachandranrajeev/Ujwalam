@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXE as STUDIO_EXE, START_EXE } from '../app/studio/tools/build.mjs';
 import { changelogExcerpt, releaseInfo } from '../tools/package/build-alpha.mjs';
-import { allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
+import { allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
 import { peInfo } from '../tools/package/pe.mjs';
 import { clipMakerNote, installedSpec, nodeOk, pruneLaunchLogs } from '../tools/package/run-installed.mjs';
 import { CLIP_MAKER_FIX, clipTools } from '../services/studio-ui/record-clips.mjs';
@@ -59,6 +59,28 @@ test('repo file set: no tests, docs, Python or local files; every relative impor
   assert.ok(files.includes('services/studio-ui/launch.mjs'));
   assert.ok(files.includes('tools/diag/bundle.mjs'));
   assert.deepEqual(importProblems(REPO, files), []);
+  // alpha.22 shipped without data/posting/auto-post-rules.json (and three more): the task panel said "file missing"
+  assert.deepEqual(dataRefProblems(REPO, files), []);
+  for (const f of ['data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json']) assert.ok(files.includes(f), f);
+  assert.deepEqual(dataRefProblems(REPO, files.filter((f) => f !== 'data/posting/auto-post-rules.json')).length, 1, 'the check sees a missing file');
+  {
+    // Codex review: either quote style counts; comments and joins on another folder (the data dir) do not
+    const d = tmp('dataref');
+    try {
+      mkdirSync(path.join(d, 'data', 'x'), { recursive: true });
+      mkdirSync(path.join(d, 'services'), { recursive: true });
+      for (const f of ['a.json', 'b.json', 'c.json', 'd.json']) writeFileSync(path.join(d, 'data', 'x', f), '{}');
+      writeFileSync(path.join(d, 'services', 'm.mjs'), [
+        `const A = path.join(REPO, 'data', 'x', 'a.json');`,
+        `const B = path.join(REPO_ROOT, "data", "x", "b.json");`,
+        `// const C = path.join(REPO, 'data', 'x', 'c.json');`,
+        `/* path.join(REPO, 'data', 'x', 'c.json') */`,
+        `const D = path.join(dataDir, 'data', 'x', 'd.json');`,
+      ].join('\n'));
+      const p = dataRefProblems(d, ['services/m.mjs']);
+      assert.deepEqual(p.map((x) => x.replace(/^.*reads /, '').replace(/,.*$/, '')), ['data/x/a.json', 'data/x/b.json']);
+    } finally { rmSync(d, { recursive: true, force: true }); }
+  }
   assert.deepEqual(allowProblems(files), []);
   assert.deepEqual(forbiddenProblems(files, { fontNames: ['Corbel', 'Consolas'] }), []);
   const dis = disabledModules(REPO);

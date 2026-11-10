@@ -225,6 +225,23 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(c.actions.map((a) => [a.action, a.done]), [['tasks:open', true], ['tasks:close', true], ['tasks:dismiss', true]]);
     assert.deepEqual([c.tasks.panelOpen, c.tasks.rows, c.tasks.total], [false, 0, 1], 'the X hides a finished task from the list');
   });
+  test('task bar: "Clear finished" removes every done and failed task at once; running and waiting ones stay (user, 2026-11-10)', async () => {
+    const p = await probe([], 6000, 'tasks:open,tasks:clear', (d) => {
+      task(d, { id: 'clip-a', title: 'Editing clips (3 of 7)', state: 'running', stage: 'render', done: 2, total: 7 });
+      task(d, { id: 'clip-b', title: 'Clips from practice-3', state: 'waiting', note: 'Waiting until the stream ends' });
+      task(d, { id: 'ui-c', kind: 'preview', title: 'Opening the horizontal preview', state: 'failed', note: 'Could not open' });
+      task(d, { id: 'ui-d', kind: 'upload', title: 'Uploaded', state: 'done' });
+      task(d, { id: 'data-posting-rules', kind: 'data', title: 'Auto-post rules not applied: the file has a problem', state: 'failed' });
+    });
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['tasks:open', true], ['tasks:clear', true]]);
+    assert.deepEqual([p.tasks.total, p.tasks.rows, p.tasks.clearShown, p.tasks.panelOpen], [5, 2, false, true], 'the two unfinished tasks stay listed');
+    const only = await probe([], 6000, 'tasks:open,tasks:clear', (d) => {
+      task(d, { id: 'ui-d', kind: 'upload', title: 'Uploaded', state: 'done' });
+    });
+    assert.deepEqual([only.tasks.rows, only.tasks.panelOpen, only.tasks.chipHidden], [0, false, true], 'nothing left: the list folds away');
+    const before = await probe([], 5000, 'tasks:open', (d) => { task(d, { id: 'ui-d', kind: 'upload', title: 'Uploaded', state: 'done' }); });
+    assert.equal(before.tasks.clearShown, true, 'the button shows while a finished task is listed');
+  });
   test('task bar (D287): a task that was running and finishes gives a toast; a failure too; the stats cards fill from the status poll', async () => {
     const p = await probe([], 5500, '', (d) => {
       task(d, { id: 'clip-a', title: 'Editing clips', state: 'running', done: 1, total: 4 });

@@ -142,6 +142,7 @@ public:
 	void setPanelOpen(bool open);
 	bool panelOpen() const { return open_; }
 	void dismissFirstFinished();
+	void clearFinished(); // the panel's "Clear finished" button: every done or failed row goes; running ones stay
 	void clickFirstToast(); // tests: what a click on a notification does
 	QJsonObject probe() const;
 	// A short notification without a task (LU2: a data file that was not applied).
@@ -165,6 +166,7 @@ private:
 	QScrollArea *scroll_;
 	QVBoxLayout *rows_;
 	QLabel *empty_, *count_;
+	QToolButton *clearBtn_;
 	QMap<QString, TaskRow *> rowById_;
 	QMap<QString, QString> lastState_; // id -> state seen last
 	QSet<QString> dismissed_, warned_;
