@@ -43,7 +43,9 @@ class NameTests(unittest.TestCase):
         self.assertEqual(names.label_for("short", ["Triple Kill", "Fury Kill", "On a 5 killstreak"], det_weights=WEIGHTS),
                          "fury-kill")
         self.assertEqual(names.label_for("short", [], det_weights=WEIGHTS), "highlight")
-        self.assertEqual(names.label_for("won-reel", kills=7), "victory-kills-7")
+        self.assertEqual(names.label_for("won-reel", ["VICTORY", "7 kill(s)"], kills=7), "victory-kills-7")
+        self.assertEqual(names.label_for("won-reel", ["DEFEAT", "11 kill(s)"], kills=11), "defeat-kills-11")
+        self.assertEqual(names.label_for("won-reel", kills=7), "match-kills-7", "result not read: never claims a win")
 
     def test_canvas_suffix(self):
         self.assertEqual(names.canvas_suffix(LAYOUTS["stream-v"]), "v")
@@ -114,7 +116,8 @@ class PublishTests(unittest.TestCase):
             {"id": "M01", "start": 0.0, "end": 36.0, "pieces": [{"start": 400.0, "end": 404.5, "kills": 2},
                                                                 {"start": 100.0, "end": 104.5, "kills": 1}],
              "files": [{"layout": "montage-v", "file": "montage-v.mp4"}]},
-            {"id": "W01", "start": 0.0, "end": 50.0, "pieces": [{"start": 10.0, "end": 14.5, "kills": 1}],
+            {"id": "W01", "start": 0.0, "end": 50.0, "labels": ["VICTORY", "1 kill(s)"],
+             "pieces": [{"start": 10.0, "end": 14.5, "kills": 1}],
              "files": [{"layout": "montage-v", "file": "montage-v.mp4"}]}]}
         write(os.path.join(mont, "render.json"), json.dumps(rdoc))
         write(os.path.join(mont, "report.json"), json.dumps({"results": [

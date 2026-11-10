@@ -8,7 +8,7 @@ Clips folder (Settings > Clips folder):
     game             game id of the detector pass (e.g. codm); "game" when unknown
     kind             short | montage | won-reel
     YYYYMMDD-HHMMSS  local wall time of the clip's first moment (short: its start; montage, won-reel: its earliest piece)
-    label            short: the best medal, e.g. triple-kill; montage: kills-12; won-reel: victory-kills-7
+    label            short: the best medal, e.g. triple-kill; montage: kills-12; won-reel: victory-kills-7 / defeat-kills-11 (match-kills-N if no result)
     nn               01, 02, ... per kind within one recording
     canvas           v = cut of the V canvas recording (the vertical stream design); v-<layout> = a vertical layout
                      made from the H recording (full-crop, game-facecam, blurred-fill); h = horizontal
@@ -62,8 +62,9 @@ def best_label(labels, det_weights=None):
 def label_for(kind, labels=None, kills=None, det_weights=None):
     if kind == "montage":
         return f"kills-{int(kills or 0)}"
-    if kind == "won-reel":
-        return f"victory-kills-{int(kills or 0)}"
+    if kind == "won-reel":  # match reel (D315: wins and qualifying defeats); the result is in the clip's labels
+        res = next((str(x).lower() for x in (labels or []) if str(x).upper() in ("VICTORY", "DEFEAT")), "match")
+        return f"{res}-kills-{int(kills or 0)}"
     return slug(best_label(labels, det_weights) or "highlight")
 
 
