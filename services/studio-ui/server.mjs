@@ -863,7 +863,9 @@ export function createStudioServer(opts) {
   async function tick() {
     try { lastSnapshot = await snapshot(); broadcast('status', lastSnapshot); } catch { /* keep polling */ }
     // Record while live (LC2): a recording started with the stream stops once no stream sink runs any more.
-    if (recordLive.active()) { try { await recordLive.observe(await host.call('outputs.status', {})); } catch { /* next poll */ } }
+    // The owner is taken before the status is read, so an older status never judges a newer recording (Codex review).
+    const owner = recordLive.owner();
+    if (owner) { try { await recordLive.observe(await host.call('outputs.status', {}), owner); } catch { /* next poll */ } }
   }
 
   // Host call with a retry on CONFLICT (-32009) for project.load.
@@ -1464,9 +1466,10 @@ export function createStudioServer(opts) {
         remember(p.method, p.params, before);
         // Record while live (LC2): after an accepted start (the stop-wins checks above passed) the recording starts too;
         // a failed record.start leaves the stream live and comes back as a warning. A Stop stream also stops a
-        // recording that was started this way; a Record / Stop recording click hands the recording back to the user.
+        // recording that was started this way once a fresh status shows no stream running; a Record / Stop recording click hands the recording back to the user.
         let recordWarning = null;
-        if (p.method === 'stream.start') recordWarning = (await recordLive.afterStreamStart()).warning ?? null;
+        // The click's own stop epoch: a Stop that came in at any point after it wins (Codex review of LC2).
+        if (p.method === 'stream.start') recordWarning = (await recordLive.afterStreamStart({ epoch: startEpoch })).warning ?? null;
         if (p.method === 'stream.stop') await recordLive.streamEnded('the stream was stopped');
         if (p.method === 'record.start' || p.method === 'record.stop') recordLive.handOff();
         const warning = [p.warning, recordWarning].filter(Boolean).join(' ') || null;

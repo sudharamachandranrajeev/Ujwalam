@@ -565,3 +565,43 @@ describe('record while live (LC2, D334 proposed)', () => {
     } finally { await r.close(); }
   });
 });
+
+describe('record while live: Codex review of LC2 (server)', () => {
+  test('P1: Stop or End all that leave an output running keep the recording; it stops once every output has stopped', async () => {
+    const SINKS = ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record', 'record-v'];
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-reclive-p1-'));
+    const fake = createFakeHost({ outputsReady: true, sinks: SINKS });
+    const calls = []; let keepLive = 'kick';
+    const host = {
+      describe: () => fake.describe(),
+      call: async (m, p) => {
+        if (m !== 'outputs.status' && m !== 'host.status') calls.push(m);
+        const out = await fake.call(m, p);
+        if (m === 'stream.stop' && keepLive) await fake.call('stream.start', { sinks: [keepLive] }); // that output did not stop
+        return out;
+      },
+    };
+    const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
+    const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, limits: { statusPollMs: 20 },
+      readiness: { config: { endAll: { waitMs: 300, pollMs: 50 } }, run: async () => ({ ok: true, items: [] }) } });
+    try {
+      const { port } = await srv.listen();
+      const a = await login(port);
+      const click = async (route, body) => JSON.parse((await post(port, a, route, body)).text);
+      const state = async () => Object.fromEntries((await fake.call('outputs.status')).sinks.map((s) => [s.id, s.state]));
+      await click('/ui/api/host', { method: 'stream.start' });
+      assert.equal((await state()).record, 'live');
+      await click('/ui/api/host', { method: 'stream.stop' });
+      assert.equal((await state()).kick, 'live', 'one output still running');
+      assert.equal(calls.filter((m) => m === 'record.stop').length, 0, 'Stop stream left an output running: the recording keeps going');
+      const end = await click('/ui/api/streams/end-all', {});
+      assert.equal(end.endAll.allStopped, false);
+      assert.equal(end.endAll.recordingStopped, undefined);
+      assert.equal((await state()).record, 'live', 'End all not finished: the recording keeps going');
+      keepLive = null;
+      await fake.call('stream.stop', { sinks: ['kick'] });
+      for (let i = 0; i < 150 && (await state()).record !== 'stopped'; i++) await new Promise((x) => setTimeout(x, 20));
+      assert.equal((await state()).record, 'stopped', 'the status poll stops it once every output has stopped');
+    } finally { await srv.close(); rmSync(dataDir, { recursive: true, force: true }); }
+  });
+});
