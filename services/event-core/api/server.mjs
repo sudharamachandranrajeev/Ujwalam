@@ -17,6 +17,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import http from 'node:http';
 import { METHODS, RpcError, E, validateParams } from './methods.mjs';
 import { createSseClient, parseKinds } from './sse.mjs';
+import { assertLanBind, sameSubnet } from '../../common/lan-remote.mjs';
 
 export const LOOPBACK = '127.0.0.1';
 
@@ -59,25 +60,36 @@ const digest = (s) => createHash('sha256').update(s, 'utf8').digest();
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
 /** opts: { core, tokens?: { api, system } (64 hex each; generated when absent), host? (only 127.0.0.1), port? (0 = random),
- *  limits?, timers?, status?: () => object (extra, text-free fields for core.status), now?: () => ms } */
+ *  limits?, timers?, status?: () => object (extra, text-free fields for core.status), now?: () => ms,
+ *  remote?: { bind: { address, prefixLen }, token } }
+ * remote (D327 IN1, "Allow remote connections"): this server is the LAN listener instead of the loopback API. It binds
+ * the given private IPv4 address only (lan-remote.mjs; never 0.0.0.0 or a public address), closes any connection from
+ * outside that subnet before reading a byte, accepts only the remote pairing token (never the api or system token, so a
+ * leaked LAN token cannot confirm or run system methods), gives the remote role core.status and actions.request only
+ * (source 'remote': the action gate treats it like api for requests and never lets it confirm) and serves no events. */
 export function createApiServer(opts) {
   const core = opts.core;
-  const host = opts.host ?? LOOPBACK;
-  if (host !== LOOPBACK) throw new RangeError('the API binds 127.0.0.1 only');
+  const remote = opts.remote ?? null;
+  if (remote) assertLanBind(remote.bind);
+  const host = remote ? remote.bind.address : (opts.host ?? LOOPBACK);
+  if (!remote && host !== LOOPBACK) throw new RangeError('the API binds 127.0.0.1 only');
   const port = opts.port ?? 0;
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new RangeError('port must be 0..65535');
   const L = { ...DEFAULT_LIMITS, ...(opts.limits ?? {}) };
-  const tokens = opts.tokens ?? { api: newToken(), system: newToken() };
-  if (!TOKEN_HEX.test(tokens.api) || !TOKEN_HEX.test(tokens.system)) throw new TypeError('tokens must be 64 hex characters');
-  if (tokens.api === tokens.system) throw new TypeError('api and system tokens must differ');
-  const dig = { api: digest(tokens.api), system: digest(tokens.system) };
-  const handles = core.actions ? { api: core.actions.forSource('api'), system: core.actions.forSource('system') } : { api: null, system: null };
+  if (remote && opts.tokens) throw new TypeError('the LAN listener takes the remote token only');
+  if (remote && !TOKEN_HEX.test(remote.token ?? '')) throw new TypeError('the remote token must be 64 hex characters');
+  const tokens = remote ? { remote: remote.token } : (opts.tokens ?? { api: newToken(), system: newToken() });
+  if (!remote && (!TOKEN_HEX.test(tokens.api) || !TOKEN_HEX.test(tokens.system))) throw new TypeError('tokens must be 64 hex characters');
+  if (!remote && tokens.api === tokens.system) throw new TypeError('api and system tokens must differ');
+  const dig = remote ? { remote: digest(tokens.remote) } : { api: digest(tokens.api), system: digest(tokens.system) };
+  const handles = !core.actions ? { api: null, system: null, remote: null }
+    : remote ? { remote: core.actions.forSource('remote') } : { api: core.actions.forSource('api'), system: core.actions.forSource('system') };
   const timers = opts.timers ?? undefined;
   const now = opts.now ?? Date.now;
   const startedAt = new Date(now()).toISOString();
   const t0 = performance.now();
 
-  const stats = { requests: 0, rpcOk: 0, rpcErrors: 0, refused: 0, authFailures: 0, rateLimited: 0, sseOpened: 0, sseDropped: 0, pendingEvicted: 0, pendingTimedOut: 0, authedRefused: 0 };
+  const stats = { requests: 0, rpcOk: 0, rpcErrors: 0, refused: 0, authFailures: 0, rateLimited: 0, sseOpened: 0, sseDropped: 0, pendingEvicted: 0, pendingTimedOut: 0, authedRefused: 0, peerRefused: 0 };
   const sse = new Set();
   const pending = new Set();  // sockets without an authenticated request yet, oldest first (Set keeps insertion order)
   const authed = new Map();   // socket -> role
@@ -95,6 +107,8 @@ export function createApiServer(opts) {
   server.maxConnections = L.maxPending + L.maxConnections + L.systemReserve + 1;
   server.on('connection', (socket) => {
     socket.on('error', () => {});
+    // LAN listener: a peer outside the bind subnet (e.g. through a forwarded router port) is closed at once.
+    if (remote && !sameSubnet(socket.remoteAddress, remote.bind)) { stats.peerRefused++; socket.destroy(); return; }
     pending.add(socket);
     if (pending.size > L.maxPending) {
       const oldest = pending.values().next().value;
@@ -137,6 +151,7 @@ export function createApiServer(opts) {
     const h = req.headers.authorization;
     const m = typeof h === 'string' ? /^Bearer ([A-Za-z0-9._~+/=-]{1,256})$/.exec(h) : null;
     const d = digest(m ? m[1] : ''); // same work whether or not a token was presented
+    if (remote) { const ok = timingSafeEqual(d, dig.remote); return m && ok ? 'remote' : null; }
     const isApi = timingSafeEqual(d, dig.api);   // fixed-length SHA-256 digests: equal-length buffers, no length leak
     const isSys = timingSafeEqual(d, dig.system);
     if (!m) return null;
@@ -267,7 +282,7 @@ export function createApiServer(opts) {
       return send(res, 401, { error: { code: 'unauthorized' } }, { 'WWW-Authenticate': 'Bearer' });
     }
     if (!admit(req.socket, role)) { stats.authedRefused++; return fail(res, 503, 'too-many-connections', { 'Retry-After': '1' }); }
-    if (route === 'GET') return handleEvents(req, res, role, url);
+    if (route === 'GET') return role === 'remote' ? fail(res, 403, 'events-not-permitted') : handleEvents(req, res, role, url);
     return handleRpc(req, res, role);
   }
 
@@ -284,8 +299,8 @@ export function createApiServer(opts) {
         server.once('error', reject);
         server.listen({ host, port }, () => {
           const a = server.address();
-          if (!a || typeof a === 'string' || a.address !== LOOPBACK) { server.close(); reject(new Error('API bound a non-loopback address')); return; }
-          allowedHosts = new Set([`127.0.0.1:${a.port}`, `localhost:${a.port}`]);
+          if (!a || typeof a === 'string' || a.address !== host) { server.close(); reject(new Error(remote ? 'LAN listener bound another address' : 'API bound a non-loopback address')); return; }
+          allowedHosts = remote ? new Set([`${host}:${a.port}`]) : new Set([`127.0.0.1:${a.port}`, `localhost:${a.port}`]);
           resolve({ host: a.address, port: a.port });
         });
       });

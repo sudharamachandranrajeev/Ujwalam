@@ -262,7 +262,8 @@ test('methods: unknown method, strict params (unknown field, wrong type, positio
 
 test('roles table: each method is callable by exactly its declared roles (403 otherwise)', async () => {
   const expected = {
-    'core.status': ['api', 'system'], 'actions.request': ['api', 'system'], 'actions.confirm': ['api'], 'actions.panic': ['api', 'system'],
+    // 'remote' (D327 IN1) exists only on the LAN listener; tests/lan-remote.test.mjs covers it
+    'core.status': ['api', 'system', 'remote'], 'actions.request': ['api', 'system', 'remote'], 'actions.confirm': ['api'], 'actions.panic': ['api', 'system'],
     'live.set': ['system'], 'audit.verify': ['api', 'system'], 'audit.export': ['api'], 'audit.purge': ['api'],
   };
   assert.deepEqual(roleTable(), expected);
