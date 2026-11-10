@@ -29,7 +29,7 @@ test('seed plans like alpha-live.json: same rungs (twitch and kick share one), a
   const res = validate(config, loadPlatforms(PLATFORMS_DIR));
   assert.deepEqual(res.errors, []);
   assert.deepEqual(res.rungs.map((r) => [r.id, r.canvas, r.w, r.h, r.bitrate, r.sinks]),
-    [['h-main', 'H', 1920, 1080, 17000, ['youtube-h', 'record']], ['v-main', 'V', 1080, 1920, 7500, ['youtube-v']], ['h-twitch', 'H', 1920, 1080, 6000, ['twitch', 'kick']]]);
+    [['h-main', 'H', 1920, 1080, 17000, ['youtube-h', 'record']], ['v-main', 'V', 1080, 1920, 7500, ['youtube-v', 'record-v']], ['h-twitch', 'H', 1920, 1080, 6000, ['twitch', 'kick']]]);
   assert.ok(res.info.some((i) => i.code === 'RUNG_DEDUP' && i.mergedFrom.includes('h-kick')), 'kick merged into twitch rung');
   assert.equal(config.audio.tracks.length, 1);
   const p = planSetup(s, { allowLive: true, schemes: { 'Ujwalam/stream/twitch-server': { present: true, scheme: 'rtmps' } } });
@@ -41,7 +41,14 @@ test('seed plans like alpha-live.json: same rungs (twitch and kick share one), a
   assert.equal(t.twitch.urlRef, 'Ujwalam/stream/twitch-server');
   assert.equal(t.kick.transport, 'rtmps');
   assert.equal(t.record.transport, 'file');
+  // LC1: the V canvas is recorded on the portrait stream's rung (no extra encoder) as <name>-v.mkv
+  assert.deepEqual(t['record-v'], { transport: 'file', name: 'stream-v.mkv' });
+  assert.equal(p.params.sinks.find((x) => x.id === 'record-v').rung, 'v-main');
   assert.throws(() => planSetup(s), /refused: plan with allowLive/);
+  // main canvas only: no portrait rung, so no V recording
+  const single = toPlan({ ...s, canvasMode: 'main' });
+  assert.equal(single.config.sinks.some((x) => x.id === 'record-v'), false);
+  assert.equal(single.config.encoders.some((x) => x.id === 'v-main'), false);
 });
 
 test('round-trip: write then read gives the same setup', () => {
@@ -87,6 +94,8 @@ test('shape checks refuse unknown keys, bad ids, wrong canvas and out-of-range c
   bad.video.fps = 45; bad.video.audioKbps = 100;
   const msgs = shapeProblems(bad).map((p) => p.field);
   for (const f of ['video', 'outputs[0].id', 'outputs[4].canvas', 'video.fps', 'video.audioKbps']) assert.ok(msgs.includes(f), `${f} in ${msgs}`);
+  const recV = clone(s); recV.outputs[0].id = 'record-v';
+  assert.ok(shapeProblems(recV).some((p) => p.field === 'outputs[0].id'), 'record-v is the V recording sink id');
   const rec = clone(s); rec.outputs[0].id = 'record';
   assert.ok(shapeProblems(rec).some((p) => p.field === 'outputs[0].id'));
   const dup = clone(s); dup.outputs[1].id = dup.outputs[0].id;
@@ -113,7 +122,8 @@ test('plan file written for the launcher plans through planFile', () => {
   try {
     const f = writePlanFile(d, seedSetup());
     const p = planFile(f, { allowLive: true, schemes: { 'Ujwalam/stream/twitch-server': { present: true, scheme: 'rtmp' } } });
-    assert.deepEqual(p.params.sinks.map((x) => x.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record']);
+    assert.deepEqual(p.params.sinks.map((x) => x.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record', 'record-v']);
+    assert.equal(JSON.parse(readFileSync(f, 'utf8')).targets['record-v'].name, 'stream-v.mkv');
     assert.equal(p.params.sinks.find((x) => x.id === 'twitch').proto, 'rtmp');
     assert.doesNotMatch(readFileSync(f, 'utf8'), /live_[A-Za-z0-9]|sk_/, 'no key material');
     writeFileSync(path.join(d, 'stream-setup.json'), '{ not json');

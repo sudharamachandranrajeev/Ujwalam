@@ -66,7 +66,7 @@ test('alpha-live plan: YouTube H 1080p60 17 Mbps (D182) + V direct, Multi rung -
   assert.deepEqual(params.rungs.map((r) => `${r.id}:${r.canvas}:${r.w}x${r.h}@${r.fps}:${r.rc}:${r.bitrate}`),
     ['yt-h:H:1920x1080@60:cbr:17000', 'reencode-tk:H:1920x1080@60:cbr:6000', 'vert:V:1080x1920@60:cbr:7500']);
   const rungOf = Object.fromEntries(params.sinks.map((s) => [s.id, s.rung]));
-  assert.deepEqual(rungOf, { 'youtube-h': 'yt-h', 'youtube-v': 'vert', twitch: 'reencode-tk', kick: 'reencode-tk', record: 'yt-h' });
+  assert.deepEqual(rungOf, { 'youtube-h': 'yt-h', 'youtube-v': 'vert', twitch: 'reencode-tk', kick: 'reencode-tk', record: 'yt-h', 'record-v': 'vert' });
   assert.deepEqual(live, ['youtube-h', 'youtube-v', 'twitch', 'kick']);
   const t = Object.fromEntries(params.sinks.map((s) => [s.id, s.target]));
   assert.deepEqual(t['youtube-h'], { transport: 'rtmps', url: 'rtmps://a.rtmps.youtube.com:443/live2', keyRef: 'Ujwalam/stream/youtube-h' });
@@ -75,6 +75,9 @@ test('alpha-live plan: YouTube H 1080p60 17 Mbps (D182) + V direct, Multi rung -
   assert.deepEqual(t.twitch, { transport: 'auto', urlRef: 'Ujwalam/stream/twitch-server', keyRef: 'Ujwalam/stream/twitch' });
   assert.deepEqual(alpha().unresolved, ['twitch']);
   assert.deepEqual(t.record, { transport: 'file', name: 'alpha.mkv' });
+  // LC1 (D333 proposed): the V canvas is recorded too, on the V stream's rung; "optional" is plan-only (not sent)
+  assert.deepEqual(t['record-v'], { transport: 'file', name: 'alpha-v.mkv' });
+  assert.equal(params.rungs.length, 3, 'two recordings, still three encoders');
   const text = readFileSync(ALPHA, 'utf8');
   assert.equal(/"(key|streamKey|stream_key|password|secret)"\s*:/i.test(text), false, 'no key fields in the committed plan');
 });
@@ -130,6 +133,29 @@ test('recording binds to an existing stream rung (no extra encoder) unless ownRu
   assert.throws(() => plan(c, wrapper.targets, { allowLive: true }), /feeds no stream sink, so it would add an encoder/);
   const ok = plan(c, { ...wrapper.targets, record: { transport: 'file', name: 'alpha.mkv', ownRung: true } }, { allowLive: true });
   assert.equal(ok.params.sinks.find((s) => s.id === 'record').target.ownRung, undefined, 'plan-only field is not sent to the host');
+});
+
+test('optional recording (LC1): left out, not refused, when its rung feeds no stream; never adds an encoder', () => {
+  // --sinks without the V stream: record-v (on vert) is dropped and the vert rung is not created
+  const r = planFile(ALPHA, { allowLive: true, select: ['youtube-h'] });
+  assert.deepEqual(r.dropped, ['record-v']);
+  assert.deepEqual(r.params.sinks.map((s) => s.id), ['youtube-h', 'record']);
+  assert.deepEqual(r.params.rungs.map((x) => x.id), ['yt-h']);
+  // with the V stream it stays, on vert
+  const v = planFile(ALPHA, { allowLive: true, select: ['youtube-v', 'youtube-h'] });
+  assert.deepEqual(v.dropped, []);
+  assert.equal(v.params.sinks.find((s) => s.id === 'record-v').rung, 'vert');
+  // the same recording without "optional" is refused as before
+  const { config, wrapper } = alpha();
+  const c = structuredClone(config);
+  c.sinks = c.sinks.filter((s) => s.id !== 'youtube-v');
+  const tg = Object.fromEntries(Object.entries(wrapper.targets).filter(([id]) => id !== 'youtube-v'));
+  assert.throws(() => plan(c, { ...tg, 'record-v': { transport: 'file', name: 'alpha-v.mkv' } }, { allowLive: true }), /feeds no stream sink, so it would add an encoder/);
+  assert.throws(() => plan(c, { ...tg, 'record-v': { transport: 'file', name: 'alpha-v.mkv', optional: 'yes' } }, { allowLive: true }), /"optional" must be true/);
+  // a plan with no stream at all keeps an optional recording (a recording-only plan)
+  const recOnly = { ...c, sinks: c.sinks.filter((s) => s.proto === 'file') };
+  const ro = plan(recOnly, { record: tg.record, 'record-v': { transport: 'file', name: 'alpha-v.mkv', optional: true } });
+  assert.deepEqual(ro.params.sinks.map((s) => s.id), ['record', 'record-v']);
 });
 
 test('loopback rtmp may carry a keyRef instead of a stream name (key path test); no allowLive needed', () => {

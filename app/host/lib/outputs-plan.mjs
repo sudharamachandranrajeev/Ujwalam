@@ -9,7 +9,7 @@
 //       loopback (the host builds every URL on 127.0.0.1):
 //         { "transport": "rtmp", "port": 19352, "app": "live", "stream": "twitch" | "keyRef": "Ujwalam/stream/<x>" }
 //       | { "transport": "srt", "port": 19360, "latencyMs": 120 }
-//       | { "transport": "file", "name": "rec-h.mkv" [, "unsafeContainer": true] [, "ownRung": true] }
+//       | { "transport": "file", "name": "rec-h.mkv" [, "unsafeContainer": true] [, "ownRung": true] [, "optional": true] }
 //       real (A0; refused unless opts.allowLive, and by the host unless it runs with --allow-live):
 //       | { "transport": "rtmps"|"rtmp", "server": "<ingest id from data/platforms/<platform>.json>", "keyRef": "..." }
 //       | { "transport": "rtmps"|"rtmp"|"auto", "serverRef": "Ujwalam/stream/<x>-server", "keyRef": "..." } }
@@ -23,7 +23,10 @@
 // scheme again against the transport on its connect thread. Without opts.schemes an "auto" target stays "auto" in the
 // params (validation only; the host refuses it) and is listed in the result's "unresolved".
 // Recording: .mkv (crash-safe) unless the target says unsafeContainer: true; when the plan streams, a recording binds
-// to a rung that already feeds a stream sink (no extra encoder) unless the target says ownRung: true.
+// to a rung that already feeds a stream sink (no extra encoder) unless the target says ownRung: true. An "optional"
+// recording (LC1: the V recording of a live plan, bound to the V stream's rung) is left out, not refused, when its rung
+// feeds no stream sink in this plan (e.g. --sinks without the V stream): it never adds an encoder. Left-out ids are in
+// the result's "dropped". ownRung and optional are plan-only fields; the host never sees them.
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { validate, loadPlatforms, formatReport } from '../../../services/outputs/validate.mjs';
@@ -143,7 +146,8 @@ export function plan(config, targets, { platformsDir = PLATFORMS_DIR, policy, al
       if (ext !== 'mkv' && t.unsafeContainer !== true) {
         throw new Error(`sink "${s.id}": recording container .${ext ?? '?'} is refused because ${CRASH_SAFE_WHY}; use .mkv, or set "unsafeContainer": true on the target to accept that`);
       }
-      const { ownRung, ...rest } = t;
+      if (t.optional !== undefined && t.optional !== true) throw new Error(`sink "${s.id}": "optional" must be true or left out`);
+      const { ownRung, optional, ...rest } = t;
       target = rest;
     } else {
       if (t.keyRef !== undefined && !REF_RE.test(t.keyRef)) throw new Error(`sink "${s.id}": keyRef must match ${REF_RE}`);
@@ -163,14 +167,18 @@ export function plan(config, targets, { platformsDir = PLATFORMS_DIR, policy, al
   }
   // Recording binds to an existing stream rung (no extra encoder) when the plan streams.
   const streamRungs = new Set(sinks.filter((x) => x.target.transport !== 'file').map((x) => x.rung));
+  const dropped = [];
   if (streamRungs.size) {
     for (const x of sinks) {
       if (x.target.transport !== 'file' || streamRungs.has(x.rung) || targets[x.id].ownRung === true) continue;
+      if (targets[x.id].optional === true) { dropped.push(x.id); continue; }
       throw new Error(`sink "${x.id}": the recording's rung "${x.rung}" feeds no stream sink, so it would add an encoder; bind it to a stream rung, or set "ownRung": true on the target`);
     }
   }
+  const keptSinks = sinks.filter((x) => !dropped.includes(x.id));
+  const keptRungs = new Set(keptSinks.map((x) => x.rung));
   const params = {
-    rungs: usedRungs.map((r) => {
+    rungs: usedRungs.filter((r) => keptRungs.has(r.id)).map((r) => {
       const o = {
         id: r.id, canvas: r.canvas, codec: r.codec, encoder: r.encoder ?? 'nvenc', rc: r.rc,
         w: r.w, h: r.h, fps: r.fps, bitrate: r.bitrate, gopSec: r.gop_sec
@@ -179,10 +187,10 @@ export function plan(config, targets, { platformsDir = PLATFORMS_DIR, policy, al
       return o;
     }),
     audio: { bitrate: tracks[0].bitrate, sampleRate: tracks[0].sampleRate },
-    sinks
+    sinks: keptSinks
   };
   if (policy) params.policy = policy;
-  return { params, report: res, live, unresolved };
+  return { params, report: res, live, unresolved, dropped };
 }
 
 // Reads a plan file: { "config": <O0 config> | "<path to O0 config>", "extraSinks": [<O0 sinks>], "targets": {...},

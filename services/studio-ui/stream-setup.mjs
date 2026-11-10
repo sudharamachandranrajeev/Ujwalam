@@ -106,8 +106,8 @@ export function shapeProblems(s, options = readOptions()) {
       const w = `outputs[${i}]`;
       if (!isObj(o)) { out.push({ field: w, message: `${w} must be an object` }); return; }
       keysOnly(o, ['id', 'name', 'platform', 'canvas', 'enabled', 'video'], w, out);
-      // "record" is the plan's local recording sink; ids double as Credential Manager names (Ujwalam/stream/<id>).
-      if (typeof o.id !== 'string' || !OUTPUT_ID.test(o.id) || o.id.length > 25 || o.id === 'record') out.push({ field: `${w}.id`, message: `${w}: id must be lowercase letters, digits and dashes (at most 25), not "record"` });
+      // "record" and "record-v" are the plan's local recording sinks; ids double as Credential Manager names (Ujwalam/stream/<id>).
+      if (typeof o.id !== 'string' || !OUTPUT_ID.test(o.id) || o.id.length > 25 || RECORD_IDS.includes(o.id)) out.push({ field: `${w}.id`, message: `${w}: id must be lowercase letters, digits and dashes (at most 25), not "record" or "record-v"` });
       else if (seen.has(o.id)) out.push({ field: `${w}.id`, message: `${w}: id "${o.id}" is used twice` });
       else seen.add(o.id);
       if (typeof o.name !== 'string' || !o.name.trim() || o.name.length > 60) out.push({ field: `${w}.name`, message: `${w}: name must be 1 to 60 characters` });
@@ -128,6 +128,11 @@ export function shapeProblems(s, options = readOptions()) {
   }
   return out;
 }
+
+/** The plan's local recording sink ids (H on the main rung; V on the portrait rung, LC1). Never an output id. */
+export const RECORD_IDS = Object.freeze(['record', 'record-v']);
+/** The V recording's file name from the H one: alpha.mkv -> alpha-v.mkv. */
+export const vRecordName = (name) => name.replace(/(.[A-Za-z0-9]+)?$/, (ext) => `-v${ext}`);
 
 const keyRefOf = (id) => `Ujwalam/stream/${id}`;
 
@@ -165,6 +170,9 @@ export function connectTargets(setup, { platforms = loadPlatforms(PLATFORMS_DIR)
  * The output-graph config and targets for a setup: { config, targets, included }.
  * canvases: { H: {w,h}, V: {w,h} } the project's canvas sizes (default: the main output size and stream-options portrait).
  * opts.platforms: loaded data/platforms (tests); opts.recordName: the local recording file on the main H rung (null = none).
+ * With a recording and a portrait (V) stream in the plan, the V canvas is recorded too ("record-v", <name>-v.mkv) on the
+ * portrait stream's rung, so the kill montages and match reels can be cut after the stream (LC1, D333 proposed). It is
+ * optional: a start without the V stream (output toggles) leaves it out, so it never adds an encoder.
  */
 export function toPlan(setup, { options = readOptions(), canvases, platforms = loadPlatforms(PLATFORMS_DIR), recordName = 'stream.mkv' } = {}) {
   const v = setup.video;
@@ -194,6 +202,10 @@ export function toPlan(setup, { options = readOptions(), canvases, platforms = l
   if (recordName) {
     sinks.push({ id: 'record', platform: 'local', encoder: 'h-main', proto: 'file', priority: included.length + 1 });
     targets.record = { transport: 'file', name: recordName };
+    if (encoders.some((e) => e.id === 'v-main')) {
+      sinks.push({ id: 'record-v', platform: 'local', encoder: 'v-main', proto: 'file', priority: included.length + 2 });
+      targets['record-v'] = { transport: 'file', name: vRecordName(recordName), optional: true };
+    }
   }
   const config = {
     name: 'Stream setup (Settings > Stream)',
