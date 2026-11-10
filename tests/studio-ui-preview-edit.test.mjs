@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Preview mouse editing, UI server side (P5, D230): the host's editing switch follows flag preview-edit (off by
-// default, switchable live, a restarted host is switched on again), and edits the host committed on mouse release
+// Preview mouse editing, UI server side (P5, D230): the host's editing switch follows flag preview-edit (on by
+// default since D330, switchable live, a restarted host is switched on again), and edits the host committed on mouse release
 // (preview.edits, announced by host.status previewEditSeq) are saved into the project file by project-sync exactly
 // like inspector layers.setPlacement calls. Stub host (kind 'host'); real flags and project-sync on temp files.
 import assert from 'node:assert/strict';
@@ -74,12 +74,16 @@ async function setup() {
 
 const placementOf = (file, layer, canvas = 'h') => JSON.parse(readFileSync(file, 'utf8')).scenes.find((s) => s.id === 'scene-main').layers.find((l) => l.id === layer).placements[canvas];
 
-test('flag off by default: the host stays off; on: switched on; a restarted host is switched on again; off again', async () => {
+test('flag on by default (D330): the host is switched on; off: switched off; on again; a restarted host is switched on again; off again', async () => {
   const c = await setup();
   try {
+    assert.equal(c.flags.isOn(PREVIEW_EDIT_FLAG), true, 'on by default since D330');
+    await until(() => c.host.st.editing === true, 'host switched on at start (the host itself starts off)');
+    c.flags.set(PREVIEW_EDIT_FLAG, false);
+    await until(() => c.host.st.editing === false, 'host switched off');
+    const n = c.host.st.calls.filter(([m]) => m === 'preview.setEditing').length;
     await sleep(100);
-    assert.equal(c.host.st.editing, false);
-    assert.ok(!c.host.st.calls.some(([m]) => m === 'preview.setEditing'), 'no call while the flag and the host agree (both off)');
+    assert.equal(c.host.st.calls.filter(([m]) => m === 'preview.setEditing').length, n, 'no call while the flag and the host agree (both off)');
     c.flags.set(PREVIEW_EDIT_FLAG, true); // the control page path is applyFlag after the typed "yes"; the poll catches a file change too
     await until(() => c.host.st.editing === true, 'host switched on');
     c.host.st.editing = false; // host restarted: starts off

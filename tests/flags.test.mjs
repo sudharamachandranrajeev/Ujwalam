@@ -12,10 +12,19 @@ const tmp = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-flags-'));
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 
 describe('committed definitions', () => {
-  test('data/flags.json is valid and every default is off', () => {
+  // New features ship off (AGENTS.md). The only exceptions are flags the user asked to have on, each with its decision.
+  const ON_BY_DECISION = { 'preview-edit': 'D330' };
+  test('data/flags.json is valid and every default is off, except the ones a decision turned on', () => {
     const defs = loadDefinitions(DEFAULT_FLAGS_FILE);
     assert.ok(defs.length >= 1);
-    for (const d of defs) assert.equal(d.default, false, d.id);
+    for (const d of defs) assert.equal(d.default, Object.hasOwn(ON_BY_DECISION, d.id), d.id);
+    const log = readFileSync(path.join(path.dirname(DEFAULT_FLAGS_FILE), '..', 'docs', 'plan', '2026-10-29-v1-decisions.md'), 'utf8');
+    for (const [id, dn] of Object.entries(ON_BY_DECISION)) {
+      const at = log.indexOf(`## ${dn} `);
+      assert.ok(at >= 0, `decision ${dn} is in the log`);
+      const section = log.slice(at, log.indexOf('\n## ', at + 1) >>> 0);
+      assert.ok(section.includes(`\`${id}\``) && /ON by default/.test(section), `${dn} turns ${id} on`);
+    }
   });
   test('rejects duplicate ids and bad shapes', () => {
     const d = tmp(); const f = path.join(d, 'defs.json');

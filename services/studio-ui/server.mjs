@@ -153,12 +153,13 @@ export const TRANSITIONS_FLAG = 'transitions';
 // Scene and layer structure edits (D240): add/remove scenes and layers from the control page, saved into the project.
 export const SCENE_EDIT_FLAG = 'scene-edit';
 // D292 (proposed): adding, duplicating and renaming lose nothing, so they work without the scene-edit flag (still
-// refused while live). Removing a scene or layer and the project-file move stay behind the flag.
-const FREE_STRUCTURE_OPS = ['scene.add', 'layer.add', 'layer.duplicate', 'layer.rename', 'scene.duplicate', 'scene.rename'];
+// refused while live). D330 (user request 2026-11-10): deleting a layer (the studio asks first) and the saved layer
+// order (Move up/down, drag in the layer list) need no flag either. Removing a scene stays behind the flag.
+const FREE_STRUCTURE_OPS = ['scene.add', 'layer.add', 'layer.duplicate', 'layer.rename', 'scene.duplicate', 'scene.rename', 'layer.remove', 'layer.move'];
 const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove', 'layer.move', ...FREE_STRUCTURE_OPS];
 /** Host calls that start a stream or a recording: refused while Ujwalam is closing (closing lock, D311 proposed). */
 const START_METHODS = new Set(['stream.start', 'record.start']);
-const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'], 'layer.move': ['scene', 'layer', 'canvas', 'direction'],
+const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'], 'layer.move': ['scene', 'layer', 'canvas', 'direction', 'target', 'place'],
   'layer.duplicate': ['scene', 'layer'], 'layer.rename': ['scene', 'layer', 'name'], 'scene.duplicate': ['scene'], 'scene.rename': ['scene', 'name'] };
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
@@ -727,7 +728,7 @@ export function createStudioServer(opts) {
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
     if (!isPlain(body) || !STRUCTURE_OPS.includes(body.op) || Object.keys(body).some((k) => k !== 'op' && !STRUCTURE_KEYS[body.op].includes(k))) return json(res, 400, { error: 'bad-params' });
-    for (const k of ['name', 'scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'layer', 'file', 'canvas', 'direction']) {
+    for (const k of ['name', 'scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'layer', 'file', 'canvas', 'direction', 'target', 'place']) {
       if (body[k] !== undefined && (typeof body[k] !== 'string' || body[k].length > (k === 'text' ? 2000 : k === 'file' ? 260 : 120))) return json(res, 400, { error: 'bad-params' });
     }
     // An asset layer may only name a file the assets listing offers right now (never a path the page made up).

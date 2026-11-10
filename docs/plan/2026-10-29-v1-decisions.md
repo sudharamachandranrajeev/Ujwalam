@@ -610,3 +610,28 @@ transition settings per canvas, remote connections for the bots). Plan:
 (D-existing rule kept); the app now writes, reads, masks and removes them itself after a sign-in or a pasted key. The
 remote-connections switch is off by default and LAN only. Platform sign-in gets a security review on the strongest model
 plus a Codex second review before it is marked done.
+
+## D330 — Layer editing the way Meld and OBS users expect (2026-11-10, user request)
+
+User (2026-11-10): deleting a layer, resizing and cropping it, and press-and-drag reordering in a scene were missing,
+and the sliders only dragged (no click to a value, no typed value). Audit: delete existed but sat behind the scene-edit
+flag (off), preview move/resize/crop existed behind the preview-edit flag (off), crop boxes were folded away, the
+order buttons did not save, and the mixer volume was only sent on a slider release. Decided:
+- Flag `preview-edit` is ON by default from now (the flag stays and can be switched off in Settings > Advanced). This
+  is a recorded exception to "new features ship off" because the user asked for the feature; tests/flags.test.mjs
+  lists it (ON_BY_DECISION). The live-lock is unchanged: while any output is live a press on the preview selects
+  nothing (D233); on air, placement changes go through the inspector and "yes, on air".
+- On the preview an edge handle stretches that side alone (aspect free, the moving edge snaps); Alt + edge still
+  crops (D256); corners keep the aspect (Shift: free). The window shows move, size and rotate cursors over the
+  selected layer.
+- Deleting a layer and the saved layer order (Move up/down, menu, drag in the layer list; structure op `layer.move`,
+  now also with `target` + `place` above|below) no longer need the scene-edit flag. Both stay refused while live
+  (structure route); the studio asks before deleting; while live the list order falls back to the host's live-only
+  `layers.move` with "yes, on air" as before. Removing a scene stays behind scene-edit. A delete cannot be undone (a
+  structure edit clears the history, D240): the confirm is the guard.
+- Crop: the project already stores `placements.<canvas>.crop` (D256), so no schema change or migration. The inspector
+  shows the four crop boxes without a toggle.
+- Sliders: one shared widget (app/studio/src/value_slider.*): a click jumps to that value, an editable number box
+  (type + Enter), arrow keys and PageUp/PageDown step, the mouse wheel only acts while the slider has focus. The
+  Look panel and mixer sliders use it; the mixer sends the volume on every committed change, not only on a drag release.
+Evidence: `docs/evidence/2026-11-10-layer-editing.md`.

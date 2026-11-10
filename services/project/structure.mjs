@@ -19,6 +19,9 @@
 //   moveLayer(doc, { scene, layer, canvas, direction }) -> { project } (D243) direction up|down, as seen on canvas h|v:
 //     the layer passes the next layer above (up) or below (down) that is on that canvas. scene.layers is bottom first
 //     and shared by H and V; refused at the top/bottom (`at-edge`) or when the layer is not on that canvas.
+//   moveLayer(doc, { scene, layer, canvas, target, place }) -> { project } (D330, drag in the layer list) place
+//     above|below: the layer goes directly above or below the target layer (both on that canvas, not the same layer).
+//     Layers that are not on the canvas keep their place relative to the others.
 // Layer ids are unique across the project (validateProject), new ids come from newId.
 
 import { newId, relPathProblem, validateProject } from './index.mjs';
@@ -130,14 +133,28 @@ export function removeLayer(doc, { scene, layer } = {}) {
   return checked(project, {});
 }
 
-export function moveLayer(doc, { scene, layer, canvas, direction } = {}) {
+export function moveLayer(doc, { scene, layer, canvas, direction, target, place } = {}) {
   const s = doc.scenes.find((x) => x.id === scene);
   if (!s) return { error: 'unknown-scene' };
-  if (!['h', 'v'].includes(canvas) || !['up', 'down'].includes(direction)) return { error: 'bad-move' };
+  const toTarget = target !== undefined || place !== undefined;
+  if (!['h', 'v'].includes(canvas)) return { error: 'bad-move' };
+  if (toTarget ? direction !== undefined || typeof target !== 'string' || !['above', 'below'].includes(place) : !['up', 'down'].includes(direction)) return { error: 'bad-move' };
   const at = s.layers.findIndex((l) => l.id === layer);
   if (at < 0) return { error: 'unknown-layer' };
   const on = (l) => !!l.placements?.[canvas];
   if (!on(s.layers[at])) return { error: 'not-on-canvas' };
+  if (toTarget) {
+    if (target === layer) return { error: 'bad-move' };
+    const t = s.layers.find((l) => l.id === target);
+    if (!t) return { error: 'unknown-layer' };
+    if (!on(t)) return { error: 'not-on-canvas' };
+    const project = structuredClone(doc);
+    const ls = project.scenes.find((x) => x.id === scene).layers;
+    const [moved] = ls.splice(at, 1);
+    const ti = ls.findIndex((l) => l.id === target);
+    ls.splice(place === 'above' ? ti + 1 : ti, 0, moved); // bottom first: above = right after the target
+    return checked(project, {});
+  }
   const step = direction === 'up' ? 1 : -1;
   let to = at + step;
   while (to >= 0 && to < s.layers.length && !on(s.layers[to])) to += step;
