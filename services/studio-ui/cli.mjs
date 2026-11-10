@@ -48,7 +48,14 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   const projectSync = typeof args.project === 'string' ? createProjectSync({ file: path.resolve(args.project), log: (m) => out(`[studio-ui] ${m}`) }) : null;
   // D241: the stream assets folder for image/video layers (the same one launch.mjs gives the host as base "media").
   const assetsDir = projectSync ? streamAssetsDir(profileFile ? readProfile(profileFile) : {}) : null;
-  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, projectSync, assetsDir, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
+  // D327 IN1: the LAN pairing token (only when the launcher started the event core with --lan); for the Integrations
+  // page's copy button. Taken out of the environment at once; never printed.
+  const remoteToken = /^[0-9a-f]{64}$/.test(env.UJWALAM_REMOTE_TOKEN ?? '') ? env.UJWALAM_REMOTE_TOKEN : undefined;
+  delete env.UJWALAM_REMOTE_TOKEN;
+  // --live-plan: the plan file the launcher configured for --live (alpha-live.json, or the Settings > Stream plan, D327);
+  // readiness checks its targets' keys.
+  const livePlanFile = typeof args['live-plan'] === 'string' ? path.resolve(args['live-plan']) : undefined;
+  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, projectSync, assetsDir, remoteToken, livePlanFile, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
   const { port } = await srv.listen();
   out(`[studio-ui] listening on http://127.0.0.1:${port}/ (no token printed)`);
   if (host.describe().kind === 'fake') out('[studio-ui] BLOCKED-ON-HOST: no libobs host found, using the in-memory fake backend');

@@ -601,6 +601,24 @@ tail of a merged box; the BR feed read on MP frames after one stray BR cue. Fixe
 each kill now records its feed and a match counts only the feed of its HUD family. Evidence:
 `docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md`.
 
+## D326 — Match reels cut only the streamer's own kills; spectate detector N3; impact-play reels (2026-11-10, user feedback F1/F4)
+
+User feedback on a published reel: it showed the loadout swap, the round intro and another player's gameplay after the
+streamer's death. Root cause (from frames): `match_reels` built its pieces from every signalled kill-feed hit, while
+the match counts already used only the counted own kills. The BR-feed ROI reads the own name inside the custom weapon
+name on the MP "select loadout" panel, which shows before each round and while dead and spectating; those hits made
+pieces. Fix: `segment()` now records the counted kill times per match (`ownKillTimes`) and per round
+(`roundKillTimes`), and reels cut only those. New detector N3 (pack 0.8.0, status unverified) reads the MP "you will
+respawn next round" banner shown while spectating; kills inside an N3 span are not own kills (`spectateDetectors`) and
+N3 is a death detector, so pieces are cut there. A Search and Destroy reel that qualifies only by a round multi-kill
+(`pieces: qualifying-rounds`) shows only those rounds' own kills.
+
+New reel kind `impact-play` (user wish F4): when the streamer's own IMPACT PLAY (M2) shows after the end screen, a
+separate reel runs from the MVP animation through the impact-play camera to the results page (C2). Rule data is
+`impactPlay` in `match-reels.json`; its timing values are agent values, proposed and unverified. It ships behind the
+flag `impact-play-reels`, off by default, and posting does not upload this kind yet. Evidence:
+`docs/evidence/2026-11-10-reel-own-kills-impact-play.md`.
+
 ## D327 — Stream settings, outputs panel, transitions, integrations and platform sign-in in the studio (2026-11-10, user)
 
 User: the app connects to streaming platforms directly, not only through keys the user puts into Windows Credential
@@ -610,6 +628,69 @@ transition settings per canvas, remote connections for the bots). Plan:
 (D-existing rule kept); the app now writes, reads, masks and removes them itself after a sign-in or a pasted key. The
 remote-connections switch is off by default and LAN only. Platform sign-in gets a security review on the strongest model
 plus a Codex second review before it is marked done.
+
+Built (2026-11-10, branch `ui/outputs-transitions-integrations`, sections A–C; sign-in is on its own branch):
+- The live plan comes from Settings > Stream when its flag is on; a value over a platform limit stops the start
+  with the problem. Otherwise `alpha-live.json` is used as before. Changes apply at the next start.
+- Each output keeps a Credential Manager key name `Ujwalam/stream/<id>`; the Edit window has a disabled "Connect"
+  hook for the sign-in branch. No key is stored or shown by these pages.
+- A live switch of one output needs "yes, on air" and stops or starts only that sink; the go-live authority and the
+  other sinks are untouched (loopback test).
+- Easing is a host formula per curve (`app/host/src/transition_ease.cpp`); the list is data
+  (`data/transitions/easing.json`). Easing applies only to a fade; a cut or stinger refuses it.
+- Virtual Camera is shown as "Not available in this build" (the host has no virtual camera method yet).
+- The remote pairing token is new on every start, passed by environment only, never written to `integrations.json`.
+Evidence: `docs/evidence/2026-11-10-outputs-transitions-integrations.md`.
+
+## D328 — Data hot-reload and the live-soak gate (LU2, LU8; 2026-11-10, agent decision under D324)
+
+Data files reload at their owning process through one data source (`services/common/data-reload.mjs`): a directory
+watch with debounce plus a poll, schema check first; an invalid version keeps the last good one and is shown in the
+task area (`data-<kind>` task) and the log at warn level, never error. Posting rules keep the last good version in a
+running process; with no good version at all they still fail closed. A broken `flags.local.json` keeps the last flag
+values instead of resetting them to the defaults, and so does one that gives a known flag a value other than true or
+false (dropping only that value would turn a default-on feature on). Registry scene presets are not reloaded live: nothing running reads
+them after launch (LU3 decides how a project picks up a changed preset). Game packs and the clip worker are out of
+scope. The live-soak gate (`npm run soak`) runs from a staged copy of the runtime (`tools/soak/stage.mjs`) so it can
+change data files without touching the repo; the host's overlay child gets only whitelisted environment variables, so
+the stage's own profile points its data dir at the run. The gate needs a quiet machine: it refuses to start while Meld
+Studio, an installed Ujwalam or a detector job runs, checks again every minute, and reports CPU per process next to
+every lost frame, because the stack runs at BelowNormal and outside load shows up as render lag. The last segment of
+each loopback stream may end one frame short at stream stop (encoder flush); that one step is reported apart and not
+counted as a gap. Timestamp gaps are measured against the planned fps of the sink's rung, never the observed median.
+The four streams youtube-h, youtube-v, twitch and kick are required by id (a plan without one fails), each live in
+every sample and received in full; the recording must start, stay live and be probed like a stream.
+
+## D329 — Device hot-plug: capture layers wait for a missing device; no feature flag (2026-11-10)
+
+User bug: adding a capture-card layer after Ujwalam started failed with `HTTP 502: host-error (... no connected device
+matches)` because Windows did not list the card at that moment. Now:
+
+- The host watches device arrival and removal with `CM_Register_Notification` (cfgmgr32; capture, video, camera and
+  audio interface classes). No window of any kind. Events are debounced (700 ms quiet, at most 3 s), then devices are
+  listed again (list only, nothing opened). The watcher runs only with `--allow-devices` (D38) or `--test-hooks`.
+- A capture layer whose device is not connected (no match, or two connected devices with the same name) is added and
+  loaded as **waiting**: the `dshow_input` source exists with an empty device id and opens nothing. Adding no longer
+  fails. A plain-English sentence says what is missing and what to do.
+- Arrival: the waiting source gets the matched device id through `obs_source_update` (only that source). Removal: the
+  source goes back to waiting and its last frame is cleared; the DirectShow graph is left to win-dshow. A loss is
+  confirmed by a second listing 1 s later, so a USB re-enumeration blip does not drop the layer. A bound source stays
+  bound while its device is still listed (a second card with the same name never steals it).
+- Encoders, outputs, recording and the stream are never touched by a device event.
+- The host publishes `host.status.devices` {seq, waiting, connected}; the UI server turns a moved seq into SSE
+  `devices` + `layers`; the web page and the Qt studio reload the layer list ("waiting for device") and the add-layer
+  device picker ("not connected"), also inside an open Add layer window.
+
+**No feature flag.** Reasons: (1) the change replaces an error with a working add: there is no old behaviour worth
+keeping behind a switch; (2) a device event only ever acts on a capture source whose own device came or went, and never
+on encoders or outputs (the host test records over NVENC through plug, unplug, re-plug and a same-name second card,
+with one file, full span and 30 fps); (3) without `--allow-devices` nothing changes at all (no watcher, capture layers
+stay "forbidden"). Codex second review (2 x P2, fixed): removals are kept through the debounce, so a device that
+leaves and returns with the same id is reactivated (that source only); a bind is "connecting" until the source
+delivers a frame and is re-activated after 3, 6, 12 and 24 s without one (5 attempts), with a plain message. Not
+done: a waiting state for WASAPI microphone and audio-output globals (they keep the current
+behaviour). Real hot-plug with the user's card is UNVERIFIED until the user tests it. Evidence:
+`docs/evidence/2026-11-10-device-hotplug.md`.
 
 ## D330 — Layer editing the way Meld and OBS users expect (2026-11-10, user request)
 

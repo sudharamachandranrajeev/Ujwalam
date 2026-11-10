@@ -42,6 +42,32 @@ test('transitions: cut by default; set fade per canvas; bad values refused; host
   await c.call('transitions.set', { canvas: 'V', type: 'cut', durationMs: 0 });
 });
 
+test('D327 TR1: easing per canvas; unknown or non-fade easing refused; force complete ends a running fade', async () => {
+  const r = await c.call('transitions.set', { canvas: 'H', type: 'fade', durationMs: 5000, easing: 'in-out-cubic' });
+  assert.deepEqual(r.H, { type: 'fade', durationMs: 5000, easing: 'in-out-cubic', available: r.H.available });
+  assert.equal(r.V.easing, undefined, 'per canvas');
+  assert.equal(await code('transitions.set', { canvas: 'H', type: 'fade', durationMs: 500, easing: 'bounce' }), -32602);
+  assert.equal(await code('transitions.set', { canvas: 'H', type: 'cut', durationMs: 0, easing: 'in-quad' }), -32602);
+  assert.equal(await code('transitions.forceComplete', { canvas: 'X' }), -32602);
+  assert.deepEqual(await c.call('transitions.forceComplete', { canvas: 'H' }), { canvas: 'H', completed: false }, 'nothing running');
+
+  for (const [id, color] of [['fc-a', '#FFFF0000'], ['fc-b', '#FF0000FF']])
+    await c.call('scenes.create', { scene: { id, canvas: 'H', name: id, layers: [{ id: 'bg', type: 'color', settings: { color } }] } });
+  await c.call('scenes.activate', { scene: 'fc-a' });
+  await sleep(300);
+  await c.call('scenes.activate', { scene: 'fc-b' }); // a 5 s eased fade starts
+  await sleep(500);
+  assert.deepEqual(await c.call('transitions.forceComplete', { canvas: 'H' }), { canvas: 'H', completed: true }, 'mid-fade');
+  assert.deepEqual(await c.call('transitions.forceComplete', { canvas: 'H' }), { canvas: 'H', completed: false }, 'ended at once');
+  // a linear fade can be forced as well
+  await c.call('transitions.set', { canvas: 'H', type: 'fade', durationMs: 5000 });
+  assert.equal((await c.call('transitions.get')).H.easing, undefined, 'linear is not reported');
+  await c.call('scenes.activate', { scene: 'fc-a' });
+  await sleep(300);
+  assert.equal((await c.call('transitions.forceComplete', { canvas: 'H' })).completed, true);
+  await c.call('transitions.set', { canvas: 'H', type: 'cut', durationMs: 0 });
+});
+
 function yavg(file) {
   const r = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-nostdin', '-i', file, '-vf', 'signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG:file=-',
     '-f', 'null', '-'], { encoding: 'utf8', windowsHide: true, maxBuffer: 16 << 20 });

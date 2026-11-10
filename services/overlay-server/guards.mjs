@@ -211,14 +211,15 @@ export function maxInWindow(times, windowMs) {
 /** opts: { config, now?, audit?, deliver?, onPreempt?, onDecision?, setTimer?, clearTimer?, seed?, ringSize? }
  *  audit: anything with recordSystem({subtype, source, verdict, reason, detail}) (the event-core audit). */
 export function createEffectGuards(opts) {
-  const cfg = validateGuardConfig(opts.config);
+  let cfg = validateGuardConfig(opts.config);
   const now = opts.now ?? Date.now;
   const setTimer = opts.setTimer ?? ((fn, ms) => { const t = setTimeout(fn, ms); t.unref?.(); return t; });
   const clearTimer = opts.clearTimer ?? clearTimeout;
   const ringSize = opts.ringSize ?? 200;
   let deliver = opts.deliver ?? null;
   const rng = mulberry32(opts.seed ?? cfg.seed ?? 1);
-  const pools = new Map(Object.entries(cfg.pools ?? {}).map(([id, p]) => [id, createPool({ items: p.items, noRepeatLast: p.noRepeatLast, rng })]));
+  const makePools = (c) => new Map(Object.entries(c.pools ?? {}).map(([id, p]) => [id, createPool({ items: p.items, noRepeatLast: p.noRepeatLast, rng })]));
+  let pools = makePools(cfg);
 
   const active = [];                    // admitted plays: { id, name, start, end, priority, interruptible, rects }
   const lastEnd = new Map();            // effect -> end of its last admitted play
@@ -395,7 +396,30 @@ export function createEffectGuards(opts) {
     measuredFlashes: () => Object.fromEntries(measured),
     stats: () => JSON.parse(JSON.stringify({ ...stats, active: active.length, queued_now: queue.length, budgetUsed: budgetStamps.length })),
     recent: () => ring.map((r) => ({ ...r })),
-    config: cfg,
+    get config() { return cfg; },
+    /**
+     * LU2 (D324): apply a new config while running (also while live). Validated first: an invalid config throws and
+     * the old one stays. What is running keeps its state: plays already admitted end as they were scheduled (their
+     * regions and flash instants stay counted), the budget window and the flash windows carry over, so a reload can
+     * never open a gap in the flash limit or the budget. Queued effects that the new config no longer knows are
+     * dropped on the next tick ('unknown-effect'). Pools restart from the new items (same seeded RNG).
+     * measurements: optional new flash measurements (validated; replace the old ones).
+     */
+    setConfig(next, measurements) {
+      const c = validateGuardConfig(next);
+      if (measurements !== undefined && measurements !== null) validateFlashMeasurements(measurements);
+      cfg = c;
+      pools = makePools(c);
+      if (measurements !== undefined && measurements !== null) {
+        measured.clear();
+        for (const [effect, per] of Object.entries(measurements.measurements)) {
+          if (!cfg.effects[effect]) continue;
+          for (const [canvas, rec] of Object.entries(per)) reportMeasuredFlashes({ effect, canvas, flashesPerSecond: rec.flashesPerSecond });
+        }
+      }
+      if (queue.length) schedule(now());
+      return cfg;
+    },
     stop() { if (timer) clearTimer(timer); timer = null; },
   };
 }

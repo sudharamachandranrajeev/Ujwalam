@@ -22,7 +22,9 @@ import path from 'node:path';
 import { createInterface } from 'node:readline';
 import { resolveDataDir } from '../../../services/event-core/config.mjs';
 import { createFlags } from '../../../services/flags/index.mjs';
-import { createOverlayServer, createRemoteBus } from '../../../services/overlay-server/index.mjs';
+import { DEFAULT_FLASH_MEASUREMENTS_FILE, DEFAULT_GUARDS_FILE, createOverlayServer, createRemoteBus, validateFlashMeasurements, validateGuardConfig } from '../../../services/overlay-server/index.mjs';
+import { createDataNotifier, createDataSource, parseJsonText } from '../../../services/common/data-reload.mjs';
+import { writeTaskFile } from '../../../services/studio-ui/tasks.mjs';
 
 const STREAMERBOT_PORT = 8093; // the real Streamer.bot keeps this port; the feed must never take it
 const argv = process.argv.slice(2);
@@ -47,8 +49,13 @@ const bus = eventsUrl ? createRemoteBus({ url: eventsUrl, token, kinds: ['chat.'
 // Effects pass Agent A's guards (data/effects/guards.json: budget, cooldowns, regions, flash limit; D76-D83).
 // Overlay feature flags (D196): read from the data dir the profile names, the same one the studio writes. No data dir
 // (no profile, or a studio run with an explicit --data-dir): every overlay flag reads as off.
+let dataDir = null;
+try { dataDir = resolveDataDir(); } catch { dataDir = null; }
+// LU2 (D324): a changed data file applies here without a restart; a broken one keeps the last good version, with a
+// warning line and a notice in the studio's task area (task file in the data dir, when there is one).
+const report = createDataNotifier({ dataDir, writeTask: writeTaskFile, log: warn });
 let flags;
-try { flags = createFlags({ dataDir: resolveDataDir() }); } catch (e) { warn(`overlay flags off (${e.message})`); }
+try { flags = createFlags({ dataDir, report }); } catch (e) { warn(`overlay flags off (${e.message})`); }
 const server = createOverlayServer({ root: path.resolve(root), bus, staticPort: port, feedPort, guards: true, log: warn, flags });
 const ports = await server.start();
 if (ports.feedPort === STREAMERBOT_PORT || ports.staticPort === STREAMERBOT_PORT) { warn('bound to 8093; stopping'); await server.stop(); process.exit(70); }
@@ -56,6 +63,27 @@ if (ports.feedPort === STREAMERBOT_PORT || ports.staticPort === STREAMERBOT_PORT
 const voice = server.guards?.config?.rules?.campop?.voice;
 const micSource = server.rule && voice?.enabled === true && typeof voice.audioSource?.id === 'string' ? voice.audioSource.id : null;
 out({ type: 'ready', staticPort: ports.staticPort, feedPort: ports.feedPort, envKeys: Object.keys(process.env).sort().slice(0, 64), eventToken: Boolean(token), micSource });
+
+// Effect presets: data/effects/guards.json (budget, cooldowns, regions, pools, cam-pop) and the measured flash rates.
+const guardsSrc = createDataSource({ kind: 'effect-guards', file: DEFAULT_GUARDS_FILE, parse: (t) => validateGuardConfig(parseJsonText(t)), report });
+const flashSrc = createDataSource({ kind: 'flash-measurements', file: DEFAULT_FLASH_MEASUREMENTS_FILE, parse: (t) => validateFlashMeasurements(parseJsonText(t)), report });
+const reloadGuards = () => {
+  let cfg; let fm;
+  try { cfg = guardsSrc.get(); fm = flashSrc.get(); } catch { return; } // no good version at all: keep what runs
+  const r = server.reloadGuards(cfg, fm);
+  if (!r.ok) warn(`effect presets not applied: ${r.why}`);
+};
+guardsSrc.onApply(reloadGuards);
+flashSrc.onApply(reloadGuards);
+const stopWatch = [guardsSrc.watch(), flashSrc.watch(), ...(flags?.watch ? [flags.watch()] : [])];
+const dataStatus = () => [guardsSrc.status(), flashSrc.status(), ...(flags?.dataStatus?.() ?? [])];
+
+// Numbers only (no names beyond effect ids): what the running guard config is, so a reload can be checked from outside.
+function guardsSummary() {
+  const c = server.guards?.config;
+  if (!c) return null;
+  return { budgetPerMinute: c.budget.maxPerMinute, queueMax: c.queue.max, effects: Object.keys(c.effects).length, cooldownMs: Object.fromEntries(Object.entries(c.effects).map(([k, v]) => [k, v.cooldownMs])) };
+}
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const MIC_WARN_MS = 10_000;
@@ -81,7 +109,7 @@ rl.on('line', (line) => {
       const meta = isPlain(m.meta) ? m.meta : {};
       out({ type: 'reply', id: m.id, ok: true, result: server.bridge.publishEffect(m.name, meta) });
     } else if (m.op === 'stats') {
-      out({ type: 'reply', id: m.id, ok: true, result: { ...server.bridge.stats(), campop: server.rule ? server.rule.stats() : null } });
+      out({ type: 'reply', id: m.id, ok: true, result: { ...server.bridge.stats(), campop: server.rule ? server.rule.stats() : null, data: dataStatus(), guards: guardsSummary() } });
     } else {
       out({ type: 'reply', id: m.id, ok: false, error: 'unknown op' });
     }
@@ -89,4 +117,4 @@ rl.on('line', (line) => {
     out({ type: 'reply', id: m.id, ok: false, error: String(e?.message ?? e).slice(0, 200) });
   }
 });
-rl.on('close', () => { server.stop().finally(() => process.exit(0)); });
+rl.on('close', () => { for (const f of stopWatch) { try { f(); } catch { /* gone */ } } server.stop().finally(() => process.exit(0)); });

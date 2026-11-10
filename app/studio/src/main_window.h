@@ -37,6 +37,9 @@ class TrayKeeper;
 class LookPanel;
 class StatsCards;
 class Guide;
+namespace streampages {
+class OutputsPanel;
+}
 
 // A native child widget the host draws a canvas preview into (P5a step 4): the host makes its preview a child
 // window of this widget's handle and resizes it when the slot changes size. If the host refuses (no canvas yet, host
@@ -109,7 +112,7 @@ private:
 	void sendNudge();
 	void hostAction(const QString &method);
 	// Settings (D284): clips (ask / after / while / off, for recordings and for streams) and the save folders.
-	void openSettings(bool firstRun);
+	void openSettings(bool firstRun, const QString &page = QString()); // page: a section title to show first (D327)
 	void saveSettings(const QJsonObject &body, bool retried = false);
 	void askClips(const QJsonObject &ask);
 	void answerClips(const QString &id, bool make, bool remember);
@@ -187,6 +190,7 @@ private:
 	bool lookSending_ = false, lookAgain_ = false;
 	int effRev_ = 0;       // bumped on every change of effEdit_; an Apply answer for an older draft keeps it dirty
 	bool effDirty_ = false; // changed since it was read from the host
+	int devicesSeq_ = -1; // host device watcher pass seen (status host.devices.seq, D329); -1 = none yet
 	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
 
 	QListWidget *sceneList_ = nullptr;
@@ -196,6 +200,7 @@ private:
 	bool sceneEditOn_ = false, transitionsOn_ = false, botsOn_ = false;
 	int botPoll_ = 0; // bot status reads the process list: every 5th status poll (10 s), and after each action
 	QGroupBox *botBox_ = nullptr;
+	streampages::OutputsPanel *outputsPanel_ = nullptr; // D327 OS3
 	QAction *reportAct_ = nullptr, *postsAct_ = nullptr; // in the More menu (D285)
 	QVBoxLayout *botRows_ = nullptr;
 	QJsonObject structure_;   // GET /ui/api/project/structure

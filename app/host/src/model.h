@@ -42,8 +42,14 @@ struct Options {
 	// server is not running). A URL is used only if it is http://127.0.0.1:<port>/overlays/<that overlay's rel>[?...].
 	std::map<std::string, std::string> browser_urls;
 	uint16_t overlay_port = 0;
+	// --test-hooks fake devices (devices.testSet, D329): capture layers are built on the host's test source type
+	// ujw_test_capture (opens nothing) instead of dshow_input, and are allowed without --allow-devices.
+	bool test_capture = false;
 };
 
+// A capture layer whose device is not connected (no match, or more than one by name) is not "unavailable": it is
+// built "waiting" (D329), a dshow_input with an empty video_device_id that opens nothing, and the host's device
+// watcher binds it when a matching device arrives. Disabled devices (no --allow-devices) stay "forbidden".
 struct Source {
 	std::string layer;    // owning layer id (project-wide unique)
 	std::string type;     // project layer type
@@ -51,6 +57,8 @@ struct Source {
 	json::Value settings; // libobs settings (obs_data_create_from_json)
 	std::string device, matched_by;
 	bool overlay = false; // browser layer showing a project overlay from the host's overlay server
+	bool waiting = false; // capture layer built without a device (D329)
+	std::string wait_problem; // devices::resolve problem while waiting
 };
 
 // Per-layer visual effect (project.schema.json $defs/effect), applied in list order.
@@ -161,6 +169,7 @@ struct Plan {
 	std::vector<Audio> audio;
 	std::string active;
 	json::Value unavailable = json::Value::array(); // [{layer|audio, reason, code}] not built
+	json::Value waiting = json::Value::array();     // [{layer, device, reason, message}] built, waiting for a device (D329)
 	json::Value warnings = json::Value::array();
 };
 

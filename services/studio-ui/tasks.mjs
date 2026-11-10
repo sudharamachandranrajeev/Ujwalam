@@ -138,6 +138,16 @@ export function loadTaskConfig(file = TASKS_CONFIG) {
   } catch { return { stallAfterMs: null }; }
 }
 
+/** LU2: data/studio/tasks.json as data. Strict (a reload keeps the last good version on any problem): an object whose
+ *  stallAfterMs is null (no warning) or an integer of at least 10000 ms. */
+export function parseTaskConfig(j) {
+  if (!j || typeof j !== 'object' || Array.isArray(j)) throw new Error('needs a JSON object');
+  const v = j.stallAfterMs;
+  if (v === null || v === undefined) return { stallAfterMs: null };
+  if (!Number.isInteger(v) || v < 10_000 || v > 24 * 3_600_000) throw new Error('stallAfterMs must be a whole number of ms from 10000 (or null)');
+  return { stallAfterMs: v };
+}
+
 /** For a running task: { silentMs, stalled } (silence since the last progress line, else since it began); else nulls. */
 export function stallOf(t, now, stallAfterMs) {
   if (t?.state !== 'running') return { silentMs: null, stalled: false };
@@ -158,9 +168,11 @@ export function stepOf(t) {
 const RANK = { running: 0, waiting: 1, failed: 2, done: 3 };
 const order = (a, b) => RANK[a.state] - RANK[b.state] || (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
 
-/** opts: { dataDir?, now?, stallAfterMs? (default: data/studio/tasks.json) }. start() returns a handle; track() runs a
+/** opts: { dataDir?, now?, stallAfterMs? (default: data/studio/tasks.json; a number, or a function read on each
+ *  list() so a reloaded config applies at once) }. start() returns a handle; track() runs a
  *  function as a task. */
 export function createTasks({ dataDir = null, now = Date.now, stallAfterMs = loadTaskConfig().stallAfterMs } = {}) {
+  const stallMs = typeof stallAfterMs === 'function' ? stallAfterMs : () => stallAfterMs;
   const mem = new Map();
   const clock = createTiming(now);
   let seq = 0;
@@ -199,6 +211,7 @@ export function createTasks({ dataDir = null, now = Date.now, stallAfterMs = loa
     const all = [...mem.values()].map((x) => ({ ...x }));
     if (dataDir) all.push(...readTaskFiles(dataDir, now()));
     const n = now();
+    const stallAfterMs = stallMs();
     const out = all.sort(order).slice(0, MAX_TASKS).map((t) => ({ stages: null, stageText: null, unit: null, activeAt: null, progressAt: null, measured: null, ...t,
       ...clock.timing(t), ...stallOf(t, n, stallAfterMs), stallAfterMs, step: stepOf(t) }));
     clock.keep(new Set(out.map((t) => t.id)));

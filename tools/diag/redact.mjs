@@ -7,7 +7,8 @@
 //      the literal value, then its letters/digits with up to one separator between them, -> <profile-term>
 //   3. URLs: rtmp/rtmps/srt/rist -> scheme://<redacted>; any query string -> ?<redacted>; user:pass@ -> <redacted>@
 //   4. secrets: Bearer values, key/token/secret/password/authorization assignments, Twitch live_ keys, Kick sk_
-//      keys, YouTube-style dashed keys, hex runs of 32+ chars, base64-like runs of 40+ chars
+//      keys, YouTube-style dashed keys, hex runs of 32+ chars, base64-like runs of 40+ chars; OAuth header values,
+//      Google token shapes, OAuth codes and Twitch-style 30-character tokens (D327 platform sign-in)
 //   5. chat and free text: JSON string fields named text/message/msg/note/body/content/comment/user/userName/
 //      username/displayName/login/author/title -> "<redacted>"
 export const RULES = Object.freeze([
@@ -15,6 +16,7 @@ export const RULES = Object.freeze([
   'profile string values (literal and separator variants) -> <profile-term>',
   'rtmp/rtmps/srt/rist URLs -> <redacted>; query strings and URL credentials -> <redacted>',
   'Bearer values, key/token/secret/password/authorization values, stream-key shapes, hex >= 32, base64-like >= 40 -> <redacted>',
+  'OAuth header values, Google ya29./1// tokens, device/user/authorization codes, Twitch-style 30-char tokens -> <redacted>',
   'JSON fields text/message/msg/note/body/content/comment/user/userName/username/displayName/login/author/title -> <redacted>',
 ]);
 
@@ -54,9 +56,16 @@ export function makeRedactor({ home, userName, profile } = {}) {
     [/\b(https?:\/\/)[^\s/"'<>@]+@/gi, '$1<redacted>@'],
     [/(https?:\/\/[^\s"'<>?]+)\?[^\s"'<>]*/gi, '$1?<redacted>'],
     [/\bBearer\s+[^\s"',;]+/gi, 'Bearer <redacted>'],
+    // Platform sign-in (D327): Twitch's "Authorization: OAuth <token>", Google access/refresh token shapes, device-flow
+    // and authorization codes, and Twitch-style 30-character tokens (lower case letters and digits, both present).
+    [/\bOAuth\s+[^\s"',;]+/g, 'OAuth <redacted>'],
+    [/\bya29\.[A-Za-z0-9._-]+/g, '<redacted-token>'],
+    [/\b1\/\/[A-Za-z0-9_-]{20,}/g, '<redacted-token>'],
+    [/(?<![A-Za-z])((?:device_code|user_code|code_verifier|refresh_token|access_token|id_token|client_secret|auth_code|authorization_code)["']?\s*[:=]\s*["']?)[^"'\s,;}&]+/gi, '$1<redacted>'],
+    [/(?<![A-Za-z0-9])(?=[a-z0-9]{30}(?![A-Za-z0-9]))(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{30}/g, '<redacted-token>'],
     [/(?<![A-Za-z])((?:stream[_-]?key|api[_-]?key|key|token|secret|password|passwd|authorization|cookie)["']?\s*[:=]\s*["']?)[^"'\s,;}&]+/gi, '$1<redacted>'],
     [/\blive_\d+_[A-Za-z0-9]+/g, '<redacted-key>'],
-    [/\bsk_[A-Za-z0-9_]{8,}/g, '<redacted-key>'],
+    [/\bsk_[A-Za-z0-9_-]{8,}/g, '<redacted-key>'], // Kick keys carry a region with dashes (sk_us-west-2_...)
     [/\b[a-z0-9]{4}(?:-[a-z0-9]{4}){3,4}\b/gi, '<redacted-key>'],
     [/\b[0-9a-f]{32,}\b/gi, '<hex>'],
     // Standard base64 includes '/'; a run with '/' is a blob only if it mixes digits and both cases (plain paths stay readable).

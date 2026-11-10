@@ -26,6 +26,7 @@ import { constants as FS, copyFileSync, createReadStream, existsSync, lstatSync,
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createFlags } from '../flags/index.mjs';
 import { resolveString } from '../project/scene-preset.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -331,7 +332,9 @@ export async function packageRun(opts) {
 
 // ---------------------------------------------------------------- finished videos (uploads.json, D301)
 
-export const UPLOAD_KINDS = Object.freeze(['short', 'montage', 'won-reel']);
+export const UPLOAD_KINDS = Object.freeze(['short', 'montage', 'won-reel', 'impact-play']);
+/** Kinds packaged only while their feature flag is on (D326: impact-play reels, off by default). */
+export const KIND_FLAGS = Object.freeze({ 'impact-play': 'impact-play-reels' });
 export const CANVAS_TAIL = /_(\d{2})_(v(?:-[a-z0-9-]+)?|h)\.[a-z0-9]+$/i;
 export const NAME_DATE =/_(\d{4})(\d{2})(\d{2})-\d{6}_/;
 
@@ -344,9 +347,10 @@ export function pickYoutubeTarget({ seconds, vertical }, limits) {
   return isShort ? 'youtube-shorts' : 'youtube-video';
 }
 
-/** opts: { dataDir, ledgerFile, profile?, ffmpeg?, templates?, limits?, run?, now? }
+/** opts: { dataDir, ledgerFile, profile?, ffmpeg?, templates?, limits?, run?, now?, flags? }
  *  Packages every validated, published video in <dataDir>/clips/uploads.json that is not posted and not packaged yet
- *  (kinds short | montage | won-reel). Packages go to <dataDir>/posting/packages/<run>/<kind>-<sha16>/<target>/.
+ *  (kinds short | montage | won-reel | impact-play; impact-play only while the flag impact-play-reels is on, read
+ *  from <dataDir>/flags.local.json or opts.flags = { isOn(id) }). Packages go to <dataDir>/posting/packages/<run>/<kind>-<sha16>/<target>/.
  *  -> { packaged: [{ file, kind, target, dir }], skipped: [{ file, reason }] } */
 export async function packageUploads(opts) {
   const templates = opts.templates ?? loadTemplates();
@@ -358,11 +362,16 @@ export async function packageUploads(opts) {
   const profile = cleanProfile(opts.profile ?? {});
   const ledger = createLedger(opts.ledgerFile);
   let ffmpeg = null;
+  let flags = null;
   for (const row of doc.files) {
     const file = isPlain(row) && typeof row.file === 'string' ? row.file : null;
     const skip = (reason) => skipped.push({ file: file ? path.basename(file) : '?', reason });
     if (!file || !UPLOAD_KINDS.includes(row.kind)) { skip('unknown-kind'); continue; }
     if (opts.run && row.run !== opts.run) continue;
+    if (KIND_FLAGS[row.kind]) {
+      flags ??= opts.flags ?? createFlags({ dataDir: opts.dataDir });
+      if (!flags.isOn(KIND_FLAGS[row.kind])) { skip('flag-off'); continue; }
+    }
     if (Array.isArray(row.posted) && row.posted.some((p) => p?.platform === 'youtube')) { skip('already-posted'); continue; }
     if (!path.isAbsolute(file) || !isRealFile(file)) { skip('file-missing'); continue; }
     const tail = CANVAS_TAIL.exec(path.basename(file));

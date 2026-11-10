@@ -110,6 +110,18 @@ export function createOverlayServer(opts) {
       opts.bus?.start?.();
       return { staticPort: stat.port, feedPort: feed.port };
     },
+    /**
+     * LU2 (D324): effect presets (data/effects/guards.json) and flash measurements reload while running. Returns
+     * { ok, why? }: an invalid file keeps the running config. Without guards (tests) there is nothing to reload.
+     * The cam-pop rule takes the new rules.campop when both old and new configs have one (adding or removing the
+     * rule needs a restart: it subscribes to the bus at start).
+     */
+    reloadGuards(config, measurements) {
+      if (!guards) return { ok: false, why: 'no guards' };
+      try { guards.setConfig(config, measurements); } catch (e) { return { ok: false, why: String(e?.message ?? e).slice(0, 200) }; }
+      if (rule && guards.config.rules?.campop) rule.setConfig(guards.config.rules.campop);
+      return { ok: true };
+    },
     async stop() { opts.bus?.stop?.(); detach?.(); detachRule?.(); detachCounters?.(); rule?.stop(); guards?.stop(); await feed.close(); await stat.close(); },
   };
 }

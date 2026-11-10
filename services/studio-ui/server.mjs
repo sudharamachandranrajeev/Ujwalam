@@ -32,7 +32,7 @@ import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
 import { QUEUE_NAME, createUploadQueue, readQueueSummary, reasonText, shownPublishAt, streamOnly } from '../posting/auto-chain.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, liveBlock, loadRules, planAuto, rulesFileFor } from '../posting/auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, createRulesSource, describeMode, liveBlock, planAuto } from '../posting/auto-post.mjs';
 import { previewRules } from '../posting/preview.mjs';
 import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
@@ -44,13 +44,22 @@ import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
-import { createTasks } from './tasks.mjs';
+import { TASKS_CONFIG, createTasks, loadTaskConfig, parseTaskConfig, writeTaskFile } from './tasks.mjs';
+import { createDataNotifier, createDataSource, parseJsonText } from '../common/data-reload.mjs';
 import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
 import { STOP_TASKS_FILE, clipTools } from './record-clips.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
+import { CONNECT_FLAG, ERROR_TEXT as CONNECT_ERROR_TEXT, PROBLEM_TEXT as CONNECT_PROBLEM_TEXT, createConnect, outputsFromPlan } from '../platform-connect/index.mjs';
+import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG, createSettingsRoutes } from './settings-routes.mjs';
+import { connectTargets, readSetup } from './stream-setup.mjs';
+import { integrationsInEffect } from './integrations.mjs';
+
+// Scene transition types and easing curves (D327 TR1, data/transitions/easing.json), read once.
+let easingCache = null;
+export const easingChoices = () => (easingCache ??= JSON.parse(readFileSync(path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..'), 'data', 'transitions', 'easing.json'), 'utf8')));
 
 // The app folder (repo or install): settings folders may not point into it (D284).
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -254,7 +263,27 @@ export function createStudioServer(opts) {
   // Undo / redo of layer edits (P5b, D238): in memory, newest 50; inspector, layer-list and preview-mouse edits.
   const history = opts.history ?? createEditHistory();
   // Feature flags (D149) and the post-stream feedback form (D150). opts.flags / opts.feedback are test seams.
-  const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir }) : null);
+  // LU2 (D324): data files this server owns reload from disk when they change (also while live); a broken file keeps
+  // the last good version and shows why in the task area (a task file data-<kind>) and the log. GET /ui/api/data
+  // lists each one's state. opts.dataReport is a test seam.
+  const dataReport = opts.dataReport ?? createDataNotifier({ dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null, writeTask: writeTaskFile, log: (m) => (typeof opts.log === 'function' ? opts.log : console.log)(`[studio-ui] ${m}`) });
+  const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir, report: dataReport }) : null);
+  const rulesSrc = createRulesSource({ dataDir: opts.dataDir, explicit: opts.autoRulesFile, report: dataReport });
+  const tasksCfg = opts.tasks || opts.stallAfterMs !== undefined ? null
+    : createDataSource({ kind: 'studio-tasks', file: opts.tasksConfigFile ?? TASKS_CONFIG, parse: (t) => parseTaskConfig(parseJsonText(t)), report: dataReport, minCheckMs: 1000 });
+  const guideSrc = Object.fromEntries([['tour.json', 'tours', 'guide-tour'], ['hints.json', 'hints', 'guide-hints']].map(([n, key, kind]) => [n, createDataSource({
+    kind, file: path.join(opts.guideDir ?? path.join(REPO_ROOT, 'data', 'guide'), n), report: dataReport, minCheckMs: 1000,
+    parse: (t) => { const j = parseJsonText(t); if (!j || !Array.isArray(j[key])) throw new Error(`needs a "${key}" list`); return j[key]; },
+  })]));
+  const dataSources = () => [...(flags?.dataStatus?.() ?? []), rulesSrc.status(), ...(tasksCfg ? [tasksCfg.status()] : []), ...Object.values(guideSrc).map((s) => s.status())];
+  let stopDataWatch = null;
+  function startDataWatch() {
+    if (stopDataWatch) return;
+    const stops = [];
+    try { if (flags?.watch) stops.push(flags.watch()); } catch { /* flags without files (tests) */ }
+    for (const s of [rulesSrc, tasksCfg, ...Object.values(guideSrc)]) { if (!s) continue; try { stops.push(s.watch()); } catch { /* no good version yet: get() reports */ } }
+    stopDataWatch = () => { for (const f of stops) { try { f(); } catch { /* gone */ } } };
+  }
   // Stream recovery (D303 proposed, stream-recovery.mjs): the launcher owns the go-live authority; this server reaches
   // it over the IPC channel the launcher opens (only when started by the launcher: parent pipe and session id). A
   // confirmed "yes, on air" start takes a generation before the host call and arms it after (refused when a Stop came
@@ -303,7 +332,8 @@ export function createStudioServer(opts) {
     return { sinks: hs?.live === true ? [{ kind: 'stream', active: true }] : [] };
   }
   // Task bar (progress of what the software is doing): its own long actions here, launcher jobs as files in <dataDir>/tasks.
-  const tasks = opts.tasks ?? createTasks({ dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null, now });
+  const stallAfter = () => { if (!tasksCfg) return opts.stallAfterMs ?? null; try { return tasksCfg.get().stallAfterMs; } catch { return loadTaskConfig().stallAfterMs; } };
+  const tasks = opts.tasks ?? createTasks({ dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null, now, stallAfterMs: stallAfter });
   const openFolder = opts.openFolder ?? defaultOpenFolder;
   // Bot manager (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot. opts.bots is a test seam (see createFakeBots).
   const bots = opts.bots ?? (typeof opts.dataDir === 'string' ? createBots({ dataDir: opts.dataDir }) : null);
@@ -334,12 +364,72 @@ export function createStudioServer(opts) {
       host, core, config, now, dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null,
       flagOn: (id) => !!flags && flags.isOn(id),
       store: (ref) => createCredentialStore(ref), listProcesses: listProcessNames, diskFree: diskFreeBytes, tcp: tcpAnswers,
-      botPorts: { streamerbot: bc.streamerbot?.port ?? null, speakerbot: bc.speakerbot?.port ?? null },
+      // D327 IN1: with the `integrations` flag on, the ports from Settings > Integrations.
+      botPorts: flags?.isOn(INTEGRATIONS_FLAG) && typeof opts.dataDir === 'string'
+        ? (({ bots }) => ({ streamerbot: bots.streamerbot.port, speakerbot: bots.speakerbot.port }))(integrationsInEffect(opts.dataDir, bc, true))
+        : { streamerbot: bc.streamerbot?.port ?? null, speakerbot: bc.speakerbot?.port ?? null },
       ciPass: () => lastCiPass(REPO_ROOT), clipTools: () => clipTools({ clipRoot }), planTargets: planTargets(opts.livePlanFile),
+      // Platform sign-in (flag platform-connect): the fix points at Settings > Connections; expired sign-ins are warnings.
+      connect: () => (connectOn() ? { fix: 'Studio: Settings > Connections (sign in, or paste the key)', warnings: () => connect().readinessWarnings() } : null),
       ...(opts.readinessDeps ?? {}),
     });
     return readinessRunner;
   }
+  // Platform sign-in (D327 PC1-PC3, flag `platform-connect`; services/platform-connect). Built on first use. The keys and
+  // tokens it writes never pass through a response: status gives presence, the address scheme and at most the last 4
+  // characters. opts.connect is a test seam (extra createConnect options: storeFor, fetchImpl, endpoints, browserOpen,
+  // sleep) or a ready object ({ connect }).
+  const connectOn = () => !!flags && flags.isOn(CONNECT_FLAG) && typeof opts.dataDir === 'string';
+  let connectSvc = opts.connect?.connect ?? null;
+  // Per-output live state from outputs.status (fail closed: unreadable throws; a fallback "something is live" with no
+  // sink ids counts as live for every output).
+  async function outputLive(id) {
+    const st = await ytOutputsStatus();
+    const sinks = Array.isArray(st?.sinks) ? st.sinks.filter((s) => s && s.kind === 'stream') : [];
+    const busy = (s) => s.active === true || ['starting', 'live', 'retrying', 'stopping', 'reconnecting'].includes(s.state);
+    return sinks.some((s) => busy(s) && (s.id === id || s.id === undefined)) ? 'live' : 'idle';
+  }
+  // Start gate (Codex review, D327): a stream key / server update and a stream start never overlap. An update waits for no
+  // start to be on its way (else 'output-starting'), and while it holds the gate a confirmed start is refused (409
+  // credentials-updating). The service re-checks the output after its write and puts the old values back if it went live.
+  let credWrites = 0;
+  const connectGate = {
+    enter() {
+      if (startsInFlight > 0) throw Object.assign(new Error('output-starting'), { code: 'output-starting' });
+      credWrites += 1;
+      let left = false;
+      return () => { if (!left) { left = true; credWrites -= 1; } };
+    },
+  };
+  // The outputs the sign-in service knows, read on every call: the live plan's targets, plus (flag stream-settings on and a
+  // saved Settings > Stream setup) every output of that setup, so an output added there can be connected before the next
+  // start. A setup output replaces a plan row with the same id. Platform ids come from the setup, not from the id's text.
+  function connectOutputs() {
+    const rows = planTargets(opts.livePlanFile);
+    if (flags && flags.isOn(STREAM_SETTINGS_FLAG) && typeof opts.dataDir === 'string') {
+      try {
+        const { exists, setup } = readSetup(opts.dataDir);
+        if (exists) {
+          const mine = connectTargets(setup);
+          const ids = new Set(mine.map((t) => t.id));
+          return outputsFromPlan([...rows.filter((r) => !ids.has(r.id)), ...mine]);
+        }
+      } catch { /* an unreadable setup: the plan's outputs only */ }
+    }
+    return outputsFromPlan(rows);
+  }
+  function connect() {
+    if (connectSvc) return connectSvc;
+    const { connect: _ignored, ...extra } = opts.connect ?? {};
+    connectSvc = createConnect({ dataDir: opts.dataDir, outputs: connectOutputs, outputLive, gate: connectGate, ...extra });
+    return connectSvc;
+  }
+  const CONNECT_STATUS = { 'output-starting': 409, cancelled: 409, 'output-live': 409, 'live-unknown': 409, 'sign-in-busy': 409, 'job-not-waiting': 409, 'unknown-output': 404, 'unknown-job': 404, 'unknown-stream': 404, 'sign-in-not-offered': 400, 'bad-client-id': 400, 'twitch-no-client': 409, 'oauth-no-client': 409 };
+  const connectFail = (res, e) => {
+    const code = typeof e?.code === 'string' ? e.code : 'connect-failed';
+    const status = CONNECT_STATUS[code] ?? (Object.hasOwn(CONNECT_PROBLEM_TEXT, code) ? 400 : 502);
+    return json(res, status, { error: code, message: CONNECT_ERROR_TEXT[code] ?? CONNECT_PROBLEM_TEXT[code] ?? 'Not done.' });
+  };
   // Public form of a readiness result for the page (the Qt shell reads the summary text of the confirm window).
   const publicReadiness = (r) => ({ at: r.at, ok: r.ok, counts: r.counts, items: r.items.map((i) => ({ id: i.id, title: i.title, status: i.status, message: i.message, ...(i.fix ? { fix: i.fix } : {}), ...(i.unknown ? { unknown: true } : {}) })) });
   // End all streams (D299): the host's stream.stop with no sinks stops every stream sink (both YouTube, Twitch, Kick) and
@@ -380,6 +470,7 @@ export function createStudioServer(opts) {
   let previewSeen = null; // last host preview edit seq handled (null: not read yet)
   let previewBusy = null; // one previewSync at a time
   let previewLast = null; // { seq, scene, canvas, layer } of the newest host preview edit, for the status snapshot
+  let devicesSeen = null; // last host.status devices.seq seen (D329): a change reloads the layer list and device picker
 
   const sec = (res) => {
     res.setHeader('Content-Security-Policy', CSP);
@@ -447,6 +538,84 @@ export function createStudioServer(opts) {
   }
 
   // Settings (D284): clip choices and folders. Refused while live (a change would load the GPU or move files mid-show).
+  // Platform sign-in writes (D327). Every credential write is a studio write: typed "yes", "yes, on air" while live; a
+  // live output's own key is refused (checked now and again at confirm and right before the write). A pasted key waits
+  // in the pending record inside a closure (memory only, gone when the record expires or is cancelled) and is never in a
+  // response. choose / cancel / check belong to a sign-in that was already confirmed, so they need no phrase.
+  async function connectRoute(res, route, body) {
+    const op = route.slice('/ui/api/connect/'.length);
+    const only = (keys) => Object.keys(body).every((k) => keys.includes(k));
+    const str = (v, max) => typeof v === 'string' && v.length > 0 && v.length <= max;
+    let c;
+    try { c = connect(); } catch (e) { return connectFail(res, e); }
+    const label = (id) => c.outputs().find((o) => o.id === id)?.label ?? id;
+    const ask = (summary, rec) => {
+      const id = addPending({ kind: 'connect', summary, phrase: live ? 'yes, on air' : 'yes', ...rec });
+      if (!id) return json(res, 429, { error: 'too-many-pending' });
+      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
+    };
+    const notLive = async (id) => { try { return (await outputLive(id)) === 'idle' ? null : 'output-live'; } catch { return 'live-unknown'; } };
+    try {
+      if (op === 'paste') {
+        if (!only(['output', 'key', 'server']) || !str(body.output, 32) || (body.key !== undefined && !str(body.key, 2048)) || (body.server !== undefined && !str(body.server, 512))) return json(res, 400, { error: 'bad-params' });
+        const bad = c.checkPaste(body.output, { key: body.key, server: body.server });
+        if (bad) return json(res, 400, { error: bad, message: CONNECT_PROBLEM_TEXT[bad] ?? 'Not valid.' });
+        const busy = await notLive(body.output);
+        if (busy) return connectFail(res, { code: busy });
+        const values = { key: body.key, server: body.server };
+        const what = [values.key !== undefined ? 'stream key' : null, values.server !== undefined ? 'server address' : null].filter(Boolean).join(' and ');
+        return ask(`Store the ${what} for ${label(body.output)} in Windows Credential Manager (replaces what is stored)`, { op: 'paste', output: body.output, values: () => values });
+      }
+      if (op === 'sign-in') {
+        if (!only(['output', 'platform']) || !str(body.output, 32) || !['youtube', 'twitch'].includes(body.platform)) return json(res, 400, { error: 'bad-params' });
+        const o = c.outputs().find((x) => x.id === body.output);
+        if (!o) return json(res, 404, { error: 'unknown-output' });
+        if (o.signIn !== body.platform) return connectFail(res, { code: 'sign-in-not-offered' });
+        const busy = await notLive(body.output);
+        if (busy) return connectFail(res, { code: busy });
+        const who = body.platform === 'youtube' ? 'Google (YouTube)' : 'Twitch';
+        return ask(`Sign in with ${who} and store the stream key for ${o.label} in Windows Credential Manager (replaces the stored key). A browser opens for the sign-in.`, { op: 'sign-in', output: body.output, platform: body.platform });
+      }
+      if (op === 'disconnect') {
+        if (!only(['output']) || !str(body.output, 32)) return json(res, 400, { error: 'bad-params' });
+        if (!c.outputs().some((x) => x.id === body.output)) return json(res, 404, { error: 'unknown-output' });
+        const busy = await notLive(body.output);
+        if (busy) return connectFail(res, { code: busy });
+        return ask(`Disconnect ${label(body.output)}: delete its stream key (and server address) from Windows Credential Manager, and the sign-in when no other output uses it. It cannot stream until connected again.`, { op: 'disconnect', output: body.output });
+      }
+      if (op === 'twitch-client') {
+        if (!only(['clientId']) || !str(body.clientId, 64)) return json(res, 400, { error: 'bad-params' });
+        if (!/^[a-z0-9]{20,64}$/.test(body.clientId.trim())) return connectFail(res, { code: 'bad-client-id' });
+        const clientId = body.clientId.trim();
+        return ask('Store the Twitch app client ID in Windows Credential Manager', { op: 'twitch-client', values: () => ({ clientId }) });
+      }
+      if (op === 'choose') {
+        if (!only(['jobId', 'streamId']) || !str(body.jobId, 64) || !(body.streamId === null || str(body.streamId, 64))) return json(res, 400, { error: 'bad-params' });
+        return json(res, 200, { job: await c.choose(body.jobId, body.streamId) });
+      }
+      if (op === 'cancel') {
+        if (!only(['jobId']) || !str(body.jobId, 64)) return json(res, 400, { error: 'bad-params' });
+        return json(res, 200, { job: c.cancelJob(body.jobId) });
+      }
+      if (op === 'check') {
+        if (Object.keys(body).length) return json(res, 400, { error: 'bad-params' });
+        return json(res, 200, { tokens: await c.checkTokens() });
+      }
+      return text(res, 404, 'not-found');
+    } catch (e) { return connectFail(res, e); }
+  }
+  // A confirmed platform sign-in write (kind 'connect').
+  async function connectConfirmed(res, p) {
+    if (!connectOn()) return json(res, 404, { error: 'platform-connect-off' }); // switched off while the phrase was pending
+    const c = connect();
+    try {
+      if (p.op === 'paste') { const v = p.values(); return json(res, 200, { verdict: 'allow', result: await c.paste(p.output, { key: v.key, server: v.server }) }); }
+      if (p.op === 'sign-in') return json(res, 200, { verdict: 'allow', job: await c.startSignIn(p.platform, p.output) });
+      if (p.op === 'disconnect') return json(res, 200, { verdict: 'allow', result: await c.disconnect(p.output) });
+      if (p.op === 'twitch-client') return json(res, 200, { verdict: 'allow', result: await c.setTwitchClientId(p.values().clientId) });
+      return json(res, 400, { error: 'unknown-op' });
+    } catch (e) { return connectFail(res, e); }
+  }
   async function settingsRoute(res, body) {
     if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
     if (live && !guideOnly(body)) return json(res, 409, { error: 'live', detail: 'Change settings after the stream.' }); // guide: tips only change what the window shows
@@ -457,10 +626,11 @@ export function createStudioServer(opts) {
     try { const settings = writeSettings(opts.dataDir, body); t.done(); return json(res, 200, { settings }); } catch (e) { t.fail('Could not save'); return json(res, 500, { error: 'not-saved', detail: String(e.message).slice(0, 200) }); }
   }
   // Tips and tours (D294 proposed): data/guide/tour.json and hints.json, plain text for the studio window. A missing or
-  // broken file gives an empty list: the window then shows no tips, and nothing else changes.
+  // broken file gives an empty list: the window then shows no tips, and nothing else changes. LU2: a file that breaks
+  // while the app runs keeps its last good version.
   function guideData() {
-    const read = (n, key) => { try { const j = JSON.parse(readFileSync(path.join(REPO_ROOT, 'data', 'guide', n), 'utf8')); return Array.isArray(j[key]) ? j[key] : []; } catch { return []; } };
-    return { tours: read('tour.json', 'tours'), hints: read('hints.json', 'hints') };
+    const read = (n) => { try { return guideSrc[n].get(); } catch { return []; } };
+    return { tours: read('tour.json'), hints: read('hints.json') };
   }
   // The answer to "make clips from it?": the launcher picks it up (record-clips.mjs).
   function clipAnswer(res, body) {
@@ -489,6 +659,7 @@ export function createStudioServer(opts) {
   //   - the studio exits only after quitCommit confirms, at that moment, that its token is still the held, granted lock.
   const RECENT_START_MS = 5000; const QUIT_WAIT_MS = Number.isFinite(limits.quitWaitMs) && limits.quitWaitMs > 0 ? limits.quitWaitMs : 10_000; // limits.quitWaitMs: tests
   let closing = null; let startsInFlight = 0; let lastStartAt = -Infinity;
+  let stopEpoch = 0; // goes up before a confirmed Stop / End all reaches the host (D327 OS3 output starts check it)
   const isClosing = () => !!closing;
   const CLOSING_REFUSAL = { error: 'closing', detail: 'Ujwalam is closing' };
   const bounded = (p) => Promise.race([Promise.resolve(p), new Promise((_, rej) => { const t = setTimeout(() => rej(new Error('timeout')), QUIT_WAIT_MS); t.unref?.(); })]);
@@ -547,6 +718,8 @@ export function createStudioServer(opts) {
     if (hs) feedbackCollect.observe(hs.live);
     if (hs) await previewSync(hs);
     if (hs) await transitionSync(hs);
+    const dev = hs ? devicesInfo(hs) : null;
+    if (dev) devicesSync(dev);
     const pick = (o, ks) => Object.fromEntries(ks.filter((k) => o && Object.hasOwn(o, k)).map((k) => [k, o[k]]));
     const snap = {
       at: now(),
@@ -554,6 +727,7 @@ export function createStudioServer(opts) {
         ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing', 'uptimeMs']) : {}),
         ...(hs && hs.audioHealth ? { audioHealth: audioReadiness(hs.audioHealth) } : {}),
         ...(previewLast ? { previewEdit: previewLast } : {}),
+        ...(dev ? { devices: { seq: dev.seq, waiting: dev.waiting } } : {}),
         effectEditing: !!flags && flags.isOn('effect-editor') },
       clips: clipStatus(),
       recovery: typeof opts.dataDir === 'string' ? readRecoveryStatus(opts.dataDir, liveSession) : null,
@@ -591,24 +765,48 @@ export function createStudioServer(opts) {
   // A stinger the host refused (file missing, module absent) is not asked for again until the project changes it; the
   // canvas cuts meanwhile (D242).
   const trRefused = {};
-  const trKey = (t) => JSON.stringify([t.type, t.durationMs, t.file ?? null, t.pointMs ?? null, t.audio ?? null]);
+  const trKey = (t) => JSON.stringify([t.type, t.durationMs, t.file ?? null, t.pointMs ?? null, t.audio ?? null, t.easing ?? null]);
   async function transitionSync(hs) {
     if (!isPlain(hs.transitions)) return; // older host or fake: nothing to sync
     const on = !!flags && flags.isOn(TRANSITIONS_FLAG);
     const want = on ? projectTransitions() : {};
+    // D327 TR1 (flag stream-settings): easing curves and "Mirror main canvas transitions" for the portrait canvas.
+    const tr1 = !!flags && flags.isOn(STREAM_SETTINGS_FLAG);
     for (const [hid, cur] of Object.entries(hs.transitions)) {
-      const t = want[hid.toLowerCase()];
+      let t = want[hid.toLowerCase()];
+      if (tr1 && hid.toLowerCase() === 'v' && t?.mirror === true) t = want.h;
       let p = { type: 'cut', durationMs: 0 };
-      if (t?.type === 'fade' && Number.isInteger(t.durationMs)) p = { type: 'fade', durationMs: Math.min(10000, Math.max(0, t.durationMs)) };
+      if (t?.type === 'fade' && Number.isInteger(t.durationMs)) {
+        p = { type: 'fade', durationMs: Math.min(10000, Math.max(0, t.durationMs)) };
+        if (tr1 && typeof t.easing === 'string' && t.easing !== 'linear' && trRefused[hid] !== trKey({ ...p, easing: t.easing })) p.easing = t.easing;
+      }
       else if (t?.type === 'stinger' && isPlain(t.file) && typeof t.file.base === 'string' && typeof t.file.rel === 'string' && Number.isInteger(t.pointMs)) {
         p = { type: 'stinger', durationMs: 0, file: { base: t.file.base, rel: t.file.rel }, pointMs: Math.min(10000, Math.max(0, t.pointMs)), audio: t.audio !== false };
       }
       if (p.type === 'stinger' && trRefused[hid] === trKey(p)) p = { type: 'cut', durationMs: 0 };
-      const same = cur?.type === p.type && cur?.durationMs === p.durationMs
+      const same = cur?.type === p.type && cur?.durationMs === p.durationMs && (cur?.easing ?? 'linear') === (p.easing ?? 'linear')
         && (p.type !== 'stinger' || (cur?.file === `${p.file.base}:${p.file.rel}` && cur?.pointMs === p.pointMs && (cur?.audio ?? true) === p.audio));
       if (same) continue;
-      try { await host.call('transitions.set', { canvas: hid, ...p }); } catch { if (p.type === 'stinger') trRefused[hid] = trKey(p); }
+      // A refused stinger or easing (older host, unknown curve) is not asked for again until the project changes it.
+      try { await host.call('transitions.set', { canvas: hid, ...p }); } catch { if (p.type === 'stinger' || p.easing) trRefused[hid] = trKey(p); }
     }
+  }
+  // Device hot-plug (D329). The host has no push channel: its device watcher bumps host.status devices.seq after each
+  // plug or unplug pass. Here a moved seq becomes SSE 'devices' {seq} and 'layers' {source: 'devices'}, so the pages
+  // and the Qt shell reload the layer list (a capture layer's "waiting" state) and the add-layer device picker. The
+  // first read only notes the seq. devicesInfo keeps the numbers and the per-device connected flags only.
+  function devicesInfo(hs) {
+    const d = hs.devices;
+    if (!isPlain(d) || !Number.isSafeInteger(d.seq) || d.seq < 0) return null;
+    const connected = isPlain(d.connected) ? Object.fromEntries(Object.entries(d.connected).filter(([, v]) => typeof v === 'boolean')) : {};
+    return { seq: d.seq, waiting: Array.isArray(d.waiting) ? d.waiting.length : 0, connected, listed: d.listed === true };
+  }
+  function devicesSync(dev) {
+    if (devicesSeen === null) { devicesSeen = dev.seq; return; }
+    if (dev.seq === devicesSeen) return;
+    devicesSeen = dev.seq; // a restarted host (lower seq) is a change too
+    broadcast('devices', { seq: dev.seq, waiting: dev.waiting });
+    broadcast('layers', { source: 'devices' });
   }
   async function previewSync(hs) {
     if (host.describe().kind !== 'host') return;
@@ -676,7 +874,8 @@ export function createStudioServer(opts) {
     let doc;
     try { projectSync.flush(); doc = loadProject(file).project; } catch { return json(res, 200, { on, available: false }); }
     return json(res, 200, { on, available: true, canvases: doc.canvases.map((c) => ({ id: c.id, transition: c.transition ?? { type: 'cut', durationMs: 0 } })),
-      videos: listAssets(assetsDir).filter((a) => a.kind === 'media').map((a) => a.rel) });
+      videos: listAssets(assetsDir).filter((a) => a.kind === 'media').map((a) => a.rel),
+      ...(flags.isOn(STREAM_SETTINGS_FLAG) ? { easing: easingChoices() } : {}) });
   }
   // Sets one canvas's project transition (refused while live); the status poll then applies it to the host.
   async function transitionEdit(res, body) {
@@ -687,8 +886,11 @@ export function createStudioServer(opts) {
     if (!flags || !flags.isOn(TRANSITIONS_FLAG)) return json(res, 404, { error: 'transitions-off' });
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
-    const keys = ['canvas', 'type', 'durationMs', 'file', 'pointMs', 'audio'];
+    // easing / mirror (D327 TR1) only with flag stream-settings.
+    const keys = ['canvas', 'type', 'durationMs', 'file', 'pointMs', 'audio', ...(flags.isOn(STREAM_SETTINGS_FLAG) ? ['easing', 'mirror'] : [])];
     if (!isPlain(body) || Object.keys(body).some((k) => !keys.includes(k)) || !['h', 'v'].includes(body.canvas) || !['cut', 'fade', 'stinger'].includes(body.type)) return json(res, 400, { error: 'bad-params' });
+    if (body.easing !== undefined && (body.type !== 'fade' || !easingChoices().easing.some((e) => e.id === body.easing))) return json(res, 400, { error: 'bad-params' });
+    if (body.mirror !== undefined && (typeof body.mirror !== 'boolean' || body.canvas !== 'v')) return json(res, 400, { error: 'bad-params' });
     const ms = (v) => Number.isInteger(v) && v >= 0 && v <= 10000;
     if (body.type === 'fade' && !ms(body.durationMs)) return json(res, 400, { error: 'bad-params' });
     if (body.type === 'stinger' && (!ms(body.pointMs) || typeof body.file !== 'string' || (body.audio !== undefined && typeof body.audio !== 'boolean'))) return json(res, 400, { error: 'bad-params' });
@@ -703,22 +905,28 @@ export function createStudioServer(opts) {
     const c = doc.canvases.find((x) => x.id === body.canvas);
     if (!c) return json(res, 409, { error: 'unknown-canvas' });
     c.transition = body.type === 'stinger' ? { type: 'stinger', durationMs: 0, file: { base: 'media', rel: body.file }, pointMs: body.pointMs, ...(body.audio === false ? { audio: false } : {}) }
-      : { type: body.type, durationMs: body.type === 'fade' ? body.durationMs : 0 };
+      : { type: body.type, durationMs: body.type === 'fade' ? body.durationMs : 0, ...(body.easing && body.easing !== 'linear' ? { easing: body.easing } : {}) };
+    if (body.mirror === true) c.transition.mirror = true;
     try { saveProject(file, doc); } catch { return json(res, 409, { error: 'not-saved' }); }
     projectSync.reload();
     return json(res, 200, { ok: true, canvas: c.id, transition: c.transition });
   }
   // What the add-layer form can offer (D240): ids and names from the project file only (shown on this local page).
-  function structureChoices(res) {
+  // Each device carries `connected` (true / false) when the host's device watcher has listed devices (D329); absent
+  // when it has not (devices not allowed, or no host): the picker then shows no state.
+  async function structureChoices(res) {
     const on = !!flags && flags.isOn(SCENE_EDIT_FLAG); // `on` now only says whether removing is allowed; choices need no flag (D292)
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 200, { on, available: false });
     let doc;
     try { projectSync.flush(); doc = loadProject(file).project; } catch { return json(res, 200, { on, available: false }); }
+    let dev = null;
+    try { dev = devicesInfo(await host.call('host.status', {})); } catch { dev = null; }
+    const connected = dev?.listed ? dev.connected : {};
     return json(res, 200, { on, available: true, canvases: doc.canvases.map((c) => c.id),
       scenes: doc.scenes.map((s) => ({ id: s.id, name: s.name, active: s.id === doc.activeScene })),
       layers: doc.scenes.flatMap((s) => s.layers.map((l) => ({ id: l.id, name: l.name, scene: s.id, sceneName: s.name, type: l.type }))),
-      devices: (doc.devices ?? []).filter((d) => d.kind === 'camera' || d.kind === 'capture-card').map((d) => ({ id: d.id, name: d.name })),
+      devices: (doc.devices ?? []).filter((d) => d.kind === 'camera' || d.kind === 'capture-card').map((d) => ({ id: d.id, name: d.name, ...(typeof connected[d.id] === 'boolean' ? { connected: connected[d.id] } : {}) })),
       overlays: (doc.overlays ?? []).map((o) => ({ id: o.id, name: o.name })),
       assets: listAssets(assetsDir) });
   }
@@ -749,10 +957,14 @@ export function createStudioServer(opts) {
       : op === 'scene.duplicate' ? duplicateScene(doc, body) : op === 'scene.rename' ? renameScene(doc, body) : removeLayer(doc, body);
     if (r.error) return json(res, 409, { error: r.error, ...(r.errors ? { detail: r.errors.map((e) => `${e.path}: ${e.message}`).join('; ').slice(0, 300) } : {}) });
     const canvases = doc.canvases.map((c) => c.id.toUpperCase());
+    let waiting = null; // a capture layer added while its device is not connected: the host's plain sentence (D329)
     try {
       if (op === 'scene.add') for (const canvas of canvases) await host.call('scenes.create', { scene: { id: r.scene.id, canvas, name: r.scene.name } });
       else if (op === 'scene.remove') await host.call('scenes.remove', { scene: body.scene });
-      else if (op === 'layer.add') await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
+      else if (op === 'layer.add') {
+        const a = await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
+        if (typeof a?.waiting?.message === 'string') waiting = a.waiting.message.slice(0, 300);
+      }
       else if (op === 'layer.move') await host.call('layers.orderFromProject', { project: r.project, scene: body.scene });
       else if (op === 'layer.duplicate') {
         await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
@@ -774,7 +986,7 @@ export function createStudioServer(opts) {
     history.clear();
     broadcast('edits', history.state());
     broadcast('layers', { source: 'structure', edit: { op, scene: r.scene?.id ?? body.scene, layer: r.layer?.id ?? body.layer ?? null } });
-    return json(res, 200, { ok: true, op, ...(r.scene ? { scene: { id: r.scene.id, name: r.scene.name } } : {}), ...(r.layer ? { layer: { id: r.layer.id, name: r.layer.name, type: r.layer.type } } : {}), saved });
+    return json(res, 200, { ok: true, op, ...(r.scene ? { scene: { id: r.scene.id, name: r.scene.name } } : {}), ...(r.layer ? { layer: { id: r.layer.id, name: r.layer.name, type: r.layer.type } } : {}), ...(waiting ? { waiting } : {}), saved });
   }
   function withRenames(method, result) {
     if (!renamed.size || !isPlain(result)) return result;
@@ -803,6 +1015,46 @@ export function createStudioServer(opts) {
     return id;
   }
   const publicPending = (id, p) => ({ pendingId: id, summary: p.summary, phrase: p.phrase, expiresAt: p.expiresAt, ...(p.step ? { step: p.step, of: 2 } : {}), ...(p.readiness ? { readiness: publicReadiness(p.readiness) } : {}) });
+  // D327 OS3: a live switch-on of one output is a start like Start stream, so a Stop or End all confirmed after it
+  // began wins. stopEpoch goes up before any confirmed Stop / End all reaches the host (works without the launcher);
+  // with the launcher, the go-live authority generation is checked too. Not armed: the stream was armed at go-live,
+  // and arming again would clear the launcher's excluded sinks.
+  const outputStartGuard = {
+    closing: isClosing,
+    credentialsUpdating: () => credWrites > 0, // the sign-in start gate (connectGate) holds a key write
+    enter() { startsInFlight += 1; return () => { startsInFlight -= 1; lastStartAt = now(); }; },
+    async begin() { return { epoch: stopEpoch, gen: authority ? await authority.begin() : null }; },
+    async still(t) {
+      if (t.epoch !== stopEpoch) return false;
+      if (!authority) return true;
+      return Number.isInteger(t.gen) && (await authority.begin()) === t.gen; // a closed authority fails closed
+    },
+    pause: () => (startPauseMs ? new Promise((r) => setTimeout(r, startPauseMs)) : Promise.resolve()),
+    async stopAgain(sinks) {
+      for (let i = 0; ; i++) {
+        try { await callHost('stream.stop', { sinks }); return true; } catch (e) {
+          if (i >= STOP_AGAIN_WAITS.length) { log(`[studio-ui] WARNING: an output started after a Stop could not be stopped again (${String(e?.code ?? e?.message ?? 'error').slice(0, 80)})`); return false; }
+        }
+        await new Promise((r) => setTimeout(r, STOP_AGAIN_WAITS[i]));
+      }
+    },
+  };
+  // D327: Stream settings, Outputs panel, Integrations, Force complete transition (settings-routes.mjs).
+  const settingsRoutes = createSettingsRoutes({
+    dataDir: opts.dataDir, flags, host, json, addPending, publicPending, getPending: (id) => pending.get(id), log,
+    remoteToken: typeof opts.remoteToken === 'string' ? opts.remoteToken : undefined,
+    startGuard: outputStartGuard,
+    ...(opts.tcpAnswers ? { tcpAnswers: opts.tcpAnswers } : {}),
+    botConfig: opts.botConfig ?? (() => loadBotConfig()),
+    canvases: () => {
+      // The project's canvas sizes (the Stream page shows them read-only; rungs never upscale them).
+      const file = projectSync?.status?.().file;
+      if (typeof file !== 'string') return undefined;
+      const doc = loadProject(file).project;
+      const c = (id) => doc.canvases.find((x) => x.id === id);
+      return c('h') && c('v') ? { H: { w: c('h').width, h: c('h').height }, V: { w: c('v').width, h: c('v').height } } : undefined;
+    },
+  });
 
   async function handleCoreOutcome(r, summary) {
     // r: { verdict, reason, confirm?, dispatch? } from the event core. The page gets verdict/reason and, when a
@@ -835,6 +1087,12 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/guide') return json(res, 200, guideData()); // guide (D294 proposed)
+    if (req.method === 'GET' && route === '/ui/api/data') { // LU2: each live-reloaded data file (base names only)
+      try { rulesSrc.get(); } catch { /* the status says why */ }
+      try { tasksCfg?.get(); } catch { /* idem */ }
+      guideData(); flags?.list();
+      return json(res, 200, { sources: dataSources() });
+    }
     if (req.method === 'GET' && route === '/ui/api/readiness') {
       if (!readinessOn()) return json(res, 404, { error: 'readiness-off' });
       try { return json(res, 200, publicReadiness(await readiness().run({ maxAgeMs: 0 }))); } catch { return json(res, 500, { error: 'readiness-failed' }); }
@@ -850,6 +1108,11 @@ export function createStudioServer(opts) {
       if ([...url.searchParams.keys()].some((k) => k !== 'title' && k !== 'note')
         || (url.searchParams.get('title') ?? '').length > MAX_TITLE * 4 || (url.searchParams.get('note') ?? '').length > MAX_NOTE * 4) return json(res, 400, { error: 'bad-params' });
       try { return json(res, 200, reporter.build(await reportContext(url.searchParams))); } catch { return json(res, 500, { error: 'report-failed' }); }
+    }
+    if (route.startsWith('/ui/api/connect') && !connectOn()) return json(res, 404, { error: 'platform-connect-off' });
+    if (req.method === 'GET' && route === '/ui/api/connect') {
+      // Presence, scheme and last 4 characters only; never a key, token, address or account name.
+      try { const c = connect(); return json(res, 200, { ...(await c.status({ fresh: url.searchParams.get('fresh') === '1' })), job: c.currentJob() }); } catch (e) { return connectFail(res, e); }
     }
     if (route.startsWith('/ui/api/posts') && !postingOn()) return json(res, 404, { error: 'posting-off' });
     if (route.startsWith('/ui/api/bots') && !botsOn()) return json(res, 404, { error: 'bot-manager-off' });
@@ -867,8 +1130,8 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/posts/auto/preview') {
       // Read-only dry run: what the rules WOULD queue, with rendered text and skip reasons. No write, no request to Google.
       try {
-        const rulesFile = rulesFileFor(opts.dataDir, opts.autoRulesFile);
-        const rules = loadRules(rulesFile);
+        const rulesFile = rulesSrc.file();
+        const rules = rulesSrc.get();
         let profile = {};
         try { if (opts.profileFile && existsSync(opts.profileFile)) profile = JSON.parse(readFileSync(opts.profileFile, 'utf8')); } catch { /* placeholders show as unresolved */ }
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
@@ -877,9 +1140,9 @@ export function createStudioServer(opts) {
     }
     if (req.method === 'GET' && route === '/ui/api/posts/auto') {
       // Read-only: the auto-post mode and what a run would do now. Enabling stays a flag; nothing is changed here.
-      const rulesFile = rulesFileFor(opts.dataDir, opts.autoRulesFile);
+      const rulesFile = rulesSrc.file();
       try {
-        const rules = loadRules(rulesFile);
+        const rules = rulesSrc.get();
         const mode = describeMode({ flagOn: !!flags && flags.isOn(AUTO_FLAG), rules });
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
         return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
@@ -889,6 +1152,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/posts/youtube/status') {
       try { const st = await youtubeAuth().status(); return json(res, 200, { signedIn: st.signedIn === true, hasClient: st.hasClient === true, phrase: UPLOAD_PHRASE }); } catch { return json(res, 502, { error: 'youtube-status-failed' }); }
     }
+    if (req.method === 'GET' && await settingsRoutes.handle('GET', route, null, res)) return undefined; // D327 pages
     if (req.method !== 'POST') return text(res, 405, 'method-not-allowed');
     // Mutating: Origin == our origin, CSRF header (timing-safe), JSON body.
     if (req.headers.origin !== origin) return text(res, 403, 'bad-origin');
@@ -896,6 +1160,7 @@ export function createStudioServer(opts) {
     if (typeof h !== 'string' || !sameSecret(h, s.csrf)) return text(res, 403, 'bad-csrf');
     const body = await readBody(req, res);
     if (body === null) return undefined;
+    if (await settingsRoutes.handle('POST', route, body, res)) return undefined;
 
     if (route === '/ui/api/edits/undo' || route === '/ui/api/edits/redo') {
       // Not while live (D238): a live layout change needs the typed on-air phrase, so undo there is the inspector's
@@ -1008,6 +1273,7 @@ export function createStudioServer(opts) {
       if (!id) return json(res, 429, { error: 'too-many-pending' });
       return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
     }
+    if (route.startsWith('/ui/api/connect/')) return connectRoute(res, route, body);
     if (route === '/ui/api/feedback/note') {
       if (Object.keys(body).some((k) => !NOTE_KEYS.includes(k))) return json(res, 400, { error: 'bad-params' });
       const err = feedback.saveNote(body.id, { text: body.text, tag: body.tag, severity: body.severity });
@@ -1102,7 +1368,7 @@ export function createStudioServer(opts) {
       if (typeof body.text !== 'string' || body.text.length > 40) return json(res, 400, { error: 'bad-text' });
       // The phrase was chosen when the request was made. If the stream went live since, plain "yes" no longer counts:
       // the record upgrades to the on-air phrase and the page shows it again (D151).
-      if ((p.kind === 'host' || p.kind === 'flag' || p.kind === 'bot' || p.kind === 'end-all') && live && p.phrase === 'yes') {
+      if ((p.kind === 'host' || p.kind === 'flag' || p.kind === 'bot' || p.kind === 'end-all' || p.kind === 'connect') && live && p.phrase === 'yes') {
         p.phrase = 'yes, on air';
         return json(res, 200, { verdict: 'wrong-phrase', pending: publicPending(body.pendingId, p) });
       }
@@ -1110,6 +1376,8 @@ export function createStudioServer(opts) {
       pending.delete(body.pendingId);
       try {
         if (p.kind === 'flag') return json(res, 200, { verdict: 'allow', flags: applyFlag(p.flagId, true) });
+        if (p.kind === 'connect') return connectConfirmed(res, p);
+        if (p.kind === 'output') return settingsRoutes.confirm(p, res); // D327 OS3: one output while live
         if (p.kind === 'bot') {
           if (!botsOn()) return json(res, 404, { error: 'bot-manager-off' }); // the flag may have been switched off meanwhile
           const r = p.verb === 'start' ? await bots.start(p.bot) : await bots.stop(p.bot);
@@ -1120,26 +1388,40 @@ export function createStudioServer(opts) {
           // quit request in between sees it (closing lock above).
           const starting = START_METHODS.has(p.method);
           if (starting && isClosing()) return json(res, 409, CLOSING_REFUSAL);
+          if (starting && credWrites > 0) return json(res, 409, { error: 'credentials-updating', detail: 'A stream key is being changed; start again in a moment' });
           if (starting) startsInFlight += 1;
           try {
           const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse
           if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
+          // D327 OS3 (flag outputs-panel): Start stream starts the outputs switched on in the panel only.
+          let callParams = p.params;
+          if (p.method === 'stream.start') {
+            const sinks = await settingsRoutes.startSinks();
+            if (Array.isArray(sinks)) {
+              if (!sinks.length) return json(res, 200, { verdict: 'refuse', reason: 'no-outputs-enabled', detail: 'No output is switched on. Switch one on in the Outputs panel or Settings > Stream.' });
+              callParams = { ...p.params, sinks };
+            }
+          }
           // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
           let overrideLogged;
           if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
+          if (p.method === 'stream.stop') stopEpoch += 1;
           if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
+          // stopEpoch: the same check without the launcher (no authority); a Stop / End all confirmed meanwhile wins.
+          const startEpoch = p.method === 'stream.start' ? stopEpoch : null;
           const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
           const before = await readBefore(p.method, p.params);
-          if (Number.isInteger(startGen)) {
+          if (Number.isInteger(startGen) || startEpoch !== null) {
             if (startPauseMs) await new Promise((r) => setTimeout(r, startPauseMs));
             // A Stop / End all confirmed since this start began wins: the start is not sent.
-            if ((await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
+            if (startEpoch !== stopEpoch) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
+            if (Number.isInteger(startGen) && (await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
           }
           const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
           let out;
-          try { out = await callHost(p.method, p.params); } catch (e) { ht?.fail('Did not finish'); throw e; }
+          try { out = await callHost(p.method, callParams); } catch (e) { ht?.fail('Did not finish'); throw e; }
           ht?.done();
-          if (Number.isInteger(startGen) && !(await authority.arm(startGen))) {
+          if ((startEpoch !== null && startEpoch !== stopEpoch) || (Number.isInteger(startGen) && !(await authority.arm(startGen)))) {
             // A Stop / End all came in while this start was on its way to the host (after the check above): the newer
             // stop wins, so the streams this start turned on are stopped again at once.
             // Tried STOP_AGAIN_WAITS.length + 1 times; if every try fails the streams may still be live: a loud error.
@@ -1161,7 +1443,7 @@ export function createStudioServer(opts) {
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
           } finally { if (starting) { startsInFlight -= 1; lastStartAt = now(); } }
         }
-        if (p.kind === 'end-all') { if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
+        if (p.kind === 'end-all') { stopEpoch += 1; if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });
         return json(res, 200, await handleCoreOutcome(r, p.summary));
       } catch (e) { return json(res, 502, { error: 'backend-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
@@ -1285,12 +1567,14 @@ export function createStudioServer(opts) {
           origin = `http://${LOOPBACK}:${p}`; hostHeader = `${LOOPBACK}:${p}`;
           pollTimer = setInterval(tick, limits.statusPollMs); pollTimer.unref();
           tick();
+          if (opts.watchData !== false) startDataWatch();
           resolve({ port: p, origin });
         });
       });
     },
     async close() {
       clearInterval(pollTimer);
+      stopDataWatch?.(); stopDataWatch = null;
       projectSync?.flush(); // write a pending layer edit now rather than lose it
       for (const c of sseClients) c.write(': bye\n\n');
       server.closeAllConnections?.();

@@ -23,10 +23,12 @@
 #include "json.h"
 #include "model.h"
 #include "preview_edit.h"
+#include "transition_ease.h"
 
 #include <obs.h>
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -69,9 +71,13 @@ public:
 	// type cut | fade (ms = duration) | stinger (file = pathRef {base, rel} of a video, resolved with the last load's
 	// bases; point_ms = when the scene changes under it; the stinger's own length is the duration; D242; audio = its own
 	// sound in the canvas mix, D244).
+	// easing (D327 TR1): a curve id of transition_ease.h for a fade ("linear" = the plain libobs fade).
 	json::Value transition_set(const std::string &canvas, const std::string &type, int64_t ms, const json::Value *file = nullptr,
-				   int64_t point_ms = 0, bool audio = true);
+				   int64_t point_ms = 0, bool audio = true, const std::string &easing = "linear");
 	json::Value transitions() const;
+	// transitions.forceComplete (D327 TR1): a running fade or stinger on that canvas jumps to its end scene now.
+	// { canvas, completed } (completed false when nothing was running).
+	json::Value transition_force_complete(const std::string &canvas);
 
 	json::Value layers_list(const std::string &scene, const std::string &canvas) const;
 	json::Value layer_add(const std::string &scene, const std::string &canvas, const json::Value &layer, int64_t index);
@@ -151,6 +157,38 @@ public:
 
 	static std::string norm_canvas(const std::string &c); // "h" -> "H"; "" if not H/V
 
+	// ---- device hot-plug (D329; device_watch.h) ----
+	// The device list every project build and the watcher use: the --test-hooks fake list when one is set
+	// (devices.testSet), else devices::enumerate() with --allow-devices, else nothing (has = false; D38).
+	devices::List list_devices(bool &has) const;
+	// --test-hooks: replaces the device list with `l` (nullptr: back to the real one). Capture layers are then built on
+	// ujw_test_capture and allowed without --allow-devices.
+	void set_test_devices(const devices::List *l);
+	bool test_devices() const;
+	// After a device list change: true if some bound capture source's device is no longer listed (the watcher then
+	// lists again after a short pause before it acts, so a glitch in one listing never unbinds a working source).
+	bool device_loss_pending(const devices::List &l);
+	// Reconciles every capture source with the list (devices::reconcile): binds waiting sources whose device arrived
+	// (obs_source_update with the new video_device_id; only that source re-activates), marks sources whose device left
+	// as waiting (their last frame is cleared; the device graph and every encoder and output are left alone). Bumps the
+	// device seq. `removed`: interface paths the watcher saw leave since the last pass (a bound source whose device is
+	// one of them is reactivated even when it is listed again, devices.h reconcile).
+	// Codex review fix: a bind (or a build with a device) is only an attempt. The source is "connecting" until it
+	// delivers a frame (its last frame is cleared before each attempt, so a picture means a new frame). Without a
+	// frame after kConnectDelaysMs[attempt - 1] the same source is updated again (re-activation), with backoff, at
+	// most kConnectAttempts times; then it stays "connecting" with a message until the device is plugged in again.
+	// Encoders and outputs are never touched.
+	// Returns {seq, changes:[{layer, device, action: bound | lost | retry, matchedBy?, attempt?, message?}]}.
+	// `event` false (a connect check, no device event): the seq moves only when a source changed state.
+	json::Value devices_changed(const devices::List &l, const char *why, const std::vector<std::string> &removed = {},
+				    bool event = true);
+	// host.status "devices": {seq, listed, waiting:[{layer, device, message}], connecting:[{layer, device, attempt,
+	// message?}], connected:{deviceId: bool}} (no listing).
+	json::Value devices_status() const;
+	// Where connect checks are asked for (the device watcher's check_after; null: none).
+	void set_check_scheduler(std::function<void(uint32_t)> f);
+	static constexpr uint32_t kConnectAttempts = 5;
+
 private:
 	struct Meter;
 	struct Src { // one libobs source; shared by every item that shows it (H, V, duplicates)
@@ -160,6 +198,16 @@ private:
 		std::string audio_id; // project audio source id bound to it
 		std::string audio_name; // its project name ("Mic", "Game"): the mixer row name
 		uint64_t created_ns = 0; // os_gettime_ns at wrap (start-up grace for the audio watchdog)
+		// Capture layers (D329): the project device id, the win-dshow id the source was given, and whether it waits for
+		// its device (built without one, or the device was unplugged). Guarded by the studio mutex.
+		std::string device, bound_id, problem, matched_by;
+		bool waiting = false;
+		uint32_t binds = 0; // device binds after the build (arrivals)
+		// Bound but no frame seen since the last activation attempt (Codex review fix): attempts made, and when the
+		// last one was made (os_gettime_ns).
+		bool connecting = false;
+		uint32_t attempts = 0;
+		uint64_t attempt_ns = 0;
 		~Src();
 	};
 	struct Layer {
@@ -193,6 +241,7 @@ private:
 		obs_source_t *routed = nullptr; // the transition on channel 0
 		std::string tr_type = "cut";
 		uint32_t tr_ms = 0;
+		std::string tr_ease = "linear"; // fade easing curve (D327 TR1)
 		std::string st_ref; // "base:rel" of the stinger file
 		uint32_t st_point = 0;
 		bool st_audio = true; // the stinger's own sound in the canvas mix (Meld "audio" switch)
@@ -206,6 +255,24 @@ private:
 	};
 
 	Flags flags_;
+	mutable std::mutex dev_m_;      // the device list state below (never held while calling into libobs)
+	bool test_list_on_ = false;
+	devices::List test_list_;
+	mutable devices::List last_list_; // newest list seen (a build or a watcher pass); host.status reads it
+	mutable bool have_list_ = false;
+	std::atomic<uint64_t> dev_seq_{0};
+	std::function<void(uint32_t)> check_; // guarded by dev_m_
+	// Connect attempts (studio mutex held): counts one more attempt on `s`; with `update`, clears its last frame and
+	// re-activates it (obs_source_update with video_device_id = obs_id); without, notes the build-time activation.
+	void connect_attempt(Src &s, const std::string &obs_id, bool update);
+	// Connect checks (studio mutex held): retries sources that are still without a frame; returns the retries as
+	// changes and asks the scheduler for the next check.
+	bool connect_checks(json::Value &changes, const char *why); // true: a source got a frame or was retried
+	void schedule_connect_check();
+	static bool has_frame(const Src &s);
+	void note_list(const devices::List &l) const;
+	std::vector<std::shared_ptr<Src>> capture_srcs() const;
+	const json::Value *model_device(const std::string &id) const;
 	AudioHealthCfg health_;
 	std::vector<std::shared_ptr<Src>> parked_; // replaced device audio sources (released in ~Studio only)
 	std::vector<json::Value> audio_events_;    // newest last, at most kAudioEvents
@@ -215,6 +282,7 @@ private:
 	std::string audio_state(const Global &g, uint64_t now, int64_t &last_ms) const;
 	bool parked_full() const { return health_.max_parked && parked_.size() >= health_.max_parked; }
 	mutable std::recursive_mutex m_;
+	std::unique_ptr<ease::Easer> easer_; // created at the first eased fade; reset in teardown (before the transitions go)
 	std::vector<Canvas> canvases_;
 	std::vector<Scene> scenes_;
 	std::vector<Global> globals_;

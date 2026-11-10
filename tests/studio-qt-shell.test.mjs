@@ -357,9 +357,9 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.flagsInSettings, false, 'hidden until Settings > Advanced borrows it');
     assert.ok(p.flags.length > 5, 'still loaded: the list follows the server');
   });
-  test('Settings (D290, D294): sections Clips, Folders, Layer effects, Appearance, Advanced; the layer-effects item and animations choice are there', async () => {
+  test('Settings (D290, D294): sections Clips, Folders, Layer effects, Appearance, Connections (D327), Help & tips, Advanced; the layer-effects item and animations choice are there', async () => {
     const p = await probe([], 6000, 'settings-open');
-    assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Appearance', 'Help & tips', 'Advanced']);
+    assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Appearance', 'Connections', 'Help & tips', 'Advanced']);
     assert.equal(p.settings.layerEffects, false);
     assert.equal(p.settings.layerEffectsText, 'Show layer effects from the scene (rounded corners, shadows, video buttons)');
     assert.equal(p.settings.motionChoices, 3, 'Follow Windows / Always on / Off');
@@ -367,7 +367,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.flagsInSettings, true, 'the feature flags list sits in Settings > Advanced');
   });
   test('Settings > Advanced (2026-11-10 offset bug): with the window shown, the flag list has no native handle and sits inside its box, also on a second open', async () => {
-    const p = await probe([], 8000, 'settings-open,settings-page:5,settings-cancel,settings-open,settings-page:5', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    const p = await probe([], 8000, 'settings-open,settings-page:6,settings-cancel,settings-open,settings-page:6', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     const f = p.settings.flagList;
     assert.ok(f, 'the Advanced page reports the flag list');
@@ -378,13 +378,13 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual([f.scrollX, f.scrollY], [0, 0]);
   });
   test('Settings deleted without closing (no finished signal): the flag list survives, refreshes and can be shown again', async () => {
-    const p = await probe([], 9000, 'settings-open,settings-page:5,settings-destroy,settings-open,settings-page:5', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    const p = await probe([], 9000, 'settings-open,settings-page:6,settings-destroy,settings-open,settings-page:6', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.ok(p.flags.length > 0, 'the borrowed list was taken back before the dialog deleted it');
     assert.equal(p.settings.flagList?.insideBox, true);
   });
   test('the app quits cleanly (exit 0) while Settings > Advanced is open', async () => {
-    const p = await probe([], 6000, 'settings-open,settings-page:5', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    const p = await probe([], 6000, 'settings-open,settings-page:6', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.equal(p.flagsInSettings, true, 'Settings was still open at quit');
   });

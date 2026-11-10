@@ -156,6 +156,11 @@ async function checkHost(ctx) {
 
 async function checkCredentials(ctx) {
   const problems = []; const warns = []; const okNames = [];
+  // Platform sign-in (D327, flag platform-connect): keys are set in the studio; an expired sign-in is a warning only
+  // (the stored key keeps working). Without it, the fix is the credential command.
+  const conn = typeof ctx.connect === 'function' ? ctx.connect() : null;
+  const fix = conn?.fix ?? 'node services/event-core/cli.mjs credential set --target <the output\'s target>';
+  if (conn) { try { warns.push(...(await conn.warnings()).map((w) => String(w).slice(0, 200))); } catch { /* status unreadable: the key checks below still run */ } }
   const live = ctx.streamSinks.filter((s) => s.target === 'live');
   if (live.length) {
     for (const s of live) {
@@ -178,8 +183,8 @@ async function checkCredentials(ctx) {
       }
       okNames.push(label);
     }
-    if (problems.length) return item('credentials', 'fail', problems.concat(warns).join('. ') + '.', { fix: 'node services/event-core/cli.mjs credential set --target <the output\'s target>' });
-    if (warns.length) return item('credentials', 'warn', warns.join('. ') + '.');
+    if (problems.length) return item('credentials', 'fail', problems.concat(warns).join('. ') + '.', { fix });
+    if (warns.length) return item('credentials', 'warn', warns.join('. ') + '.', conn ? { fix } : undefined);
     return item('credentials', 'pass', `Keys present for ${okNames.join(', ')}${live.some((s) => s.urlRef) ? '; server addresses use the right scheme' : ''}.`);
   }
   // Not live-configured: check the live plan's targets directly (presence only), so keys can be fixed before a --live start.
@@ -204,7 +209,7 @@ async function checkCredentials(ctx) {
     } catch { warns.push(`${label}: could not be read from Windows Credential Manager`); }
   }
   const pre = 'Not started with --live, so these are the live plan\'s keys: ';
-  if (problems.length || warns.length) return item('credentials', 'warn', pre + problems.concat(warns).join('. ') + '.', { fix: 'node services/event-core/cli.mjs credential set --target <the output\'s target>' });
+  if (problems.length || warns.length) return item('credentials', 'warn', pre + problems.concat(warns).join('. ') + '.', { fix });
   return item('credentials', 'pass', `${pre}all present (${okNames.join(', ')}).`);
 }
 

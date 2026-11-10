@@ -13,9 +13,33 @@
     "game": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
     "decision": { "type": "string" },
     "user": { "type": "string" },
-    "rules": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/rule" } }
+    "rules": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/rule" } },
+    "impactPlay": { "$ref": "#/$defs/impactPlay" }
   },
   "$defs": {
+    "impactPlay": {
+      "type": "object",
+      "description": "Impact-play reel (D326): one separate reel per match whose impact-play screen belongs to the streamer, from the MVP animation after the match-end banner to the results page. Evaluated by services/clip/clip_montage.py impact_play_reels(); made only while `flag` is on.",
+      "required": ["id", "label", "status", "flag", "detector", "maxBannerLeadSec", "fallbackLeadSec", "resultsAfterSec", "endHoldSec", "minSec", "maxSec"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+        "label": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["approved", "unverified"] },
+        "user": { "type": "string" },
+        "decision": { "type": "string" },
+        "flag": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Feature flag id in data/flags.json." },
+        "detector": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$", "description": "The impact-play screen detector; a signalled hit (profile name on it) marks the streamer's impact play." },
+        "resultsDetector": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$", "description": "The results-page detector; the reel ends after its last signalled hit." },
+        "maxBannerLeadSec": { "type": "number", "minimum": 0 },
+        "fallbackLeadSec": { "type": "number", "minimum": 0 },
+        "resultsAfterSec": { "type": "number", "minimum": 0 },
+        "endHoldSec": { "type": "number", "minimum": 0 },
+        "minSec": { "type": "number", "minimum": 0 },
+        "maxSec": { "type": "number", "exclusiveMinimum": 0 },
+        "note": { "type": "string" }
+      }
+    },
     "rule": {
       "type": "object",
       "required": ["id", "label", "when", "status"],
@@ -35,6 +59,7 @@
             "roundKillsAtLeast": { "type": "integer", "minimum": 1 }
           }
         },
+        "pieces": { "enum": ["match", "qualifying-rounds"], "description": "D326: what the reel shows when this rule is the only kind that passes. match (default): every own kill of the match; qualifying-rounds: the own kills of the rounds that reach roundKillsAtLeast." },
         "status": { "enum": ["approved", "unverified"] },
         "note": { "type": "string" }
       }

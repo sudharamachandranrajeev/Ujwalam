@@ -51,6 +51,7 @@ class AddLayerDialog : public FadeDialog {
 	Q_OBJECT
 public:
 	AddLayerDialog(const QJsonObject &structure, const QString &sceneId, const QString &sceneName, QWidget *parent);
+	void setStructure(const QJsonObject &structure);
 	// Probe (tests): drive the real widgets.
 	bool probeKind(const QString &kind);
 	bool probeChoice(int row);
@@ -61,6 +62,7 @@ signals:
 	void chosen(const QJsonObject &body);
 private:
 	void send();
+	void fillChoices(const QString &keep);
 	QJsonObject structure_;
 	QString scene_;
 	QListWidget *kinds_, *choices_;

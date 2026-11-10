@@ -12,7 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 export const STUDIO_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const REPO_ROOT = path.resolve(STUDIO_DIR, '..', '..');
-export const BUILD_DIR = path.join(REPO_ROOT, 'out', 'studio', 'build');
+// UJWALAM_STUDIO_BUILD: another build folder (a worktree build that must not replace the main checkout's).
+export const BUILD_DIR = process.env.UJWALAM_STUDIO_BUILD ? path.resolve(process.env.UJWALAM_STUDIO_BUILD) : path.join(REPO_ROOT, 'out', 'studio', 'build');
 export const EXE = path.join(BUILD_DIR, 'ujwalam-studio.exe');
 // The windowless start stub the shortcuts run (src/start_stub.cpp; built by the same cmake project).
 export const START_EXE = path.join(BUILD_DIR, 'ujwalam-start.exe');

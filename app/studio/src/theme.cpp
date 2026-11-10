@@ -9,6 +9,11 @@
 #include <QAbstractButton>
 #include <QApplication>
 #include <QCoreApplication>
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QFileInfo>
+#include <QFileSystemWatcher>
+#include <QTimer>
 #include <QDir>
 #include <QFile>
 #include <QFont>
@@ -260,6 +265,47 @@ const Data &defaultData()
 	return d;
 }
 
+// ---- LU2: live reload of the current pack (D324) ----
+QFileSystemWatcher *g_watch = nullptr;
+QTimer *g_reloadTimer = nullptr;
+QByteArray g_fileHash; // content hash of the pack file the current look came from (empty: embedded)
+int g_reloads = 0, g_rejects = 0;
+QString g_lastReject;
+
+QString packFile(const QString &id)
+{
+	if (!validId(id))
+		return {};
+	for (const QString &dir : searchDirs()) {
+		const QString p = dir + QLatin1Char('/') + id + QStringLiteral(".json");
+		if (QFile::exists(p))
+			return p;
+	}
+	return {};
+}
+
+QByteArray readBytes(const QString &path, bool *ok)
+{
+	QFile f(path);
+	*ok = f.open(QIODevice::ReadOnly);
+	return *ok ? f.readAll() : QByteArray();
+}
+
+QByteArray hashOf(const QByteArray &b)
+{
+	return QCryptographicHash::hash(b, QCryptographicHash::Sha256);
+}
+
+void rememberFile(const QString &id)
+{
+	const QString p = packFile(id);
+	bool ok = false;
+	const QByteArray b = p.isEmpty() ? QByteArray() : readBytes(p, &ok);
+	g_fileHash = ok ? hashOf(b) : QByteArray();
+	if (g_watch && ok && !g_watch->files().contains(p))
+		g_watch->addPath(p);
+}
+
 Data load(const QString &id)
 {
 	bool custom = false;
@@ -501,6 +547,67 @@ void refreshIcons()
 	}
 }
 
+void applyAll(QApplication &app);
+
+// The current pack's file changed (or a file appeared in a theme folder): apply a valid new version, keep the look
+// on an invalid one. A file that fails to parse less than 300 ms after it was written is retried (still being saved).
+void reloadCurrent()
+{
+	if (!g_cur.valid)
+		return;
+	const QString p = packFile(g_cur.id);
+	if (p.isEmpty())
+		return; // embedded pack only, or the file is between delete and rename: the next event retries
+	if (g_watch && !g_watch->files().contains(p))
+		g_watch->addPath(p); // a save through rename replaced the watched file
+	bool ok = false;
+	const QByteArray b = readBytes(p, &ok);
+	if (!ok)
+		return;
+	const QByteArray h = hashOf(b);
+	if (h == g_fileHash)
+		return;
+	const QString why = packProblem(b, g_cur.id);
+	if (!why.isEmpty()) {
+		const qint64 age = QFileInfo(p).lastModified().msecsTo(QDateTime::currentDateTime());
+		if (age >= 0 && age < 300) {
+			g_reloadTimer->start(300);
+			return;
+		}
+		g_fileHash = h; // reported once per version of the file
+		g_rejects++;
+		g_lastReject = why;
+		qWarning("theme: %s.json not applied, the last good look stays: %s", qPrintable(g_cur.id), qPrintable(why));
+		emit notifier()->rejected(QStringLiteral("Theme not applied: the file has a problem"),
+					  QStringLiteral("%1.json: %2. The last good look stays.").arg(g_cur.id, why));
+		return;
+	}
+	Data d = load(g_cur.id);
+	if (!d.valid)
+		return;
+	g_fileHash = h;
+	g_cur = d;
+	g_reloads++;
+	qInfo("theme: %s.json changed on disk; applied", qPrintable(g_cur.id));
+	applyAll(*qobject_cast<QApplication *>(QCoreApplication::instance()));
+}
+
+void startWatch()
+{
+	if (g_watch)
+		return;
+	g_watch = new QFileSystemWatcher(qApp);
+	g_reloadTimer = new QTimer(qApp);
+	g_reloadTimer->setSingleShot(true);
+	QObject::connect(g_reloadTimer, &QTimer::timeout, qApp, []() { reloadCurrent(); });
+	const auto kick = [](const QString &) { g_reloadTimer->start(200); };
+	QObject::connect(g_watch, &QFileSystemWatcher::fileChanged, qApp, kick);
+	QObject::connect(g_watch, &QFileSystemWatcher::directoryChanged, qApp, kick);
+	for (const QString &dir : searchDirs())
+		if (QDir(dir).exists())
+			g_watch->addPath(dir);
+}
+
 void applyAll(QApplication &app)
 {
 	applyPalette(app, g_cur);
@@ -540,6 +647,33 @@ void apply(QApplication &app)
 	applyPalette(app, g_cur);
 	applyFont(app, g_cur);
 	app.setStyleSheet(buildQss(g_cur));
+	startWatch();
+	rememberFile(g_cur.id);
+}
+
+QString packProblem(const QByteArray &bytes, const QString &id)
+{
+	QJsonParseError err;
+	const QJsonDocument doc = QJsonDocument::fromJson(bytes, &err);
+	if (err.error != QJsonParseError::NoError)
+		return QStringLiteral("not valid JSON (at character %1)").arg(err.offset);
+	if (!doc.isObject())
+		return QStringLiteral("not a JSON object");
+	const QJsonObject o = doc.object();
+	if (o.value(QStringLiteral("id")).toString() != id)
+		return QStringLiteral("its id must be %1").arg(id);
+	// The parts the schema (data/themes/theme.schema.json) requires.
+	for (const char *k : {"name", "topic", "version", "dark", "colors", "typography", "geometry", "depth", "motion", "background", "icons"})
+		if (!o.contains(QLatin1String(k)))
+			return QStringLiteral("%1 is missing").arg(QLatin1String(k));
+	if (!o.value(QStringLiteral("colors")).isObject())
+		return QStringLiteral("colors must be an object");
+	static const QRegularExpression hex(QStringLiteral("^#[0-9a-fA-F]{6}$"));
+	const QJsonObject c = o.value(QStringLiteral("colors")).toObject();
+	for (const QString &k : kColorKeys)
+		if (!hex.match(c.value(k).toString()).hasMatch())
+			return QStringLiteral("colors.%1 must be a colour like #1a2b3c").arg(k);
+	return {};
 }
 
 bool setCurrent(const QString &id)
@@ -550,6 +684,7 @@ bool setCurrent(const QString &id)
 	if (!d.valid)
 		return false;
 	g_cur = d;
+	rememberFile(id);
 	applyAll(*qobject_cast<QApplication *>(QCoreApplication::instance()));
 	return true;
 }
@@ -762,6 +897,10 @@ QJsonObject probe()
 	for (const Info &i : available())
 		ids.append(i.id);
 	o.insert(QStringLiteral("available"), ids);
+	o.insert(QStringLiteral("accent"), g_cur.colors.value(QStringLiteral("accent")).name());
+	o.insert(QStringLiteral("reloads"), g_reloads); // LU2: applied changes of the pack file
+	o.insert(QStringLiteral("rejects"), g_rejects); // LU2: invalid versions kept out
+	o.insert(QStringLiteral("lastReject"), g_lastReject);
 	return o;
 }
 

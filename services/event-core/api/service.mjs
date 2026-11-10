@@ -22,12 +22,15 @@ import { createServiceExecutor } from './executor.mjs';
 import { publishApiFile, publishSystemFile, tokensFromEnv } from './discovery.mjs';
 import { createSystemPipeServer } from './pipe.mjs';
 import path from 'node:path';
+import { rmSync, writeFileSync } from 'node:fs';
+import { chooseLanBind } from '../../common/lan-remote.mjs';
 import { createStallTracer } from '../diag/stall-tracer.mjs';
 import { createFlags } from '../../flags/index.mjs';
 import { createAudienceCounters } from '../counters.mjs';
 import { createHostLink, createLiveMarkers, loadLiveMarkerConfig } from '../live-markers.mjs';
 
 export const STALL_FILE = 'stalls.jsonl';
+export const REMOTE_FILE = 'remote.json'; // { address, port, prefixLen } of the LAN listener while it runs; no token
 export const STALL_DEFAULTS = Object.freeze({ thresholdMs: 200, maxBytes: 1_048_576 });
 
 /** Audit numbers for a stall record: queue depths, the last write and request. Numbers and op names only. */
@@ -69,7 +72,8 @@ function startLiveMarkers({ core, dataDir, opts, out }) {
 /** opts: { dataDir?, port?, systemPipe? (false = no system pipe), mock?, url?, allowRemote? (E8-15: ws:// to a non-loopback host), credential?, noFixtures?, noStreamerbot?, env?, limits?, chatIntervalMs?, seed?, out?(line),
  *          stallTracer?: false | { thresholdMs?, maxBytes?, tickMs?, watchdog? }, core?: createEventCore overrides,
  *          hostToken?, hostDiscovery?, liveMarkers?: false | { host?, flags? },
- *          counters?: false | { flags?, config? } (test seams) } */
+ *          counters?: false | { flags?, config? } (test seams),
+ *          remote?: { token (64 hex), address? (preferred LAN address), port? (0 = random), interfaces? (test seam) } } */
 export async function startService(opts = {}) {
   const out = opts.out ?? (() => {});
   if (opts.url !== undefined) checkUrl(opts.url, { allowRemote: opts.allowRemote === true }); // before anything starts
@@ -126,6 +130,30 @@ export async function startService(opts = {}) {
     }
   }
 
+  // LAN listener (D327 IN1, "Allow remote connections"): only when opts.remote is given (the launcher passes it only
+  // when the user turned the setting on and the 'integrations' flag is on). Default: none. No private IPv4 address on
+  // this machine, or any bind failure: a log line and no listener (never a wider bind).
+  let remoteApi = null;
+  let remoteInfo = null;
+  if (opts.remote) {
+    const bind = chooseLanBind({ preferred: opts.remote.address, interfaces: opts.remote.interfaces });
+    if (!bind) out('[serve] remote connections: off (no private LAN address on this machine)');
+    else {
+      const r = createApiServer({ core, remote: { bind, token: opts.remote.token }, port: opts.remote.port ?? 0, limits: opts.limits, status: () => ({}) });
+      try {
+        const a = await r.listen();
+        remoteApi = r;
+        remoteInfo = { address: a.host, port: a.port, prefixLen: bind.prefixLen };
+        writeFileSync(path.join(dataDir, REMOTE_FILE), JSON.stringify(remoteInfo)); // address and port only, never the token
+        out(`[serve] remote connections: listening on ${a.host}:${a.port} (same subnet /${bind.prefixLen} only, pairing token)`);
+        core.audit.recordSystem({ subtype: 'remote-start', source: 'system', verdict: 'ok', detail: { prefixLen: bind.prefixLen } });
+      } catch (e) {
+        await r.close();
+        out(`[serve] warn: remote connections not started (${e?.code ?? 'error'})`);
+      }
+    }
+  }
+
   let mockSb = null;
   let chatTimer = null;
   if (opts.noStreamerbot !== true) {
@@ -161,7 +189,7 @@ export async function startService(opts = {}) {
   let stopped = false;
   return {
     core, api, tokens, dataDir, port: addr.port, apiFile: file, dataDirProtection, dataDirCreated: created,
-    systemPipe: pipe, systemFile: sysFile,
+    systemPipe: pipe, systemFile: sysFile, remoteApi, remote: remoteInfo,
     mockStreamerbot: mockSb, streamerbot: () => sb, liveMarkers, counters, stallTracer: tracer, stallFile: tracer ? path.join(dataDir, STALL_FILE) : null,
     async stop() {
       if (stopped) return;
@@ -174,6 +202,7 @@ export async function startService(opts = {}) {
       core.audit.recordSystem({ subtype: 'api-stop', source: 'api', verdict: 'ok' });
       await pipe?.close();
       sysFile?.remove();
+      if (remoteApi) { await remoteApi.close(); rmSync(path.join(dataDir, REMOTE_FILE), { force: true }); }
       await api.close();
       file.remove();
       await core.audit.close();

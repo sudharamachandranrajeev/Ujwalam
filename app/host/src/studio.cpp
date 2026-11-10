@@ -254,9 +254,20 @@ void Studio::set_channel(Canvas &c, Scene *s, bool animate)
 	obs_source_t *want = c.tr_type == "stinger" && c.st ? c.st : c.tr;
 	swap_to(c.id, c.vc, c.routed, want);
 	bool change = animate && src && !c.active.empty() && (!s || c.active != s->id);
+	if (easer_)
+		easer_->end(c.id); // a new switch (or a cut) takes over from a running eased fade
 	if (change && want == c.st) {
 		if (!obs_transition_start(c.st, OBS_TRANSITION_MODE_AUTO, 0, src))
 			obs_transition_set(c.st, src);
+	} else if (change && c.tr_type == "fade" && c.tr_ms > 0 && c.tr_ease != "linear") {
+		// D327 TR1: eased fade = manual mode driven by the easer's tick callback (transition_ease.h).
+		if (obs_transition_start(c.tr, OBS_TRANSITION_MODE_MANUAL, c.tr_ms, src)) {
+			if (!easer_)
+				easer_ = std::make_unique<ease::Easer>();
+			easer_->begin(c.id, c.tr, c.tr_ms, c.tr_ease);
+		} else {
+			obs_transition_set(c.tr, src);
+		}
 	} else if (change && c.tr_type == "fade" && c.tr_ms > 0) {
 		if (!obs_transition_start(c.tr, OBS_TRANSITION_MODE_AUTO, c.tr_ms, src))
 			obs_transition_set(c.tr, src);
@@ -267,11 +278,15 @@ void Studio::set_channel(Canvas &c, Scene *s, bool animate)
 }
 
 json::Value Studio::transition_set(const std::string &cv, const std::string &type, int64_t ms, const json::Value *file,
-				   int64_t point_ms, bool audio)
+				   int64_t point_ms, bool audio, const std::string &easing)
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);
 	if (type != "cut" && type != "fade" && type != "stinger")
 		throw Error(rpc::INVALID_PARAMS, "type must be cut, fade or stinger");
+	if (!ease::known(easing))
+		throw Error(rpc::INVALID_PARAMS, "unknown easing curve");
+	if (easing != "linear" && type != "fade")
+		throw Error(rpc::INVALID_PARAMS, "easing is for a fade only");
 	Canvas *c = canvas(norm_canvas(cv));
 	if (!c)
 		throw Error(rpc::INVALID_PARAMS, "unknown canvas");
@@ -310,6 +325,7 @@ json::Value Studio::transition_set(const std::string &cv, const std::string &typ
 		c->tr_ms = type == "fade" ? (uint32_t)ms : 0;
 	}
 	c->tr_type = type;
+	c->tr_ease = easing;
 	if (c->tr && c->routed) { // put the right transition on the channel now, showing the same scene
 		Scene *cur = c->active.empty() ? nullptr : scene(c->active, c->id);
 		set_channel(*c, cur, false);
@@ -321,8 +337,34 @@ json::Value Studio::transition_set(const std::string &cv, const std::string &typ
 		c->st_point = 0;
 		c->st_audio = true;
 	}
-	hlog::info("transition %s: %s %u ms", c->id.c_str(), c->tr_type.c_str(), type == "stinger" ? c->st_point : c->tr_ms);
+	hlog::info("transition %s: %s %u ms %s", c->id.c_str(), c->tr_type.c_str(), type == "stinger" ? c->st_point : c->tr_ms, c->tr_ease.c_str());
 	return transitions();
+}
+
+json::Value Studio::transition_force_complete(const std::string &cv)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	Canvas *c = canvas(norm_canvas(cv));
+	if (!c)
+		throw Error(rpc::INVALID_PARAMS, "unknown canvas");
+	if (easer_)
+		easer_->end(c->id);
+	bool completed = false;
+	// The transition on the channel: while it runs, source B is the scene it goes to; set() makes that the shown scene
+	// at once and ends the transition (the OBS frontend does the same for a stuck transition).
+	if (c->routed && (c->routed == c->tr || c->routed == c->st)) { // a plain scene on the channel has nothing to end
+		obs_source_t *dst = obs_transition_get_source(c->routed, OBS_TRANSITION_SOURCE_B);
+		if (dst) {
+			obs_transition_set(c->routed, dst);
+			obs_source_release(dst);
+			completed = true;
+		}
+	}
+	hlog::info("transition %s: force complete (%s)", c->id.c_str(), completed ? "was running" : "nothing running");
+	json::Value r = json::Value::object();
+	r.set("canvas", c->id);
+	r.set("completed", completed);
+	return r;
 }
 
 json::Value Studio::transitions() const
@@ -333,6 +375,8 @@ json::Value Studio::transitions() const
 		json::Value o = json::Value::object();
 		o.set("type", c.tr_type);
 		o.set("durationMs", (int64_t)c.tr_ms);
+		if (c.tr_type == "fade" && c.tr_ease != "linear")
+			o.set("easing", c.tr_ease);
 		if (c.tr_type == "stinger") {
 			o.set("file", c.st_ref);
 			o.set("pointMs", (int64_t)c.st_point);
@@ -424,6 +468,7 @@ void Studio::teardown()
 {
 	std::lock_guard<std::recursive_mutex> l(m_);
 	drop_relay();
+	easer_.reset(); // the tick callback goes before the transitions it drives
 	for (auto &c : canvases_) {
 		set_channel(c, nullptr);
 		if (c.tr || c.st) { // off the output before the release, then the transitions drop their scene references
@@ -874,12 +919,283 @@ model::Options Studio::model_options(const json::Value &doc, const LoadOptions &
 	mo.allow_browser = flags_.allow_browser;
 	mo.browser_urls = o.browser_urls;
 	mo.overlay_port = o.overlay_port;
+	mo.test_capture = test_devices();
 	const json::Value *d = doc.find("devices");
-	if (list_devices && d && d->is_array() && d->size() > 0) {
-		list = devices::enumerate(); // list-only (see devices.h)
-		mo.devices = &list;
+	if ((list_devices || mo.test_capture) && d && d->is_array() && d->size() > 0) {
+		bool has = false;
+		list = this->list_devices(has); // the parameter list_devices is the bool above
+		if (has)
+			mo.devices = &list;
 	}
 	return mo;
+}
+
+// ---- device hot-plug (D329) ----
+
+devices::List Studio::list_devices(bool &has) const
+{
+	{
+		std::lock_guard<std::mutex> lk(dev_m_);
+		if (test_list_on_) {
+			has = true;
+			last_list_ = test_list_;
+			have_list_ = true;
+			return test_list_;
+		}
+	}
+	has = flags_.allow_devices;
+	if (!has)
+		return {};
+	devices::List l = devices::enumerate(); // list-only (see devices.h)
+	note_list(l);
+	return l;
+}
+
+void Studio::note_list(const devices::List &l) const
+{
+	std::lock_guard<std::mutex> lk(dev_m_);
+	last_list_ = l;
+	have_list_ = true;
+}
+
+void Studio::set_test_devices(const devices::List *l)
+{
+	std::lock_guard<std::mutex> lk(dev_m_);
+	test_list_on_ = l != nullptr;
+	test_list_ = l ? *l : devices::List{};
+}
+
+bool Studio::test_devices() const
+{
+	std::lock_guard<std::mutex> lk(dev_m_);
+	return test_list_on_;
+}
+
+const json::Value *Studio::model_device(const std::string &id) const
+{
+	const json::Value *ds = format_ == "project-v1" ? model_doc_.find("devices") : nullptr;
+	if (!ds || !ds->is_array())
+		return nullptr;
+	for (auto &d : ds->as_array())
+		if (const json::Value *i = d.find("id"); i && i->is_string() && i->as_string() == id)
+			return &d;
+	return nullptr;
+}
+
+// Every capture source the scenes show, once (H, V and duplicates share one).
+std::vector<std::shared_ptr<Studio::Src>> Studio::capture_srcs() const
+{
+	std::vector<std::shared_ptr<Src>> out;
+	for (auto &s : scenes_)
+		for (auto &l : s.layers)
+			if (l.src && !l.src->device.empty() && std::find(out.begin(), out.end(), l.src) == out.end())
+				out.push_back(l.src);
+	return out;
+}
+
+bool Studio::device_loss_pending(const devices::List &l)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	for (auto &s : capture_srcs()) {
+		const json::Value *spec = model_device(s->device);
+		if (!spec)
+			continue;
+		devices::Binding b{s->bound_id, s->waiting};
+		devices::Step st = devices::reconcile(*spec, b, l);
+		if (st.act == devices::Step::Lose)
+			return true;
+	}
+	return false;
+}
+
+// Seconds without a frame before attempt n + 1 (index n - 1); kConnectAttempts attempts in all.
+static constexpr uint32_t kConnectDelaysMs[Studio::kConnectAttempts] = {3000, 6000, 12000, 24000, 30000};
+
+void Studio::set_check_scheduler(std::function<void(uint32_t)> f)
+{
+	std::lock_guard<std::mutex> lk(dev_m_);
+	check_ = std::move(f);
+}
+
+bool Studio::has_frame(const Src &s)
+{
+	// The last frame is cleared before every attempt (obs_source_output_video(nullptr): no size until a new frame),
+	// so a size means this activation delivered a frame.
+	return s.src && obs_source_get_width(s.src) > 0;
+}
+
+void Studio::connect_attempt(Src &s, const std::string &obs_id, bool update)
+{
+	if (update) {
+		// Only this source re-activates (win-dshow queues the activation on its own thread); encoders, outputs
+		// and every other source are untouched.
+		obs_source_output_video(s.src, nullptr);
+		obs_data_t *d = obs_data_create();
+		obs_data_set_string(d, "video_device_id", obs_id.c_str());
+		obs_source_update(s.src, d);
+		obs_data_release(d);
+	}
+	s.connecting = true;
+	s.attempts++;
+	s.attempt_ns = os_gettime_ns();
+}
+
+void Studio::schedule_connect_check()
+{
+	uint64_t now = os_gettime_ns(), next = 0;
+	for (auto &s : capture_srcs()) {
+		if (s->waiting || !s->connecting || s->attempts == 0 || s->attempts > kConnectAttempts)
+			continue;
+		uint64_t due = s->attempt_ns + (uint64_t)kConnectDelaysMs[s->attempts - 1] * 1000000ull;
+		uint64_t in = due > now ? due - now : 0;
+		if (next == 0 || in < next)
+			next = in == 0 ? 1 : in;
+	}
+	if (next == 0)
+		return;
+	std::lock_guard<std::mutex> lk(dev_m_);
+	if (check_)
+		check_((uint32_t)std::min<uint64_t>(next / 1000000ull + 50, 60000));
+}
+
+bool Studio::connect_checks(json::Value &changes, const char *why)
+{
+	uint64_t now = os_gettime_ns();
+	bool moved = false;
+	for (auto &s : capture_srcs()) {
+		if (s->waiting || !s->connecting)
+			continue;
+		if (has_frame(*s)) {
+			s->connecting = false;
+			s->attempts = 0;
+			moved = true;
+			continue;
+		}
+		if (s->attempts == 0 || s->attempts >= kConnectAttempts)
+			continue; // the last attempt failed: stay connecting with a message (a plug event starts over)
+		if (now < s->attempt_ns + (uint64_t)kConnectDelaysMs[s->attempts - 1] * 1000000ull)
+			continue;
+		connect_attempt(*s, s->bound_id, true);
+		json::Value c = json::Value::object();
+		c.set("layer", s->owner);
+		c.set("device", s->device);
+		c.set("action", "retry");
+		c.set("attempt", (uint64_t)s->attempts);
+		hlog::warn("devices (%s): layer %s: no picture from device %s yet; activation attempt %u", why,
+			   s->owner.c_str(), s->device.c_str(), s->attempts);
+		changes.push(std::move(c));
+		moved = true;
+	}
+	schedule_connect_check();
+	return moved;
+}
+
+json::Value Studio::devices_changed(const devices::List &l, const char *why, const std::vector<std::string> &removed, bool event)
+{
+	note_list(l);
+	json::Value changes = json::Value::array();
+	{
+		std::lock_guard<std::recursive_mutex> lk(m_);
+		for (auto &s : capture_srcs()) {
+			const json::Value *spec = model_device(s->device);
+			if (!spec)
+				continue;
+			devices::Binding b{s->bound_id, s->waiting};
+			devices::Step st = devices::reconcile(*spec, b, l, removed);
+			json::Value c = json::Value::object();
+			c.set("layer", s->owner);
+			c.set("device", s->device);
+			if (st.act == devices::Step::Bind) {
+				s->attempts = 0; // a device event starts the attempts over
+				connect_attempt(*s, st.obs_id, true);
+				s->bound_id = st.obs_id;
+				s->matched_by = st.matched_by;
+				s->waiting = false;
+				s->problem.clear();
+				s->binds++;
+				c.set("action", "bound");
+				c.set("matchedBy", st.matched_by);
+				hlog::info("devices (%s): layer %s bound to device %s (matched by %s)", why, s->owner.c_str(),
+					   s->device.c_str(), st.matched_by.c_str());
+			} else if (st.act == devices::Step::Lose) {
+				// The device left: waiting. The last frame is cleared (async video); the device graph is left to
+				// win-dshow, and a false alarm only costs one frame (the next frame paints again).
+				obs_source_output_video(s->src, nullptr);
+				s->waiting = true;
+				s->connecting = false;
+				s->attempts = 0;
+				s->problem = st.problem;
+				c.set("action", "lost");
+				c.set("message", devices::waiting_message(*spec, st.problem));
+				hlog::warn("devices (%s): layer %s lost device %s; waiting for it", why, s->owner.c_str(), s->device.c_str());
+			} else {
+				if (s->waiting)
+					s->problem = st.problem;
+				continue;
+			}
+			changes.push(std::move(c));
+		}
+		if (connect_checks(changes, why))
+			event = true; // a source got its picture, or was retried: the pages refresh its state
+	}
+	uint64_t seq = event || changes.size() ? ++dev_seq_ : dev_seq_.load();
+	json::Value r = json::Value::object();
+	r.set("seq", seq);
+	r.set("changes", std::move(changes));
+	return r;
+}
+
+json::Value Studio::devices_status() const
+{
+	json::Value r = json::Value::object();
+	r.set("seq", dev_seq_.load());
+	devices::List l;
+	bool have = false;
+	{
+		std::lock_guard<std::mutex> lk(dev_m_);
+		have = have_list_;
+		if (have)
+			l = last_list_;
+	}
+	r.set("listed", have);
+	json::Value waiting = json::Value::array(), connecting = json::Value::array();
+	json::Value connected = json::Value::object();
+	std::unique_lock<std::recursive_mutex> lk(m_, std::try_to_lock); // never wait on a load in host.status
+	if (lk.owns_lock()) {
+		for (auto &s : capture_srcs()) {
+			if (!s->waiting && s->connecting && !has_frame(*s)) {
+				const json::Value *spec = model_device(s->device);
+				json::Value w = json::Value::object();
+				w.set("layer", s->owner);
+				w.set("device", s->device);
+				w.set("attempt", (uint64_t)s->attempts);
+				if (s->attempts > 1 && spec)
+					w.set("message", devices::connecting_message(*spec, s->attempts >= kConnectAttempts));
+				connecting.push(std::move(w));
+				continue;
+			}
+			if (!s->waiting)
+				continue;
+			const json::Value *spec = model_device(s->device);
+			json::Value w = json::Value::object();
+			w.set("layer", s->owner);
+			w.set("device", s->device);
+			w.set("message", spec ? devices::waiting_message(*spec, s->problem) : std::string("Waiting for its device."));
+			waiting.push(std::move(w));
+		}
+		const json::Value *ds = format_ == "project-v1" ? model_doc_.find("devices") : nullptr;
+		if (have && ds && ds->is_array())
+			for (auto &d : ds->as_array()) {
+				const json::Value *id = d.find("id");
+				if (id && id->is_string())
+					connected.set(id->as_string(), devices::resolve(d, l).entry != nullptr);
+			}
+	}
+	r.set("busy", !lk.owns_lock());
+	r.set("waiting", std::move(waiting));
+	r.set("connecting", std::move(connecting));
+	r.set("connected", std::move(connected));
+	return r;
 }
 
 json::Value Studio::plan(const json::Value &project, const LoadOptions &o) const
@@ -1020,6 +1336,7 @@ json::Value Studio::load_model(const json::Value &doc, const LoadOptions &o)
 		counts.set("relay", relay_ ? json::Value(relay_scope_) : json::Value());
 		r.set("built", std::move(counts));
 		r.set("unavailable", p.unavailable);
+		r.set("waiting", p.waiting);
 		r.set("warnings", p.warnings);
 		return r;
 	} catch (...) {
@@ -1038,7 +1355,22 @@ std::shared_ptr<Studio::Src> Studio::make_src(const model::Source &spec, const s
 		throw Error(rpc::INTERNAL, "source create failed for layer " + layer + " (" + spec.obs_type + ")");
 	if (obs_source_get_output_flags(src) & OBS_SOURCE_AUDIO)
 		obs_source_set_audio_mixers(src, 0); // no audio.sources entry: no tracks
-	return wrap(src, layer);
+	auto w = wrap(src, layer);
+	if (spec.type == "capture") { // D329: the watcher binds / rebinds it
+		w->device = spec.device;
+		const json::Value *id = spec.settings.find("video_device_id");
+		w->bound_id = id && id->is_string() ? id->as_string() : "";
+		w->waiting = spec.waiting;
+		w->problem = spec.wait_problem;
+		w->matched_by = spec.matched_by;
+		if (!w->waiting && !w->bound_id.empty()) { // built with a device: connecting until its first frame
+			connect_attempt(*w, w->bound_id, false);
+			std::lock_guard<std::mutex> lk(dev_m_);
+			if (check_)
+				check_(kConnectDelaysMs[0] + 50);
+		}
+	}
+	return w;
 }
 
 // The source a layer owns, when any scene on any canvas still shows it.
@@ -1049,6 +1381,19 @@ std::shared_ptr<Studio::Src> Studio::find_src(const std::string &owner)
 			if (l.src && l.src->owner == owner)
 				return l.src;
 	return nullptr;
+}
+
+// A plan.unavailable entry as the sentence the studio shows (D329: what is missing, what to do).
+static std::string plain_unavailable(const json::Value &u)
+{
+	std::string lid = u.find("layer") && u.find("layer")->is_string() ? u.find("layer")->as_string() : "?";
+	std::string reason = u.find("reason")->as_string();
+	if (u.find("code")->as_string() == "forbidden" && reason.find("capture devices are disabled") == 0)
+		return "Layer " + lid + " cannot be added: this start of Ujwalam has capture devices switched off. Start Ujwalam "
+		       "with devices allowed (the normal start does) and add the layer again. (" + reason + ")";
+	if (u.find("code")->as_string() == "forbidden")
+		return "Layer " + lid + " cannot be added: that feature is switched off in this start of Ujwalam (" + reason + ").";
+	return "Layer " + lid + " cannot be added: " + reason + ".";
 }
 
 json::Value Studio::layer_add_model(const json::Value &doc, const std::string &sid, const std::string &lid)
@@ -1064,7 +1409,7 @@ json::Value Studio::layer_add_model(const json::Value &doc, const std::string &s
 	for (auto &u : p.unavailable.as_array())
 		if (const json::Value *l = u.find("layer"); l && l->is_string() && l->as_string() == lid)
 			throw Error(u.find("code")->as_string() == "forbidden" ? rpc::FORBIDDEN : rpc::UNAVAILABLE,
-				    "layer " + lid + " cannot be built: " + u.find("reason")->as_string());
+				    plain_unavailable(u));
 	auto ps = std::find_if(p.scenes.begin(), p.scenes.end(), [&](const model::Scene &x) { return x.id == sid; });
 	if (ps == p.scenes.end())
 		throw Error(rpc::INVALID_PARAMS, "no such scene in the project: " + sid);
@@ -1134,11 +1479,24 @@ json::Value Studio::layer_add_model(const json::Value &doc, const std::string &s
 		make_relay(last_opts_);
 	model_doc_ = doc;
 	dirty_ = false;
-	hlog::info("layer added from the project: %s in %s", lid.c_str(), sid.c_str());
 	json::Value r = json::Value::object();
 	r.set("scene", sid);
 	r.set("layer", lid);
 	r.set("canvases", std::move(cvs));
+	// D329: a capture layer whose device is not connected is added waiting; the studio shows the message.
+	std::string src_layer = lid;
+	for (auto &t : todo)
+		src_layer = t.pi->source_layer;
+	json::Value wait;
+	if (auto s = find_src(src_layer); s && s->waiting) { // the built source says (it may be shared and older)
+		const json::Value *spec = model_device(s->device);
+		wait = json::Value::object();
+		wait.set("layer", src_layer);
+		wait.set("device", s->device);
+		wait.set("message", spec ? devices::waiting_message(*spec, s->problem) : std::string("Waiting for its device."));
+	}
+	r.set("waiting", wait);
+	hlog::info("layer added from the project: %s in %s%s", lid.c_str(), sid.c_str(), wait.is_null() ? "" : " (waiting for its device)");
 	return r;
 }
 
@@ -1228,6 +1586,22 @@ json::Value Studio::layer_json(const Scene &s, const Layer &l) const
 	o.set("width", src ? obs_source_get_width(src) : 0u);
 	o.set("height", src ? obs_source_get_height(src) : 0u);
 	o.set("audio", l.src && l.src->meter != nullptr);
+	if (l.src && !l.src->device.empty()) { // capture layer (D329)
+		json::Value d = json::Value::object();
+		d.set("id", l.src->device);
+		const bool connecting = !l.src->waiting && l.src->connecting && !has_frame(*l.src);
+		d.set("state", l.src->waiting ? "waiting" : connecting ? "connecting" : "connected");
+		const json::Value *spec = model_device(l.src->device);
+		if (l.src->waiting) {
+			d.set("message", spec ? devices::waiting_message(*spec, l.src->problem) : std::string("Waiting for its device."));
+		} else if (connecting) {
+			d.set("attempt", (uint64_t)l.src->attempts);
+			if (l.src->attempts > 1 && spec)
+				d.set("message", devices::connecting_message(*spec, l.src->attempts >= kConnectAttempts));
+		}
+		d.set("binds", (uint64_t)l.src->binds);
+		o.set("device", std::move(d));
+	}
 	return o;
 }
 

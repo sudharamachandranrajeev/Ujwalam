@@ -94,6 +94,22 @@ describe('packageUploads', () => {
     assert.ok(again.skipped.some((s) => s.reason === 'already-packaged'));
   });
 
+  test('D326: impact-play reels are packaged only while the impact-play-reels flag is on (off by default)', async () => {
+    const row = { name: 'codm_impact-play_20261109-100000_victory_01_v.mp4', kind: 'impact-play', seconds: 47 };
+    const off = setup([row]);
+    const r0 = await packageUploads({ dataDir: off.dataDir, ledgerFile: off.ledgerFile, profile: PROFILE, ffmpeg: FFMPEG });
+    assert.equal(r0.packaged.length, 0);
+    assert.deepEqual(r0.skipped.map((s) => s.reason), ['flag-off'], 'default off, no flags.local.json');
+    writeFileSync(path.join(off.dataDir, 'flags.local.json'), JSON.stringify({ flags: { 'impact-play-reels': true } }));
+    const r1 = await packageUploads({ dataDir: off.dataDir, ledgerFile: off.ledgerFile, profile: PROFILE, ffmpeg: FFMPEG });
+    assert.equal(r1.packaged.length, 1);
+    assert.equal(r1.packaged[0].target, 'youtube-shorts');
+    const injected = setup([row]);
+    const r2 = await packageUploads({ dataDir: injected.dataDir, ledgerFile: injected.ledgerFile, profile: PROFILE, ffmpeg: FFMPEG,
+      flags: { isOn: (id) => id !== 'impact-play-reels' } });
+    assert.deepEqual(r2.skipped.map((s) => s.reason), ['flag-off']);
+  });
+
   test('run filter packages only that run; an empty profile leaves placeholders listed, never filled in; empty list is fine', async () => {
     const e = setup([{ ...ROWS[1], run: 'runA' }, { ...ROWS[2], run: 'runB' }]);
     const r = await packageUploads({ dataDir: e.dataDir, ledgerFile: e.ledgerFile, profile: {}, ffmpeg: FFMPEG, run: 'runB' });
