@@ -183,12 +183,12 @@ test('pack: name-match flags (player events need a name; own HUD does not)', () 
   assert.deepEqual(byId('M5').modes, ['mp']);
 });
 
-test('pack: suppression hides M3/M4 while M2 is shown; negatives are N1/N2', () => {
+test('pack: suppression hides M3/M4 while M2 is shown; negatives are N1/N2/N3', () => {
   const r = pack.suppressionRules.find((x) => x.while === 'M2');
   assert.ok(r);
   assert.deepEqual([...r.suppress].sort(), ['M3', 'M4']);
   for (const rule of pack.suppressionRules) for (const id of [...rule.suppress, rule.while]) assert.ok(byId(id), id);
-  assert.deepEqual(pack.detectors.filter((d) => d.role === 'negative').map((d) => d.id).sort(), ['N1', 'N2']);
+  assert.deepEqual(pack.detectors.filter((d) => d.role === 'negative').map((d) => d.id).sort(), ['N1', 'N2', 'N3']);
 });
 
 test('pack: OCR engine is rapidocr; versions present', () => {

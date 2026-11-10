@@ -725,7 +725,12 @@ def cmd_montage(a):
     # D326: impact-play reels (match-reels.json impactPlay), only while their flag is on (off by default)
     ip_spec = ((_gate_pack(a) or {}).get("matchReels") or {}).get("impactPlay")
     ip_on = bool(ip_spec) and flag_on(resolve_data_dir(a.data_dir), ip_spec.get("flag") or "impact-play-reels")
-    impacts = mont.impact_play_reels(hits, matches, ip_spec, min(info["duration"], vinfo["duration"])) if ip_on else []
+    try:  # the result banner's span ends one detector sample after its last read frame
+        fps = float(load_json(os.path.join(os.path.dirname(hits_path), "detector-pass.json"))["config"]["fps"])
+    except (OSError, ClipError, KeyError, TypeError, ValueError):
+        fps = 1.0
+    impacts = (mont.impact_play_reels(hits, matches, ip_spec, min(info["duration"], vinfo["duration"]),
+                                      sample_sec=1.0 / fps if fps > 0 else 1.0) if ip_on else [])
     reel_doc["impactPlay"] = {"flag": (ip_spec or {}).get("flag"), "on": ip_on,
                               "reels": [{"id": f"I{i:02d}", "match": r["match"], "pieces": r["pieces"]}
                                         for i, r in enumerate(impacts, 1)]}

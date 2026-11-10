@@ -20,7 +20,7 @@
     "impactPlay": {
       "type": "object",
       "description": "Impact-play reel (D326): one separate reel per match whose impact-play screen belongs to the streamer, from the MVP animation after the match-end banner to the results page. Evaluated by services/clip/clip_montage.py impact_play_reels(); made only while `flag` is on.",
-      "required": ["id", "label", "status", "flag", "detector", "startAfterBannerSec", "maxBannerLeadSec", "fallbackLeadSec", "resultsAfterSec", "endHoldSec", "minSec", "maxSec"],
+      "required": ["id", "label", "status", "flag", "detector", "maxBannerLeadSec", "fallbackLeadSec", "resultsAfterSec", "endHoldSec", "minSec", "maxSec"],
       "additionalProperties": false,
       "properties": {
         "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
@@ -31,7 +31,6 @@
         "flag": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$", "description": "Feature flag id in data/flags.json." },
         "detector": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$", "description": "The impact-play screen detector; a signalled hit (profile name on it) marks the streamer's impact play." },
         "resultsDetector": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$", "description": "The results-page detector; the reel ends after its last signalled hit." },
-        "startAfterBannerSec": { "type": "number", "minimum": 0 },
         "maxBannerLeadSec": { "type": "number", "minimum": 0 },
         "fallbackLeadSec": { "type": "number", "minimum": 0 },
         "resultsAfterSec": { "type": "number", "minimum": 0 },

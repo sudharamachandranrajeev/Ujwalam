@@ -534,11 +534,13 @@ def segment(hits, stats, duration, cfg):
         elif kill_src:
             m["ownKills"] = sum(1 for t in kill_times if start <= t < play_end)
             m["killsSource"] = kill_src
-        if kill_src:  # D326: the reel cuts these kills (the counted ones), never the raw kill-feed hits
-            m["ownKillTimes"] = [round(t, 3) for t in kill_times if start <= t < play_end]
+        # D326: the reel cuts these kills (the counted ones), never the raw kill-feed hits. Full precision: the reel
+        # selects and cuts with them, and a rounded time can cross a round edge (Codex review: 99.9996 -> 100.0)
+        if kill_src:
+            m["ownKillTimes"] = [float(t) for t in kill_times if start <= t < play_end]
         if m["rounds"] and kill_src:
             edges = [start] + [r["tEnd"] for r in m["rounds"]] + [play_end]
-            m["roundKillTimes"] = [[round(t, 3) for t in kill_times if a <= t < b] for a, b in zip(edges, edges[1:])]
+            m["roundKillTimes"] = [[float(t) for t in kill_times if a <= t < b] for a, b in zip(edges, edges[1:])]
             m["roundKills"] = [len(x) for x in m["roundKillTimes"]]
         if not c:
             tops = []

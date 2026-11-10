@@ -158,6 +158,72 @@ class OwnKillTests(unittest.TestCase):
         self.assertIn("spectating", m["reel"]["noReel"])
 
 
+def snd_rounds(kills, extra=()):
+    """A lost Search and Destroy match with round banners at 100 and 200 s and the match end at 300 s; `kills` are
+    the counted own kill times, `extra` more hits (medals)."""
+    hits = [hit(30, "C1", "DESTROY TARGET"),
+            hit(100, "W1", "DEFEAT", banner="round", subtitle=None),
+            hit(200, "W1", "VICTORY", banner="round", subtitle=None),
+            hit(300, "W1", "DEFEAT", t_end=301, banner="match", subtitle=None),
+            hit(330, "C2", "SEARCH & DESTROY", t_end=333)]
+    hits += [hit(k, "M5", "MP kill feed") for k in kills] + list(extra)
+    hits.sort(key=lambda h: h["t"])
+    stats = {"readings": [], "ownKills": {"times": list(kills), "feeds": ["M5"] * len(kills)}}
+    return hits, decided(hits, stats)[0]
+
+
+class QualifyingRoundTests(unittest.TestCase):
+    """Codex second review (2026-11-10) of the qualifying-rounds reel."""
+
+    def test_medal_after_the_round_end_is_matched_against_every_counted_kill(self):
+        # round 1 qualifies (40, 60); round 2 has a counted kill at 101 and a medal at 102. With a 5 s medal lead the
+        # medal, matched only against round 1's kills, made a kill at 97 s inside round 1.
+        cfg = dict(MONTAGE, medalLeadSec=5.0)
+        hits, m = snd_rounds([40.0, 60.0, 101.0], [hit(102, "M3", "Triple Kill")])
+        self.assertEqual(m["reel"]["pieceRounds"], [0])
+        reel = mont.match_reels(hits, RANKING, cfg, [m], 400.0)[0]
+        self.assertEqual(reel["kills"], 2)
+        self.assertFalse(any(p["start"] < 100 < p["end"] or 90 < p["start"] < 100 for p in reel["pieces"]),
+                         reel["pieces"])
+
+    def test_a_medals_fallback_kill_belongs_to_the_medals_round(self):
+        # a medal at 103 s with no counted kill before it: its fallback kill (98 s) lies in round 1, but the medal is
+        # round 2's, which does not qualify, so it adds nothing
+        cfg = dict(MONTAGE, medalLeadSec=5.0)
+        hits, m = snd_rounds([40.0, 60.0], [hit(103, "M3", "Triple Kill")])
+        reel = mont.match_reels(hits, RANKING, cfg, [m], 400.0)[0]
+        self.assertEqual(reel["kills"], 2)
+        self.assertTrue(all(p["end"] <= 70 or p["start"] >= 295 for p in reel["pieces"]), reel["pieces"])
+
+    def test_pieces_stay_inside_their_round(self):
+        # round 2 qualifies (101, 150); round 1 has one kill at 99 s. The 101 s piece would start at 98 s (round 1).
+        hits, m = snd_rounds([99.0, 101.0, 150.0])
+        self.assertEqual(m["reel"]["pieceRounds"], [1])
+        reel = mont.match_reels(hits, RANKING, MONTAGE, [m], 400.0)[0]
+        kill_pieces = [p for p in reel["pieces"] if p["kills"]]
+        self.assertEqual(reel["kills"], 2)
+        self.assertEqual(kill_pieces[0]["start"], 100.0)
+        self.assertTrue(all(100 <= p["start"] and p["end"] <= 200 for p in kill_pieces), kill_pieces)
+        # a kill near a qualifying round's end shows nothing of the next round
+        hits, m = snd_rounds([60.0, 99.0, 150.0])
+        self.assertEqual(m["reel"]["pieceRounds"], [0])
+        reel = mont.match_reels(hits, RANKING, MONTAGE, [m], 400.0)[0]
+        self.assertEqual(max(p["end"] for p in reel["pieces"] if p["kills"]), 100.0)
+
+    def test_result_piece_shows_none_of_a_last_round_that_does_not_qualify(self):
+        hits, m = snd_rounds([40.0, 60.0, 250.0])
+        reel = mont.match_reels(hits, RANKING, MONTAGE, [m], 400.0)[0]
+        self.assertEqual(reel["pieces"][-1]["start"], 300.0)
+
+    def test_kill_just_before_a_round_edge_keeps_full_precision(self):
+        # 99.9996 s rounded to 100.000 fell out of round 1's half-open window
+        hits, m = snd_rounds([60.0, 99.9996])
+        self.assertEqual(m["roundKillTimes"][0], [60.0, 99.9996])
+        self.assertEqual(m["ownKillTimes"], [60.0, 99.9996])
+        reel = mont.match_reels(hits, RANKING, MONTAGE, [m], 400.0)[0]
+        self.assertEqual(reel["kills"], 2)
+
+
 def impact_match(own=True, banner=True, results=True):
     """Match end of the 2026-11-09 Control match: banner 3062-3065, MVP animation, IMPACT PLAY 3070-3092, top 3 and
     MVP 3095-3108, results page 3110-3112."""
@@ -179,7 +245,14 @@ class ImpactPlayTests(unittest.TestCase):
         self.assertEqual(len(reels), 1)
         self.assertEqual(reels[0]["pieces"], [{"start": 3066.0, "end": 3112.5, "kills": 0}])
         self.assertEqual((reels[0]["match"], reels[0]["labels"]), (1, ["VICTORY", "IMPACT PLAY"]))
-        self.assertEqual(ms[0]["impactPlay"]["startRule"], "after the result banner")
+        self.assertEqual(ms[0]["impactPlay"]["startRule"], "at the end of the result banner's span")
+
+    def test_start_is_the_banner_span_end_not_a_fixed_offset(self):
+        # banner read to 3065 s: at 1 fps its span ends at 3066 s, at 2 fps at 3065.5 s
+        hits, ms = impact_match()
+        self.assertNotIn("startAfterBannerSec", IMPACT)
+        self.assertEqual(mont.impact_play_reels(hits, ms, IMPACT, 3147.5, sample_sec=0.5)[0]["pieces"][0]["start"],
+                         3065.5)
 
     def test_other_players_impact_play_gives_no_reel(self):
         hits, ms = impact_match(own=False)

@@ -87,8 +87,12 @@ Kept out of the code; dedup stays an open item.
 ## 6. Impact-play reels (F4)
 
 `match-reels.json` `impactPlay` (flag `impact-play-reels`, off by default): the first signalled M2 (IMPACT PLAY) hit
-after the match's end screens starts the reel `startAfterBannerSec` (1.0 s) after the result banner when the banner
-ends within `maxBannerLeadSec` (10 s) before it, else `fallbackLeadSec` (5 s) before it. The reel ends `endHoldSec`
+after the match's end screens starts the reel where the result banner's span ends when the banner ends within
+`maxBannerLeadSec` (10 s) before it, else `fallbackLeadSec` (5 s) before it. The span ends one detector sample
+(1/fps) after the banner's last read frame (coordinator, 2026-11-10: the banner span end, no fixed offset; the earlier
+`startAfterBannerSec` is gone). Frames: match 5 banner read to 2770 s, on screen at 2771.0 and 2771.5 s, MVP animation
+at 2772.5 s; match 6 read to 3065 s, on screen at 3065.5 s, MVP at 3066.5 s. So the reel shows up to about 1 s of
+the fading banner; a cue for the MVP screen would start it exactly (open). The reel ends `endHoldSec`
 (0.5 s) after the last signalled C2 results-page read within `resultsAfterSec` (30 s), capped at `maxSec` 90 s,
 at least `minSec` 10 s. All agent values, proposed, unverified.
 
@@ -127,15 +131,32 @@ Checks:
 - I01: 2771.5 s is the tail of the VICTORY banner, 2785 s the impact-play camera with the IMPACT PLAY badge,
   2817.5 s the results page (VICTORY | TEAM DEATHMATCH). The reel starts about 1-2 s early, still on the banner.
 
+## 7a. Codex second review fixes (2026-11-10)
+
+- Medals are matched against every counted kill of the match before any round selection. A medal's fallback kill
+  belongs to the medal's round and is dropped when that round does not qualify.
+- Qualifying-rounds reels: each piece is clipped to its round's bounds before merging, so a kill near a round edge
+  shows nothing of the next or previous round; the result piece starts no earlier than the end screen when the last
+  round does not qualify.
+- `ownKillTimes` and `roundKillTimes` keep full precision (a kill at 99.9996 s rounded to 100.000 fell out of its
+  round's half-open window).
+- Posting packages `impact-play` videos (`UPLOAD_KINDS`) only while the flag `impact-play-reels` is on (skip reason
+  `flag-off`).
+- Regression tests: `QualifyingRoundTests` (5) and the banner-span start in
+  `tests/py/test_reel_own_kills_impact_play.py`; the flag test in `tests/posting-uploads.test.mjs`. The reels in
+  section 7 were rendered before these fixes (no qualifying-round reel there has a kill near a round edge).
+
 ## 8. Tests
 
 `$env:UJWALAM_HEADLESS='1'; .venv\Scripts\python.exe -I -m unittest discover -s tests/py -t tests/py -p "test_*.py"`:
-479 tests, OK (6 skipped); 463 before this work. New file `tests/py/test_reel_own_kills_impact_play.py` (16 tests).
+485 tests, OK (6 skipped); 463 before this work. New file `tests/py/test_reel_own_kills_impact_play.py` (22 tests).
 
 ## 9. Open
 
 - N3, the impact-play timings and the rule `pieces` value are unverified on more than one recording.
-- Posting does not upload `impact-play` reels yet (`services/posting/index.mjs` `UPLOAD_KINDS`).
-- Own-kill dedup for non-Latin victim names (match 2, +3) and the Domination over-count (+3).
-- Impact-play start lands 1-2 s before the banner ends; a later start (or a banner-end detector) is a tuning item.
+- Auto-post rules (`RULE_KINDS`) do not list `impact-play`; packaged drafts are posted by hand. No template text of
+  its own (the target's base text is used).
+- Own-kill dedup for non-Latin victim names (match 2, +3) and the Domination over-count (+3): a separate task.
+- Impact-play start shows up to about 1 s of the fading banner; an MVP-screen cue would fix it. Timing values await
+  the user's approval.
 - A kill piece may end up to 1.5 s into a death that the killcam (N1) has not yet marked (W03, 1656 s).

@@ -59,13 +59,12 @@
     "flag": "impact-play-reels",
     "detector": "M2",
     "resultsDetector": "C2",
-    "startAfterBannerSec": 1.0,
     "maxBannerLeadSec": 10.0,
     "fallbackLeadSec": 5.0,
     "resultsAfterSec": 30,
     "endHoldSec": 0.5,
     "minSec": 10,
     "maxSec": 90,
-    "note": "User feedback F4, 2026-11-10 (approved in the user's words). One separate reel per match whose IMPACT PLAY screen (M2, the profile name on the impact player's card) belongs to the streamer, cut from the V recording next to the match reel. 2026-11-09 practice (docs/evidence/2026-11-10-reel-own-kills-impact-play.md): the match-end banner, then the MVP animation (about 4 s), the impact-play camera (16-22 s), a loading screen, the top-3 screen and the results page (summary screen, C2) follow each other; the M2 card showed the own name in 2 of 5 impact plays. Times are agent values (proposed, unverified): startAfterBannerSec skips the banner, fallbackLeadSec is used when no banner was read, endHoldSec keeps the results page on screen, minSec and maxSec bound the reel; resultsAfterSec as C2 afterEndSec. Off until the flag is switched on."
+    "note": "User feedback F4, 2026-11-10 (approved in the user's words). One separate reel per match whose IMPACT PLAY screen (M2, the profile name on the impact player's card) belongs to the streamer, cut from the V recording next to the match reel. 2026-11-09 practice (docs/evidence/2026-11-10-reel-own-kills-impact-play.md): the match-end banner, then the MVP animation (about 4 s), the impact-play camera (16-22 s), a loading screen, the top-3 screen and the results page (summary screen, C2) follow each other; the M2 card showed the own name in 2 of 5 impact plays. The reel starts where the result banner's span ends (its last read frame plus one detector sample; coordinator 2026-11-10: the banner span end, no fixed offset). Times are agent values (proposed, unverified): fallbackLeadSec is used when no banner was read, endHoldSec keeps the results page on screen, minSec and maxSec bound the reel; resultsAfterSec as C2 afterEndSec. Off until the flag is switched on."
   }
 }

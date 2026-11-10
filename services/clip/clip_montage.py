@@ -221,8 +221,9 @@ def match_reels(hits, ranking, cfg, matches, duration=None):
     count from the match start to its result screen (the signalled W1 box, else the first end-screen hit). A
     qualifying match with no own kill gives no reel (m["reel"]["noReel"] says so). Pieces end at `duration` (the
     shorter of the H and V recordings) when it is given. D326: the kills are the match's counted own kills
-    (m["ownKillTimes"], or only the rounds in m["reel"]["pieceRounds"]), plus streak medals with no counted kill
-    before them; the death detectors of ranking.json (KILLCAM, spectating) cut every piece."""
+    (m["ownKillTimes"], or only the rounds in m["reel"]["pieceRounds"], each piece clipped to its round), plus streak
+    medals with no counted kill of the match before them; the death detectors of ranking.json (KILLCAM, spectating)
+    cut every piece."""
     hit_kills, medals = _kill_events(hits, ranking, cfg)
     near, lead = float(cfg["medalMatchSec"]), float(cfg["medalLeadSec"])
     deaths = rank.death_spans(hits, ranking)
@@ -239,28 +240,45 @@ def match_reels(hits, ranking, cfg, matches, duration=None):
         # own name in a weapon's custom name on the MP loadout panel (pre-round and while dead), and those pieces
         # showed loadout swaps, round intros and a spectated teammate. Runs without counted times use the hits.
         own = mt.get("ownKillTimes")
+        kills = [float(k) for k in own] if isinstance(own, list) else list(hit_kills)
+        # a medal with no own-kill line before it is its own kill (as in streaks); matched against every counted kill
+        # of the match, before any round selection (Codex review: a medal right after a qualifying round's end
+        # matched only that round's kills and made a piece inside it)
+        extra = [m["t"] for m in medals if not any(m["t"] - near <= k <= m["t"] for k in kills)]
         rounds = dec.get("pieceRounds")
+        result_start = t - float(cfg["resultLeadSec"])
         if isinstance(rounds, list) and isinstance(mt.get("roundKillTimes"), list):
-            own = [k for i in rounds if i < len(mt["roundKillTimes"]) for k in mt["roundKillTimes"][i]]
-        kills = list(own) if isinstance(own, list) else list(hit_kills)
-        for m in medals:  # a medal with no own-kill line before it is its own kill (as in streaks)
-            if not any(m["t"] - near <= k <= m["t"] for k in kills):
-                kills.append(m["t"] - lead)
-        kills.sort()
-        ks = [k for k in kills if start < k <= t]
-        if isinstance(rounds, list):  # only the qualifying rounds: a medal elsewhere in the match adds no piece
-            edges = _round_edges(mt)
-            ks = [k for k in ks if any(i + 1 < len(edges) and edges[i] <= k < edges[i + 1] for i in rounds)]
-        if not ks:
-            dec["noReel"] = "no own kill in the match"
-            continue
-        ps = _pieces(ks, deaths, ranking, cfg)
+            # only the qualifying rounds; each piece stays inside its round (a kill near a round's end shows neither
+            # the next round's intro nor the previous round). A medal's fallback kill belongs to the medal's round.
+            edges, rkt = _round_edges(mt), mt["roundKillTimes"]
+            ps, found = [], False
+            for i in sorted(set(rounds)):
+                if i >= len(rkt) or i + 1 >= len(edges):
+                    continue
+                a, b = edges[i], edges[i + 1]
+                ks = sorted([float(k) for k in rkt[i]] + [m - lead for m in extra if a <= m < b])
+                found = found or bool(ks)
+                for p in _pieces(ks, deaths, ranking, cfg):
+                    s, e = max(p["start"], a), min(p["end"], b)
+                    if e > s:
+                        ps.append(dict(p, start=round(s, 3), end=round(e, 3)))
+            if len(edges) - 2 not in rounds:  # the result piece shows none of a last round that does not qualify
+                result_start = max(result_start, edges[-1])
+            if not found:
+                dec["noReel"] = "no own kill in the match"
+                continue
+        else:
+            ks = sorted(k for k in kills + [m - lead for m in extra] if start < k <= t)
+            if not ks:
+                dec["noReel"] = "no own kill in the match"
+                continue
+            ps = _pieces(ks, deaths, ranking, cfg)
         if duration is not None:
             ps = [dict(p, end=min(p["end"], float(duration))) for p in ps]
         end = float(mt.get("resultEnd") or t) + float(cfg["resultHoldSec"])
         if duration is not None:
             end = min(end, float(duration))
-        ps.append({"start": round(t - float(cfg["resultLeadSec"]), 3), "end": round(end, 3), "kills": 0})
+        ps.append({"start": round(result_start, 3), "end": round(end, 3), "kills": 0})
         ps.sort(key=lambda p: p["start"])
         merged = []
         for p in ps:  # the result piece may overlap the last kill piece
@@ -281,21 +299,24 @@ def match_reels(hits, ranking, cfg, matches, duration=None):
     return out
 
 
-def impact_play_reels(hits, matches, spec, duration=None):
+def impact_play_reels(hits, matches, spec, duration=None, sample_sec=1.0):
     """Impact-play reels (D326, user feedback F4 2026-11-10: "if there was an impact play by the streamer, create it as
     a separate reel with MVP animation, Impact play cam and up to the results page"). spec: match-reels.json
     `impactPlay` (game pack data). For each match whose end was seen and whose end screens hold a signalled
     spec.detector hit (the IMPACT PLAY screen with the profile name on its card, M2 in CODM), one piece: from
-    startAfterBannerSec after the match-end result banner (the MVP animation follows it) when that banner ends no
+    the end of the match-end result banner's span (the MVP animation follows it) when that banner ends no
     more than maxBannerLeadSec before the impact play, else fallbackLeadSec before the impact play; to endHoldSec
     after the last signalled spec.resultsDetector hit (the results page, C2 in CODM) read from the match's first
-    end-screen hit to resultsAfterSec after its last, else after the match's last end-screen hit. At most maxSec
+    end-screen hit to resultsAfterSec after its last, else after the match's last end-screen hit. The result banner's
+    span ends one detector sample (sample_sec, 1/fps of the detector pass) after its last read frame: the frames
+    sampled at the banner's last read still show it (2026-11-09 practice: read to 2770 s, on screen at 2771.5 s, MVP
+    animation at 2772.5 s); the reel starts there, not at a fixed offset (coordinator, 2026-11-10). At most maxSec
     long; a piece shorter than minSec is no reel. Pieces end at `duration` when it is given. m["impactPlay"] records
     the decision. -> [reel] shaped like match_reels (kills 0)."""
     if not spec:
         return []
     det, res = spec["detector"], spec.get("resultsDetector")
-    after, max_lead = float(spec["startAfterBannerSec"]), float(spec["maxBannerLeadSec"])
+    after, max_lead = float(sample_sec), float(spec["maxBannerLeadSec"])
     fallback, hold = float(spec["fallbackLeadSec"]), float(spec["endHoldSec"])
     res_after, max_sec, min_sec = float(spec["resultsAfterSec"]), float(spec["maxSec"]), float(spec["minSec"])
     out = []
@@ -310,7 +331,7 @@ def impact_play_reels(hits, matches, spec, duration=None):
         ip = float(own[0]["t"])
         banner = mt.get("resultEnd")
         if banner is not None and ip - max_lead <= float(banner) <= ip:
-            s, how = float(banner) + after, "after the result banner"
+            s, how = float(banner) + after, "at the end of the result banner's span"
         else:
             s, how = ip - fallback, "before the impact play (no result banner just before it)"
         ends = [float(h.get("tEnd", h["t"])) for h in hits if res and h.get("detector") == res
