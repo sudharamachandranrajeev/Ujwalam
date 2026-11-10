@@ -33,7 +33,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore, packageRun, packageUploads, sha256File } from './index.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, liveBlock, loadRules, rulesFileFor, runAuto } from './auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, createRulesSource, liveBlock, runAuto } from './auto-post.mjs';
+import { createDataNotifier } from '../common/data-reload.mjs';
 import { READONLY_SCOPE, createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
 import { SCHEDULE_FLAG, ScheduleError, chunkDeadlineMs, fallbackBps, isRetry, loadScheduleConfig, marginMs, minLeadMs, planQueueSlots, toIso } from './schedule.mjs';
@@ -194,7 +195,7 @@ export async function markPosted({ dataDir, run, sha256, postIdValue, videoId, a
 
 /**
  * opts: { dataDir, log?, now?(ms), flags?, rulesFile?, profileFile?, ffmpeg?, fetchImpl?, auth?, chunkSize?,
- *         packageImpl? (tests), tickEveryMs? }
+ *         packageImpl? (tests), tickEveryMs?, rulesSource? (createRulesSource; default: one for dataDir/rulesFile) }
  * status arguments are the host's outputs.status answers (the launcher feeds one every 5 s).
  */
 export function createPostChain(opts) {
@@ -207,6 +208,8 @@ export function createPostChain(opts) {
   const flags = opts.flags ?? createFlags({ dataDir });
   let latest = null; let busy = false; let lastTick = 0; let recovered = false; let halted = false;
   const flagsOn = () => flags.isOn(POSTING_FLAG) && flags.isOn(AUTO_FLAG);
+  // LU2: the rules reload when the file changes; a broken file keeps the last good rules (notice in the task area).
+  const rulesSrc = opts.rulesSource ?? createRulesSource({ dataDir, explicit: opts.rulesFile, report: createDataNotifier({ dataDir, writeTask: writeTaskFile, log }) });
   const scheduleOn = () => flags.isOn(SCHEDULE_FLAG);
   const outputsStatus = streamOnly(async () => { if (!latest) throw new Error('no output status yet'); return latest; });
   const getAuth = () => opts.auth ?? createYoutubeAuth({ browserOpen: async () => { throw new Error('sign-in is never started from the background'); } });
@@ -399,7 +402,7 @@ export function createPostChain(opts) {
     if (!flagsOn()) return { skipped: 'flag-off' };
     if (halted) return { skipped: 'stopped' };
     let rules;
-    try { rules = loadRules(rulesFileFor(dataDir, opts.rulesFile)); } catch (e) { return { skipped: 'bad-rules', detail: e?.code ?? 'error' }; }
+    try { rules = rulesSrc.get(); } catch (e) { return { skipped: 'bad-rules', detail: e?.code ?? 'error' }; }
     if (!rules.rules.length) return { skipped: 'no-rules' };
     if (!recovered) { recovered = true; queue.recover(); }
     const store = createPostStore({ ledgerFile });

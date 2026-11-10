@@ -19,7 +19,7 @@
 
 export function createCamPopRule({ config, fire, now = Date.now, rng = Math.random, setInterval: si = setInterval, clearInterval: ci = clearInterval }) {
   if (typeof fire !== 'function') throw new TypeError('fire must be a function');
-  const c = config;
+  let c = config;
   const chatTimes = [];
   let lastPopAt = -Infinity;
   let loudSince = 0;
@@ -64,5 +64,12 @@ export function createCamPopRule({ config, fire, now = Date.now, rng = Math.rand
     start() { if (!timer && c.random.enabled) { timer = si(() => this.tickRandom(), c.random.checkEveryMs); timer.unref?.(); } },
     stop() { if (timer) ci(timer); timer = null; },
     stats: () => ({ ...counts }),
+    /** LU2: a new rules.campop config while running; counters and the last pop time carry over. */
+    setConfig(next) {
+      const running = timer !== null;
+      this.stop();
+      c = next;
+      if (running) this.start();
+    },
   };
 }

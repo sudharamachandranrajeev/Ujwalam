@@ -32,7 +32,7 @@ import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
 import { QUEUE_NAME, createUploadQueue, readQueueSummary, reasonText, shownPublishAt, streamOnly } from '../posting/auto-chain.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, liveBlock, loadRules, planAuto, rulesFileFor } from '../posting/auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, createRulesSource, describeMode, liveBlock, planAuto } from '../posting/auto-post.mjs';
 import { previewRules } from '../posting/preview.mjs';
 import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
@@ -44,7 +44,8 @@ import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
-import { createTasks } from './tasks.mjs';
+import { TASKS_CONFIG, createTasks, loadTaskConfig, parseTaskConfig, writeTaskFile } from './tasks.mjs';
+import { createDataNotifier, createDataSource, parseJsonText } from '../common/data-reload.mjs';
 import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
 import { STOP_TASKS_FILE, clipTools } from './record-clips.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
@@ -253,7 +254,27 @@ export function createStudioServer(opts) {
   // Undo / redo of layer edits (P5b, D238): in memory, newest 50; inspector, layer-list and preview-mouse edits.
   const history = opts.history ?? createEditHistory();
   // Feature flags (D149) and the post-stream feedback form (D150). opts.flags / opts.feedback are test seams.
-  const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir }) : null);
+  // LU2 (D324): data files this server owns reload from disk when they change (also while live); a broken file keeps
+  // the last good version and shows why in the task area (a task file data-<kind>) and the log. GET /ui/api/data
+  // lists each one's state. opts.dataReport is a test seam.
+  const dataReport = opts.dataReport ?? createDataNotifier({ dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null, writeTask: writeTaskFile, log: (m) => (typeof opts.log === 'function' ? opts.log : console.log)(`[studio-ui] ${m}`) });
+  const flags = opts.flags ?? (typeof opts.dataDir === 'string' ? createFlags({ dataDir: opts.dataDir, report: dataReport }) : null);
+  const rulesSrc = createRulesSource({ dataDir: opts.dataDir, explicit: opts.autoRulesFile, report: dataReport });
+  const tasksCfg = opts.tasks || opts.stallAfterMs !== undefined ? null
+    : createDataSource({ kind: 'studio-tasks', file: opts.tasksConfigFile ?? TASKS_CONFIG, parse: (t) => parseTaskConfig(parseJsonText(t)), report: dataReport, minCheckMs: 1000 });
+  const guideSrc = Object.fromEntries([['tour.json', 'tours', 'guide-tour'], ['hints.json', 'hints', 'guide-hints']].map(([n, key, kind]) => [n, createDataSource({
+    kind, file: path.join(opts.guideDir ?? path.join(REPO_ROOT, 'data', 'guide'), n), report: dataReport, minCheckMs: 1000,
+    parse: (t) => { const j = parseJsonText(t); if (!j || !Array.isArray(j[key])) throw new Error(`needs a "${key}" list`); return j[key]; },
+  })]));
+  const dataSources = () => [...(flags?.dataStatus?.() ?? []), rulesSrc.status(), ...(tasksCfg ? [tasksCfg.status()] : []), ...Object.values(guideSrc).map((s) => s.status())];
+  let stopDataWatch = null;
+  function startDataWatch() {
+    if (stopDataWatch) return;
+    const stops = [];
+    try { if (flags?.watch) stops.push(flags.watch()); } catch { /* flags without files (tests) */ }
+    for (const s of [rulesSrc, tasksCfg, ...Object.values(guideSrc)]) { if (!s) continue; try { stops.push(s.watch()); } catch { /* no good version yet: get() reports */ } }
+    stopDataWatch = () => { for (const f of stops) { try { f(); } catch { /* gone */ } } };
+  }
   // Stream recovery (D303 proposed, stream-recovery.mjs): the launcher owns the go-live authority; this server reaches
   // it over the IPC channel the launcher opens (only when started by the launcher: parent pipe and session id). A
   // confirmed "yes, on air" start takes a generation before the host call and arms it after (refused when a Stop came
@@ -302,7 +323,8 @@ export function createStudioServer(opts) {
     return { sinks: hs?.live === true ? [{ kind: 'stream', active: true }] : [] };
   }
   // Task bar (progress of what the software is doing): its own long actions here, launcher jobs as files in <dataDir>/tasks.
-  const tasks = opts.tasks ?? createTasks({ dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null, now });
+  const stallAfter = () => { if (!tasksCfg) return opts.stallAfterMs ?? null; try { return tasksCfg.get().stallAfterMs; } catch { return loadTaskConfig().stallAfterMs; } };
+  const tasks = opts.tasks ?? createTasks({ dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null, now, stallAfterMs: stallAfter });
   const openFolder = opts.openFolder ?? defaultOpenFolder;
   // Bot manager (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot. opts.bots is a test seam (see createFakeBots).
   const bots = opts.bots ?? (typeof opts.dataDir === 'string' ? createBots({ dataDir: opts.dataDir }) : null);
@@ -456,10 +478,11 @@ export function createStudioServer(opts) {
     try { const settings = writeSettings(opts.dataDir, body); t.done(); return json(res, 200, { settings }); } catch (e) { t.fail('Could not save'); return json(res, 500, { error: 'not-saved', detail: String(e.message).slice(0, 200) }); }
   }
   // Tips and tours (D294 proposed): data/guide/tour.json and hints.json, plain text for the studio window. A missing or
-  // broken file gives an empty list: the window then shows no tips, and nothing else changes.
+  // broken file gives an empty list: the window then shows no tips, and nothing else changes. LU2: a file that breaks
+  // while the app runs keeps its last good version.
   function guideData() {
-    const read = (n, key) => { try { const j = JSON.parse(readFileSync(path.join(REPO_ROOT, 'data', 'guide', n), 'utf8')); return Array.isArray(j[key]) ? j[key] : []; } catch { return []; } };
-    return { tours: read('tour.json', 'tours'), hints: read('hints.json', 'hints') };
+    const read = (n) => { try { return guideSrc[n].get(); } catch { return []; } };
+    return { tours: read('tour.json'), hints: read('hints.json') };
   }
   // The answer to "make clips from it?": the launcher picks it up (record-clips.mjs).
   function clipAnswer(res, body) {
@@ -834,6 +857,12 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/guide') return json(res, 200, guideData()); // guide (D294 proposed)
+    if (req.method === 'GET' && route === '/ui/api/data') { // LU2: each live-reloaded data file (base names only)
+      try { rulesSrc.get(); } catch { /* the status says why */ }
+      try { tasksCfg?.get(); } catch { /* idem */ }
+      guideData(); flags?.list();
+      return json(res, 200, { sources: dataSources() });
+    }
     if (req.method === 'GET' && route === '/ui/api/readiness') {
       if (!readinessOn()) return json(res, 404, { error: 'readiness-off' });
       try { return json(res, 200, publicReadiness(await readiness().run({ maxAgeMs: 0 }))); } catch { return json(res, 500, { error: 'readiness-failed' }); }
@@ -866,8 +895,8 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/posts/auto/preview') {
       // Read-only dry run: what the rules WOULD queue, with rendered text and skip reasons. No write, no request to Google.
       try {
-        const rulesFile = rulesFileFor(opts.dataDir, opts.autoRulesFile);
-        const rules = loadRules(rulesFile);
+        const rulesFile = rulesSrc.file();
+        const rules = rulesSrc.get();
         let profile = {};
         try { if (opts.profileFile && existsSync(opts.profileFile)) profile = JSON.parse(readFileSync(opts.profileFile, 'utf8')); } catch { /* placeholders show as unresolved */ }
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
@@ -876,9 +905,9 @@ export function createStudioServer(opts) {
     }
     if (req.method === 'GET' && route === '/ui/api/posts/auto') {
       // Read-only: the auto-post mode and what a run would do now. Enabling stays a flag; nothing is changed here.
-      const rulesFile = rulesFileFor(opts.dataDir, opts.autoRulesFile);
+      const rulesFile = rulesSrc.file();
       try {
-        const rules = loadRules(rulesFile);
+        const rules = rulesSrc.get();
         const mode = describeMode({ flagOn: !!flags && flags.isOn(AUTO_FLAG), rules });
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
         return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
@@ -1284,12 +1313,14 @@ export function createStudioServer(opts) {
           origin = `http://${LOOPBACK}:${p}`; hostHeader = `${LOOPBACK}:${p}`;
           pollTimer = setInterval(tick, limits.statusPollMs); pollTimer.unref();
           tick();
+          if (opts.watchData !== false) startDataWatch();
           resolve({ port: p, origin });
         });
       });
     },
     async close() {
       clearInterval(pollTimer);
+      stopDataWatch?.(); stopDataWatch = null;
       projectSync?.flush(); // write a pending layer edit now rather than lose it
       for (const c of sseClients) c.write(': bye\n\n');
       server.closeAllConnections?.();
