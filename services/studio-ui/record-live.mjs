@@ -31,7 +31,7 @@ const why = (e) => String(e?.code ?? e?.message ?? 'error').slice(0, 60);
  *  bump it); closing() -> the closing lock is held; tasks: the server's task list; log(line); now() -> ms. */
 export function createRecordLive({ call, enabled, epoch, closing = () => false, tasks = null, log = () => {}, now = Date.now }) {
   let auto = null; // { gen, at, sawLive }: the recording this started, while it runs (identity = ownership)
-  let gen = 0; // bumped by every start attempt and every Record / Stop click
+  let gen = 0; // bumped by every Record / Stop recording click
   let starting = 0; // automatic starts queued or on their way
   let chain = Promise.resolve();
   const serial = (fn) => { const p = chain.then(fn); chain = p.catch(() => {}); return p; };
@@ -68,9 +68,11 @@ export function createRecordLive({ call, enabled, epoch, closing = () => false, 
     try { on = enabled() === true; } catch { on = false; }
     if (!on || closing() || epoch() !== e0) return { started: false };
     starting += 1;
+    // The generation when the attempt is queued, never a fresh one inside the queue: a Record / Stop recording click
+    // that finishes while this waits behind a stop drops it (Codex re-review of LC2).
+    const g = gen;
     return serial(async () => {
-      const g = ++gen;
-      if (closing() || epoch() !== e0) return { started: false };
+      if (closing() || epoch() !== e0 || gen !== g) return { started: false };
       let st;
       try { st = await call('outputs.status', {}); } catch (e) { return notRecorded(`the outputs could not be read: ${why(e)}`); }
       if (isRecording(st)) return { started: false, already: true }; // started by hand: never stopped by this

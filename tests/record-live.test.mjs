@@ -183,3 +183,20 @@ test('a slow record.start never holds up Stop stream or End all; that start stop
   assert.equal(h.count('record.stop'), 1, 'stopped by the start itself');
   assert.equal(h.rl.active(), false);
 });
+
+test('P2 (re-review): a start queued behind a stop never undoes a Stop recording click made while it waited', async () => {
+  const h = hostRig();
+  await h.rl.afterStreamStart();
+  h.stream = 'stopped';
+  const release = h.gate('record.stop');
+  const stopping = h.rl.streamEnded('the stream was stopped');
+  await until(() => h.count('record.stop') === 1);
+  h.stream = 'live'; // a new stream start, queued behind the stop
+  const starting = h.rl.afterStreamStart();
+  h.rl.handOff(); // the user's Stop recording click finished while that start waited
+  release();
+  await stopping;
+  assert.deepEqual(await starting, { started: false }, 'the queued start is dropped');
+  assert.equal(h.count('record.start'), 1, 'not started again over the user\'s Stop');
+  assert.equal(h.rl.active(), false);
+});

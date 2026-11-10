@@ -604,4 +604,44 @@ describe('record while live: Codex review of LC2 (server)', () => {
       assert.equal((await state()).record, 'stopped', 'the status poll stops it once every output has stopped');
     } finally { await srv.close(); rmSync(dataDir, { recursive: true, force: true }); }
   });
+  test('P1 (re-review): a Record click whose answer is still on its way is never claimed by the automatic start', async () => {
+    const SINKS = ['youtube-h', 'record', 'record-v'];
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-reclive-p1b-'));
+    const fake = createFakeHost({ outputsReady: true, sinks: SINKS });
+    const calls = []; let n = 0;
+    let releaseAuto; const autoGate = new Promise((x) => { releaseAuto = x; });
+    let releaseManual; const manualGate = new Promise((x) => { releaseManual = x; });
+    const host = {
+      describe: () => fake.describe(),
+      call: async (m, p) => {
+        if (m !== 'outputs.status' && m !== 'host.status') calls.push(m);
+        if (m !== 'record.start') return fake.call(m, p);
+        n += 1;
+        if (n === 1) { await autoGate; return fake.call(m, p); } // the automatic start, sent after an idle status read
+        const out = await fake.call(m, p); await manualGate; return out; // the user's Record: the host acts, the answer is slow
+      },
+    };
+    const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
+    const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, limits: { statusPollMs: 20 },
+      readiness: { config: { endAll: { waitMs: 300, pollMs: 50 } }, run: async () => ({ ok: true, items: [] }) } });
+    const until = async (fn) => { for (let i = 0; i < 150 && !fn(); i++) await new Promise((x) => setTimeout(x, 20)); assert.ok(fn()); };
+    try {
+      const { port } = await srv.listen();
+      const a = await login(port);
+      const click = async (route, body) => JSON.parse((await post(port, a, route, body)).text);
+      const starting = click('/ui/api/host', { method: 'stream.start' });
+      await until(() => n === 1);
+      const manual = click('/ui/api/host', { method: 'record.start' });
+      await until(() => n === 2);
+      releaseAuto();
+      assert.equal((await starting).verdict, 'allow');
+      const stop = await click('/ui/api/host', { method: 'stream.stop' });
+      assert.equal(stop.verdict, 'allow');
+      assert.equal(calls.filter((m) => m === 'record.stop').length, 0, 'the user\'s recording is not stopped with the stream');
+      releaseManual();
+      assert.equal((await manual).verdict, 'allow');
+      const st = Object.fromEntries((await fake.call('outputs.status')).sinks.map((s) => [s.id, s.state]));
+      assert.equal(st.record, 'live');
+    } finally { releaseAuto(); releaseManual(); await srv.close(); rmSync(dataDir, { recursive: true, force: true }); }
+  });
 });

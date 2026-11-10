@@ -1443,6 +1443,10 @@ export function createStudioServer(opts) {
           if (startEpoch !== stopEpoch) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
           if (Number.isInteger(startGen) && (await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
         }
+        // Record while live (LC2): a Record / Stop recording click owns the recording from the moment it is sent, so an
+        // automatic start working from an older status can never claim it while this answer is on its way (Codex
+        // re-review of LC2). Handed off again after the answer (below) in case a start read the status meanwhile.
+        if (p.method === 'record.start' || p.method === 'record.stop') recordLive.handOff();
         const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
         let out;
         try { out = await callHost(p.method, callParams); } catch (e) { ht?.fail('Did not finish'); throw e; }
