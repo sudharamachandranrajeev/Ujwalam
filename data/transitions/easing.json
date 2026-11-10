@@ -1,5 +1,5 @@
 {
-  "$comment": "Scene transition choices (D327, TR1): the types and easing curves Settings > Transitions offers. The host (app/host/src/studio.cpp ease_value) knows the formula of each curve (Penner easing equations; all monotonic in 0..1, so a fade never overshoots). An id the host does not know is refused there. linear = the plain libobs fade.",
+  "$comment": "Scene transition choices (D327, TR1): the types and easing curves Settings > Transitions offers. The host (app/host/src/transition_ease.cpp ease::value) knows the formula of each curve (Penner easing equations; all monotonic in 0..1, so a fade never overshoots). An id the host does not know is refused there. linear = the plain libobs fade.",
   "types": [
     { "id": "cut", "label": "Cut" },
     { "id": "fade", "label": "Fade" },

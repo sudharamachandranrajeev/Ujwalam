@@ -610,3 +610,16 @@ transition settings per canvas, remote connections for the bots). Plan:
 (D-existing rule kept); the app now writes, reads, masks and removes them itself after a sign-in or a pasted key. The
 remote-connections switch is off by default and LAN only. Platform sign-in gets a security review on the strongest model
 plus a Codex second review before it is marked done.
+
+Built (2026-11-10, branch `ui/outputs-transitions-integrations`, sections A–C; sign-in is on its own branch):
+- The live plan comes from Settings > Stream when its flag is on; a value over a platform limit stops the start
+  with the problem. Otherwise `alpha-live.json` is used as before. Changes apply at the next start.
+- Each output keeps a Credential Manager key name `Ujwalam/stream/<id>`; the Edit window has a disabled "Connect"
+  hook for the sign-in branch. No key is stored or shown by these pages.
+- A live switch of one output needs "yes, on air" and stops or starts only that sink; the go-live authority and the
+  other sinks are untouched (loopback test).
+- Easing is a host formula per curve (`app/host/src/transition_ease.cpp`); the list is data
+  (`data/transitions/easing.json`). Easing applies only to a fade; a cut or stinger refuses it.
+- Virtual Camera is shown as "Not available in this build" (the host has no virtual camera method yet).
+- The remote pairing token is new on every start, passed by environment only, never written to `integrations.json`.
+Evidence: `docs/evidence/2026-11-10-outputs-transitions-integrations.md`.
