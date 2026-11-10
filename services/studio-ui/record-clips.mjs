@@ -97,7 +97,7 @@ export function countSaves(dataDir, since, { newest = newestSaves } = {}) {
 }
 
 /** The task panel row of the live clipper (id "live-clipper"), or null when there is nothing to show.
- *  lc: { state: 'running' | 'stopped' | 'not-started', reason, restarts, maxRestarts } from the launcher;
+ *  lc: { state: 'running' | 'restarting' | 'gave-up' | 'not-started', reason, restarts, maxRestarts } from the launcher;
  *  watching: a stream or recording runs and the clipper is asked to act; since: when that began (ms);
  *  ended: it was watching on the previous tick and is not now (the finished row, once). */
 export function liveClipperTask({ lc, watching, ended = false, saves = 0, since = null, now }) {
@@ -107,6 +107,9 @@ export function liveClipperTask({ lc, watching, ended = false, saves = 0, since 
     if (lc?.state === 'running') {
       const re = lc.restarts ? `; restarted ${lc.restarts} time${lc.restarts === 1 ? '' : 's'}` : '';
       return { ...base, title: 'Live clips: watching the game', state: 'running', measured: false, activeAt: since ?? now, note: `${kept} so far${re}` };
+    }
+    if (lc?.state === 'restarting') {
+      return { ...base, title: 'Live clips: restarting the live clipper', state: 'running', measured: false, activeAt: since ?? now, note: `${kept} so far; ${String(lc.reason ?? 'it stopped; restarting').slice(0, 120)} (restart ${lc.restarts ?? 0} of ${lc.maxRestarts ?? '?'})` };
     }
     return { ...base, title: 'Live clips are not being made', state: 'failed', note: String(lc?.reason ?? 'the live clipper is not running').slice(0, 160) };
   }

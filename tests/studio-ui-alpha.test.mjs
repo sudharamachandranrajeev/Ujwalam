@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, loadAudioHealth, clipsEnv, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, releaseVersion, shellChoice, shellExitRecord, shellRelaunchAllowed, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, loadAudioHealth, clipperExited, clipsEnv, LIVE_CLIPPER_MAX_RESTARTS, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, releaseVersion, shellChoice, shellExitRecord, shellRelaunchAllowed, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -700,4 +700,19 @@ test('live clipper spec: H game capture layer, GPU venv first, no spec for a pla
   const noWorker = liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: (p) => !p.endsWith('live_worker.py') });
   assert.equal(noWorker.spec, null);
   assert.match(noWorker.reason, /live clipper is missing .*live_worker\.py/);
+});
+
+test('live clipper exit (Codex review of LC1): restarting while a restart is scheduled, the fifth included; gave-up only after the fifth restarted process stops', () => {
+  let view = { state: 'running', reason: null, restarts: 0, maxRestarts: LIVE_CLIPPER_MAX_RESTARTS };
+  for (let n = 1; n <= LIVE_CLIPPER_MAX_RESTARTS; n++) {
+    const r = clipperExited(view, 1);
+    assert.equal(r.restart, true, `exit ${n}: a restart is scheduled`);
+    assert.deepEqual([r.view.state, r.view.restarts], ['restarting', n]);
+    assert.equal(r.view.reason, 'it stopped (exit 1); restarting in 10 s');
+    view = { ...r.view, state: 'running', reason: null }; // the restarted process runs
+  }
+  const last = clipperExited(view, 3);
+  assert.equal(last.restart, false);
+  assert.deepEqual([last.view.state, last.view.restarts], ['gave-up', 5]);
+  assert.equal(last.view.reason, 'it stopped (exit 3) and was restarted 5 times; restart Ujwalam to try again');
 });

@@ -406,6 +406,9 @@ test('liveClipperTask: running while watched (never "stuck"), the reason when it
   const no = liveClipperTask({ lc: { state: 'not-started', reason: 'the game layer has no capture device (devices are off or none is chosen)' }, watching: true, now: 1 });
   assert.deepEqual([no.state, no.title, no.note], ['failed', 'Live clips are not being made', 'the game layer has no capture device (devices are off or none is chosen)']);
   assert.equal(liveClipperTask({ lc: null, watching: true, now: 1 }).note, 'the live clipper is not running');
+  const re = liveClipperTask({ lc: { state: 'restarting', reason: 'it stopped (exit 1); restarting in 10 s', restarts: 5, maxRestarts: 5 }, watching: true, saves: 2, since: 1, now: 2 });
+  assert.deepEqual([re.state, re.title, re.note], ['running', 'Live clips: restarting the live clipper', '2 moments kept so far; it stopped (exit 1); restarting in 10 s (restart 5 of 5)']);
+  assert.equal(liveClipperTask({ lc: { state: 'gave-up', reason: 'it stopped (exit 1) and was restarted 5 times; restart Ujwalam to try again' }, watching: true, now: 1 }).state, 'failed');
   const end = liveClipperTask({ lc, watching: false, ended: true, saves: 3, since: 1, now: 9 });
   assert.deepEqual([end.state, end.title, end.note], ['done', 'Live clips: 3 moments kept', 'They become clips after the stream']);
   assert.equal(liveClipperTask({ lc, watching: false, ended: true, saves: 0, now: 9 }).note, 'No moment was found');

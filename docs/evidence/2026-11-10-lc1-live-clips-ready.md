@@ -102,6 +102,27 @@ ci: 9/9 passed in 15.3s
 
 `npm run validate:outputs` passes. The full `npm run ci` and the soak were not run (brief: one heavy job at a time).
 
+## Codex review
+
+- **P2, readiness failed during the last scheduled restart** (`services/studio-ui/readiness.mjs`, launcher). The
+  launcher counted the fifth restart before its 10 s delay. During that delay readiness saw `stopped` with
+  restarts >= max and failed, although a restart was still pending. Fixed: the launcher's exit step is now the pure
+  `clipperExited()` in `launch.mjs`. It publishes `restarting` while a restart is scheduled (the fifth included) and
+  `gave-up` only when the fifth restarted process also stops. Readiness fails only on `gave-up`, warns on
+  `restarting`, and warns on any unknown state. The task panel shows "Live clips: restarting the live clipper" while
+  a restart is pending.
+  Tests: `tests/studio-ui-alpha.test.mjs` (five exits give `restarting` 1..5 with a restart each; the sixth exit gives
+  `gave-up`, no restart), `tests/studio-ui-readiness.test.mjs` (fifth restart pending = warn, `gave-up` = fail,
+  unknown state = warn), `tests/record-clips.test.mjs` (restarting row).
+
+```
+UJWALAM_HEADLESS=1 node --test tests/studio-ui-alpha.test.mjs tests/record-clips.test.mjs tests/studio-ui-readiness.test.mjs
+ℹ tests 96
+ℹ pass 95
+ℹ fail 0
+ℹ skipped 1
+```
+
 ## Not checked (UNVERIFIED)
 
 - A real stream: H + V recording, the live clipper and the task panel rows on a real live session.

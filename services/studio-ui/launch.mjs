@@ -342,6 +342,16 @@ export function liveClipsSpec({ project, dataDir, repo = REPO, exists = existsSy
 /** Restarts of a crashed live clipper before the launcher gives up (D226). */
 export const LIVE_CLIPPER_MAX_RESTARTS = 5;
 
+/** The live clipper's state after its process exited: { view, restart } (pure). restart = schedule one more start.
+ *  "gave-up" only when every allowed restart was used and the last restarted process also stopped; while a restart is
+ *  scheduled (the last one included) the state is "restarting" (Codex review of LC1). */
+export function clipperExited(view, code, max = LIVE_CLIPPER_MAX_RESTARTS) {
+  if (view.restarts >= max) {
+    return { restart: false, view: { ...view, state: 'gave-up', reason: `it stopped (exit ${code}) and was restarted ${max} times; restart Ujwalam to try again` } };
+  }
+  return { restart: true, view: { ...view, state: 'restarting', restarts: view.restarts + 1, reason: `it stopped (exit ${code}); restarting in 10 s` } };
+}
+
 export function coreServeArgs({ dataDir, mock = false, sbWs = {}, remote = null }) {
   const argv = ['serve', '--data-dir', dataDir];
   // D327 IN1 "Allow remote connections": the LAN listener (the pairing token goes by environment, never argv).
@@ -1073,7 +1083,8 @@ export async function main(argv = process.argv.slice(2)) {
       }
     }
     // Live clipper state (LC1, D333 proposed): shown in the task panel and in clips/status.json (record-clips.mjs), read
-    // by the readiness check. state: running | stopped (crashed, restart pending or given up) | not-started (reason).
+    // by the readiness check. state: running | restarting (it stopped; a restart is scheduled) | gave-up (the last allowed
+    // restart also stopped) | not-started (reason). Codex review of LC1: "gave-up" is set only when no restart is pending.
     const lcView = { state: 'not-started', reason: 'the studio is starting', restarts: 0, maxRestarts: LIVE_CLIPPER_MAX_RESTARTS };
     let tryStartClipper = () => {};
     if (disc && alpha) {
@@ -1117,14 +1128,12 @@ export async function main(argv = process.argv.slice(2)) {
             const i = children.indexOf(c);
             if (i >= 0) children.splice(i, 1);
             if (stopping) return;
-            lcView.state = 'stopped';
-            if (lcView.restarts >= LIVE_CLIPPER_MAX_RESTARTS) {
-              lcView.reason = `it stopped (exit ${code}) and was restarted ${LIVE_CLIPPER_MAX_RESTARTS} times; restart Ujwalam to try again`;
+            const next = clipperExited(lcView, code);
+            Object.assign(lcView, next.view);
+            if (!next.restart) {
               console.log(`[studio] live clipper exited (${code}); not restarted again`);
               return;
             }
-            lcView.restarts += 1;
-            lcView.reason = `it stopped (exit ${code}); restarting in 10 s`;
             console.log(`[studio] live clipper exited (${code}); restart ${lcView.restarts}/${LIVE_CLIPPER_MAX_RESTARTS} in 10 s`);
             setTimeout(() => { if (!stopping) startClipper(); }, 10_000).unref();
           });

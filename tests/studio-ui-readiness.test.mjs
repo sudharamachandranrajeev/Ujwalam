@@ -261,11 +261,19 @@ describe('runReadiness', () => {
     const cap = await run({ lc: st({ state: 'not-started', reason: 'the game layer has no capture device (devices are off or none is chosen)' }) });
     assert.equal(cap.status, 'fail');
     assert.match(cap.message, /live clipper is not running: the game layer has no capture device/);
-    const gaveUp = await run({ lc: st({ state: 'stopped', restarts: 5, reason: 'it stopped (exit 1) and was restarted 5 times; restart Ujwalam to try again' }) });
+    // Codex review of LC1: the fifth restart is still pending (restarts = max, state restarting) = a warning; only the
+    // launcher's "gave-up" (that last restarted process also stopped) fails.
+    const gaveUp = await run({ lc: st({ state: 'gave-up', restarts: 5, reason: 'it stopped (exit 1) and was restarted 5 times; restart Ujwalam to try again' }) });
     assert.equal(gaveUp.status, 'fail');
-    const restarting = await run({ lc: st({ state: 'stopped', restarts: 1, reason: 'it stopped (exit 1); restarting in 10 s' }) });
+    assert.match(gaveUp.message, /restarted 5 times; restart Ujwalam to try again/);
+    const restarting = await run({ lc: st({ state: 'restarting', restarts: 1, reason: 'it stopped (exit 1); restarting in 10 s' }) });
     assert.equal(restarting.status, 'warn');
-    assert.match(restarting.message, /restarting \(1 restart\(s\)\)/);
+    assert.match(restarting.message, /restarting \(restart 1 of 5\)/);
+    const fifthPending = await run({ lc: st({ state: 'restarting', restarts: 5, reason: 'it stopped (exit 1); restarting in 10 s' }) });
+    assert.equal(fifthPending.status, 'warn', 'the fifth restart is scheduled: not given up yet');
+    assert.match(fifthPending.message, /restart 5 of 5/);
+    const odd = await run({ lc: st({ state: 'stopped', restarts: 5 }) });
+    assert.equal(odd.status, 'warn', 'an unknown state is a warning, never a pass or a fail');
     // the launcher's state is missing or old: unknown, a warning (never a pass)
     const none = await run({ lc: { wanted: true, flag: true, status: null } });
     assert.equal(none.status, 'warn');

@@ -314,8 +314,11 @@ async function checkClips(ctx) {
   const fresh = st && Number.isFinite(Date.parse(st.at)) && ctx.now() - Date.parse(st.at) <= ctx.config.clips.statusMaxAgeMs;
   if (!fresh) warns.push('the studio does not report the live clipper (start Ujwalam normally; it runs the clipper with the studio)');
   else if (st.state === 'not-started') fails.push(`the live clipper is not running: ${st.reason ?? 'unknown reason'}`);
-  else if (st.state === 'stopped' && Number.isFinite(st.restarts) && Number.isFinite(st.maxRestarts) && st.restarts >= st.maxRestarts) fails.push(`the live clipper is not running: ${st.reason ?? 'it stopped'}`);
-  else if (st.state === 'stopped') warns.push(`the live clipper is restarting (${st.restarts ?? 0} restart(s))`);
+  // Only "gave-up" fails: while a restart is scheduled ("restarting", even the last allowed one) it is a warning
+  // (Codex review of LC1). Any other state that is not "running" is unknown: a warning, never a pass.
+  else if (st.state === 'gave-up') fails.push(`the live clipper is not running: ${st.reason ?? 'it stopped'}`);
+  else if (st.state === 'restarting') warns.push(`the live clipper is restarting (restart ${st.restarts ?? 0} of ${st.maxRestarts ?? '?'})`);
+  else if (st.state !== 'running') warns.push(`the live clipper state is unknown (${String(st.state).slice(0, 20)})`);
   if (fails.length) return item('clips', 'fail', `Clips will not be made while live (${why}): ${fails.concat(warns).join('; ')}.`, fix ? { fix } : {});
   if (warns.length) return item('clips', 'warn', `Live clipping is on, but ${warns.join('; ')}.`);
   return item('clips', 'pass', `Clip maker ready; the live clipper is running (${why}).`);
