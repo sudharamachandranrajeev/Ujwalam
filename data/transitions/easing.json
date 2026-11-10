@@ -1,0 +1,33 @@
+{
+  "$comment": "Scene transition choices (D327, TR1): the types and easing curves Settings > Transitions offers. The host (app/host/src/studio.cpp ease_value) knows the formula of each curve (Penner easing equations; all monotonic in 0..1, so a fade never overshoots). An id the host does not know is refused there. linear = the plain libobs fade.",
+  "types": [
+    { "id": "cut", "label": "Cut" },
+    { "id": "fade", "label": "Fade" },
+    { "id": "stinger", "label": "Stinger (video)" }
+  ],
+  "easing": [
+    { "id": "linear", "label": "Linear" },
+    { "id": "in-sine", "label": "In Sine" },
+    { "id": "out-sine", "label": "Out Sine" },
+    { "id": "in-out-sine", "label": "In Out Sine" },
+    { "id": "in-quad", "label": "In Quadratic" },
+    { "id": "out-quad", "label": "Out Quadratic" },
+    { "id": "in-out-quad", "label": "In Out Quadratic" },
+    { "id": "in-cubic", "label": "In Cubic" },
+    { "id": "out-cubic", "label": "Out Cubic" },
+    { "id": "in-out-cubic", "label": "In Out Cubic" },
+    { "id": "in-quart", "label": "In Quartic" },
+    { "id": "out-quart", "label": "Out Quartic" },
+    { "id": "in-out-quart", "label": "In Out Quartic" },
+    { "id": "in-quint", "label": "In Quintic" },
+    { "id": "out-quint", "label": "Out Quintic" },
+    { "id": "in-out-quint", "label": "In Out Quintic" },
+    { "id": "in-expo", "label": "In Exponential" },
+    { "id": "out-expo", "label": "Out Exponential" },
+    { "id": "in-out-expo", "label": "In Out Exponential" },
+    { "id": "in-circ", "label": "In Circular" },
+    { "id": "out-circ", "label": "Out Circular" },
+    { "id": "in-out-circ", "label": "In Out Circular" }
+  ],
+  "durationMs": { "min": 0, "max": 10000, "default": 500 }
+}

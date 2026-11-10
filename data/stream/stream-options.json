@@ -1,0 +1,28 @@
+{
+  "$comment": "Choices the studio's Settings > Stream page offers (D327, OS1). UI choices only: platform limits stay in data/platforms/*.json and are checked by services/outputs/validate.mjs, never here. videoBitrateKbps bounds are what the bitrate box accepts, not a platform limit. Quality presets map to the host's encoder presets (NVENC p1-p7, x264 ultrafast-medium). seedPlan: the live plan a new stream setup starts from; its rung values are copied, never guessed.",
+  "resolutions": [
+    { "id": "720p", "label": "720p", "w": 1280, "h": 720 },
+    { "id": "1080p", "label": "1080p", "w": 1920, "h": 1080 },
+    { "id": "1440p", "label": "1440p", "w": 2560, "h": 1440 },
+    { "id": "2160p", "label": "2160p (4K)", "w": 3840, "h": 2160 }
+  ],
+  "portrait": { "w": 1080, "h": 1920 },
+  "frameRates": [30, 60],
+  "qualityPresets": [
+    { "id": "quality", "label": "Best quality (slowest)", "nvenc": "p7", "x264": "medium" },
+    { "id": "balanced", "label": "Balanced", "nvenc": "p5", "x264": "veryfast" },
+    { "id": "performance", "label": "Fastest (least GPU and CPU)", "nvenc": "p3", "x264": "superfast" }
+  ],
+  "audioBitratesKbps": [96, 128, 160, 192, 256, 320],
+  "videoBitrateKbps": { "min": 500, "max": 100000, "step": 500 },
+  "codec": "h264",
+  "rateControl": "cbr",
+  "keyframeSec": 2,
+  "seedPlan": "data/outputs/alpha-live.json",
+  "seedQuality": "balanced",
+  "platforms": [
+    { "id": "youtube", "label": "YouTube", "badge": "YT", "canvases": ["H", "V"] },
+    { "id": "twitch", "label": "Twitch", "badge": "TW", "canvases": ["H"] },
+    { "id": "kick", "label": "Kick", "badge": "K", "canvases": ["H"] }
+  ]
+}
