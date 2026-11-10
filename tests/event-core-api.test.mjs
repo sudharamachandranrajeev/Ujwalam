@@ -320,7 +320,7 @@ test('source comes from the token role only: "source" in a body is refused or ha
   } finally { await r.close(); }
 });
 
-test('live.set: system role only; it changes the gate state and the phrase the confirmation needs', async () => {
+test('live.set: system role only; it changes the gate state the approval is bound to', async () => {
   const r = await rig();
   try {
     assert.equal(r.core.actions.state().liveState, 'unknown');
@@ -331,53 +331,62 @@ test('live.set: system role only; it changes the gate state and the phrase the c
     assert.equal(r.core.actions.state().liveState, 'offline');
     assert.equal((await rpc(r, r.tokens.system, 'live.set', { state: 'maybe' })).error.code, -32602);
     await rpc(r, r.tokens.system, 'live.set', { state: 'live' });
-    const req = await rpc(r, r.tokens.api, 'actions.request', { id: 'scene.create', params: { name: 'invented' } });
-    assert.equal(req.result.confirm.phrase, 'yes, on air');
+    // a write the system role asks for waits for one approval, bound to the live state at the request
+    const req = await rpc(r, r.tokens.system, 'actions.request', { id: 'scene.create', params: { name: 'invented' } });
+    assert.deepEqual([req.result.verdict, req.result.confirm.liveStateAtRequest, req.result.confirm.phrase], ['confirm', 'live', undefined]);
+    // the api client's own write runs at once while live too (D332)
+    const own = await rpc(r, r.tokens.api, 'actions.request', { id: 'scene.create', params: { name: 'invented' } });
+    assert.deepEqual([own.result.verdict, own.result.reason], ['allow', 'ui-direct']);
   } finally { await r.close(); }
 });
 
-test('confirm flow end to end: request -> confirm -> executor once -> replay refused; system cannot confirm', async () => {
+test('confirm flow end to end: system request -> api approval -> executor once -> replay refused; system cannot confirm', async () => {
   const r = await rig();
   try {
     await rpc(r, r.tokens.system, 'live.set', { state: 'offline' });
-    const req = await rpc(r, r.tokens.api, 'actions.request', { id: 'scene.create', params: { name: 'invented scene' } });
+    const req = await rpc(r, r.tokens.system, 'actions.request', { id: 'scene.create', params: { name: 'invented scene' } });
     assert.equal(req.result.verdict, 'confirm');
     const c = req.result.confirm;
-    assert.equal(c.phrase, 'yes');
+    assert.equal(c.phrase, undefined); // D332: no typed phrase
     assert.equal(r.calls.length, 0);
     // wrong role
-    assert.equal((await rpc(r, r.tokens.system, 'actions.confirm', { confirmId: c.confirmId, phrase: 'yes', actionHash: c.actionHash })).status, 403);
-    // wrong hash and wrong phrase each spend the confirmation, so use fresh ones
-    const req2 = await rpc(r, r.tokens.api, 'actions.request', { id: 'scene.create', params: { name: 'invented scene' } });
-    const bad = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: req2.result.confirm.confirmId, phrase: 'yes', actionHash: 'c'.repeat(64) });
+    assert.equal((await rpc(r, r.tokens.system, 'actions.confirm', { confirmId: c.confirmId, actionHash: c.actionHash })).status, 403);
+    // a wrong hash spends the confirmation, so use a fresh one
+    const req2 = await rpc(r, r.tokens.system, 'actions.request', { id: 'scene.create', params: { name: 'invented scene' } });
+    const bad = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: req2.result.confirm.confirmId, actionHash: 'c'.repeat(64) });
     assert.deepEqual([bad.result.verdict, bad.result.reason], ['refuse', 'hash-mismatch']);
     assert.equal(r.calls.length, 0);
-    // the real one
+    // the real one (an old client's phrase is accepted and ignored)
     const ok = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: c.confirmId, phrase: 'yes', actionHash: c.actionHash });
     assert.deepEqual([ok.result.verdict, ok.result.reason], ['allow', 'confirmed']);
     assert.deepEqual(ok.result.dispatch, { ok: true, result: { mock: true } });
     assert.equal(r.calls.length, 1);
     assert.equal(r.calls[0].id, 'scene.create');
-    assert.equal(r.calls[0].source, 'api');
+    assert.equal(r.calls[0].source, 'system');
     // replay
-    const again = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: c.confirmId, phrase: 'yes', actionHash: c.actionHash });
+    const again = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: c.confirmId, actionHash: c.actionHash });
     assert.deepEqual([again.result.verdict, again.result.reason], ['refuse', 'replayed']);
     assert.equal(r.calls.length, 1);
+    // the api client's own write runs on its request, once
+    const own = await rpc(r, r.tokens.api, 'actions.request', { id: 'scene.create', params: { name: 'invented scene' } });
+    assert.deepEqual([own.result.verdict, own.result.reason, own.result.dispatch], ['allow', 'ui-direct', { ok: true, result: { mock: true } }]);
+    assert.equal(r.calls.length, 2);
+    assert.equal(r.calls[1].source, 'api');
     // reads go straight through
     const read = await rpc(r, r.tokens.api, 'actions.request', { id: 'state.read' });
     assert.equal(read.result.verdict, 'allow');
-    assert.equal(r.calls.length, 2);
+    assert.equal(r.calls.length, 3);
     // refusals
     assert.equal((await rpc(r, r.tokens.api, 'actions.request', { id: 'no.such.thing' })).result.reason, 'unknown-action');
   } finally { await r.close(); }
 });
 
-test('panic over the API: engages from api and system, clears pending confirmations, event on the bus, clear needs a confirmation', async () => {
+test('panic over the API: engages from api and system, clears pending confirmations, event on the bus, api clears it with one click', async () => {
   const r = await rig();
   try {
     const seen = [];
     r.core.bus.subscribe({ name: 'p', kinds: ['system.panic'], handler: (e) => { seen.push(e); } });
-    const req = await rpc(r, r.tokens.api, 'actions.request', { id: 'scene.create', params: {} });
+    const req = await rpc(r, r.tokens.system, 'actions.request', { id: 'scene.create', params: {} });
     assert.equal(req.result.verdict, 'confirm');
     assert.equal(r.core.actions.state().pending, 1);
     const p = await rpc(r, r.tokens.api, 'actions.panic', { reason: 'api test' });
@@ -387,17 +396,14 @@ test('panic over the API: engages from api and system, clears pending confirmati
     await tick();
     assert.equal(seen.length, 1);
     // the pending confirmation is gone
-    const late = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: req.result.confirm.confirmId, phrase: 'yes, on air', actionHash: req.result.confirm.actionHash });
+    const late = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: req.result.confirm.confirmId, actionHash: req.result.confirm.actionHash });
     assert.equal(late.result.verdict, 'refuse');
     assert.equal(r.calls.length, 0);
     // the system role may also panic; second call reports already-panic
     assert.equal((await rpc(r, r.tokens.system, 'actions.panic', {})).result.reason, 'already-panic');
-    // clearing is a catalogue action that needs a confirmation from api
+    // clearing is a catalogue action: the api client's click clears it directly (D332, no confirmation round trip)
     const clr = await rpc(r, r.tokens.api, 'actions.request', { id: 'panic.clear' });
-    assert.equal(clr.result.verdict, 'confirm');
-    assert.equal(r.core.actions.state().panic, true);
-    const done = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: clr.result.confirm.confirmId, phrase: clr.result.confirm.phrase, actionHash: clr.result.confirm.actionHash });
-    assert.equal(done.result.reason, 'panic-cleared');
+    assert.deepEqual(clr.result, { verdict: 'allow', reason: 'panic-cleared' });
     assert.equal(r.core.actions.state().panic, false);
     // system cannot clear
     await rpc(r, r.tokens.api, 'actions.panic', {});
@@ -454,18 +460,14 @@ test('audit methods: verify, paged export (audit rows only), purge routed throug
     assert.equal(gate.forSource('chat').request({ id: 'chat.raw.purge', params: { all: true } }).reason, 'chat-forbidden');
     assert.equal(gate.request({ id: 'chat.raw.purge', source: 'rule', provenance: { kind: 'chat', eventId: 'e000000000001-00000000-aaaaaaaa' } }).reason, 'chat-forbidden');
     assert.equal(gate.catalogue.get('chat.raw.purge').class, 'write');
-    // api: confirmation first, nothing deleted yet
+    // api: the purge is the api client's own write, so it runs on that request (D332), through the gate
     await r.core.audit.flush();
     const rawBefore = (await r.core.audit.purge({ olderThanDays: 99999 })).purged;
     assert.equal(rawBefore, 0);
-    const req = await rpc(r, r.tokens.api, 'audit.purge', { all: true });
-    assert.equal(req.result.verdict, 'confirm');
-    assert.equal(req.result.confirm.phrase, 'yes, on air'); // live state unknown counts as live
     const callsBefore = r.calls.length; // the five state.read requests above ran the executor
     assert.equal(callsBefore, 5);
-    const c = req.result.confirm;
-    const done = await rpc(r, r.tokens.api, 'actions.confirm', { confirmId: c.confirmId, phrase: c.phrase, actionHash: c.actionHash });
-    assert.equal(done.result.verdict, 'allow');
+    const done = await rpc(r, r.tokens.api, 'audit.purge', { all: true });
+    assert.deepEqual([done.result.verdict, done.result.reason], ['allow', 'ui-direct']);
     assert.equal(done.result.dispatch.ok, true);
     assert.equal(done.result.dispatch.result.purged, 6);
     assert.equal(done.result.dispatch.result.all, true);
@@ -475,7 +477,7 @@ test('audit methods: verify, paged export (audit rows only), purge routed throug
     // the purge itself is in the audit as a decision plus a system row, with counts only
     const all = (await rpc(r, r.tokens.api, 'audit.export', { limit: 500 })).result.rows;
     assert.ok(all.some((x) => x.type === 'system' && x.subtype === 'purge'));
-    assert.ok(all.some((x) => x.type === 'decision' && x.action_id === 'chat.raw.purge' && x.subtype === 'confirm-accepted'));
+    assert.ok(all.some((x) => x.type === 'decision' && x.action_id === 'chat.raw.purge' && x.subtype === 'request' && x.verdict === 'allow' && x.reason === 'ui-direct'));
   } finally { await r.close(); }
 });
 

@@ -13,7 +13,7 @@ import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { createFlags } from '../services/flags/index.mjs';
 import {
-  ITEMS, OVERRIDE_LOG, OVERRIDE_PHRASE, createReadiness, readinessDeadlineMs, credentialFacts, loadReadinessConfig, logOverride, planTargets,
+  ITEMS, OVERRIDE_LOG, createReadiness, readinessDeadlineMs, credentialFacts, loadReadinessConfig, logOverride, planTargets,
   readinessSummary, runReadiness, schemeOf,
 } from '../services/studio-ui/readiness.mjs';
 
@@ -361,11 +361,11 @@ describe('helpers', () => {
     assert.equal(schemeOf('RTMPS://x'), 'rtmps');
     assert.equal(schemeOf('ingest.example/app'), null);
   });
-  test('summary names failures and the override phrase; the override log holds ids only', async () => {
+  test('summary names failures and the "Go live anyway" button (no phrase, D332); the override log holds ids only', async () => {
     const r = await runReadiness(deps({ procs: ['meldstudio.exe'], tcp: false }));
     const s = readinessSummary(r);
     assert.match(s, /PROBLEM - Other streaming apps/);
-    assert.ok(s.includes(OVERRIDE_PHRASE));
+    assert.ok(s.includes('Go live anyway'));
     const d = mk();
     assert.equal(logOverride(d, r, new Date('2026-11-08T10:00:00Z')), true);
     const line = JSON.parse(readFileSync(path.join(d, 'logs', OVERRIDE_LOG), 'utf8').trim());
@@ -437,7 +437,7 @@ async function bootS(opts) {
   };
   const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
   let runs = 0;
-  const readiness = { config: { ...CONFIG, goLiveMaxAgeMs: 0, endAll: { waitMs: 2000, pollMs: 20 } }, run: async () => { runs++; return opts.result; } };
+  const readiness = { config: { ...CONFIG, goLiveMaxAgeMs: 0, endAll: { waitMs: 2000, pollMs: 20 } }, run: async () => { runs++; if (opts.gate) await opts.gate; return opts.result; } };
   const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, readiness, limits: { statusPollMs: 30 } });
   servers.push(srv);
   const { port } = await srv.listen();
@@ -456,14 +456,15 @@ const FAIL = mkResult([{ id: 'credentials', status: 'fail', message: 'Twitch: se
 const WARN = mkResult([{ id: 'speakerbot', status: 'warn', message: 'no answer' }, { id: 'disk', status: 'pass', message: 'ok' }]);
 
 describe('server: readiness route and go-live gate', () => {
-  test('flag off (the default): the route is 404 and Start stream asks only for "yes, on air"', async () => {
+  test('flag off (the default): the route is 404 and Start stream acts on the click, no check (D332)', async () => {
     const defs = JSON.parse(readFileSync(path.join(REPO, 'data', 'flags.json'), 'utf8')).flags;
     assert.equal(defs.find((f) => f.id === 'readiness').default, false);
     const c = await bootS({ flagOn: false, result: FAIL });
     assert.equal((await c.get('/ui/api/readiness')).status, 404);
     const r = (await c.post('/ui/api/host', { method: 'stream.start' })).json();
-    assert.equal(r.pending.phrase, 'yes, on air');
-    assert.equal(r.pending.readiness, undefined);
+    assert.equal(r.verdict, 'allow');
+    assert.equal(r.pending, undefined);
+    assert.ok(c.calls.some(([m]) => m === 'stream.start'));
     assert.equal(c.runs(), 0);
   });
 
@@ -474,35 +475,57 @@ describe('server: readiness route and go-live gate', () => {
     assert.deepEqual(r.items.map((i) => i.id), ['speakerbot', 'disk']);
   });
 
-  test('a failed item blocks: "yes, on air" is refused, the override phrase goes live and is logged (ids only)', async () => {
+  test('a failed item blocks: nothing starts on the click; one "Go live anyway" click (pendingId only) goes live and is logged (ids only)', async () => {
     const c = await bootS({ result: FAIL });
     const r = (await c.post('/ui/api/host', { method: 'stream.start' })).json();
-    assert.equal(r.verdict, 'confirm');
-    assert.equal(r.pending.phrase, OVERRIDE_PHRASE);
+    assert.equal(r.verdict, 'readiness-failed');
+    assert.equal(r.pending.phrase, undefined, 'no phrase (D332)');
     assert.equal(r.pending.readiness.ok, false);
     assert.match(r.pending.summary, /^Start the stream\.\n\nReady to go live\?/);
     assert.match(r.pending.summary, /PROBLEM - credentials/);
-    const w = (await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes, on air' })).json();
-    assert.equal(w.verdict, 'wrong-phrase');
     assert.ok(!c.calls.some(([m]) => m === 'stream.start'), 'started without the override');
-    const ok = (await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: OVERRIDE_PHRASE })).json();
+    const ok = (await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId })).json();
     assert.deepEqual([ok.verdict, ok.override, ok.overrideLogged], ['allow', true, true]);
     assert.ok(c.calls.some(([m]) => m === 'stream.start'));
     const log = readFileSync(path.join(c.dataDir, 'logs', OVERRIDE_LOG), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
     assert.equal(log.length, 1);
     assert.deepEqual(log[0].failed, ['credentials']);
     assert.ok(!JSON.stringify(log).includes('rtmp'), 'the log carries messages');
+    assert.equal((await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId })).status, 410, 'single use');
   });
 
-  test('warnings only: "yes, on air" goes live, nothing is logged', async () => {
-    const c = await bootS({ result: WARN });
+  test('a failed check, then Cancel: nothing starts and nothing is logged', async () => {
+    const c = await bootS({ result: FAIL });
     const r = (await c.post('/ui/api/host', { method: 'stream.start' })).json();
-    assert.equal(r.pending.phrase, 'yes, on air');
-    assert.match(r.pending.summary, /Warning - speakerbot/);
-    const ok = (await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes, on air' })).json();
+    assert.equal((await c.post('/ui/api/cancel', { pendingId: r.pending.pendingId })).status, 200);
+    assert.equal((await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId })).status, 410);
+    assert.ok(!c.calls.some(([m]) => m === 'stream.start'));
+    assert.equal(existsSync(path.join(c.dataDir, 'logs', OVERRIDE_LOG)), false);
+  });
+
+  test('warnings only: the click goes live, the warnings come back in the answer, nothing is logged', async () => {
+    const c = await bootS({ result: WARN });
+    const ok = (await c.post('/ui/api/host', { method: 'stream.start' })).json();
     assert.equal(ok.verdict, 'allow');
+    assert.match(ok.warning, /Warning - speakerbot/);
+    assert.ok(c.calls.some(([m]) => m === 'stream.start'));
     assert.equal(ok.override, undefined);
     assert.equal(existsSync(path.join(c.dataDir, 'logs', OVERRIDE_LOG)), false);
+  });
+
+  test('stop wins (Codex review of D332): Start, then Stop while the readiness check runs: the start never reaches the host', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const c = await bootS({ result: WARN, gate });
+    const starting = c.post('/ui/api/host', { method: 'stream.start' });
+    for (let i = 0; i < 200 && c.runs() === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(c.runs(), 1, 'the readiness check did not start');
+    const stop = (await c.post('/ui/api/host', { method: 'stream.stop' })).json();
+    assert.equal(stop.verdict, 'allow');
+    release();
+    const r = (await starting).json();
+    assert.deepEqual([r.verdict, r.reason], ['refuse', 'stopped-meanwhile']);
+    assert.ok(!c.calls.some(([m]) => m === 'stream.start'), 'the earlier Start went live after the Stop');
   });
 
   test('a readiness check that cannot run refuses go-live (fail closed) and says how to bypass', async () => {
@@ -520,13 +543,11 @@ describe('server: End all streams', () => {
     { id: 'record', kind: 'record', platform: 'local', state: rec },
   ] });
 
-  test('while live: typed "yes, on air", then stream.stop {} (all stream sinks), waits until stopped, recording untouched', async () => {
+  test('while live: on the click (D332) stream.stop {} (all stream sinks), waits until stopped, recording untouched', async () => {
     const c = await bootS({ flagOn: false, live: true, result: WARN, outputsSeq: [st('stopping'), st('stopping'), st('stopped')] });
-    const r = (await c.post('/ui/api/streams/end-all', {})).json();
-    assert.equal(r.pending.phrase, 'yes, on air');
-    assert.match(r.pending.summary, /recording keeps running/);
-    const ok = (await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes, on air' })).json();
+    const ok = (await c.post('/ui/api/streams/end-all', {})).json();
     assert.equal(ok.verdict, 'allow');
+    assert.equal(ok.pending, undefined);
     assert.equal(ok.endAll.allStopped, true);
     assert.equal(ok.endAll.recording, true);
     assert.deepEqual(ok.endAll.sinks.map((s) => s.state), ['stopped', 'stopped']);
@@ -539,17 +560,14 @@ describe('server: End all streams', () => {
   test('a sink that does not stop in time is reported, not hidden; extra body fields are refused', async () => {
     const c = await bootS({ flagOn: false, live: true, result: WARN, outputsSeq: [st('stopping')] });
     assert.equal((await c.post('/ui/api/streams/end-all', { sinks: ['x'] })).status, 400);
-    const r = (await c.post('/ui/api/streams/end-all', {})).json();
-    const ok = (await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes, on air' })).json();
+    const ok = (await c.post('/ui/api/streams/end-all', {})).json();
     assert.equal(ok.endAll.allStopped, false);
     assert.deepEqual(ok.endAll.sinks.map((s) => s.state), ['stopping', 'stopping']);
   });
 
-  test('not live: plain "yes"; works without the readiness flag (no flag: it wires the existing stop path)', async () => {
+  test('not live: on the click too; works without the readiness flag (no flag: it wires the existing stop path)', async () => {
     const c = await bootS({ flagOn: false, result: WARN, outputsSeq: [st('stopped', 'stopped')] });
-    const r = (await c.post('/ui/api/streams/end-all', {})).json();
-    assert.equal(r.pending.phrase, 'yes');
-    const ok = (await c.post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes' })).json();
+    const ok = (await c.post('/ui/api/streams/end-all', {})).json();
     assert.deepEqual([ok.verdict, ok.endAll.allStopped, ok.endAll.recording], ['allow', true, false]);
   });
 });

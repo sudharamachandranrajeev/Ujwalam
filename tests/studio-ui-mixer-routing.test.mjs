@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Mixer track routing, UI server side (D273): mixer.setTracks is refused while flag mixer-routing is off (the default),
 // passes the track list to the host when on, saves the host's answer into audio.sources[].tracks of the project file
-// (keyed by the project audio source the host resolved), needs "yes, on air" while live, and refuses a bad list
+// (keyed by the project audio source the host resolved), acts on the click while live (D332), and refuses a bad list
 // before the host. Stub host (kind 'host'); real flags and project-sync on temp files.
 import assert from 'node:assert/strict';
 import { copyFileSync, mkdtempSync, readFileSync } from 'node:fs';
@@ -117,7 +117,7 @@ test('mixer routing: off by default; on: sent to the host and saved under the pr
   } finally { await c.srv.close(); }
 });
 
-test('mixer routing: bad lists refused before the host; while live "yes, on air" first', async () => {
+test('mixer routing: bad lists refused before the host; while live it acts on the click (D332)', async () => {
   const c = await setup();
   try {
     c.flags.set(FLAG, true);
@@ -131,13 +131,10 @@ test('mixer routing: bad lists refused before the host; while live "yes, on air"
 
     c.host.st.live = true;
     await until(async () => (await c.status()).host.live === true, 'live seen');
-    const r = await c.post('/ui/api/host', { method: 'mixer.setTracks', params: { id: 'scene-main/layer-game', tracks: ['track2'] } });
-    assert.equal(r.body.verdict, 'confirm');
-    assert.equal(r.body.pending.phrase, 'yes, on air');
-    assert.equal(routed(c).length, 0, 'host not called before the phrase');
-    const ok = await c.post('/ui/api/confirm', { pendingId: r.body.pending.pendingId, text: 'yes, on air' });
-    assert.equal(ok.body.verdict, 'allow');
+    const ok = await c.post('/ui/api/host', { method: 'mixer.setTracks', params: { id: 'scene-main/layer-game', tracks: ['track2'] } });
+    assert.equal(ok.body.verdict, 'allow', 'acts on the click while live (D332), no "yes, on air"');
+    assert.equal(ok.body.pending, undefined);
     assert.deepEqual(c.host.st.tracks['aud-game'], ['track2']);
-    await until(() => JSON.stringify(tracksOf(c.file, 'aud-game')) === '["track2"]', 'saved after the on-air confirm');
+    await until(() => JSON.stringify(tracksOf(c.file, 'aud-game')) === '["track2"]', 'saved after the live click');
   } finally { await c.srv.close(); }
 });

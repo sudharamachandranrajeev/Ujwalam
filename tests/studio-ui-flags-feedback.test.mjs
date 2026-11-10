@@ -66,18 +66,13 @@ describe('feature flags API', () => {
     assert.ok(flags.length >= 1);
     assert.ok(flags.every((f) => f.on === (f.id === 'preview-edit') && typeof f.id === 'string' && typeof f.description === 'string'));
   });
-  test('ON needs the typed phrase; wrong phrase keeps it off; right phrase turns it on and persists', async () => {
+  test('ON acts on the click (D332): no phrase, nothing pending; it turns on and persists', async () => {
     const id = (await get(c.port, c.a, '/ui/api/flags')).json().flags[0].id;
-    const r = await post(c.port, c.a, '/ui/api/flags/set', { id, on: true });
-    const j = r.json();
-    assert.equal(j.verdict, 'confirm');
-    assert.equal(j.pending.phrase, 'yes');
-    assert.equal(existsSync(path.join(c.dataDir, 'flags.local.json')), false, 'nothing written before confirmation');
-    const bad = await post(c.port, c.a, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'no' });
-    assert.equal(bad.json().verdict, 'wrong-phrase');
-    assert.equal(existsSync(path.join(c.dataDir, 'flags.local.json')), false);
-    const ok = await post(c.port, c.a, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: ' Yes ' });
+    assert.equal(existsSync(path.join(c.dataDir, 'flags.local.json')), false, 'nothing written before the click');
+    const ok = await post(c.port, c.a, '/ui/api/flags/set', { id, on: true });
     assert.equal(ok.json().verdict, 'allow');
+    assert.equal(ok.json().pending, undefined);
+    assert.equal(c.srv._pending().size, 0);
     assert.equal(ok.json().flags.find((f) => f.id === id).on, true);
     assert.equal(JSON.parse(readFileSync(path.join(c.dataDir, 'flags.local.json'), 'utf8')).flags[id], true);
   });
@@ -106,33 +101,31 @@ describe('feature flags while live', () => {
   before(async () => { c = await boot({ live: true }); await new Promise((r) => setTimeout(r, 200)); });
   after(() => c.srv.close());
 
-  test('ON while live needs "yes, on air"; OFF while live is still instant', async () => {
+  test('ON while live acts on the click (no "yes, on air", D332); OFF while live is instant too', async () => {
     const id = (await get(c.port, c.a, '/ui/api/flags')).json().flags[0].id;
     const j = (await post(c.port, c.a, '/ui/api/flags/set', { id, on: true })).json();
-    assert.equal(j.pending.phrase, 'yes, on air');
-    assert.equal((await post(c.port, c.a, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'yes' })).json().verdict, 'wrong-phrase');
-    assert.equal((await post(c.port, c.a, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'yes, on air' })).json().verdict, 'allow');
+    assert.equal(j.verdict, 'allow');
+    assert.equal(j.flags.find((f) => f.id === id).on, true);
     const off = await post(c.port, c.a, '/ui/api/flags/set', { id, on: false });
     assert.equal(off.json().verdict, 'allow');
   });
 });
 
-describe('going live while a confirmation is open (D151)', () => {
+describe('going live between clicks (D151, D332)', () => {
   let c; const state = { live: false };
   before(async () => { c = await boot({ state }); await new Promise((r) => setTimeout(r, 200)); });
   after(() => c.srv.close());
 
-  test('a "yes" request made off air needs "yes, on air" once the stream is live', async () => {
+  test('a flag click leaves nothing open to confirm later; a click after going live also acts at once', async () => {
     const id = (await get(c.port, c.a, '/ui/api/flags')).json().flags[0].id;
     const j = (await post(c.port, c.a, '/ui/api/flags/set', { id, on: true })).json();
-    assert.equal(j.pending.phrase, 'yes');
+    assert.equal(j.verdict, 'allow');
+    assert.equal(c.srv._pending().size, 0, 'nothing pending that going live could upgrade');
     state.live = true;
     await new Promise((r) => setTimeout(r, 300)); // status poll is 50 ms
-    const up = (await post(c.port, c.a, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'yes' })).json();
-    assert.equal(up.verdict, 'wrong-phrase');
-    assert.equal(up.pending.phrase, 'yes, on air');
-    assert.equal(existsSync(path.join(c.dataDir, 'flags.local.json')), false, 'nothing written on plain yes');
-    assert.equal((await post(c.port, c.a, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'yes, on air' })).json().verdict, 'allow');
+    const off = (await post(c.port, c.a, '/ui/api/flags/set', { id, on: false })).json();
+    assert.equal(off.verdict, 'allow');
+    assert.equal(JSON.parse(readFileSync(path.join(c.dataDir, 'flags.local.json'), 'utf8')).flags[id], false);
   });
 });
 

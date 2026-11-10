@@ -529,11 +529,8 @@ void StreamPage::deleteOutput(int index)
 	QJsonArray outs = setup_.value(QStringLiteral("outputs")).toArray();
 	if (index < 0 || index >= outs.size())
 		return;
-	const QString name = outs.at(index).toObject().value(QStringLiteral("name")).toString();
-	// Asks first (the brief: Delete confirms). The key in Credential Manager is left alone.
-	if (QMessageBox::question(this, QStringLiteral("Delete output"), QStringLiteral("Delete the output \"%1\"? Its stream key in Windows Credential Manager is not touched.").arg(name),
-				  QMessageBox::Yes | QMessageBox::No, QMessageBox::No) != QMessageBox::Yes)
-		return;
+	// The click acts (D332); the list change is part of the Settings draft until Save. The key in Credential Manager is
+	// left alone.
 	outs.removeAt(index);
 	setup_ = current();
 	setup_.insert(QStringLiteral("outputs"), outs);
@@ -952,14 +949,25 @@ void IntegrationsPage::test(const QString &bot)
 	});
 }
 
-void IntegrationsPage::save(const Note &note)
+QJsonObject IntegrationsPage::edited() const
 {
-	if (data_.isEmpty())
-		return;
 	QJsonObject val = data_.value(QStringLiteral("value")).toObject();
 	val.insert(QStringLiteral("bots"), QJsonObject{{QStringLiteral("streamerbot"), QJsonObject{{QStringLiteral("port"), sbPort_->value()}}},
 						     {QStringLiteral("speakerbot"), QJsonObject{{QStringLiteral("port"), spPort_->value()}}}});
 	val.insert(QStringLiteral("remote"), QJsonObject{{QStringLiteral("enabled"), remote_->isChecked()}, {QStringLiteral("address"), remoteAddr_->currentData().toString().isEmpty() ? QJsonValue() : QJsonValue(remoteAddr_->currentData().toString())}});
+	return val;
+}
+
+bool IntegrationsPage::dirty() const
+{
+	return !data_.isEmpty() && edited() != data_.value(QStringLiteral("value")).toObject();
+}
+
+void IntegrationsPage::save(const Note &note)
+{
+	if (data_.isEmpty())
+		return;
+	const QJsonObject val = edited();
 	if (val == data_.value(QStringLiteral("value")).toObject() && data_.value(QStringLiteral("exists")).toBool())
 		return; // unchanged
 	api_->post(QStringLiteral("ui/api/integrations"), QJsonObject{{QStringLiteral("value"), val}}, [note](bool ok, const QJsonObject &b, const QString &err) {
@@ -1089,7 +1097,7 @@ void OutputsPanel::refresh()
 			sw->setCheckedSilently(on);
 			sw->setEnabled(o.value(QStringLiteral("inPlan")).toBool() && (!live || !st.isEmpty()));
 			sw->setToolTip(!o.value(QStringLiteral("inPlan")).toBool() ? QStringLiteral("Portrait outputs need Main + portrait canvas (Settings > Stream).")
-				       : live ? QStringLiteral("Live: switching asks for \"yes, on air\" and starts or stops this output only.")
+				       : live ? QStringLiteral("Live: switching starts or stops this output only, at once.")
 					      : QStringLiteral("Whether Start stream starts this output."));
 		}
 	});

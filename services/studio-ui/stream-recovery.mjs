@@ -4,7 +4,7 @@
 // Authority (one owner): the launcher holds the go-live authority in memory (createLiveAuthority); nothing on disk is
 // read for a decision. The UI server, its only writer, talks to it over the Node IPC channel the launcher opens
 // (authorityClient / serveAuthority):
-//   begin            before a confirmed "yes, on air" stream.start goes to the host -> the current generation g
+//   begin            before a Start stream click's stream.start goes to the host -> the current generation g
 //   arm(g)           after the host accepted that start; refused when any revoke happened since begin (a newer Stop
 //                    wins over a slow Start)
 //   revoke(reason)   before a confirmed Stop or End all goes to the host. The generation goes up at once (the
@@ -213,7 +213,7 @@ const hhmm = (ms) => { const d = new Date(ms); return `${String(d.getHours()).pa
 const list = (a) => a.join(', ');
 const WHY = {
   'flag-off': 'stream recovery is off (feature flag stream-recovery)',
-  'no-confirmation': 'no "yes, on air" from this session was found',
+  'no-confirmation': 'no Start stream click from this session was found',
   stopped: 'you had stopped them',
   'too-late': 'the host took too long to come back',
   config: 'the recovery settings (data/live/recovery.json) could not be read',

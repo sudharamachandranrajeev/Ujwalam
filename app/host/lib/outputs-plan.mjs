@@ -159,7 +159,7 @@ export function plan(config, targets, { platformsDir = PLATFORMS_DIR, policy, al
     if (!config.sinks.some((s) => s.id === id)) throw new Error(`target "${id}" names no sink`);
   }
   if (live.length && !allowLive) {
-    throw new Error(`real (non-loopback) targets for ${live.map((x) => `"${x}"`).join(', ')} are refused: plan with allowLive (the host must run with --allow-live, after the user's "yes, on air")`);
+    throw new Error(`real (non-loopback) targets for ${live.map((x) => `"${x}"`).join(', ')} are refused: plan with allowLive (the host must run with --allow-live, after the user's Start stream click)`);
   }
   // Recording binds to an existing stream rung (no extra encoder) when the plan streams.
   const streamRungs = new Set(sinks.filter((x) => x.target.transport !== 'file').map((x) => x.rung));

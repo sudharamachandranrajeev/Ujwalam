@@ -3,7 +3,7 @@
 // listeners only (no platform, nothing beyond 127.0.0.1): the full studio launch (services/studio-ui/launch.mjs,
 // event core --mock, no --alpha, no --live, no devices) with a loopback plan (one 640x360 rung feeding an RTMP sink to
 // an ffmpeg listener on 127.0.0.1 and an .mkv recording). The stream is started through the control page's own API
-// ("yes, on air"), the host process is killed (TerminateProcess, exit code 1 = a crash), and the launcher restarts
+// (one click, D332), the host process is killed (TerminateProcess, exit code 1 = a crash), and the launcher restarts
 // the host and the stream: a second listener receives it (ffprobe), the recording continues in a new file, the
 // control page status names the restarted stream.
 //   node --test --test-concurrency=1 app/host/tests/host-stream-recovery.test.mjs   (part of npm run test:host)
@@ -118,12 +118,9 @@ test('a host killed while streaming comes back with its stream and a new recordi
   const l1 = listener('first');
   await sleep(1200);
   await until(async () => { const r = await req('GET', '/ui/api/status'); return r.body?.host?.outputsReady?.record; }, 'record output ready');
-  // Record, then go live, both through the page's confirm flow.
-  for (const [method, phrase] of [['record.start', 'yes'], ['stream.start', 'yes, on air']]) {
-    const c = await req('POST', '/ui/api/host', { method, params: {} });
-    assert.equal(c.body.verdict, 'confirm', JSON.stringify(c.body));
-    assert.equal(c.body.pending.phrase, phrase);
-    const r = await req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: phrase });
+  // Record, then go live, both through the page's own routes (each acts on the click, D332).
+  for (const method of ['record.start', 'stream.start']) {
+    const r = await req('POST', '/ui/api/host', { method, params: {} });
     assert.equal(r.body.verdict, 'allow', JSON.stringify(r.body));
   }
   await until(async () => size(l1.file) > 100_000, 'the first listener receiving the stream', 30_000);
@@ -142,8 +139,7 @@ test('a host killed while streaming comes back with its stream and a new recordi
   assert.ok(lines.some((x) => /recording started again in a new file \(rec-h\)/.test(x)), lines.join('\n'));
 
   // Stop everything from the page (End all, then the recording), then check the files.
-  const c = await req('POST', '/ui/api/streams/end-all', {});
-  const e = await req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+  const e = await req('POST', '/ui/api/streams/end-all', {});
   assert.equal(e.body.endAll.allStopped, true, JSON.stringify(e.body));
   await l2.stop();
   for (const f of [l1.file, l2.file]) {

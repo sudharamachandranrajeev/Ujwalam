@@ -3,7 +3,7 @@
 //   1. read the session file named by env UJWALAM_MELD_SESSION or paths.meld_session in data/profile.local.json
 //   2. services/project/import-meld.mjs importMeld() -> a NEW project file under <dataDir>/projects (never overwrites)
 //   3. host project.plan (dry run) -> counts only go back to the page (no names, ids, paths or device names)
-//   4. project.load happens later, behind the typed confirmation (server.mjs)
+//   4. project.load happens later, on the user's Load click (server.mjs)
 // Existing scenes, layers, devices and settings of the studio are never modified by the import itself.
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';

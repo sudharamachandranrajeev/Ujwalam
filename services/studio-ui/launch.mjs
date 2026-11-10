@@ -36,7 +36,7 @@
 // --hotkey-marker COMBO|off replace a default combo (e.g. when another program already holds Ctrl+Alt+M).
 // --live (alpha only): configure the real-output plan data/outputs/alpha-live.json and start the host with
 // --allow-live. Without it no real target is configured (an --outputs plan with real targets is refused). Nothing
-// starts streaming at launch: the control page's typed "yes, on air" stays the start gate. At start the launcher
+// starts streaming at launch: the user's Start stream click stays the start gate (D332). At start the launcher
 // prints per sink keyPresent / urlPresent from outputs.status (never a key or URL), the hotkeys and the replay state.
 // Private test stream options (all need --alpha --live):
 //   --sinks youtube-h,youtube-v,twitch[,kick]  which REAL sinks of the plan are configured (default: all of them);
@@ -46,7 +46,7 @@
 //       stops (exit 1) unless outputs.status shows bandwidthTest true on every twitch sink.
 //   --test-stream-minutes N [--test-sink-minutes id=M,...]  arms the live-test guard (live-guard.mjs, budget
 //       data/outputs/guard/live-test-budget.json). The guard never starts anything: it waits for the first stream started
-//       from the control page ("yes, on air"), then stops ALL outputs after N minutes (exit 0) or at once when a
+//       by the user (Start stream), then stops ALL outputs after N minutes (exit 0) or at once when a
 //       destination fails or drops frames past the budget (exit 4), writes <data dir>/logs/live-test-<stamp>.json
 //       and .txt (no keys, URLs or error text) and ends the session. id=M stops only that sink after M minutes.
 // UJWALAM_ALPHA_FEEDBACK_PROBE=1 (tests and evidence; only with --no-open): after start the launcher calls
@@ -62,7 +62,7 @@
 // (a new .mkv file; the old one stays playable, mkv is crash-safe) and a marker (source api) records the restart.
 // Streams (D303 proposed, flag stream-recovery, off by default; stream-recovery.mjs): with the flag on, the stream
 // sinks that were live before the crash are started again when this launcher's go-live authority is armed (it owns
-// it in memory; the UI server arms it after a confirmed "yes, on air" start and revokes it before Stop / End all, over
+// it in memory; the UI server arms it after a Start stream click and revokes it before Stop / End all, over
 // the IPC channel), the restarted host is ready within maxGapMs of the crash and the recovery limit
 // (data/live/recovery.json) is not reached; never a sink that was not live, never after Stop / End all, never after a
 // launcher restart (a new launcher has a new, unarmed authority). The decision and the stream.start run in the
@@ -837,7 +837,7 @@ function superviseHost(o) {
     }
     // A host without its scenes would broadcast an empty picture: streams come back only after a good project load.
     const sr = carry ? await recoverStreams(client, projectOk) : { restarted: [], byHand: [] };
-    if (sr.byHand.length) console.log(`[studio] WARNING: streams ${sr.byHand.join(', ')} are NOT running: start them from the control page ("yes, on air")`);
+    if (sr.byHand.length) console.log(`[studio] WARNING: streams ${sr.byHand.join(', ')} are NOT running: start them with Start stream`);
     const note = `host restarted after an unexpected exit (${base.exit}); restart ${d.attempt} of ${d.max}; recording resumed: ${resumed.join(', ') || 'none'}; ${sr.restarted.length ? `streams restarted: ${sr.restarted.join(', ')}; ` : ''}streams to restart by hand: ${sr.byHand.join(', ') || 'none'}`;
     try { await client.call('marker.add', { source: 'api', note: note.slice(0, 500) }); } catch (e) { console.log(`[studio] WARNING: restart marker not written: ${e.message}`); }
     crashLog({ at: new Date().toISOString(), action: 'restarted', attempt: d.attempt, resumed, streams, streamsRestarted: sr.restarted, streamsByHand: sr.byHand });
@@ -1010,7 +1010,7 @@ export async function main(argv = process.argv.slice(2)) {
       const ltp = liveTestPlanProblems(lt, params.sinks);
       if (ltp.length) { for (const p of ltp) console.log(`[studio] ${p}`); await stopAll(); return 2; }
       if (lt.select) console.log(`[studio] LIVE sinks: ${params.sinks.map((s) => s.id).join(', ')} (--sinks)`);
-      if (args.live === true) console.log(`[studio] LIVE plan: ${path.relative(REPO, planPath)} (real targets configured, nothing started; start from the control page with "yes, on air")`);
+      if (args.live === true) console.log(`[studio] LIVE plan: ${path.relative(REPO, planPath)} (real targets configured, nothing started; start with Start stream)`);
       else if (planPath === ALPHA_RECORD_PLAN) console.log(`[studio] record plan: ${path.relative(REPO, planPath)} (Record saves H and V .mkv; streaming needs the LIVE start: Ujwalam.cmd --live)`);
       for (const w of report.warnings) console.log(`[studio] outputs plan warning: ${w.code}`);
       const f = path.join(hostCfg.dataDir, 'outputs-params.json');
@@ -1175,7 +1175,7 @@ export async function main(argv = process.argv.slice(2)) {
         windowsHide: false // GUI window: the Qt studio window (default, D277); a GUI exe, no console
       });
       shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
-      // One close (D280): the window closed by the user (exit 0; while live only after the typed "yes, on air") stops
+      // One close (D280): the window closed by the user (exit 0; while live too, D332) stops
       // everything. Any other exit is a crash: the studio keeps running (a stream is never cut by a UI crash) and the
       // window is opened again (at most SHELL_RELAUNCH_MAX times in SHELL_RELAUNCH_WINDOW_MS), with a new one-time key
       // the UI server gets on its stdin pipe. Without a console (ujwalam-start.exe) the window is the only way to stop.

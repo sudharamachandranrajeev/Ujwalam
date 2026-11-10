@@ -163,37 +163,32 @@ describe('mutating API', () => {
     assert.equal((await post(port, a, route, { method: 'layers.setPlacement', params: { scene: 's', layer: 'l' } })).status, 400, 'placement required');
     assert.ok(Object.keys(HOST_CALLS).every((k) => !/^(host|project|outputs|encoders)\./.test(k)));
   });
-  test('stream start needs the typed phrase; the host is not called before it', async () => {
+  test('stream start acts on the click (D332): no phrase, no pending entry; the host is called once', async () => {
     const before = ctx.calls.host.filter((m) => m === 'stream.start').length;
-    const r = JSON.parse((await post(port, a, '/ui/api/host', { method: 'stream.start' })).text);
-    assert.equal(r.verdict, 'confirm');
-    assert.equal(r.pending.phrase, 'yes, on air');
-    assert.equal(ctx.calls.host.filter((m) => m === 'stream.start').length, before);
-    const id = r.pending.pendingId;
-    const wrong = JSON.parse((await post(port, a, '/ui/api/confirm', { pendingId: id, text: 'yes' })).text);
-    assert.equal(wrong.verdict, 'wrong-phrase');
-    assert.equal(ctx.calls.host.filter((m) => m === 'stream.start').length, before);
-    const ok = JSON.parse((await post(port, a, '/ui/api/confirm', { pendingId: id, text: '  Yes,  ON air ' })).text);
+    const ok = JSON.parse((await post(port, a, '/ui/api/host', { method: 'stream.start' })).text);
     assert.equal(ok.verdict, 'allow');
+    assert.equal(ok.pending, undefined);
     assert.equal(ctx.calls.host.filter((m) => m === 'stream.start').length, before + 1);
-    assert.equal((await post(port, a, '/ui/api/confirm', { pendingId: id, text: 'yes, on air' })).status, 410, 'single use');
   });
-  test('cancel removes a pending confirmation', async () => {
-    const r = JSON.parse((await post(port, a, '/ui/api/host', { method: 'record.start' })).text);
+  test('confirm and cancel need a known pending id: unknown, used or cancelled ids get 410', async () => {
+    const r = JSON.parse((await post(port, a, '/ui/api/core/request', { id: 'chat.raw.purge', params: {} })).text);
+    assert.equal(r.verdict, 'confirm');
     assert.equal((await post(port, a, '/ui/api/cancel', { pendingId: r.pending.pendingId })).status, 200);
-    assert.equal((await post(port, a, '/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes' })).status, 410);
+    assert.equal((await post(port, a, '/ui/api/confirm', { pendingId: r.pending.pendingId })).status, 410);
+    assert.equal((await post(port, a, '/ui/api/confirm', { pendingId: 'f'.repeat(32) })).status, 410);
   });
-  test('core action: ids and hashes stay server-side; the typed phrase triggers actions.confirm', async () => {
+  test('core approval: ids and hashes stay server-side; one Allow click (pendingId only) triggers actions.confirm', async () => {
     const r = await post(port, a, '/ui/api/core/request', { id: 'chat.raw.purge', params: { all: true } });
     assert.equal(r.status, 200);
     assert.ok(!r.text.includes(CONFIRM_ID) && !r.text.includes(ACTION_HASH), 'confirmId/actionHash must not reach the page');
     const j = JSON.parse(r.text);
-    assert.equal(j.verdict, 'confirm'); assert.equal(j.pending.phrase, 'yes');
+    assert.equal(j.verdict, 'confirm'); assert.equal(j.pending.phrase, undefined, 'no phrase');
     assert.ok(!ctx.calls.core.some(([m]) => m === 'actions.confirm'));
-    const ok = JSON.parse((await post(port, a, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'yes' })).text);
+    const ok = JSON.parse((await post(port, a, '/ui/api/confirm', { pendingId: j.pending.pendingId })).text);
     assert.equal(ok.verdict, 'allow');
     const c = ctx.calls.core.find(([m]) => m === 'actions.confirm');
-    assert.deepEqual(c[1], { confirmId: CONFIRM_ID, phrase: 'yes', actionHash: ACTION_HASH });
+    assert.deepEqual(c[1], { confirmId: CONFIRM_ID, actionHash: ACTION_HASH });
+    assert.equal((await post(port, a, '/ui/api/confirm', { pendingId: j.pending.pendingId })).status, 410, 'single use');
     assert.equal((await post(port, a, '/ui/api/core/request', { id: 'Bad Id' })).status, 400);
   });
 });
@@ -327,17 +322,16 @@ describe('Meld import and project.load', () => {
       assert.equal((await post(c.port, c.a, '/ui/api/project/import-meld', { path: 'C:/x.json' })).status, 503);
     } finally { await c.srv.close(); }
   });
-  test('load needs an import first, then the typed phrase; retries on -32009; project stays server-side', async () => {
+  test('load needs an import first, then acts on the click (D332); retries on -32009; project stays server-side', async () => {
     const c = await importSetup();
     try {
       assert.equal((await post(c.port, c.a, '/ui/api/project/load', {})).status, 409);
       await post(c.port, c.a, '/ui/api/project/import-meld', {});
       assert.equal((await post(c.port, c.a, '/ui/api/project/load', { project: {} })).status, 400);
+      assert.ok(!c.calls.some(([m]) => m === 'project.load'), 'nothing loaded before the Load click');
       const r = await post(c.port, c.a, '/ui/api/project/load', { skipUnavailable: true });
-      const j = JSON.parse(r.text);
-      assert.equal(j.verdict, 'confirm'); assert.ok(!r.text.includes('"scenes"'), 'project document must not reach the page');
-      assert.ok(!c.calls.some(([m]) => m === 'project.load'));
-      const ok = JSON.parse((await post(c.port, c.a, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'yes' })).text);
+      const ok = JSON.parse(r.text);
+      assert.ok(!r.text.includes('"scenes"'), 'project document must not reach the page');
       assert.equal(ok.verdict, 'allow');
       assert.equal(c.calls.filter(([m]) => m === 'project.load').length, 3, 'two conflicts then success');
       assert.equal(c.calls.find(([m]) => m === 'project.load')[1].skipUnavailable, true);
@@ -414,7 +408,7 @@ describe('audio readiness (D297 proposed)', () => {
     assert.deepEqual(audioReadiness(undefined), { ok: true, warnings: [], sources: [] });
     assert.deepEqual(audioReadiness({ warnings: [5, 'X audio missing'], sources: 'no' }), { ok: false, warnings: ['X audio missing'], sources: [] });
   });
-  test('status snapshot and the record/stream confirmation name the missing sound before going live', async () => {
+  test('status snapshot and the record/stream answer name the missing sound (D332: a warning, not a stop)', async () => {
     const fake = createFakeHost({ outputsReady: true });
     let ah = AH;
     const host = { describe: () => fake.describe(), call: async (m, p) => { const r = await fake.call(m, p); return m === 'host.status' ? { ...r, audioHealth: ah } : r; } };
@@ -427,14 +421,15 @@ describe('audio readiness (D297 proposed)', () => {
       assert.deepEqual(st.host.audioHealth, audioReadiness(AH));
       for (const method of ['record.start', 'stream.start']) {
         const r = JSON.parse((await post(port, a, '/ui/api/host', { method })).text);
-        assert.equal(r.verdict, 'confirm');
-        assert.match(r.pending.summary, /WARNING: Game audio missing$/, method);
+        assert.equal(r.verdict, 'allow', method);
+        assert.match(r.warning, /^WARNING: Game audio missing$/, method);
       }
+      const stop = JSON.parse((await post(port, a, '/ui/api/host', { method: 'record.stop' })).text);
+      assert.equal(stop.warning, undefined, 'only starts carry the audio warning');
       ah = { ok: true, warnings: [], sources: [] };
       const r2 = JSON.parse((await post(port, a, '/ui/api/host', { method: 'record.start' })).text);
-      assert.equal(r2.pending.summary, 'Start recording');
-      const stop = JSON.parse((await post(port, a, '/ui/api/host', { method: 'record.stop' })).text);
-      assert.equal(stop.pending.summary, 'Stop recording', 'only starts carry the readiness warning');
+      assert.equal(r2.verdict, 'allow');
+      assert.equal(r2.warning, undefined);
     } finally { await srv.close(); }
   });
 });

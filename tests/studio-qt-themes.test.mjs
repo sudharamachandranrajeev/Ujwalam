@@ -110,8 +110,8 @@ describe('Qt studio themes (headless probe)', { skip }, () => {
     assert.equal(saved.ui.theme, 'retro-wave');
     assert.equal(saved.ui.effects, 'reduced');
   });
-  test('Settings > Appearance: Cancel puts the old look back and saves nothing', async () => {
-    const p = await probe({ ms: 9000, actions: 'settings-open,settings-theme:neon-arcade,settings-reduce-effects:on,settings-cancel' });
+  test('Settings > Appearance: Cancel, then Discard in the unsaved-changes question (D332), puts the old look back and saves nothing', async () => {
+    const p = await probe({ ms: 9000, actions: 'settings-open,settings-theme:neon-arcade,settings-reduce-effects:on,settings-cancel,settings-unsaved:discard' });
     assert.equal(p.actions.every((a) => a.done), true);
     assert.equal(p.theme.id, 'violet-night');
     assert.equal(p.theme.effects, 'full');

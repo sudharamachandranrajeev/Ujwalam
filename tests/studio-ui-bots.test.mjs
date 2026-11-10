@@ -99,58 +99,37 @@ describe('Bots API with fake bots', () => {
     assert.deepEqual(rows.map((b) => b.port), [8093, 8083], 'the fake reports the default ports; nothing is contacted');
   });
 
-  test('Start and Stop are typed-confirmation writes: nothing runs before the phrase, a wrong phrase stays pending', async () => {
+  test('Start and Stop act on the click (D332): no pending entry, no phrase', async () => {
     const c = await boot();
-    const r = await post(c, '/ui/api/bots/start', { bot: 'streamerbot' });
-    const j = r.json();
-    assert.equal(j.verdict, 'confirm');
-    assert.equal(j.pending.phrase, 'yes');
-    assert.match(j.pending.summary, /Start Streamer\.bot/);
-    assert.deepEqual(c.bots.calls, [], 'not started before confirmation');
-    const wrong = await post(c, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'ok' });
-    assert.equal(wrong.json().verdict, 'wrong-phrase');
-    assert.deepEqual(c.bots.calls, []);
-    const ok = await post(c, '/ui/api/confirm', { pendingId: j.pending.pendingId, text: 'Yes' });
-    assert.equal(ok.json().verdict, 'allow');
+    const j = (await post(c, '/ui/api/bots/start', { bot: 'streamerbot' })).json();
+    assert.equal(j.verdict, 'allow');
+    assert.equal(j.pending, undefined, 'nothing waits for a typed phrase');
     assert.deepEqual(c.bots.calls, [['start', 'streamerbot']]);
-    assert.deepEqual(ok.json().bots.map((b) => [b.bot, b.running, b.startedByUs]), [['streamerbot', true, true], ['speakerbot', false, false]]);
-    // Stop
-    const s = (await post(c, '/ui/api/bots/stop', { bot: 'streamerbot' })).json();
-    assert.match(s.pending.summary, /Stop Streamer\.bot/);
-    assert.match(s.pending.summary, /force-closed: save your Streamer\.bot changes first/); // warned before a forced close
-    const done = (await post(c, '/ui/api/confirm', { pendingId: s.pending.pendingId, text: 'yes' })).json();
+    assert.deepEqual(j.bots.map((b) => [b.bot, b.running, b.startedByUs]), [['streamerbot', true, true], ['speakerbot', false, false]]);
+    const done = (await post(c, '/ui/api/bots/stop', { bot: 'streamerbot' })).json();
     assert.equal(done.verdict, 'allow');
     assert.equal(done.forced, false);
     assert.equal(done.bots[0].running, false);
   });
 
-  test('Cancel runs nothing; Stop of a copy the user started is refused with a reason', async () => {
+  test('Stop of a copy the user started is refused with a reason', async () => {
     const c = await boot({ bots: createFakeBots({ speakerbot: { running: true, startedByUs: false, portAnswering: true } }) });
-    const p = (await post(c, '/ui/api/bots/start', { bot: 'streamerbot' })).json().pending;
-    assert.equal((await post(c, '/ui/api/cancel', { pendingId: p.pendingId })).json().verdict, 'cancelled');
-    assert.deepEqual(c.bots.calls, []);
-    const s = (await post(c, '/ui/api/bots/stop', { bot: 'speakerbot' })).json().pending;
-    const r = (await post(c, '/ui/api/confirm', { pendingId: s.pendingId, text: 'yes' })).json();
+    const r = (await post(c, '/ui/api/bots/stop', { bot: 'speakerbot' })).json();
     assert.equal(r.verdict, 'refuse');
     assert.equal(r.reason, 'not-started-by-ujwalam');
     assert.equal(r.bots.find((b) => b.bot === 'speakerbot').running, true);
   });
 
-  test('while live the phrase is "yes, on air", also when the stream went live after the request', async () => {
+  test('while live a bot start also acts on the click (no "yes, on air")', async () => {
     const c = await boot({ live: true });
-    const p = (await post(c, '/ui/api/bots/start', { bot: 'speakerbot' })).json().pending;
-    assert.equal(p.phrase, 'yes, on air');
-    assert.equal((await post(c, '/ui/api/confirm', { pendingId: p.pendingId, text: 'yes' })).json().verdict, 'wrong-phrase');
-    assert.deepEqual(c.bots.calls, []);
-    assert.equal((await post(c, '/ui/api/confirm', { pendingId: p.pendingId, text: 'yes, on air' })).json().verdict, 'allow');
+    assert.equal((await post(c, '/ui/api/bots/start', { bot: 'speakerbot' })).json().verdict, 'allow');
     assert.deepEqual(c.bots.calls, [['start', 'speakerbot']]);
   });
 
-  test('turning the flag off between request and confirmation cancels the write', async () => {
+  test('with the flag off nothing runs', async () => {
     const c = await boot();
-    const p = (await post(c, '/ui/api/bots/start', { bot: 'streamerbot' })).json().pending;
     createFlags({ dataDir: c.dataDir }).set('bot-manager', false);
-    const r = await post(c, '/ui/api/confirm', { pendingId: p.pendingId, text: 'yes' });
+    const r = await post(c, '/ui/api/bots/start', { bot: 'streamerbot' });
     assert.equal(r.status, 404);
     assert.deepEqual(c.bots.calls, []);
   });
@@ -190,14 +169,12 @@ describe('Bots API over the real bot manager (copied node executable, no real bo
     });
     const before = (await get(c, '/ui/api/bots')).json().bots;
     assert.deepEqual([before[0].installed, before[0].running, before[1].installed], [true, false, false], 'speakerbot is not configured');
-    const sp = (await post(c, '/ui/api/bots/start', { bot: 'streamerbot' })).json().pending;
-    const started = (await post(c, '/ui/api/confirm', { pendingId: sp.pendingId, text: 'yes' })).json();
+    const started = (await post(c, '/ui/api/bots/start', { bot: 'streamerbot' })).json();
     assert.equal(started.verdict, 'allow');
     const row = started.bots[0];
     assert.deepEqual([row.running, row.startedByUs, row.portAnswering], [true, true, false]);
     assert.equal(alive(row.pid), true);
-    const st = (await post(c, '/ui/api/bots/stop', { bot: 'streamerbot' })).json().pending;
-    const stopped = (await post(c, '/ui/api/confirm', { pendingId: st.pendingId, text: 'yes' })).json();
+    const stopped = (await post(c, '/ui/api/bots/stop', { bot: 'streamerbot' })).json();
     assert.equal(stopped.verdict, 'allow');
     assert.equal(alive(row.pid), false);
     assert.equal(stopped.bots[0].running, false);

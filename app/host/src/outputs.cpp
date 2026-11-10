@@ -1059,7 +1059,7 @@ json::Value Outputs::build(const json::Value &params)
 		if (d.s->live_target && !allow_live_)
 			throw Error(rpc::FORBIDDEN, "sink " + d.s->id +
 							    ": real (non-loopback) targets are refused; the host must be started with "
-							    "--allow-live (after the user's \"yes, on air\")");
+							    "--allow-live (after the user's Start stream click)");
 	for (auto &d : defs) {
 		Sink &s = *d.s;
 		if (!s.key_ref.empty()) {

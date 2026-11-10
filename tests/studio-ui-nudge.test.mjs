@@ -93,16 +93,17 @@ test('no nudge: flag off, no selection, typing in a field, with Ctrl, or other k
   assert.deepEqual([moves(off.calls), moves(h.calls)], [[], []]);
 });
 
-test('live: arrow keys are off with a note; a confirm verdict is cancelled, never left pending', async () => {
+test('live: arrow keys are off with a note; a press acts on the key with nothing left pending (D332)', async () => {
   const live = harness({ live: true });
   await settle(); await live.select();
   live.key('ArrowRight');
   await settle();
   assert.deepEqual(moves(live.calls), []);
   assert.match(live.els.get('insp-note').textContent, /Live: arrow keys are off/);
-  const v = harness({ verdict: 'confirm' });
+  const v = harness({ verdict: 'allow' });
   await settle(); await v.select();
   v.key('ArrowRight');
   await settle();
-  assert.deepEqual(v.calls.filter((c) => c[0] === 'cancel'), [['cancel', 'p1']]);
+  assert.equal(moves(v.calls).length, 1, 'one move on the key press');
+  assert.deepEqual(v.calls.filter((c) => c[0] === 'cancel' || c[0] === 'confirm'), [], 'no confirm step, nothing to cancel');
 });

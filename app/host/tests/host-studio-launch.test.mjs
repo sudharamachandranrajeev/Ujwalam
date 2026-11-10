@@ -56,19 +56,17 @@ function req(method, route, body) {
     r.end();
   });
 }
-// The page's Api.host(method, params): 200 { result } or a typed confirmation.
+// The page's Api.host(method, params): 200 { result }, or { verdict: 'allow', result } for a start or stop (D332).
 async function host(method, params = {}) {
   const r = await req('POST', '/ui/api/host', { method, params });
   assert.equal(r.status, 200, `${method}: ${JSON.stringify(r.body)}`);
   return r.body;
 }
-async function confirmed(method, params = {}) {
-  const c = await host(method, params);
-  assert.equal(c.verdict, 'confirm', `${method} needs a typed phrase`);
-  assert.equal(c.pending.phrase, 'yes', `${method} phrase while not live`);
-  const r = await req('POST', '/ui/api/confirm', { pendingId: c.pending.pendingId, text: 'yes' });
-  assert.equal(r.status, 200, `${method} confirm: ${JSON.stringify(r.body)}`);
-  return r.body;
+async function clicked(method, params = {}) {
+  const r = await host(method, params);
+  assert.equal(r.verdict, 'allow', `${method} acts on the click (D332): ${JSON.stringify(r)}`);
+  assert.equal(r.pending, undefined, `${method}: no pending entry`);
+  return r;
 }
 async function status() {
   const r = await req('GET', '/ui/api/status');
@@ -202,7 +200,7 @@ test('mixer volume + mute + live meter (peakDb)', async () => {
 });
 
 test('local recording start/stop through the typed confirmation (no stream)', async () => {
-  const st = await confirmed('record.start');
+  const st = await clicked('record.start');
   console.log(`# record.start ${JSON.stringify(st)}`);
   let s;
   for (let i = 0; i < 20; i++) { s = await status(); if (s.host.recording) break; await sleep(250); }
@@ -214,7 +212,7 @@ test('local recording start/stop through the typed confirmation (no stream)', as
   assert.equal(s.host.totalFrames, 0, 'no stream sink: status-bar frame counters stay 0');
   assert.equal(s.host.droppedFrames, 0);
   console.log(`# status while recording ${JSON.stringify(s.host)}`);
-  const sp = await confirmed('record.stop');
+  const sp = await clicked('record.stop');
   console.log(`# record.stop ${JSON.stringify(sp)}`);
   for (let i = 0; i < 40; i++) { s = await status(); if (!s.host.recording) break; await sleep(250); }
   assert.equal(s.host.recording, false, 'recording off');

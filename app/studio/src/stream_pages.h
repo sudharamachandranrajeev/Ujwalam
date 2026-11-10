@@ -9,7 +9,7 @@
 //                    "Allow remote connections" (LAN only, off by default).
 //   OutputsPanel     main window (flag outputs-panel): an on/off switch per output, a + button, the Virtual Camera row.
 // Every value goes through the UI server (services/studio-ui/settings-routes.mjs), which checks it again: platform
-// limits, live lock, "yes, on air" for a live switch. No key or token is stored or shown here. Theme tokens only.
+// limits, live lock; a live switch acts on the click (D332). No key or token is stored or shown here. Theme tokens only.
 #pragma once
 
 #include "api_client.h"
@@ -43,6 +43,7 @@ public:
 	void save(const Note &note); // Settings Save: refused values come back with the limit
 	// A change with problems (a value over a platform limit): Settings stays open on this page, the problems shown.
 	bool blocksSave() const { return loaded_ && !lastProblems_.isEmpty() && current() != orig_; }
+	bool dirty() const { return loaded_ && current() != orig_; } // an edit Save would send (Settings asks before it is lost)
 	QJsonObject probe() const;
 	bool probeAction(const QStringList &p); // stream-mode:<main|multi> | stream-kbps:<n> | stream-output:add|edit|delete:<i>
 
@@ -77,6 +78,7 @@ class TransitionsPage : public QWidget {
 public:
 	TransitionsPage(ApiClient *api, bool live, QWidget *parent);
 	void save(const Note &note);
+	bool dirty() const { return !live_ && !data_.isEmpty() && signature() != orig_; }
 	QJsonObject probe() const;
 	bool probeAction(const QStringList &p); // tr-type:<h|v>:<id> | tr-ease:<h|v>:<id> | tr-mirror:<on|off> | tr-force:<h|v>
 
@@ -106,12 +108,14 @@ class IntegrationsPage : public QWidget {
 public:
 	IntegrationsPage(ApiClient *api, QWidget *parent);
 	void save(const Note &note);
+	bool dirty() const; // a changed port or remote choice (Save would send it)
 	QJsonObject probe() const;
 	bool probeAction(const QStringList &p); // int-test:<streamerbot|speakerbot> | int-remote:<on|off>
 
 private:
 	void load();
 	void test(const QString &bot);
+	QJsonObject edited() const; // the value as the page shows it now
 	ApiClient *api_;
 	QJsonObject data_;
 	QSpinBox *sbPort_ = nullptr, *spPort_ = nullptr;
@@ -130,7 +134,7 @@ public:
 	bool probeToggle(const QString &id, bool on); // a click on that row's switch
 
 signals:
-	void confirmNeeded(const QJsonObject &pending); // a live switch: the window asks for "yes, on air"
+	void confirmNeeded(const QJsonObject &pending); // a pending entry from the server: the window shows it for one click
 	void message(const QString &text);
 	void addRequested(); // the + button: Settings > Stream
 

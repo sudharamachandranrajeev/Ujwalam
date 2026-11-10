@@ -2,9 +2,10 @@
 // Bench: live-lock gate decision cost (P3 E4). Per-decision p50/p95 of the synchronous request() call.
 // SYNTHETIC input: made-up action params, actors and event ids, no real chat. The mix: read allow, chat refuse
 // (deny category), chat refuse (not allowed; the committed catalogue is chatAllowed false everywhere since the
-// 2026-10-28 review), ui write -> confirm (SHA-256 + random id), and untainted rule confirm. Each source has
-// its own pending quota (16); once full, new requests are refused, so most confirm-path requests after the
-// first 32 take the quota refusal. Confirm() is timed separately in confirm_p50_ms. Part of PB-12.
+// 2026-10-28 review), ui write -> run at once (D332, the user's own click), and untainted rule -> confirm
+// (SHA-256 + random id). Each source has its own pending quota (16); once full, new requests are refused, so most
+// rule requests after the first 16 take the quota refusal. Confirm() (one approval click, D332) is timed
+// separately in confirm_p50_ms. Part of PB-12.
 import { createActionGate, loadCatalogue } from '../../../services/event-core/livelock/index.mjs';
 
 export const id = 'event-core-livelock';
@@ -48,12 +49,8 @@ export async function run() {
   const ct = [];
   for (const r of confirms.slice(-12)) { // the newest 12 are still pending (cap 16)
     const t0 = performance.now();
-    let c = gate.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source: 'ui' });
+    const c = gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: 'ui' });
     ct.push(performance.now() - t0);
-    // Live on-air writes need a second step since E4b; only step 1 is timed, as before.
-    if (c.verdict === 'confirm' && c.reason === 'second-confirmation-required') {
-      c = gate.confirm(c.confirm.confirmId, c.confirm.phrase, c.confirm.actionHash, { source: 'ui' });
-    }
     if (c.verdict !== 'allow') throw new Error(`bench confirm ${c.reason}`);
   }
   if (sink < 1) throw new Error('executor never ran');

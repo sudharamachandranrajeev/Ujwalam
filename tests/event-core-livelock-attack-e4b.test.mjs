@@ -32,60 +32,70 @@ function gateWith(persist, extra = {}, wrapperExtra = {}) {
 }
 const stalled = { start: () => new Promise(() => {}), done: () => {} };
 const slowOk = (ms) => ({ start: () => sleep(ms), done: () => {} });
-// Confirms every step (one, or two for an on-air write while live) with the right phrase.
-const confirmAll = (h, r) => {
-  let c = h.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash);
-  while (c.verdict === 'confirm') c = h.confirm(c.confirm.confirmId, c.confirm.phrase, c.confirm.actionHash);
-  return c;
-};
-
-// A1: offline confirmation + keyed dispatch waits on the durable start; stream goes live meanwhile; the write must not
-// run while live with no durable audit and only the offline "yes".
-test('A1 TOCTOU: offline-confirmed keyed on-air write must not run after the stream went live without a durable audit', async () => {
-  const { gate, ran } = gateWith(stalled);
-  const sys = gate.forSource('system');
-  const api = gate.forSource('api');
-  sys.setLiveState('offline');
-  const r = api.request({ id: 'scene.switch', params: { scene: 'x' }, idempotencyKey: 'client-key-0001' });
-  assert.equal(r.verdict, 'confirm');
-  assert.equal(r.confirm.step, undefined, 'offline: single step');
-  const c = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-  assert.equal(c.verdict, 'allow');
-  sys.setLiveState('live'); // the stream starts while the dispatch waits for the marker
-  const d = await c.dispatch;
-  assert.equal(gate.state().liveState, 'live');
-  assert.deepEqual(ran, [], `ran while live, unaudited: ${JSON.stringify(ran)} dispatch=${JSON.stringify(d)}`);
-  assert.deepEqual(d, { ok: false, error: L.AUDIT_UNAVAILABLE });
+// D332: a write from the user's own surface (api, ui) runs on that request; a write from an automatic source waits for
+// one approval click (no phrase, no second step). confirmAll gives the click when one is asked for.
+const confirmAll = (h, r) => (r.verdict === 'confirm' ? h.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash) : r);
+// The two ways a write reaches dispatch, so every race below is tried on both: the user's own click (api, at once), and
+// an untainted automatic rule's request approved by one api click.
+const PATHS = Object.freeze({
+  direct: (gate, req) => {
+    const r = gate.forSource('api').request(req);
+    assert.equal(r.reason, 'ui-direct');
+    return r;
+  },
+  approved: (gate, req) => {
+    const r = gate.forSource('rule').request({ ...req, provenance: { kind: 'hotkey' } });
+    assert.equal(r.verdict, 'confirm');
+    assert.equal(r.confirm.step, undefined);
+    return gate.forSource('api').confirm(r.confirm.confirmId, undefined, r.confirm.actionHash);
+  },
 });
 
-// A2: a confirmed strict live write is waiting for its durable start; panic is engaged; the write must not run.
-test('A2 TOCTOU: panic engaged while a confirmed live write waits for its audit must stop it', async () => {
-  const { gate, ran } = gateWith(slowOk(100));
-  gate.forSource('system').setLiveState('live');
-  const api = gate.forSource('api');
-  const r = api.request({ id: 'scene.create', params: { name: 'x' } }); // class write, live: one "yes, on air"
-  const c = api.confirm(r.confirm.confirmId, 'yes, on air', r.confirm.actionHash);
-  assert.equal(c.verdict, 'allow');
-  await sleep(10);
-  assert.equal(api.panic({ reason: 'stop' }).ok, true);
-  const d = await c.dispatch;
-  assert.deepEqual(ran, [], 'ran after panic');
-  assert.deepEqual(d, { ok: false, error: L.PANIC_REFUSED });
+// A1: an offline write (the user's click, or an approved rule) whose keyed dispatch waits on the durable start; the
+// stream goes live meanwhile; the write must not run while live with no durable audit and only an offline decision.
+test('A1 TOCTOU: an offline-decided keyed on-air write must not run after the stream went live without a durable audit', async () => {
+  for (const [name, go] of Object.entries(PATHS)) {
+    const { gate, ran } = gateWith(stalled);
+    const sys = gate.forSource('system');
+    sys.setLiveState('offline');
+    const c = go(gate, { id: 'scene.switch', params: { scene: 'x' }, idempotencyKey: 'client-key-0001' });
+    assert.equal(c.verdict, 'allow', name);
+    sys.setLiveState('live'); // the stream starts while the dispatch waits for the marker
+    const d = await c.dispatch;
+    assert.equal(gate.state().liveState, 'live');
+    assert.deepEqual(ran, [], `${name}: ran while live, unaudited: ${JSON.stringify(ran)} dispatch=${JSON.stringify(d)}`);
+    assert.deepEqual(d, { ok: false, error: L.AUDIT_UNAVAILABLE }, name);
+  }
+});
+
+// A2: a decided strict live write is waiting for its durable start; panic is engaged; the write must not run.
+test('A2 TOCTOU: panic engaged while a decided live write waits for its audit must stop it', async () => {
+  for (const [name, go] of Object.entries(PATHS)) {
+    const { gate, ran } = gateWith(slowOk(100));
+    gate.forSource('system').setLiveState('live');
+    const c = go(gate, { id: 'scene.create', params: { name: 'x' } }); // class write, live
+    assert.equal(c.verdict, 'allow', name);
+    await sleep(10);
+    assert.equal(gate.forSource('api').panic({ reason: 'stop' }).ok, true);
+    const d = await c.dispatch;
+    assert.deepEqual(ran, [], `${name}: ran after panic`);
+    assert.deepEqual(d, { ok: false, error: L.PANIC_REFUSED }, name);
+  }
 });
 
 // A3: same, but the live epoch changes (offline, then live) while the strict write waits.
-test('A3 TOCTOU: a live-epoch change while a confirmed write waits for its audit must stop it', async () => {
-  const { gate, ran } = gateWith(slowOk(100));
-  const sys = gate.forSource('system');
-  sys.setLiveState('live');
-  const api = gate.forSource('api');
-  const r = api.request({ id: 'scene.create', params: { name: 'x' } });
-  const c = api.confirm(r.confirm.confirmId, 'yes, on air', r.confirm.actionHash);
-  await sleep(10);
-  sys.setLiveState('offline'); sys.setLiveState('live'); // epoch +2, same state as confirmed
-  const d = await c.dispatch;
-  assert.deepEqual(ran, [], 'ran in another epoch than the one confirmed');
-  assert.deepEqual(d, { ok: false, error: L.LIVE_STATE_CHANGED });
+test('A3 TOCTOU: a live-epoch change while a decided write waits for its audit must stop it', async () => {
+  for (const [name, go] of Object.entries(PATHS)) {
+    const { gate, ran } = gateWith(slowOk(100));
+    const sys = gate.forSource('system');
+    sys.setLiveState('live');
+    const c = go(gate, { id: 'scene.create', params: { name: 'x' } });
+    await sleep(10);
+    sys.setLiveState('offline'); sys.setLiveState('live'); // epoch +2, same state as decided
+    const d = await c.dispatch;
+    assert.deepEqual(ran, [], `${name}: ran in another epoch than the one decided`);
+    assert.deepEqual(d, { ok: false, error: L.LIVE_STATE_CHANGED }, name);
+  }
 });
 
 // A4: the core without an audit attached must refuse a live write (requirement 3).
@@ -94,12 +104,12 @@ test('A4 fail-open: createEventCore without an audit must refuse a live write (n
   const core = createEventCore({ key: Buffer.alloc(32, 3), moderation: false, actions: { catalogue: doc(), executor: { execute: (a) => { ran.push(a.id); return 'ran'; } } } });
   await core.ready;
   core.actions.setLiveState('live', { source: 'system' });
-  const api = core.actions.forSource('api');
-  const r = api.request({ id: 'scene.create', params: {} });
-  const c = api.confirm(r.confirm.confirmId, 'yes, on air', r.confirm.actionHash);
-  assert.deepEqual(await c.dispatch, { ok: false, error: L.AUDIT_UNAVAILABLE });
+  for (const go of Object.values(PATHS)) {
+    const c = go(core.actions, { id: 'scene.create', params: {} });
+    assert.deepEqual(await c.dispatch, { ok: false, error: L.AUDIT_UNAVAILABLE });
+  }
   assert.deepEqual(ran, [], 'live write ran with no audit attached');
-  assert.equal(core.stats().refusedNoAudit, 1);
+  assert.equal(core.stats().refusedNoAudit, 2);
 });
 
 // A5: the client idempotency key must not be spent by a fail-closed refusal; once the audit recovers, the retry runs.
@@ -111,8 +121,7 @@ test('A5 key poisoning: a retry after an audit-unavailable refusal must be able 
   const api = gate.forSource('api');
   const go = async () => {
     const r = api.request({ id: 'scene.create', params: { name: 'a' }, idempotencyKey: 'retry-key-0001' });
-    const c = api.confirm(r.confirm.confirmId, 'yes, on air', r.confirm.actionHash);
-    return c.dispatch;
+    return confirmAll(api, r).dispatch;
   };
   const d1 = await go();
   assert.equal(d1.ok, false);
@@ -130,51 +139,55 @@ test('A5b reporting: a skipped dispatch must not be reported as ok:true', async 
   const { gate } = gateWith(null);
   gate.forSource('system').setLiveState('offline');
   const api = gate.forSource('api');
-  const once = () => { const r = api.request({ id: 'scene.create', params: {}, idempotencyKey: 'dup-key-00001' }); return api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash).dispatch; };
+  const once = () => { const r = api.request({ id: 'scene.create', params: {}, idempotencyKey: 'dup-key-00001' }); return confirmAll(api, r).dispatch; };
   assert.deepEqual(await once(), { ok: true, result: 'ran' });
   const d = await once();
   assert.notEqual(d.ok === true && d.result?.skipped, 'completed', `second dispatch: ${JSON.stringify(d)}`);
   assert.deepEqual(d, { ok: false, error: 'skipped', skipped: 'completed' });
 });
 
-// A6: two-step ordering, replay, rebinding, forgery (held before the fixes).
-test('A6 two-step: replay, skip, rebind, cross-source, epoch, expiry, chat-tainted confirmer are all refused', () => {
+// A6 (was the E4b two-step; D332 has one approval click): replay, rebinding, forgery, cross-source, tainted
+// confirmer, epoch and expiry are all refused for a live on-air write an automatic rule asked for.
+test('A6 approval: replay, rebind, cross-source, epoch, expiry, forgery and a chat-tainted confirmer are all refused', () => {
   let t = 0;
   const ran = [];
   const gate = L.createActionGate({ catalogue: doc(), executor: { execute: (a) => { ran.push(a.id); return 1; } }, now: () => t, liveStaleMs: 1e9 });
   gate.forSource('system').setLiveState('live');
   const api = gate.forSource('api');
-  const ui = gate.forSource('ui');
-  const req = () => api.request({ id: 'scene.switch', params: { scene: 'a' } });
+  const rule = gate.forSource('rule');
+  const req = (scene = 'a') => rule.request({ id: 'scene.switch', params: { scene }, provenance: { kind: 'hotkey' } });
   let r = req();
-  assert.equal(r.confirm.step, 1);
-  assert.equal(api.confirm(r.confirm.confirmId, 'yes, on air', r.confirm.actionHash).reason, 'wrong-phrase'); // skip step 1
+  assert.deepEqual([r.verdict, r.confirm.step, r.confirm.phrase], ['confirm', undefined, undefined]);
+  // Rebind: another request's hash on this confirmId; the attempt spends it.
+  const other = req('b');
+  assert.equal(api.confirm(r.confirm.confirmId, undefined, other.confirm.actionHash).reason, 'hash-mismatch');
+  assert.equal(api.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash).reason, 'replayed');
+  // Cross-source and tainted confirmers are refused and do not spend it.
   r = req();
-  const s2 = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-  assert.equal(s2.confirm.step, 2);
-  assert.equal(api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash).reason, 'replayed');
-  assert.equal(api.confirm(s2.confirm.confirmId, 'yes, on air', r.confirm.actionHash).reason, 'hash-mismatch'); // step-1 hash
-  r = req();
-  let s = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-  assert.equal(ui.confirm(s.confirm.confirmId, 'yes, on air', s.confirm.actionHash).reason, 'step-source-mismatch');
-  r = req();
-  for (const src of ['chat', 'remote', 'system', 'rule']) assert.notEqual(gate.forSource(src).confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash).verdict, 'confirm', src);
-  assert.equal(gate.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash, { source: 'api', provenance: { kind: 'chat.message' } }).reason, 'tainted-confirmation');
-  assert.equal(gate.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash, { source: 'api', provenance: { kind: 'rule', parent: { kind: 'alert.sub' } } }).reason, 'tainted-confirmation');
-  s = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-  assert.equal(s.confirm.step, 2, 'refused attempts did not spend step 1');
+  for (const src of ['chat', 'remote', 'system', 'rule']) assert.equal(gate.forSource(src).confirm(r.confirm.confirmId, undefined, r.confirm.actionHash).reason, 'source-not-permitted', src);
+  assert.equal(gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: 'api', provenance: { kind: 'chat.message' } }).reason, 'tainted-confirmation');
+  assert.equal(gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: 'api', provenance: { kind: 'rule', parent: { kind: 'alert.sub' } } }).reason, 'tainted-confirmation');
+  assert.equal(ran.length, 0);
+  // The live state changes before the click: refused.
   gate.forSource('system').setLiveState('unknown');
-  assert.equal(api.confirm(s.confirm.confirmId, 'yes, on air', s.confirm.actionHash).reason, 'live-state-changed');
+  assert.equal(api.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash).reason, 'live-state-changed');
   gate.forSource('system').setLiveState('live');
+  // Expiry.
   r = req();
-  s = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-  t += 30_000;
-  assert.equal(api.confirm(s.confirm.confirmId, 'yes, on air', s.confirm.actionHash).reason, 'expired');
+  t += L.DEFAULT_TTL_MS;
+  assert.equal(api.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash).reason, 'expired');
+  // Forgery: a hash for other params (or another source) never matches.
   r = req();
-  s = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-  const forged = L.actionHash({ id: 'scene.switch', params: { scene: 'b' }, source: 'api', actor: 'invalid', phrase: 'yes, on air', step: 2, epoch: gate.state().liveEpoch, prev: r.confirm.actionHash });
-  assert.equal(api.confirm(s.confirm.confirmId, 'yes, on air', forged).reason, 'hash-mismatch');
+  const forged = L.actionHash({ id: 'scene.switch', params: { scene: 'b' }, source: 'rule', actor: 'invalid', epoch: gate.state().liveEpoch });
+  assert.equal(api.confirm(r.confirm.confirmId, undefined, forged).reason, 'hash-mismatch');
+  r = req();
+  const asApi = L.actionHash({ id: 'scene.switch', params: { scene: 'a' }, source: 'api', actor: 'invalid', epoch: gate.state().liveEpoch });
+  assert.equal(api.confirm(r.confirm.confirmId, undefined, asApi).reason, 'hash-mismatch');
   assert.deepEqual(ran, []);
+  // The right click runs it once.
+  r = req();
+  assert.equal(api.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash).verdict, 'allow');
+  assert.deepEqual(ran, ['scene.switch']);
 });
 
 // A7: API params cannot set source, provenance, actor or ruleId.
@@ -182,6 +195,8 @@ test('A7 API: actions.request refuses source/provenance/actor/ruleId fields; act
   const m = METHODS['actions.request'];
   for (const f of ['source', 'provenance', 'actor', 'ruleId', 'tainted']) assert.match(validateParams(m.schema, { id: 'scene.switch', [f]: 'x' }) ?? '', /unknown field/, f);
   for (const f of ['source', 'provenance', 'ctx']) assert.match(validateParams(METHODS['actions.confirm'].schema, { confirmId: 'a'.repeat(32), phrase: 'yes', actionHash: 'b'.repeat(64), [f]: 'x' }) ?? '', /unknown field/, f);
+  // D332: the phrase is no longer needed (an old caller may still send one; it is ignored).
+  assert.equal(validateParams(METHODS['actions.confirm'].schema, { confirmId: 'a'.repeat(32), actionHash: 'b'.repeat(64) }), null);
   assert.deepEqual(METHODS['actions.confirm'].roles, ['api']);
   assert.deepEqual(METHODS['live.set'].roles, ['system']);
 });
@@ -254,7 +269,7 @@ test('A11 keys: the same client key from api and system roles, and from api with
   gate.forSource('system').setLiveState('offline');
   const run = async (src, params) => {
     const r = gate.forSource(src).request({ id: 'scene.create', params, idempotencyKey: 'shared-key-0001' });
-    return gate.forSource('api').confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash).dispatch;
+    return confirmAll(gate.forSource('api'), r).dispatch;
   };
   await run('system', { name: 'a' });
   await run('api', { name: 'a' });
@@ -273,46 +288,46 @@ test('A12 memory: pending stays bounded per source under 10 000 requests', () =>
 
 // ---- the same fixes from other angles ------------------------------------------------------------------------
 
-test('finding 1: a healthy but slow audit and an offline confirmation; the stream goes live during the wait -> refused live-state-changed', async () => {
-  const { gate, ran } = gateWith(slowOk(40));
-  const sys = gate.forSource('system');
-  const api = gate.forSource('api');
-  sys.setLiveState('offline');
-  for (const id of ['scene.switch', 'scene.create']) { // on-air write and write, keyed and unkeyed
-    for (const key of [undefined, `k1-${id}-0001`]) {
-      const r = api.request({ id, params: {}, ...(key ? { idempotencyKey: key } : {}) });
-      const c = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-      sys.setLiveState('live');
-      assert.deepEqual(await c.dispatch, { ok: false, error: L.LIVE_STATE_CHANGED }, `${id} ${key ?? 'unkeyed'}`);
-      sys.setLiveState('offline');
+test('finding 1: a healthy but slow audit and an offline decision; the stream goes live during the wait -> refused live-state-changed', async () => {
+  for (const [name, go] of Object.entries(PATHS)) {
+    const { gate, ran } = gateWith(slowOk(40));
+    const sys = gate.forSource('system');
+    sys.setLiveState('offline');
+    for (const id of ['scene.switch', 'scene.create']) { // on-air write and write, keyed and unkeyed
+      for (const key of [undefined, `k1-${id}-0001`]) {
+        const c = go(gate, { id, params: {}, ...(key ? { idempotencyKey: key } : {}) });
+        sys.setLiveState('live');
+        assert.deepEqual(await c.dispatch, { ok: false, error: L.LIVE_STATE_CHANGED }, `${name} ${id} ${key ?? 'unkeyed'}`);
+        sys.setLiveState('offline');
+      }
     }
+    assert.deepEqual(ran, [], name);
+    // the same keyed request with no state change in between runs (the refusal did not spend its key)
+    assert.deepEqual(await go(gate, { id: 'scene.create', params: {}, idempotencyKey: 'k1-scene.create-0001' }).dispatch, { ok: true, result: 'ran' }, name);
   }
-  assert.deepEqual(ran, []);
-  // the same keyed request with no state change in between runs (the refusal did not spend its key)
-  const r = api.request({ id: 'scene.create', params: {}, idempotencyKey: 'k1-scene.create-0001' });
-  assert.deepEqual(await api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash).dispatch, { ok: true, result: 'ran' });
 });
 
 test('finding 1: the live state going stale (offline -> unknown, no epoch change) during the wait also refuses', async () => {
-  let t = 0;
-  const { gate, ran } = gateWith(slowOk(30), { now: () => t, liveStaleMs: 1000 });
-  gate.forSource('system').setLiveState('offline');
-  const api = gate.forSource('api');
-  const r = api.request({ id: 'scene.create', params: {} });
-  const c = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-  t += 2000; // no live-state update for 2 s: the effective state is 'unknown', which counts as live
-  assert.equal(gate.state().liveState, 'unknown');
-  assert.deepEqual(await c.dispatch, { ok: false, error: L.LIVE_STATE_CHANGED });
-  assert.deepEqual(ran, []);
+  for (const [name, go] of Object.entries(PATHS)) {
+    let t = 0;
+    const { gate, ran } = gateWith(slowOk(30), { now: () => t, liveStaleMs: 1000 });
+    gate.forSource('system').setLiveState('offline');
+    const c = go(gate, { id: 'scene.create', params: {} });
+    t += 2000; // no live-state update for 2 s: the effective state is 'unknown', which counts as live
+    assert.equal(gate.state().liveState, 'unknown');
+    assert.deepEqual(await c.dispatch, { ok: false, error: L.LIVE_STATE_CHANGED }, name);
+    assert.deepEqual(ran, []);
+  }
 });
 
 test('finding 1: with an audit attached, offline writes are strict too (stalled audit -> refused); reads still run', async () => {
   const { gate, ran } = gateWith(stalled);
   gate.forSource('system').setLiveState('offline');
   const api = gate.forSource('api');
-  for (const id of ['scene.create', 'scene.switch']) {
-    const r = api.request({ id, params: {} });
-    assert.deepEqual(await api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash).dispatch, { ok: false, error: L.AUDIT_UNAVAILABLE }, id);
+  for (const go of Object.values(PATHS)) {
+    for (const id of ['scene.create', 'scene.switch']) {
+      assert.deepEqual(await go(gate, { id, params: {} }).dispatch, { ok: false, error: L.AUDIT_UNAVAILABLE }, id);
+    }
   }
   const read = api.request({ id: 'state.read', params: {} });
   assert.deepEqual(read.dispatch, { ok: true, result: 'ran' });
@@ -320,21 +335,21 @@ test('finding 1: with an audit attached, offline writes are strict too (stalled 
 });
 
 test('finding 2: panic engaged while the write waits refuses it even when panic is cleared again before the commit', async () => {
-  let t = 0;
-  const { gate, ran } = gateWith(slowOk(60), { now: () => t });
-  gate.forSource('system').setLiveState('offline');
-  const api = gate.forSource('api');
-  const r = api.request({ id: 'scene.create', params: {} });
-  const c = api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash);
-  api.panic({ reason: 'oops' });
-  const pc = api.request({ id: 'panic.clear', params: {} });
-  assert.equal(api.confirm(pc.confirm.confirmId, pc.confirm.phrase, pc.confirm.actionHash).reason, 'panic-cleared');
-  assert.equal(gate.state().panic, false);
-  assert.deepEqual(await c.dispatch, { ok: false, error: L.PANIC_REFUSED });
-  assert.deepEqual(ran, []);
-  // a write confirmed after the clear runs normally
-  const r2 = api.request({ id: 'scene.create', params: {} });
-  assert.deepEqual(await api.confirm(r2.confirm.confirmId, 'yes', r2.confirm.actionHash).dispatch, { ok: true, result: 'ran' });
+  for (const [name, go] of Object.entries(PATHS)) {
+    let t = 0;
+    const { gate, ran } = gateWith(slowOk(60), { now: () => t });
+    gate.forSource('system').setLiveState('offline');
+    const api = gate.forSource('api');
+    const c = go(gate, { id: 'scene.create', params: {} });
+    api.panic({ reason: 'oops' });
+    // D332: clearing panic is one click from api (no confirmation round trip).
+    assert.deepEqual(api.request({ id: 'panic.clear', params: {} }), { verdict: 'allow', reason: 'panic-cleared' });
+    assert.equal(gate.state().panic, false);
+    assert.deepEqual(await c.dispatch, { ok: false, error: L.PANIC_REFUSED }, name);
+    assert.deepEqual(ran, []);
+    // a write decided after the clear runs normally
+    assert.deepEqual(await go(gate, { id: 'scene.create', params: {} }).dispatch, { ok: true, result: 'ran' }, name);
+  }
 });
 
 test('findings 1 to 4 in the core: refusals are shown with their reason, keys are not spent, and nothing runs', async () => {
@@ -356,8 +371,7 @@ test('findings 1 to 4 in the core: refusals are shown with their reason, keys ar
   let c = confirmAll(api, r);
   api.panic({ reason: 'stop' });
   assert.deepEqual(await c.dispatch, { ok: false, error: L.PANIC_REFUSED });
-  const pc = api.request({ id: 'panic.clear', params: {} });
-  confirmAll(api, pc);
+  assert.equal(api.request({ id: 'panic.clear', params: {} }).reason, 'panic-cleared');
   r = api.request({ id: 'scene.create', params: {}, idempotencyKey: 'core-key-0001' });
   c = confirmAll(api, r);
   sys.setLiveState('offline');
@@ -449,7 +463,8 @@ test('finding 5: the dry-run row records the would-be result of the non-chat rul
   const chat = (id) => { recs.length = 0; gate.request({ id, params: {}, source: 'chat', actor: '0123456789abcdef0123456789abcdef' }); return recs.find((r) => r.dryRun); };
   const pick = (r) => [r.wouldDecision, r.wouldReason, r.wouldSteps, r.liveState];
   sys.setLiveState('live');
-  assert.deepEqual(pick(chat('effect.fire')), ['confirm', 'two-step-confirmation', 2, 'live']);
+  // D332: one approval click whatever the class or live state (no two-step any more).
+  assert.deepEqual(pick(chat('effect.fire')), ['confirm', 'confirmation-required', 1, 'live']);
   assert.deepEqual(pick(chat('marker.drop')), ['confirm', 'confirmation-required', 1, 'live']);
   assert.deepEqual(pick(chat('state.read')), ['allow', 'read', undefined, 'live']);
   sys.setLiveState('offline');
@@ -460,7 +475,7 @@ test('finding 8: a key still running is reported ok:false skipped:running', asyn
   const { gate } = gateWith(slowOk(40));
   gate.forSource('system').setLiveState('offline');
   const api = gate.forSource('api');
-  const go = () => { const r = api.request({ id: 'scene.create', params: {}, idempotencyKey: 'running-key-01' }); return api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash).dispatch; };
+  const go = () => { const r = api.request({ id: 'scene.create', params: {}, idempotencyKey: 'running-key-01' }); return confirmAll(api, r).dispatch; };
   const first = go();
   assert.deepEqual(await go(), { ok: false, error: 'skipped', skipped: 'running' });
   assert.deepEqual(await first, { ok: true, result: 'ran' });
@@ -470,8 +485,6 @@ test('guard: a raw executor (no wrapper) ignores the guard; dispatch is unchange
   const seen = [];
   const gate = L.createActionGate({ catalogue: doc(), executor: { execute: (a, g) => { seen.push([a.liveEpoch, typeof g?.revalidate, g.revalidate()]); return 'raw'; } }, liveStaleMs: 1e9 });
   gate.forSource('system').setLiveState('offline');
-  const api = gate.forSource('api');
-  const r = api.request({ id: 'scene.create', params: {} });
-  assert.deepEqual(api.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash).dispatch, { ok: true, result: 'raw' });
-  assert.deepEqual(seen, [[gate.state().liveEpoch, 'function', null]]);
+  for (const go of Object.values(PATHS)) assert.deepEqual(go(gate, { id: 'scene.create', params: {} }).dispatch, { ok: true, result: 'raw' });
+  assert.deepEqual(seen, [[gate.state().liveEpoch, 'function', null], [gate.state().liveEpoch, 'function', null]]);
 });

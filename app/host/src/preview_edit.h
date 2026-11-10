@@ -109,7 +109,7 @@ struct Backend {
 				  const json::Value &patch)>
 		apply;
 	// true while any stream output is live (live-lock, D233): a press then selects nothing and starts no drag.
-	// Placement changes while live go through the control page's "yes, on air". Unset: never locked.
+	// Placement changes while live go through the control page's inspector (one click, D332). Unset: never locked.
 	std::function<bool()> locked;
 };
 

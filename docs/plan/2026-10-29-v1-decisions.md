@@ -752,3 +752,33 @@ the whole screen behind all layers". Decided:
 - Live: the upgrade runs only at start, before the host load, so a running stream and its outputs are never touched.
   A studio that is already running gets the backdrop at its next start.
 Evidence: `docs/evidence/2026-11-10-bg1-game-backdrop.md`.
+
+## D332 — No typed confirmation; the click is the decision (2026-11-10, user decision)
+
+User (2026-11-10): "No text type anywhere." "No misclick guard, end stream means end stream." "All clicks will be made
+by user's decision." Decided:
+- Every typed phrase ("yes", "yes, on air", "yes, upload", "go live anyway") and every "are you sure" question is gone
+  from the studio, the control page and the server. Start stream, Stop stream, End all, close while live, delete a
+  layer or scene, delete an output, bots, flags (on and off), project load, connections and YouTube upload act on the
+  click.
+- Live-lock gate (services/event-core/livelock/gate.mjs): an untainted write or on-air write from ui or api is allowed
+  and dispatched at once (audit reason `ui-direct`). A write from rule, remote or system gets one pending confirmation
+  with no phrase; it runs only on a click from ui or api. The two-step flow is removed; `panic.clear` is a direct ui/api
+  click. Kept unchanged: chat can never write or confirm; taint (chat or alert provenance) forces the confirmation path
+  and a tainted click cannot confirm; `forSource` binding; single-use confirm ids; the action hash (id, params, source,
+  actor, live epoch); the epoch re-check at confirm and the guard's revalidate before dispatch; panic; idempotency
+  keys; the audit (fail closed). `actions.confirm` still accepts an old client's `phrase` and ignores it.
+- Readiness (flag readiness): a failed check no longer starts the stream. The answer lists the problems with a
+  "Go live anyway" pending entry, confirmed by `{ pendingId }` only; the override is logged as before.
+- Studio Settings is a draft across every page, feature flags included (on and off apply at Save). Cancel, Escape or
+  the X with edits asks "Save changes / Discard / Cancel". This is not a misclick guard on an action: it keeps edits
+  that Save would otherwise lose.
+- Settings > Advanced (N2): one row per flag, a switch that shows ON / OFF in words, the flag name and its plain
+  description from data/flags.json, built fresh inside the dialog (keeps the 2026-11-10 native-handle offset fix).
+- AGENTS.md: the "Studio writes need yes" rule is replaced; agents still need the user's words in chat before studio
+  writes or going live, and a live test still starts only on "start stream test".
+Not changed: the preset id `live-lock-yes-on-air` (an id, renaming it is a registry migration), the release notes
+of earlier alphas, and the terminal-only `services/event-core/audit/cli.mjs` purge prompt (a developer CLI, not app UI).
+Also readiness warnings (no failed item) no longer stop the start; they come back in the answer's `warning` text.
+Evidence: `docs/evidence/2026-11-10-n1-no-typed-confirm.md`.
+>>>>>>> claude/alpha0-d1

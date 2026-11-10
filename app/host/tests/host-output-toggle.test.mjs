@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // D327 OS3: the main-window Outputs panel switches one output while live. With the REAL libobs host and a loopback plan
 // (one 640x360 rung feeding two RTMP sinks, "twitch" and "kick", each to its own local ffmpeg listener), the page's
-// toggle route asks for "yes, on air", then stops only that sink: the other listener keeps receiving. Switching it back
+// toggle route acts on the click (D332), and stops only that sink: the other listener keeps receiving. Switching it back
 // on starts only that sink again, into a new listener. ffprobe checks every received file. Never a real platform.
 //   node --test app/host/tests/host-output-toggle.test.mjs
 // Needs the built host (node app/host/tools/build.mjs), the OBS runtime and ffmpeg/ffprobe on PATH. Headless.
@@ -78,15 +78,11 @@ function listener(sink, name) {
 const size = (f) => { try { return statSync(f).size; } catch { return 0; } };
 const sinkState = async (id) => (await req('GET', '/ui/api/outputs/panel')).body?.outputs?.find((o) => o.id === id)?.state;
 
+// A live switch acts on the click (D332): no phrase, no pending entry.
 async function toggle(id, on) {
-  const c = await req('POST', '/ui/api/outputs/toggle', { id, on });
-  assert.equal(c.body.verdict, 'confirm', JSON.stringify(c.body));
-  assert.equal(c.body.pending.phrase, 'yes, on air');
-  const wrong = await req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes' });
-  assert.notEqual(wrong.body?.verdict, 'allow', 'a plain "yes" never switches a live output');
-  const c2 = await req('POST', '/ui/api/outputs/toggle', { id, on });
-  const r = await req('POST', '/ui/api/confirm', { pendingId: c2.body.pending.pendingId, text: 'yes, on air' });
+  const r = await req('POST', '/ui/api/outputs/toggle', { id, on });
   assert.equal(r.body.verdict, 'allow', JSON.stringify(r.body));
+  assert.equal(r.body.pending, undefined);
 }
 
 before(async () => {
@@ -142,13 +138,11 @@ test('while live, one output stops and starts again; the other stays up (loopbac
   const k1 = listener('kick', 'kick-1');
   await sleep(1200);
 
-  // Offline, the switch only saves the choice (no confirm, nothing starts).
+  // Offline, the switch only saves the choice (nothing starts).
   const off = await req('POST', '/ui/api/outputs/toggle', { id: 'kick', on: true });
   assert.deepEqual(off.body, { ok: true, id: 'kick', enabled: true, live: false });
 
-  const c = await req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
-  assert.equal(c.body.verdict, 'confirm', JSON.stringify(c.body));
-  const go = await req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+  const go = await req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
   assert.equal(go.body.verdict, 'allow', JSON.stringify(go.body));
   await until(async () => size(tw.file) > 100_000 && size(k1.file) > 100_000, 'both listeners receiving', 30_000);
 
@@ -174,8 +168,7 @@ test('while live, one output stops and starts again; the other stays up (loopbac
   const setup = JSON.parse(readFileSync(path.join(dataDir, 'stream-setup.json'), 'utf8'));
   assert.equal(setup.outputs.find((o) => o.id === 'kick').enabled, true);
 
-  const e = await req('POST', '/ui/api/streams/end-all', {});
-  const r = await req('POST', '/ui/api/confirm', { pendingId: e.body.pending.pendingId, text: 'yes, on air' });
+  const r = await req('POST', '/ui/api/streams/end-all', {});
   assert.equal(r.body.endAll.allStopped, true, JSON.stringify(r.body));
   await Promise.all([tw.stop(), k2.stop()]);
   for (const f of [tw.file, k1.file, k2.file]) {
@@ -189,14 +182,13 @@ test('while live, one output stops and starts again; the other stays up (loopbac
   }
 });
 
-// Codex review P1 (2026-11-10): a switch-on confirmed while live, then End all confirmed before that start reaches the
-// host. End all wins: the switch-on is refused and the output never connects again.
-test('End all during a pending switch-on: nothing restarts after End all (loopback)', { timeout: 240_000 }, async () => {
+// Codex review P1 (2026-11-10): a switch-on clicked while live, then End all clicked before that start reaches the
+// host (the start waits PAUSE_MS on its way). End all wins: the switch-on is refused and the output never connects again.
+test('End all during a switch-on on its way to the host: nothing restarts after End all (loopback)', { timeout: 240_000 }, async () => {
   const tw = listener('twitch', 'twitch-2');
   const k = listener('kick', 'kick-3');
   await sleep(1200);
-  const c = await req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
-  const go = await req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+  const go = await req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
   assert.equal(go.body.verdict, 'allow', JSON.stringify(go.body));
   await until(async () => size(tw.file) > 100_000 && size(k.file) > 100_000, 'both listeners receiving', 30_000);
   await toggle('kick', false);
@@ -205,11 +197,9 @@ test('End all during a pending switch-on: nothing restarts after End all (loopba
 
   const k4 = listener('kick', 'kick-4'); // would receive if the switch-on got through
   await sleep(800);
-  const t = await req('POST', '/ui/api/outputs/toggle', { id: 'kick', on: true });
-  const pendingOn = req('POST', '/ui/api/confirm', { pendingId: t.body.pending.pendingId, text: 'yes, on air' });
+  const pendingOn = req('POST', '/ui/api/outputs/toggle', { id: 'kick', on: true });
   await sleep(300); // the switch-on is inside its pause, on its way to the host
-  const e = await req('POST', '/ui/api/streams/end-all', {});
-  const ended = await req('POST', '/ui/api/confirm', { pendingId: e.body.pending.pendingId, text: 'yes, on air' });
+  const ended = await req('POST', '/ui/api/streams/end-all', {});
   assert.equal(ended.body.endAll.allStopped, true, JSON.stringify(ended.body));
   const on = (await pendingOn).body;
   assert.equal(on.verdict, 'refuse', JSON.stringify(on));

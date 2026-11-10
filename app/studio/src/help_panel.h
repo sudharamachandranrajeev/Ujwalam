@@ -3,7 +3,7 @@
 // "How clips are made" and "Posting your clips", each with a "Show me" button that runs a short tour on the related
 // controls, plus "Replay the welcome tour". The pictures are drawn with Qt (no image files). Non-modal: a child widget
 // of the main window that never takes focus; it slides in and fades unless motion is off. The posting text says what
-// is built today, what needs the user's typed yes, and what does not exist yet; keep it in step with services/posting.
+// is built today, what needs the user's click, and what does not exist yet; keep it in step with services/posting.
 #pragma once
 
 #include "coach.h"

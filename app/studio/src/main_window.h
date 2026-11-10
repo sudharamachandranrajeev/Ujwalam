@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Meld-like studio window (P5a): scenes + layers (left), H/V previews (centre), inspector + mixer (right),
-// Stream / Record and status pills (top). Every action goes through the UI server (ApiClient); stream and record
-// changes come back as a typed confirmation ("yes" / "yes, on air") shown in a dialog.
+// Stream / Record and status pills (top). Every action goes through the UI server (ApiClient) and acts on the click
+// (D332). A held action (readiness problems, a rule or remote request) is shown once with Allow / Go live anyway.
 #pragma once
 
 #include "api_client.h"
@@ -79,7 +79,7 @@ protected:
 
 public:
 	// Probe action (tests only, UJWALAM_STUDIO_PROBE_ACTIONS, D275): clicks the real widget so its own handler runs.
-	// flag-off:<id> | mute:<strip> | track:<strip>:<n> | undo. false: no such widget. Never types a confirm phrase.
+	// flag-off:<id> | mute:<strip> | track:<strip>:<n> | undo | confirm:<ok|cancel>. false: no such widget.
 	bool probeAction(const QString &action);
 
 private:
@@ -119,7 +119,7 @@ private:
 	void updateClips(const QJsonObject &cl);
 	void loadEdits();             // undo / redo state (UI server history, D238)
 	void undoRedo(bool undo);
-	void loadFlags();             // feature flags (D149): on needs the typed phrase, off is instant
+	void loadFlags();             // feature flags (D149): the server's list in flags_; Settings > Advanced switches them
 	void setFlag(const QString &id, bool on);
 	void loadUiSettings();        // settings.json ui.motion -> motion::setMode (D290)
 	// Scene and layer structure edits (D240, flag scene-edit) and transitions (D242, flag transitions): the UI server
@@ -137,7 +137,7 @@ private:
 	void layerRename();
 	void layerDelete();
 	void layerMoveTo(int index);   // saved order offline (structure layer.move to a target, D330), else layerMoveHost
-	void layerMoveHost(const QJsonObject &args); // host-only order (layers.move with scene/canvas/layer/index fixed at the ask; "yes, on air" while live)
+	void layerMoveHost(const QJsonObject &args); // host-only order (layers.move with scene/canvas/layer/index fixed at the click)
 	void layerToggleVisible();
 	void lookCopy();
 	void lookPaste();
@@ -149,18 +149,19 @@ private:
 	void loadTransitions();
 	void renderTransition();
 	void applyTransition();
-	// Streamer.bot / Speaker.bot start and stop (BM, flag bot-manager): typed "yes" each; stop ends only a copy
+	// Streamer.bot / Speaker.bot start and stop (BM, flag bot-manager): on the click; stop ends only a copy
 	// Ujwalam started (the server checks).
 	void loadBots();
 	void openAddLayer(const QString &sceneId = QString()); // add-layer window (D274, D292): kinds with what they are, a searchable pick list
 	void openAddScene();   // add-scene window (D292): a name
 	void updateAddButtons();
-	void openImport();   // Meld session import -> host check -> typed confirm -> project.load (the page's flow)
-	void openPosts();    // flag posting (P16a): review clip packages; YouTube private upload needs "yes, upload"
+	void openImport();   // Meld session import -> host check -> project.load on the click (the page's flow)
+	void openPosts();    // flag posting (P16a): review clip packages; YouTube private upload on the click
 	void report();       // flag report-button (D199): prefilled GitHub issue link opened in the user's browser
 	void openFeedback(); // post-stream notes on feedback moments (D150), the browser page's form
 	void botAction(const QString &bot, bool start);
-	void confirm(const QJsonObject &pending);
+	void confirm(const QJsonObject &pending);              // a held action: one window, Allow / Go live anyway or Cancel
+	void confirmAnswer(const QString &pendingId, bool allow); // sends { pendingId } to confirm, or cancels
 	void note(const QString &text);
 	QJsonObject layerArgs(const QJsonObject &extra = {}) const;
 	QJsonObject selectedLayer() const;
@@ -195,8 +196,7 @@ private:
 
 	QListWidget *sceneList_ = nullptr;
 	QListWidget *layerList_ = nullptr;
-	QPointer<QListWidget> flagList_;
-	QPointer<QWidget> flagHome_; // hidden holder of flagList_ while Settings is closed (keeps the list free of a native handle)
+	QJsonArray flags_; // ui/api/flags as last read: [{id, on, description}]
 	bool sceneEditOn_ = false, transitionsOn_ = false, botsOn_ = false;
 	int botPoll_ = 0; // bot status reads the process list: every 5th status poll (10 s), and after each action
 	QGroupBox *botBox_ = nullptr;
@@ -241,13 +241,13 @@ private:
 	QWidget *moreBtn_ = nullptr;
 	TaskBar *tasks_ = nullptr;     // task button, panel and notifications at the top right (D287; 2026-11-10)
 	int taskStops_ = 0;            // Stop requests sent from the task panel (probe)
-	void stopTasks(bool ask);
+	void stopTasks();
 	TrayKeeper *tray_ = nullptr;  // tasks kept running in the tray after the window closed (D311 proposed)
 	QString closeAsked_;          // the last close question's text (probe)
 	QString closeChoice_;         // tray | stop | cancel: the answer to it (probe)
 	void enterTray();
 	void leaveTray();
-	void stopAllFromTray(bool ask);
+	void stopAllFromTray();
 	// The closing lock (D311 proposed): the UI server grants it only when no stream or recording runs or is starting
 	// (fresh host status, fail closed) and from then refuses every start. Every tray-triggered exit takes it first;
 	// then() gets granted, the reason when not, and the lock's token (release it with releaseQuit when not exiting).

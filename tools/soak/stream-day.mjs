@@ -20,7 +20,7 @@
 // chat-effects, test-broadcast. data/flags.json is never touched.
 //
 // The streams are started with the host's own outputs API (stream.start, record.start) using the host token this
-// script made; the control page's typed "yes, on air" gate is not used and not typed. The host refuses real targets
+// script made; the control page's Start stream click is not used. The host refuses real targets
 // (no --allow-live), so nothing can leave the machine.
 //
 // During the run: samples every --sample-s (host.status, outputs.status, replay.status, feedback.status, overlay.stats,

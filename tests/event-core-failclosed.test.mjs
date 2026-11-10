@@ -150,12 +150,17 @@ function mkCore(over = {}) {
   });
   return { core, calls, lines, dataDir };
 }
-const confirmed = (core, id, source = 'ui') => {
-  const r = core.actions.request({ id, params: { scene: 'Main' }, source, actor: 'u' });
+// D332: the two ways a write reaches dispatch. 'direct': the user's own ui click runs it on the request. 'approved': an
+// untainted automatic rule (a hotkey) asks, and one ui click approves it (no phrase, no second step).
+const confirmed = (core, id, path = 'direct') => {
+  if (path === 'direct') {
+    const r = core.actions.request({ id, params: { scene: 'Main' }, source: 'ui', actor: 'u' });
+    assert.deepEqual([r.verdict, r.reason], ['allow', 'ui-direct'], id);
+    return r.dispatch;
+  }
+  const r = core.actions.request({ id, params: { scene: 'Main' }, source: 'rule', provenance: { kind: 'hotkey' }, actor: 'u' });
   assert.equal(r.verdict, 'confirm', `${id}: ${r.reason}`);
-  let c = core.actions.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source });
-  // An on-air write while live (or unknown) has two steps (E4b): follow the step-2 confirmation.
-  if (c.verdict === 'confirm') c = core.actions.confirm(c.confirm.confirmId, c.confirm.phrase, c.confirm.actionHash, { source });
+  const c = core.actions.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: 'ui' });
   assert.equal(c.verdict, 'allow');
   return c.dispatch;
 };
@@ -190,6 +195,11 @@ test('core: the audit row and the start marker are durable BEFORE a live on-air 
   assert.deepEqual(await confirmed(core, 'scene.create'), { ok: true, result: 'scene.create' });
   assert.equal(seen.keys, 1);
   assert.deepEqual(seen.row.map((x) => [x.action_id, x.verdict, x.reason]), [['scene.switch', 'start', 'on-air-write'], ['scene.create', 'start', 'write']]);
+  // a rule's on-air write approved by one ui click: its start row is durable before it executes too
+  assert.deepEqual(await confirmed(core, 'scene.switch', 'approved'), { ok: true, result: 'scene.switch' });
+  assert.equal(seen.keys, 1);
+  assert.deepEqual(seen.row.map((x) => [x.action_id, x.source, x.reason]).at(-1), ['scene.switch', 'rule', 'on-air-write']);
+  assert.equal(seen.row.length, 3);
   assert.equal((await core.audit.verify()).ok, true);
   await core.audit.close();
 });
@@ -210,8 +220,9 @@ test('core: audit stalled -> live on-air write and live write refused and shown;
   assert.equal(lines.length, 1);
   assert.match(lines[0], /^\[event-core\] warn: action-refused reason=audit-unavailable action=scene\.switch cause=timeout$/);
 
-  // class write while live: refused the same way (user decision 2026-10-28: every write fails closed while live)
-  assert.deepEqual(await confirmed(core, 'scene.create'), { ok: false, error: AUDIT_UNAVAILABLE });
+  // class write while live, approved from a rule: refused the same way (user decision 2026-10-28: every write fails
+  // closed while live)
+  assert.deepEqual(await confirmed(core, 'scene.create', 'approved'), { ok: false, error: AUDIT_UNAVAILABLE });
   assert.deepEqual(calls, []);
   assert.equal(events.length, 2);
   assert.deepEqual([events[1].kind, events[1].action, events[1].reason, events[1].source], ['system.refused', 'scene.create', AUDIT_UNAVAILABLE, 'system']);
@@ -222,7 +233,7 @@ test('core: audit stalled -> live on-air write and live write refused and shown;
   core.actions.setLiveState('offline', { source: 'system' });
   // E4b review finding 1: with an audit attached every write is strict, offline too (no decision from a stale state)
   assert.deepEqual(await confirmed(core, 'scene.create'), { ok: false, error: AUDIT_UNAVAILABLE }); // write, not live
-  assert.deepEqual(await confirmed(core, 'scene.switch'), { ok: false, error: AUDIT_UNAVAILABLE }); // not live
+  assert.deepEqual(await confirmed(core, 'scene.switch', 'approved'), { ok: false, error: AUDIT_UNAVAILABLE }); // not live
   assert.deepEqual(calls, ['state.read']);
   assert.equal(core.stats().refusedNoAudit, 4);
   assert.equal(core.stats().idempotency.refusedNoAudit, 4);
@@ -249,19 +260,19 @@ test('core: audit down (closed) -> live on-air write refused with a log line; un
   // live state never set: 'unknown', which counts as live
   const api = core.actions.forSource('api');
   const r = api.request({ id: 'scene.switch', params: {}, idempotencyKey: 'client-key-001' });
-  assert.equal(r.confirm.phrase, 'yes'); // on-air write while live: step 1 of 2
-  const s2 = api.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash);
-  assert.equal(s2.confirm.phrase, 'yes, on air');
-  const c = api.confirm(s2.confirm.confirmId, s2.confirm.phrase, s2.confirm.actionHash);
-  assert.deepEqual(await c.dispatch, { ok: false, error: AUDIT_UNAVAILABLE });
+  assert.deepEqual([r.verdict, r.reason], ['allow', 'ui-direct']); // the user's click (D332)
+  assert.deepEqual(await r.dispatch, { ok: false, error: AUDIT_UNAVAILABLE });
   assert.deepEqual(calls, []);
   assert.equal(lines.length, 1);
   assert.match(lines[0], /action=scene\.switch cause=failed:CLOSED$/);
   // the same client key again: NOT spent by the refusal (E4b finding 4), so it is tried again and refused again (audit
   // still closed); still not run
   const r2 = api.request({ id: 'scene.switch', params: {}, idempotencyKey: 'client-key-001' });
-  const s2b = api.confirm(r2.confirm.confirmId, r2.confirm.phrase, r2.confirm.actionHash);
-  assert.deepEqual(await api.confirm(s2b.confirm.confirmId, s2b.confirm.phrase, s2b.confirm.actionHash).dispatch, { ok: false, error: AUDIT_UNAVAILABLE });
+  assert.deepEqual(await r2.dispatch, { ok: false, error: AUDIT_UNAVAILABLE });
+  // a rule's request approved by one api click is refused the same way
+  const rr = core.actions.forSource('rule').request({ id: 'scene.switch', params: {}, provenance: { kind: 'hotkey' } });
+  assert.equal(rr.confirm.liveStateAtRequest, 'unknown');
+  assert.deepEqual(await api.confirm(rr.confirm.confirmId, undefined, rr.confirm.actionHash).dispatch, { ok: false, error: AUDIT_UNAVAILABLE });
   assert.deepEqual(calls, []);
 });
 
@@ -290,25 +301,19 @@ test('api: a refused live on-air write and live write are visible over SSE (api 
   try {
     assert.equal((await rpc(r, svc.tokens.system, 'live.set', { state: 'live' })).result.ok, true);
     svc.core.audit.recordActionStart = never; // stalled writer
+    // D332: the api client's own write runs on its request; the stalled audit refuses it before it executes
     const req = await rpc(r, svc.tokens.api, 'actions.request', { id: 'scene.switch', params: { scene: 'Main' } });
-    const { confirmId, phrase, actionHash } = req.result.confirm;
-    assert.equal(phrase, 'yes'); // step 1 of 2
-    const step2 = await rpc(r, svc.tokens.api, 'actions.confirm', { confirmId, phrase, actionHash });
-    assert.equal(step2.result.confirm.phrase, 'yes, on air');
-    const conf = await rpc(r, svc.tokens.api, 'actions.confirm', { confirmId: step2.result.confirm.confirmId, phrase: step2.result.confirm.phrase, actionHash: step2.result.confirm.actionHash });
-    assert.deepEqual(conf.result, { verdict: 'allow', reason: 'confirmed', dispatch: { ok: false, error: AUDIT_UNAVAILABLE } });
+    assert.deepEqual(req.result, { verdict: 'allow', reason: 'ui-direct', dispatch: { ok: false, error: AUDIT_UNAVAILABLE } });
     const isRefusal = (f) => f.json?.kind === 'system.refused' && f.json.action === 'scene.switch' && f.json.reason === AUDIT_UNAVAILABLE;
     await sseApi.waitFor(() => sseApi.frames.some(isRefusal));
     await sseSys.waitFor(() => sseSys.frames.some(isRefusal));
     assert.equal(sseApi.frames.find(isRefusal).event, 'system.refused');
     assert.deepEqual(calls, []);
-    // class write while live: refused and shown the same way
-    const wreq = await rpc(r, svc.tokens.api, 'actions.request', { id: 'scene.create', params: { scene: 'Main' } });
-    let wc = wreq.result;
-    while (wc.verdict === 'confirm') {
-      wc = (await rpc(r, svc.tokens.api, 'actions.confirm', { confirmId: wc.confirm.confirmId, phrase: wc.confirm.phrase, actionHash: wc.confirm.actionHash })).result;
-    }
-    assert.deepEqual(wc.dispatch, { ok: false, error: AUDIT_UNAVAILABLE });
+    // class write while live, asked by the system role and approved by one api click: refused and shown the same way
+    const wreq = await rpc(r, svc.tokens.system, 'actions.request', { id: 'scene.create', params: { scene: 'Main' } });
+    assert.equal(wreq.result.verdict, 'confirm');
+    const wc = (await rpc(r, svc.tokens.api, 'actions.confirm', { confirmId: wreq.result.confirm.confirmId, actionHash: wreq.result.confirm.actionHash })).result;
+    assert.deepEqual(wc, { verdict: 'allow', reason: 'confirmed', dispatch: { ok: false, error: AUDIT_UNAVAILABLE } });
     const isWriteRefusal = (f) => f.json?.kind === 'system.refused' && f.json.action === 'scene.create' && f.json.reason === AUDIT_UNAVAILABLE;
     await sseApi.waitFor(() => sseApi.frames.some(isWriteRefusal));
     await sseSys.waitFor(() => sseSys.frames.some(isWriteRefusal));

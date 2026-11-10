@@ -29,7 +29,7 @@
     importMeld: function () { return request('POST', '/ui/api/project/import-meld', {}); },
     projectLoad: function (skipUnavailable) { return request('POST', '/ui/api/project/load', skipUnavailable ? { skipUnavailable: true } : {}); },
     coreRequest: function (id, params) { return request('POST', '/ui/api/core/request', { id: id, params: params || {} }); },
-    confirm: function (pendingId, text) { return request('POST', '/ui/api/confirm', { pendingId: pendingId, text: text }); },
+    confirm: function (pendingId) { return request('POST', '/ui/api/confirm', { pendingId: pendingId }); }, // one click (D332)
     cancel: function (pendingId) { return request('POST', '/ui/api/cancel', { pendingId: pendingId }); },
     readiness: function () { return request('GET', '/ui/api/readiness'); },
     endAll: function () { return request('POST', '/ui/api/streams/end-all', {}); },
@@ -48,7 +48,7 @@
     postEdit: function (id, fields) { var b = { id: id }; Object.keys(fields).forEach(function (k) { b[k] = fields[k]; }); return request('POST', '/ui/api/posts/edit', b); },
     postStatus: function (id, status) { return request('POST', '/ui/api/posts/status', { id: id, status: status }); },
     ytStatus: function () { return request('GET', '/ui/api/posts/youtube/status'); },
-    ytUpload: function (id, confirm) { return request('POST', '/ui/api/posts/youtube/upload', { id: id, confirm: confirm }); },
+    ytUpload: function (id) { return request('POST', '/ui/api/posts/youtube/upload', { id: id }); },
     ytCheck: function (id) { return request('POST', '/ui/api/posts/youtube/check', { id: id }); },
     postQueueRetry: function (id) { return request('POST', '/ui/api/posts/queue/retry', { id: id }); },
     postOpen: function (id) { return request('POST', '/ui/api/posts/open', { id: id }); },
