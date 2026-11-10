@@ -600,3 +600,13 @@ the own name at its end read as a kill; victim keys taken from count digits, a s
 tail of a merged box; the BR feed read on MP frames after one stray BR cue. Fixed in code (no pack value changed);
 each kill now records its feed and a match counts only the feed of its HUD family. Evidence:
 `docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md`.
+
+## D327 — Stream settings, outputs panel, transitions, integrations and platform sign-in in the studio (2026-11-10, user)
+
+User: the app connects to streaming platforms directly, not only through keys the user puts into Windows Credential
+Manager by hand; plus four UI references (stream settings with outputs list, main-window outputs panel with switches,
+transition settings per canvas, remote connections for the bots). Plan:
+`docs/plan/2026-11-10-outputs-transitions-platform-connect.md`. Keys and tokens still live only in Credential Manager
+(D-existing rule kept); the app now writes, reads, masks and removes them itself after a sign-in or a pasted key. The
+remote-connections switch is off by default and LAN only. Platform sign-in gets a security review on the strongest model
+plus a Codex second review before it is marked done.
