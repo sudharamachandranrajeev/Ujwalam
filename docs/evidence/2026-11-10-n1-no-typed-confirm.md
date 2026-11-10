@@ -44,7 +44,24 @@ Status: tests and headless probes only. Not yet used on a real stream (UNVERIFIE
 
 All with `UJWALAM_HEADLESS=1`, one file at a time (`node --test --test-timeout=90000 <file>`).
 
-RESULTS_PLACEHOLDER
+Run 2026-11-10 after the merge of `claude/alpha0-d1` (BG1, alpha.22) into this branch:
+
+- Qt studio: `tests/studio-qt-shell.test.mjs`, `tests/studio-qt-d327.test.mjs`, `tests/studio-qt-themes.test.mjs`
+  (`--test-timeout=120000`): 88 tests, 87 pass, 1 fail. The failure: after Save switched flag `transitions` on, the
+  main window's Transitions panel stayed hidden until a later flag reload (`setFlag` only polled status). Fixed: a
+  successful flag change reloads the flag list at once (`MainWindow::setFlag`). Re-run of the Settings tests: 11/11.
+- Studio UI server: `studio-ui-readiness`, `studio-ui-server`, `stream-recovery`, `studio-ui-quit-lock`: 91/91, with
+  the new stop-wins test below.
+- Host (real ujwalam-host.exe): `host-output-toggle`, `host-stream-recovery`, `host-studio-launch` (concurrency 1):
+  9/9.
+
+Codex review (second model family, medium effort, diff only, no commands): one finding, P1, fixed.
+- A Start waiting on the go-live readiness check could still go live after a later Stop / End all: the stop
+  generation was read only after the readiness and audio checks. Fix (`services/studio-ui/server.mjs`): the generation
+  (stopEpoch, and the launcher's authority generation) is taken when the Start click arrives and carried into
+  `runAction`; a "Go live anyway" click on a pending entry takes a fresh one. Test `stop wins (Codex review of D332)`
+  in `tests/studio-ui-readiness.test.mjs`: Start, Stop while the readiness check is held, release: refused
+  `stopped-meanwhile`, no `stream.start` reaches the host. It fails on the code before the fix (0/1) and passes after.
 
 ## Grep: no typed-phrase UI left
 
