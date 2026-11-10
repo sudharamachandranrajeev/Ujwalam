@@ -2,6 +2,10 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.22 — 2026-11-10
+
+- The background of the main and vertical scenes is now a blurred copy of your game capture, filling the whole screen behind every other layer. Your existing scenes are updated once when Ujwalam starts (a backup of the project is kept); your own layer moves and added layers stay as they are. If the capture card is not set up yet, the scene waits and is updated on a later start.
+
 ## 0.1.0-alpha.21 — 2026-11-10
 
 - Correction: alpha.20 did not contain the round/match-end and match-type changes its notes listed (a merge mistake). They are in this build.
