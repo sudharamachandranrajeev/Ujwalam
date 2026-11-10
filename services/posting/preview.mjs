@@ -127,7 +127,7 @@ export async function previewRules(opts) {
   }
   for (const q of queued) if (!UPLOAD_TARGETS.includes(q.target)) q.note = 'not a YouTube upload target: approval only';
   const schedule = opts.scheduleOn === true ? estimateSlots({ dataDir: opts.dataDir, queued, nowMs: now.getTime(), file: opts.scheduleFile }) : { on: false };
-  return { mode: describeMode({ flagOn: opts.flagOn === true, rules: rulesDoc }), blocked, queued, skipped, schedule, generatedAt: now.toISOString(), note: 'dry run: nothing written, nothing sent' };
+  return { mode: describeMode({ flagOn: opts.flagOn === true, rules: rulesDoc }), rulesFile: typeof opts.rulesFile === 'string' ? opts.rulesFile : null, blocked, queued, skipped, schedule, generatedAt: now.toISOString(), note: 'dry run: nothing written, nothing sent' };
 }
 
 /** post-schedule estimate (read-only, no network): the upload queue's own slots plus the channel schedule saved by the
@@ -159,6 +159,7 @@ function estimateSlots({ dataDir, queued, nowMs, file }) {
 export function formatPreview(r) {
   const L = [];
   L.push(`auto-post preview (dry run, nothing written or sent): ${r.mode.enabled ? 'on' : 'off'}, ${r.mode.ruleCount} rule(s), autoUpload ${r.mode.autoUpload}, privacy private`);
+  if (r.rulesFile) L.push(`rules file: ${r.rulesFile}`);
   if (r.blocked) L.push(`LIVE CHECK: a run would be refused now (${r.blocked}); everything below would be held`);
   L.push(`would queue: ${r.queued.length}`);
   if (r.schedule?.on) {

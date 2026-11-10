@@ -32,7 +32,7 @@ import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
 import { QUEUE_NAME, createUploadQueue, readQueueSummary, reasonText, shownPublishAt, streamOnly } from '../posting/auto-chain.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, liveBlock, loadRules, planAuto } from '../posting/auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, describeMode, liveBlock, loadRules, planAuto, rulesFileFor } from '../posting/auto-post.mjs';
 import { previewRules } from '../posting/preview.mjs';
 import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
@@ -866,21 +866,23 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/posts/auto/preview') {
       // Read-only dry run: what the rules WOULD queue, with rendered text and skip reasons. No write, no request to Google.
       try {
-        const rules = loadRules(opts.autoRulesFile);
+        const rulesFile = rulesFileFor(opts.dataDir, opts.autoRulesFile);
+        const rules = loadRules(rulesFile);
         let profile = {};
         try { if (opts.profileFile && existsSync(opts.profileFile)) profile = JSON.parse(readFileSync(opts.profileFile, 'utf8')); } catch { /* placeholders show as unresolved */ }
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
-        return json(res, 200, await previewRules({ dataDir: opts.dataDir, rules, profile, log, flagOn: !!flags && flags.isOn(AUTO_FLAG), now: () => new Date(now()), outputsStatus: streamOnly(ytOutputsStatus), scheduleOn: !!flags && flags.isOn(SCHEDULE_FLAG), scheduleFile: opts.scheduleFile }));
+        return json(res, 200, await previewRules({ dataDir: opts.dataDir, rules, rulesFile, profile, log, flagOn: !!flags && flags.isOn(AUTO_FLAG), now: () => new Date(now()), outputsStatus: streamOnly(ytOutputsStatus), scheduleOn: !!flags && flags.isOn(SCHEDULE_FLAG), scheduleFile: opts.scheduleFile }));
       } catch { return json(res, 200, { error: 'preview-unavailable', queued: [], skipped: [] }); }
     }
     if (req.method === 'GET' && route === '/ui/api/posts/auto') {
       // Read-only: the auto-post mode and what a run would do now. Enabling stays a flag; nothing is changed here.
+      const rulesFile = rulesFileFor(opts.dataDir, opts.autoRulesFile);
       try {
-        const rules = loadRules(opts.autoRulesFile);
+        const rules = loadRules(rulesFile);
         const mode = describeMode({ flagOn: !!flags && flags.isOn(AUTO_FLAG), rules });
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
-        return json(res, 200, { mode, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
-      } catch { return json(res, 200, { mode: { enabled: false, flagOn: false, autoUpload: false, ruleCount: 0, privacy: 'private', error: 'rules-unreadable' }, plan: [] }); }
+        return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
+      } catch { return json(res, 200, { mode: { enabled: false, flagOn: false, autoUpload: false, ruleCount: 0, privacy: 'private', error: 'rules-unreadable' }, rulesFile, plan: [] }); }
     }
     if (req.method === 'GET' && route === '/ui/api/posts/media') return postMedia(req, res, url);
     if (req.method === 'GET' && route === '/ui/api/posts/youtube/status') {

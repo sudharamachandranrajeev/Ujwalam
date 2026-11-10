@@ -2306,6 +2306,12 @@ void MainWindow::openPosts()
 	info->setWordWrap(true);
 	auto *autoInfo = new QLabel(dlg);
 	autoInfo->setWordWrap(true);
+	autoInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	auto *previewB = new QPushButton(QStringLiteral("Preview auto-post rules"), dlg);
+	auto *previewInfo = new QLabel(dlg);
+	previewInfo->setWordWrap(true);
+	previewInfo->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	previewInfo->setVisible(false);
 	auto *queueInfo = new QLabel(dlg);
 	queueInfo->setWordWrap(true);
 	auto *list = new QListWidget(dlg);
@@ -2364,6 +2370,8 @@ void MainWindow::openPosts()
 	form->setVisible(false);
 	v->addWidget(info);
 	v->addWidget(autoInfo);
+	v->addWidget(previewB, 0, Qt::AlignLeft);
+	v->addWidget(previewInfo);
 	v->addWidget(queueInfo);
 	v->addWidget(list);
 	v->addWidget(form, 1);
@@ -2597,11 +2605,65 @@ void MainWindow::openPosts()
 		if (!guard || !ok)
 			return;
 		const QJsonObject m = r.value(QStringLiteral("mode")).toObject();
-		autoInfo->setText(QStringLiteral("Auto-post: %1, %2 rule(s), %3. %4 planned action(s).")
+		const QString rf = r.value(QStringLiteral("rulesFile")).toString();
+		autoInfo->setText(QStringLiteral("Auto-post: %1, %2 rule(s), %3. %4 planned action(s).%5")
 					  .arg(m.value(QStringLiteral("enabled")).toBool() ? QStringLiteral("ON") : QStringLiteral("off (review-first)"))
 					  .arg(m.value(QStringLiteral("ruleCount")).toInt())
 					  .arg(m.value(QStringLiteral("autoUpload")).toBool() ? QStringLiteral("approve and upload (private)") : QStringLiteral("approve only"))
-					  .arg(r.value(QStringLiteral("plan")).toArray().size()));
+					  .arg(r.value(QStringLiteral("plan")).toArray().size())
+					  .arg(rf.isEmpty() ? QString() : QStringLiteral("\nRules file: ") + rf));
+	});
+	// Read-only dry run: what the rules would queue and skip. Nothing is written or sent.
+	connect(previewB, &QPushButton::clicked, dlg, [=]() {
+		previewInfo->setVisible(true);
+		previewInfo->setText(QStringLiteral("Checking..."));
+		api_->get(QStringLiteral("ui/api/posts/auto/preview"), [=](bool ok, const QJsonObject &r, const QString &err) {
+			if (!guard)
+				return;
+			if (!ok || r.contains(QStringLiteral("error"))) {
+				previewInfo->setText(QStringLiteral("Preview unavailable.") + (ok ? QString() : QStringLiteral(" ") + err));
+				return;
+			}
+			const QJsonArray q = r.value(QStringLiteral("queued")).toArray();
+			const QJsonArray sk = r.value(QStringLiteral("skipped")).toArray();
+			constexpr int kMax = 12;
+			QStringList L;
+			const QString rf = r.value(QStringLiteral("rulesFile")).toString();
+			if (!rf.isEmpty())
+				L << QStringLiteral("Rules file: ") + rf;
+			L << QStringLiteral("Dry run: %1 would be queued, %2 skipped. Nothing is written or sent.").arg(q.size()).arg(sk.size());
+			const QString blocked = r.value(QStringLiteral("blocked")).toString();
+			if (!blocked.isEmpty())
+				L << QStringLiteral("A stream looks live (%1): a run would be refused.").arg(blocked);
+			int n = 0;
+			for (const auto &x : q) {
+				if (n++ >= kMax) {
+					L << QStringLiteral("  ... and %1 more").arg(q.size() - kMax);
+					break;
+				}
+				const QJsonObject o = x.toObject();
+				QStringList acts;
+				for (const auto &a : o.value(QStringLiteral("actions")).toArray())
+					acts << a.toString();
+				QString line = QStringLiteral("  would %1: %2 to %3 (rule %4) %5").arg(acts.join(QStringLiteral(" + ")), o.value(QStringLiteral("kind")).toString(QStringLiteral("?")), o.value(QStringLiteral("target")).toString(QStringLiteral("-")), o.value(QStringLiteral("ruleId")).toString(), o.value(QStringLiteral("id")).toString());
+				if (o.value(QStringLiteral("publishAt")).isString())
+					line += QStringLiteral(", goes public about ") + o.value(QStringLiteral("publishAt")).toString();
+				else if (o.value(QStringLiteral("publishNote")).toString() == QStringLiteral("beyond-cap"))
+					line += QStringLiteral(", waits: public time too far ahead");
+				L << line;
+			}
+			n = 0;
+			for (const auto &x : sk) {
+				if (n++ >= kMax) {
+					L << QStringLiteral("  ... and %1 more skipped").arg(sk.size() - kMax);
+					break;
+				}
+				const QJsonObject o = x.toObject();
+				const QString d = o.value(QStringLiteral("detail")).toString();
+				L << QStringLiteral("  skip %1 %2 %3: %4%5").arg(o.value(QStringLiteral("kind")).toString(QStringLiteral("?")), o.value(QStringLiteral("target")).toString(QStringLiteral("-")), o.value(QStringLiteral("id")).toString(), o.value(QStringLiteral("reason")).toString(), d.isEmpty() ? QString() : QStringLiteral(" (") + d + QStringLiteral(")"));
+			}
+			previewInfo->setText(L.join(QLatin1Char('\n')));
+		});
 	});
 	api_->get(QStringLiteral("ui/api/posts/youtube/status"), [=](bool ok, const QJsonObject &r, const QString &) {
 		if (!guard)
