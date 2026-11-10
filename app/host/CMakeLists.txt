@@ -93,6 +93,7 @@ add_executable(ujwalam-host
   src/studio.cpp
   src/model.cpp
   src/devices.cpp
+  src/device_watch.cpp
   src/preview.cpp
   src/preview_edit.cpp
   src/outputs.cpp
@@ -113,7 +114,7 @@ target_compile_definitions(ujwalam-host PRIVATE UNICODE _UNICODE NOMINMAX WIN32_
 target_compile_options(ujwalam-host PRIVATE /W3 /utf-8 /wd4244 /wd4267 /EHsc)
 # obs.dll lives in the runtime dir, not next to the exe: delay-load it so the host can put the runtime on PATH
 # (from --runtime) before the first libobs call.
-target_link_libraries(ujwalam-host PRIVATE obs_import delayimp ws2_32 bcrypt advapi32 user32 psapi shell32 ole32 oleaut32 strmiids uuid dbghelp)
+target_link_libraries(ujwalam-host PRIVATE obs_import delayimp ws2_32 bcrypt advapi32 user32 psapi shell32 ole32 oleaut32 strmiids uuid dbghelp cfgmgr32)
 target_link_options(ujwalam-host PRIVATE /DELAYLOAD:obs.dll)
 
 # libobs plugins launch helper processes from the HOST executable's directory: obs-ffmpeg-mux.exe (ffmpeg_muxer

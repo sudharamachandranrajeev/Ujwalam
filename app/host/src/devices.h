@@ -50,6 +50,35 @@ struct Match {
 };
 Match resolve(const json::Value &device, const List &l);
 
+// A list entry as enumerate() makes it (obs_id = win-dshow "name:path" for DirectShow kinds, the path otherwise).
+// Used for the --test-hooks fake device lists (devices.testSet), so they match exactly like real ones.
+Entry make_entry(const std::string &kind, const std::string &name, const std::string &path);
+
+// True if the DirectShow video category was listed without an error (an empty category is not an error). A list
+// whose video category failed proves nothing about a device being gone.
+bool video_listed(const List &l);
+
+// Hot-plug binding of one capture source (D328). After every device list change each capture source is reconciled:
+//   bound and its entry (same obs_id, a fitting kind) still listed      -> None (sticky: a second device with the same
+//                                                                           name never moves a working source)
+//   bound, entry gone, video category not listed (enumeration error)    -> None (never unbind on a failed listing)
+//   bound, entry gone, resolve() finds another entry                    -> Bind (moved to another USB port)
+//   bound, entry gone, nothing matches                                  -> Lose (waiting; the source is kept)
+//   waiting, resolve() finds an entry                                   -> Bind
+//   waiting, nothing (or more than one by name)                         -> None, problem updated
+struct Binding {
+	std::string bound_id; // the win-dshow id the source was given ("" = none)
+	bool waiting = true;
+};
+struct Step {
+	enum Act { None, Bind, Lose } act = None;
+	std::string obs_id, matched_by, problem;
+};
+Step reconcile(const json::Value &device, const Binding &cur, const List &l);
+
+// Plain-English text for a capture layer waiting for its device (studio layer list, host.status, add result).
+std::string waiting_message(const json::Value &device, const std::string &problem);
+
 // Audio monitoring output (what "monitor" layers play through, e.g. headphones). Finds exactly one audio-output
 // entry whose friendly name equals `name` (case-insensitive) and passes its endpoint id to
 // obs_set_audio_monitoring_device. Returns {"device", "id"} on success; {"problem"} otherwise (libobs keeps the

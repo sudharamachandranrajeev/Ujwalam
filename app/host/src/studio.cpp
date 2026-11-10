@@ -874,12 +874,189 @@ model::Options Studio::model_options(const json::Value &doc, const LoadOptions &
 	mo.allow_browser = flags_.allow_browser;
 	mo.browser_urls = o.browser_urls;
 	mo.overlay_port = o.overlay_port;
+	mo.test_capture = test_devices();
 	const json::Value *d = doc.find("devices");
-	if (list_devices && d && d->is_array() && d->size() > 0) {
-		list = devices::enumerate(); // list-only (see devices.h)
-		mo.devices = &list;
+	if ((list_devices || mo.test_capture) && d && d->is_array() && d->size() > 0) {
+		bool has = false;
+		list = this->list_devices(has); // the parameter list_devices is the bool above
+		if (has)
+			mo.devices = &list;
 	}
 	return mo;
+}
+
+// ---- device hot-plug (D328) ----
+
+devices::List Studio::list_devices(bool &has) const
+{
+	{
+		std::lock_guard<std::mutex> lk(dev_m_);
+		if (test_list_on_) {
+			has = true;
+			last_list_ = test_list_;
+			have_list_ = true;
+			return test_list_;
+		}
+	}
+	has = flags_.allow_devices;
+	if (!has)
+		return {};
+	devices::List l = devices::enumerate(); // list-only (see devices.h)
+	note_list(l);
+	return l;
+}
+
+void Studio::note_list(const devices::List &l) const
+{
+	std::lock_guard<std::mutex> lk(dev_m_);
+	last_list_ = l;
+	have_list_ = true;
+}
+
+void Studio::set_test_devices(const devices::List *l)
+{
+	std::lock_guard<std::mutex> lk(dev_m_);
+	test_list_on_ = l != nullptr;
+	test_list_ = l ? *l : devices::List{};
+}
+
+bool Studio::test_devices() const
+{
+	std::lock_guard<std::mutex> lk(dev_m_);
+	return test_list_on_;
+}
+
+const json::Value *Studio::model_device(const std::string &id) const
+{
+	const json::Value *ds = format_ == "project-v1" ? model_doc_.find("devices") : nullptr;
+	if (!ds || !ds->is_array())
+		return nullptr;
+	for (auto &d : ds->as_array())
+		if (const json::Value *i = d.find("id"); i && i->is_string() && i->as_string() == id)
+			return &d;
+	return nullptr;
+}
+
+// Every capture source the scenes show, once (H, V and duplicates share one).
+std::vector<std::shared_ptr<Studio::Src>> Studio::capture_srcs() const
+{
+	std::vector<std::shared_ptr<Src>> out;
+	for (auto &s : scenes_)
+		for (auto &l : s.layers)
+			if (l.src && !l.src->device.empty() && std::find(out.begin(), out.end(), l.src) == out.end())
+				out.push_back(l.src);
+	return out;
+}
+
+bool Studio::device_loss_pending(const devices::List &l)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	for (auto &s : capture_srcs()) {
+		const json::Value *spec = model_device(s->device);
+		if (!spec)
+			continue;
+		devices::Binding b{s->bound_id, s->waiting};
+		devices::Step st = devices::reconcile(*spec, b, l);
+		if (st.act == devices::Step::Lose)
+			return true;
+	}
+	return false;
+}
+
+json::Value Studio::devices_changed(const devices::List &l, const char *why)
+{
+	note_list(l);
+	json::Value changes = json::Value::array();
+	{
+		std::lock_guard<std::recursive_mutex> lk(m_);
+		for (auto &s : capture_srcs()) {
+			const json::Value *spec = model_device(s->device);
+			if (!spec)
+				continue;
+			devices::Binding b{s->bound_id, s->waiting};
+			devices::Step st = devices::reconcile(*spec, b, l);
+			json::Value c = json::Value::object();
+			c.set("layer", s->owner);
+			c.set("device", s->device);
+			if (st.act == devices::Step::Bind) {
+				// Only this source re-activates (win-dshow queues the activation on its own thread); encoders,
+				// outputs and every other source are untouched.
+				obs_data_t *d = obs_data_create();
+				obs_data_set_string(d, "video_device_id", st.obs_id.c_str());
+				obs_source_update(s->src, d);
+				obs_data_release(d);
+				s->bound_id = st.obs_id;
+				s->matched_by = st.matched_by;
+				s->waiting = false;
+				s->problem.clear();
+				s->binds++;
+				c.set("action", "bound");
+				c.set("matchedBy", st.matched_by);
+				hlog::info("devices (%s): layer %s bound to device %s (matched by %s)", why, s->owner.c_str(),
+					   s->device.c_str(), st.matched_by.c_str());
+			} else if (st.act == devices::Step::Lose) {
+				// The device left: waiting. The last frame is cleared (async video); the device graph is left to
+				// win-dshow, and a false alarm only costs one frame (the next frame paints again).
+				obs_source_output_video(s->src, nullptr);
+				s->waiting = true;
+				s->problem = st.problem;
+				c.set("action", "lost");
+				c.set("message", devices::waiting_message(*spec, st.problem));
+				hlog::warn("devices (%s): layer %s lost device %s; waiting for it", why, s->owner.c_str(), s->device.c_str());
+			} else {
+				if (s->waiting)
+					s->problem = st.problem;
+				continue;
+			}
+			changes.push(std::move(c));
+		}
+	}
+	uint64_t seq = ++dev_seq_;
+	json::Value r = json::Value::object();
+	r.set("seq", seq);
+	r.set("changes", std::move(changes));
+	return r;
+}
+
+json::Value Studio::devices_status() const
+{
+	json::Value r = json::Value::object();
+	r.set("seq", dev_seq_.load());
+	devices::List l;
+	bool have = false;
+	{
+		std::lock_guard<std::mutex> lk(dev_m_);
+		have = have_list_;
+		if (have)
+			l = last_list_;
+	}
+	r.set("listed", have);
+	json::Value waiting = json::Value::array();
+	json::Value connected = json::Value::object();
+	std::unique_lock<std::recursive_mutex> lk(m_, std::try_to_lock); // never wait on a load in host.status
+	if (lk.owns_lock()) {
+		for (auto &s : capture_srcs()) {
+			if (!s->waiting)
+				continue;
+			const json::Value *spec = model_device(s->device);
+			json::Value w = json::Value::object();
+			w.set("layer", s->owner);
+			w.set("device", s->device);
+			w.set("message", spec ? devices::waiting_message(*spec, s->problem) : std::string("Waiting for its device."));
+			waiting.push(std::move(w));
+		}
+		const json::Value *ds = format_ == "project-v1" ? model_doc_.find("devices") : nullptr;
+		if (have && ds && ds->is_array())
+			for (auto &d : ds->as_array()) {
+				const json::Value *id = d.find("id");
+				if (id && id->is_string())
+					connected.set(id->as_string(), devices::resolve(d, l).entry != nullptr);
+			}
+	}
+	r.set("busy", !lk.owns_lock());
+	r.set("waiting", std::move(waiting));
+	r.set("connected", std::move(connected));
+	return r;
 }
 
 json::Value Studio::plan(const json::Value &project, const LoadOptions &o) const
@@ -1020,6 +1197,7 @@ json::Value Studio::load_model(const json::Value &doc, const LoadOptions &o)
 		counts.set("relay", relay_ ? json::Value(relay_scope_) : json::Value());
 		r.set("built", std::move(counts));
 		r.set("unavailable", p.unavailable);
+		r.set("waiting", p.waiting);
 		r.set("warnings", p.warnings);
 		return r;
 	} catch (...) {
@@ -1038,7 +1216,16 @@ std::shared_ptr<Studio::Src> Studio::make_src(const model::Source &spec, const s
 		throw Error(rpc::INTERNAL, "source create failed for layer " + layer + " (" + spec.obs_type + ")");
 	if (obs_source_get_output_flags(src) & OBS_SOURCE_AUDIO)
 		obs_source_set_audio_mixers(src, 0); // no audio.sources entry: no tracks
-	return wrap(src, layer);
+	auto w = wrap(src, layer);
+	if (spec.type == "capture") { // D328: the watcher binds / rebinds it
+		w->device = spec.device;
+		const json::Value *id = spec.settings.find("video_device_id");
+		w->bound_id = id && id->is_string() ? id->as_string() : "";
+		w->waiting = spec.waiting;
+		w->problem = spec.wait_problem;
+		w->matched_by = spec.matched_by;
+	}
+	return w;
 }
 
 // The source a layer owns, when any scene on any canvas still shows it.
@@ -1049,6 +1236,19 @@ std::shared_ptr<Studio::Src> Studio::find_src(const std::string &owner)
 			if (l.src && l.src->owner == owner)
 				return l.src;
 	return nullptr;
+}
+
+// A plan.unavailable entry as the sentence the studio shows (D328: what is missing, what to do).
+static std::string plain_unavailable(const json::Value &u)
+{
+	std::string lid = u.find("layer") && u.find("layer")->is_string() ? u.find("layer")->as_string() : "?";
+	std::string reason = u.find("reason")->as_string();
+	if (u.find("code")->as_string() == "forbidden" && reason.find("capture devices are disabled") == 0)
+		return "Layer " + lid + " cannot be added: this start of Ujwalam has capture devices switched off. Start Ujwalam "
+		       "with devices allowed (the normal start does) and add the layer again. (" + reason + ")";
+	if (u.find("code")->as_string() == "forbidden")
+		return "Layer " + lid + " cannot be added: that feature is switched off in this start of Ujwalam (" + reason + ").";
+	return "Layer " + lid + " cannot be added: " + reason + ".";
 }
 
 json::Value Studio::layer_add_model(const json::Value &doc, const std::string &sid, const std::string &lid)
@@ -1064,7 +1264,7 @@ json::Value Studio::layer_add_model(const json::Value &doc, const std::string &s
 	for (auto &u : p.unavailable.as_array())
 		if (const json::Value *l = u.find("layer"); l && l->is_string() && l->as_string() == lid)
 			throw Error(u.find("code")->as_string() == "forbidden" ? rpc::FORBIDDEN : rpc::UNAVAILABLE,
-				    "layer " + lid + " cannot be built: " + u.find("reason")->as_string());
+				    plain_unavailable(u));
 	auto ps = std::find_if(p.scenes.begin(), p.scenes.end(), [&](const model::Scene &x) { return x.id == sid; });
 	if (ps == p.scenes.end())
 		throw Error(rpc::INVALID_PARAMS, "no such scene in the project: " + sid);
@@ -1134,11 +1334,24 @@ json::Value Studio::layer_add_model(const json::Value &doc, const std::string &s
 		make_relay(last_opts_);
 	model_doc_ = doc;
 	dirty_ = false;
-	hlog::info("layer added from the project: %s in %s", lid.c_str(), sid.c_str());
 	json::Value r = json::Value::object();
 	r.set("scene", sid);
 	r.set("layer", lid);
 	r.set("canvases", std::move(cvs));
+	// D328: a capture layer whose device is not connected is added waiting; the studio shows the message.
+	std::string src_layer = lid;
+	for (auto &t : todo)
+		src_layer = t.pi->source_layer;
+	json::Value wait;
+	if (auto s = find_src(src_layer); s && s->waiting) { // the built source says (it may be shared and older)
+		const json::Value *spec = model_device(s->device);
+		wait = json::Value::object();
+		wait.set("layer", src_layer);
+		wait.set("device", s->device);
+		wait.set("message", spec ? devices::waiting_message(*spec, s->problem) : std::string("Waiting for its device."));
+	}
+	r.set("waiting", wait);
+	hlog::info("layer added from the project: %s in %s%s", lid.c_str(), sid.c_str(), wait.is_null() ? "" : " (waiting for its device)");
 	return r;
 }
 
@@ -1228,6 +1441,17 @@ json::Value Studio::layer_json(const Scene &s, const Layer &l) const
 	o.set("width", src ? obs_source_get_width(src) : 0u);
 	o.set("height", src ? obs_source_get_height(src) : 0u);
 	o.set("audio", l.src && l.src->meter != nullptr);
+	if (l.src && !l.src->device.empty()) { // capture layer (D328)
+		json::Value d = json::Value::object();
+		d.set("id", l.src->device);
+		d.set("state", l.src->waiting ? "waiting" : "connected");
+		if (l.src->waiting) {
+			const json::Value *spec = model_device(l.src->device);
+			d.set("message", spec ? devices::waiting_message(*spec, l.src->problem) : std::string("Waiting for its device."));
+		}
+		d.set("binds", (uint64_t)l.src->binds);
+		o.set("device", std::move(d));
+	}
 	return o;
 }
 

@@ -283,6 +283,65 @@ Match resolve(const json::Value &device, const List &l)
 	return m;
 }
 
+Entry make_entry(const std::string &kind, const std::string &name, const std::string &path)
+{
+	Entry e;
+	e.kind = kind;
+	e.name = name;
+	e.path = path;
+	e.obs_id = (kind == "video" || kind == "dshow-audio") ? obs_encode(name) + ":" + obs_encode(path) : path;
+	return e;
+}
+
+bool video_listed(const List &l)
+{
+	for (auto &e : l.errors)
+		if (e.rfind("video:", 0) == 0)
+			return false;
+	return true;
+}
+
+Step reconcile(const json::Value &device, const Binding &cur, const List &l)
+{
+	Step s;
+	const json::Value *kind = device.find("kind");
+	std::string pk = kind && kind->is_string() ? kind->as_string() : "";
+	if (!cur.waiting && !cur.bound_id.empty()) {
+		for (auto &e : l.entries)
+			if (kind_fits(pk, e.kind) && lower(e.obs_id) == lower(cur.bound_id))
+				return s; // still there
+		if (!video_listed(l))
+			return s;
+	}
+	Match m = resolve(device, l);
+	if (m.entry) {
+		if (!cur.waiting && lower(m.entry->obs_id) == lower(cur.bound_id))
+			return s;
+		s.act = Step::Bind;
+		s.obs_id = m.entry->obs_id;
+		s.matched_by = m.matched_by;
+		return s;
+	}
+	s.problem = m.problem;
+	if (!cur.waiting)
+		s.act = Step::Lose;
+	return s;
+}
+
+std::string waiting_message(const json::Value &device, const std::string &problem)
+{
+	const json::Value *k = device.find("kind");
+	const json::Value *n = device.find("name");
+	std::string kind = k && k->is_string() ? k->as_string() : "";
+	std::string what = kind == "camera" ? "camera" : kind == "capture-card" ? "capture card" : "device";
+	std::string name = n && n->is_string() ? n->as_string() : "";
+	std::string label = what + (name.empty() ? "" : " \"" + name + "\"");
+	if (problem == "name matches more than one device")
+		return "Waiting for " + label + ": more than one connected device has this name, so Ujwalam cannot tell which "
+		       "one to use. Unplug the one you do not want; the layer connects by itself.";
+	return "Waiting for " + label + ": it is not connected. Plug it in; the layer connects by itself.";
+}
+
 json::Value set_monitoring_output(const std::string &name, const List &l)
 {
 	json::Value r = json::Value::object();

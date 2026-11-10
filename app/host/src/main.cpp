@@ -492,8 +492,10 @@ int wmain(int argc, wchar_t **wargv)
 			hc.max_parked = ah.max_parked;
 			hc.recreate = ah.enabled;
 			app.studio->set_audio_health(hc);
-			if (app.test_hooks)
+			if (app.test_hooks) {
 				ahealth::register_test_audio_type();
+				devwatch::register_test_capture_type(); // D328: capture layers on fake devices (devices.testSet)
+			}
 			if (ah.no_data_ms && ah.check_interval_ms) {
 				Studio *st = app.studio.get();
 				app.audio_watch = std::make_unique<ahealth::Ticker>(ah.check_interval_ms, [st]() { st->audio_watch_tick(); });
@@ -503,6 +505,10 @@ int wmain(int argc, wchar_t **wargv)
 				   ah.enabled ? "watchdog on" : (ah.no_data_ms ? "report only" : "off"), ah.no_data_ms,
 				   ah.check_interval_ms, ah.max_recreates, ah.max_parked, ah.shutdown_guard_ms);
 		}
+		// Device hot-plug (D328): capture layers follow devices plugged in or out while the host runs. Listing is a
+		// device feature (D38): only with --allow-devices, or --test-hooks (fake lists).
+		if (app.allow_devices || app.test_hooks)
+			app.device_watch = std::make_unique<devwatch::Watcher>([&app]() { devices_pass(app, "watcher"); });
 		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir, app.allow_live,
 							app.twitch_bandwidth_test);
 		app.outputs->set_replay_config(app.config.replay);
@@ -711,6 +717,8 @@ int wmain(int argc, wchar_t **wargv)
 		app.hotkeys->stop();
 		if (server)
 			server->stop();
+		if (app.device_watch)
+			app.device_watch->stop(); // no pass runs after this (the studio goes away below)
 		app.moments->stop();
 		app.panic->stop();
 		app.outputs->stop_all(5000);

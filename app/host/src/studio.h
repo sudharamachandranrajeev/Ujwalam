@@ -151,6 +151,25 @@ public:
 
 	static std::string norm_canvas(const std::string &c); // "h" -> "H"; "" if not H/V
 
+	// ---- device hot-plug (D328; device_watch.h) ----
+	// The device list every project build and the watcher use: the --test-hooks fake list when one is set
+	// (devices.testSet), else devices::enumerate() with --allow-devices, else nothing (has = false; D38).
+	devices::List list_devices(bool &has) const;
+	// --test-hooks: replaces the device list with `l` (nullptr: back to the real one). Capture layers are then built on
+	// ujw_test_capture and allowed without --allow-devices.
+	void set_test_devices(const devices::List *l);
+	bool test_devices() const;
+	// After a device list change: true if some bound capture source's device is no longer listed (the watcher then
+	// lists again after a short pause before it acts, so a glitch in one listing never unbinds a working source).
+	bool device_loss_pending(const devices::List &l);
+	// Reconciles every capture source with the list (devices::reconcile): binds waiting sources whose device arrived
+	// (obs_source_update with the new video_device_id; only that source re-activates), marks sources whose device left
+	// as waiting (their last frame is cleared; the device graph and every encoder and output are left alone). Bumps the
+	// device seq. Returns {seq, changes:[{layer, device, action, matchedBy?, message?}]}.
+	json::Value devices_changed(const devices::List &l, const char *why);
+	// host.status "devices": {seq, listed, waiting:[{layer, device, message}], connected:{deviceId: bool}} (no listing).
+	json::Value devices_status() const;
+
 private:
 	struct Meter;
 	struct Src { // one libobs source; shared by every item that shows it (H, V, duplicates)
@@ -160,6 +179,11 @@ private:
 		std::string audio_id; // project audio source id bound to it
 		std::string audio_name; // its project name ("Mic", "Game"): the mixer row name
 		uint64_t created_ns = 0; // os_gettime_ns at wrap (start-up grace for the audio watchdog)
+		// Capture layers (D328): the project device id, the win-dshow id the source was given, and whether it waits for
+		// its device (built without one, or the device was unplugged). Guarded by the studio mutex.
+		std::string device, bound_id, problem, matched_by;
+		bool waiting = false;
+		uint32_t binds = 0; // device binds after the build (arrivals)
 		~Src();
 	};
 	struct Layer {
@@ -206,6 +230,15 @@ private:
 	};
 
 	Flags flags_;
+	mutable std::mutex dev_m_;      // the device list state below (never held while calling into libobs)
+	bool test_list_on_ = false;
+	devices::List test_list_;
+	mutable devices::List last_list_; // newest list seen (a build or a watcher pass); host.status reads it
+	mutable bool have_list_ = false;
+	std::atomic<uint64_t> dev_seq_{0};
+	void note_list(const devices::List &l) const;
+	std::vector<std::shared_ptr<Src>> capture_srcs() const;
+	const json::Value *model_device(const std::string &id) const;
 	AudioHealthCfg health_;
 	std::vector<std::shared_ptr<Src>> parked_; // replaced device audio sources (released in ~Studio only)
 	std::vector<json::Value> audio_events_;    // newest last, at most kAudioEvents
