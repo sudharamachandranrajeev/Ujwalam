@@ -3,6 +3,7 @@
 #include "value_slider.h"
 
 #include <QApplication>
+#include <QEventLoop>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QMouseEvent>
@@ -68,7 +69,14 @@ void JumpSlider::wheelEvent(QWheelEvent *e)
 		e->ignore(); // the panel scrolls instead
 		return;
 	}
-	QSlider::wheelEvent(e);
+	// One notch is one step (Qt's own wheel moves the Windows "lines per notch", 3 by default); a fine-scroll touchpad
+	// adds up its partial notches.
+	wheelRest_ += e->angleDelta().y();
+	const int notches = wheelRest_ / 120;
+	wheelRest_ -= notches * 120;
+	if (notches != 0)
+		setValue(value() + notches * singleStep());
+	e->accept();
 }
 
 NumberBox::NumberBox(QWidget *parent) : QDoubleSpinBox(parent)
@@ -86,7 +94,12 @@ void NumberBox::wheelEvent(QWheelEvent *e)
 		e->ignore();
 		return;
 	}
-	QDoubleSpinBox::wheelEvent(e);
+	wheelRest_ += e->angleDelta().y(); // one notch, one step (as the slider)
+	const int notches = wheelRest_ / 120;
+	wheelRest_ -= notches * 120;
+	if (notches != 0)
+		stepBy(notches);
+	e->accept();
 }
 
 ValueSlider::ValueSlider(double lo, double hi, double step, int decimals, QWidget *parent)
@@ -123,16 +136,24 @@ ValueSlider::ValueSlider(double lo, double hi, double step, int decimals, QWidge
 		if (!slider_->isSliderDown())
 			settle_->start(); // a key, the wheel or a click that is not held: commit after the pause
 	});
+	// A mouse gesture commits on release only: the jump of a track click starts the settle timer before the slider is
+	// down, so the press stops it (else a hold-and-drag past 250 ms committed a value on the way, Codex review).
+	connect(slider_, &QSlider::sliderPressed, settle_, &QTimer::stop);
 	connect(slider_, &QSlider::sliderReleased, this, [this]() {
 		settle_->stop();
 		commit();
 	});
+	// The box: a step (arrow key held, wheel) waits for the pause like the slider's keys; Enter or leaving the box
+	// commits at once.
 	connect(box_, &QDoubleSpinBox::valueChanged, this, [this](double v) {
 		{
 			const QSignalBlocker b(slider_);
 			slider_->setValue(toPos(v));
 		}
 		emit valueChanged(v);
+		settle_->start();
+	});
+	connect(box_, &QAbstractSpinBox::editingFinished, this, [this]() {
 		settle_->stop();
 		commit();
 	});
@@ -228,6 +249,37 @@ bool ValueSlider::probeKey(int key)
 	slider_->setFocus(Qt::OtherFocusReason);
 	QKeyEvent k(QEvent::KeyPress, key, Qt::NoModifier);
 	QApplication::sendEvent(slider_, &k);
+	return true;
+}
+
+bool ValueSlider::probeHoldDrag(double from, double to, int holdMs)
+{
+	if (!isEnabled())
+		return false;
+	const auto at = [this](double f) { return slider_->pointFor((int)std::lround(std::clamp(f, 0.0, 1.0) * slider_->maximum())); };
+	const QPoint a = at(from);
+	QMouseEvent press(QEvent::MouseButtonPress, QPointF(a), slider_->mapToGlobal(QPointF(a)), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+	QApplication::sendEvent(slider_, &press);
+	QEventLoop wait; // the settle timer would fire in here if the press had not stopped it
+	QTimer::singleShot(holdMs, &wait, &QEventLoop::quit);
+	wait.exec();
+	const QPoint b = at(to);
+	QMouseEvent move(QEvent::MouseMove, QPointF(b), slider_->mapToGlobal(QPointF(b)), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+	QApplication::sendEvent(slider_, &move);
+	QMouseEvent release(QEvent::MouseButtonRelease, QPointF(b), slider_->mapToGlobal(QPointF(b)), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+	QApplication::sendEvent(slider_, &release);
+	return true;
+}
+
+bool ValueSlider::probeBoxKey(int key, int times)
+{
+	if (!isEnabled())
+		return false;
+	box_->setFocus(Qt::OtherFocusReason);
+	for (int i = 0; i < times; i++) {
+		QKeyEvent k(QEvent::KeyPress, key, Qt::NoModifier);
+		QApplication::sendEvent(box_, &k);
+	}
 	return true;
 }
 

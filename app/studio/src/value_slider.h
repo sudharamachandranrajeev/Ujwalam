@@ -26,7 +26,10 @@ public:
 
 protected:
 	void mousePressEvent(QMouseEvent *e) override;
-	void wheelEvent(QWheelEvent *e) override;
+	void wheelEvent(QWheelEvent *e) override; // one notch = one step
+
+private:
+	int wheelRest_ = 0; // partial notches (fine-scroll touchpads)
 };
 
 // The number box: the wheel needs focus.
@@ -35,7 +38,10 @@ public:
 	explicit NumberBox(QWidget *parent = nullptr);
 
 protected:
-	void wheelEvent(QWheelEvent *e) override;
+	void wheelEvent(QWheelEvent *e) override; // one notch = one step
+
+private:
+	int wheelRest_ = 0;
 };
 
 class ValueSlider : public QWidget {
@@ -56,6 +62,9 @@ public:
 	bool probeType(const QString &text); // types into the box and presses Enter
 	bool probeKey(int key);           // one key press on the slider (Qt::Key_Right, Qt::Key_PageUp, ...)
 	bool probeWheel(int steps, bool focused); // wheel notches over the slider, with or without focus first
+	// a press on the track at share `from`, held still for holdMs, then moved to share `to` and released
+	bool probeHoldDrag(double from, double to, int holdMs);
+	bool probeBoxKey(int key, int times); // key presses in the number box (Qt::Key_Up steps it), one after another
 
 signals:
 	void valueChanged(double v);

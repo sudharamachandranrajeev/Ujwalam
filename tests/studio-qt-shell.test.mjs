@@ -101,11 +101,17 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const fake = createFakeHost({ outputsReady: !!opts.live });
     if (opts.live) await fake.call('stream.start', {}); // the window sees a live stream
     const calls = [];
-    const host = { describe: () => fake.describe(), call: (m, p) => { calls.push([m, p]); return fake.call(m, p); } };
+    // opts.slowStatusMs: host.status answers late, so a structure reply (the route asks host.status first) arrives after
+    // the user has moved on (D330 review).
+    const host = { describe: () => fake.describe(), call: async (m, p) => {
+      calls.push([m, p]);
+      if (opts.slowStatusMs && m === 'host.status') await new Promise((r) => setTimeout(r, opts.slowStatusMs));
+      return fake.call(m, p);
+    } };
     const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
     const key = 'p'.repeat(40);
     const file = opts.project ? path.join(dataDir, 'p.project.json') : null;
-    if (file) saveProject(file, menuProject());
+    if (file) { const doc = menuProject(); opts.editProject?.(doc); saveProject(file, doc); }
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags, bots: createFakeBots(), limits: { statusPollMs: 50 }, ...(file ? { projectSync: createProjectSync({ file }) } : {}) });
     const { port } = await srv.listen();
     // opts.onStatus(n, dataDir): called once per status request the shell makes (n counts from 1), so a test can change
@@ -457,6 +463,14 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(q.actions.map((a) => a.done), [true]);
     assert.equal(q.calls.filter(([m]) => m === 'layers.move').length, 1, 'no project file: the live-only host move, as before');
   });
+  test('layer list (D330 review): a host-only fallback that answers late moves the dragged layer, not the one selected since', async () => {
+    // The project lacks chat, so the structure route answers unknown-layer, 1.5 s late; Camera is selected meanwhile.
+    const p = await probe([], 8000, 'layer-drag:0:2,select-layer:cam', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' },
+      { project: true, slowStatusMs: 1500, editProject: (doc) => { doc.scenes[0].layers = doc.scenes[0].layers.filter((l) => l.id !== 'chat'); } });
+    assert.deepEqual(p.actions.map((a) => a.done), [true, true]);
+    assert.equal(p.selectedLayer, 'cam');
+    assert.deepEqual(p.calls.filter(([m]) => m === 'layers.move').map(([, x]) => [x.scene, x.layer, x.index]), [['scene-1', 'chat', 0]]);
+  });
   test('layer list (D330): the trash button deletes with no flag after a "Yes"; "No" keeps the layer; the button has its icon', async () => {
     const p = await probe([], 8000, 'select-layer:chat,delete-button,msg:no,delete-button,msg:yes', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' }, { project: true });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
@@ -488,10 +502,16 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const sent = p.calls.filter(([m, x]) => m === 'mixer.setVolume' && x.id === 'scene-1/cam').map(([, x]) => x.db);
     assert.equal(sent[0], -45, `the click at a quarter of -60..0 dB: ${sent}`);
     assert.ok(sent.includes(-6), `typed -6: ${sent}`);
-    // a wheel notch moves Windows' "lines per notch" steps (3 by default, Qt's wheelScrollLines): -6 - 2 x 3
-    assert.equal(sent.at(-1), -12, `two wheel notches down from -6 with focus: ${sent}`);
+    // one notch = one step (1 dB), not Windows' 3 lines per notch (D330 review)
+    assert.equal(sent.at(-1), -8, `two wheel notches down from -6 with focus: ${sent}`);
     assert.equal(sent.length, 3, `the unfocused wheel sent nothing: ${sent}`);
-    assert.equal(p.volumes['scene-1/cam'], -12);
+    assert.equal(p.volumes['scene-1/cam'], -8);
+  });
+  test('shared slider (D330 review): press, hold and drag commits once on release; held box steps commit once after the pause', async () => {
+    const p = await probe([], 9000, 'volume-slider:scene-1/cam:hold-drag:0.25~0.75,volume-slider:scene-1/cam:box-up:3', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    const sent = p.calls.filter(([m, x]) => m === 'mixer.setVolume' && x.id === 'scene-1/cam').map(([, x]) => x.db);
+    assert.deepEqual(sent, [-15, -12], `only the released value (-15), then one send for three box steps (-12): ${sent}`);
   });
   test('layer menu (D292): Copy look then Paste look sets the same effects on another layer through layers.setEffects', async () => {
     const p = await probe([], 11000, 'select-layer:cam,look:rounded:on,look-set:rounded:radius:40,layer-menu:copylook,select-layer:game,layer-menu:pastelook', null, {}, { project: true });

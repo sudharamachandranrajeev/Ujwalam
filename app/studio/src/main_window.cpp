@@ -3141,6 +3141,9 @@ void MainWindow::layerMoveTo(int index)
 {
 	if (selected_.isEmpty() || index < 0 || index >= layers_.size())
 		return;
+	// The host fallback is built now, from the layer, scene and canvas the user moved: the structure reply comes later,
+	// and by then another layer may be selected (Codex review of D330).
+	const QJsonObject hostArgs = layerArgs(QJsonObject{{QStringLiteral("layer"), selected_}, {QStringLiteral("index"), index}});
 	QStringList order; // host order with the moved layer taken out
 	for (const auto &l : layers_)
 		if (const QString id = l.toObject().value(QStringLiteral("id")).toString(); id != selected_)
@@ -3150,10 +3153,10 @@ void MainWindow::layerMoveTo(int index)
 		const QString target = below ? order.first() : order.at(std::min<int>(index, order.size()) - 1);
 		const QJsonObject body{{QStringLiteral("op"), QStringLiteral("layer.move")}, {QStringLiteral("scene"), activeScene_}, {QStringLiteral("layer"), selected_},
 				       {QStringLiteral("canvas"), canvas_}, {QStringLiteral("target"), target}, {QStringLiteral("place"), below ? QStringLiteral("below") : QStringLiteral("above")}};
-		api_->post(QStringLiteral("ui/api/project/structure"), body, [this, index](bool ok, const QJsonObject &b, const QString &err) {
+		api_->post(QStringLiteral("ui/api/project/structure"), body, [this, hostArgs](bool ok, const QJsonObject &b, const QString &err) {
 			if (!ok && (err.contains(QStringLiteral("unknown-layer")) || err.contains(QStringLiteral("not-on-canvas")) || err.contains(QStringLiteral("unknown-scene")) ||
 				    err.contains(QStringLiteral("no-project-file"))))
-				return layerMoveHost(index); // not a project layer: the live-only order, as before
+				return layerMoveHost(hostArgs); // not a project layer: the live-only order, as before
 			if (!ok)
 				note(QStringLiteral("Not moved: ") + plainStructureError(b.value(QStringLiteral("error")).toString(err)));
 			else if (!b.value(QStringLiteral("saved")).toBool())
@@ -3165,17 +3168,13 @@ void MainWindow::layerMoveTo(int index)
 		});
 		return;
 	}
-	layerMoveHost(index);
+	layerMoveHost(hostArgs);
 }
 
-void MainWindow::layerMoveHost(int index)
+// args: scene, canvas, layer and index as they were when the user asked for the move.
+void MainWindow::layerMoveHost(const QJsonObject &args)
 {
-	if (selected_.isEmpty() || index < 0 || index >= layers_.size())
-		return;
-	QJsonObject x;
-	x.insert(QStringLiteral("layer"), selected_);
-	x.insert(QStringLiteral("index"), index);
-	api_->host(QStringLiteral("layers.move"), layerArgs(x), [this](bool ok, const QJsonObject &b, const QString &err) {
+	api_->host(QStringLiteral("layers.move"), args, [this](bool ok, const QJsonObject &b, const QString &err) {
 		if (!ok)
 			note(QStringLiteral("Move failed: ") + err);
 		else if (b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
@@ -4030,7 +4029,7 @@ bool MainWindow::probeAction(const QString &action)
 	}
 	// look-slider:<type>:<key>:<op>:<arg> and volume-slider:<source id>:<op>:<arg>; op is click (share 0..1),
 	// type (percent-encoded text, then Enter), key (right|left|up|down|pageup|pagedown|home|end), wheel (notches, with
-	// focus) or wheel-nofocus (notches, focus elsewhere).
+	// focus), wheel-nofocus (notches, focus elsewhere), hold-drag (from~to shares) or box-up / box-down (times).
 	if ((p.size() == 5 && p[0] == QStringLiteral("look-slider")) || (p.size() == 4 && p[0] == QStringLiteral("volume-slider"))) {
 		ValueSlider *s = p[0] == QStringLiteral("look-slider") ? look_->probeSlider(p[1], p[2]) : findChild<ValueSlider *>(QStringLiteral("vol:") + p[1]);
 		if (!s)
@@ -4042,6 +4041,12 @@ bool MainWindow::probeAction(const QString &action)
 			return s->probeType(QUrl::fromPercentEncoding(arg.toUtf8()));
 		if (op == QStringLiteral("wheel") || op == QStringLiteral("wheel-nofocus"))
 			return s->probeWheel(arg.toInt(), op == QStringLiteral("wheel"));
+		if (op == QStringLiteral("hold-drag")) { // <from share>~<to share>: pressed, held 400 ms, dragged, released
+			const QStringList ft = arg.split(QLatin1Char('~'));
+			return ft.size() == 2 && s->probeHoldDrag(ft[0].toDouble(), ft[1].toDouble(), 400);
+		}
+		if (op == QStringLiteral("box-up") || op == QStringLiteral("box-down")) // <times>: arrow presses in the number box
+			return s->probeBoxKey(op == QStringLiteral("box-up") ? Qt::Key_Up : Qt::Key_Down, arg.toInt());
 		if (op == QStringLiteral("key")) {
 			static const QMap<QString, int> keys{{QStringLiteral("right"), Qt::Key_Right}, {QStringLiteral("left"), Qt::Key_Left}, {QStringLiteral("up"), Qt::Key_Up},
 							     {QStringLiteral("down"), Qt::Key_Down}, {QStringLiteral("pageup"), Qt::Key_PageUp}, {QStringLiteral("pagedown"), Qt::Key_PageDown},

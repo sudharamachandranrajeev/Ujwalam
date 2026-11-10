@@ -632,6 +632,10 @@ order buttons did not save, and the mixer volume was only sent on a slider relea
 - Crop: the project already stores `placements.<canvas>.crop` (D256), so no schema change or migration. The inspector
   shows the four crop boxes without a toggle.
 - Sliders: one shared widget (app/studio/src/value_slider.*): a click jumps to that value, an editable number box
-  (type + Enter), arrow keys and PageUp/PageDown step, the mouse wheel only acts while the slider has focus. The
-  Look panel and mixer sliders use it; the mixer sends the volume on every committed change, not only on a drag release.
+  (type + Enter), arrow keys and PageUp/PageDown step, the mouse wheel only acts while the slider has focus, one
+  notch = one step. A mouse gesture commits on release only; key, wheel and number-box steps commit once after a
+  250 ms pause; Enter commits at once. The Look panel and mixer sliders use it; the mixer sends the volume on every
+  committed change, not only on a drag release.
+- The control page matches the studio: Remove layer needs no flag, asks first, and is greyed while live; its order
+  moves try the saved structure move first.
 Evidence: `docs/evidence/2026-11-10-layer-editing.md`.

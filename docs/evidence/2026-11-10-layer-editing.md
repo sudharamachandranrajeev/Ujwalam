@@ -44,7 +44,15 @@ Studio Qt, headless (`tests/studio-qt-shell.test.mjs`, `UJWALAM_HEADLESS=1`, off
 - Look slider: a click on the track jumps far along it, typed 12 + Enter sets 12, Right steps to 13; each reaches
   `layers.setEffects`;
 - volume slider: a wheel without focus sends nothing; a click at a quarter sends -45 dB once on release; typed -6
-  sends -6; two wheel notches with focus send -12 (3 steps a notch, the Windows default).
+  sends -6; two wheel notches with focus send -8 (one notch is one step);
+- Codex review fixes: a press held 400 ms then dragged sends only the released value (-15); three arrow steps in the
+  number box send once (-12) after the pause; a host-only move fallback that answers 1.5 s late moves the dragged layer
+  (`chat`), not the layer selected meanwhile (`cam`).
+
+Control page (`tests/studio-ui-layer-remove.test.mjs`, 3/3): Remove layer sits outside the scene-edit form; with the
+flag off it asks first ("Cancel" sends nothing, "OK" sends `layer.remove`); while live it is greyed with "Not while
+live" and a click sends nothing. The page's layer order also tries the saved structure move without the flag and falls
+back to the host-only move as before.
 
 ## Runs (2026-11-10)
 
@@ -65,5 +73,4 @@ Studio Qt, headless (`tests/studio-qt-shell.test.mjs`, `UJWALAM_HEADLESS=1`, off
 
 - Real mouse use on a shown window (drag feel, cursors, hold-to-pick-up delay): UNVERIFIED.
 - Alt + corner crop is not implemented; crop is by Alt + edge or the inspector boxes.
-- The web control page (`ui/js/app.js`) still hides layer remove behind the scene-edit flag.
 - A delete cannot be undone (structure edits clear the history, D240); the confirm is the guard.

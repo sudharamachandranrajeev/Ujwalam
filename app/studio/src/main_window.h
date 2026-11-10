@@ -134,7 +134,7 @@ private:
 	void layerRename();
 	void layerDelete();
 	void layerMoveTo(int index);   // saved order offline (structure layer.move to a target, D330), else layerMoveHost
-	void layerMoveHost(int index); // host-only order (layers.move; "yes, on air" while live)
+	void layerMoveHost(const QJsonObject &args); // host-only order (layers.move with scene/canvas/layer/index fixed at the ask; "yes, on air" while live)
 	void layerToggleVisible();
 	void lookCopy();
 	void lookPaste();

@@ -90,9 +90,11 @@
     else body.text = $('layer-value').value;
     structureEdit(body);
   }
+  // D330: removing a layer needs no flag (it asks first; the server refuses it while live).
   function removeLayerClick() {
     var l = selectedLayer();
     if (!l) { setText($('struct-note'), 'Select a layer first (click its name).'); return; }
+    if (state.status && state.status.host && state.status.host.live) { setText($('struct-note'), STRUCT_ERRORS['live-locked']); return; }
     if (!window.confirm('Remove layer "' + l.name + '" from this scene on every canvas?')) return;
     structureEdit({ op: 'layer.remove', scene: state.activeScene, layer: l.id }).then(function (ok) { if (ok) { state.selected = null; renderInspector(); } });
   }
@@ -247,15 +249,14 @@
       .catch(function (e) { showError('Error: ' + (e && e.message ? e.message : 'failed')); })
       .then(function () { nudge.busy = false; sendNudge(); });
   }
-  // With scene editing on, a move changes the project order (shared by H and V, saved) and the host follows it on
-  // every canvas (D243). While live, or for a layer outside the project, it is the host's live-only move.
+  // A move changes the project order (shared by H and V, saved) and the host follows it on every canvas (D243; no flag
+  // since D330). While live, with no project file, or for a layer outside the project, it is the host's live-only move.
   function move(l, from, to) {
-    if (!choices) { hostMove(l, to); return; }
     Api.structureEdit({ op: 'layer.move', scene: state.activeScene, layer: l.id, canvas: state.canvas, direction: to > from ? 'up' : 'down' })
       .then(function () { setText($('struct-note'), 'Order saved.'); return loadLayers(); })
       .catch(function (e) {
         var code = e && e.message;
-        if (code === 'live-locked' || code === 'unknown-layer' || code === 'not-on-canvas') { hostMove(l, to); return; }
+        if (code === 'live-locked' || code === 'unknown-layer' || code === 'not-on-canvas' || code === 'unknown-scene' || code === 'no-project-file') { hostMove(l, to); return; }
         setText($('struct-note'), STRUCT_ERRORS[code] || ('Not moved: ' + ((e && (e.detail || e.message)) || 'failed')));
       });
   }
@@ -391,6 +392,8 @@
     sb.disabled = !ready.stream; rb.disabled = !ready.record;
     setText(sb, h.live ? 'Stop stream' : 'Start stream');
     $('btn-end-all').hidden = !h.live; // D299: stops every stream sink, the recording keeps running
+    var rl = $('btn-layer-remove'); // D330: no flag, but never while live (the server refuses too)
+    rl.disabled = !!h.live; rl.title = h.live ? 'Not while live' : 'Remove the selected layer (asks first)';
     setText(rb, h.recording ? 'Stop recording' : 'Record');
     sb.title = ready.stream ? '' : 'Disabled until the stream output exists';
     rb.title = ready.record ? '' : 'Disabled until the record output exists';
