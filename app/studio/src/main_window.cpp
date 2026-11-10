@@ -3352,8 +3352,10 @@ void MainWindow::setFlag(const QString &id, bool on)
 			note(QStringLiteral("Flag not changed: ") + err);
 		else if (b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
 			return confirm(b.value(QStringLiteral("pending")).toObject()); // the next poll shows the result either way
-		else
+		else {
 			note(QStringLiteral("Flag ") + id + (on ? QStringLiteral(" on.") : QStringLiteral(" off.")));
+			loadFlags(); // the panels a flag shows or hides follow at once, not on a later poll
+		}
 		pollStatus();
 	});
 }
