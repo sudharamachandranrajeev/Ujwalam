@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "main_window.h"
 #include "guide.h"
+#include "connections_page.h"
 #include "icons.h"
 #include "add_dialogs.h"
 #include "look_panel.h"
@@ -3707,6 +3708,10 @@ void MainWindow::openSettings(bool firstRun)
 		auto *pap = page(QStringLiteral("Appearance"));
 		auto *appear = new appearance::Page(theme::currentId(), theme::effects(), motionNow, dlg);
 		pap->addWidget(appear, 1);
+
+		// Connections (D327, flag platform-connect): sign in to YouTube / Twitch or paste keys per stream output. The page
+		// talks to the studio UI server itself; each write asks for the typed phrase there and then.
+		page(QStringLiteral("Connections"))->addWidget(new connections::Page(api_, dlg), 1);
 
 		// Help & tips (D294 proposed): tips on/off, reset "Don't show again", replay the welcome tour
 		guide_->fillSettingsPage(page(QStringLiteral("Help & tips")), dlg);
