@@ -562,3 +562,18 @@ has run yet, even with the match gate off. Exit code policy: the montage never c
 failure would make the studio report the whole job as failed and skip posting of the shorts). The outcome goes to the
 log (`montage: NOT MADE (<reason>)`) and to `render.json` `montage` {status made|failed|skipped, reason, videos}. The
 review job's stage list in the task panel gets `montage` at the end.
+
+## D323 — Round end vs match end; game mode per match (2026-11-10, user: "Ujwalam needs to identify the match type itself")
+
+Every VICTORY/DEFEAT banner closed a match, so round-based modes (Search and Destroy, Control, a half-time switch) split
+one match into many (2026-11-09 recording: 14 segments for 6 matches + an open tail). The detector pass now records the
+banner kind from the word's vertical position in the game area (pack 0.6.0, W1 `banner.kinds`, round centre y ~0.34,
+match ~0.42; status unverified, one recording). Hits from older runs fall back to "a post-match screen follows within
+followSec". Only banners classified as match ends close a match; a banner of unknown kind (recording ends too soon
+after it) never does (Codex review). Round banners become `rounds` inside the match with per-round own kills, which
+feeds `snd-round-multikill`. "SCORE LIMIT REACHED" on a round-style banner was a half-time side switch, not a match end:
+a match end always shows the large banner. The game mode per match comes from on-screen evidence only (top-3 screen
+mode name with on-screen spellings such as "SEARCH & DESTROY", new C1 mode cues, ranked "RATING n" score), and is
+"unknown" with a reason when the evidence is missing or disagrees; it is never guessed. Open: the post-match lobby
+header shows the mode but sits on the `summary` screen where no detector runs (screen-model change); own kill counts of
+44 and 49 in two matches suggest a kill-feed dedup issue.

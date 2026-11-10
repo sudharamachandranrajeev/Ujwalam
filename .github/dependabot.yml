@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Weekly dependency updates, grouped so each ecosystem opens at most one
 # routine pull request. Security fixes arrive separately, as soon as an
 # advisory is published (repo setting: Dependabot security updates).
