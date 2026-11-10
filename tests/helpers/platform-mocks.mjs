@@ -13,8 +13,8 @@ export const SECRETS = Object.freeze({
   googleClientSecret: 'GOCSPX-mockClientSecretZZ9', // lint-allow: secret (a made-up test marker, not a credential)
   twitchKey: 'live_123456789_MockTwitchStreamKeyZZ9',
   twitchAccess: 'mocktwitchaccesstokenzz9a1b2cd',
-  twitchRefresh: 'mocktwitchrefreshtokenzz9q8w7',
-  twitchRefresh2: 'mocktwitchrefreshrotatedzz9k5',
+  twitchRefresh: 'mocktwitchrefreshtokenzz9q8w7x',
+  twitchRefresh2: 'mocktwitchrefreshrotatedzz9k5x',
   deviceCode: 'mockDeviceCodeZZ9secret',
   kickKey: 'sk_us-west-2_MockKickKeyZZ9abcdef',
   kickServer: 'rtmps://zz9-mock-ingest.example.net:443/app',
