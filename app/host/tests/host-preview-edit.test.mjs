@@ -59,7 +59,7 @@ test('flag off by default: no selection, no edit; test-format project: nothing t
   assert.equal(st.previewEditing, false, 'mouse editing starts off (flag preview-edit default false)');
   assert.equal(st.previewEditSeq, 0);
   assert.equal(st.previewSnap, false, 'snapping starts off (D335 F10: an option the user turns on)');
-  assert.deepEqual(st.previewSelection, { seq: 0, H: null, V: null });
+  assert.deepEqual(st.previewSelection, { seq: 0, seqs: { H: 0, V: 0 }, dragging: { H: false, V: false }, H: null, V: null });
   let r = await sim([at('down', 960, 540), at('move', 1000, 560), at('up', 1000, 560)]);
   assert.deepEqual(r.steps.map((s) => s.used), [false, false, false], 'every event ignored while off');
   assert.equal(r.seq, 0);
@@ -318,6 +318,30 @@ test('F8: preview.select is checked: hidden, unknown, wrong canvas, editing off;
   await assert.rejects(c.call('preview.select', { canvas: 'H', layer: 'box' }), /editing is off/);
   assert.deepEqual((await c.call('host.status')).previewSelection.H, null, 'off: no selection');
   await c.call('preview.setEditing', { enabled: true });
+});
+
+test('F8 (Codex review): the selection seq is per canvas; a held press shows as dragging and refuses preview.select', async () => {
+  await c.call('preview.select', { canvas: 'V', layer: null });
+  let st = (await c.call('host.status')).previewSelection;
+  const { H: h0, V: v0 } = st.seqs;
+  // a click on the V preview (its centre: bg) picks a layer on V only: H's seq stays, so H's list does not follow
+  const vsim = (steps) => c.call('preview.editSim', { canvas: 'V', width: 640, height: 400, steps });
+  await vsim([{ event: 'down', x: 320, y: 200 }, { event: 'up', x: 320, y: 200 }]);
+  st = (await c.call('host.status')).previewSelection;
+  assert.deepEqual(st.V, { scene: 'main', layer: 'bg' });
+  assert.deepEqual([st.seqs.H, st.seqs.V], [h0, v0 + 1], 'only V moved');
+  assert.deepEqual(st.dragging, { H: false, V: false });
+  // a press held on H: dragging.H, and the studio's preview.select on H is refused until the release
+  await putBox({ x: 600, y: 300 });
+  await c.call('preview.select', { canvas: 'H', layer: 'box' });
+  await sim([at('down', 650, 320)]);
+  st = (await c.call('host.status')).previewSelection;
+  assert.deepEqual(st.dragging, { H: true, V: false });
+  await assert.rejects(c.call('preview.select', { canvas: 'H', layer: 'turned' }), /drag is running/);
+  await sim([at('up', 650, 320)]);
+  st = (await c.call('host.status')).previewSelection;
+  assert.equal(st.dragging.H, false, 'released');
+  assert.equal((await c.call('preview.select', { canvas: 'H', layer: 'turned' })).layer, 'turned', 'the retry after the release is taken');
 });
 
 test('F10: snap off = the layer goes exactly where it is dropped (Alt does nothing special); on = D272 snapping', async () => {

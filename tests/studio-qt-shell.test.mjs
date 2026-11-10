@@ -106,7 +106,8 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const host = { describe: () => fake.describe(), call: async (m, p) => {
       calls.push([m, p]);
       if (opts.slowStatusMs && m === 'host.status') await new Promise((r) => setTimeout(r, opts.slowStatusMs));
-      if (opts.hostStatus && m === 'host.status') return { ...(await fake.call(m, p)), ...opts.hostStatus() }; // D335: extra host status fields
+      if (opts.hostStatus && m === 'host.status') return { ...(await fake.call(m, p)), ...opts.hostStatus(calls) }; // D335: extra host status fields
+      if (opts.hostCall) { const r = await opts.hostCall(m, p, calls); if (r !== undefined) return r; } // D335: a host answer of the test's own (may throw)
       return fake.call(m, p);
     } };
     const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
@@ -470,15 +471,62 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const off = await probe([], 6000, 'select-layer:cam');
     assert.equal(off.calls.filter(([m]) => m === 'preview.select').length, 0);
   });
+  // host.status previewSelection as the host sends it (seq per canvas, dragging per canvas)
+  const sel = (sh, sv, H, V, drag = {}) => ({ seq: sh + sv, seqs: { H: sh, V: sv }, dragging: { H: !!drag.H, V: !!drag.V }, H, V });
+  const selects = (calls, layer) => calls.filter(([m, x]) => m === 'preview.select' && x.layer === layer);
   test('preview selection (D335 F8): a click on the preview that picks another layer selects it in the list, without an echo', async () => {
     let n = 0;
     const p = await probe([], 7000, '', null, {}, { hostStatus: () => {
       n++;
-      return { previewEditing: true, previewSelection: n < 6 ? { seq: 0, H: null, V: null } : { seq: 1, H: { scene: 'scene-1', layer: 'game' }, V: null } };
+      return { previewEditing: true, previewSelection: n < 6 ? sel(0, 0, null, null) : sel(1, 0, { scene: 'scene-1', layer: 'game' }, null) };
     } });
     assert.ok(n >= 6, `enough status polls: ${n}`);
     assert.equal(p.selectedLayer, 'game', 'the list follows the preview');
     assert.equal(p.calls.filter(([m, x]) => m === 'preview.select' && x.layer === 'game').length, 0, 'not sent back to the host');
+  });
+  test('preview selection (Codex review of 23e5289): a click on the V preview does not change the H list', async () => {
+    // cam picked in the H list; the host's H selection stays null (as for a layer the host could not select); then a
+    // click on V moves only V's seq: the H list keeps cam.
+    let sentAt = 0, shellPollsAfterV = 0;
+    const vClicked = () => sentAt > 0 && Date.now() - sentAt > 1500; // the V click comes 1.5 s after the list pick
+    const p = await probe([], 9000, 'select-layer:cam', null, {}, {
+      hostCall: (m, x) => { if (m === 'preview.select' && x.layer === 'cam') sentAt = Date.now(); return undefined; },
+      hostStatus: () => ({ previewEditing: true, previewSelection: vClicked() ? sel(0, 1, null, { scene: 'scene-1', layer: 'game' }) : sel(0, 0, null, null) }),
+      onStatus: () => { if (vClicked()) shellPollsAfterV++; },
+    });
+    assert.ok(shellPollsAfterV >= 2, `the shell read the status after the V click (${shellPollsAfterV})`);
+    assert.equal(p.selectedLayer, 'cam', 'the H list keeps its selection');
+  });
+  test('preview selection (Codex review of 23e5289): a selection refused mid-drag is sent again once the drag ends', async () => {
+    const DRAG_MS = 2500;
+    const at = []; // times of the preview.select calls for cam
+    let dragSeen = false;
+    const p = await probe([], 10000, 'select-layer:cam', null, {}, {
+      hostStatus: () => {
+        const dragging = at.length === 1 && Date.now() - at[0] < DRAG_MS; // the press is held for 2.5 s after the refusal
+        if (dragging) dragSeen = true;
+        return { previewEditing: true, previewSelection: sel(0, 0, { scene: 'scene-1', layer: 'game' }, null, { H: dragging }) };
+      },
+      hostCall: (m, x) => {
+        if (m !== 'preview.select' || x.layer !== 'cam') return undefined;
+        at.push(Date.now());
+        if (at.length === 1) throw Object.assign(new Error('a drag is running on that preview'), { code: -32009 });
+        return { layer: 'cam' };
+      },
+    });
+    assert.equal(at.length, 2, 'refused once, sent again once');
+    assert.ok(dragSeen, 'the drag was in the status');
+    assert.ok(at[1] - at[0] >= DRAG_MS, `the retry waited for the drag to end (${at[1] - at[0]} ms)`);
+    assert.equal(p.selectedLayer, 'cam', 'the list keeps the selection the preview now has');
+  });
+  test('preview selection (Codex review of 23e5289): a refused retry puts the list back to the host\'s selection', async () => {
+    const p = await probe([], 9000, 'select-layer:cam', null, {}, {
+      hostStatus: () => ({ previewEditing: true, previewSelection: sel(0, 0, { scene: 'scene-1', layer: 'game' }, null) }),
+      hostCall: (m, x) => { if (m === 'preview.select' && x.layer === 'cam') throw Object.assign(new Error('busy: try again'), { code: -32009 }); return undefined; },
+    });
+    assert.equal(selects(p.calls, 'cam').length, 2, 'one retry, no more');
+    assert.equal(p.selectedLayer, 'game', 'the list shows the layer the preview edits');
+    assert.equal(selects(p.calls, 'game').length, 0, 'the restored selection is not sent back');
   });
   test('Settings (D332): closing with unsaved edits asks Save changes / Discard / Cancel', async () => {
     const ask = await probe([], 7000, 'settings-open,settings-flag:transitions:on,settings-cancel');

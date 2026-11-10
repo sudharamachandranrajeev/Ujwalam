@@ -14,11 +14,14 @@ Status: tests and headless simulation only (`preview.editSim`, Qt probe). Real-m
   `preview.select {canvas, layer|null}` sets the host's selection for that canvas. A press inside the selected layer
   grabs it even when another layer is on top (OBS order: selected layer first, then topmost). A press outside it
   selects the topmost there. Refused with CONFLICT while editing is off, live-locked or a drag is active; INVALID_PARAMS
-  for a hidden, unknown or placement-less layer. `host.status` carries `previewSelection {seq, H, V}`; `seq` moves only
-  when a preview click changes the selection, so the studio follows the preview without echoing back.
+  for a hidden, unknown or placement-less layer. `host.status` carries `previewSelection {seq, seqs: {H, V},
+  dragging: {H, V}, H, V}`; `seqs.<canvas>` moves only when a click on that canvas's preview changes its selection, so
+  the studio follows the preview without echoing back and a click on V never touches the H list.
 - **Studio** (`app/studio/src/main_window.*`): the layer list sends `preview.select` once per canvas/scene/layer key
-  when the selection changes (nothing while editing is off). When `previewSelection.seq` moves, the list row follows
-  with signals blocked (no echo). UI server allows `preview.select` (schema: canvas h|v, layer id) and passes the two
+  when the selection changes (nothing while editing is off). When the shown canvas's `seqs` entry moves, the list row
+  follows with signals blocked (no echo). A refused `preview.select` (mid-drag, busy, live) is kept and sent once more
+  when the host reports that canvas not dragging and the stream is not live; a newer selection replaces it; a refused
+  retry puts the list back to the host's selection. UI server allows `preview.select` (schema: canvas h|v, layer id) and passes the two
   new status fields through.
 - **F9, drags coalesced** (`preview_edit.cpp`, `preview.cpp`): the drawn box follows every mouse move; libobs gets the
   newest rectangle at most once per 16 ms (first move past the threshold at once, then a 16 ms Win32 timer flushes the
@@ -39,10 +42,16 @@ Status: tests and headless simulation only (`preview.editSim`, Qt probe). Real-m
 | `npm run lint` | 0 findings |
 | `npm run build:host` | built `out/host/build/ujwalam-host.exe` (only the existing C4996 deprecation warnings) |
 | `npm run build:studio` | built `out/studio/build/ujwalam-studio.exe` |
-| `node --test app/host/tests/host-preview-edit.test.mjs` | 17 / 17 pass (5 new: F8 select, F8 validation, F10 snap off/on, F9 coalescing, F9 DPI) |
+| `node --test app/host/tests/host-preview-edit.test.mjs` | 18 / 18 pass (6 new: F8 select, F8 validation, F8 per-canvas seq and dragging, F10 snap off/on, F9 coalescing, F9 DPI) |
 | `node --test tests/studio-ui-preview-edit.test.mjs` | 6 / 6 pass, 3 runs in a row (2 new: snap follows `ui.snap`, `preview.select` passthrough) |
-| `node --test tests/studio-qt-shell.test.mjs` | 66 / 66 pass (new: Settings > Preview snap draft/save, list selection sent once, host click followed without echo) |
+| `node --test tests/studio-qt-shell.test.mjs` | 69 / 69 pass (new: a V click leaves the H list, a refused select retried after the drag, a refused retry restores the list; Settings > Preview snap draft/save, list selection sent once, host click followed without echo) |
 | `node --test tests/user-settings-theme.test.mjs tests/user-settings-match-gate.test.mjs tests/studio-ui-server.test.mjs tests/guide.test.mjs` | 54 / 54 pass |
+
+Codex review of 23e5289 (two P2 issues, fixed in the follow-up commit): the four regression tests (host "F8 (Codex
+review)" and the three Qt "Codex review of 23e5289" tests) were run first against the 23e5289 build and failed for the
+reported reasons: host status had no `seqs` / `dragging`; Qt: the H list was cleared by a V click (expected 'cam',
+actual ''), and a refused select was never sent again (expected 2 calls, actual 1, in both retry tests). After the fix
+all pass.
 
 `npm run build` does not exist in this repo; build:host and build:studio were run instead. The full CI was not run
 (brief: affected tests only).

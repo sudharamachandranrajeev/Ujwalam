@@ -147,7 +147,9 @@ public:
 	std::string select(const std::string &canvas, const std::string &layer);
 	// Bumped when a press on the preview changes which layer is selected (or clears it).
 	uint64_t sel_seq() const;
-	// {seq, H: {scene, layer} | null, V: ...} for host.status (previewSelection).
+	// {seq, seqs: {H, V}, dragging: {H, V}, H: {scene, layer} | null, V: ...} for host.status (previewSelection).
+	// seqs.H moves only when a press on the H preview changed H's selection (the studio follows its own canvas only);
+	// dragging.H: a press is held on H, so preview.select on H is refused until it ends (the studio retries then).
 	json::Value selection_status() const;
 
 	// Mouse events in client px of a preview whose letterbox is v. Return true when the event was used.
@@ -207,6 +209,7 @@ private:
 	int interval_ms_ = 16;
 	uint64_t applies_ = 0;
 	uint64_t sel_seq_ = 0;
+	std::map<std::string, uint64_t> sel_seq_cv_; // per canvas ("H", "V"): the studio follows only its own canvas
 	std::map<std::string, Sel> sel_; // canvas -> selection
 	std::deque<Edit> edits_;
 	uint64_t seq_ = 0;

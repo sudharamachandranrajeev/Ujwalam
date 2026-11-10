@@ -451,9 +451,14 @@ json::Value Editor::selection_status() const
 	std::lock_guard<std::mutex> l(m_);
 	json::Value o = json::Value::object();
 	o.set("seq", (int64_t)sel_seq_);
+	json::Value seqs = json::Value::object(), dragging = json::Value::object();
 	for (const char *cv : {"H", "V"}) {
+		auto sq = sel_seq_cv_.find(cv);
+		seqs.set(cv, (int64_t)(sq == sel_seq_cv_.end() ? 0 : sq->second));
 		auto it = sel_.find(cv);
-		if (!enabled_ || it == sel_.end() || !it->second.has) {
+		const bool has = enabled_ && it != sel_.end() && it->second.has;
+		dragging.set(cv, has && it->second.mode != Mode::None);
+		if (!has) {
 			o.set(cv, json::Value());
 			continue;
 		}
@@ -462,6 +467,8 @@ json::Value Editor::selection_status() const
 		s.set("layer", it->second.layer);
 		o.set(cv, std::move(s));
 	}
+	o.set("seqs", std::move(seqs));
+	o.set("dragging", std::move(dragging));
 	return o;
 }
 
@@ -476,8 +483,10 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 	}
 	if (be_.locked && be_.locked()) {
 		std::lock_guard<std::mutex> l(m_);
-		if (sel_[canvas].has)
+		if (sel_[canvas].has) {
 			sel_seq_++;
+			sel_seq_cv_[canvas]++;
+		}
 		sel_[canvas] = Sel(); // live: nothing selected, nothing moves
 		return true;
 	}
@@ -530,8 +539,10 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 	if (!enabled_)
 		return false;
 	const Sel &was = sel_[canvas];
-	if (was.has != next.has || was.layer != next.layer || was.scene != next.scene)
+	if (was.has != next.has || was.layer != next.layer || was.scene != next.scene) {
 		sel_seq_++; // the preview picked another layer (or none): the studio's layer list follows
+		sel_seq_cv_[canvas]++; // per canvas: a click on V never moves H's list (Codex review of 23e5289)
+	}
 	sel_[canvas] = next; // empty canvas: the selection is cleared
 	return true;
 }

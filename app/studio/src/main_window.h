@@ -194,10 +194,19 @@ private:
 	bool effDirty_ = false; // changed since it was read from the host
 	int devicesSeq_ = -1; // host device watcher pass seen (status host.devices.seq, D329); -1 = none yet
 	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
-	// D335 F8: the layer-list selection the preview was last told (preview.select), as "canvas/scene/layer/visible";
-	// and the host's previewSelection.seq last seen (it moves when a click on the preview picked another layer).
+	// D335 F8: the layer-list selection the preview was last told (preview.select), as "canvas/scene/layer";
+	// the host's previewSelection.seqs last seen per canvas ("H", "V"; each moves when a click on that preview picked
+	// another layer) and the newest previewSelection (to put the list back after a refused selection).
 	QString previewSelSent_;
-	double previewSelSeq_ = -1;
+	QMap<QString, double> previewSelSeqs_;
+	QJsonObject previewSelLast_;
+	// A preview.select refused (a drag on that preview, model busy, live): sent again once the host is not dragging
+	// that canvas; a newer selection replaces it; a refused retry puts the list back to the host's selection.
+	QJsonObject previewSelWant_;
+	QString previewSelWantKey_;
+	int previewSelGen_ = 0; // a reply to an older preview.select is ignored
+	void sendPreviewSelection(const QJsonObject &params, const QString &key, bool retry);
+	void followPreviewSelection(const QString &canvas); // the list shows the host's selection on that canvas
 
 	QListWidget *sceneList_ = nullptr;
 	QListWidget *layerList_ = nullptr;

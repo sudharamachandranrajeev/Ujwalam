@@ -1548,7 +1548,8 @@ void MainWindow::renderLayers()
 
 // D335 F8: tells the host which layer the mouse edits on this canvas's preview (the one selected in the list). Sent once
 // per change of canvas, scene, layer or its visibility; a hidden layer, or one without a placement, selects none there.
-// The host refuses while live or mid-drag (the next change sends again). The echo from the host is not sent back.
+// The host refuses while live or mid-drag: the selection is kept and sent again from pollStatus once that canvas is not
+// dragging (a newer selection replaces it; a refused retry puts the list back to the host's). The echo is not sent back.
 void MainWindow::syncPreviewSelection()
 {
 	if (!previewEditing_ || activeScene_.isEmpty())
@@ -1563,10 +1564,54 @@ void MainWindow::syncPreviewSelection()
 	QJsonObject x{{QStringLiteral("canvas"), canvas_}};
 	if (!layer.isEmpty())
 		x.insert(QStringLiteral("layer"), layer);
-	api_->host(QStringLiteral("preview.select"), x, [this](bool ok, const QJsonObject &, const QString &) {
-		if (!ok)
-			previewSelSent_.clear(); // refused (live, a drag, an older host): try again on the next change
+	sendPreviewSelection(x, key, false);
+}
+
+void MainWindow::sendPreviewSelection(const QJsonObject &params, const QString &key, bool retry)
+{
+	previewSelWant_ = QJsonObject(); // this one replaces any selection still waiting for a retry
+	previewSelWantKey_.clear();
+	const int gen = ++previewSelGen_;
+	api_->host(QStringLiteral("preview.select"), params, [this, params, key, retry, gen](bool ok, const QJsonObject &, const QString &) {
+		if (gen != previewSelGen_)
+			return; // a newer selection (from the list or a preview click) went out meanwhile
+		if (ok)
+			return;
+		if (!retry) { // refused (a drag on that preview, model busy, live): send again from pollStatus
+			previewSelWant_ = params;
+			previewSelWantKey_ = key;
+			return;
+		}
+		// Refused again: the preview edits what the host has, so the list shows that, not a layer the mouse cannot move.
+		followPreviewSelection(params.value(QStringLiteral("canvas")).toString());
 	});
+}
+
+void MainWindow::followPreviewSelection(const QString &canvas)
+{
+	previewSelWant_ = QJsonObject();
+	previewSelWantKey_.clear();
+	++previewSelGen_; // a reply still on its way no longer counts
+	if (canvas != canvas_)
+		return; // the list shows another canvas now; it sends its own selection
+	const QJsonValue cur = previewSelLast_.value(canvas_.toUpper());
+	const QJsonObject co = cur.toObject();
+	const QString layer = cur.isObject() && co.value(QStringLiteral("scene")).toString() == activeScene_ ? co.value(QStringLiteral("layer")).toString() : QString();
+	if (!cur.isNull() && layer.isEmpty())
+		return; // a selection in another scene (a scene switch is on its way): leave the list alone
+	previewSelSent_ = canvas_ + QLatin1Char('/') + activeScene_ + QLatin1Char('/') + layer; // no echo
+	if (layer == selected_)
+		return;
+	selected_ = layer;
+	{
+		const QSignalBlocker block(layerList_);
+		layerList_->setCurrentItem(nullptr);
+		layerList_->clearSelection();
+		for (int i = 0; i < layerList_->count(); i++)
+			if (layerList_->item(i)->data(Qt::UserRole).toString() == layer)
+				layerList_->setCurrentRow(i);
+	}
+	renderInspector();
 }
 
 void MainWindow::renderInspector()
@@ -2088,35 +2133,37 @@ void MainWindow::pollStatus()
 		if (const bool pe = h.value(QStringLiteral("previewEditing")).toBool(); pe != previewEditing_) {
 			previewEditing_ = pe;
 			previewSelSent_.clear(); // editing (re)started: the host has no selection yet; send the list's
+			previewSelWant_ = QJsonObject();
+			previewSelWantKey_.clear();
 			if (pe)
 				syncPreviewSelection();
 		}
-		// D335 F8: a click on the preview picked another layer (or none): the layer list follows. Only the seq moving
-		// counts (a selection the studio sent, or the host dropping a hidden layer, does not move it).
+		// D335 F8: a click on the preview picked another layer (or none): the layer list follows. Only that canvas's
+		// seq moving counts (a click on the other canvas, a selection the studio sent, or the host dropping a hidden
+		// layer does not move it).
 		const QJsonObject ps = h.value(QStringLiteral("previewSelection")).toObject();
-		if (ps.value(QStringLiteral("seq")).isDouble()) {
-			const double seq = ps.value(QStringLiteral("seq")).toDouble();
-			if (previewSelSeq_ >= 0 && seq != previewSelSeq_ && previewEditing_) {
-				const QJsonValue cur = ps.value(canvas_.toUpper());
-				const QJsonObject co = cur.toObject();
-				const QString layer = cur.isObject() && co.value(QStringLiteral("scene")).toString() == activeScene_ ? co.value(QStringLiteral("layer")).toString() : QString();
-				if (cur.isNull() || !layer.isEmpty()) {
-					previewSelSent_ = canvas_ + QLatin1Char('/') + activeScene_ + QLatin1Char('/') + layer; // no echo
-					if (layer != selected_) {
-						selected_ = layer;
-						{
-							const QSignalBlocker block(layerList_);
-							layerList_->setCurrentItem(nullptr);
-							layerList_->clearSelection();
-							for (int i = 0; i < layerList_->count(); i++)
-								if (layerList_->item(i)->data(Qt::UserRole).toString() == layer)
-									layerList_->setCurrentRow(i);
-						}
-						renderInspector();
-					}
+		if (const QJsonObject seqs = ps.value(QStringLiteral("seqs")).toObject(); !seqs.isEmpty()) {
+			previewSelLast_ = ps;
+			bool follow = false;
+			for (const QString cv : {QStringLiteral("H"), QStringLiteral("V")}) {
+				if (!seqs.value(cv).isDouble())
+					continue;
+				const double seq = seqs.value(cv).toDouble();
+				if (cv == canvas_.toUpper() && previewSelSeqs_.contains(cv) && seq != previewSelSeqs_.value(cv) && previewEditing_)
+					follow = true;
+				previewSelSeqs_.insert(cv, seq);
+			}
+			if (follow)
+				followPreviewSelection(canvas_);
+			// A refused selection waits until that preview is not dragging (and not live), then goes out once more.
+			if (!previewSelWant_.isEmpty() && previewEditing_ && !live_) {
+				const QString wc = previewSelWant_.value(QStringLiteral("canvas")).toString();
+				if (!ps.value(QStringLiteral("dragging")).toObject().value(wc.toUpper()).toBool()) {
+					const QJsonObject x = previewSelWant_;
+					const QString key = previewSelWantKey_;
+					sendPreviewSelection(x, key, true);
 				}
 			}
-			previewSelSeq_ = seq;
 		}
 		if (const bool ee = h.value(QStringLiteral("effectEditing")).toBool(); ee != effectEditing_) {
 			effectEditing_ = ee;

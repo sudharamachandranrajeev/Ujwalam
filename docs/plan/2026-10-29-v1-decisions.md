@@ -792,8 +792,11 @@ could turn on in settings as well." Decided:
   in the canvas's active scene). The studio sends it when its selection, canvas, scene or the layer's visibility
   changes, once per change. Press priority stays OBS: a press inside the selected layer's box or on its handles acts on
   it even under other layers; only a press outside it hit-tests the topmost layer. Such a press moves
-  `host.status.previewSelection.seq`; the studio's list then selects that layer (no echo: a selection the studio sent
-  never moves the seq).
+  `host.status.previewSelection.seqs.<canvas>` (one seq per canvas, so a click on V never moves the H list); the
+  studio's list then selects that layer (no echo: a selection the studio sent never moves the seq). A `preview.select`
+  refused mid-drag (or busy, or live) is kept and sent once more when `previewSelection.dragging.<canvas>` is false
+  (and not live); a newer selection replaces it; if that retry is refused too, the list goes back to the host's
+  selection, so the list never shows one layer while the preview edits another (Codex review of 23e5289).
 - F9: during a drag the drawn selection follows every mouse move, but the rectangle goes to libobs
   (Studio::layer_set_placement) at most once per 16 ms with the newest point; a 16 ms window timer sends a waiting
   point when the mouse rests, and the release always applies the final rectangle and records exactly one edit.
