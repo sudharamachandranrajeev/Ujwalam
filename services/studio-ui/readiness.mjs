@@ -19,11 +19,17 @@
 // and the override log never carry a key, an address or a credential target's value.
 //
 // Thresholds and names: data/live/readiness.json (loadReadinessConfig). Nothing here is hardcoded.
+// Disk (LC1): hours left come from the bitrates of the recordings the host has set up (outputs.status: each record
+// sink's rung bitrate + the audio bitrate; a live start records H and V), else from disk.gbPerHour.
+// Clips (LC1, D333 proposed): when live clipping is wanted (flag live-clips on, or Settings > Clips "while live"), a
+// missing clip maker Python, a missing live clipper (clips.liveWorker), a missing clips.tools program on PATH, or a
+// live clipper that is not running (launcher state in <dataDir>/clips/status.json: no capture device on the game layer,
+// crashed too often) fails with the reason and the fix. When it is not wanted the item warns or passes as before.
 // Audio (pluggable): deps.audioCheck(ctx) replaces the default, which calls the host method config.audio.method
 // (assumed: { sources: [{ id, name, state }] }) when host.status has no audioHealth; no answer from either = fail.
 
 import { execFile } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, statfsSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statfsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { systemTool } from '../event-core/config.mjs';
@@ -64,6 +70,8 @@ export function loadReadinessConfig(file = DEFAULT_CONFIG_FILE) {
   try { re = new RegExp(String(j.gpu?.adapterPattern ?? ''), 'i'); } catch { throw new Error('readiness config: bad gpu.adapterPattern'); }
   if (!j.gpu?.adapterPattern) throw new Error('readiness config: bad gpu.adapterPattern');
   if (typeof j.audio?.method !== 'string' || !/^[a-z]+\.[A-Za-z]+$/.test(j.audio.method)) throw new Error('readiness config: bad audio.method');
+  if (typeof j.clips?.liveWorker !== 'string' || !/^[A-Za-z0-9_./-]{1,120}$/.test(j.clips.liveWorker) || j.clips.liveWorker.includes('..')) throw new Error('readiness config: bad clips.liveWorker');
+  if (typeof j.clips?.toolsFix !== 'string' || !j.clips.toolsFix) throw new Error('readiness config: bad clips.toolsFix');
   return {
     checkTimeoutMs: num(j.checkTimeoutMs, 'checkTimeoutMs', 100, 9000),
     goLiveMaxAgeMs: num(j.goLiveMaxAgeMs, 'goLiveMaxAgeMs', 0, 600_000),
@@ -75,6 +83,7 @@ export function loadReadinessConfig(file = DEFAULT_CONFIG_FILE) {
     loopback: { maxAgeDays: num(j.loopback?.maxAgeDays, 'loopback.maxAgeDays', 0, 365) },
     gpu: { adapter: re, preference: num(j.gpu?.preference, 'gpu.preference', 0, 9) },
     audio: { method: j.audio.method, failStates: strList(j.audio.failStates, 'audio.failStates'), warnStates: strList(j.audio.warnStates, 'audio.warnStates') },
+    clips: { liveWorker: j.clips.liveWorker, tools: strList(j.clips.tools, 'clips.tools'), toolsFix: j.clips.toolsFix.slice(0, 200), statusMaxAgeMs: num(j.clips.statusMaxAgeMs, 'clips.statusMaxAgeMs', 1000, 600_000) },
     endAll: { waitMs: num(j.endAll?.waitMs, 'endAll.waitMs', 0, 9000), pollMs: num(j.endAll?.pollMs, 'endAll.pollMs', 50, 5000) },
   };
 }
@@ -121,6 +130,33 @@ export function listProcessNames() {
 export function diskFreeBytes(dir) {
   const s = statfsSync(dir);
   return Number(s.bavail) * Number(s.bsize);
+}
+
+/** Full path of a program on PATH (Windows: with a PATHEXT extension), or null. The clip maker finds ffmpeg and
+ *  ffprobe the same way (services/clip/clip_common.py find_tool: shutil.which). */
+export function findOnPath(name, { env = process.env, exists = existsSync, platform = process.platform } = {}) {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === 'PATH');
+  const dirs = String((key && env[key]) || '').split(platform === 'win32' ? ';' : ':').map((d) => d.trim().replace(/^"(.*)"$/, '$1')).filter(Boolean);
+  const pext = Object.keys(env).find((k) => k.toUpperCase() === 'PATHEXT');
+  const exts = platform === 'win32' ? ['', ...String((pext && env[pext]) || '.EXE').split(';').filter(Boolean).map((e) => e.toLowerCase())] : [''];
+  for (const d of dirs) for (const e of exts) { const p = path.join(d, name + e); if (e === '' && platform === 'win32' && !/\.[A-Za-z0-9]+$/.test(name)) continue; if (exists(p)) return p; }
+  return null;
+}
+
+/** GB (1024^3) per hour of the recordings the host has set up: each record sink's rung bitrate plus the audio bitrate
+ *  (outputs.status, kbps). null when the host reports no recording or no bitrates. */
+export function recordingGbPerHour(outputs) {
+  const rungs = new Map((Array.isArray(outputs?.rungs) ? outputs.rungs : []).map((r) => [r?.id, r]));
+  const recs = (Array.isArray(outputs?.sinks) ? outputs.sinks : []).filter((x) => x?.kind === 'record');
+  if (!recs.length) return null;
+  const audio = Number.isFinite(outputs?.audio?.bitrate) ? outputs.audio.bitrate : 0;
+  let kbps = 0;
+  for (const x of recs) {
+    const b = rungs.get(x.rung)?.bitrate;
+    if (!Number.isFinite(b) || b <= 0) return null;
+    kbps += b + audio;
+  }
+  return (kbps * 1000 / 8 * 3600) / GB;
 }
 
 /** Newest full-CI pass stamp { at } (tools/ci-stamp.mjs) or null (no git, no stamp). */
@@ -218,10 +254,13 @@ async function checkDisk(ctx) {
   const drive = path.parse(path.resolve(dir)).root || dir;
   const { failBelowGB, warnBelowGB } = ctx.config.disk;
   const g = roundGB(free);
-  const hours = (free / GB / ctx.config.disk.gbPerHour).toFixed(1);
-  if (free < failBelowGB * GB) return item('disk', 'fail', `Only ${g} GB free on ${drive} (needs at least ${failBelowGB} GB). Free space before going live.`);
-  if (free < warnBelowGB * GB) return item('disk', 'warn', `${g} GB free on ${drive} (below ${warnBelowGB} GB, about ${hours} h of H+V recording).`);
-  return item('disk', 'pass', `${g} GB free on ${drive}.`);
+  const derived = recordingGbPerHour(ctx.outputs);
+  const perHour = derived ?? ctx.config.disk.gbPerHour;
+  const hours = (free / GB / perHour).toFixed(1);
+  const rate = `about ${hours} h of recording at ${perHour.toFixed(1)} GB per hour${derived === null ? '' : ' (the recordings set up now)'}`;
+  if (free < failBelowGB * GB) return item('disk', 'fail', `Only ${g} GB free on ${drive} (needs at least ${failBelowGB} GB; ${rate}). Free space before going live.`);
+  if (free < warnBelowGB * GB) return item('disk', 'warn', `${g} GB free on ${drive} (below ${warnBelowGB} GB, ${rate}).`);
+  return item('disk', 'pass', `${g} GB free on ${drive} (${rate}).`);
 }
 
 async function checkEncoders(ctx) {
@@ -259,9 +298,30 @@ async function checkLoopback(ctx) {
 
 async function checkClips(ctx) {
   const t = ctx.clipTools();
-  const lc = ctx.flagOn('live-clips') ? 'on' : 'off';
-  if (!t.py) return item('clips', 'warn', `Clips cannot be made: ${t.reason}. Live clipping is ${lc}.`, t.fix ? { fix: t.fix } : {});
-  return item('clips', 'pass', `Clip maker ready. Live clipping is ${lc}.`);
+  const w = (typeof ctx.liveClips === 'function' ? await ctx.liveClips() : null) ?? { wanted: ctx.flagOn('live-clips'), status: null };
+  if (!w.wanted) {
+    if (!t.py) return item('clips', 'warn', `Clips cannot be made: ${t.reason}. Live clipping is off.`, t.fix ? { fix: t.fix } : {});
+    return item('clips', 'pass', 'Clip maker ready. Live clipping is off.');
+  }
+  // Live clipping is wanted: anything that stops it is a problem (clips would silently not be made from this stream).
+  const why = w.flag === false && w.setting ? 'Settings > Clips says "while live"' : 'live clipping is on';
+  const fails = []; const warns = []; let fix = null;
+  if (!t.py) { fails.push(t.reason); fix = t.fix ?? null; }
+  else if (ctx.liveWorkerExists() === false) { fails.push(`the live clipper is missing (${ctx.config.clips.liveWorker})`); fix = t.fix ?? null; }
+  const noTool = ctx.config.clips.tools.filter((n) => !ctx.findTool(n));
+  if (noTool.length) { fails.push(`${noTool.join(' and ')} ${noTool.length > 1 ? 'are' : 'is'} not on PATH (the clip maker cuts and checks clips with ${noTool.length > 1 ? 'them' : 'it'})`); fix ??= ctx.config.clips.toolsFix; }
+  const st = w.status;
+  const fresh = st && Number.isFinite(Date.parse(st.at)) && ctx.now() - Date.parse(st.at) <= ctx.config.clips.statusMaxAgeMs;
+  if (!fresh) warns.push('the studio does not report the live clipper (start Ujwalam normally; it runs the clipper with the studio)');
+  else if (st.state === 'not-started') fails.push(`the live clipper is not running: ${st.reason ?? 'unknown reason'}`);
+  // Only "gave-up" fails: while a restart is scheduled ("restarting", even the last allowed one) it is a warning
+  // (Codex review of LC1). Any other state that is not "running" is unknown: a warning, never a pass.
+  else if (st.state === 'gave-up') fails.push(`the live clipper is not running: ${st.reason ?? 'it stopped'}`);
+  else if (st.state === 'restarting') warns.push(`the live clipper is restarting (restart ${st.restarts ?? 0} of ${st.maxRestarts ?? '?'})`);
+  else if (st.state !== 'running') warns.push(`the live clipper state is unknown (${String(st.state).slice(0, 20)})`);
+  if (fails.length) return item('clips', 'fail', `Clips will not be made while live (${why}): ${fails.concat(warns).join('; ')}.`, fix ? { fix } : {});
+  if (warns.length) return item('clips', 'warn', `Live clipping is on, but ${warns.join('; ')}.`);
+  return item('clips', 'pass', `Clip maker ready; the live clipper is running (${why}).`);
 }
 
 const audioUnreadable = (why, note = '') => item('audio', 'fail', `Live audio state could not be read: ${why}. Check the mixer meters by ear before going live.${note}`, { unknown: true });
@@ -316,7 +376,9 @@ function withTimeout(p, ms) {
 
 /**
  * deps: { host, core?, config, flagOn(id), store(ref), listProcesses(), diskFree(dir), tcp(port, ms), botPorts,
- *         ciPass(), clipTools(), planTargets?, dataDir?, audioCheck?(ctx), now? }
+ *         ciPass(), clipTools(), planTargets?, dataDir?, audioCheck?(ctx), now?,
+ *         liveClips?() -> { wanted, flag?, setting?, status: <clips/status.json liveClipper + at> | null },
+ *         findTool?(name) -> path | null, clipRoot?, liveWorkerExists?() -> true | false | null }
  */
 export async function runReadiness(deps) {
   const now = deps.now ?? Date.now;
@@ -337,6 +399,9 @@ export async function runReadiness(deps) {
     recordingsDir: typeof hostInfo?.recordingsDir === 'string' && hostInfo.recordingsDir ? hostInfo.recordingsDir : null,
     planTargets: deps.planTargets ?? [],
     botPorts: deps.botPorts ?? {},
+    findTool: deps.findTool ?? ((n) => findOnPath(n)),
+    // true / false, or null when no clip root is known (not checked)
+    liveWorkerExists: deps.liveWorkerExists ?? (() => (typeof deps.clipRoot === 'string' && deps.clipRoot ? existsSync(path.join(deps.clipRoot, deps.config.clips.liveWorker)) : null)),
   };
   const audio = deps.audioCheck ?? defaultAudioCheck;
   const hostUp = hostKind === 'host' && !!hostStatus;

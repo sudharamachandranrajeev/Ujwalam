@@ -95,6 +95,7 @@ export function createHostClient({ dataDir = null, env = process.env } = {}) {
  *  outputsReady is passed (tests / UI work only), so start/stop stay disabled by default. */
 export function createFakeHost({ outputsReady = false, sinks = ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record'] } = {}) {
   const sinkState = new Map(sinks.map((id) => [id, 'idle']));
+  const isRec = (id) => id === 'record' || id.startsWith('record-'); // "record" (H) and "record-v" (V, LC1)
   const scenes = [
     { id: 'scene-1', name: 'Gameplay', canvas: 'H' }, { id: 'scene-2', name: 'Starting soon', canvas: 'H' }, { id: 'scene-3', name: 'Gameplay V', canvas: 'V' },
   ];
@@ -181,13 +182,13 @@ export function createFakeHost({ outputsReady = false, sinks = ['youtube-h', 'yo
           if (!outputsReady) throw Object.assign(new Error('outputs-not-ready'), { code: 'NOT_READY' });
           // Per-sink like the host (D327 OS3): { sinks: [ids] } starts or stops only those; none = all of that kind.
           const kind = method.startsWith('stream') ? 'stream' : 'record';
-          const ids = Array.isArray(p.sinks) && p.sinks.length ? p.sinks : [...sinkState.keys()].filter((id) => (id === 'record') === (kind === 'record'));
+          const ids = Array.isArray(p.sinks) && p.sinks.length ? p.sinks : [...sinkState.keys()].filter((id) => isRec(id) === (kind === 'record'));
           for (const id of ids) { if (!sinkState.has(id)) throw Object.assign(new Error(`unknown-sink ${id}`), { code: 'UNKNOWN' }); sinkState.set(id, method.endsWith('start') ? 'live' : 'stopped'); }
-          const anyLive = (k) => [...sinkState].some(([id, st]) => (id === 'record') === (k === 'record') && st === 'live');
+          const anyLive = (k) => [...sinkState].some(([id, st]) => isRec(id) === (k === 'record') && st === 'live');
           state.live = anyLive('stream'); state.recording = anyLive('record');
           return { ok: true };
         }
-        case 'outputs.status': return { sinks: [...sinkState].map(([id, st]) => ({ id, kind: id === 'record' ? 'record' : 'stream', state: st })) };
+        case 'outputs.status': return { sinks: [...sinkState].map(([id, st]) => ({ id, kind: isRec(id) ? 'record' : 'stream', state: st })) };
         case 'transitions.forceComplete': return { canvas: p.canvas, completed: false };
         default: throw Object.assign(new Error('method-not-found'), { code: 'NO_METHOD' });
       }

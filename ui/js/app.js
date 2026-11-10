@@ -423,7 +423,7 @@
   function endAllText(x) {
     if (!x) return 'Done.';
     var left = (x.sinks || []).filter(function (s) { return s.state !== 'stopped' && s.state !== 'idle'; });
-    return (x.allStopped ? 'All streams ended.' : 'Still closing: ' + left.map(function (s) { return s.id + ' (' + s.state + ')'; }).join(', ') + '.') + (x.recording ? ' The recording keeps running.' : '');
+    return (x.allStopped ? 'All streams ended.' : 'Still closing: ' + left.map(function (s) { return s.id + ' (' + s.state + ')'; }).join(', ') + '.') + (x.recording ? ' The recording keeps running.' : '') + (x.recordingStopped ? ' The recording started with the stream stopped too.' : '');
   }
 
   // The pending window: a go-live whose readiness check failed (problems + "Go live anyway"), or an event-core write from

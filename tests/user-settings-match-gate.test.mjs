@@ -35,7 +35,7 @@ test('matchGate write merges part by part and keeps the other clip settings', ()
   try {
     writeSettings(d, { clips: { recording: 'after' } });
     writeSettings(d, { clips: { matchGate: { minKills: 15 } } });
-    assert.deepEqual(readSettings(d).clips, { recording: 'after', live: 'ask', matchGate: { top3: true, minKills: 15 } });
+    assert.deepEqual(readSettings(d).clips, { recording: 'after', live: 'ask', recordLive: true, matchGate: { top3: true, minKills: 15 } });
     writeSettings(d, { clips: { matchGate: { top3: false } } });
     assert.deepEqual(readSettings(d).clips.matchGate, { top3: false, minKills: 15 });
     writeSettings(d, { clips: { live: 'off' } });

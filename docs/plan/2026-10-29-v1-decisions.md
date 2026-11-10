@@ -781,4 +781,67 @@ Not changed: the preset id `live-lock-yes-on-air` (an id, renaming it is a regis
 of earlier alphas, and the terminal-only `services/event-core/audit/cli.mjs` purge prompt (a developer CLI, not app UI).
 Also readiness warnings (no failed item) no longer stop the start; they come back in the answer's `warning` text.
 Evidence: `docs/evidence/2026-11-10-n1-no-typed-confirm.md`.
->>>>>>> claude/alpha0-d1
+
+## D333 — A live stream records H and V; live clipping fails readiness when it cannot run; its state is visible (2026-11-10, user request)
+
+User: "make the app live stream ready as a priority with auto clipping feature while live and reel creation in the
+background from clips as per existing rules." The kill montages and match reels need the portrait (V) recording,
+and a live stream recorded only H, so reels from a stream were never made. Decided:
+- V recording while live. The live plan (`data/outputs/alpha-live.json`) and Settings > Stream (H + V canvas mode)
+  add a `record-v` file sink on the existing `vert` rung, crash-safe .mkv, named `<record name>-v` (for example
+  `alpha-v-<stamp>.mkv`). No new encoder: sinks never own encoders, and the vert rung already encodes for YouTube V.
+  Audio is encoded once and shared. Record starts both recordings; the replay buffer binding is unchanged.
+- File targets take an optional plan-only `"optional": true`. When the plan streams and an optional recording's rung
+  feeds no stream (for example YouTube V switched off with the D327 toggles or `--sinks`), that recording is dropped
+  rather than adding an encoder or failing the plan. Settings "main" canvas mode has no portrait rung, so no V file.
+- Disk cost: at the alpha-live bitrates (yt-h 17,000 kbps, vert 7,500 kbps, audio 160 kbps each) H alone is about
+  7.2 GB (1024^3) per hour and H + V about 10.4 GB per hour, so V adds about 3.2 GB per hour. The readiness disk
+  check now states hours left from the bitrates of the recordings set up, falling back to the data value
+  (`disk.gbPerHour` 11). The fail and warn thresholds (22 GB, 44 GB) are unchanged: 22 GB is about 2.1 h of H + V.
+- Readiness: when live clipping is wanted (flag `live-clips` on or Settings clips "while"), a missing clip Python,
+  missing `services/clip/live_worker.py`, ffmpeg/ffprobe not on PATH, or a live clipper that did not start (for
+  example no game layer or no capture device) or gave up after 5 restarts is a FAIL with a plain reason and the fix.
+  A missing or stale launcher status is a warning. With clipping off the check passes or warns as before. Names and
+  fixes are data (`data/live/readiness.json` `clips`).
+- Visible state: the clips `status.json` carries the live clipper state (running, not running with reason,
+  restarts) and the moments kept so far. The studio task panel shows a "Live clips" row while a stream or recording
+  is watched, and a finished clip job notes "Reels not made: <reason>" when the montage was skipped, failed or
+  could not run (no V recording).
+- No feature flag. Same recorded exception as D330–D332: the user asked for it directly. No typed confirmation and
+  no new "are you sure" (D332).
+Not changed here: going live did not start recording by itself (D334 changes that).
+Evidence: `docs/evidence/2026-11-10-lc1-live-clips-ready.md`.
+
+## D334 — Record while live, on by default (2026-11-10, user request)
+
+Same user request as D333 ("auto clipping feature while live and reel creation in the background from clips"). The
+reels are cut from the H and V recordings, and Start stream did not record, so a stream made no reels unless Record
+was also pressed. Decided:
+- Setting Settings > Clips > "Record while live" (switch row with its explanation, N2 style), stored as
+  `clips.recordLive` (true or false) in settings.json. **Default on**, because the user asked for reels from live
+  streams directly. Switching it off restores the old behaviour.
+- With it on, after a stream start the host accepted (the stop-wins checks passed), the UI server starts the
+  recording (`record.start`: every record sink, H and V) if none is running, and remembers that it started it.
+  When that stream ends (Stop stream, End all, or the status poll seeing no stream sink running) it stops that
+  recording, so the launcher sees the finished recording and runs the after-stream review and montage job.
+- A recording the user started by hand is never started again or stopped by this. A Record or Stop recording click
+  during a recording started with the stream hands it back to the user.
+- A failed `record.start` never fails or stops the stream: the answer carries a warning ("The stream is live, but it
+  is not being recorded (...)") and the task panel a failed "Recording the stream for reels" row with the reason.
+- A Stop or End all that arrives while `record.start` is on its way wins: the recording is stopped again at once.
+  No start while Ujwalam is closing (the start is inside the closing-lock count). No confirmation (D332).
+- Codex review of LC2:
+  - The recording stops only when a fresh `outputs.status` shows no stream sink starting, live, reconnecting,
+    retrying or stopping. A per-output Stop, or an End all still closing, keeps it, and the status poll stops it
+    later.
+  - Starts and stops run one at a time. Ownership is one object plus a generation counter, so a late answer never
+    takes over the user's recording and never forgets a newer one.
+  - Stop and End all never wait for a pending automatic `record.start`.
+  - A Record or Stop recording click hands the recording to the user before it is sent to the host.
+  - An automatic start takes the generation when it is queued, and is dropped if a click changed it before the
+    start runs.
+- Disk: about 10.4 GB (1024^3) per hour at the alpha-live bitrates (D333); the readiness disk check already counts
+  the H and V recordings.
+- No feature flag (same exception as D330–D333: the user asked for it directly).
+Code: `services/studio-ui/record-live.mjs`, `server.mjs`, `user-settings.mjs`, the Qt Settings > Clips page.
+Evidence: `docs/evidence/2026-11-10-lc1-live-clips-ready.md` (LC2 section).

@@ -144,7 +144,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.previews.length, 2);
     for (const m of p.previews) assert.doesNotMatch(m, /bad field/, m);
     assert.equal(p.clips, 'Clips: ready', 'D284: no clip runs yet, the default choice is "ask me"');
-    assert.deepEqual(p.clipSettings, { recording: 'ask', live: 'ask', matchGate: { top3: true, minKills: null } });
+    assert.deepEqual(p.clipSettings, { recording: 'ask', live: 'ask', recordLive: true, matchGate: { top3: true, minKills: null } });
   });
 
   test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons; mixer track buttons', async () => {
@@ -198,7 +198,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.clipAsks, 1, 'the question is listed until the launcher picks up the answer');
     assert.equal(p.clips, 'Make clips? (1)');
     const saved = JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8'));
-    assert.deepEqual(saved.clips, { recording: 'after', live: 'while', matchGate: { top3: true, minKills: null } });
+    assert.deepEqual(saved.clips, { recording: 'after', live: 'while', recordLive: true, matchGate: { top3: true, minKills: null } });
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'clips', 'answer.json'), 'utf8')), { id: ask.id, make: true, remember: false });
   });
 
@@ -422,6 +422,17 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.motionMode, 'off');
     assert.equal(p.motion, false, 'no animation while the choice is Off');
     assert.equal(p.flagsInSettings, false, 'the rows went with the closed Settings window');
+  });
+  test('Settings > Clips (LC2, D334 proposed): Record while live is a switch row with its explanation, on by default; off is saved at Save', async () => {
+    const p = await probe([], 7000, 'settings-open,settings-page:0');
+    assert.deepEqual(p.settings.recordLive, { on: true, text: 'Record while live', visible: true,
+      hint: 'Records the stream (H and V) to your recordings folder so reels can be made after it ends. Uses about 10 GB per hour.' });
+    assert.equal(p.settings.dirty, false);
+    const draft = await probe([], 7000, 'settings-open,settings-record-live:off');
+    assert.deepEqual([draft.settings.recordLive.on, draft.settings.dirty], [false, true], 'a draft until Save (D332)');
+    const saved = await probe([], 9000, 'settings-open,settings-record-live:off,settings-save');
+    assert.ok(saved.actions.every((x) => x.done), JSON.stringify(saved.actions));
+    assert.equal(JSON.parse(readFileSync(path.join(saved.dataDir, 'settings.json'), 'utf8')).clips.recordLive, false);
   });
   test('Settings > Advanced (N2, D332): a flag switch is a draft; Save applies it, on and off alike', async () => {
     const draft = await probe(['scene-edit'], 7000, 'settings-open,settings-flag:transitions:on,settings-flag:scene-edit:off');

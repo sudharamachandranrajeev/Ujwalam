@@ -3673,6 +3673,24 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			cf->addRow(warn);
 		}
 		pc->addWidget(clipBox);
+		// Record while live (LC2, D334 proposed): the stream is recorded (H and V) from Start stream until it ends, so the
+		// reels can be made after it. Stored as clips.recordLive; on unless the user switched it off.
+		const bool hadRecordLive = c.contains(QStringLiteral("recordLive"));
+		const bool recordLiveStart = c.value(QStringLiteral("recordLive")).toBool(true);
+		auto *recLiveBox = new QGroupBox(QStringLiteral("WHILE I STREAM"), dlg);
+		auto *rlv = new QVBoxLayout(recLiveBox);
+		rlv->setSpacing(8);
+		const auto recLiveParts = switchRow(QStringLiteral("Record while live"), recLiveBox);
+		Switch *recLive = std::get<1>(recLiveParts);
+		recLive->setObjectName(QStringLiteral("settingsRecordLive"));
+		recLive->setChecked(recordLiveStart);
+		auto *recLiveHint = new QLabel(QStringLiteral("Records the stream (H and V) to your recordings folder so reels can be made after it ends. Uses about 10 GB per hour."), recLiveBox);
+		recLiveHint->setObjectName(QStringLiteral("muted"));
+		recLiveHint->setProperty("recordLiveText", true); // found by the probe
+		recLiveHint->setWordWrap(true);
+		rlv->addWidget(std::get<0>(recLiveParts));
+		rlv->addWidget(recLiveHint);
+		pc->addWidget(recLiveBox);
 		// Match filter the clipper honours (clips.matchGate): only matches that went well become clips.
 		const QJsonObject gate = c.value(QStringLiteral("matchGate")).toObject();
 		const bool hadGate = c.contains(QStringLiteral("matchGate"));
@@ -3895,6 +3913,8 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				return true;
 			if (top3->isChecked() != gateTop3 || (killsOn->isChecked() ? kills->value() : -1) != gateKillsN)
 				return true;
+			if (recLive->isChecked() != recordLiveStart)
+				return true;
 			if (recRow.second->text().trimmed() != recDirStart.trimmed() || clipRow.second->text().trimmed() != clipDirStart.trimmed())
 				return true;
 			if (appear->changedTheme() || appear->changedEffects() || appear->motion() != motionNow)
@@ -3938,6 +3958,8 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			const int newKills = killsOn->isChecked() ? kills->value() : -1;
 			if (hadGate || top3->isChecked() != gateTop3 || newKills != gateKills) // sent only when it matters: an older server refuses the key
 				clipsBody.insert(QStringLiteral("matchGate"), matchGateJson(top3->isChecked(), newKills));
+			if (hadRecordLive || recLive->isChecked() != recordLiveStart) // sent only when it matters: an older server refuses the key
+				clipsBody.insert(QStringLiteral("recordLive"), recLive->isChecked());
 			body.insert(QStringLiteral("clips"), clipsBody);
 			body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
 			const QString motionNew = appear->motion();
@@ -4149,6 +4171,17 @@ QJsonObject MainWindow::probe() const
 			      {QStringLiteral("layerEffectsText"), fxText ? fxText->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
 			      {QStringLiteral("motionChoices"), mo ? mo->count() : 0}, {QStringLiteral("dirty"), sd->dirty ? sd->dirty() : false},
 			      {QStringLiteral("unsavedAsked"), settingsDlg_->findChild<QMessageBox *>(QStringLiteral("settingsUnsaved")) != nullptr}};
+		if (auto *rl = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsRecordLive"))) { // LC2
+			QString words, hint;
+			for (auto *l : settingsDlg_->findChildren<QLabel *>()) {
+				if (l->property("recordLiveText").toBool())
+					hint = l->text();
+				else if (l->parentWidget() == rl->parentWidget())
+					words = l->text();
+			}
+			s.insert(QStringLiteral("recordLive"), QJsonObject{{QStringLiteral("on"), rl->isChecked()}, {QStringLiteral("text"), words}, {QStringLiteral("hint"), hint},
+								 {QStringLiteral("visible"), rl->isVisibleTo(settingsDlg_.data())}});
+		}
 		// Advanced page (N2): one row per flag, switch state and description; geometry for the 2026-11-10 offset bug:
 		// where the rows sit in their box and in the dialog, and whether they carry their own native window handle.
 		if (auto *rows = settingsDlg_->findChild<QWidget *>(QStringLiteral("settingsFlagRows"))) {
@@ -4384,6 +4417,13 @@ bool MainWindow::probeAction(const QString &action)
 			if (auto *fx = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsLayerEffects")); fx && fx->isEnabled()) {
 				if (fx->isChecked() != (p[1] == QStringLiteral("on")))
 					fx->click(); // a click on the switch
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-record-live")) { // LC2: a click on the Record while live switch
+			if (auto *rl = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsRecordLive"))) {
+				if (rl->isChecked() != (p[1] == QStringLiteral("on")))
+					rl->click();
 				return true;
 			}
 		}

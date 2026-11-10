@@ -13,7 +13,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
-import { ALPHA_LIVE_PLAN, alphaHostConfig, loadAudioHealth, clipsEnv, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, releaseVersion, shellChoice, shellExitRecord, shellRelaunchAllowed, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, alphaHostConfig, loadAudioHealth, clipperExited, clipsEnv, LIVE_CLIPPER_MAX_RESTARTS, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, releaseVersion, shellChoice, shellExitRecord, shellRelaunchAllowed, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -564,13 +564,13 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     h = JSON.parse(readFileSync(rec, 'utf8'));
     assert.ok(h.argv.includes('--allow-live'));
     assert.equal(h.argv[h.argv.indexOf('--outputs') + 1], path.join(root, 'host', 'outputs-params.json'));
-    assert.deepEqual(h.outputsParams.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record']);
+    assert.deepEqual(h.outputsParams.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record', 'record-v']);
     for (const s of h.outputsParams.sinks) assert.ok(!Object.hasOwn(s.target, 'key'), `${s.id}: no key field`);
     // Twitch "auto" (D309 proposed): a stand-in (script) host reaches no platform, so no server address is read.
     assert.equal(h.outputsParams.sinks.find((s) => s.id === 'twitch').target.transport, 'auto');
     assert.match(r.out, /outputs: twitch transport "auto" not chosen \(stand-in host: no server address read\)/);
     assert.match(r.out, /LIVE plan: data[\\/]outputs[\\/]alpha-live\.json/);
-    assert.match(r.out, /\[studio\] outputs: real targets ALLOWED \(--live\); 5 sink\(s\)/);
+    assert.match(r.out, /\[studio\] outputs: real targets ALLOWED \(--live\); 6 sink\(s\)/); // LC1: + record-v
     assert.match(r.out, /sink youtube-h: youtube live, keyPresent no, idle/);
     assert.match(r.out, /sink twitch: twitch live, keyPresent no, urlPresent no, idle/);
     assert.match(r.out, /sink kick: kick live, keyPresent no, urlPresent no, idle/);
@@ -693,4 +693,26 @@ test('live clipper spec: H game capture layer, GPU venv first, no spec for a pla
   assert.equal(liveClipsSpec({ project: scene({ type: 'color' }), dataDir: 'D', repo: 'R', exists: both }).spec, null);
   assert.equal(liveClipsSpec({ project: { scenes: [] }, dataDir: 'D', repo: 'R', exists: both }).spec, null);
   assert.equal(liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: () => false }).spec, null);
+  // LC1: plain reasons for the task panel and readiness; a missing live_worker.py is caught before the spawn.
+  assert.match(liveClipsSpec({ project: scene({ type: 'color' }), dataDir: 'D', repo: 'R', exists: both }).reason, /game layer has no capture device/);
+  assert.match(liveClipsSpec({ project: { scenes: [] }, dataDir: 'D', repo: 'R', exists: both }).reason, /no game layer/);
+  assert.match(liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: () => false }).reason, /Python is missing/);
+  const noWorker = liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: (p) => !p.endsWith('live_worker.py') });
+  assert.equal(noWorker.spec, null);
+  assert.match(noWorker.reason, /live clipper is missing .*live_worker\.py/);
+});
+
+test('live clipper exit (Codex review of LC1): restarting while a restart is scheduled, the fifth included; gave-up only after the fifth restarted process stops', () => {
+  let view = { state: 'running', reason: null, restarts: 0, maxRestarts: LIVE_CLIPPER_MAX_RESTARTS };
+  for (let n = 1; n <= LIVE_CLIPPER_MAX_RESTARTS; n++) {
+    const r = clipperExited(view, 1);
+    assert.equal(r.restart, true, `exit ${n}: a restart is scheduled`);
+    assert.deepEqual([r.view.state, r.view.restarts], ['restarting', n]);
+    assert.equal(r.view.reason, 'it stopped (exit 1); restarting in 10 s');
+    view = { ...r.view, state: 'running', reason: null }; // the restarted process runs
+  }
+  const last = clipperExited(view, 3);
+  assert.equal(last.restart, false);
+  assert.deepEqual([last.view.state, last.view.restarts], ['gave-up', 5]);
+  assert.equal(last.view.reason, 'it stopped (exit 3) and was restarted 5 times; restart Ujwalam to try again');
 });

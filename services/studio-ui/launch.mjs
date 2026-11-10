@@ -322,17 +322,34 @@ export function hudWarnings(projectFile, game = 'codm') {
 
 /** Live clipper child (D226): the Python worker and its argv, or null with the reason. The worker reads the game
  *  layer of the H scene (preset origin scene-default-h/game, bound to a capture device); a placeholder game layer
- *  (devices off) has no picture to read. Python: .venv-gpu (DirectML OCR) when present, else .venv (CPU OCR). */
+ *  (devices off) has no picture to read. Python: .venv-gpu (DirectML OCR) when present, else .venv (CPU OCR).
+ *  The reasons are plain words for the task panel and the readiness check (LC1). */
+export const LIVE_WORKER = path.join('services', 'clip', 'live_worker.py');
 export function liveClipsSpec({ project, dataDir, repo = REPO, exists = existsSync }) {
   const game = (project?.scenes ?? []).flatMap((s) => s.layers ?? []).find((l) => l.origin?.id === 'scene-default-h/game');
-  if (!game) return { spec: null, reason: 'no H game layer in the project' };
-  if (game.type !== 'capture') return { spec: null, reason: 'the game layer has no capture device (devices off)' };
+  if (!game) return { spec: null, reason: 'the main (H) scene has no game layer' };
+  if (game.type !== 'capture') return { spec: null, reason: 'the game layer has no capture device (devices are off or none is chosen)' };
   const venv = ['.venv-gpu', '.venv'].map((v) => path.join(repo, v, 'Scripts', 'python.exe')).find((p) => exists(p));
-  if (!venv) return { spec: null, reason: 'no Python venv (.venv-gpu or .venv)' };
+  if (!venv) return { spec: null, reason: "the clip maker's Python is missing (no .venv-gpu or .venv)" };
+  const worker = path.join(repo, LIVE_WORKER);
+  if (!exists(worker)) return { spec: null, reason: 'the live clipper is missing (no services\\clip\\live_worker.py)' };
   return {
-    spec: { exe: venv, gpu: venv.includes('.venv-gpu'), argv: [path.join(repo, 'services', 'clip', 'live_worker.py'), '--layer', game.id, '--data-dir', dataDir] },
+    spec: { exe: venv, gpu: venv.includes('.venv-gpu'), argv: [worker, '--layer', game.id, '--data-dir', dataDir] },
     reason: null,
   };
+}
+
+/** Restarts of a crashed live clipper before the launcher gives up (D226). */
+export const LIVE_CLIPPER_MAX_RESTARTS = 5;
+
+/** The live clipper's state after its process exited: { view, restart } (pure). restart = schedule one more start.
+ *  "gave-up" only when every allowed restart was used and the last restarted process also stopped; while a restart is
+ *  scheduled (the last one included) the state is "restarting" (Codex review of LC1). */
+export function clipperExited(view, code, max = LIVE_CLIPPER_MAX_RESTARTS) {
+  if (view.restarts >= max) {
+    return { restart: false, view: { ...view, state: 'gave-up', reason: `it stopped (exit ${code}) and was restarted ${max} times; restart Ujwalam to try again` } };
+  }
+  return { restart: true, view: { ...view, state: 'restarting', restarts: view.restarts + 1, reason: `it stopped (exit ${code}); restarting in 10 s` } };
 }
 
 export function coreServeArgs({ dataDir, mock = false, sbWs = {}, remote = null }) {
@@ -1005,6 +1022,7 @@ export async function main(argv = process.argv.slice(2)) {
         planned = planFile(planPath, { allowLive: args.live === true, ...(lt.select ? { select: lt.select } : {}), ...(schemes ? { schemes } : {}) });
       } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
       const { params, report } = planned;
+      if (planned.dropped?.length) console.log(`[studio] outputs: ${planned.dropped.join(', ')} left out (optional recording; its stream is not in this start, so it would add an encoder)`);
       if (planned.unresolved?.length) console.log(`[studio] outputs: ${planned.unresolved.join(', ')} transport "auto" not chosen (stand-in host: no server address read)`);
       else if (args.live === true) for (const s of params.sinks) if (s.target?.urlRef) console.log(`[studio] sink ${s.id}: transport ${s.target.transport} (the scheme of the server address in ${s.target.urlRef})`);
       const ltp = liveTestPlanProblems(lt, params.sinks);
@@ -1064,12 +1082,20 @@ export async function main(argv = process.argv.slice(2)) {
         return 1;
       }
     }
+    // Live clipper state (LC1, D333 proposed): shown in the task panel and in clips/status.json (record-clips.mjs), read
+    // by the readiness check. state: running | restarting (it stopped; a restart is scheduled) | gave-up (the last allowed
+    // restart also stopped) | not-started (reason). Codex review of LC1: "gave-up" is set only when no restart is pending.
+    const lcView = { state: 'not-started', reason: 'the studio is starting', restarts: 0, maxRestarts: LIVE_CLIPPER_MAX_RESTARTS };
+    let tryStartClipper = () => {};
     if (disc && alpha) {
       // Clips from each finished recording (D283, flag clip-pipeline): outputs.status every 5 s; the discovery file is
       // read each time, so a restarted host is followed.
-      recordClips = createRecordClips({ clipRoot: CLIP_ROOT, dataDir, project: alpha ? alphaFile(dataDir) : null, log: (l) => console.log(`[studio] ${l}`), postChain: createPostChain({ dataDir, log: (l) => console.log(`[studio] ${l}`) }) });
+      const liveClipsFlag = () => { try { return createFlags({ dataDir }).isOn('live-clips'); } catch { return false; } };
+      recordClips = createRecordClips({ clipRoot: CLIP_ROOT, dataDir, project: alpha ? alphaFile(dataDir) : null, log: (l) => console.log(`[studio] ${l}`), postChain: createPostChain({ dataDir, log: (l) => console.log(`[studio] ${l}`) }),
+        liveClipper: () => ({ ...lcView, flagOn: liveClipsFlag() }) });
       const clipTick = async () => {
         if (stopping) return;
+        tryStartClipper(); // a clipper that could not start (no capture device yet) starts once it can
         try {
           const d = JSON.parse(readFileSync(hostDiscovery, 'utf8'));
           recordClips.feed(await new HostClient({ port: d.port, token: hostToken }).call('outputs.status'));
@@ -1080,28 +1106,42 @@ export async function main(argv = process.argv.slice(2)) {
     }
     if (disc && alpha) {
       // Live clipper (D226): started with the alpha session, idles while the live-clips flag is off (re-read every
-      // 5 s). Only the clips token reaches it. Restarted after a crash at most 5 times; never stops the stream.
-      let lc = { spec: null, reason: 'project not readable' };
-      try { lc = liveClipsSpec({ project: loadProject(alphaFile(dataDir)).project, dataDir, repo: CLIP_ROOT }); } catch { /* reason above */ }
-      if (!lc.spec) console.log(`[studio] live clipper not started: ${lc.reason}`);
-      else {
-        let restarts = 0;
+      // 5 s). Only the clips token reaches it. Restarted after a crash at most LIVE_CLIPPER_MAX_RESTARTS times; never
+      // stops the stream. One that cannot start yet (e.g. no capture device on the game layer) is tried again on every
+      // clip tick (5 s), so binding the device later starts it (LC1).
+      let lastReason = null;
+      tryStartClipper = () => {
+        if (stopping || lcView.state !== 'not-started') return;
+        let lc = { spec: null, reason: 'the scene file could not be read' };
+        try { lc = liveClipsSpec({ project: loadProject(alphaFile(dataDir)).project, dataDir, repo: CLIP_ROOT }); } catch { /* reason above */ }
+        if (!lc.spec) {
+          lcView.reason = lc.reason;
+          if (lc.reason !== lastReason) console.log(`[studio] live clipper not started: ${lc.reason}`);
+          lastReason = lc.reason;
+          return;
+        }
         const startClipper = () => {
           const c = spawn(lc.spec.exe, lc.spec.argv, { stdio: ['pipe', 'inherit', 'inherit'], windowsHide: true, env: { ...clipsEnv({ hostClipsToken, hostDiscovery }), ...PARENT_PIPE } });
           children.push(c);
+          lcView.state = 'running'; lcView.reason = null;
           c.once('exit', (code) => {
             const i = children.indexOf(c);
             if (i >= 0) children.splice(i, 1);
             if (stopping) return;
-            if (restarts >= 5) { console.log(`[studio] live clipper exited (${code}); not restarted again`); return; }
-            restarts += 1;
-            console.log(`[studio] live clipper exited (${code}); restart ${restarts}/5 in 10 s`);
+            const next = clipperExited(lcView, code);
+            Object.assign(lcView, next.view);
+            if (!next.restart) {
+              console.log(`[studio] live clipper exited (${code}); not restarted again`);
+              return;
+            }
+            console.log(`[studio] live clipper exited (${code}); restart ${lcView.restarts}/${LIVE_CLIPPER_MAX_RESTARTS} in 10 s`);
             setTimeout(() => { if (!stopping) startClipper(); }, 10_000).unref();
           });
         };
         startClipper();
-        console.log(`[studio] live clipper started (OCR ${lc.spec.gpu ? 'GPU, DirectML' : 'CPU'}; acts only while the live-clips flag is on)`);
-      }
+        console.log(`[studio] live clipper started (OCR ${lc.spec.gpu ? 'GPU, DirectML' : 'CPU'}; acts only while the live-clips flag is on or clips are set to "while live")`);
+      };
+      tryStartClipper();
       // Face AI worker (D295 proposed): idles while the face-ai flag is off; no host token. A crash only makes the
       // host's face effects fall back to the plain camera. Restarted at most 5 times.
       const fs_ = faceSpec({ dataDir, repo: CLIP_ROOT });

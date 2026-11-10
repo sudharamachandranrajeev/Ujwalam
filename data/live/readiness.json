@@ -2,14 +2,14 @@
   "$comment": "Pre-stream readiness check (services/studio-ui/readiness.mjs, flag 'readiness', D299 proposed). Every threshold and name the check uses lives here, never in code. status 'proposed' = agent defaults derived as noted below, not yet approved by the user or tuned on a real stream.",
   "version": "0.1.0",
   "status": "proposed",
-  "checked": "2026-11-08",
+  "checked": "2026-11-10",
   "checkTimeoutMs": 4000,
   "goLiveMaxAgeMs": 60000,
   "disk": {
     "failBelowGB": 22,
     "warnBelowGB": 44,
     "gbPerHour": 11,
-    "source": "derived 2026-11-08 from data/outputs/presets/youtube-1080p60.json: H recording 17000 kbps + V recording 7500 kbps (the practice plan records both) = 24.5 Mbps = about 11 GB per hour (gbPerHour, used to say how many hours are left). fail = less than 2 hours of H+V recording left, warn = less than 4 hours. The drive checked is the host's recordings folder (host.info recordingsDir), else the data folder."
+    "source": "derived 2026-11-08 from data/outputs/presets/youtube-1080p60.json: H recording 17000 kbps + V recording 7500 kbps (the practice plan records both, and since LC1 / D333 proposed the live plan too) = 24.5 Mbps = about 11 GB per hour. gbPerHour is only the fallback: when the host reports its recordings (outputs.status), the hours left come from their rung bitrates plus audio (readiness.mjs recordingGbPerHour). fail = less than 2 hours of H+V recording left, warn = less than 4 hours. The drive checked is the host's recordings folder (host.info recordingsDir), else the data folder."
   },
   "otherEncoders": {
     "source": "process image names, checked 2026-11-08. Meld: tools/soak/stream-day.mjs already looks for MeldStudio*; the exact image name is UNVERIFIED (prefix match). OBS: obs64.exe is the OBS Studio 64-bit image (UNVERIFIED on this PC). A running streaming app can hold NVENC sessions and push to the same stream keys, so Meld and OBS fail (an explicit override can still go live); the others only warn.",
@@ -38,6 +38,13 @@
     "failStates": ["missing"],
     "warnStates": ["starting", "unknown"],
     "source": "D297: the host reports each device audio source in host.status.audioHealth.sources (state ok | starting | missing | inactive | unknown; 'missing' = no audio packets for data/audio/health.json noDataMs). 'method' is only the fallback for a host without audioHealth. 'inactive' (source not in use) neither fails nor warns. Muted sources in the stream mix (mixer.list) warn. While the host answers, audio state that cannot be read (no audioHealth and the method fails, is missing, times out or answers without a sources list) fails (D297 second opinion, 2026-11-08); host down = the host item fails and audio warns. A restarted source stays 'missing' until the new one delivers packets. States verified against app/host/src/studio.cpp Studio::audio_health on 2026-11-08; behaviour with a real dead source UNVERIFIED."
+  },
+  "clips": {
+    "liveWorker": "services/clip/live_worker.py",
+    "tools": ["ffmpeg", "ffprobe"],
+    "toolsFix": "Install ffmpeg (it includes ffprobe), add its bin folder to the Windows PATH, then restart Ujwalam.",
+    "statusMaxAgeMs": 30000,
+    "source": "LC1 (D333 proposed, 2026-11-10). With live clipping wanted (flag live-clips, or Settings > Clips \"while live\"), these fail the item: no clip maker Python or clipper.py (record-clips.mjs clipTools), no liveWorker under the clip root, a tools program missing on PATH (the clip maker finds ffmpeg and ffprobe on PATH: services/clip/clip_common.py find_tool), or the launcher reporting the live clipper as not running (<dataDir>/clips/status.json liveClipper, which the launcher rewrites about every 5 s; older than statusMaxAgeMs = not reported, a warning)."
   },
   "endAll": {
     "waitMs": 6000,

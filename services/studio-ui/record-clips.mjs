@@ -17,6 +17,10 @@
 // settings (default <dataDir>/clips) as <YYYY-MM-DD>/<game>_<kind>_<stamp>_<label>_<nn>_<canvas>.mp4
 // (services/clip/clip_names.py). A whole-recording run also makes kill montages when the V recording exists, and so
 // does a review run of a recorded stream (D322 proposed: H and V recordings both there); a review run deletes the live clipper's replay saves it used (host-named intermediates) once every clip rendered.
+// Visible state (LC1, D333 proposed): status.json carries liveClipper (is the live clipper process running, why not,
+// restarts, moments kept so far while it watches), and the task panel shows it as task "live-clipper" while a stream or
+// recording is watched. A finished job whose reels (kill montages + match reels) were not made says why in its task
+// note ("Reels not made: <reason>"), from the job itself or the run's render.json montage status.
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -78,6 +82,60 @@ export function newestSaves(dataDir) {
       .map((x) => path.join(root, x.name)).sort((a, b) => statSync(b).mtimeMs - statSync(a).mtimeMs);
     return d[0] ?? null;
   } catch { return null; }
+}
+
+/** Moments the live clipper kept since an ISO time: rows of the newest session's saves.jsonl with at >= since. */
+export function countSaves(dataDir, since, { newest = newestSaves } = {}) {
+  const dir = newest(dataDir);
+  if (!dir) return 0;
+  try {
+    return readFileSync(path.join(dir, 'saves.jsonl'), 'utf8').split(/\r?\n/).reduce((n, l) => {
+      if (!l.trim()) return n;
+      try { const r = JSON.parse(l); return typeof r?.at === 'string' && (!since || r.at >= since) ? n + 1 : n; } catch { return n; }
+    }, 0);
+  } catch { return 0; }
+}
+
+/** The task panel row of the live clipper (id "live-clipper"), or null when there is nothing to show.
+ *  lc: { state: 'running' | 'restarting' | 'gave-up' | 'not-started', reason, restarts, maxRestarts } from the launcher;
+ *  watching: a stream or recording runs and the clipper is asked to act; since: when that began (ms);
+ *  ended: it was watching on the previous tick and is not now (the finished row, once). */
+export function liveClipperTask({ lc, watching, ended = false, saves = 0, since = null, now }) {
+  const base = { id: 'live-clipper', kind: 'live-clips', startedAt: since ?? now, updatedAt: now };
+  const kept = `${saves} moment${saves === 1 ? '' : 's'} kept`;
+  if (watching) {
+    if (lc?.state === 'running') {
+      const re = lc.restarts ? `; restarted ${lc.restarts} time${lc.restarts === 1 ? '' : 's'}` : '';
+      return { ...base, title: 'Live clips: watching the game', state: 'running', measured: false, activeAt: since ?? now, note: `${kept} so far${re}` };
+    }
+    if (lc?.state === 'restarting') {
+      return { ...base, title: 'Live clips: restarting the live clipper', state: 'running', measured: false, activeAt: since ?? now, note: `${kept} so far; ${String(lc.reason ?? 'it stopped; restarting').slice(0, 120)} (restart ${lc.restarts ?? 0} of ${lc.maxRestarts ?? '?'})` };
+    }
+    return { ...base, title: 'Live clips are not being made', state: 'failed', note: String(lc?.reason ?? 'the live clipper is not running').slice(0, 160) };
+  }
+  if (ended) return { ...base, title: `Live clips: ${kept}`, state: 'done', note: saves ? 'They become clips after the stream' : 'No moment was found' };
+  return null;
+}
+
+/** Why the reels (kill montages + match reels) of a finished job were not made, or null when they were (or the job
+ *  made them with nothing to show). readJson(file) -> object (throws when missing). */
+export function reelsNotMade(job, out, { readJson = (f) => JSON.parse(readFileSync(f, 'utf8')), exists = existsSync } = {}) {
+  const has = (p) => typeof p === 'string' && p !== '';
+  if (job?.type === 'review') {
+    if (!has(job.h)) return 'the stream was not recorded';
+    if (!has(job.v)) return 'there is no portrait (V) recording of this stream';
+    if (!exists(job.h)) return 'the stream recording is missing';
+    if (!exists(job.v)) return 'the portrait (V) recording is missing';
+    let m = null;
+    try { m = readJson(path.join(out, 'render.json'))?.montage ?? null; } catch { m = null; }
+    if (!m || typeof m !== 'object') return 'the reel step left no result; see the log';
+    return m.status === 'made' ? null : String(m.reason ?? m.status ?? 'unknown').slice(0, 120);
+  }
+  if (!has(job?.v)) return 'there is no portrait (V) recording';
+  // A whole-recording run (clipper.py run --montage) writes montage/render.json, report.json and published.json when
+  // the montage step ran; none of them = it stopped early (its reason is only in the log).
+  for (const n of ['render.json', 'report.json', 'published.json']) { try { readJson(path.join(out, 'montage', n)); return null; } catch { /* next */ } }
+  return 'the reel step did not finish; see the log';
 }
 
 /** Python and argv for one job, or { spec: null, reason }. job: { type: 'full'|'review', h?, v?, since?, until?, name }.
@@ -177,7 +235,7 @@ const JOB_KEYS = ['type', 'kind', 'h', 'v', 'since', 'until', 'name', 'minutes']
 const pickJob = (j) => Object.fromEntries(JOB_KEYS.filter((k) => j[k] !== undefined).map((k) => [k, j[k]]));
 
 /** The queue and the child. feed(status) is called with each outputs.status. */
-export function createRecordClips({ clipRoot, dataDir, project = null, log, spawnFn = spawn, now = Date.now, postChain = null, killTreeFn = killChildTree }) {
+export function createRecordClips({ clipRoot, dataDir, project = null, log, spawnFn = spawn, now = Date.now, postChain = null, killTreeFn = killChildTree, liveClipper = null }) {
   const stateDir = path.join(dataDir, 'clips');
   const statusFile = path.join(stateDir, 'status.json');
   const answerFile = path.join(stateDir, 'answer.json');
@@ -187,6 +245,8 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
   const queue = []; let asks = [];
   let prev = null; let child = null; let current = null; let last = null; let stopped = false;
   let halted = false; let lastStatus = null; let progress = null; let liveNow = false; let recStart = null; let recSawLive = false; let liveStart = null; let liveHadRecording = false; let workerOn = null;
+  // Live clipper view (LC1): liveClipper() -> { state, reason, restarts, maxRestarts, flagOn } from the launcher.
+  let watchSince = null; let watching = false; let watchEnded = false; let savesNow = 0;
 
   // A run cut short by closing Ujwalam (or queued, or still to be answered) comes back at the next start.
   try {
@@ -218,13 +278,22 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
     if (halted) return; // stopped by the user: the task files say so; the jobs run again at the next start
     for (const j of queue) { j.taskStart ??= now(); writeTaskFile(dataDir, taskFor(j, progress)); }
   };
+  const lcState = () => { try { return typeof liveClipper === 'function' ? liveClipper() : null; } catch { return null; } };
+  const writeLiveTask = (lc) => {
+    const t = liveClipperTask({ lc, watching, ended: watchEnded, saves: savesNow, since: watchSince, now: now() });
+    if (t) writeTaskFile(dataDir, t);
+    watchEnded = false;
+  };
   const finishTask = (j, ok, note) => writeTaskFile(dataDir, { id: taskId(j), kind: 'clips', title: ok ? `Clips ready from ${j.name}` : `Clips from ${j.name} did not finish`, state: ok ? 'done' : 'failed', note, startedAt: j.taskStart ?? now(), updatedAt: now() });
 
   const write = () => {
     writeTasks();
     const s = readSettings(dataDir);
     const t = clipTools({ clipRoot });
-    const out = { at: iso(now()), state: current && !halted ? 'running' : queue.length ? 'queued' : 'idle', available: !!t.py, reason: t.reason, fix: t.fix, missing: t.missing,
+    const lc = lcState();
+    if (!halted) writeLiveTask(lc);
+    const liveClipperOut = lc ? { ...lc, watching, since: watchSince === null ? null : iso(watchSince), saves: savesNow } : null;
+    const out = { liveClipper: liveClipperOut, at: iso(now()), state: current && !halted ? 'running' : queue.length ? 'queued' : 'idle', available: !!t.py, reason: t.reason, fix: t.fix, missing: t.missing,
       settings: s.clips, folder: clipsFolder(dataDir, s),
       running: current ? pickJob(current) : null, queued: queue.filter((q) => q !== current).map(pickJob), asks, last };
     try {
@@ -284,9 +353,11 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
       if (done.pausedForLive) { delete done.pausedForLive; log(`clips: ${done.name} paused for the stream; it continues after`); write(); return; }
       queue.shift(); progress = null;
       const n = code === 0 ? countClips(spec.out) : 0;
-      last = { name: done.name, kind: done.kind, result: code === 0 ? 'done' : 'failed', code, clips: n, out: spec.out, folder: spec.folder };
+      const reels = code === 0 ? reelsNotMade(done, spec.out) : null;
+      last = { name: done.name, kind: done.kind, result: code === 0 ? 'done' : 'failed', code, clips: n, out: spec.out, folder: spec.folder, ...(reels ? { reelsNotMade: reels } : {}) };
+      if (reels) log(`clips: reels not made from ${done.name}: ${reels}`);
       log(code === 0 ? `clips: ${n} clip(s) made from ${done.name} in ${spec.folder}` : `clips: making clips from ${done.name} failed (exit ${code}); see ${logFile}`);
-      finishTask(done, code === 0, code === 0 ? `${n} clip${n === 1 ? '' : 's'} made` : 'Something went wrong; see the log');
+      finishTask(done, code === 0, code === 0 ? `${n} clip${n === 1 ? '' : 's'} made${reels ? `. Reels not made: ${reels}` : ''}` : 'Something went wrong; see the log');
       // D300: package + auto-approve + private upload (flags posting + auto-post; each step fails closed while live).
       if (code === 0 && n > 0 && postChain) void Promise.resolve(postChain.afterRun(spec.out, lastStatus)).catch(() => {});
       write();
@@ -334,6 +405,13 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
       if (live && liveStart === null) { liveStart = t; liveHadRecording = false; }
       if (live && rec) liveHadRecording = true;
       setWorker((live && s.clips.live === 'while') || (rec && !live && s.clips.recording === 'while'));
+      // The clipper acts while asked (setWorker) or while its flag is on; it is "watching" only during a stream or
+      // recording (that is when moments can be kept).
+      const nowWatching = (live || rec) && (workerOn === true || lcState()?.flagOn === true);
+      if (nowWatching && !watching) { watchSince = t; savesNow = 0; }
+      if (!nowWatching && watching) watchEnded = true;
+      watching = nowWatching;
+      if (watching || watchEnded) savesNow = countSaves(dataDir, iso(watchSince ?? t));
 
       const f = finishedRecording(prev, status);
       if (f) {

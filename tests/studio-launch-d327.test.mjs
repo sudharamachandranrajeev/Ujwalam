@@ -26,6 +26,7 @@ test('livePlanFile: alpha-live.json with the flag off or no saved setup; the gen
   assert.equal(f, path.join(d, 'outputs', 'stream-setup-plan.json'));
   const j = JSON.parse(readFileSync(f, 'utf8'));
   assert.equal(j.targets.record.name, 'alpha.mkv');
+  assert.equal(j.targets['record-v'].name, 'alpha-v.mkv', 'LC1: the V recording follows the H name');
   // Readiness reads the same plan: Credential Manager target names only, never a value.
   const t = planTargets(f);
   assert.ok(t.length >= 1);
