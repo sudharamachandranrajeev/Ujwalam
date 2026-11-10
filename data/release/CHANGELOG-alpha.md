@@ -2,6 +2,15 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.23 — 2026-11-10
+
+- Live streams now record both the main (H) and vertical (V) picture, so kill montages and match reels are made in the background after a stream. The V recording uses the vertical stream's encoder; if YouTube V is off, only H is recorded.
+- Record while live (Settings > Clips, on): Start stream also starts recording, and the recording stops when every stream has stopped. A recording you start or stop yourself is never taken over or stopped by this.
+- Live clipping that cannot run (missing Python, ffmpeg, the clip worker, or a clipper that keeps crashing) now stops the readiness check with the reason and the fix. The task panel shows a "Live clips" row while live, and says why reels were not made.
+- The layer selected in the layer list is the one that moves and resizes on the preview, even under other layers; a click on the preview selects that layer in the list. Dragging is smoother, and handles keep their size at 125 and 150 % display scaling.
+- Settings > Preview: "Snap to preview edges and other layers", off by default. Hold Alt to turn snapping off for one drag.
+- The app package now includes the posting rules, posting schedule, clip targets and stream options files (alpha.22 missed them, which caused the "auto-post-rules.json: file missing" notice). A build missing any data file the services read now fails.
+- Task panel: a "Clear finished" button removes all done and failed tasks.
 ## 0.1.0-alpha.22 — 2026-11-10
 
 - The background of the main and vertical scenes is now a blurred copy of your game capture, filling the whole screen behind every other layer. Your existing scenes are updated once when Ujwalam starts (a backup of the project is kept); your own layer moves and added layers stay as they are. If the capture card is not set up yet, the scene waits and is updated on a later start.
