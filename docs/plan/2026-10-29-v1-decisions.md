@@ -837,6 +837,9 @@ was also pressed. Decided:
   - Starts and stops run one at a time. Ownership is one object plus a generation counter, so a late answer never
     takes over the user's recording and never forgets a newer one.
   - Stop and End all never wait for a pending automatic `record.start`.
+  - A Record or Stop recording click hands the recording to the user before it is sent to the host.
+  - An automatic start takes the generation when it is queued, and is dropped if a click changed it before the
+    start runs.
 - Disk: about 10.4 GB (1024^3) per hour at the alpha-live bitrates (D333); the readiness disk check already counts
   the H and V recordings.
 - No feature flag (same exception as D330–D333: the user asked for it directly).

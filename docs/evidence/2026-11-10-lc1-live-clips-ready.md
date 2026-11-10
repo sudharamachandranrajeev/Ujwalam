@@ -244,7 +244,40 @@ New tests:
 - `tests/studio-ui-server.test.mjs`: one output still live after Stop stream and End all keeps the recording; the
   poll stops it once every output has stopped.
 
-Other affected suites, after the fixes:
+Codex re-review of 50fd00b (2 more):
+- **P1, a manual Record whose answer was still on its way could be claimed** (`server.mjs`). `handOff()` ran only
+  after the manual host call returned. An automatic start that had read an idle status earlier could finish in that
+  gap and claim the user's recording, and a later Stop stream stopped it. Fixed: an accepted Record or Stop recording
+  click hands the recording off before it is sent to the host, and again after the answer.
+- **P2, a start queued behind a stop undid a Stop recording click** (`record-live.mjs`). The queued start set a fresh
+  generation inside its own step, so a Stop recording click that finished while it waited was overridden. Fixed: the
+  generation is taken when the attempt is queued. The attempt is dropped if it changed before the step runs.
+  Automatic starts no longer change the generation.
+
+Before the fix, both new tests failed:
+
+```
+tests/record-live.test.mjs: not ok 12 - P2 (re-review): a start queued behind a stop never undoes a Stop recording click made while it waited
+tests/studio-ui-server.test.mjs: not ok 1 - P1 (re-review): a Record click whose answer is still on its way is never claimed by the automatic start
+  expected: 0
+  actual: 1   (record.stop count)
+```
+
+After the fix:
+
+```
+UJWALAM_HEADLESS=1 node --test --test-timeout=60000 tests/record-live.test.mjs
+# tests 12
+# pass 12
+# fail 0
+
+UJWALAM_HEADLESS=1 node --test --test-timeout=60000 tests/studio-ui-server.test.mjs
+# tests 40
+# pass 40
+# fail 0
+```
+
+Other affected suites, after the first round of fixes (50fd00b):
 
 ```
 UJWALAM_HEADLESS=1 node --test --test-timeout=60000 tests/record-live.test.mjs tests/record-clips.test.mjs tests/studio-ui-readiness.test.mjs tests/studio-ui-alpha.test.mjs tests/live-soak.test.mjs tests/stream-recovery.test.mjs tests/user-settings-match-gate.test.mjs tests/user-settings-theme.test.mjs tests/studio-tasks.test.mjs tests/studio-qt-d327.test.mjs tests/package-alpha.test.mjs
