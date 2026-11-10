@@ -38,7 +38,46 @@ static QString stateText(const QJsonObject &o)
 	return d.isEmpty() ? t : t + QStringLiteral(" - ") + d;
 }
 
-Page::Page(ApiClient *api, QWidget *parent) : QWidget(parent), api_(api)
+QString shortStateText(const QJsonObject &o)
+{
+	const QString st = o.value(QStringLiteral("state")).toString();
+	const QJsonObject key = o.value(QStringLiteral("key")).toObject();
+	QString t = st == QStringLiteral("connected") ? QStringLiteral("Connected")
+		    : st == QStringLiteral("token-expired") ? QStringLiteral("Sign-in expired") : QStringLiteral("Not connected");
+	if (key.value(QStringLiteral("present")).toBool() && key.contains(QStringLiteral("last4")))
+		t += QStringLiteral("  (key ....") + key.value(QStringLiteral("last4")).toString() + QStringLiteral(")");
+	return t;
+}
+
+void openForOutput(ApiClient *api, const QString &outputId, QWidget *parent)
+{
+	QDialog dlg(parent);
+	dlg.setObjectName(QStringLiteral("connectionsFlow"));
+	dlg.setProperty("output", outputId);
+	dlg.setWindowTitle(QStringLiteral("Connect output"));
+	auto *v = new QVBoxLayout(&dlg);
+	v->addWidget(new Page(api, &dlg, outputId), 1);
+	auto *bb = new QDialogButtonBox(QDialogButtonBox::Close, &dlg);
+	QObject::connect(bb, &QDialogButtonBox::rejected, &dlg, &QDialog::reject);
+	QObject::connect(bb, &QDialogButtonBox::clicked, &dlg, &QDialog::accept);
+	v->addWidget(bb);
+	dlg.resize(780, 560);
+	dlg.exec();
+}
+
+int Page::rowCount() const
+{
+	return rows_->count();
+}
+
+QString Page::rowLabel(int i) const
+{
+	QWidget *w = i >= 0 && i < rows_->count() ? rows_->itemAt(i)->widget() : nullptr;
+	QLabel *l = w ? w->findChild<QLabel *>() : nullptr;
+	return l ? l->text() : QString();
+}
+
+Page::Page(ApiClient *api, QWidget *parent, const QString &onlyOutput) : QWidget(parent), api_(api), only_(onlyOutput)
 {
 	auto *v = new QVBoxLayout(this);
 	v->setContentsMargins(0, 0, 0, 0);
@@ -146,6 +185,8 @@ void Page::render(const QJsonObject &b)
 	for (const QJsonValue &ov : b.value(QStringLiteral("outputs")).toArray()) {
 		const QJsonObject o = ov.toObject();
 		const QString id = o.value(QStringLiteral("id")).toString();
+		if (!only_.isEmpty() && id != only_)
+			continue;
 		auto *row = new QWidget();
 		auto *h = new QHBoxLayout(row);
 		h->setContentsMargins(0, 0, 0, 0);

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // D327 in the Qt studio shell (headless probe, real UI server, fake host, mocked TCP test): Settings > Stream (values,
-// a value over a platform limit refused with the limit, the Edit output window with its Connect placeholder),
+// a value over a platform limit refused with the limit, the Edit output window with its Connect button (tests/studio-qt-connect-button.test.mjs)),
 // Settings > Transitions (type, easing, duration per canvas, Force complete), Settings > Integrations (Test, Allow
 // remote connections), and the main-window Outputs panel (offline switch saves; live switch asks for "yes, on air").
 // Pictures go to %TEMP%\ujwalam-d327-shots (never into the repo). Skipped when the shell is not built.
