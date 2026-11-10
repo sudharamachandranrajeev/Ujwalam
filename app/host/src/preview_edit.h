@@ -7,9 +7,10 @@
 // rotated by `rotation` degrees about its centre (studio.cpp apply_placement; the crop is inside that rectangle).
 // The hit test undoes the rotation, so a rotated layer is hit exactly on its turned box.
 //
-// Gestures (OBS/Meld conventions): click selects the topmost visible layer under the cursor on that canvas (empty
-// canvas clears the selection; one selection per canvas). Drag inside the box moves it; a corner handle resizes it
-// with the aspect ratio kept (Shift: free). Moves and unrotated resizes snap within 8 screen px to the canvas edges
+// Gestures (OBS/Meld conventions): a press inside the selected layer (or on its handles) acts on it; elsewhere a click
+// selects the topmost visible layer under the cursor on that canvas (empty canvas clears the selection; one selection
+// per canvas). Drag inside the box moves it; a corner handle resizes it
+// with the aspect ratio kept (Shift: free). With snap on (D335), moves and unrotated resizes snap within 8 px to the canvas edges
 // and centre and to the edges and centres of the other visible layers' bounding boxes (D272; Alt: no snap); while a
 // drag holds a snap, draw_cb shows the guide line it snapped to. The round handle 24 screen px above the top edge turns the layer about its centre
 // (Shift: 15 degree steps); a turn changes only `rotation` (D255). Alt + drag on an edge crops that side (D256): the
@@ -18,10 +19,22 @@
 // a resize handle (D330): that side follows the cursor (aspect free), the opposite side stays, the moving edge snaps.
 // Over the selected layer the window shows a matching cursor (hover: move, the four size arrows, rotate).
 //
-// Edit path: while dragging, every mouse move applies the rectangle through Backend::apply, which is
-// Studio::layer_set_placement, the code behind the RPC layers.setPlacement (no round trip to the UI per move). The
-// release applies the final rectangle once more and records it as ONE edit (seq + placement), which the UI server
-// reads with preview.edits (host.status carries previewEditSeq) and autosaves like an inspector edit.
+// Edit path: while dragging, each mouse move updates the drawn selection at once; the rectangle goes to libobs through
+// Backend::apply (Studio::layer_set_placement, the code behind the RPC layers.setPlacement; no round trip to the UI)
+// at most once per apply interval (16 ms, about one frame at 60 fps; D335 F9) with the newest point. flush() (the
+// window's drag timer) applies a point still waiting. The release always applies the final rectangle and records it as
+// ONE edit (seq + placement), which the UI server reads with preview.edits (host.status carries previewEditSeq) and
+// autosaves like an inspector edit.
+//
+// Selection (D335 F8): the studio's layer list sets the selection with select() (RPC preview.select); a press inside
+// the selected layer's box or on its handles acts on it even under other layers (OBS). Only a press outside it
+// hit-tests the topmost layer and changes the selection; such a change bumps sel_seq() so the studio's list follows.
+//
+// Snap (D335 F10): off by default; set_snap(true) (settings.json ui.snap through the UI server, RPC preview.setSnap)
+// turns on the D272 snapping, which Alt then suspends. With snap off Alt only matters for the crop gesture.
+//
+// Sizes: handle hit areas, the rotate-handle distance, the drag threshold and the snap distance are in logical px
+// (View::dpi = window DPI / 96), so they stay the same physical size at 100, 125 and 150 % scaling.
 //
 // Threading: Editor state is touched by the preview UI thread (window procedure) and by the RPC threads
 // (setEditing, editSim, edits) and read by draw_cb on the libobs graphics thread. One mutex guards it; it is never
@@ -54,7 +67,9 @@ struct Item {
 struct View {
 	double vx = 0, vy = 0, vw = 0, vh = 0; // client px
 	double cw = 0, ch = 0;                 // canvas px
+	double dpi = 1;                        // window DPI / 96 (client px per logical px)
 	double canvas_per_px() const { return vw > 0 ? cw / vw : 1; }
+	double canvas_per_lpx() const { return canvas_per_px() * (dpi > 0 ? dpi : 1); } // canvas px per logical px
 };
 View fit_view(double client_w, double client_h, double canvas_w, double canvas_h);
 void to_canvas(const View &v, double sx, double sy, double &cx, double &cy);
@@ -119,12 +134,31 @@ public:
 
 	void set_enabled(bool on); // off clears every selection and cancels a drag (the layer stays where it is)
 	bool enabled() const;
+	void set_snap(bool on); // D335 F10: snapping to the canvas and the other layers (default off)
+	bool snap() const;
+	// How often a drag applies to libobs at most (ms; 0: every move, the behaviour before D335). Default 16.
+	void set_apply_interval_ms(int ms);
+	int apply_interval_ms() const;
+	uint64_t applies() const; // Backend::apply calls made by drags so far (tests and the evidence numbers)
+
+	// D335 F8: sets the selection on a canvas from the studio's layer list. layer "" clears it. Returns "" or why not
+	// ("off", "live", "dragging", "busy", "missing": not a visible layer with a placement in the active scene).
+	// Does not bump sel_seq (the studio already knows).
+	std::string select(const std::string &canvas, const std::string &layer);
+	// Bumped when a press on the preview changes which layer is selected (or clears it).
+	uint64_t sel_seq() const;
+	// {seq, seqs: {H, V}, dragging: {H, V}, H: {scene, layer} | null, V: ...} for host.status (previewSelection).
+	// seqs.H moves only when a press on the H preview changed H's selection (the studio follows its own canvas only);
+	// dragging.H: a press is held on H, so preview.select on H is refused until it ends (the studio retries then).
+	json::Value selection_status() const;
 
 	// Mouse events in client px of a preview whose letterbox is v. Return true when the event was used.
 	bool down(const std::string &canvas, const View &v, double sx, double sy, Mods m);
 	bool move(const std::string &canvas, const View &v, double sx, double sy, Mods m);
 	bool up(const std::string &canvas, const View &v, double sx, double sy, Mods m);
 	void cancel(const std::string &canvas); // lost mouse capture: the layer goes back to where the drag began
+	// The drag timer: applies a rectangle that waits for the apply interval. true when one was applied.
+	bool flush(const std::string &canvas);
 	bool dragging(const std::string &canvas) const;
 	// The cursor for a point (client px) with no button down: the selected layer's handles and box only (no backend
 	// call, so it is cheap on every mouse move); Arrow when off, live-locked or nothing is selected there.
@@ -162,10 +196,20 @@ private:
 		bool moved = false;
 		std::vector<double> gx, gy; // snap targets from the other layers, taken at the press
 		double lx = NAN, ly = NAN;  // guide lines the drag snapped to now
+		bool pending = false;       // r is newer than what libobs has (waits for the apply interval)
+		bool applied = false;       // this drag applied something (cancel puts the start back)
+		double last_apply = -1e9;   // ms (steady clock) of this drag's last apply
 	};
+	bool step(const std::string &canvas, const View &v, double sx, double sy, Mods m, bool final);
+	bool apply_pending(const std::string &canvas, bool force);
 	Backend be_;
 	mutable std::mutex m_;
 	bool enabled_ = false;
+	bool snap_ = false;
+	int interval_ms_ = 16;
+	uint64_t applies_ = 0;
+	uint64_t sel_seq_ = 0;
+	std::map<std::string, uint64_t> sel_seq_cv_; // per canvas ("H", "V"): the studio follows only its own canvas
 	std::map<std::string, Sel> sel_; // canvas -> selection
 	std::deque<Edit> edits_;
 	uint64_t seq_ = 0;

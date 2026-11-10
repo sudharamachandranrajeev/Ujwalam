@@ -845,3 +845,31 @@ was also pressed. Decided:
 - No feature flag (same exception as D330–D333: the user asked for it directly).
 Code: `services/studio-ui/record-live.mjs`, `server.mjs`, `user-settings.mjs`, the Qt Settings > Clips page.
 Evidence: `docs/evidence/2026-11-10-lc1-live-clips-ready.md` (LC2 section).
+
+## D335 — Preview mouse editing acts on the list's layer; drags coalesced; snapping is a setting, off by default (2026-11-10, user report F8-F10)
+
+User (2026-11-10, alpha.21): "while a layer is selected from the layers that layer needs to move. now some other layer
+is moving. hovering and resizing needs to optimised. snapping to the edge of preview should an an option that user
+could turn on in settings as well." Decided:
+- F8: the host editor's selection follows the studio's layer list through a new RPC `preview.select {canvas, layer |
+  null}` (refused when editing is off, while live, during a drag, or for a layer that is not visible with a placement
+  in the canvas's active scene). The studio sends it when its selection, canvas, scene or the layer's visibility
+  changes, once per change. Press priority stays OBS: a press inside the selected layer's box or on its handles acts on
+  it even under other layers; only a press outside it hit-tests the topmost layer. Such a press moves
+  `host.status.previewSelection.seqs.<canvas>` (one seq per canvas, so a click on V never moves the H list); the
+  studio's list then selects that layer (no echo: a selection the studio sent never moves the seq). A `preview.select`
+  refused mid-drag (or busy, or live) is kept and sent once more when `previewSelection.dragging.<canvas>` is false
+  (and not live); a newer selection replaces it; if that retry is refused too, the list goes back to the host's
+  selection, so the list never shows one layer while the preview edits another (Codex review of 23e5289).
+- F9: during a drag the drawn selection follows every mouse move, but the rectangle goes to libobs
+  (Studio::layer_set_placement) at most once per 16 ms with the newest point; a 16 ms window timer sends a waiting
+  point when the mouse rests, and the release always applies the final rectangle and records exactly one edit.
+  Handle hit areas, the rotate-handle distance, the drag threshold, the snap distance and the drawn handles are in
+  logical px (window DPI / 96), so they keep their size at 125 and 150 % scaling. Hover stays backend-free.
+- F10: Settings > Preview has the switch "Snap to preview edges and other layers" with its explanation, default off
+  (the user's words: an option to turn on). Stored as settings.json `ui.snap` (bool); the UI server keeps the host equal
+  to it with `preview.setSnap {enabled}` (host.status `previewSnap`, host default off). On: D272 snapping (canvas edges
+  and centre, other layers; Alt suspends). Off: no snapping; Alt only matters for the crop gesture.
+Not done: a snap-distance setting (the triage row mentions one; the distance stays 8 px, D272). Real-mouse feel on the
+user's screen is UNVERIFIED until the user tries it.
+Evidence: `docs/evidence/2026-11-10-f8-preview-select-snap.md`.
