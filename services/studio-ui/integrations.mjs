@@ -76,3 +76,10 @@ export function writeIntegrations(dataDir, value) {
 }
 
 export const botUrl = (port) => `ws://${BOT_ADDRESS}:${port}/`;
+
+/** The settings a start uses: the stored ones with the `integrations` flag on, else the profile's bot ports and remote
+ *  off (the behaviour before D327). */
+export function integrationsInEffect(dataDir, botConfig, flagOn) {
+  if (!flagOn || typeof dataDir !== 'string') return defaults(botConfig);
+  return readIntegrations(dataDir, botConfig).value;
+}

@@ -51,7 +51,8 @@ import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
-import { STREAM_SETTINGS_FLAG, createSettingsRoutes } from './settings-routes.mjs';
+import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG, createSettingsRoutes } from './settings-routes.mjs';
+import { integrationsInEffect } from './integrations.mjs';
 
 // Scene transition types and easing curves (D327 TR1, data/transitions/easing.json), read once.
 let easingCache = null;
@@ -338,7 +339,10 @@ export function createStudioServer(opts) {
       host, core, config, now, dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null,
       flagOn: (id) => !!flags && flags.isOn(id),
       store: (ref) => createCredentialStore(ref), listProcesses: listProcessNames, diskFree: diskFreeBytes, tcp: tcpAnswers,
-      botPorts: { streamerbot: bc.streamerbot?.port ?? null, speakerbot: bc.speakerbot?.port ?? null },
+      // D327 IN1: with the `integrations` flag on, the ports from Settings > Integrations.
+      botPorts: flags?.isOn(INTEGRATIONS_FLAG) && typeof opts.dataDir === 'string'
+        ? (({ bots }) => ({ streamerbot: bots.streamerbot.port, speakerbot: bots.speakerbot.port }))(integrationsInEffect(opts.dataDir, bc, true))
+        : { streamerbot: bc.streamerbot?.port ?? null, speakerbot: bc.speakerbot?.port ?? null },
       ciPass: () => lastCiPass(REPO_ROOT), clipTools: () => clipTools({ clipRoot }), planTargets: planTargets(opts.livePlanFile),
       ...(opts.readinessDeps ?? {}),
     });
