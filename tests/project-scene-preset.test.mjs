@@ -54,12 +54,43 @@ test('layers are back to front, H only, geometry in pixels of the H canvas', () 
   const r = loadScenePreset(base(), preset, { profile });
   const sc = r.project.scenes.at(-1);
   assert.equal(sc.layers.length, 14);
-  assert.equal(sc.layers[0].name, 'Background');
+  assert.equal(sc.layers[0].name, 'Game backdrop (blurred)');
   assert.equal(sc.layers[12].name, 'Atmos front');
   const game = sc.layers[1].placements.h;
   assert.equal(game.x, Math.round(0.24373 * 1920 * 100) / 100);
   assert.ok(sc.layers.every((l) => Object.keys(l.placements).join() === 'h'));
   assert.equal(sc.layers[12].placements.h.visible, false);
+});
+
+test('D331: the bottom layer is a blurred duplicate of the game over the full canvas, no flag, no browser background', () => {
+  const spec = preset.params.layers.find((l) => l.key === 'game-backdrop');
+  assert.equal(spec.z, Math.min(...preset.params.layers.map((l) => l.z)));
+  assert.equal(spec.flag, undefined);
+  assert.equal(spec.effectsFlag, undefined);
+  assert.equal(spec.crop, undefined, '16:9 source on a 16:9 canvas: no crop');
+  assert.ok(!preset.params.layers.some((l) => l.key === 'background'));
+  // flag off (default) and on: the backdrop is the same, shown, blurred, under every layer
+  for (const flags of [{}, { 'layer-effects': true }]) {
+    const r = loadScenePreset(base(), preset, { profile, roles: { 'game-capture': 'dev-cap', facecam: 'dev-cam' }, flags });
+    assert.equal(validateProject(r.project).ok, true);
+    const sc = r.project.scenes.at(-1);
+    const bd = sc.layers[0];
+    assert.equal(bd.id, r.layerIds['game-backdrop']);
+    assert.equal(bd.type, 'duplicate');
+    assert.deepEqual(bd.source, { layer: r.layerIds.game });
+    assert.deepEqual(bd.effects, [{ type: 'blur', strength: 71 }]);
+    assert.deepEqual(bd.placements.h, { visible: true, x: 0, y: 0, width: 1920, height: 1080 });
+    assert.deepEqual(bd.origin, { importer: 'preset', id: 'scene-default-h/game-backdrop' });
+    assert.ok(!sc.layers.some((l) => l.origin.id === 'scene-default-h/background'));
+    // the game's own rounded corners stay behind layer-effects
+    const game = sc.layers.find((l) => l.id === r.layerIds.game);
+    assert.deepEqual(game.effects, flags['layer-effects'] ? [{ type: 'rounded', radius: 64 }] : undefined);
+  }
+  // unbound game: the backdrop is a transparent placeholder
+  const u = loadScenePreset(base(), preset, { profile }).project.scenes.at(-1).layers[0];
+  assert.equal(u.type, 'color');
+  assert.deepEqual(u.source, { color: '#00000000' });
+  assert.equal(u.effects, undefined);
 });
 
 test('roles: unbound become transparent colour layers, bound become capture layers; no device created', () => {

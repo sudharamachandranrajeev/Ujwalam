@@ -90,7 +90,8 @@ import { createFlags } from '../flags/index.mjs';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../project/device-roles.mjs';
 import { hudCoverage, loadHudZones } from '../project/hud-zones.mjs';
 import { loadProject } from '../project/store.mjs';
-import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
+import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf, upgradePresets } from './alpha.mjs';
+import { upgradeScenes } from '../project/scene-upgrades.mjs';
 import { createRecordClips, isLive } from './record-clips.mjs';
 import { killChildTree } from '../common/kill-tree.mjs';
 import { createPostChain } from '../posting/auto-chain.mjs';
@@ -574,8 +575,14 @@ export async function alphaProject({ client, dataDir, args, hostCfg, embedded = 
       report = b.report;
       return b.project;
     },
+    // one-time scene upgrades of an existing project (D331: the blurred game backdrop replaces the browser background);
+    // applied at start, before the host load, so a running stream is never touched
+    upgrade: (project) => upgradeScenes(project, { presets: upgradePresets(path.join(REPO, 'registry', 'presets')) }),
   });
   console.log(`[studio] alpha project ${r.action}: ${path.basename(r.file)}${r.moved ? ' (old one moved to projects/_old/)' : ''}`);
+  for (const c of r.upgraded ?? []) console.log(`[studio] scene upgrade ${c.upgrade}: ${c.canvas.toUpperCase()} ${c.action} (background ${c.background})`);
+  if (r.backup) console.log(`[studio] project before the upgrade kept in projects/_old/${path.basename(r.backup)}`);
+  if (r.upgradeError) console.log(`[studio] WARNING: scene upgrade not applied (project loaded as it is): ${r.upgradeError}`);
   if (report) {
     for (const w of report.warnings) console.log(`[studio] WARNING: ${w}`);
     for (const [role, b] of Object.entries(report.roles)) console.log(`[studio] role ${role}: bound (${b.by}${b.preset ? ` ${b.preset}` : ''})`);

@@ -1,6 +1,6 @@
 {
   "id": "scene-default-h",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default H (current stream layout)",
@@ -14,12 +14,17 @@
     "sources": "Positions are fractions of the canvas. 'meld' = geometry copied from the user's Meld H scene (2026-10-30 run, April 2026 session file); 'spec' = measured from the reference screenshot (about 1 percent accuracy) because the Meld box was more than 2 percentage points away or no Meld layer matched. Crops are in source pixels and UNVERIFIED against Meld (centred).",
     "layers": [
       {
-        "key": "background",
+        "key": "game-backdrop",
         "z": 0,
-        "name": "Background",
-        "type": "browser",
-        "overlay": "atmos-frame/index.html",
-        "query": "brackets=0",
+        "name": "Game backdrop (blurred)",
+        "type": "duplicate",
+        "of": "game",
+        "effects": [
+          {
+            "type": "blur",
+            "strength": 71
+          }
+        ],
         "rect": {
           "x": 0,
           "y": 0,
@@ -27,7 +32,7 @@
           "h": 1
         },
         "geometry": "spec",
-        "note": "Theme backdrop; atmos-frame with the HUD brackets off (UNVERIFIED which legacy parts make up the stone backdrop)."
+        "note": "Blurred copy of the game capture filling the whole canvas behind every layer (user request 2026-11-10, D331; replaces the atmos-frame browser background). No crop: the 16:9 source fills the 16:9 canvas without stretching. Blur strength 71 = sigma 35.5 source px = 35.5 canvas px at scale 1, the same on-screen blur as the V backdrop (strength 40 = sigma 20 source px x 1.78 = 35.5 canvas px); proposed, UNVERIFIED on a real capture, tunable in the Look panel. Not behind a feature flag (user request). An unbound game capture leaves a transparent placeholder."
       },
       {
         "key": "game",
@@ -298,6 +303,9 @@
       "handles.kick",
       "links.discord",
       "assets.subscribe_cta"
+    ],
+    "changelog": [
+      "0.6.0 (2026-11-10, D331): the atmos-frame browser background is replaced by game-backdrop, a blurred duplicate of the game capture over the full canvas, behind every layer; no feature flag."
     ]
   },
   "themeOverrides": {},
