@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // D327 OS3: the main-window Outputs panel switches one output while live. With the REAL libobs host and a loopback plan
 // (one 640x360 rung feeding two RTMP sinks, "twitch" and "kick", each to its own local ffmpeg listener), the page's
-// toggle route acts on the click (D331), and stops only that sink: the other listener keeps receiving. Switching it back
+// toggle route acts on the click (D332), and stops only that sink: the other listener keeps receiving. Switching it back
 // on starts only that sink again, into a new listener. ffprobe checks every received file. Never a real platform.
 //   node --test app/host/tests/host-output-toggle.test.mjs
 // Needs the built host (node app/host/tools/build.mjs), the OBS runtime and ffmpeg/ffprobe on PATH. Headless.
@@ -78,7 +78,7 @@ function listener(sink, name) {
 const size = (f) => { try { return statSync(f).size; } catch { return 0; } };
 const sinkState = async (id) => (await req('GET', '/ui/api/outputs/panel')).body?.outputs?.find((o) => o.id === id)?.state;
 
-// A live switch acts on the click (D331): no phrase, no pending entry.
+// A live switch acts on the click (D332): no phrase, no pending entry.
 async function toggle(id, on) {
   const r = await req('POST', '/ui/api/outputs/toggle', { id, on });
   assert.equal(r.body.verdict, 'allow', JSON.stringify(r.body));

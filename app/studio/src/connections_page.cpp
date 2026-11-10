@@ -341,7 +341,7 @@ void Page::post(const QString &route, const QJsonObject &body, bool confirmFirst
 	});
 }
 
-// A held change (D331): the user's click on this page was the decision, so the pending id is sent at once. No phrase,
+// A held change (D332): the user's click on this page was the decision, so the pending id is sent at once. No phrase,
 // no second question. The server checks the id, its expiry and the live state again.
 void Page::confirm(const QJsonObject &pending)
 {

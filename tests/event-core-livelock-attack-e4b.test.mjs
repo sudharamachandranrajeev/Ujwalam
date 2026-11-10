@@ -32,7 +32,7 @@ function gateWith(persist, extra = {}, wrapperExtra = {}) {
 }
 const stalled = { start: () => new Promise(() => {}), done: () => {} };
 const slowOk = (ms) => ({ start: () => sleep(ms), done: () => {} });
-// D331: a write from the user's own surface (api, ui) runs on that request; a write from an automatic source waits for
+// D332: a write from the user's own surface (api, ui) runs on that request; a write from an automatic source waits for
 // one approval click (no phrase, no second step). confirmAll gives the click when one is asked for.
 const confirmAll = (h, r) => (r.verdict === 'confirm' ? h.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash) : r);
 // The two ways a write reaches dispatch, so every race below is tried on both: the user's own click (api, at once), and
@@ -146,7 +146,7 @@ test('A5b reporting: a skipped dispatch must not be reported as ok:true', async 
   assert.deepEqual(d, { ok: false, error: 'skipped', skipped: 'completed' });
 });
 
-// A6 (was the E4b two-step; D331 has one approval click): replay, rebinding, forgery, cross-source, tainted
+// A6 (was the E4b two-step; D332 has one approval click): replay, rebinding, forgery, cross-source, tainted
 // confirmer, epoch and expiry are all refused for a live on-air write an automatic rule asked for.
 test('A6 approval: replay, rebind, cross-source, epoch, expiry, forgery and a chat-tainted confirmer are all refused', () => {
   let t = 0;
@@ -195,7 +195,7 @@ test('A7 API: actions.request refuses source/provenance/actor/ruleId fields; act
   const m = METHODS['actions.request'];
   for (const f of ['source', 'provenance', 'actor', 'ruleId', 'tainted']) assert.match(validateParams(m.schema, { id: 'scene.switch', [f]: 'x' }) ?? '', /unknown field/, f);
   for (const f of ['source', 'provenance', 'ctx']) assert.match(validateParams(METHODS['actions.confirm'].schema, { confirmId: 'a'.repeat(32), phrase: 'yes', actionHash: 'b'.repeat(64), [f]: 'x' }) ?? '', /unknown field/, f);
-  // D331: the phrase is no longer needed (an old caller may still send one; it is ignored).
+  // D332: the phrase is no longer needed (an old caller may still send one; it is ignored).
   assert.equal(validateParams(METHODS['actions.confirm'].schema, { confirmId: 'a'.repeat(32), actionHash: 'b'.repeat(64) }), null);
   assert.deepEqual(METHODS['actions.confirm'].roles, ['api']);
   assert.deepEqual(METHODS['live.set'].roles, ['system']);
@@ -342,7 +342,7 @@ test('finding 2: panic engaged while the write waits refuses it even when panic 
     const api = gate.forSource('api');
     const c = go(gate, { id: 'scene.create', params: {} });
     api.panic({ reason: 'oops' });
-    // D331: clearing panic is one click from api (no confirmation round trip).
+    // D332: clearing panic is one click from api (no confirmation round trip).
     assert.deepEqual(api.request({ id: 'panic.clear', params: {} }), { verdict: 'allow', reason: 'panic-cleared' });
     assert.equal(gate.state().panic, false);
     assert.deepEqual(await c.dispatch, { ok: false, error: L.PANIC_REFUSED }, name);
@@ -463,7 +463,7 @@ test('finding 5: the dry-run row records the would-be result of the non-chat rul
   const chat = (id) => { recs.length = 0; gate.request({ id, params: {}, source: 'chat', actor: '0123456789abcdef0123456789abcdef' }); return recs.find((r) => r.dryRun); };
   const pick = (r) => [r.wouldDecision, r.wouldReason, r.wouldSteps, r.liveState];
   sys.setLiveState('live');
-  // D331: one approval click whatever the class or live state (no two-step any more).
+  // D332: one approval click whatever the class or live state (no two-step any more).
   assert.deepEqual(pick(chat('effect.fire')), ['confirm', 'confirmation-required', 1, 'live']);
   assert.deepEqual(pick(chat('marker.drop')), ['confirm', 'confirmation-required', 1, 'live']);
   assert.deepEqual(pick(chat('state.read')), ['allow', 'read', undefined, 'live']);

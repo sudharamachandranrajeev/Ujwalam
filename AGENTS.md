@@ -43,7 +43,7 @@ When the user types "wind up", in order:
 - Don't assume; ask one short question. Mark unverified items UNVERIFIED.
 - Before multi-step work: post a plan and wait for approval; summarise after each major step.
 - Before deleting/overwriting/renaming any existing file: show the change, wait for yes.
-- App actions act on the user's click: no typed phrase and no "are you sure" (D331). Chat and rules never write on their own; a rule, remote or system request waits for one click from the studio or the control page. Agents still need the user's words in chat before any studio write or going live. Reads are free.
+- App actions act on the user's click: no typed phrase and no "are you sure" (D332). Chat and rules never write on their own; a rule, remote or system request waits for one click from the studio or the control page. Agents still need the user's words in chat before any studio write or going live. Reads are free.
 - Presets are data, not code. Every new effect = core function + manifest + ≥1 preset + similar tags.
 - ★ presets must match legacy behaviour; compare against legacy/ before marking done.
 - Scene package import never modifies existing scenes, layers, devices or settings.

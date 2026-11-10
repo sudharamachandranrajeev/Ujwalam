@@ -99,7 +99,7 @@ describe('Bots API with fake bots', () => {
     assert.deepEqual(rows.map((b) => b.port), [8093, 8083], 'the fake reports the default ports; nothing is contacted');
   });
 
-  test('Start and Stop act on the click (D331): no pending entry, no phrase', async () => {
+  test('Start and Stop act on the click (D332): no pending entry, no phrase', async () => {
     const c = await boot();
     const j = (await post(c, '/ui/api/bots/start', { bot: 'streamerbot' })).json();
     assert.equal(j.verdict, 'allow');

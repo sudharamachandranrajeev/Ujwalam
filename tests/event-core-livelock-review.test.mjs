@@ -16,7 +16,7 @@ const doc = () => JSON.parse(readFileSync(path.join(repo, 'data', 'actions', 'ca
 const chatOn = (...ids) => { const d = doc(); for (const a of d.actions) if (ids.includes(a.id)) { a.chatAllowed = true; a.chatMode = 'dry-run'; } return d; };
 const PSEUDO = '0123456789abcdef0123456789abcdef';
 
-// The approval click for a rule / remote / system write (D331: one click, no phrase, no second step).
+// The approval click for a rule / remote / system write (D332: one click, no phrase, no second step).
 const finish = (gate, r, source = 'ui') => gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source });
 // An untainted automatic rule (a hotkey): its writes always wait for a ui/api click.
 const RULE = Object.freeze({ source: 'rule', provenance: { kind: 'hotkey' } });
@@ -88,13 +88,13 @@ test('review 7: 40 requests from hotkey rules, remote, system or api cannot evic
     for (let i = 0; i < 40; i++) gate.request({ id: 'scene.switch', params: { i }, actor: 'x', ...flood });
     const c = finish(gate, mine);
     assert.equal(c.verdict, 'allow', flood.source);
-    // An api flood runs its own writes (the user's surface, D331); nothing else ran besides the approved one.
+    // An api flood runs its own writes (the user's surface, D332); nothing else ran besides the approved one.
     assert.deepEqual(calls.filter((id) => id !== 'scene.switch'), ['layer.create']);
     assert.equal(calls.filter((id) => id === 'scene.switch').length, flood.source === 'api' ? 40 : 0);
   }
 });
 
-test('review 8 (D331): clearing panic while live is one ui/api click; chat, rule, remote and system cannot clear it', () => {
+test('review 8 (D332): clearing panic while live is one ui/api click; chat, rule, remote and system cannot clear it', () => {
   const { gate } = mk();
   gate.setLiveState('live', { source: 'system' });
   gate.panic({ source: 'ui' });
@@ -145,7 +145,7 @@ test('review 5: a broken wall clock, monotonic clock or random source refuses wi
     const gate = createActionGate({
       catalogue: chatOn('effect.fire'), executor: { execute: (a) => { calls.push(a.id); } }, onDecision: (r) => audit.push(r), ...extra,
     });
-    // D331: a ui write no longer draws a confirmId (no randomness), so the rule write is the one that needs the random
+    // D332: a ui write no longer draws a confirmId (no randomness), so the rule write is the one that needs the random
     // source; a ui write still hits the broken clocks through its audit row.
     for (const action of [
       { id: 'scene.switch', params: {}, ...RULE, actor: 'u1' },
@@ -241,7 +241,7 @@ test('review 18: forSource fixes the source; a request body cannot override it',
   assert.equal(rule.confirm(pend.confirm.confirmId, undefined, pend.confirm.actionHash).reason, 'source-not-permitted');
   assert.equal(finish(ui, pend).verdict, 'allow');
   assert.deepEqual(calls, ['scene.switch']);
-  // The ui transport's own write runs on its click (D331).
+  // The ui transport's own write runs on its click (D332).
   assert.equal(ui.request({ id: 'layer.create', params: {}, source: 'rule', actor: 'u1' }).reason, 'ui-direct');
   assert.deepEqual(calls, ['scene.switch', 'layer.create']);
 });

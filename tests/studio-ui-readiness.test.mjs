@@ -361,7 +361,7 @@ describe('helpers', () => {
     assert.equal(schemeOf('RTMPS://x'), 'rtmps');
     assert.equal(schemeOf('ingest.example/app'), null);
   });
-  test('summary names failures and the "Go live anyway" button (no phrase, D331); the override log holds ids only', async () => {
+  test('summary names failures and the "Go live anyway" button (no phrase, D332); the override log holds ids only', async () => {
     const r = await runReadiness(deps({ procs: ['meldstudio.exe'], tcp: false }));
     const s = readinessSummary(r);
     assert.match(s, /PROBLEM - Other streaming apps/);
@@ -456,7 +456,7 @@ const FAIL = mkResult([{ id: 'credentials', status: 'fail', message: 'Twitch: se
 const WARN = mkResult([{ id: 'speakerbot', status: 'warn', message: 'no answer' }, { id: 'disk', status: 'pass', message: 'ok' }]);
 
 describe('server: readiness route and go-live gate', () => {
-  test('flag off (the default): the route is 404 and Start stream acts on the click, no check (D331)', async () => {
+  test('flag off (the default): the route is 404 and Start stream acts on the click, no check (D332)', async () => {
     const defs = JSON.parse(readFileSync(path.join(REPO, 'data', 'flags.json'), 'utf8')).flags;
     assert.equal(defs.find((f) => f.id === 'readiness').default, false);
     const c = await bootS({ flagOn: false, result: FAIL });
@@ -479,7 +479,7 @@ describe('server: readiness route and go-live gate', () => {
     const c = await bootS({ result: FAIL });
     const r = (await c.post('/ui/api/host', { method: 'stream.start' })).json();
     assert.equal(r.verdict, 'readiness-failed');
-    assert.equal(r.pending.phrase, undefined, 'no phrase (D331)');
+    assert.equal(r.pending.phrase, undefined, 'no phrase (D332)');
     assert.equal(r.pending.readiness.ok, false);
     assert.match(r.pending.summary, /^Start the stream\.\n\nReady to go live\?/);
     assert.match(r.pending.summary, /PROBLEM - credentials/);
@@ -528,7 +528,7 @@ describe('server: End all streams', () => {
     { id: 'record', kind: 'record', platform: 'local', state: rec },
   ] });
 
-  test('while live: on the click (D331) stream.stop {} (all stream sinks), waits until stopped, recording untouched', async () => {
+  test('while live: on the click (D332) stream.stop {} (all stream sinks), waits until stopped, recording untouched', async () => {
     const c = await bootS({ flagOn: false, live: true, result: WARN, outputsSeq: [st('stopping'), st('stopping'), st('stopped')] });
     const ok = (await c.post('/ui/api/streams/end-all', {})).json();
     assert.equal(ok.verdict, 'allow');

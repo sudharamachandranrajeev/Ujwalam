@@ -21,7 +21,7 @@
 //
 // Live rule (caller supplies outputLive(id) -> 'live' | 'idle' and throws when it cannot tell): a write to an output
 // that is live is refused ('output-live'); an unreadable state refuses too ('live-unknown'). Checked again right before
-// every credential write. The user's click in the studio is the decision (studio-ui server.mjs, D331).
+// every credential write. The user's click in the studio is the decision (studio-ui server.mjs, D332).
 //
 // Test seams: opts.storeFor(target) (credential store double), opts.fetchImpl, opts.endpoints, opts.browserOpen,
 // opts.now, opts.sleep. No test touches Google, Twitch or the real Credential Manager.

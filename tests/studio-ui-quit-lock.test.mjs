@@ -4,7 +4,7 @@
 //   - quit while a stream or recording runs, or while the host cannot be read: refused (fail closed);
 //   - a start already under way when the quit comes: the quit is refused;
 //   - a start that comes after the grant: refused, 409 "Ujwalam is closing", and the host never gets it (a start
-//     acts on the click, D331, so no start can be held open across the grant);
+//     acts on the click, D332, so no start can be held open across the grant);
 //   - a released lock lets starts through again; the go-live authority is revoked on a grant;
 //   - round 3: a granted lock never expires (only its token's cancel releases it); the studio exits only when
 //     quit/commit confirms the token still holds the granted lock; a slow or failing revoke cannot end in a grant.
@@ -67,7 +67,7 @@ async function boot(ctl = {}) {
   const csrf = (await raw(port, { url: '/ui/api/session', headers: { cookie } })).body.csrf;
   const post = (route, body = {}) => raw(port, { method: 'POST', url: route, body: JSON.stringify(body),
     headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
-  /** A start click: it acts at once (D331); the promise is not awaited by the caller when racing. */
+  /** A start click: it acts at once (D332); the promise is not awaited by the caller when racing. */
   const ask = (method) => post('/ui/api/host', { method, params: {} });
   return { post, ask, calls, revokes, clock, ctl };
 }

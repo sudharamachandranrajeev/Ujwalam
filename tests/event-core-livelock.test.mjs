@@ -43,7 +43,7 @@ function mk(extra = {}) {
   });
   return { gate, calls, audit, advance: (ms) => { t += ms; }, clock: () => t };
 }
-// D331: a ui/api write runs at once (the click is the decision); the confirmation machinery is exercised with an
+// D332: a ui/api write runs at once (the click is the decision); the confirmation machinery is exercised with an
 // untainted automatic rule (a schedule), which always needs one approval click from ui or api.
 const RULE = Object.freeze({ source: 'rule', provenance: { kind: 'schedule' } });
 const req = (gate, over = {}) => gate.request({ id: 'scene.switch', params: { scene: 'Main' }, actor: 'u1', ...RULE, ...over });
@@ -149,7 +149,7 @@ test('decision: malformed requests are refused, never thrown', () => {
   assert.equal(req(gate, { params: new Date() }).reason, 'bad-params');
 });
 
-test('decision (D331): a rule / remote / system write asks for ONE approval with no phrase and no step, offline, live and unknown', () => {
+test('decision (D332): a rule / remote / system write asks for ONE approval with no phrase and no step, offline, live and unknown', () => {
   const { gate, calls } = mk();
   assert.equal(gate.state().liveState, 'unknown');
   const shape = (r) => [r.verdict, r.reason, r.confirm.phrase, r.confirm.step, r.confirm.of];
@@ -167,7 +167,7 @@ test('decision (D331): a rule / remote / system write asks for ONE approval with
   assert.equal(calls.length, 0, 'nothing runs without the approval click');
 });
 
-test('decision (D331): an untainted ui or api write runs at once (reason ui-direct), once, offline, live and unknown; nothing pends', () => {
+test('decision (D332): an untainted ui or api write runs at once (reason ui-direct), once, offline, live and unknown; nothing pends', () => {
   for (const state of [null, 'offline', 'live']) {
     for (const source of ['ui', 'api']) {
       for (const id of ['scene.create', 'scene.switch', 'stream.start', 'stream.stop']) {
@@ -189,7 +189,7 @@ test('decision (D331): an untainted ui or api write runs at once (reason ui-dire
   assert.equal(calls.length, 0);
 });
 
-test('confirm (D331): the phrase argument is ignored. Any phrase, none, or a wrong type confirms when id, hash and source are right', () => {
+test('confirm (D332): the phrase argument is ignored. Any phrase, none, or a wrong type confirms when id, hash and source are right', () => {
   const { gate, calls } = mk(); // unknown counts as live: no special phrase any more
   for (const phrase of [undefined, '', 'yes', 'nope', 42, null, { x: 1 }]) {
     const r = req(gate, { id: 'scene.create' });
@@ -312,7 +312,7 @@ test('confirm: expires after the TTL (injected clock)', () => {
   assert.equal(calls.length, 1);
 });
 
-test('confirm (D331): while live an on-air write needs one approval click, not two; a wrong hash is still refused', () => {
+test('confirm (D332): while live an on-air write needs one approval click, not two; a wrong hash is still refused', () => {
   const { gate, calls } = mk();
   gate.setLiveState('live', { source: 'system' });
   let r = req(gate); // scene.switch: on-air-write
@@ -406,7 +406,7 @@ test('panic: takes effect at once, refuses chat-tainted and rule requests, clear
     assert.deepEqual([r.verdict, r.reason], ['refuse', 'panic']);
     assert.equal(g.request({ id: 'effect.fire', params: {}, actor: 'a', ...over }).reason, 'panic');
   }
-  // ui and api carry on: reads allow, and their own writes run at once (the user's click, D331).
+  // ui and api carry on: reads allow, and their own writes run at once (the user's click, D332).
   assert.equal(g.request({ id: 'state.read', params: {}, source: 'ui', actor: 'u' }).verdict, 'allow');
   assert.deepEqual(((r) => [r.verdict, r.reason])(g.request({ id: 'scene.switch', params: {}, source: 'api', actor: 'u' })), ['allow', 'ui-direct']);
   // A system write still only pends: it needs a ui/api click.
@@ -427,7 +427,7 @@ test('panic: only ui, api or system may trigger it; chat, rule and remote may no
   assert.equal(gate.state().panic, true);
 });
 
-test('panic (D331): clearing is one click from untainted ui or api; chat, rule, remote, system and tainted ui/api cannot clear; the event is emitted', async () => {
+test('panic (D332): clearing is one click from untainted ui or api; chat, rule, remote, system and tainted ui/api cannot clear; the event is emitted', async () => {
   const core = createEventCore({ key: Buffer.alloc(32, 7), moderation: false, actions: { catalogue: seeded() } });
   const seen = [];
   core.bus.subscribe({ name: 'p', kinds: ['system.panic'], handler: (e) => seen.push(e.reason) });

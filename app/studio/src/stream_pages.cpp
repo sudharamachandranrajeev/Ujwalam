@@ -529,7 +529,7 @@ void StreamPage::deleteOutput(int index)
 	QJsonArray outs = setup_.value(QStringLiteral("outputs")).toArray();
 	if (index < 0 || index >= outs.size())
 		return;
-	// The click acts (D331); the list change is part of the Settings draft until Save. The key in Credential Manager is
+	// The click acts (D332); the list change is part of the Settings draft until Save. The key in Credential Manager is
 	// left alone.
 	outs.removeAt(index);
 	setup_ = current();

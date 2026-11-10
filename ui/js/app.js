@@ -90,7 +90,7 @@
     else body.text = $('layer-value').value;
     structureEdit(body);
   }
-  // D330: removing a layer needs no flag (the server refuses it while live). D331: the click acts, no "are you sure".
+  // D330: removing a layer needs no flag (the server refuses it while live). D332: the click acts, no "are you sure".
   function removeLayerClick() {
     var l = selectedLayer();
     if (!l) { setText($('struct-note'), 'Select a layer first (click its name).'); return; }
@@ -401,7 +401,7 @@
     rb.title = ready.record ? '' : 'Disabled until the record output exists';
   }
 
-  // ---- results and the one-click approval (D331: no typed phrase; the server keeps the ids and hashes) ----
+  // ---- results and the one-click approval (D332: no typed phrase; the server keeps the ids and hashes) ----
   // ---- Ready to go live? (D299, flag readiness): one row per check; reads only ----
   var READY_PILL = { pass: ['ok', 'ok'], warn: ['warn', 'warn'], fail: ['blocked', 'fail'] };
   function renderReady(ul, r) {
@@ -495,7 +495,7 @@
     guard(Api.projectLoad(skip).then(function (r) { $('import').hidden = true; showResult(r); }));
   }
 
-  // ---- feature flags: ON and OFF apply on the click (D331) ----
+  // ---- feature flags: ON and OFF apply on the click (D332) ----
   function renderFlags(list) {
     var ul = $('flag-list'); clear(ul);
     var postingOn = (list || []).some(function (f) { return f.id === 'posting' && f.on; });
@@ -529,7 +529,7 @@
   }
   function loadFlags() { return Api.flags().then(function (r) { renderFlags(r.flags); }); }
 
-  // ---- Bots card (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot; Start and Stop act on the click (D331) ----
+  // ---- Bots card (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot; Start and Stop act on the click (D332) ----
   function yesNo(v) { return v ? 'yes' : 'no'; }
   function renderBots(rows) {
     var ul = $('bot-list'); clear(ul);

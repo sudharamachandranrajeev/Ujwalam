@@ -66,7 +66,7 @@ describe('feature flags API', () => {
     assert.ok(flags.length >= 1);
     assert.ok(flags.every((f) => f.on === (f.id === 'preview-edit') && typeof f.id === 'string' && typeof f.description === 'string'));
   });
-  test('ON acts on the click (D331): no phrase, nothing pending; it turns on and persists', async () => {
+  test('ON acts on the click (D332): no phrase, nothing pending; it turns on and persists', async () => {
     const id = (await get(c.port, c.a, '/ui/api/flags')).json().flags[0].id;
     assert.equal(existsSync(path.join(c.dataDir, 'flags.local.json')), false, 'nothing written before the click');
     const ok = await post(c.port, c.a, '/ui/api/flags/set', { id, on: true });
@@ -101,7 +101,7 @@ describe('feature flags while live', () => {
   before(async () => { c = await boot({ live: true }); await new Promise((r) => setTimeout(r, 200)); });
   after(() => c.srv.close());
 
-  test('ON while live acts on the click (no "yes, on air", D331); OFF while live is instant too', async () => {
+  test('ON while live acts on the click (no "yes, on air", D332); OFF while live is instant too', async () => {
     const id = (await get(c.port, c.a, '/ui/api/flags')).json().flags[0].id;
     const j = (await post(c.port, c.a, '/ui/api/flags/set', { id, on: true })).json();
     assert.equal(j.verdict, 'allow');
@@ -111,7 +111,7 @@ describe('feature flags while live', () => {
   });
 });
 
-describe('going live between clicks (D151, D331)', () => {
+describe('going live between clicks (D151, D332)', () => {
   let c; const state = { live: false };
   before(async () => { c = await boot({ state }); await new Promise((r) => setTimeout(r, 200)); });
   after(() => c.srv.close());

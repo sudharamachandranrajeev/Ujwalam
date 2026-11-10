@@ -334,7 +334,7 @@ test('live.set: system role only; it changes the gate state the approval is boun
     // a write the system role asks for waits for one approval, bound to the live state at the request
     const req = await rpc(r, r.tokens.system, 'actions.request', { id: 'scene.create', params: { name: 'invented' } });
     assert.deepEqual([req.result.verdict, req.result.confirm.liveStateAtRequest, req.result.confirm.phrase], ['confirm', 'live', undefined]);
-    // the api client's own write runs at once while live too (D331)
+    // the api client's own write runs at once while live too (D332)
     const own = await rpc(r, r.tokens.api, 'actions.request', { id: 'scene.create', params: { name: 'invented' } });
     assert.deepEqual([own.result.verdict, own.result.reason], ['allow', 'ui-direct']);
   } finally { await r.close(); }
@@ -347,7 +347,7 @@ test('confirm flow end to end: system request -> api approval -> executor once -
     const req = await rpc(r, r.tokens.system, 'actions.request', { id: 'scene.create', params: { name: 'invented scene' } });
     assert.equal(req.result.verdict, 'confirm');
     const c = req.result.confirm;
-    assert.equal(c.phrase, undefined); // D331: no typed phrase
+    assert.equal(c.phrase, undefined); // D332: no typed phrase
     assert.equal(r.calls.length, 0);
     // wrong role
     assert.equal((await rpc(r, r.tokens.system, 'actions.confirm', { confirmId: c.confirmId, actionHash: c.actionHash })).status, 403);
@@ -401,7 +401,7 @@ test('panic over the API: engages from api and system, clears pending confirmati
     assert.equal(r.calls.length, 0);
     // the system role may also panic; second call reports already-panic
     assert.equal((await rpc(r, r.tokens.system, 'actions.panic', {})).result.reason, 'already-panic');
-    // clearing is a catalogue action: the api client's click clears it directly (D331, no confirmation round trip)
+    // clearing is a catalogue action: the api client's click clears it directly (D332, no confirmation round trip)
     const clr = await rpc(r, r.tokens.api, 'actions.request', { id: 'panic.clear' });
     assert.deepEqual(clr.result, { verdict: 'allow', reason: 'panic-cleared' });
     assert.equal(r.core.actions.state().panic, false);
@@ -460,7 +460,7 @@ test('audit methods: verify, paged export (audit rows only), purge routed throug
     assert.equal(gate.forSource('chat').request({ id: 'chat.raw.purge', params: { all: true } }).reason, 'chat-forbidden');
     assert.equal(gate.request({ id: 'chat.raw.purge', source: 'rule', provenance: { kind: 'chat', eventId: 'e000000000001-00000000-aaaaaaaa' } }).reason, 'chat-forbidden');
     assert.equal(gate.catalogue.get('chat.raw.purge').class, 'write');
-    // api: the purge is the api client's own write, so it runs on that request (D331), through the gate
+    // api: the purge is the api client's own write, so it runs on that request (D332), through the gate
     await r.core.audit.flush();
     const rawBefore = (await r.core.audit.purge({ olderThanDays: 99999 })).purged;
     assert.equal(rawBefore, 0);

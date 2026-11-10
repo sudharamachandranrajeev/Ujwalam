@@ -150,7 +150,7 @@ function mkCore(over = {}) {
   });
   return { core, calls, lines, dataDir };
 }
-// D331: the two ways a write reaches dispatch. 'direct': the user's own ui click runs it on the request. 'approved': an
+// D332: the two ways a write reaches dispatch. 'direct': the user's own ui click runs it on the request. 'approved': an
 // untainted automatic rule (a hotkey) asks, and one ui click approves it (no phrase, no second step).
 const confirmed = (core, id, path = 'direct') => {
   if (path === 'direct') {
@@ -260,7 +260,7 @@ test('core: audit down (closed) -> live on-air write refused with a log line; un
   // live state never set: 'unknown', which counts as live
   const api = core.actions.forSource('api');
   const r = api.request({ id: 'scene.switch', params: {}, idempotencyKey: 'client-key-001' });
-  assert.deepEqual([r.verdict, r.reason], ['allow', 'ui-direct']); // the user's click (D331)
+  assert.deepEqual([r.verdict, r.reason], ['allow', 'ui-direct']); // the user's click (D332)
   assert.deepEqual(await r.dispatch, { ok: false, error: AUDIT_UNAVAILABLE });
   assert.deepEqual(calls, []);
   assert.equal(lines.length, 1);
@@ -301,7 +301,7 @@ test('api: a refused live on-air write and live write are visible over SSE (api 
   try {
     assert.equal((await rpc(r, svc.tokens.system, 'live.set', { state: 'live' })).result.ok, true);
     svc.core.audit.recordActionStart = never; // stalled writer
-    // D331: the api client's own write runs on its request; the stalled audit refuses it before it executes
+    // D332: the api client's own write runs on its request; the stalled audit refuses it before it executes
     const req = await rpc(r, svc.tokens.api, 'actions.request', { id: 'scene.switch', params: { scene: 'Main' } });
     assert.deepEqual(req.result, { verdict: 'allow', reason: 'ui-direct', dispatch: { ok: false, error: AUDIT_UNAVAILABLE } });
     const isRefusal = (f) => f.json?.kind === 'system.refused' && f.json.action === 'scene.switch' && f.json.reason === AUDIT_UNAVAILABLE;

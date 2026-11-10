@@ -118,13 +118,13 @@ describe('Outputs panel (OS3)', () => {
     assert.equal(t.json().live, false);
     assert.equal(c.calls.filter(([m]) => m.startsWith('stream.')).length, 0, 'no host call offline');
     const ok = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
-    assert.equal(ok.verdict, 'allow', JSON.stringify(ok)); // the click is the decision (D331)
+    assert.equal(ok.verdict, 'allow', JSON.stringify(ok)); // the click is the decision (D332)
     assert.deepEqual(c.calls.find(([m]) => m === 'stream.start')[1], { sinks: ['youtube-h', 'youtube-v', 'twitch'] });
     const after = (await get(c, '/ui/api/outputs/panel')).json();
     assert.deepEqual(after.outputs.map((o) => [o.id, o.state]), [['youtube-h', 'live'], ['youtube-v', 'live'], ['twitch', 'live'], ['kick', 'idle']]);
   });
 
-  test('live: one output acts on the click (D331, no "yes, on air") and only that sink starts or stops', async () => {
+  test('live: one output acts on the click (D332, no "yes, on air") and only that sink starts or stops', async () => {
     const c = await boot();
     await c.fake.call('stream.start', {});
     await settle();
@@ -152,7 +152,7 @@ describe('Outputs panel (OS3)', () => {
     const r = await post(c, '/ui/api/outputs/toggle', { id: 'twitch-2', on: true });
     assert.equal(r.status, 409);
     assert.equal(r.json().error, 'not-in-this-stream');
-    // D331: no held confirmation can outlive the stream; a click after it ended is an offline switch (saved only).
+    // D332: no held confirmation can outlive the stream; a click after it ended is an offline switch (saved only).
     await c.fake.call('stream.stop', {});
     await settle();
     const late = (await post(c, '/ui/api/outputs/toggle', { id: 'kick', on: true })).json();
@@ -161,7 +161,7 @@ describe('Outputs panel (OS3)', () => {
     assert.ok(!c.calls.some(([m]) => m === 'stream.start'), 'never a go-live from an output switch');
   });
 
-  // Codex review P1 (2026-11-10): a switch-on clicked live must not outlive a newer End all / Stop. D331: no pending
+  // Codex review P1 (2026-11-10): a switch-on clicked live must not outlive a newer End all / Stop. D332: no pending
   // entry waits any more; the start's own pause (startPauseMs) and the host call are the windows a Stop can land in.
   const states = async (c) => Object.fromEntries((await c.fake.call('outputs.status', {})).sinks.map((x) => [x.id, x.state]));
   async function kickOffLive(c) {

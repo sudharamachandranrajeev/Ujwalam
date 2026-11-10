@@ -29,7 +29,7 @@
     importMeld: function () { return request('POST', '/ui/api/project/import-meld', {}); },
     projectLoad: function (skipUnavailable) { return request('POST', '/ui/api/project/load', skipUnavailable ? { skipUnavailable: true } : {}); },
     coreRequest: function (id, params) { return request('POST', '/ui/api/core/request', { id: id, params: params || {} }); },
-    confirm: function (pendingId) { return request('POST', '/ui/api/confirm', { pendingId: pendingId }); }, // one click (D331)
+    confirm: function (pendingId) { return request('POST', '/ui/api/confirm', { pendingId: pendingId }); }, // one click (D332)
     cancel: function (pendingId) { return request('POST', '/ui/api/cancel', { pendingId: pendingId }); },
     readiness: function () { return request('GET', '/ui/api/readiness'); },
     endAll: function () { return request('POST', '/ui/api/streams/end-all', {}); },

@@ -1,6 +1,6 @@
 {
   "id": "scene-default-v",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "function": "scene-layout-preset",
   "functionVersion": "^0.1.0",
   "name": "Default V (current vertical stream layout)",
@@ -14,28 +14,11 @@
     "sources": "Positions are fractions of the canvas. 'meld' = geometry copied from the user's Meld vertical scene that is linked to the current scene (session file of 2026-10-26). 'meld-clamped' = the Meld box runs past the canvas edge and is clamped to it (every difference is under 2 percentage points except where a layer note says otherwise). 'spec' = mirrored from Default H because the Meld vertical scene has no matching layer. Crops are in source pixels and UNVERIFIED against Meld (centred).",
     "layers": [
       {
-        "key": "background",
-        "z": 0,
-        "name": "Background",
-        "type": "browser",
-        "overlay": "atmos-frame/index.html",
-        "query": "brackets=0&canvas=vertical",
-        "rect": {
-          "x": 0,
-          "y": 0,
-          "w": 1,
-          "h": 1
-        },
-        "geometry": "spec",
-        "note": "Theme backdrop, mirrored from Default H. Meld draws a blurred, enlarged duplicate of the game capture here; that is the game-backdrop layer above (feature flag layer-effects). The atmos-frame canvas option is UNVERIFIED."
-      },
-      {
         "key": "game-backdrop",
-        "z": 0.5,
+        "z": 0,
         "name": "Game backdrop (blurred)",
         "type": "duplicate",
         "of": "game",
-        "flag": "layer-effects",
         "effects": [
           {
             "type": "blur",
@@ -53,7 +36,7 @@
           "right": 656
         },
         "geometry": "spec",
-        "note": "Blurred, enlarged copy of the game capture filling the canvas behind the framed game (Meld V layout; user reference 2026-11-07). Crop: centre 608x1080 of the 1920x1080 source covers 9:16 without stretching. Blur strength 40 = sigma 20 source px (about 36 canvas px at this scale); proposed, UNVERIFIED. Shown only with feature flag layer-effects."
+        "note": "Blurred, enlarged copy of the game capture filling the whole canvas behind every layer (Meld V layout; user reference 2026-11-07; bottom layer since 0.5.0, user request 2026-11-10, D331, replacing the atmos-frame browser background). Crop: centre 608x1080 of the 1920x1080 source covers 9:16 without stretching. Blur strength 40 = sigma 20 source px (about 36 canvas px at this scale); proposed, UNVERIFIED on a real capture, tunable in the Look panel. Not behind a feature flag (user request). An unbound game capture leaves a transparent placeholder."
       },
       {
         "key": "game",
@@ -384,6 +367,9 @@
       "assets.support_cta",
       "assets.confetti_cta",
       "brand.character"
+    ],
+    "changelog": [
+      "0.5.0 (2026-11-10, D331): the atmos-frame browser background is removed; game-backdrop (blurred duplicate of the game capture, full canvas) is the bottom layer and no longer behind feature flag layer-effects."
     ]
   },
   "themeOverrides": {},

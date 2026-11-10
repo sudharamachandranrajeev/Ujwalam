@@ -8,7 +8,7 @@
 //   POST /ui/api/stream/setup  {setup}    saved (used at the next live start) | 422 { problems } (platform limit shown)
 //   POST /ui/api/stream/check  {setup}    { problems } (nothing saved)
 //   GET  /ui/api/outputs/panel            { outputs: [{ id, name, platform, canvas, enabled, summary, state }], live, virtualCamera }
-//   POST /ui/api/outputs/toggle {id, on}  offline: saves enabled (what Start stream starts); live: on the click (D331)
+//   POST /ui/api/outputs/toggle {id, on}  offline: saves enabled (what Start stream starts); live: on the click (D332)
 //                                         stream.start/stop { sinks: [id] } for that output only
 //   GET  /ui/api/integrations             { value, bots: { <bot>: { address, port } }, remote: { running, address, port, lan } }
 //   POST /ui/api/integrations  {value}    saved (used at the next start) | 422 { problems }
@@ -116,7 +116,7 @@ export function createSettingsRoutes(opts) {
         if (!w.ok) return json(res, 422, { error: 'refused', problems: w.problems }), true;
         return json(res, 200, { ok: true, id: o.id, enabled: body.on, live: false }), true;
       }
-      // Live: only an output the host has (it was in the plan at go-live) can be switched; the click is the decision (D331).
+      // Live: only an output the host has (it was in the plan at go-live) can be switched; the click is the decision (D332).
       const states = await sinkStates();
       if (!states || !states.has(o.id)) return json(res, 409, { error: 'not-in-this-stream', detail: `${label(o)} was not part of this stream. It can be added at the next start.` }), true;
       const summary = body.on

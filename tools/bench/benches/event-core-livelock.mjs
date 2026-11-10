@@ -2,9 +2,9 @@
 // Bench: live-lock gate decision cost (P3 E4). Per-decision p50/p95 of the synchronous request() call.
 // SYNTHETIC input: made-up action params, actors and event ids, no real chat. The mix: read allow, chat refuse
 // (deny category), chat refuse (not allowed; the committed catalogue is chatAllowed false everywhere since the
-// 2026-10-28 review), ui write -> run at once (D331, the user's own click), and untainted rule -> confirm
+// 2026-10-28 review), ui write -> run at once (D332, the user's own click), and untainted rule -> confirm
 // (SHA-256 + random id). Each source has its own pending quota (16); once full, new requests are refused, so most
-// rule requests after the first 16 take the quota refusal. Confirm() (one approval click, D331) is timed
+// rule requests after the first 16 take the quota refusal. Confirm() (one approval click, D332) is timed
 // separately in confirm_p50_ms. Part of PB-12.
 import { createActionGate, loadCatalogue } from '../../../services/event-core/livelock/index.mjs';
 

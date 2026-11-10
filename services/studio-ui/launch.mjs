@@ -36,7 +36,7 @@
 // --hotkey-marker COMBO|off replace a default combo (e.g. when another program already holds Ctrl+Alt+M).
 // --live (alpha only): configure the real-output plan data/outputs/alpha-live.json and start the host with
 // --allow-live. Without it no real target is configured (an --outputs plan with real targets is refused). Nothing
-// starts streaming at launch: the user's Start stream click stays the start gate (D331). At start the launcher
+// starts streaming at launch: the user's Start stream click stays the start gate (D332). At start the launcher
 // prints per sink keyPresent / urlPresent from outputs.status (never a key or URL), the hotkeys and the replay state.
 // Private test stream options (all need --alpha --live):
 //   --sinks youtube-h,youtube-v,twitch[,kick]  which REAL sinks of the plan are configured (default: all of them);
@@ -90,7 +90,8 @@ import { createFlags } from '../flags/index.mjs';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../project/device-roles.mjs';
 import { hudCoverage, loadHudZones } from '../project/hud-zones.mjs';
 import { loadProject } from '../project/store.mjs';
-import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf } from './alpha.mjs';
+import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf, upgradePresets } from './alpha.mjs';
+import { upgradeScenes } from '../project/scene-upgrades.mjs';
 import { createRecordClips, isLive } from './record-clips.mjs';
 import { killChildTree } from '../common/kill-tree.mjs';
 import { createPostChain } from '../posting/auto-chain.mjs';
@@ -574,8 +575,14 @@ export async function alphaProject({ client, dataDir, args, hostCfg, embedded = 
       report = b.report;
       return b.project;
     },
+    // one-time scene upgrades of an existing project (D331: the blurred game backdrop replaces the browser background);
+    // applied at start, before the host load, so a running stream is never touched
+    upgrade: (project) => upgradeScenes(project, { presets: upgradePresets(path.join(REPO, 'registry', 'presets')) }),
   });
   console.log(`[studio] alpha project ${r.action}: ${path.basename(r.file)}${r.moved ? ' (old one moved to projects/_old/)' : ''}`);
+  for (const c of r.upgraded ?? []) console.log(`[studio] scene upgrade ${c.upgrade}: ${c.canvas.toUpperCase()} ${c.action} (background ${c.background})`);
+  if (r.backup) console.log(`[studio] project before the upgrade kept in projects/_old/${path.basename(r.backup)}`);
+  if (r.upgradeError) console.log(`[studio] WARNING: scene upgrade not applied (project loaded as it is): ${r.upgradeError}`);
   if (report) {
     for (const w of report.warnings) console.log(`[studio] WARNING: ${w}`);
     for (const [role, b] of Object.entries(report.roles)) console.log(`[studio] role ${role}: bound (${b.by}${b.preset ? ` ${b.preset}` : ''})`);
@@ -1168,7 +1175,7 @@ export async function main(argv = process.argv.slice(2)) {
         windowsHide: false // GUI window: the Qt studio window (default, D277); a GUI exe, no console
       });
       shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
-      // One close (D280): the window closed by the user (exit 0; while live too, D331) stops
+      // One close (D280): the window closed by the user (exit 0; while live too, D332) stops
       // everything. Any other exit is a crash: the studio keeps running (a stream is never cut by a UI crash) and the
       // window is opened again (at most SHELL_RELAUNCH_MAX times in SHELL_RELAUNCH_WINDOW_MS), with a new one-time key
       // the UI server gets on its stdin pipe. Without a console (ujwalam-start.exe) the window is the only way to stop.

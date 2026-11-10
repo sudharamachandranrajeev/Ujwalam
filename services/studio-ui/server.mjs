@@ -14,7 +14,7 @@
 //   - Static files: GET only, extension allowlist, no dotfiles, no traversal (checked on the decoded path and again
 //     on the real path), nothing outside ui/.
 //
-// Confirmation channel (ADR 2026-10-29-confirmation-channel.md, D7; D331 2026-11-10): this server is the human-facing
+// Confirmation channel (ADR 2026-10-29-confirmation-channel.md, D7; D332 2026-11-10): this server is the human-facing
 // surface. A request from the page or the studio window is the user's own click and acts at once: no typed phrase, no
 // "are you sure", offline or live. Two cases still keep a pending record on the server and wait for one more click
 // (POST /ui/api/confirm { pendingId }, no text): a go-live whose readiness check failed ("Go live anyway", logged as an
@@ -101,7 +101,7 @@ const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) 
 const pickKeys = (o, ks) => Object.fromEntries(ks.filter((k) => Object.hasOwn(o, k) && Number.isFinite(o[k])).map((k) => [k, o[k]]));
 
 // Calls the page may make on the host. Everything else the page sends is refused. Schema: see validate(). confirm /
-// liveConfirm mark stream, recording and live layout changes: they run at once on the user's click (D331); the marks
+// liveConfirm mark stream, recording and live layout changes: they run at once on the user's click (D332); the marks
 // keep their summary text and the stream.start readiness check.
 const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 const MIXER_ID = /^(?:[A-Za-z0-9_.:-]{1,64}\/[A-Za-z0-9_.:-]{1,64}|audio:[A-Za-z0-9_.:-]{1,64})$/; // "<scene>/<layer>" or "audio:<id>"
@@ -123,7 +123,7 @@ export const HOST_CALLS = Object.freeze({
   'scenes.activate': { schema: { scene: SCENE, canvas: OPT_CANVAS } },
   'layers.list': { schema: { scene: SCENE, canvas: OPT_CANVAS } },
   'layers.setVisible': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, visible: { type: 'bool', required: true } } },
-  // liveConfirm: a layout change while live (live-lock, D233); since D331 it runs at once on the user's click too.
+  // liveConfirm: a layout change while live (live-lock, D233); since D332 it runs at once on the user's click too.
   // Scene switches, visibility and the mixer stay instant: they are the controls a live show needs.
   'layers.move': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, index: { type: 'int', min: 0, max: 255, required: true } }, liveConfirm: true, summary: 'Change the layer order while live' },
   'layers.setPlacement': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, placement: PLACEMENT }, liveConfirm: true, summary: 'Move or resize a layer while live' },
@@ -144,7 +144,7 @@ export const HOST_CALLS = Object.freeze({
   // CUE (headphone monitoring, Meld's per-channel button): not a stream change, applied at once.
   'mixer.setCue': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, cue: { type: 'bool', required: true } } },
   // Track routing (D273, flag mixer-routing): which project audio tracks a source goes to. Every output encodes track 1,
-  // so this changes what the stream and recording hear. Applied on the click, offline or live (D331). Saved to the project.
+  // so this changes what the stream and recording hear. Applied on the click, offline or live (D332). Saved to the project.
   'mixer.setTracks': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, tracks: { type: 'ids', max: 6, required: true } }, liveConfirm: true, flag: 'mixer-routing', summary: 'Change which tracks a sound goes to while live' },
   'stream.start': { schema: {}, confirm: 'onair', summary: 'Start the stream' },
   'stream.stop': { schema: {}, confirm: 'live', summary: 'Stop the stream' },
@@ -539,7 +539,7 @@ export function createStudioServer(opts) {
   }
 
   // Settings (D284): clip choices and folders. Refused while live (a change would load the GPU or move files mid-show).
-  // Platform sign-in writes (D327). Every credential write is a studio write done on the user's click (D331); a live
+  // Platform sign-in writes (D327). Every credential write is a studio write done on the user's click (D332); a live
   // output's own key is refused (checked now and again right before the write). A pasted key is held in a closure for
   // the call only and is never in a response.
   async function connectRoute(res, route, body) {
@@ -549,7 +549,7 @@ export function createStudioServer(opts) {
     let c;
     try { c = connect(); } catch (e) { return connectFail(res, e); }
     const label = (id) => c.outputs().find((o) => o.id === id)?.label ?? id;
-    const ask = (summary, rec) => runAction({ kind: 'connect', summary, ...rec }, res); // the click is the decision (D331)
+    const ask = (summary, rec) => runAction({ kind: 'connect', summary, ...rec }, res); // the click is the decision (D332)
     const notLive = async (id) => { try { return (await outputLive(id)) === 'idle' ? null : 'output-live'; } catch { return 'live-unknown'; } };
     try {
       if (op === 'paste') {
@@ -1010,7 +1010,7 @@ export function createStudioServer(opts) {
     pending.set(id, { ...rec, expiresAt: t + limits.pendingTtlMs });
     return id;
   }
-  // No phrase (D331): the page shows the summary (and the readiness list) with one button.
+  // No phrase (D332): the page shows the summary (and the readiness list) with one button.
   const publicPending = (id, p) => ({ pendingId: id, summary: p.summary, expiresAt: p.expiresAt, ...(p.readiness ? { readiness: publicReadiness(p.readiness) } : {}) });
   // D327 OS3: a live switch-on of one output is a start like Start stream, so a Stop or End all confirmed after it
   // began wins. stopEpoch goes up before any confirmed Stop / End all reaches the host (works without the launcher);
@@ -1204,7 +1204,7 @@ export function createStudioServer(opts) {
       if (spec.flag && !(flags && flags.isOn(spec.flag))) return json(res, 404, { error: `${spec.flag}-off` });
       if (START_METHODS.has(body.method) && isClosing()) return json(res, 409, CLOSING_REFUSAL);
       if (spec.confirm || (live && spec.liveConfirm)) {
-        // Stream and recording changes, and layout changes while live: the click is the decision (D331), so they run
+        // Stream and recording changes, and layout changes while live: the click is the decision (D332), so they run
         // now through the same path as before (closing lock, stop-wins generation, autosave).
         let summary = spec.summary; let ready = null; let warning = null;
         // Go-live readiness (flag readiness): run first. A failed item does not start the stream: the answer lists the
@@ -1222,7 +1222,7 @@ export function createStudioServer(opts) {
           const w = hs && hs.audioHealth ? audioReadiness(hs.audioHealth).warnings : [];
           if (w.length) { warning = `WARNING: ${w.join(', ')}`; summary = `${summary}. ${warning}`; }
         }
-        // Readiness warnings never block; they come back with the answer so the user still sees them (D331).
+        // Readiness warnings never block; they come back with the answer so the user still sees them (D332).
         if (ready && ready.ok && ready.counts?.warn > 0) warning = [warning, readinessSummary(ready)].filter(Boolean).join('\n');
         const rec = { kind: 'host', summary, method: body.method, params, ...(warning ? { warning } : {}), ...(ready ? { readiness: ready, readinessOverride: !ready.ok } : {}) };
         if (ready && !ready.ok) {
@@ -1245,12 +1245,12 @@ export function createStudioServer(opts) {
     }
     if (route === '/ui/api/streams/end-all') {
       // End all streams (D299, no flag: it is the host's existing stream.stop, plus a check that every stream sink
-      // stopped). A studio write like Stop stream: runs on the click (D331). Recording keeps running.
+      // stopped). A studio write like Stop stream: runs on the click (D332). Recording keeps running.
       if (Object.keys(body).length) return json(res, 400, { error: 'bad-params' });
       return runAction({ kind: 'end-all', summary: 'End all streams: both YouTube outputs, Twitch and Kick stop and their connections close. The recording keeps running (stop it separately).' }, res);
     }
     if (route === '/ui/api/bots/start' || route === '/ui/api/bots/stop') {
-      // Studio write on the click (D331). Stop only ever ends a copy Ujwalam started (checked in the module).
+      // Studio write on the click (D332). Stop only ever ends a copy Ujwalam started (checked in the module).
       const bad = validate(BOT_SCHEMA, body);
       if (bad) return json(res, 400, { error: bad });
       const verb = route.endsWith('/start') ? 'start' : 'stop';
@@ -1267,7 +1267,7 @@ export function createStudioServer(opts) {
       if (!flags.ids().includes(body.id)) return json(res, 404, { error: 'unknown-flag' });
       if (!body.on) return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, false) }); // OFF is instant safety
       if (flags.isOn(body.id)) return json(res, 200, { verdict: 'allow', flags: flags.list() });
-      return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, true) }); // ON: the click is the decision (D331)
+      return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, true) }); // ON: the click is the decision (D332)
     }
     if (route.startsWith('/ui/api/connect/')) return connectRoute(res, route, body);
     if (route === '/ui/api/feedback/note') {
@@ -1289,7 +1289,7 @@ export function createStudioServer(opts) {
       if (!isUpload) {
         try { return json(res, 200, await checkPostStatus({ id: body.id, store: posting, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl })); } catch (e) { return fail(e); }
       }
-      // The Upload click is the decision (D331): no typed phrase. Approved, not uploaded, nothing live (checked below).
+      // The Upload click is the decision (D332): no typed phrase. Approved, not uploaded, nothing live (checked below).
       if (v.status === 'uploaded') return json(res, 409, { error: 'already-uploaded', videoId: v.videoId });
       if (v.status !== 'approved') return json(res, 409, { error: 'not-approved' });
       if (uploading.size) return json(res, 409, { error: 'upload-in-progress' });
@@ -1359,7 +1359,7 @@ export function createStudioServer(opts) {
       const p = typeof body.pendingId === 'string' ? pending.get(body.pendingId) : undefined;
       if (!p || p.expiresAt <= now()) { pending.delete(body.pendingId); return json(res, 410, { error: 'expired-or-unknown' }); }
       if (route === '/ui/api/cancel') { pending.delete(body.pendingId); return json(res, 200, { verdict: 'cancelled' }); }
-      // One click (D331): { pendingId } only; no typed text. Single use.
+      // One click (D332): { pendingId } only; no typed text. Single use.
       if (Object.keys(body).some((k) => k !== 'pendingId')) return json(res, 400, { error: 'bad-params' });
       pending.delete(body.pendingId);
       return runAction(p, res);
@@ -1367,7 +1367,7 @@ export function createStudioServer(opts) {
     return text(res, 404, 'not-found');
   }
 
-  // Runs one studio write: the user's click (D331), or the "Go live anyway" / Allow click on a pending record.
+  // Runs one studio write: the user's click (D332), or the "Go live anyway" / Allow click on a pending record.
   async function runAction(p, res) {
     try {
       if (p.kind === 'connect') return connectConfirmed(res, p);

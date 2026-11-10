@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Effect editor, UI server side (D260, D290): layers.setEffects needs no flag (the Look panel; flag effect-editor only shows the
 // Advanced list), passes the whole list to the host when on, saves it into the project file (an empty list removes it), can be
-// undone and redone, acts on the click while live (D331), and refuses a list that is not a short array of typed objects.
+// undone and redone, acts on the click while live (D332), and refuses a list that is not a short array of typed objects.
 // Stub host (kind 'host'); real flags and project-sync on temp files.
 import assert from 'node:assert/strict';
 import { copyFileSync, mkdtempSync, readFileSync } from 'node:fs';
@@ -111,7 +111,7 @@ test('effect editor: no flag needed (D290); applied, saved, undone and redone; a
   } finally { await c.srv.close(); }
 });
 
-test('effect editor: while live it acts on the click (D331); malformed lists are refused before the host', async () => {
+test('effect editor: while live it acts on the click (D332); malformed lists are refused before the host', async () => {
   const c = await setup();
   try {
     c.flags.set(FLAG, true);
@@ -126,7 +126,7 @@ test('effect editor: while live it acts on the click (D331); malformed lists are
     c.host.st.live = true;
     await until(async () => (await c.status()).host.live === true, 'live seen');
     const ok = await c.post('/ui/api/host', { method: 'layers.setEffects', params: { scene: 'scene-main', layer: 'layer-cam', effects: [SHADOW] } });
-    assert.equal(ok.body.verdict, 'allow', 'acts on the click while live (D331), no "yes, on air"');
+    assert.equal(ok.body.verdict, 'allow', 'acts on the click while live (D332), no "yes, on air"');
     assert.equal(ok.body.pending, undefined);
     assert.deepEqual(c.host.st.effects['layer-cam'], [SHADOW]);
     await until(() => layerOf(c.file, 'layer-cam').effects?.length === 1, 'saved after the live click');

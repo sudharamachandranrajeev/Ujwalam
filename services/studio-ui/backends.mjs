@@ -65,7 +65,7 @@ export function createCoreClient({ dataDir = null, env = process.env } = {}) {
   return {
     call,
     // TODO(main): switch to the separate confirm credential when event-core has the confirm role (ADR option 2).
-    confirm: ({ confirmId, actionHash }) => call('actions.confirm', { confirmId, actionHash }), // an Allow click, no phrase (D331)
+    confirm: ({ confirmId, actionHash }) => call('actions.confirm', { confirmId, actionHash }), // an Allow click, no phrase (D332)
     describe: () => ({ available: creds() !== null, reachable: lastOk }),
   };
 }

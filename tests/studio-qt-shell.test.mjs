@@ -397,7 +397,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.equal(p.flagsInSettings, true, 'Settings was still open at quit');
   });
-  test('Settings (D290, D331): layer effects on turns flag layer-effects on at Save, no phrase; animations Off is saved as ui.motion', async () => {
+  test('Settings (D290, D332): layer effects on turns flag layer-effects on at Save, no phrase; animations Off is saved as ui.motion', async () => {
     const p = await probe([], 11000, 'settings-open,settings-layer-effects:on,settings-motion:off,settings-save');
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true]]);
     assert.equal(p.store.isOn('layer-effects'), true, 'applied on Save through the flags route');
@@ -406,7 +406,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.motion, false, 'no animation while the choice is Off');
     assert.equal(p.flagsInSettings, false, 'the rows went with the closed Settings window');
   });
-  test('Settings > Advanced (N2, D331): a flag switch is a draft; Save applies it, on and off alike', async () => {
+  test('Settings > Advanced (N2, D332): a flag switch is a draft; Save applies it, on and off alike', async () => {
     const draft = await probe(['scene-edit'], 7000, 'settings-open,settings-flag:transitions:on,settings-flag:scene-edit:off');
     assert.ok(draft.actions.every((a) => a.done), JSON.stringify(draft.actions));
     assert.deepEqual(draft.settings.flagRows.filter((r) => ['transitions', 'scene-edit'].includes(r.id)).map((r) => [r.id, r.on]).sort(), [['scene-edit', false], ['transitions', true]]);
@@ -425,7 +425,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const q = await probe([], 7000, 'settings-open,settings-layer-effects:on');
     assert.equal(q.settings.flagRows.find((r) => r.id === 'layer-effects').on, true, 'the row follows the Layer effects page');
   });
-  test('Settings (D331): closing with unsaved edits asks Save changes / Discard / Cancel', async () => {
+  test('Settings (D332): closing with unsaved edits asks Save changes / Discard / Cancel', async () => {
     const ask = await probe([], 7000, 'settings-open,settings-flag:transitions:on,settings-cancel');
     assert.equal(ask.settings?.unsavedAsked, true, 'the question is open and Settings stays open');
     assert.equal(ask.store.isOn('transitions'), false);
@@ -519,7 +519,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.selectedLayer, 'cam');
     assert.deepEqual(p.calls.filter(([m]) => m === 'layers.move').map(([, x]) => [x.scene, x.layer, x.index]), [['scene-1', 'chat', 0]]);
   });
-  test('layer list (D330, D331): the trash button deletes on the click, no question and no flag; the button has its icon', async () => {
+  test('layer list (D330, D332): the trash button deletes on the click, no question and no flag; the button has its icon', async () => {
     const p = await probe([], 8000, 'select-layer:chat,delete-button', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' }, { project: true });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.deepEqual([p.addButtons.delete.enabled, p.addButtons.delete.icon], [true, true]);
@@ -569,7 +569,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(list.find((l) => l.id === 'game').effects, [{ type: 'rounded', radius: 40 }]);
     assert.deepEqual(list.find((l) => l.id === 'cam').effects, [{ type: 'rounded', radius: 40 }]);
   });
-  test('layer menu (D292, D331): Delete removes the layer from the host and the project on the click (scene editing on)', async () => {
+  test('layer menu (D292, D332): Delete removes the layer from the host and the project on the click (scene editing on)', async () => {
     const p = await probe(['scene-edit'], 8000, 'select-layer:chat,layer-menu:delete', null, {}, { project: true });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.deepEqual(names(p), ['Camera', 'Game capture']);
@@ -780,7 +780,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.guide.coach.active, true);
   });
   // --- end tips, tour and help ---
-  test('no typed confirms (D331): a flag switched on is on at once; no text window opens; an unknown flag is refused', async () => {
+  test('no typed confirms (D332): a flag switched on is on at once; no text window opens; an unknown flag is refused', async () => {
     const p = await probe([], 8000, 'flag-on:transitions,type:yes,flag-on:no-such-flag');
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['flag-on:transitions', true], ['type:yes', false], ['flag-on:no-such-flag', false]]);
     assert.equal(p.store.isOn('transitions'), true, 'on at once through /ui/api/flags/set');

@@ -56,7 +56,7 @@ function req(method, route, body) {
     r.end();
   });
 }
-// The page's Api.host(method, params): 200 { result }, or { verdict: 'allow', result } for a start or stop (D331).
+// The page's Api.host(method, params): 200 { result }, or { verdict: 'allow', result } for a start or stop (D332).
 async function host(method, params = {}) {
   const r = await req('POST', '/ui/api/host', { method, params });
   assert.equal(r.status, 200, `${method}: ${JSON.stringify(r.body)}`);
@@ -64,7 +64,7 @@ async function host(method, params = {}) {
 }
 async function clicked(method, params = {}) {
   const r = await host(method, params);
-  assert.equal(r.verdict, 'allow', `${method} acts on the click (D331): ${JSON.stringify(r)}`);
+  assert.equal(r.verdict, 'allow', `${method} acts on the click (D332): ${JSON.stringify(r)}`);
   assert.equal(r.pending, undefined, `${method}: no pending entry`);
   return r;
 }

@@ -143,7 +143,7 @@ test('the status snapshot names the newest host edit (Qt shell / page refresh th
   } finally { await c.srv.close(); }
 });
 
-test('live-lock (D233): mouse editing is switched off while live and back on after; a layout change while live acts on the click (D331) and then autosaves', async () => {
+test('live-lock (D233): mouse editing is switched off while live and back on after; a layout change while live acts on the click (D332) and then autosaves', async () => {
   const c = await setup();
   try {
     c.flags.set(PREVIEW_EDIT_FLAG, true);
@@ -156,7 +156,7 @@ test('live-lock (D233): mouse editing is switched off while live and back on aft
       headers: { cookie: c.cookie, origin: `http://127.0.0.1:${c.port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
     const params = { scene: 'scene-main', canvas: 'h', layer: 'layer-cam', placement: { x: 11, y: 12, width: 640, height: 360 } };
     const ok = JSON.parse((await post('/ui/api/host', { method: 'layers.setPlacement', params })).text);
-    assert.equal(ok.verdict, 'allow', 'acts on the click while live (D331), no "yes, on air"');
+    assert.equal(ok.verdict, 'allow', 'acts on the click while live (D332), no "yes, on air"');
     assert.equal(ok.pending, undefined);
     assert.equal(ok.saved, 'pending');
     await until(() => placementOf(c.file, 'layer-cam').x === 11, 'saved after the live click');

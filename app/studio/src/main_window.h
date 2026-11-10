@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Meld-like studio window (P5a): scenes + layers (left), H/V previews (centre), inspector + mixer (right),
 // Stream / Record and status pills (top). Every action goes through the UI server (ApiClient) and acts on the click
-// (D331). A held action (readiness problems, a rule or remote request) is shown once with Allow / Go live anyway.
+// (D332). A held action (readiness problems, a rule or remote request) is shown once with Allow / Go live anyway.
 #pragma once
 
 #include "api_client.h"

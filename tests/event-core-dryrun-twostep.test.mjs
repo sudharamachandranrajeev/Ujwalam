@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // P3 E4b (user decisions 2026-10-28): (1) chat-triggered actions run in DRY-RUN: the gate decides, the audit records what
 // would have run, nothing executes; chatMode "on" is refused at load; (2) was the E4b two-step on-air confirmation;
-// D331 (user decision 2026-11-10) replaced it with ONE approval click (section 2). The file name is kept for history.
+// D332 (user decision 2026-11-10) replaced it with ONE approval click (section 2). The file name is kept for history.
 // All text, ids and names are invented. Temp dirs and injected clocks only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -108,7 +108,7 @@ test('dry-run: a chat request is decided and recorded, nothing executes, the ans
   const a = audit[0];
   assert.deepEqual(
     [a.type, a.actionId, a.rule, a.actor, a.verdict, a.reason, a.dryRun, a.wouldDecision, a.wouldReason, a.wouldSteps, a.wouldClass, a.wouldTarget],
-    // E4b review finding 5: the would-be result is what the non-chat rules give (D331: one approval click)
+    // E4b review finding 5: the would-be result is what the non-chat rules give (D332: one approval click)
     ['request', 'effect.fire', 'burst-rule', PSEUDO, 'dry-run', 'chat-dry-run', true, 'confirm', 'confirmation-required', 1, 'on-air-write', 'effect'],
   );
   assert.match(a.ts, /^2026-10-28T12:00:\d\d\.\d{3}Z$/);
@@ -261,7 +261,7 @@ test('dry-run rows survive the raw-chat purge; the hash chain still verifies and
 });
 
 // ================================================================================================================
-// 2. One approval click (D331, user decision 2026-11-10; replaces the E4b two-step "yes" / "yes, on air")
+// 2. One approval click (D332, user decision 2026-11-10; replaces the E4b two-step "yes" / "yes, on air")
 // ================================================================================================================
 // A write the user starts on their own surface (ui, api) runs on that click. A write an automatic source asks for
 // (an untainted rule, remote, system) waits for ONE approval click from ui/api: no phrase, no second step. It stays

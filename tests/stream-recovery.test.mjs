@@ -4,7 +4,7 @@
 // a revoke that fails closes it, a slow start never arms after a newer stop, a stop waits for an in-flight recovery
 // start) and the status text; then the launcher
 // end to end with the fake host (no libobs, no devices, mock Streamer.bot, loopback-only fake stream sinks, nothing
-// reaches a network): the go-live is the control page's own Start stream click (through the UI server API, D331: no
+// reaches a network): the go-live is the control page's own Start stream click (through the UI server API, D332: no
 // typed phrase; logged in by the headless scripted browser), the crash is the fake host exiting with code 3.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -269,7 +269,7 @@ function launch(name, { flag = true, crashRuns = '1,2', extraEnv = {}, before = 
     s.port = l.port; s.cookie = l.cookie;
     s.csrf = (await s.req('GET', '/ui/api/session')).body.csrf;
   };
-  // The page's flow (D331): one click acts; no pending entry, no typed phrase.
+  // The page's flow (D332): one click acts; no pending entry, no typed phrase.
   s.clicked = async (route, body) => {
     const r = await s.req('POST', route, body);
     assert.equal(r.status, 200, JSON.stringify(r.body));

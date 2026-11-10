@@ -163,7 +163,7 @@ describe('mutating API', () => {
     assert.equal((await post(port, a, route, { method: 'layers.setPlacement', params: { scene: 's', layer: 'l' } })).status, 400, 'placement required');
     assert.ok(Object.keys(HOST_CALLS).every((k) => !/^(host|project|outputs|encoders)\./.test(k)));
   });
-  test('stream start acts on the click (D331): no phrase, no pending entry; the host is called once', async () => {
+  test('stream start acts on the click (D332): no phrase, no pending entry; the host is called once', async () => {
     const before = ctx.calls.host.filter((m) => m === 'stream.start').length;
     const ok = JSON.parse((await post(port, a, '/ui/api/host', { method: 'stream.start' })).text);
     assert.equal(ok.verdict, 'allow');
@@ -322,7 +322,7 @@ describe('Meld import and project.load', () => {
       assert.equal((await post(c.port, c.a, '/ui/api/project/import-meld', { path: 'C:/x.json' })).status, 503);
     } finally { await c.srv.close(); }
   });
-  test('load needs an import first, then acts on the click (D331); retries on -32009; project stays server-side', async () => {
+  test('load needs an import first, then acts on the click (D332); retries on -32009; project stays server-side', async () => {
     const c = await importSetup();
     try {
       assert.equal((await post(c.port, c.a, '/ui/api/project/load', {})).status, 409);
@@ -408,7 +408,7 @@ describe('audio readiness (D297 proposed)', () => {
     assert.deepEqual(audioReadiness(undefined), { ok: true, warnings: [], sources: [] });
     assert.deepEqual(audioReadiness({ warnings: [5, 'X audio missing'], sources: 'no' }), { ok: false, warnings: ['X audio missing'], sources: [] });
   });
-  test('status snapshot and the record/stream answer name the missing sound (D331: a warning, not a stop)', async () => {
+  test('status snapshot and the record/stream answer name the missing sound (D332: a warning, not a stop)', async () => {
     const fake = createFakeHost({ outputsReady: true });
     let ah = AH;
     const host = { describe: () => fake.describe(), call: async (m, p) => { const r = await fake.call(m, p); return m === 'host.status' ? { ...r, audioHealth: ah } : r; } };

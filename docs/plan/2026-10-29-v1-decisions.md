@@ -721,7 +721,39 @@ order buttons did not save, and the mixer volume was only sent on a slider relea
   moves try the saved structure move first.
 Evidence: `docs/evidence/2026-11-10-layer-editing.md`.
 
-## D331 — No typed confirmation; the click is the decision (2026-11-10, user decision)
+## D331 — Blurred game backdrop replaces the background layer, H and V, no feature flag (2026-11-10, user request)
+
+User: "replace the current background layer in Ujwalam with a blurred copy of the game capture. it needs to fill in
+the whole screen behind all layers". Decided:
+- Both stream scene presets (Default H 0.6.0, Default V 0.5.0): the browser `background` layer (atmos-frame page) is
+  removed. The bottom layer is `game-backdrop`: a `duplicate` of the game capture with a Gaussian blur, over the full
+  canvas, cropped to cover the canvas without stretching (H: 16:9 source on a 16:9 canvas, no crop; V: crop 656 left
+  and right, as before). The atmos-frame overlay itself stays in the repo (the hidden H `atmos-front` layer still uses
+  it); it is only retired from these two scenes' background.
+- No feature flag. This is a recorded exception to "new features ship behind a flag, off by default", because the user
+  asked for it directly (as D330 did for preview-edit). The V backdrop was behind flag `layer-effects` (D224); it no
+  longer is. The game's own rounded corners keep `effectsFlag: layer-effects` as before.
+- Blur: V keeps strength 40 (sigma 20 source px, about 35.5 canvas px at the V scale 1.78). H uses strength 71 (sigma
+  35.5 source px = 35.5 canvas px at scale 1), so both canvases show the same blur on screen. Proposed, UNVERIFIED on a
+  real capture; tunable per layer in the Look panel (strength 1-100, no flag) and live through `layers.setEffects`.
+  The host blur already works on a downscaled copy (it halves the texture up to 3 times until sigma <= 6.5 texels,
+  then upscales), so no extra downscale step was added; cost in the evidence.
+- Existing projects: a one-time scene upgrade `bg1` (services/project/scene-upgrades.mjs) runs when the studio starts
+  and finds the alpha project on disk, before the project goes to the host. In each scene it finds the preset layer
+  `<preset>/background` and puts the backdrop in its place in the stack (the V scene's existing, hidden backdrop is
+  shown and moved there; the H backdrop is added). Only those layers change; the user's moved, edited and added layers
+  stay. A copy of the file goes to `projects/_old/alpha-<stamp>.before-bg1.project.json` first. A project without the
+  retired background (a new build, a second start, or a user who removed it) is not changed. A background that another
+  layer or an audio source still uses is hidden, and its origin becomes `<preset>/background-retired-bg1`, so the
+  upgrade does not run again. While the game capture is still a placeholder (unbound), that scene is left as it is
+  and keeps its background; the upgrade runs on a later start, after the capture is bound. A V backdrop that was built
+  as a placeholder is then turned into the real blurred duplicate in place (same id and box). A failed upgrade never
+  blocks the start: the project loads as it is and the reason is logged.
+- Live: the upgrade runs only at start, before the host load, so a running stream and its outputs are never touched.
+  A studio that is already running gets the backdrop at its next start.
+Evidence: `docs/evidence/2026-11-10-bg1-game-backdrop.md`.
+
+## D332 — No typed confirmation; the click is the decision (2026-11-10, user decision)
 
 User (2026-11-10): "No text type anywhere." "No misclick guard, end stream means end stream." "All clicks will be made
 by user's decision." Decided:
@@ -749,3 +781,4 @@ Not changed: the preset id `live-lock-yes-on-air` (an id, renaming it is a regis
 of earlier alphas, and the terminal-only `services/event-core/audit/cli.mjs` purge prompt (a developer CLI, not app UI).
 Also readiness warnings (no failed item) no longer stop the start; they come back in the answer's `warning` text.
 Evidence: `docs/evidence/2026-11-10-n1-no-typed-confirm.md`.
+>>>>>>> claude/alpha0-d1

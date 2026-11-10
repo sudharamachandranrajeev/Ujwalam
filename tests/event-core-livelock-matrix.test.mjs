@@ -6,7 +6,7 @@
 // The assertions are written from the OWNER'S RULES (P3 E4 task, 2026-10-28), not from the gate's branch order:
 //  R1 never from chat, whatever the data says: stream, record, outputs, deletion, settings, devices, main mic mute;
 //  R2 a rule triggered by chat or an alert, through any chain, counts as chat; unknown/malformed provenance fails safe;
-//  R3 (D331, user decision 2026-11-10, replaces the typed "yes" / "yes, on air" and the E4b two-step): a write from
+//  R3 (D332, user decision 2026-11-10, replaces the typed "yes" / "yes, on air" and the E4b two-step): a write from
 //     the user's own surface (untainted ui or api) runs on that click; a write from an automatic source (untainted
 //     rule, remote, system) never runs on its own and needs ONE approval click from ui or api, with no phrase;
 //     unknown live state counts as live for the live-state binding;
@@ -15,7 +15,7 @@
 //  R5 chat is never offered a confirmation;
 //  R6 live state is set only by privileged sources;
 //  R7 panic stops chat-tainted and rule-sourced actions and clears pending confirmations; clearing is a click from
-//     untainted ui or api only (D331), never from chat, rule, remote or system;
+//     untainted ui or api only (D332), never from chat, rule, remote or system;
 //  R8 data may only restrict, never widen.
 // The categories in R1 and the taint of each scenario are restated here. No gate, catalogue or provenance
 // helper is used to compute what is expected; only the catalogue DATA is read.
@@ -168,8 +168,8 @@ test('matrix R4: an automatic write\'s approval completes only from ui or api, o
           if (live !== 'unknown') gate.setLiveState(live, { source: 'api' });
           const r = gate.request({ id: entry.id, params: {}, actor: 'u1', ...who });
           assert.equal(r.verdict, 'confirm', `${entry.id}/${live}/${who.source}`);
-          assert.equal(r.confirm.step, undefined, 'no second step (D331)');
-          assert.equal(r.confirm.phrase, undefined, 'no phrase (D331)');
+          assert.equal(r.confirm.step, undefined, 'no second step (D332)');
+          assert.equal(r.confirm.phrase, undefined, 'no phrase (D332)');
           assert.deepEqual(calls, [], 'nothing runs before the click');
           const c = gate.confirm(r.confirm.confirmId, 'any words at all', r.confirm.actionHash, { source: confirmer });
           if (USER.includes(confirmer)) {
@@ -314,7 +314,7 @@ test('matrix R4: cap abuse by each source never evicts or blocks another source\
     { source: 'chat' }, { source: 'rule', provenance: CHAT },
   ];
   for (const flood of FLOODERS) {
-    // Victims: automatic sources whose writes wait for an approval (ui/api writes do not pend any more, D331).
+    // Victims: automatic sources whose writes wait for an approval (ui/api writes do not pend any more, D332).
     for (const victim of [{ source: 'system' }, { source: 'remote' }, { source: 'rule', provenance: { kind: 'hotkey' } }]) {
       if (victim.source === flood.source) continue;
       const calls = [];

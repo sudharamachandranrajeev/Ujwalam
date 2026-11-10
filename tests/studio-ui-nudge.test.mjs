@@ -93,7 +93,7 @@ test('no nudge: flag off, no selection, typing in a field, with Ctrl, or other k
   assert.deepEqual([moves(off.calls), moves(h.calls)], [[], []]);
 });
 
-test('live: arrow keys are off with a note; a press acts on the key with nothing left pending (D331)', async () => {
+test('live: arrow keys are off with a note; a press acts on the key with nothing left pending (D332)', async () => {
   const live = harness({ live: true });
   await settle(); await live.select();
   live.key('ArrowRight');

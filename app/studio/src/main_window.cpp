@@ -342,7 +342,7 @@ QString PreviewSlot::message() const
 
 // One close for the whole app (D280): closing this window stops Ujwalam (host, previews, services; the launcher
 // does that when the window exits with code 0). While live it stops every stream and the recording: the close is the
-// user's click and acts at once (D331, no typed phrase, no "are you sure").
+// user's click and acts at once (D332, no typed phrase, no "are you sure").
 void MainWindow::closeEvent(QCloseEvent *e)
 {
 	// Tasks still running or waiting (user 2026-11-09, D311 proposed): nothing may go on unseen after the window is
@@ -420,7 +420,7 @@ void MainWindow::leaveTray()
 	std::fflush(stdout);
 }
 
-// Stop all from the tray: the click acts at once (D331). Unfinished clip jobs run again at the next start.
+// Stop all from the tray: the click acts at once (D332). Unfinished clip jobs run again at the next start.
 void MainWindow::stopAllFromTray()
 {
 	requestQuit([this](bool can, const QString &why, const QString &token) {
@@ -445,7 +445,7 @@ void MainWindow::stopAllFromTray()
 }
 
 // Stop from the task panel (2026-11-10): the background jobs end (clip making, uploads; the same route as the tray's
-// Stop all while live), the studio and host stay. The click acts at once (D331).
+// Stop all while live), the studio and host stay. The click acts at once (D332).
 void MainWindow::stopTasks()
 {
 	taskStops_++;
@@ -784,7 +784,7 @@ void MainWindow::setControl(QPushButton *b, const QString &icon, const QString &
 		cap->setText(caption);
 }
 
-// The four controls (D290, the reference's Controls block). Each acts on the click (D331); a stream start with
+// The four controls (D290, the reference's Controls block). Each acts on the click (D332); a stream start with
 // readiness problems shows them with "Go live anyway".
 QWidget *MainWindow::buildControls()
 {
@@ -1053,7 +1053,7 @@ QWidget *MainWindow::buildLeft()
 	renderAddPick();
 
 	// Feature flags (D149): new features ship off; switch them in Settings > Advanced (D290). The list (flags_) follows
-	// the server on every status poll. Settings builds its switch rows fresh from it each time it opens (D331, N2): no
+	// the server on every status poll. Settings builds its switch rows fresh from it each time it opens (D332, N2): no
 	// widget is kept here and moved into the dialog (2026-11-10 Advanced offset bug: the embedded previews carry native
 	// window handles, so a widget made in this window and moved into Settings was placed as its own native child window
 	// and showed up shifted).
@@ -1194,7 +1194,7 @@ QWidget *MainWindow::buildRight()
 
 	// Look (D290): the friendly effect controls for the selected layer. No flag: this is how rounded corners, shadows and
 	// the other looks are set. Offline every change goes to the host after a short pause (layers.setEffects, saved into the
-	// project, undoable); live the Apply button sends it (D331: the click acts).
+	// project, undoable); live the Apply button sends it (D332: the click acts).
 	lookCap_ = captionLabel(QStringLiteral("Look"), body);
 	v->addWidget(lookCap_);
 	look_ = new LookPanel(body);
@@ -1624,7 +1624,7 @@ void MainWindow::applyInspector()
 	x.insert(QStringLiteral("placement"), patch);
 	api_->host(QStringLiteral("layers.setPlacement"), layerArgs(x), [this](bool ok, const QJsonObject &b, const QString &err) {
 		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
-			return confirm(b.value(QStringLiteral("pending")).toObject()); // a held action (D331)
+			return confirm(b.value(QStringLiteral("pending")).toObject()); // a held action (D332)
 		note(ok ? QStringLiteral("Applied.") : QStringLiteral("Not applied: ") + err);
 		loadLayers();
 	});
@@ -1717,7 +1717,7 @@ void MainWindow::renderEffectForm()
 }
 
 // The whole list goes to the host for every canvas of the scene (layers.setEffects); while live the UI server asks
-// for nothing more: the click acts (D331). The host checks each effect; the UI server saves the list into the project (undoable).
+// for nothing more: the click acts (D332). The host checks each effect; the UI server saves the list into the project (undoable).
 void MainWindow::applyEffects()
 {
 	if (selected_.isEmpty() || activeScene_.isEmpty())
@@ -1739,7 +1739,7 @@ void MainWindow::applyEffects()
 }
 
 // The Look panel's send (D290): the whole working list, one send at a time (a change made while one is on its way
-// goes out right after it). Live, the Apply click sends it at once (D331).
+// goes out right after it). Live, the Apply click sends it at once (D332).
 void MainWindow::applyLook()
 {
 	if (lookSending_) {
@@ -1988,7 +1988,7 @@ void MainWindow::setTracks(const QString &id, const QStringList &tracks)
 	api_->host(QStringLiteral("mixer.setTracks"), p, [this](bool ok, const QJsonObject &b, const QString &err) {
 		routeBusy_ = false;
 		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
-			confirm(b.value(QStringLiteral("pending")).toObject()); // a held action (D331); reloads the mixer after
+			confirm(b.value(QStringLiteral("pending")).toObject()); // a held action (D332); reloads the mixer after
 		else if (!ok)
 			note(QStringLiteral("Tracks not changed: ") + err);
 		else
@@ -2262,7 +2262,7 @@ void MainWindow::loadBots()
 }
 
 // Meld import: the server writes a new project file (never changes the current one), the host plans it (counts only),
-// and the Load click runs project.load, which replaces the scenes (D331).
+// and the Load click runs project.load, which replaces the scenes (D332).
 void MainWindow::openImport()
 {
 	auto *dlg = new QDialog(this);
@@ -2324,7 +2324,7 @@ void MainWindow::openImport()
 }
 
 // Posts (P16a, flag posting): the browser page's review form. Edit, approve and reject change local files only.
-// YouTube upload is private, needs the package approved and a CLI sign-in; the Upload click is the decision (D331).
+// YouTube upload is private, needs the package approved and a CLI sign-in; the Upload click is the decision (D332).
 // The server refuses it while live. The clip itself is watched from its folder (Open folder).
 void MainWindow::openPosts()
 {
@@ -3123,7 +3123,7 @@ void MainWindow::layerDelete()
 
 // Host order is bottom first, so a higher index is higher in the picture. Offline the move is saved into the project
 // (structure op layer.move to a target layer, D330); live, or for a layer the project does not have, it goes to the
-// host only (layers.move), on the click (D331).
+// host only (layers.move), on the click (D332).
 void MainWindow::layerMoveTo(int index)
 {
 	if (selected_.isEmpty() || index < 0 || index >= layers_.size())
@@ -3410,7 +3410,7 @@ QString modeWords(const QString &id, bool live)
 			return QString::fromUtf8(live ? m.live : m.recording);
 	return id;
 }
-// The Settings window (D331): Cancel, Escape or the X with edits that are not saved asks "Save changes / Discard /
+// The Settings window (D332): Cancel, Escape or the X with edits that are not saved asks "Save changes / Discard /
 // Cancel" first. The question opens without blocking (open(), not exec()), so the probe can answer it.
 class SettingsDialog : public QDialog
 {
@@ -3580,7 +3580,7 @@ void MainWindow::saveSettings(const QJsonObject &body, bool retried)
 }
 
 // Settings (D284, D290, D293): sections on the left (Clips, Folders, Layer effects, Appearance, Advanced), the page on the right. The
-// feature flags are switch rows in Advanced, built fresh each time (D331, N2). Every page is a draft: Save applies it
+// feature flags are switch rows in Advanced, built fresh each time (D332, N2). Every page is a draft: Save applies it
 // (flags included, on and off), Cancel or the X with edits asks Save changes / Discard / Cancel.
 void MainWindow::openSettings(bool firstRun, const QString &startPage)
 {
@@ -3794,7 +3794,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		pap->addWidget(appear, 1);
 
 		// Connections (D327, flag platform-connect): sign in to YouTube / Twitch or paste keys per stream output. The page
-		// talks to the studio UI server itself; each write acts on the click there and then (D331).
+		// talks to the studio UI server itself; each write acts on the click there and then (D332).
 		page(QStringLiteral("Connections"))->addWidget(new connections::Page(api_, dlg), 1);
 
 		// Help & tips (D294 proposed): tips on/off, reset "Don't show again", replay the welcome tour
@@ -3885,7 +3885,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		};
 		connect(bb, &QDialogButtonBox::accepted, dlg, [dlg]() { dlg->save(); });
 		connect(bb, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
-		// Anything Save would send (the unsaved-changes question, D331).
+		// Anything Save would send (the unsaved-changes question, D332).
 		const int gateKillsN = gateKills > 0 ? gateKills : -1;
 		const QString recDirStart = f.value(QStringLiteral("recordings")).toString(), clipDirStart = f.value(QStringLiteral("clips")).toString();
 		dlg->dirty = [=]() {
@@ -3952,7 +3952,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				body.insert(QStringLiteral("ui"), ui);
 			}
 			saveSettings(body);
-			// The flag switches apply now, on and off alike (D331: the Save click is the decision, no phrase).
+			// The flag switches apply now, on and off alike (D332: the Save click is the decision, no phrase).
 			for (auto it = flagDraft->cbegin(); it != flagDraft->cend(); ++it)
 				if (flagStart.value(it.key(), false) != it.value())
 					setFlag(it.key(), it.value());
@@ -3984,7 +3984,7 @@ void MainWindow::hostAction(const QString &method)
 	});
 }
 
-// One click (D331): a click acts at once. The server holds an action here only when it cannot act on the click alone:
+// One click (D332): a click acts at once. The server holds an action here only when it cannot act on the click alone:
 // the readiness check found problems ("Go live anyway", logged), or a rule or remote request waits for the user's
 // click. Allow sends only the pending id; Cancel drops it. No phrase. Opened without blocking, so the probe answers it.
 void MainWindow::confirm(const QJsonObject &pending)
@@ -4306,7 +4306,7 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		return false;
 	}
-	if (p.size() == 2 && p[0] == QStringLiteral("confirm")) { // D331: the one-click window, confirm:ok | confirm:cancel
+	if (p.size() == 2 && p[0] == QStringLiteral("confirm")) { // D332: the one-click window, confirm:ok | confirm:cancel
 		auto *box = findChild<QMessageBox *>(QStringLiteral("confirmBox"));
 		QPushButton *b = box ? box->findChild<QPushButton *>(p[1] == QStringLiteral("ok") ? QStringLiteral("confirmOk") : QStringLiteral("confirmCancel")) : nullptr;
 		if (!b)
@@ -4394,7 +4394,7 @@ bool MainWindow::probeAction(const QString &action)
 				}
 			return false;
 		}
-		if (p.size() == 2 && p[0] == QStringLiteral("settings-unsaved")) { // D331: answer save | discard | cancel
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-unsaved")) { // D332: answer save | discard | cancel
 			auto *box = settingsDlg_->findChild<QMessageBox *>(QStringLiteral("settingsUnsaved"));
 			const QString name = p[1] == QStringLiteral("save") ? QStringLiteral("unsavedSave") : p[1] == QStringLiteral("discard") ? QStringLiteral("unsavedDiscard") : QStringLiteral("unsavedCancel");
 			if (auto *b = box ? box->findChild<QPushButton *>(name) : nullptr) {

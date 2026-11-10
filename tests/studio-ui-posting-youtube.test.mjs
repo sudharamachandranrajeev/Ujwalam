@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // F7: Posts view YouTube private upload + status check (flag `posting`). Fake auth and fake fetch only: nothing here touches
-// Google, a browser or Credential Manager. Checks the Upload click (no typed phrase, D331), live refusal (fail closed), approved-only,
+// Google, a browser or Credential Manager. Checks the Upload click (no typed phrase, D332), live refusal (fail closed), approved-only,
 // no double upload, no token in any response, the status route, and the UI source rules.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -97,7 +97,7 @@ describe('youtube status route', () => {
     try {
       const r = await c.get('/ui/api/posts/youtube/status');
       assert.equal(r.status, 200);
-      assert.deepEqual(Object.keys(r.json()).sort(), ['hasClient', 'signedIn'], 'no phrase (D331)');
+      assert.deepEqual(Object.keys(r.json()).sort(), ['hasClient', 'signedIn'], 'no phrase (D332)');
       assert.equal(r.json().signedIn, true);
       assert.ok(!r.text.includes(TOKEN));
     } finally { c.srv.close(); }
@@ -114,7 +114,7 @@ describe('youtube upload route', () => {
       assert.equal(r.status, 409); assert.equal(r.json().error, 'not-approved');
       await c.approve();
       r = await c.post(UP, { id: c.id, confirm: 'yes' });
-      assert.equal(r.status, 400); assert.equal(r.json().error, 'bad-params', 'the body is { id } only (D331)');
+      assert.equal(r.status, 400); assert.equal(r.json().error, 'bad-params', 'the body is { id } only (D332)');
       r = await c.post(UP, { id: c.id, extra: 1 });
       assert.equal(r.status, 400); assert.equal(r.json().error, 'bad-params');
       r = await c.post(UP, { id: 'nope' });
@@ -201,7 +201,7 @@ describe('checkUploadStatus (fake fetch)', () => {
 });
 
 describe('UI source rules', () => {
-  test('no innerHTML, no external script, upload button present, no typed confirmation (D331)', () => {
+  test('no innerHTML, no external script, upload button present, no typed confirmation (D332)', () => {
     const js = readFileSync(path.join(UI, 'js', 'app.js'), 'utf8') + readFileSync(path.join(UI, 'js', 'api.js'), 'utf8');
     const html = readFileSync(path.join(UI, 'index.html'), 'utf8');
     assert.ok(!/innerHTML/.test(js));

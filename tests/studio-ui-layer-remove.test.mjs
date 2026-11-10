@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Control page Remove layer (D330, Codex review): no scene-edit flag needed, acts on the click (D331), greyed and refused while live.
+// Control page Remove layer (D330, Codex review): no scene-edit flag needed, acts on the click (D332), greyed and refused while live.
 // ui/js/app.js runs in a vm with a stub DOM and a stub Api (as tests/studio-ui-nudge.test.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -64,7 +64,7 @@ test('the Remove layer button sits outside the scene-edit form (shown without th
   assert.match(HTML, /<div id="layer-actions" class="struct-edit">\s*<button id="btn-layer-remove"/);
 });
 
-test('scene-edit off: Remove acts on the click (D331): no "are you sure", one layer.remove', async () => {
+test('scene-edit off: Remove acts on the click (D332): no "are you sure", one layer.remove', async () => {
   // The stub would answer "Cancel" if asked; the click must not ask at all.
   const h = harness({ answer: false });
   await settle(); await h.select();

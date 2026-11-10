@@ -122,7 +122,7 @@ describe('flag gate', () => {
 });
 
 describe('paste (PC1, PC2)', () => {
-  test('stored on the click (D331, no phrase); the key is never echoed; stored under the host target names; status masked', async () => {
+  test('stored on the click (D332, no phrase); the key is never echoed; stored under the host target names; status masked', async () => {
     const c = await boot();
     const ok = (await post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer })).json();
     assert.equal(ok.verdict, 'allow');

@@ -1,8 +1,8 @@
-# 2026-11-10 N1 no typed confirmation, N2 Settings > Advanced switches (D331)
+# 2026-11-10 N1 no typed confirmation, N2 Settings > Advanced switches (D332)
 
 Branch `ui/no-typed-confirm` (from `claude/alpha0-d1` at 8245b16). User decision, 2026-11-10: "No text type
 anywhere." "No misclick guard, end stream means end stream." "All clicks will be made by user's decision."
-Decision record: D331 in `docs/plan/2026-10-29-v1-decisions.md`.
+Decision record: D332 in `docs/plan/2026-10-29-v1-decisions.md`.
 
 Status: tests and headless probes only. Not yet used on a real stream (UNVERIFIED live).
 
@@ -25,7 +25,7 @@ Status: tests and headless probes only. Not yet used on a real stream (UNVERIFIE
 - **N2 Settings > Advanced**: one row per flag, a switch showing ON / OFF in words, the flag name, the description
   from `data/flags.json` (word-wrapped, always visible), in a scroll area, built fresh inside the dialog. Clips and
   Layer effects are switch rows too.
-- **Docs**: AGENTS.md rule replaced and the Live stream testing parenthetical removed; D331; help panel text.
+- **Docs**: AGENTS.md rule replaced and the Live stream testing parenthetical removed; D332; help panel text.
 
 ## Protections kept (proved by the adapted tests)
 
@@ -58,7 +58,7 @@ Remaining hits, none of them a typed confirmation:
   Report a problem text, and the YouTube stream picker. The user types a name or report, not a confirmation.
 - Comments that say "no typed phrase" (`server.mjs`, `gate.mjs`, `ui/js/app.js`, `main_window.cpp`).
 - `services/event-core/audit/cli.mjs`: "Type yes to continue" in the terminal-only raw-chat purge CLI. Developer tool,
-  not app UI; left as is (see D331 "Not changed").
+  not app UI; left as is (see D332 "Not changed").
 
 ## UNVERIFIED
 

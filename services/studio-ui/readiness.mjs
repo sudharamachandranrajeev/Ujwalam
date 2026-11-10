@@ -5,7 +5,7 @@
 // status is 'pass' | 'warn' | 'fail'. ok is true when nothing failed (warnings never block). Each check runs in
 // parallel with its own timeout (config.checkTimeoutMs); a check that throws or times out is a 'warn' that says so,
 // except audio: while the host answers, audio state that cannot be read is a 'fail' (a dead game audio must not pass
-// unseen; the "Go live anyway" click still goes live, D331). The first host probes (host.status, outputs.status, host.info,
+// unseen; the "Go live anyway" click still goes live, D332). The first host probes (host.status, outputs.status, host.info,
 // core.status) have the same timeout, and createReadiness gives a whole run a deadline (readinessDeadlineMs).
 // Items (ITEMS): host, credentials, disk, encoders, streamerbot, speakerbot, loopback, clips, audio, gpu.
 //

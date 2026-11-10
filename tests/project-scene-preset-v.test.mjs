@@ -26,9 +26,9 @@ test('V preset: registry validates, targets the v canvas, similar to Default H',
   assert.equal(presetV.parity, 'pending');
 });
 
-test('V preset: z unique 0..13 (z13 = test-broadcast banner, z0.5 = blurred game backdrop) plus cam-pop rule z14, rects inside the canvas, crop not stretch', () => {
+test('V preset: z unique 0..13 (z13 = test-broadcast banner, z0 = blurred game backdrop, D331) plus cam-pop rule z14, rects inside the canvas, crop not stretch', () => {
   const zs = presetV.params.layers.map((l) => l.z).sort((a, b) => a - b);
-  assert.deepEqual(zs, [0, 0.5, 1, 2, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 11, 12, 13]); // z3.5 = confetti prompt (D248)
+  assert.deepEqual(zs, [0, 1, 2, 3, 3.5, 4, 4.5, 5, 6, 7, 8, 9, 10, 11, 12, 13]); // z3.5 = confetti prompt (D248)
   assert.equal(presetV.params.rules[0].z, 14);
   for (const l of presetV.params.layers) {
     for (const k of ['x', 'y', 'w', 'h']) assert.ok(l.rect[k] >= 0 && l.rect[k] <= 1, `${l.key}.${k}`);
@@ -52,7 +52,7 @@ test('V preset loads into the v canvas with roles bound and validates', () => {
   assert.equal(validateProject(r.project).ok, true);
   const sc = r.project.scenes.at(-1);
   assert.equal(sc.name, 'Default V');
-  assert.equal(sc.layers.length, 17);
+  assert.equal(sc.layers.length, 16);
   assert.ok(sc.layers.every((l) => Object.keys(l.placements).join() === 'v'));
   const byKey = (k) => sc.layers.find((l) => l.id === r.layerIds[k]);
   assert.deepEqual(byKey('game').source, { device: 'dev-cap' });
@@ -60,11 +60,19 @@ test('V preset loads into the v canvas with roles bound and validates', () => {
   assert.equal(byKey('facecam').placements.v.visible, true); // shown (user 2026-11-06)
   assert.deepEqual(byKey('game').placements.v.crop, { left: 336, right: 336 });
   assert.equal(byKey('game').placements.v.width, 1080);
-  // layer-effects off (default): the backdrop is built but hidden, and no layer carries effects
-  assert.equal(sc.layers[1].id, r.layerIds['game-backdrop']);
-  assert.deepEqual(byKey('game-backdrop').source, { layer: r.layerIds.game });
-  assert.equal(byKey('game-backdrop').placements.v.visible, false);
-  assert.ok(sc.layers.every((l) => !l.effects));
+  // D331: the bottom layer is the blurred game backdrop, shown and blurred with layer-effects off (no flag); no
+  // browser background. The game's rounded corners stay behind layer-effects.
+  assert.equal(sc.layers[0].id, r.layerIds['game-backdrop']);
+  assert.equal(r.layerIds.background, undefined);
+  assert.ok(!sc.layers.some((l) => l.origin.id === 'scene-default-v/background'));
+  const bd = byKey('game-backdrop');
+  assert.deepEqual(bd.source, { layer: r.layerIds.game });
+  assert.equal(bd.placements.v.visible, true);
+  assert.deepEqual(bd.effects, [{ type: 'blur', strength: 40 }]);
+  assert.deepEqual(bd.placements.v.crop, { left: 656, right: 656 });
+  assert.deepEqual([bd.placements.v.x, bd.placements.v.y, bd.placements.v.width, bd.placements.v.height], [0, 0, 1080, 1920]);
+  assert.equal(byKey('game').effects, undefined);
+  assert.ok(sc.layers.every((l) => l === bd || !l.effects));
   assert.equal(r.project.devices.length, 2);
   assert.equal(r.rules[0].layer, r.layerIds.facecam);
 });
@@ -83,11 +91,24 @@ test('V preset with layer-effects on: blurred backdrop shown behind the game, ga
   assert.deepEqual(byKey('game').effects, [{ type: 'rounded', radius: 48 }]);
 });
 
-test('V preset: an unbound game leaves the backdrop a transparent placeholder too', () => {
-  const r = loadScenePreset(base(), presetV, { profile, flags: { 'layer-effects': true } });
-  const bd = r.project.scenes.at(-1).layers.find((l) => l.id === r.layerIds['game-backdrop']);
-  assert.equal(bd.type, 'color');
-  assert.equal(bd.effects, undefined);
+test('V preset: an unbound game leaves the backdrop a transparent placeholder too (flag on or off)', () => {
+  for (const flags of [{ 'layer-effects': true }, {}]) {
+    const r = loadScenePreset(base(), presetV, { profile, flags });
+    const bd = r.project.scenes.at(-1).layers.find((l) => l.id === r.layerIds['game-backdrop']);
+    assert.equal(bd.type, 'color');
+    assert.deepEqual(bd.source, { color: '#00000000' });
+    assert.equal(bd.placements.v.crop, undefined);
+    assert.equal(bd.effects, undefined);
+  }
+});
+
+test('V preset (D331): the backdrop carries no feature flag; the atmos-frame background is gone from the preset', () => {
+  const bd = presetV.params.layers.find((l) => l.key === 'game-backdrop');
+  assert.equal(bd.flag, undefined);
+  assert.equal(bd.effectsFlag, undefined);
+  assert.equal(bd.z, Math.min(...presetV.params.layers.map((l) => l.z)));
+  assert.ok(!presetV.params.layers.some((l) => l.key === 'background'));
+  assert.ok(!presetV.params.layers.some((l) => l.overlay === 'atmos-frame/index.html'));
 });
 
 test('V preset: unbound roles give transparent colour layers; browser pages are sized to the placement', () => {

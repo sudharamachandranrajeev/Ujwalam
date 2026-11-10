@@ -401,7 +401,7 @@ async function runCrash(args, ctx) {
     async before(item) {
       if (!killAt.includes(item.seq)) return;
       // Prepare the pre-kill facts: api.json identity and three pending confirmations requested through the API. They are
-      // asked by the system role: an api client's own write runs at once (D331), a system write waits for an api click.
+      // asked by the system role: an api client's own write runs at once (D332), a system write waits for an api click.
       const api = readApiFile(ctx.paths.dataDir);
       const confirms = [];
       for (let i = 0; i < 3; i++) {

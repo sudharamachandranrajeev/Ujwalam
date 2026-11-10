@@ -76,7 +76,7 @@ function needAudit(c) {
 
 export const METHODS = Object.freeze({
   // 'remote' = the LAN listener's pairing token (D327 IN1): status and requests only; requests go through the action
-  // gate as source 'remote' (each write waits for an approval click from ui/api, D331), and a remote caller can never
+  // gate as source 'remote' (each write waits for an approval click from ui/api, D332), and a remote caller can never
   // confirm, panic, export or set live state.
   'core.status': {
     roles: ['api', 'system', 'remote'], schema: {},
@@ -98,7 +98,7 @@ export const METHODS = Object.freeze({
     roles: ['api'],
     schema: {
       confirmId: { type: 'string', required: true, max: 64, pattern: /^[0-9a-f]{32}$/ },
-      phrase: { type: 'string', max: 40 }, // ignored (D331: an approval is a click); accepted for old callers
+      phrase: { type: 'string', max: 40 }, // ignored (D332: an approval is a click); accepted for old callers
       actionHash: { type: 'string', required: true, max: 64, pattern: /^[0-9a-f]{64}$/ },
     },
     run: (c, p) => outcome(needGate(c).confirm(p.confirmId, p.phrase, p.actionHash)),
@@ -123,7 +123,7 @@ export const METHODS = Object.freeze({
     run: async (c, p) => safe(await needAudit(c).exportPage({ afterId: p.afterId ?? 0, limit: p.limit ?? 100 })),
   },
   // Not a direct purge: a catalogue action 'chat.raw.purge' (class write, destructive verb, so chat can never reach
-  // it). From the api token (the user's own surface) the gate runs it at once (D331); a rule / remote / system request
+  // it). From the api token (the user's own surface) the gate runs it at once (D332); a rule / remote / system request
   // waits for an approval click through actions.confirm.
   'audit.purge': {
     roles: ['api'],

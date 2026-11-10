@@ -17,7 +17,7 @@
 //   panic.set  (ui|api|system)                         -> allow, engages panic;  other sources refuse
 //   panic.clear (ui|api, untainted)                    -> allow, clears panic (the user's click); other sources refuse
 //   class read                                         -> allow
-//   write / on-air-write from ui or api (untainted)    -> allow and dispatch at once, audit reason 'ui-direct' (D331:
+//   write / on-air-write from ui or api (untainted)    -> allow and dispatch at once, audit reason 'ui-direct' (D332:
 //                                                         the user's click IS the decision; no typed phrase, no second
 //                                                         step, offline or live)
 //   write / on-air-write from rule, remote or system   -> confirm: one approval click (Allow) from an untainted ui/api
@@ -63,7 +63,7 @@ export const DEFAULT_MAX_PENDING = 16; // per requesting source
 export const DEFAULT_LIVE_STALE_MS = 15_000;
 export const MAX_PARAMS_BYTES = 8192;
 export const CONFIRM_SOURCES = Object.freeze(['ui', 'api']);
-/** Sources whose own untainted write requests run at once (the user's click, D331). */
+/** Sources whose own untainted write requests run at once (the user's click, D332). */
 export const DIRECT_SOURCES = CONFIRM_SOURCES;
 export const PANIC_SOURCES = Object.freeze(['ui', 'api', 'system']);
 export const LIVE_STATE_SOURCES = Object.freeze(['system', 'api']);
@@ -264,7 +264,7 @@ export function createActionGate(opts) {
     for (const p of pending.values()) if (p.source === base.source) mine++;
     if (mine >= maxPending) return refuse(base, 'too-many-pending');
     const state = liveState();
-    // One approval click; no phrase, no second step (D331).
+    // One approval click; no phrase, no second step (D332).
     const hash = actionHash({ id: base.id, params, source: base.source, actor: base.actor, epoch: liveEpoch });
     const confirmId = random(16).toString('hex');
     const expiresAt = t + ttlMs;
@@ -362,7 +362,7 @@ export function createActionGate(opts) {
     if (id === PANIC_CLEAR) {
       if (!CONFIRM_SOURCES.includes(source)) return refuse(base, 'source-not-permitted');
       if (!panicOn) return refuse(base, 'not-in-panic');
-      // The user's click (untainted ui/api; chat was refused above): clears at once (D331).
+      // The user's click (untainted ui/api; chat was refused above): clears at once (D332).
       audit('panic-clear', base, 'allow', 'panic-cleared', { confirmingSource: source });
       panicOn = false;
       opts.emit?.('system.panic', { reason: 'cleared' });
@@ -374,7 +374,7 @@ export function createActionGate(opts) {
       return { verdict: 'allow', reason: 'read', dispatch: dispatch({ ...base, params, idem }) };
     }
 
-    // write / on-air-write from the user's own surface (untainted ui or api): the click is the decision (D331).
+    // write / on-air-write from the user's own surface (untainted ui or api): the click is the decision (D332).
     if (DIRECT_SOURCES.includes(source)) {
       audit('request', base, 'allow', 'ui-direct');
       return { verdict: 'allow', reason: 'ui-direct', dispatch: dispatch({ ...base, params, idem }) };

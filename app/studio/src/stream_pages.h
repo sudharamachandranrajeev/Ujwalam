@@ -9,7 +9,7 @@
 //                    "Allow remote connections" (LAN only, off by default).
 //   OutputsPanel     main window (flag outputs-panel): an on/off switch per output, a + button, the Virtual Camera row.
 // Every value goes through the UI server (services/studio-ui/settings-routes.mjs), which checks it again: platform
-// limits, live lock; a live switch acts on the click (D331). No key or token is stored or shown here. Theme tokens only.
+// limits, live lock; a live switch acts on the click (D332). No key or token is stored or shown here. Theme tokens only.
 #pragma once
 
 #include "api_client.h"

@@ -90,7 +90,7 @@ describe('connect knows the Settings > Stream outputs (D327)', () => {
     assert.equal(o.state, 'missing');
     assert.equal(o.label, 'Kick');
     const r = await post(c, '/ui/api/connect/paste', { output: 'kick-2', key: NEW_KEY, server: NEW_SERVER });
-    assert.equal(r.json().verdict, 'allow', 'stored on the click (D331), no phrase');
+    assert.equal(r.json().verdict, 'allow', 'stored on the click (D332), no phrase');
     assert.equal(c.mem.map.get('Ujwalam/stream/kick-2'), NEW_KEY);
     assert.equal(c.mem.map.get('Ujwalam/stream/kick-2-server'), NEW_SERVER);
     const k = (await get(c, '/ui/api/connect?fresh=1')).json().outputs.find((x) => x.id === 'kick-2');

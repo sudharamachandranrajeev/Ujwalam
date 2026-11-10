@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Alpha 0 project (alpha plan Part A, day 1): <dataDir>/projects/alpha.project.json.
-//   prepareAlphaProject({ dataDir, rebuild, build }) -> { file, action: 'loaded' | 'built' | 'rebuilt', moved? }
-//     An existing file is used unchanged (a user's edits are never modified). rebuild builds the new project first;
+//   prepareAlphaProject({ dataDir, rebuild, build, upgrade }) -> { file, action: 'loaded' | 'upgraded' | 'built' | 'rebuilt', moved?, upgraded?, backup? }
+//     An existing file is used as it is (a user's edits are never modified), except for the one-time scene upgrades
+//     (upgrade, D331: only the preset layers an upgrade names change; a copy goes to projects/_old/ first). rebuild builds the new project first;
 //     only when that succeeds is the old file (and its .bak) moved to <dataDir>/projects/_old/alpha-<stamp>.project.json[.bak]
 //     and the new one saved (atomic save, services/project/store.mjs).
 //   buildAlphaProject({ presetsDir, profile, bindings, devicesListed, flags, mediaInfo }) -> { project, report }
@@ -15,10 +16,10 @@
 //     layer's own audio too; monitoring off.
 //   alphaBases({ profile, overlayRoot }) -> pathRef bases for project.load (profile: image files of the presets;
 //     media: the user's stream assets folder, streamAssetsDir, when it exists, D241).
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createProject, newId, projectFile, saveProject, validateProject } from '../project/index.mjs';
+import { createProject, loadProject, newId, projectFile, saveProject, validateProject } from '../project/index.mjs';
 import { loadScenePreset, ScenePresetError } from '../project/scene-preset.mjs';
 
 export const ALPHA_ID = 'alpha';
@@ -164,9 +165,44 @@ export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound
   };
 }
 
-export async function prepareAlphaProject({ dataDir, rebuild = false, build, now = new Date() }) {
+// Scene upgrades (services/project/scene-upgrades.mjs) for an existing alpha project: a copy of the file goes to
+// <dataDir>/projects/_old/alpha-<stamp>.before-<upgrade ids>.project.json first (never deleted), then the upgraded
+// project is saved (atomic save). Nothing to do, or an unreadable project: the file is left as it is.
+//   upgradeAlphaFile({ file, upgrade, now }) -> { changes, backup } | null
+//   upgrade(project) -> { project, changes } (scene-upgrades.mjs upgradeScenes with the registry presets bound)
+export function upgradeAlphaFile({ file, upgrade, now = new Date() }) {
+  let loaded;
+  try { loaded = loadProject(file); } catch { return null; } // reported by the host load as before
+  if (loaded.recoveredFrom) return null; // never upgrade (and so overwrite) a file that did not load
+  const { project, changes } = upgrade(loaded.project);
+  if (!changes.length) return null;
+  const oldDir = path.join(path.dirname(file), '_old');
+  mkdirSync(oldDir, { recursive: true });
+  const ids = [...new Set(changes.map((c) => c.upgrade))].join('-');
+  const backup = path.join(oldDir, `alpha-${stampOf(now)}.before-${ids}.project.json`);
+  if (existsSync(backup)) throw new Error('a project backup with this time stamp already exists; try again');
+  copyFileSync(file, backup);
+  saveProject(file, project);
+  return { changes, backup };
+}
+
+// The registry presets the scene upgrades read (by preset id); a missing or broken file is left out.
+export function upgradePresets(presetsDir) {
+  const out = {};
+  for (const f of [H_PRESET, V_PRESET]) {
+    try { const p = JSON.parse(readFileSync(path.join(presetsDir, f), 'utf8')); if (p?.id) out[p.id] = p; } catch { /* left out */ }
+  }
+  return out;
+}
+
+export async function prepareAlphaProject({ dataDir, rebuild = false, build, upgrade = null, now = new Date() }) {
   const file = alphaFile(dataDir);
-  if (existsSync(file) && !rebuild) return { file, action: 'loaded' };
+  if (existsSync(file) && !rebuild) {
+    // a failed upgrade never blocks the start: the project loads as it is and the reason is reported
+    let up = null;
+    try { up = upgrade ? upgradeAlphaFile({ file, upgrade, now }) : null; } catch (e) { return { file, action: 'loaded', upgradeError: e.message }; }
+    return up ? { file, action: 'upgraded', upgraded: up.changes, backup: up.backup } : { file, action: 'loaded' };
+  }
   const project = await build(); // a failed build leaves the old file where it is
   let moved = null;
   if (existsSync(file)) {
