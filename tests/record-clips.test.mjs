@@ -54,7 +54,9 @@ test('settings: defaults ask/ask, plain folders only, bad values refused, merge 
   const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-set-'));
   try {
     const gate = { top3: true, minKills: null }; // D286 proposed defaults (tests/user-settings-match-gate.test.mjs)
-    assert.deepEqual(readSettings(d), { exists: false, clips: { recording: 'ask', live: 'ask', matchGate: gate }, folders: { recordings: null, clips: null } });
+    assert.deepEqual(readSettings(d), { exists: false, clips: { recording: 'ask', live: 'ask', recordLive: true, matchGate: gate }, folders: { recordings: null, clips: null } });
+    assert.deepEqual(settingsProblems({ clips: { recordLive: 'yes' } }), ['clips.recordLive must be true or false'], 'LC2: a plain on/off');
+    assert.deepEqual(settingsProblems({ clips: { recordLive: false } }), []);
     assert.deepEqual(settingsProblems({ clips: { recording: 'sometimes' } }), ['clips.recording must be one of ask, after, while, off']);
     assert.match(settingsProblems({ folders: { clips: 'relative\\x' } })[0], /full path/);
     assert.match(settingsProblems({ folders: { clips: path.join(d, 'app', 'clips') } }, { forbidden: [path.join(d, 'app')] })[0], /may not be inside/);
@@ -63,7 +65,10 @@ test('settings: defaults ask/ask, plain folders only, bad values refused, merge 
     writeSettings(d, { clips: { live: 'while' } });
     const clips = path.join(d, 'my clips');
     writeSettings(d, { folders: { clips } });
-    assert.deepEqual(readSettings(d), { exists: true, clips: { recording: 'ask', live: 'while', matchGate: gate }, folders: { recordings: null, clips } });
+    assert.deepEqual(readSettings(d), { exists: true, clips: { recording: 'ask', live: 'while', recordLive: true, matchGate: gate }, folders: { recordings: null, clips } });
+    writeSettings(d, { clips: { recordLive: false } });
+    assert.equal(readSettings(d).clips.recordLive, false, 'LC2: off is kept');
+    assert.equal(readSettings(d).clips.live, 'while', 'and the other clip choices with it');
     assert.ok(existsSync(clips), 'the chosen folder is made');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });

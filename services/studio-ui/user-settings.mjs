@@ -7,6 +7,8 @@
 //                    { top3: true|false (the streamer is in the top 3 on the end screen),
 //                      minKills: null (kills rule off) | whole number 1..200 (the streamer's kills in the match) }
 //                    a match passes when any rule that is on holds; default { top3: true, minKills: null }
+//   clips.recordLive: true (default) | false: record H and V while a stream runs, started with the stream and stopped
+//                     when it ends, so the reels can be made after it (LC2, D334 proposed; services/studio-ui/server.mjs)
 //   folders.recordings: where recordings are saved (used from the next start); null = <host data>/recordings
 //   folders.clips: where finished clips are saved; null = <dataDir>/clips
 //   ui.motion (D290), ui.guide (D294 proposed): see the blocks below
@@ -19,7 +21,7 @@ export const SETTINGS_FILE = 'settings.json';
 export const CLIP_MODES = Object.freeze(['ask', 'after', 'while', 'off']);
 export const MIN_KILLS = Object.freeze({ min: 1, max: 200 }); // match gate
 export const DEFAULTS = Object.freeze({
-  clips: Object.freeze({ recording: 'ask', live: 'ask', matchGate: Object.freeze({ top3: true, minKills: null }) }),
+  clips: Object.freeze({ recording: 'ask', live: 'ask', recordLive: true, matchGate: Object.freeze({ top3: true, minKills: null }) }),
   folders: Object.freeze({ recordings: null, clips: null }),
 });
 
@@ -151,13 +153,14 @@ export function readSettings(dataDir) {
   const dir = (v) => (typeof v === 'string' && !folderProblem(v) ? v : null);
   return {
     exists: j !== null,
-    clips: { recording: mode(c.recording, DEFAULTS.clips.recording), live: mode(c.live, DEFAULTS.clips.live), matchGate: readMatchGate(c.matchGate) },
+    clips: { recording: mode(c.recording, DEFAULTS.clips.recording), live: mode(c.live, DEFAULTS.clips.live),
+      recordLive: typeof c.recordLive === 'boolean' ? c.recordLive : DEFAULTS.clips.recordLive, matchGate: readMatchGate(c.matchGate) },
     folders: { recordings: dir(f.recordings), clips: dir(f.clips) },
     ...uiRead(j), // D290
   };
 }
 
-/** Problems with a settings change { clips?: {recording?, live?, matchGate?: {top3?, minKills?}},
+/** Problems with a settings change { clips?: {recording?, live?, recordLive?, matchGate?: {top3?, minKills?}},
  *  folders?: {recordings?, clips?} }; [] when fine. */
 export function settingsProblems(patch, { forbidden = [] } = {}) {
   const out = [];
@@ -166,6 +169,7 @@ export function settingsProblems(patch, { forbidden = [] } = {}) {
   if (patch.ui !== undefined) out.push(...uiProblems(patch.ui)); // D290
   for (const [k, v] of Object.entries(patch.clips ?? {})) {
     if (k === 'matchGate') out.push(...matchGateProblems(v)); // match gate
+    else if (k === 'recordLive') { if (typeof v !== 'boolean') out.push('clips.recordLive must be true or false'); } // LC2
     else if (!['recording', 'live'].includes(k)) out.push(`unknown clip setting ${k}`);
     else if (!CLIP_MODES.includes(v)) out.push(`clips.${k} must be one of ${CLIP_MODES.join(', ')}`);
   }

@@ -11,6 +11,7 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import { audioReadiness, createStudioServer, HOST_CALLS } from '../services/studio-ui/server.mjs';
+import { writeSettings } from '../services/studio-ui/user-settings.mjs';
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 const REPO = path.resolve(UI, '..');
@@ -367,7 +368,7 @@ describe('settings and clip answers', () => {
 
   test('GET: defaults "ask" for both, not saved yet, default clips folder', async () => {
     const r = JSON.parse((await raw(port, { url: '/ui/api/settings', headers: { cookie: a.cookie } })).text);
-    assert.deepEqual(r.settings.clips, { recording: 'ask', live: 'ask', matchGate: { top3: true, minKills: null } });
+    assert.deepEqual(r.settings.clips, { recording: 'ask', live: 'ask', recordLive: true, matchGate: { top3: true, minKills: null } });
     assert.equal(r.clips.settingsSaved, false);
     assert.equal(r.clips.folder, path.join(dataDir, 'clips'));
   });
@@ -375,8 +376,8 @@ describe('settings and clip answers', () => {
     const clips = path.join(dataDir, 'out clips');
     assert.equal((await post(port, a, '/ui/api/settings', { clips: { recording: 'after', live: 'while' }, folders: { clips } })).status, 200);
     const s = JSON.parse(readFileSync(path.join(dataDir, 'settings.json'), 'utf8'));
-    assert.deepEqual([s.clips, s.folders.clips], [{ recording: 'after', live: 'while', matchGate: { top3: true, minKills: null } }, clips]);
-    for (const bad of [{ clips: { recording: 'maybe' } }, { folders: { clips: 'rel' } }, { folders: { recordings: path.join(REPO, 'services') } }, { other: 1 }]) {
+    assert.deepEqual([s.clips, s.folders.clips], [{ recording: 'after', live: 'while', recordLive: true, matchGate: { top3: true, minKills: null } }, clips]);
+    for (const bad of [{ clips: { recording: 'maybe' } }, { clips: { recordLive: 'on' } }, { folders: { clips: 'rel' } }, { folders: { recordings: path.join(REPO, 'services') } }, { other: 1 }]) {
       const r = await post(port, a, '/ui/api/settings', bad);
       assert.equal(r.status, 400, JSON.stringify(bad));
       assert.equal(JSON.parse(r.text).error, 'bad-settings');
@@ -431,5 +432,136 @@ describe('audio readiness (D297 proposed)', () => {
       assert.equal(r2.verdict, 'allow');
       assert.equal(r2.warning, undefined);
     } finally { await srv.close(); }
+  });
+});
+
+describe('record while live (LC2, D334 proposed)', () => {
+  const SINKS = ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record', 'record-v'];
+  async function rig({ recordLive, failRecordStart = false } = {}) {
+    const dataDir = mkdtempSync(path.join(os.tmpdir(), 'ujw-reclive-'));
+    if (recordLive !== undefined) writeSettings(dataDir, { clips: { recordLive } });
+    const fake = createFakeHost({ outputsReady: true, sinks: SINKS });
+    const calls = [];
+    const r = { fake, calls, hold: null, failRecordStart };
+    const host = {
+      describe: () => fake.describe(),
+      call: async (m, p) => {
+        if (m !== 'outputs.status' && m !== 'host.status') calls.push(m);
+        if (m === 'record.start' && r.hold) await r.hold;
+        if (m === 'record.start' && r.failRecordStart) { r.failRecordStart = false; throw Object.assign(new Error('disk'), { code: 'RECORD_FAILED' }); }
+        return fake.call(m, p);
+      },
+    };
+    const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
+    r.srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, limits: { statusPollMs: 20 } });
+    ({ port: r.port } = await r.srv.listen());
+    r.a = await login(r.port);
+    r.click = async (route, body) => JSON.parse((await post(r.port, r.a, route, body)).text);
+    r.state = async () => Object.fromEntries((await fake.call('outputs.status')).sinks.map((s) => [s.id, s.state]));
+    r.count = (m) => calls.filter((x) => x === m).length;
+    r.tasks = async () => JSON.parse((await raw(r.port, { url: '/ui/api/tasks', headers: { cookie: r.a.cookie } })).text).tasks;
+    r.close = async () => { await r.srv.close(); rmSync(dataDir, { recursive: true, force: true }); };
+    return r;
+  }
+  const waitFor = async (fn, ms = 3000) => { const end = Date.now() + ms; while (Date.now() < end) { if (await fn()) return true; await new Promise((x) => setTimeout(x, 20)); } return false; };
+
+  test('on by default: Start stream records H and V; Stop stream stops that recording (the reels can be made)', async () => {
+    const r = await rig();
+    try {
+      const ok = await r.click('/ui/api/host', { method: 'stream.start' });
+      assert.equal(ok.verdict, 'allow');
+      assert.equal(ok.warning, undefined);
+      assert.deepEqual(r.calls.filter((m) => /^(stream|record)\./.test(m)), ['stream.start', 'record.start'], 'the recording starts after the accepted stream start');
+      const live = await r.state();
+      assert.deepEqual([live.record, live['record-v'], live['youtube-h']], ['live', 'live', 'live']);
+      const t = (await r.tasks()).find((x) => x.title === 'Recording the stream for reels');
+      assert.deepEqual([t?.state, t?.note], ['done', 'Started with the stream; it stops when the stream ends, then the reels are made.']);
+      const stop = await r.click('/ui/api/host', { method: 'stream.stop' });
+      assert.equal(stop.verdict, 'allow');
+      assert.equal(r.count('record.stop'), 1);
+      const end = await r.state();
+      assert.deepEqual([end.record, end['record-v'], end['youtube-h']], ['stopped', 'stopped', 'stopped']);
+    } finally { await r.close(); }
+  });
+
+  test('a recording started by hand is never started again or stopped by the stream', async () => {
+    const r = await rig();
+    try {
+      await r.click('/ui/api/host', { method: 'record.start' });
+      await r.click('/ui/api/host', { method: 'stream.start' });
+      assert.equal(r.count('record.start'), 1, 'already recording: not started again');
+      await r.click('/ui/api/host', { method: 'stream.stop' });
+      await new Promise((x) => setTimeout(x, 120)); // a few status polls
+      assert.equal(r.count('record.stop'), 0);
+      assert.equal((await r.state()).record, 'live', 'the hand-started recording keeps running');
+      // a Record click during a recording started with the stream hands it back to the user
+      await r.click('/ui/api/host', { method: 'record.stop' });
+      await r.click('/ui/api/host', { method: 'stream.start' });
+      assert.equal(r.count('record.start'), 2, 'started with the stream');
+      await r.click('/ui/api/host', { method: 'record.stop' });
+      await r.click('/ui/api/host', { method: 'record.start' });
+      await r.click('/ui/api/host', { method: 'stream.stop' });
+      await new Promise((x) => setTimeout(x, 120));
+      assert.equal((await r.state()).record, 'live', 'taken over by the Record click: kept');
+    } finally { await r.close(); }
+  });
+
+  test('record.start fails: the stream stays live, the answer warns and the task panel says why', async () => {
+    const r = await rig({ failRecordStart: true });
+    try {
+      const ok = await r.click('/ui/api/host', { method: 'stream.start' });
+      assert.equal(ok.verdict, 'allow', 'the start itself succeeded');
+      assert.equal(ok.warning, 'The stream is live, but it is not being recorded (the recording did not start: RECORD_FAILED), so no reels will be made from it. Press Record to record it.');
+      const st = await r.state();
+      assert.deepEqual([st['youtube-h'], st.twitch, st.record], ['live', 'live', 'idle']);
+      assert.equal(r.count('stream.stop'), 0, 'never stops the stream');
+      const t = (await r.tasks()).find((x) => x.title === 'Recording the stream for reels');
+      assert.deepEqual([t?.state, t?.note], ['failed', 'Not recorded: the recording did not start: RECORD_FAILED. The stream is live; press Record to record it.']);
+    } finally { await r.close(); }
+  });
+
+  test('setting off: the old behaviour (no recording with the stream)', async () => {
+    const r = await rig({ recordLive: false });
+    try {
+      const ok = await r.click('/ui/api/host', { method: 'stream.start' });
+      assert.equal(ok.verdict, 'allow');
+      assert.equal(r.count('record.start'), 0);
+      await r.click('/ui/api/host', { method: 'stream.stop' });
+      assert.equal(r.count('record.stop'), 0);
+    } finally { await r.close(); }
+  });
+
+  test('End all stops the recording started with the stream; the host reporting every stream stopped does too', async () => {
+    const r = await rig();
+    try {
+      await r.click('/ui/api/host', { method: 'stream.start' });
+      const end = await r.click('/ui/api/streams/end-all', {});
+      assert.equal(end.verdict, 'allow');
+      assert.deepEqual([end.endAll.allStopped, end.endAll.recording, end.endAll.recordingStopped], [true, false, true]);
+      assert.equal((await r.state()).record, 'stopped');
+      // the streams end without a click (the host stopped them): the next status poll stops the recording
+      await r.click('/ui/api/host', { method: 'stream.start' });
+      assert.equal((await r.state())['record-v'], 'live');
+      await new Promise((x) => setTimeout(x, 120)); // status polls see the stream running (until then a 30 s grace applies)
+      await r.fake.call('stream.stop', {});
+      assert.ok(await waitFor(async () => (await r.state()).record === 'stopped'), 'stopped by the status poll');
+      assert.equal(r.count('record.stop'), 2);
+    } finally { await r.close(); }
+  });
+
+  test('a Stop that arrives while record.start is on its way wins: the recording is stopped again', async () => {
+    const r = await rig();
+    try {
+      let release; r.hold = new Promise((x) => { release = x; });
+      const starting = r.click('/ui/api/host', { method: 'stream.start' });
+      assert.ok(await waitFor(() => r.count('record.start') === 1), 'record.start sent');
+      const stop = await r.click('/ui/api/host', { method: 'stream.stop' });
+      assert.equal(stop.verdict, 'allow');
+      release();
+      assert.equal((await starting).verdict, 'allow');
+      assert.equal(r.count('record.stop'), 1, 'stopped again at once');
+      const st = await r.state();
+      assert.deepEqual([st.record, st['youtube-h']], ['stopped', 'stopped']);
+    } finally { await r.close(); }
   });
 });

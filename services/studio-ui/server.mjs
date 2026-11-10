@@ -51,6 +51,7 @@ import { TASKS_CONFIG, createTasks, loadTaskConfig, parseTaskConfig, writeTaskFi
 import { createDataNotifier, createDataSource, parseJsonText } from '../common/data-reload.mjs';
 import { READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
 import { STOP_TASKS_FILE, clipTools } from './record-clips.mjs';
+import { createRecordLive } from './record-live.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
@@ -671,6 +672,12 @@ export function createStudioServer(opts) {
   let closing = null; let startsInFlight = 0; let lastStartAt = -Infinity;
   let stopEpoch = 0; // goes up before a confirmed Stop / End all reaches the host (D327 OS3 output starts check it)
   const isClosing = () => !!closing;
+  // Record while live (LC2, D334 proposed; record-live.mjs): the recording starts with an accepted stream start and
+  // stops when the stream ends, when Settings > Clips "Record while live" is on (default). Needs the data folder.
+  const recordLive = createRecordLive({
+    call: (m, p) => host.call(m, p), epoch: () => stopEpoch, closing: () => !!closing, tasks, log, now,
+    enabled: () => typeof opts.dataDir === 'string' && readSettings(opts.dataDir).clips.recordLive === true,
+  });
   const CLOSING_REFUSAL = { error: 'closing', detail: 'Ujwalam is closing' };
   const bounded = (p) => Promise.race([Promise.resolve(p), new Promise((_, rej) => { const t = setTimeout(() => rej(new Error('timeout')), QUIT_WAIT_MS); t.unref?.(); })]);
   async function quitBegin(res) {
@@ -855,6 +862,8 @@ export function createStudioServer(opts) {
   }
   async function tick() {
     try { lastSnapshot = await snapshot(); broadcast('status', lastSnapshot); } catch { /* keep polling */ }
+    // Record while live (LC2): a recording started with the stream stops once no stream sink runs any more.
+    if (recordLive.active()) { try { await recordLive.observe(await host.call('outputs.status', {})); } catch { /* next poll */ } }
   }
 
   // Host call with a retry on CONFLICT (-32009) for project.load.
@@ -1266,7 +1275,7 @@ export function createStudioServer(opts) {
       // End all streams (D299, no flag: it is the host's existing stream.stop, plus a check that every stream sink
       // stopped). A studio write like Stop stream: runs on the click (D332). Recording keeps running.
       if (Object.keys(body).length) return json(res, 400, { error: 'bad-params' });
-      return runAction({ kind: 'end-all', summary: 'End all streams: both YouTube outputs, Twitch and Kick stop and their connections close. The recording keeps running (stop it separately).' }, res);
+      return runAction({ kind: 'end-all', summary: 'End all streams: both YouTube outputs, Twitch and Kick stop and their connections close. A recording you started keeps running (stop it separately); one started with the stream (Record while live) stops with it.' }, res);
     }
     if (route === '/ui/api/bots/start' || route === '/ui/api/bots/stop') {
       // Studio write on the click (D332). Stop only ever ends a copy Ujwalam started (checked in the module).
@@ -1453,12 +1462,27 @@ export function createStudioServer(opts) {
           return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', stoppedAgain: true });
         }
         remember(p.method, p.params, before);
+        // Record while live (LC2): after an accepted start (the stop-wins checks above passed) the recording starts too;
+        // a failed record.start leaves the stream live and comes back as a warning. A Stop stream also stops a
+        // recording that was started this way; a Record / Stop recording click hands the recording back to the user.
+        let recordWarning = null;
+        if (p.method === 'stream.start') recordWarning = (await recordLive.afterStreamStart()).warning ?? null;
+        if (p.method === 'stream.stop') await recordLive.streamEnded('the stream was stopped');
+        if (p.method === 'record.start' || p.method === 'record.stop') recordLive.handOff();
+        const warning = [p.warning, recordWarning].filter(Boolean).join(' ') || null;
         // A layout change confirmed while live autosaves like an instant one (P5b).
         const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
-        return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.warning ? { warning: p.warning } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
+        return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(warning ? { warning } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
         } finally { if (starting) { startsInFlight -= 1; lastStartAt = now(); } }
       }
-      if (p.kind === 'end-all') { stopEpoch += 1; if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
+      if (p.kind === 'end-all') {
+        stopEpoch += 1;
+        if (authority) await authority.revoke('end-all');
+        const endAll = await endAllStreams();
+        // Record while live (LC2): a recording started with the stream ends with it; one started by hand keeps running.
+        const recordingStopped = await recordLive.streamEnded('all streams were ended');
+        return json(res, 200, { verdict: 'allow', endAll: recordingStopped ? { ...endAll, recording: false, recordingStopped: true } : endAll });
+      }
       if (p.kind !== 'core') return json(res, 400, { error: 'unknown-kind' });
       const r = await core.confirm({ confirmId: p.confirmId, actionHash: p.actionHash });
       return json(res, 200, await handleCoreOutcome(r, p.summary));
