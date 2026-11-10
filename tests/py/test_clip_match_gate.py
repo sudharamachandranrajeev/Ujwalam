@@ -225,9 +225,9 @@ def hit(t, det, label=None, signal=True, mode="mp", t_end=None, why=None):
 class SegmentTests(unittest.TestCase):
     def hits(self):
         return [
-            hit(20, "M5", "MP kill feed"), hit(300, "W1", "VICTORY"), hit(320, "M2", "IMPACT PLAY"),
+            hit(20, "M5", "MP kill feed"), dict(hit(300, "W1", "VICTORY"), banner="match"), hit(320, "M2", "IMPACT PLAY"),
             hit(331, "S1", "TOP 3", t_end=345), hit(346, "W1", "VICTORY", signal=False, why=["outside_roi"]),
-            hit(400, "M5", "MP kill feed"), hit(700, "W1", "DEFEAT"), hit(735, "S1", "TOP 3", signal=False, t_end=748),
+            hit(400, "M5", "MP kill feed"), dict(hit(700, "W1", "DEFEAT"), banner="match"), hit(735, "S1", "TOP 3", signal=False, t_end=748),
             hit(800, "M5", "MP kill feed"),
         ]
 
@@ -272,7 +272,8 @@ class SegmentTests(unittest.TestCase):
         self.assertEqual(len(mg.end_clusters([hit(100, "M1", "MVP")], CFG)), 1)
 
     def test_end_screens_far_apart_are_two_matches(self):
-        hs = [hit(100, "W1", "VICTORY"), hit(100 + CFG["endGapSec"] + 1, "W1", "DEFEAT")]
+        hs = [dict(hit(100, "W1", "VICTORY"), banner="match"),
+              dict(hit(100 + CFG["endGapSec"] + 1, "W1", "DEFEAT"), banner="match")]
         self.assertEqual(len(mg.end_clusters(hs, CFG)), 2)
 
 

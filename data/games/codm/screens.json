@@ -38,7 +38,8 @@
         "M4",
         "M5",
         "X1",
-        "N1"
+        "N1",
+        "C1"
       ],
       "status": "unverified",
       "note": "Includes MP killcams (N1 label_mp, killer_header, killer_card). Without a mode gate B1 fired 409 boxes on MP frames (A5c), so B1 is not allowed here.",
@@ -307,7 +308,8 @@
       ],
       "detectors": [
         "M1",
-        "S1"
+        "S1",
+        "C1"
       ],
       "status": "unverified",
       "note": "A final MP scoreboard frame is still missing (capture-plan mp_final_scoreboard). Scoreboards were read during play in A5c (03:36, 12:49, 14:20, 14:43); whether those show MVP badges is not recorded (UNVERIFIED). S1 (2026-11-08) reads the own row's kills here; its ROI and kills header are unverified until a frame exists.",

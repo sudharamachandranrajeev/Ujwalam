@@ -2,6 +2,15 @@
 
 The pack version is `version` in `detectors.json`. It covers every file in this folder (`game.json`, `detectors.json`, `events.json`, `screens.json`, `capture-plan.json`, `match-reels.json`). Validate with `npm run validate:games`.
 
+## 0.6.0 — 2026-11-10 (round end vs match end, game mode per match)
+
+Evidence: `docs/evidence/2026-11-10-round-vs-match-end.md`.
+
+- W1 gains `banner` (schema `detector-pack.schema.json`, all status unverified): `kinds` tell a round-end banner (word centre y 0.31-0.38) from a match-end banner (y 0.39-0.47); `subtitleRoi` and `subtitles` read the line under a round banner (ENEMIES ELIMINATED, SQUAD ELIMINATED, BOMB DEFUSED pointing to Search and Destroy, SCORE LIMIT REACHED as a half-time round, ALL ZONES CAPTURED); `followers`/`followSec` 30 classify hits without a kind by the post-match screens that follow a match end; `sameBannerSec` 10 joins one banner split into two hits. Only match-end banners now close a match; round banners become the match's `rounds` and fill `roundKills`.
+- New detector C1 "Game mode cues" (role context, no weight, status unverified), screens `mp_gameplay` and `mp_scoreboard`: ROIs `objective` (DESTROY TARGET) and `scoreboard_head` (PLANTS, DEFUSES), new detector field `cues` (text and the modes it points to). `services/clip/match_gate.py` `game_mode()` combines C1 cues, the top-3 mode name and round subtitles into one mode per match with a confidence and the evidence list, or none with the reason.
+- S1 `modeNames` entries may be `{text, mode}`; added SEARCH & DESTROY (the on-screen spelling), CONTROL (top-3 screen), KILL CONFIRMED and FRONTLINE (mode-select tiles only). `scoreRegex`, `patterns` and `regex` also take RATING n (ranked TDM top-3 cards).
+- Detection changes: W1 rows carry `banner` and `subtitle`; C1 rows are new. Runs detected with 0.5.0 still segment correctly through the follow-on fallback, but read no C1 cues, subtitles or RATING top-3 screens until re-detected.
+
 ## Unreleased — 2026-11-09 (match reel rules, D315)
 
 Evidence: `docs/evidence/2026-11-09-match-reel-rules.md`.

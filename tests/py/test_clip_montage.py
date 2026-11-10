@@ -154,7 +154,8 @@ class MontageTests(unittest.TestCase):
 
 
 def result(t, word="VICTORY"):
-    return {"t": float(t), "tEnd": float(t), "detector": "W1", "label": word, "signal": True, "role": "context"}
+    return {"t": float(t), "tEnd": float(t), "detector": "W1", "label": word, "signal": True, "role": "context",
+            "banner": "match"}
 
 
 def reels(hits, places=None, duration=None):

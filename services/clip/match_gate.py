@@ -60,7 +60,45 @@ def stats_config(pack):
     st.setdefault("endGapSec", 90)
     st.setdefault("killLineHoldSec", 6)
     st.setdefault("victimMatchMin", 0.7)
+    w1 = next((d for d in pack.get("detectors", []) if d.get("id") == "W1"), None) or {}
+    st["banner"] = dict(w1.get("banner") or {})
+    c1 = next((d for d in pack.get("detectors", []) if d.get("id") == "C1"), None) or {}
+    st["modeCues"] = list(c1.get("cues") or [])
     return st
+
+
+# ---------------------------------------------------------------- banner (round end vs match end)
+
+def banner_kind(g, banner):
+    """Kind of a VICTORY/DEFEAT banner from its word box g (game fractions) -> "round" | "match" | None.
+    The pack's W1 `banner.kinds` give the centre-y range of the word per kind (round banners: thin bar high on the
+    screen; match-end banners: large emblem lower down)."""
+    if not g or not banner:
+        return None
+    cy = (g[1] + g[3]) / 2
+    for k in banner.get("kinds") or []:
+        if float(k["y0"]) <= cy <= float(k["y1"]):
+            return k["kind"]
+    return None
+
+
+def banner_subtitle(boxes, banner):
+    """The banner subtitle (e.g. "BOMB DEFUSED") in the pack's W1 banner.subtitleRoi -> canonical pack text or None.
+    Only the pack's own texts are returned, never raw OCR text."""
+    roi = (banner or {}).get("subtitleRoi")
+    subs = [(gt.normalise(s["text"]), s["text"]) for s in (banner or {}).get("subtitles") or []]
+    if not roi or not subs:
+        return None
+    best, label = 0.0, None
+    for b in boxes:
+        if not b.get("g") or not _inside(b["g"], roi):
+            continue
+        t = gt.normalise(b.get("text", ""))
+        for n, text in subs:
+            r = gt.partial_ratio(n, t) if t else 0.0
+            if r >= 0.85 and r > best:
+                best, label = r, text
+    return label
 
 
 def _centre(g):
@@ -123,7 +161,8 @@ def parse_mode_label(boxes, det, cfg):
     roi = _roi(det, "mode_label")
     if not roi:
         return None
-    wanted = [(gt.normalise(n), n.lower()) for n in cfg.get("modeNames") or []]
+    wanted = [(gt.normalise(n), n.lower()) if isinstance(n, str) else (gt.normalise(n["text"]), n["mode"].lower())
+              for n in cfg.get("modeNames") or []]
     for b in boxes:
         if b.get("g") and _inside(b["g"], roi):
             t = gt.normalise(b.get("text", ""))
@@ -300,17 +339,66 @@ def read_hits(path):
     return out
 
 
-def end_clusters(hits, cfg):
+def _is_banner(h):
+    return h.get("detector") == "W1" and h.get("signal") is True and h.get("label") in ("VICTORY", "DEFEAT")
+
+
+def _follower(h, ids):
+    return h.get("detector") in ids and not (h.get("detector") == "M1" and "outside_roi" in (h.get("why") or []))
+
+
+def classify_banners(hits, cfg, duration=None):
+    """Round end or match end for every signalled VICTORY/DEFEAT banner (W1). -> {id(hit): (kind, source)}.
+    kind "round" | "match" | None (unknown: treated as a match end, the behaviour before rounds existed).
+    source "geometry": the detector pass read the banner kind from the word's position (hit field `banner`, pack
+    W1 banner.kinds). Hits without that field (detected before it existed) fall back to "follow-on" (pack
+    banner.followers / followSec): a match end is followed within followSec by a post-match screen (FINAL KILLCAM,
+    IMPACT PLAY, MVP, top 3); a round banner is not. A banner too close to the end of the recording to tell stays
+    None. Without a pack banner config every banner is a match end."""
+    b = cfg.get("banner") or {}
+    out = {}
+    if not b:
+        for h in hits:
+            if _is_banner(h):
+                out[id(h)] = ("match", "no banner config")
+        return out
+    ids = set(b.get("followers") or [])
+    follow = float(b.get("followSec") or 0)
+    starts = sorted(float(h["t"]) for h in hits if _follower(h, ids))
+    last = max([float(h.get("tEnd", h["t"])) for h in hits] + [float(duration or 0)])
+    for h in hits:
+        if not _is_banner(h):
+            continue
+        if h.get("banner") in ("round", "match"):
+            out[id(h)] = (h["banner"], "geometry")
+            continue
+        t1 = float(h.get("tEnd", h["t"]))
+        if any(t1 <= s <= t1 + follow for s in starts):
+            out[id(h)] = ("match", "follow-on")
+        elif last - t1 > follow:
+            out[id(h)] = ("round", "follow-on")
+        else:
+            out[id(h)] = (None, "follow-on: recording ends too soon after the banner")
+    return out
+
+
+def end_clusters(hits, cfg, kinds=None):
     """End-screen sequences: hits of cfg endScreenDetectors (M1 only inside its ROI) closer than endGapSec join.
-    -> [{t0, t1, results: Counter, hudModes: Counter, w1: [(t, tEnd, label, signalled)]}] sorted by time."""
+    Round-end banners (classify_banners; kinds is its result, computed when None) never join: only match ends do.
+    -> [{t0, t1, results: Counter, hudModes: Counter, w1: [(t, tEnd, label, signalled)], banners: [(t, source)]}]
+    sorted by time."""
     ids = set(cfg.get("endScreenDetectors") or [])
     gap = float(cfg.get("endGapSec") or 90)
+    if kinds is None:
+        kinds = classify_banners(hits, cfg)
     pts = []
     for h in hits:
         d = h.get("detector")
         if d not in ids:
             continue
         if d == "M1" and "outside_roi" in (h.get("why") or []):
+            continue
+        if kinds.get(id(h), (None,))[0] == "round":
             continue
         t0 = float(h["t"])
         t1 = float(h.get("tEnd", t0))
@@ -322,11 +410,13 @@ def end_clusters(hits, cfg):
             c = out[-1]
             c["t1"] = max(c["t1"], t1)
         else:
-            c = {"t0": t0, "t1": t1, "results": Counter(), "hudModes": Counter(), "w1": []}
+            c = {"t0": t0, "t1": t1, "results": Counter(), "hudModes": Counter(), "w1": [], "banners": []}
             out.append(c)
         if h.get("detector") == "W1" and h.get("label") in ("VICTORY", "DEFEAT"):
             c["results"][h["label"]] += 2 if h.get("signal") else 1
             c["w1"].append((t0, t1, h["label"], h.get("signal") is True))
+            if id(h) in kinds:
+                c["banners"].append((t0, kinds[id(h)][1], h.get("subtitle")))
         if h.get("mode") in ("mp", "br"):
             c["hudModes"][h["mode"]] += 1
     return out
@@ -340,9 +430,25 @@ def segment(hits, stats, duration, cfg):
     """Matches of a recording. stats: match-stats.json doc (or None). Each match: start, end, endSeen, result,
     mode, ownRank, ownScore, top3Seen, ownKills, killsSource; for the reel rules (D315) also endScreenAt (first
     end-screen hit), resultConfirmed (a signalled W1 box of that result), resultAt/resultEnd (that box's time),
-    gameMode (the mode name read on the top-3 screen, else None) and roundKills (own kills per round: no round
-    detector exists, always None). No names."""
-    clusters = end_clusters(hits, cfg)
+    gameMode with modeConfidence, modeEvidence and modeReason (game_mode(): top-3 mode name, mode cues, round
+    subtitles; None when the evidence does not decide one mode) and roundKills (own kills per round, from the
+    round-end banners: see below). Round ends (classify_banners) never close a match: they are listed in `rounds`
+    [{t, tEnd, result, source, subtitle}] of the match they fall in; endBanner tells how the closing banner was
+    told apart ({source, subtitle} or None). roundKills: with at least one round end, own kills per round, a round
+    running from the previous round end (or the match start) to its banner, the last one to the match-end banner;
+    otherwise None. No names."""
+    kinds = classify_banners(hits, cfg, duration)
+    clusters = end_clusters(hits, cfg, kinds)
+    round_hits = []  # one per round banner: hits of the same result closer than banner.sameBannerSec are one banner
+    same = float((cfg.get("banner") or {}).get("sameBannerSec") or 0)
+    for h in sorted((h for h in hits if kinds.get(id(h), (None,))[0] == "round"), key=lambda h: float(h["t"])):
+        p = round_hits[-1] if round_hits else None
+        if p and p["label"] == h["label"] and float(h["t"]) - float(p.get("tEnd", p["t"])) <= same:
+            round_hits[-1] = dict(p, tEnd=max(float(p.get("tEnd", p["t"])), float(h.get("tEnd", h["t"]))),
+                                  subtitle=p.get("subtitle") or h.get("subtitle"))
+            kinds[id(round_hits[-1])] = kinds[id(p)]
+            continue
+        round_hits.append(h)
     readings = (stats or {}).get("readings") or []
     if stats and isinstance((stats.get("ownKills") or {}).get("times"), list):
         kill_times, kill_src = [float(t) for t in stats["ownKills"]["times"]], "killfeed"
@@ -363,7 +469,13 @@ def segment(hits, stats, duration, cfg):
         m = {"index": i, "start": round(start, 2), "end": round(end, 2), "endSeen": seen, "result": None,
              "mode": None, "ownRank": None, "ownScore": None, "top3Seen": False, "ownKills": None, "killsSource": None,
              "endScreenAt": round(c["t0"], 2) if c else None, "resultConfirmed": False, "resultAt": None,
-             "resultEnd": None, "gameMode": None, "roundKills": None}
+             "resultEnd": None, "gameMode": None, "roundKills": None, "rounds": [], "endBanner": None,
+             "modeConfidence": None, "modeEvidence": [], "modeReason": None}
+        m["rounds"] = [{"t": round(float(h["t"]), 2), "tEnd": round(float(h.get("tEnd", h["t"])), 2),
+                        "result": h["label"], "source": kinds[id(h)][1], "subtitle": h.get("subtitle")}
+                       for h in round_hits if start <= float(h["t"]) < play_end]
+        if c and c["banners"]:
+            m["endBanner"] = {"source": c["banners"][0][1], "subtitle": c["banners"][0][2]}
         hud = Counter(h["mode"] for h in hits if h.get("mode") in ("mp", "br") and start <= float(h["t"]) <= end)
         if c:
             if c["results"]:
@@ -383,9 +495,6 @@ def segment(hits, stats, duration, cfg):
                     scores = Counter(r["ownScore"] for r in tops if r.get("ownRank") == m["ownRank"]
                                      and r.get("ownScore") is not None)
                     m["ownScore"] = scores.most_common(1)[0][0] if scores else None
-                gm = Counter(r["gameMode"] for r in tops if r.get("gameMode"))
-                m["mode"] = _mode_of(gm)
-                m["gameMode"] = m["mode"]
         boards = [r for r in readings if r.get("kind") == "scoreboard" and start <= float(r.get("t", -1)) <= end
                   and isinstance(r.get("ownKills"), int)]
         if boards:
@@ -393,10 +502,71 @@ def segment(hits, stats, duration, cfg):
         elif kill_src:
             m["ownKills"] = sum(1 for t in kill_times if start <= t < play_end)
             m["killsSource"] = kill_src
-        if m["mode"] is None:
-            m["mode"] = _mode_of(hud + (c["hudModes"] if c else Counter()))
+        if m["rounds"] and kill_src:
+            edges = [start] + [r["tEnd"] for r in m["rounds"]] + [play_end]
+            m["roundKills"] = [sum(1 for t in kill_times if a <= t < b) for a, b in zip(edges, edges[1:])]
+        if not c:
+            tops = []
+        in_match = [h for h in hits if start <= float(h["t"]) <= end]
+        gm = game_mode(tops, in_match, m["rounds"], m["endBanner"], cfg)
+        m["gameMode"], m["modeConfidence"], m["modeEvidence"], m["modeReason"] = gm
+        m["mode"] = m["gameMode"] or _mode_of(hud + (c["hudModes"] if c else Counter()))
         out.append(m)
     return out
+
+
+def _cue_modes(cfg):
+    """{cue text: [modes]} of the pack's mode cues (C1 `cues`) and banner subtitles that name modes."""
+    out = {}
+    for q in cfg.get("modeCues") or []:
+        out[q["text"]] = [x.lower() for x in q.get("modes") or []]
+    for s in (cfg.get("banner") or {}).get("subtitles") or []:
+        if s.get("modes"):
+            out.setdefault(s["text"], [x.lower() for x in s["modes"]])
+    return out
+
+
+def game_mode(tops, hits, rounds, end_banner, cfg):
+    """Game mode of one match from on-screen evidence -> (mode | None, confidence | None, evidence, reason).
+    Evidence items {source, at, text, modes}: the mode name on the top-3 screen (S1 mode_label), mode cues seen
+    during the match (C1 hits: HUD and scoreboard texts that only some modes show) and round-banner subtitles that
+    name modes. Each item allows a set of modes; the match mode is the one mode every item allows. No item: None
+    ("no mode evidence"); items that allow no common mode or more than one: None with the reason (never a guess).
+    Confidence: "high" with the top-3 mode name, else "medium" with two or more items, else "low"."""
+    cues = _cue_modes(cfg)
+    ev = []
+    for r in tops:
+        if r.get("gameMode"):
+            ev.append({"source": "top-3 screen", "at": round(float(r["t"]), 2), "text": r["gameMode"],
+                       "modes": [r["gameMode"]]})
+    seen = set()
+    for h in hits:
+        if h.get("detector") == "C1" and h.get("signal") is True and h.get("label") in cues:
+            ev.append({"source": "mode cue", "at": round(float(h["t"]), 2), "text": h["label"],
+                       "modes": cues[h["label"]]})
+    for r in list(rounds) + ([end_banner] if end_banner else []):
+        s = r.get("subtitle")
+        if s in cues:
+            ev.append({"source": "round subtitle", "at": r.get("t"), "text": s, "modes": cues[s]})
+    # one item per (source, text): repeats of the same screen or cue add no independent evidence
+    uniq = []
+    for e in ev:
+        k = (e["source"], e["text"])
+        if k not in seen:
+            seen.add(k)
+            uniq.append(e)
+    if not uniq:
+        return None, None, [], "no mode evidence"
+    allowed = set(uniq[0]["modes"])
+    for e in uniq[1:]:
+        allowed &= set(e["modes"])
+    if len(allowed) != 1:
+        named = sorted({x for e in uniq for x in e["modes"]})
+        why = "evidence disagrees" if not allowed else "evidence fits more than one mode"
+        return None, None, uniq, f"{why} ({', '.join(named)})"
+    mode = allowed.pop()
+    conf = "high" if any(e["source"] == "top-3 screen" for e in uniq) else "medium" if len(uniq) >= 2 else "low"
+    return mode, conf, uniq, f"{len(uniq)} evidence item(s) agree"
 
 
 # ---------------------------------------------------------------- gate
