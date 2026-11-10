@@ -2,6 +2,22 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.21 — 2026-11-10
+
+- Correction: alpha.20 did not contain the round/match-end and match-type changes its notes listed (a merge mistake). They are in this build.
+- Match reels show only your own kills: no loadout screen, no round intro and no teammate you watch after dying. A Search and Destroy reel that counts because of one strong round shows that round.
+- Ujwalam also reads the match type from the post-match header, and counts your kills more accurately (one kill line is no longer counted twice in most cases).
+- Match reel files say victory or defeat and your kill count.
+- Impact-play reels (switch "impact-play-reels", off): a separate reel from the MVP animation through the impact-play camera to the results page, when the impact play is yours.
+- Capture cards and cameras plugged in after Ujwalam starts: a layer for a device that is not connected is added and waits; it connects by itself when you plug the device in, and goes back to waiting when you unplug it. The stream and recording keep running.
+- Layers: a delete button (asks first), move and resize on the preview with edge handles, crop with Alt+drag or the crop boxes, drag to reorder in the layer list. Every slider takes a click, a typed value and the arrow keys.
+- Settings > Stream (switch "stream-settings", off): canvas, frame rate, encoder, bitrates and your stream outputs with add, edit and delete, checked against each platform's limits.
+- Outputs panel in the main window (switch "outputs-panel", off): one switch per output; while live, "yes, on air" switches just that output on or off.
+- Transitions per canvas with easing curves, "mirror main canvas" for the vertical canvas, and Force complete.
+- Settings > Integrations (switch "integrations", off): Streamer.bot and Speaker.bot address, port and a test button; "Allow remote connections" stays off unless you turn it on, and then only on your home network with a pairing code.
+- Settings > Connections (switch "platform-connect", off): sign in to YouTube or Twitch, or paste a stream key and server, from the app. Keys stay in Windows Credential Manager; only the last 4 characters are shown.
+- Themes: four new themes, a theme picker in Settings, and a High performance mode for lighter memory use. Settings > Advanced no longer opens shifted.
+- Data files (switches, posting rules, effect limits, themes) reload while Ujwalam runs; a broken file keeps the last good one.
 ## 0.1.0-alpha.20 — 2026-11-10
 
 - Search and Destroy and other round modes are no longer split into one "match" per round: only the large end-of-match banner ends a match. Rounds are listed inside the match with your kills per round, so a multi-kill in one round can get a reel.

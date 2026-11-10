@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 20,
+  "current": 21,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -31,6 +31,7 @@
     { "n": 17, "date": "2026-11-10", "title": "Normal windows, match reel rules, caption timing, retry slots" },
     { "n": 18, "date": "2026-11-10", "title": "Clip jobs no longer freeze, rules survive updates" },
     { "n": 19, "date": "2026-11-10", "title": "Task panel with stages, time left and stuck warning" },
-    { "n": 20, "date": "2026-11-10", "title": "Matches split by match end, match type read from the screen" }
+    { "n": 20, "date": "2026-11-10", "title": "Matches split by match end, match type read from the screen" },
+    { "n": 21, "date": "2026-11-10", "title": "Own-kill reels, device hot-plug, layer editing, stream settings and sign-in" }
   ]
 }
