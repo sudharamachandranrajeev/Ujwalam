@@ -830,6 +830,13 @@ was also pressed. Decided:
   is not being recorded (...)") and the task panel a failed "Recording the stream for reels" row with the reason.
 - A Stop or End all that arrives while `record.start` is on its way wins: the recording is stopped again at once.
   No start while Ujwalam is closing (the start is inside the closing-lock count). No confirmation (D332).
+- Codex review of LC2:
+  - The recording stops only when a fresh `outputs.status` shows no stream sink starting, live, reconnecting,
+    retrying or stopping. A per-output Stop, or an End all still closing, keeps it, and the status poll stops it
+    later.
+  - Starts and stops run one at a time. Ownership is one object plus a generation counter, so a late answer never
+    takes over the user's recording and never forgets a newer one.
+  - Stop and End all never wait for a pending automatic `record.start`.
 - Disk: about 10.4 GB (1024^3) per hour at the alpha-live bitrates (D333); the readiness disk check already counts
   the H and V recordings.
 - No feature flag (same exception as D330–D333: the user asked for it directly).

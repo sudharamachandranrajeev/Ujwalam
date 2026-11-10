@@ -178,6 +178,82 @@ New tests:
 UNVERIFIED for LC2: a real stream started from the studio that records H and V by itself and makes the reels after
 it ends.
 
+### Codex review of LC2
+
+`services/studio-ui/record-live.mjs` was reworked. Starts and stops now run one at a time (a promise chain). The
+recording it owns is one object, plus a generation counter that every start attempt and every Record or Stop click
+bumps. A late answer acts only while its object is still the owner.
+
+- **P1, recording stopped while an output still ran** (`server.mjs`). Every Stop stream, a per-output stop included,
+  stopped the auto recording. End all stopped it even when `endAll.allStopped` was false. Fixed: the recording stops
+  only when a fresh `outputs.status` shows no stream sink starting, live, reconnecting, retrying or stopping.
+  Otherwise the status poll stops it later.
+- **P1, a pending auto start took over the user's recording.** A Record click completed during the automatic
+  `record.start`, then the start's answer set the recording as automatic again. Fixed: the generation check. A start
+  answer that arrives after a Record or Stop click leaves the recording to the user.
+- **P1, an old stop answer orphaned a new recording.** A late `record.stop` answer cleared the owner of a recording
+  that a new stream start had just made, so that recording would run forever. Fixed: the steps run in order, and the
+  owner is cleared only if it is still the recording being stopped. The status poll takes the owner before it reads
+  the status and acts only for that owner.
+- **P2, a Stop during the first status read was lost.** The stop epoch was read after `outputs.status`. Fixed: the
+  server passes the click's own epoch, taken before any await. The epoch and the closing lock are checked again just
+  before `record.start` and again after it.
+- **Follow-up (found while testing the fixes): Stop stream waited for a slow `record.start`.** With the serial
+  queue, Stop stream and End all waited behind a pending automatic `record.start`. The server test "a Stop that
+  arrives while record.start is on its way wins" hung, because it releases `record.start` only after Stop answers.
+  Fixed: while an automatic start is queued or running, `streamEnded` answers at once. That start sees the new epoch
+  and stops its own recording once a fresh status shows every stream ended.
+
+Before the fixes, the new regression tests failed:
+
+```
+UJWALAM_HEADLESS=1 node --test tests/record-live.test.mjs
+ℹ tests 10
+ℹ pass 4
+ℹ fail 6
+
+studio-ui-server "P1: Stop or End all that leave an output running keep the recording": record.stop count
+  actual: 1
+  expected: 0
+```
+
+After the fixes (each file run on its own with `--test-timeout=60000`):
+
+```
+UJWALAM_HEADLESS=1 node --test --test-timeout=60000 tests/record-live.test.mjs
+# tests 11
+# pass 11
+# fail 0
+
+UJWALAM_HEADLESS=1 node --test --test-timeout=60000 tests/studio-ui-server.test.mjs
+# tests 39
+# pass 39
+# fail 0
+# duration_ms 1743.5764
+```
+
+New tests:
+- `tests/record-live.test.mjs` (7):
+  - a Stop during the status read;
+  - the click's epoch;
+  - a Record click during `record.start`;
+  - an old stop answer against a new start;
+  - a fresh status is required (live and stopping keep the recording);
+  - a stale poll with the old owner;
+  - a slow `record.start` never holds up Stop.
+- `tests/studio-ui-server.test.mjs`: one output still live after Stop stream and End all keeps the recording; the
+  poll stops it once every output has stopped.
+
+Other affected suites, after the fixes:
+
+```
+UJWALAM_HEADLESS=1 node --test --test-timeout=60000 tests/record-live.test.mjs tests/record-clips.test.mjs tests/studio-ui-readiness.test.mjs tests/studio-ui-alpha.test.mjs tests/live-soak.test.mjs tests/stream-recovery.test.mjs tests/user-settings-match-gate.test.mjs tests/user-settings-theme.test.mjs tests/studio-tasks.test.mjs tests/studio-qt-d327.test.mjs tests/package-alpha.test.mjs
+# tests 179
+# pass 177
+# fail 0
+# skipped 2   (the same two environment gates as above)
+```
+
 ## Not checked (UNVERIFIED)
 
 - A real stream: H + V recording, the live clipper and the task panel rows on a real live session.
