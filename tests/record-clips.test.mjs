@@ -97,6 +97,14 @@ test('clipRunSpec: whole recording (after) and moments found while it ran (while
   const withRec = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { ...job, h: 'C:/r/h.mkv', v: 'C:/r/v.mkv' }, saves: 'D/live-clips/s1', exists: has([script, gpu, 'C:/r/h.mkv']) });
   assert.deepEqual(withRec.spec.argv.slice(4), ['live-review', '--saves', 'D/live-clips/s1', '--since', job.since, '--until', job.until,
     '--recording', 'C:/r/h.mkv', '--threads', '4', '--encoder', 'h264_nvenc', '--publish', 'E:/clips', '--drop-used-saves', '--out', path.join('D', 'clips', 'runs', 'live-1')]);
+  assert.ok(!withRec.spec.argv.includes('--montage'), 'a V recording that is gone: no montage');
+  // D322 proposed (user 2026-11-10: no montage clips from a recorded stream): H and V there -> montage after the shorts.
+  const withV = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { ...job, h: 'C:/r/h.mkv', v: 'C:/r/v.mkv' }, saves: 'D/live-clips/s1', exists: has([script, gpu, 'C:/r/h.mkv', 'C:/r/v.mkv']) });
+  assert.deepEqual(withV.spec.argv.slice(4), ['live-review', '--saves', 'D/live-clips/s1', '--since', job.since, '--until', job.until,
+    '--recording', 'C:/r/h.mkv', '--threads', '4', '--v-recording', 'C:/r/v.mkv', '--montage', '--encoder', 'h264_nvenc', '--publish', 'E:/clips',
+    '--drop-used-saves', '--out', path.join('D', 'clips', 'runs', 'live-1')]);
+  const vOnly = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { ...job, h: 'C:/r/h.mkv', v: 'C:/r/v.mkv' }, saves: 'D/live-clips/s1', exists: has([script, gpu, 'C:/r/v.mkv']) });
+  assert.ok(!vOnly.spec.argv.includes('--montage'), 'no H recording: no detector hits, no montage');
   const goneRec = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { ...job, h: 'C:/r/h.mkv' }, saves: 'D/live-clips/s1', exists: has([script, gpu]) });
   assert.ok(!goneRec.spec.argv.includes('--recording'), 'a recording that is gone: no gate input, every save kept');
   // 2026-11-10: the H recording is a canvas; the project's game layer places the detector boxes (D235).
@@ -281,6 +289,8 @@ test('task panel: the stages of each job type in order, and their plain words', 
   assert.deepEqual(jobStages({ type: 'full', h: 'a.mkv', v: 'b.mkv' }), ['detect', 'candidates', 'gate', 'render', 'validate', 'publish', 'montage'], 'a V recording adds the montage');
   assert.deepEqual(jobStages({ type: 'review', h: 'a.mkv' }), ['detect', 'gate', 'review', 'publish'], 'the stream recording gives the matches');
   assert.deepEqual(jobStages({ type: 'review' }), ['review', 'publish']);
+  assert.deepEqual(jobStages({ type: 'review', h: 'a.mkv', v: 'b.mkv' }), ['detect', 'gate', 'review', 'publish', 'montage'], 'D322: a recorded stream adds the montage');
+  assert.deepEqual(jobStages({ type: 'review', v: 'b.mkv' }), ['review', 'publish'], 'no H recording: no montage');
   assert.deepEqual(stageWords('detect', { type: 'full' }), { stageText: 'Reading the game screen', unit: 'frame', measured: true });
   assert.deepEqual(stageWords('gate', { type: 'full' }), { stageText: 'Sorting clips by match', unit: 'match', measured: true });
   assert.deepEqual(stageWords('gate', { type: 'review' }), { stageText: 'Sorting saves by match', unit: null, measured: true });
