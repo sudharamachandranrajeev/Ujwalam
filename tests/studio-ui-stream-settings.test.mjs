@@ -49,16 +49,17 @@ const post = (c, route, body) => raw(c.port, {
   headers: { cookie: c.a.cookie, origin: `http://127.0.0.1:${c.port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': c.a.csrf },
 });
 
-async function boot({ flagsOn = ['stream-settings', 'outputs-panel', 'integrations'], tcp } = {}) {
+async function boot({ flagsOn = ['stream-settings', 'outputs-panel', 'integrations'], tcp, authority = null, startPauseMs = 0, beforeHost = null } = {}) {
   const dataDir = mk();
   const f = createFlags({ dataDir });
   for (const id of flagsOn) f.set(id, true);
   const fake = createFakeHost({ outputsReady: true });
   const calls = [];
-  const host = { describe: () => fake.describe(), call: async (m, p) => { if (m !== 'host.status' && m !== 'outputs.status') calls.push([m, p]); return fake.call(m, p); } };
+  // beforeHost(m, p): awaited before the fake host runs a call (race tests: a slow start on its way to the host).
+  const host = { describe: () => fake.describe(), call: async (m, p) => { if (m !== 'host.status' && m !== 'outputs.status') calls.push([m, p]); if (beforeHost) await beforeHost(m, p); return fake.call(m, p); } };
   const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
   const tcpCalls = [];
-  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, limits: { statusPollMs: 30 }, authority: null,
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, limits: { statusPollMs: 30 }, authority, startPauseMs,
     tcpAnswers: async (port) => { tcpCalls.push(port); return tcp ? tcp(port) : false; }, botConfig: () => ({}) });
   servers.push(srv);
   const { port } = await srv.listen();
@@ -165,6 +166,105 @@ describe('Outputs panel (OS3)', () => {
     assert.equal(late.verdict, 'refuse');
     assert.equal(late.reason, 'not-live');
     assert.ok(!c.calls.some(([m]) => m === 'stream.start'), 'never a go-live from an output switch');
+  });
+
+  // Codex review P1 (2026-11-10): a switch-on confirmed live must not outlive a newer End all / Stop.
+  const states = async (c) => Object.fromEntries((await c.fake.call('outputs.status', {})).sinks.map((x) => [x.id, x.state]));
+  async function kickOffLive(c) {
+    const seed = (await get(c, '/ui/api/stream/setup')).json().setup;
+    assert.equal((await post(c, '/ui/api/stream/setup', { setup: seed })).status, 200); // saved: live switches are remembered
+    await c.fake.call('stream.start', {});
+    await settle();
+    const off = (await post(c, '/ui/api/outputs/toggle', { id: 'kick', on: false })).json();
+    assert.equal((await post(c, '/ui/api/confirm', { pendingId: off.pending.pendingId, text: 'yes, on air' })).json().verdict, 'allow');
+    return (await post(c, '/ui/api/outputs/toggle', { id: 'kick', on: true })).json();
+  }
+  async function endAll(c) {
+    const e = (await post(c, '/ui/api/streams/end-all', {})).json();
+    return (await post(c, '/ui/api/confirm', { pendingId: e.pending.pendingId, text: 'yes, on air' })).json();
+  }
+
+  test('race: End all confirmed while a switch-on waits -> the switch-on is not sent; nothing restarts', async () => {
+    const c = await boot({ startPauseMs: 400 });
+    const on = await kickOffLive(c);
+    const pendingOn = post(c, '/ui/api/confirm', { pendingId: on.pending.pendingId, text: 'yes, on air' });
+    await new Promise((r) => setTimeout(r, 100)); // the switch-on has its token and waits
+    assert.equal((await endAll(c)).verdict, 'allow');
+    const r = (await pendingOn).json();
+    assert.equal(r.verdict, 'refuse', JSON.stringify(r));
+    assert.equal(r.reason, 'stopped-meanwhile');
+    assert.ok(!c.calls.some(([m, p]) => m === 'stream.start' && p?.sinks?.[0] === 'kick'), 'the start never reached the host');
+    const s = await states(c);
+    for (const id of ['youtube-h', 'youtube-v', 'twitch', 'kick']) assert.notEqual(s[id], 'live', `${id} after End all`);
+    const setup = JSON.parse(readFileSync(path.join(c.dataDir, 'stream-setup.json'), 'utf8'));
+    assert.equal(setup.outputs.find((o) => o.id === 'kick').enabled, false, 'a refused switch-on is not remembered');
+  });
+
+  test('race: End all lands while the switch-on is on its way to the host -> that output is stopped again', async () => {
+    let gate = null;
+    const c = await boot({ beforeHost: async (m, p) => { if (m === 'stream.start' && p?.sinks?.[0] === 'kick' && gate) await gate; } });
+    const on = await kickOffLive(c);
+    let open; gate = new Promise((r) => { open = r; });
+    const pendingOn = post(c, '/ui/api/confirm', { pendingId: on.pending.pendingId, text: 'yes, on air' });
+    await new Promise((r) => setTimeout(r, 100)); // the start is held at the host's door
+    const ended = endAll(c);
+    await new Promise((r) => setTimeout(r, 100));
+    open(); // the start reaches the host after End all's stop
+    assert.equal((await ended).verdict, 'allow');
+    const r = (await pendingOn).json();
+    assert.equal(r.verdict, 'refuse', JSON.stringify(r));
+    assert.equal(r.stoppedAgain, true);
+    assert.deepEqual(c.calls.at(-1), ['stream.stop', { sinks: ['kick'] }]);
+    assert.notEqual((await states(c)).kick, 'live');
+  });
+
+  test('race: a launcher revoke (go-live authority) while a switch-on waits also wins', async () => {
+    let gen = 0;
+    const authority = { begin: async () => gen, arm: async (g) => g === gen, revoke: async () => { gen += 1; return true; } };
+    const c = await boot({ authority, startPauseMs: 300 });
+    const on = await kickOffLive(c);
+    const pendingOn = post(c, '/ui/api/confirm', { pendingId: on.pending.pendingId, text: 'yes, on air' });
+    await new Promise((r) => setTimeout(r, 100));
+    await authority.revoke('live-test-guard');
+    const r = (await pendingOn).json();
+    assert.equal(r.reason, 'stopped-meanwhile', JSON.stringify(r));
+    assert.ok(!c.calls.some(([m, p]) => m === 'stream.start' && p?.sinks?.[0] === 'kick'));
+  });
+});
+
+describe('Start stream honours switched-off outputs (Codex review P1)', () => {
+  test('stream-settings on, outputs-panel off: a disabled output is not started; none enabled refuses with a message', async () => {
+    const c = await boot({ flagsOn: ['stream-settings'] });
+    const s = structuredClone((await get(c, '/ui/api/stream/setup')).json().setup);
+    s.outputs.find((o) => o.id === 'kick').enabled = false;
+    assert.equal((await post(c, '/ui/api/stream/setup', { setup: s })).status, 200);
+    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
+    const ok = (await post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' })).json();
+    assert.equal(ok.verdict, 'allow', JSON.stringify(ok));
+    assert.deepEqual(c.calls.find(([m]) => m === 'stream.start')[1], { sinks: ['youtube-h', 'youtube-v', 'twitch'] });
+    assert.notEqual((await c.fake.call('outputs.status', {})).sinks.find((x) => x.id === 'kick').state, 'live');
+    await c.fake.call('stream.stop', {});
+    await settle();
+    for (const o of s.outputs) o.enabled = false;
+    assert.equal((await post(c, '/ui/api/stream/setup', { setup: s })).status, 200);
+    const n = c.calls.length;
+    const st2 = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
+    const no = (await post(c, '/ui/api/confirm', { pendingId: st2.pending.pendingId, text: 'yes, on air' })).json();
+    assert.equal(no.verdict, 'refuse');
+    assert.equal(no.reason, 'no-outputs-enabled');
+    assert.match(no.detail, /No output is switched on/);
+    assert.ok(!c.calls.slice(n).some(([m]) => m === 'stream.start'), 'nothing started');
+  });
+
+  test('both flags off: a saved setup is not in effect; Start stream starts the plan as before', async () => {
+    const c = await boot({ flagsOn: ['stream-settings'] });
+    const s = structuredClone((await get(c, '/ui/api/stream/setup')).json().setup);
+    s.outputs.find((o) => o.id === 'kick').enabled = false;
+    assert.equal((await post(c, '/ui/api/stream/setup', { setup: s })).status, 200);
+    createFlags({ dataDir: c.dataDir }).set('stream-settings', false);
+    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
+    assert.equal((await post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' })).json().verdict, 'allow');
+    assert.deepEqual(c.calls.find(([m]) => m === 'stream.start')[1], {});
   });
 });
 

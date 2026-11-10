@@ -21,6 +21,7 @@ const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 const BASE = 19700 + Math.floor(Math.random() * 40) * 2;
 const PORTS = { twitch: BASE, kick: BASE + 1 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const PAUSE_MS = 2000; // UJWALAM_TEST_START_PAUSE_MS: every confirmed start waits this long before the host call
 
 const PLAN = {
   config: {
@@ -111,6 +112,8 @@ before(async () => {
     env: {
       ...process.env, UJWALAM_HEADLESS: '1', UJWALAM_BROWSER: process.execPath, UJWALAM_BROWSER_ARGS: `${path.join(HOST_DIR, 'tests', 'studio-login.mjs')} ${loginOut}`,
       UJWALAM_HOST_DATA: path.join(dir, 'host'), UJWALAM_HOST_TOKEN: '', UJWALAM_LIVE_SESSION: '',
+      // The second test needs a confirmed start to wait before it goes to the host (End all lands meanwhile).
+      UJWALAM_TEST_START_PAUSE_MS: String(PAUSE_MS),
     },
     stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
   });
@@ -184,4 +187,40 @@ test('while live, one output stops and starts again; the other stays up (loopbac
     assert.ok(v[0].packets > 30, `${path.basename(f)} video packets ${v[0].packets}`);
     console.log(`# ${path.basename(f)}: ${v[0].packets} video packets, ${p.streams.filter((s) => s.type === 'audio').length} audio stream(s)`);
   }
+});
+
+// Codex review P1 (2026-11-10): a switch-on confirmed while live, then End all confirmed before that start reaches the
+// host. End all wins: the switch-on is refused and the output never connects again.
+test('End all during a pending switch-on: nothing restarts after End all (loopback)', { timeout: 240_000 }, async () => {
+  const tw = listener('twitch', 'twitch-2');
+  const k = listener('kick', 'kick-3');
+  await sleep(1200);
+  const c = await req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
+  const go = await req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+  assert.equal(go.body.verdict, 'allow', JSON.stringify(go.body));
+  await until(async () => size(tw.file) > 100_000 && size(k.file) > 100_000, 'both listeners receiving', 30_000);
+  await toggle('kick', false);
+  await Promise.race([k.exit, sleep(15_000)]);
+  await until(async () => (await sinkState('kick')) === 'stopped', 'kick stopped', 15_000);
+
+  const k4 = listener('kick', 'kick-4'); // would receive if the switch-on got through
+  await sleep(800);
+  const t = await req('POST', '/ui/api/outputs/toggle', { id: 'kick', on: true });
+  const pendingOn = req('POST', '/ui/api/confirm', { pendingId: t.body.pending.pendingId, text: 'yes, on air' });
+  await sleep(300); // the switch-on is inside its pause, on its way to the host
+  const e = await req('POST', '/ui/api/streams/end-all', {});
+  const ended = await req('POST', '/ui/api/confirm', { pendingId: e.body.pending.pendingId, text: 'yes, on air' });
+  assert.equal(ended.body.endAll.allStopped, true, JSON.stringify(ended.body));
+  const on = (await pendingOn).body;
+  assert.equal(on.verdict, 'refuse', JSON.stringify(on));
+  assert.equal(on.reason, 'stopped-meanwhile');
+  await sleep(PAUSE_MS + 3000);
+  assert.notEqual(await sinkState('kick'), 'live', 'kick stays stopped after End all');
+  assert.notEqual(await sinkState('twitch'), 'live', 'twitch stays stopped after End all');
+  assert.equal(size(k4.file), 0, 'the kick listener never received anything after End all');
+  await Promise.all([tw.stop(), k4.stop()]);
+  const v = probe(tw.file).streams.filter((s) => s.type === 'video');
+  assert.equal(v[0]?.codec, 'h264');
+  assert.ok(v[0].packets > 30, `twitch-2 video packets ${v[0].packets}`);
+  console.log(`# twitch-2: ${v[0].packets} video packets; kick-4: ${size(k4.file)} bytes after End all`);
 });

@@ -33,7 +33,8 @@ const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) 
 
 /**
  * opts: { dataDir, flags, host, addPending, getPending, publicPending, json, canvases?: () => ({ H, V } | undefined),
- *         botConfig?: () => object, tcpAnswers?, remoteToken?: string, log? }
+ *         botConfig?: () => object, tcpAnswers?, remoteToken?: string, log?,
+ *         startGuard?: { closing(), enter() -> release(), begin() -> token, still(token), pause(), stopAgain(sinks) } }
  */
 export function createSettingsRoutes(opts) {
   const { flags, host, json } = opts;
@@ -56,10 +57,12 @@ export function createSettingsRoutes(opts) {
   }
   const label = (o) => `${o.name}`;
 
-  /** The sinks Start stream starts when the outputs panel is on: the enabled outputs the host has. null = all (flag
-   *  off or no setup); [] = none enabled (Start is refused). */
+  /** The sinks Start stream starts while a saved setup is in effect (flag stream-settings or outputs-panel on): the
+   *  enabled outputs the host has. The launcher plan holds every output of the setup, disabled ones too (so one can be
+   *  switched on live), so a switched-off output must be left out here whatever the panel flag says.
+   *  null = all (both flags off or no setup); [] = none enabled (Start is refused). */
   async function startSinks() {
-    if (!on(OUTPUTS_PANEL_FLAG) || !dataDir) return null;
+    if ((!on(STREAM_SETTINGS_FLAG) && !on(OUTPUTS_PANEL_FLAG)) || !dataDir) return null;
     const { exists, setup } = readSetup(dataDir);
     if (!exists) return null;
     const states = await sinkStates();
@@ -180,13 +183,31 @@ export function createSettingsRoutes(opts) {
     } catch { return { running: false }; }
   }
 
-  /** Confirms a kind 'output' pending (live switch of one output). Re-checks live first: never a go-live from here. */
+  /** Confirms a kind 'output' pending (live switch of one output). Re-checks live first: never a go-live from here.
+   *  A switch-on goes through opts.startGuard (server.mjs: the same stop generation and go-live authority as Start
+   *  stream): a Stop or End all confirmed after this start began wins. Checked before the host call (the start is not
+   *  sent) and after it (that output is stopped again at once). */
   async function confirm(p, res) {
     if (!on(OUTPUTS_PANEL_FLAG)) return json(res, 404, { error: `${OUTPUTS_PANEL_FLAG}-off` });
-    const live = await hostLive();
-    if (live !== true) return json(res, 200, { verdict: 'refuse', reason: 'not-live', detail: 'The stream is not live any more; use Start stream.' });
-    const method = p.on ? 'stream.start' : 'stream.stop';
-    try { await host.call(method, { sinks: [p.outputId] }); } catch (e) { return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+    const g = p.on ? opts.startGuard ?? null : null;
+    if (g?.closing()) return json(res, 409, { error: 'closing', detail: 'Ujwalam is closing' });
+    const release = g ? g.enter() : () => {};
+    try {
+      const token = g ? await g.begin() : null; // taken before the live check: any Stop from here on wins
+      const live = await hostLive();
+      if (live !== true) return json(res, 200, { verdict: 'refuse', reason: 'not-live', detail: 'The stream is not live any more; use Start stream.' });
+      if (g) {
+        await g.pause();
+        if (!(await g.still(token))) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', detail: 'A Stop or End all came first; nothing was started.' });
+      }
+      const method = p.on ? 'stream.start' : 'stream.stop';
+      try { await host.call(method, { sinks: [p.outputId] }); } catch (e) { return json(res, 502, { error: 'host-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+      if (g && !(await g.still(token))) {
+        // The Stop reached the host while this start was on its way: stop this output again so the newer Stop wins.
+        if (!(await g.stopAgain([p.outputId]))) return json(res, 502, { error: 'host-error', detail: 'stop-again-failed' });
+        return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', stoppedAgain: true });
+      }
+    } finally { release(); }
     // Remember the choice for the next start too (best effort; the live switch already happened).
     try {
       const { exists, setup } = readSetup(dataDir);

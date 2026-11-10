@@ -497,6 +497,7 @@ export function createStudioServer(opts) {
   //   - the studio exits only after quitCommit confirms, at that moment, that its token is still the held, granted lock.
   const RECENT_START_MS = 5000; const QUIT_WAIT_MS = Number.isFinite(limits.quitWaitMs) && limits.quitWaitMs > 0 ? limits.quitWaitMs : 10_000; // limits.quitWaitMs: tests
   let closing = null; let startsInFlight = 0; let lastStartAt = -Infinity;
+  let stopEpoch = 0; // goes up before a confirmed Stop / End all reaches the host (D327 OS3 output starts check it)
   const isClosing = () => !!closing;
   const CLOSING_REFUSAL = { error: 'closing', detail: 'Ujwalam is closing' };
   const bounded = (p) => Promise.race([Promise.resolve(p), new Promise((_, rej) => { const t = setTimeout(() => rej(new Error('timeout')), QUIT_WAIT_MS); t.unref?.(); })]);
@@ -823,10 +824,34 @@ export function createStudioServer(opts) {
     return id;
   }
   const publicPending = (id, p) => ({ pendingId: id, summary: p.summary, phrase: p.phrase, expiresAt: p.expiresAt, ...(p.step ? { step: p.step, of: 2 } : {}), ...(p.readiness ? { readiness: publicReadiness(p.readiness) } : {}) });
+  // D327 OS3: a live switch-on of one output is a start like Start stream, so a Stop or End all confirmed after it
+  // began wins. stopEpoch goes up before any confirmed Stop / End all reaches the host (works without the launcher);
+  // with the launcher, the go-live authority generation is checked too. Not armed: the stream was armed at go-live,
+  // and arming again would clear the launcher's excluded sinks.
+  const outputStartGuard = {
+    closing: isClosing,
+    enter() { startsInFlight += 1; return () => { startsInFlight -= 1; lastStartAt = now(); }; },
+    async begin() { return { epoch: stopEpoch, gen: authority ? await authority.begin() : null }; },
+    async still(t) {
+      if (t.epoch !== stopEpoch) return false;
+      if (!authority) return true;
+      return Number.isInteger(t.gen) && (await authority.begin()) === t.gen; // a closed authority fails closed
+    },
+    pause: () => (startPauseMs ? new Promise((r) => setTimeout(r, startPauseMs)) : Promise.resolve()),
+    async stopAgain(sinks) {
+      for (let i = 0; ; i++) {
+        try { await callHost('stream.stop', { sinks }); return true; } catch (e) {
+          if (i >= STOP_AGAIN_WAITS.length) { log(`[studio-ui] WARNING: an output started after a Stop could not be stopped again (${String(e?.code ?? e?.message ?? 'error').slice(0, 80)})`); return false; }
+        }
+        await new Promise((r) => setTimeout(r, STOP_AGAIN_WAITS[i]));
+      }
+    },
+  };
   // D327: Stream settings, Outputs panel, Integrations, Force complete transition (settings-routes.mjs).
   const settingsRoutes = createSettingsRoutes({
     dataDir: opts.dataDir, flags, host, json, addPending, publicPending, getPending: (id) => pending.get(id), log,
     remoteToken: typeof opts.remoteToken === 'string' ? opts.remoteToken : undefined,
+    startGuard: outputStartGuard,
     ...(opts.tcpAnswers ? { tcpAnswers: opts.tcpAnswers } : {}),
     botConfig: opts.botConfig ?? (() => loadBotConfig()),
     canvases: () => {
@@ -1167,13 +1192,14 @@ export function createStudioServer(opts) {
           if (p.method === 'stream.start') {
             const sinks = await settingsRoutes.startSinks();
             if (Array.isArray(sinks)) {
-              if (!sinks.length) return json(res, 200, { verdict: 'refuse', reason: 'no-outputs-enabled' });
+              if (!sinks.length) return json(res, 200, { verdict: 'refuse', reason: 'no-outputs-enabled', detail: 'No output is switched on. Switch one on in the Outputs panel or Settings > Stream.' });
               callParams = { ...p.params, sinks };
             }
           }
           // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
           let overrideLogged;
           if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
+          if (p.method === 'stream.stop') stopEpoch += 1;
           if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
           const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
           const before = await readBefore(p.method, p.params);
@@ -1208,7 +1234,7 @@ export function createStudioServer(opts) {
           return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
           } finally { if (starting) { startsInFlight -= 1; lastStartAt = now(); } }
         }
-        if (p.kind === 'end-all') { if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
+        if (p.kind === 'end-all') { stopEpoch += 1; if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
         const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });
         return json(res, 200, await handleCoreOutcome(r, p.summary));
       } catch (e) { return json(res, 502, { error: 'backend-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
