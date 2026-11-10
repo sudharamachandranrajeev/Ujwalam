@@ -218,6 +218,38 @@ describe('Outputs panel (OS3)', () => {
     assert.notEqual((await states(c)).kick, 'live');
   });
 
+  test('race, no launcher: End all confirmed while Start stream waits -> the start is not sent', async () => {
+    const c = await boot({ startPauseMs: 400 });
+    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
+    const going = post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' });
+    await new Promise((r) => setTimeout(r, 100));
+    const e = (await post(c, '/ui/api/streams/end-all', {})).json();
+    assert.equal((await post(c, '/ui/api/confirm', { pendingId: e.pending.pendingId, text: 'yes' })).json().verdict, 'allow');
+    const r = (await going).json();
+    assert.equal(r.reason, 'stopped-meanwhile', JSON.stringify(r));
+    assert.ok(!c.calls.some(([m]) => m === 'stream.start'), 'the start never reached the host');
+    assert.ok(!Object.values(await states(c)).includes('live'));
+  });
+
+  test('race, no launcher: End all lands while Start stream is on its way to the host -> stopped again', async () => {
+    let gate = null;
+    const c = await boot({ beforeHost: async (m) => { if (m === 'stream.start' && gate) await gate; } });
+    let open; gate = new Promise((r) => { open = r; });
+    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
+    const going = post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' });
+    await new Promise((r) => setTimeout(r, 100));
+    const e = (await post(c, '/ui/api/streams/end-all', {})).json();
+    const ended = post(c, '/ui/api/confirm', { pendingId: e.pending.pendingId, text: 'yes' });
+    await new Promise((r) => setTimeout(r, 100));
+    open();
+    await ended;
+    const r = (await going).json();
+    assert.equal(r.verdict, 'refuse', JSON.stringify(r));
+    assert.equal(r.stoppedAgain, true);
+    assert.deepEqual(c.calls.at(-1), ['stream.stop', {}]);
+    assert.ok(!Object.values(await states(c)).includes('live'));
+  });
+
   test('race: a launcher revoke (go-live authority) while a switch-on waits also wins', async () => {
     let gen = 0;
     const authority = { begin: async () => gen, arm: async (g) => g === gen, revoke: async () => { gen += 1; return true; } };

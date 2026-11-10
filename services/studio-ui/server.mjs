@@ -1201,18 +1201,21 @@ export function createStudioServer(opts) {
           if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
           if (p.method === 'stream.stop') stopEpoch += 1;
           if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
+          // stopEpoch: the same check without the launcher (no authority); a Stop / End all confirmed meanwhile wins.
+          const startEpoch = p.method === 'stream.start' ? stopEpoch : null;
           const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
           const before = await readBefore(p.method, p.params);
-          if (Number.isInteger(startGen)) {
+          if (Number.isInteger(startGen) || startEpoch !== null) {
             if (startPauseMs) await new Promise((r) => setTimeout(r, startPauseMs));
             // A Stop / End all confirmed since this start began wins: the start is not sent.
-            if ((await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
+            if (startEpoch !== stopEpoch) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
+            if (Number.isInteger(startGen) && (await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
           }
           const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
           let out;
           try { out = await callHost(p.method, callParams); } catch (e) { ht?.fail('Did not finish'); throw e; }
           ht?.done();
-          if (Number.isInteger(startGen) && !(await authority.arm(startGen))) {
+          if ((startEpoch !== null && startEpoch !== stopEpoch) || (Number.isInteger(startGen) && !(await authority.arm(startGen)))) {
             // A Stop / End all came in while this start was on its way to the host (after the check above): the newer
             // stop wins, so the streams this start turned on are stopped again at once.
             // Tried STOP_AGAIN_WAITS.length + 1 times; if every try fails the streams may still be live: a loud error.
