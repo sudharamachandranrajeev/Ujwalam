@@ -176,12 +176,31 @@
         "mp",
         "br"
       ],
-      "cues": [],
-      "detectors": [],
+      "cues": [
+        {
+          "texts": [
+            "SEARCH & DESTROY",
+            "DOMINATION",
+            "TEAM DEATHMATCH"
+          ],
+          "roi": {
+            "x0": 0.49,
+            "y0": 0.01,
+            "x1": 0.66,
+            "y1": 0.07
+          },
+          "status": "unverified",
+          "note": "MP header: the mode name top centre (x 0.508-0.636, y 0.020-0.057), the map name under it, the result word left of it, then the team cards (KILLS n, MVP) and PLAY AGAIN / EXIT. 2026-11-09 practice, 5-s sweep: 390-395, 1140-1145, 1695-1705, 2440, 2815 s (5 of 6 match ends; none after the Control match at 3112 s). docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md."
+        }
+      ],
+      "detectors": [
+        "C2"
+      ],
       "status": "unverified",
-      "note": "Excluded. After the XP screen (A5c: MP 00:17, 06:34, 16:44-16:45; BR 05:55-05:58). It shows MVP badges for both teams while the IGN is elsewhere on the frame, so a frame-level name check would make the A5c m2 defeat positive. Cue text and positions not measured.",
+      "note": "After the XP screen (A5c: MP 00:17, 06:34, 16:44-16:45; BR 05:55-05:58). It shows MVP badges for both teams while the IGN is elsewhere on the frame, so a frame-level name check would make the A5c m2 defeat positive: no name-reading detector runs here. Only name-free context detectors may (tools/game-validate.mjs): C2 reads the mode name in the header (2026-11-10, user approved).",
       "evidence": [
-        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md"
+        "docs/evidence/2026-10-27-p2a-a5c-mp-capture-3.md",
+        "docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md"
       ]
     },
     {

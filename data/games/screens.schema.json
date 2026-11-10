@@ -52,7 +52,7 @@
         "name": { "type": "string", "minLength": 1 },
         "kind": {
           "enum": ["gameplay", "end_screen", "menu", "overlay", "summary", "signal_loss"],
-          "description": "menu, overlay, summary and signal_loss screens are excluded: no detector runs on them."
+          "description": "menu, overlay and signal_loss screens are excluded: no detector runs on them. summary screens run only name-free context detectors (role context, nameRequired false; checked by tools/game-validate.mjs)."
         },
         "modes": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/$defs/mode" }, "description": "Match modes the screen belongs to; [] = not tied to a mode (lobby, profile, capture-card screens)." },
         "cues": { "type": "array", "items": { "$ref": "#/$defs/cue" }, "description": "[] when no cue is measured yet (status unverified, see note)." },
@@ -63,7 +63,7 @@
       },
       "allOf": [
         {
-          "if": { "properties": { "kind": { "enum": ["menu", "overlay", "summary", "signal_loss"] } }, "required": ["kind"] },
+          "if": { "properties": { "kind": { "enum": ["menu", "overlay", "signal_loss"] } }, "required": ["kind"] },
           "then": { "properties": { "detectors": { "type": "array", "maxItems": 0 } } }
         }
       ]

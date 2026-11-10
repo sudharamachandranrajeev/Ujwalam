@@ -586,3 +586,17 @@ function. Approved plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-
 SB1–SB5). Order: LU8 live-soak gate and LU2 data hot-reload first. The libobs host is never swapped while live; its
 updates are staged until the next stop. Learning store capped at 5 GB, oldest streams first. A local vision model for
 layout reading is allowed if the hardware allows it (6 GB VRAM, never loaded while live), asked again before any install.
+
+## D325 — Mode from the summary-screen header; own kill-count fixes (2026-11-10, user approved the screen-model change)
+
+The post-match `summary` screen shows the game mode in its header (`VICTORY | <MODE>`) after most matches. Summary
+screens may now run detectors, but only name-free context detectors (role context, nameRequired false), enforced by
+`tools/game-validate.mjs`; menu, overlay and signal_loss screens still run none. New detector C2 reads the header
+(pack 0.7.0, status unverified); its reads within `afterEndSec` of a match's end screens are one more evidence source
+for `game_mode()`, as strong as the top-3 mode name, and disagreeing evidence still gives no mode. Own kill counts were
+too high (Domination 44 for 20 on the summary card, match 1 8 for 4). Causes, all in the detector pass: ROI-band
+boxes held by the roiEvery cadence overlapped the current kill-feed rows; a whole line merged into one OCR box with
+the own name at its end read as a kill; victim keys taken from count digits, a second own-name box or the own-name
+tail of a merged box; the BR feed read on MP frames after one stray BR cue. Fixed in code (no pack value changed);
+each kill now records its feed and a match counts only the feed of its HUD family. Evidence:
+`docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md`.

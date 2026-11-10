@@ -1,7 +1,7 @@
 {
   "$schema": "../detector-pack.schema.json",
   "$comment": "CODM detector pack. All ROIs, texts and colours are UNVERIFIED until G1/G2 check them on corpus footage (source: docs/evidence/2026-10-27-g1-live-reference.md). Weights, windows and cooldowns are null: G3 proposes them from labelled data. No private names here; names come from data/profile.local.json at runtime. `version` is the pack version for every file in this folder; version history: CHANGELOG.md.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "engineVersion": "0.1.0",
   "game": "codm",
   "detectors": [
@@ -696,7 +696,83 @@
       },
       "cooldownSec": null,
       "status": "unverified",
-      "note": "Context only: never a clip signal or weight. match_gate.game_mode combines these cues with the top-3 mode name (S1) and round subtitles (W1 banner) into one mode per match, or none with the reason when they disagree. Mode-select menu tiles and the loading screen also show mode names, but in places that move or list several modes, so no ROI covers them. Evidence: 2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md). Not used: the post-match lobby header (mode name at x 0.508-0.636, y 0.020-0.057 after 5 of the 6 2026-11-09 match ends) is on the summary screen, where screens.json runs no detector; reading it needs a screen-model change."
+      "note": "Context only: never a clip signal or weight. match_gate.game_mode combines these cues with the top-3 mode name (S1) and round subtitles (W1 banner) into one mode per match, or none with the reason when they disagree. Mode-select menu tiles and the loading screen also show mode names, but in places that move or list several modes, so no ROI covers them. Evidence: 2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-round-vs-match-end.md). The post-match header of the summary screen is read by C2 (2026-11-10)."
+    },
+    {
+      "id": "C2",
+      "name": "Summary-screen mode header",
+      "role": "context",
+      "modes": [
+        "mp"
+      ],
+      "screens": [
+        "summary"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "mode_header",
+          "label": "Summary screen: mode name top centre (map name under it)",
+          "x0": 0.49,
+          "y0": 0.01,
+          "x1": 0.66,
+          "y1": 0.07,
+          "status": "unverified",
+          "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md): mode name x 0.508-0.636, y 0.020-0.057 on 9 frames after 5 of the 6 match ends (390-395, 1140-1145, 1695-1705, 2440, 2815 s); the box adds about 0.015 on each side. During play a player name and the match timer sit near this box (50, 155, 665-700 s); only the pack's mode names are read, never other text."
+        }
+      ],
+      "cues": [
+        {
+          "text": "SEARCH & DESTROY",
+          "modes": [
+            "search and destroy"
+          ],
+          "status": "unverified",
+          "note": "Header at 390-395, 1140-1145 and 1695-1705 s (the three Search and Destroy matches, the third a DEFEAT without a top-3 screen)."
+        },
+        {
+          "text": "DOMINATION",
+          "modes": [
+            "domination"
+          ],
+          "status": "unverified",
+          "note": "Header at 2440 s."
+        },
+        {
+          "text": "TEAM DEATHMATCH",
+          "modes": [
+            "team deathmatch"
+          ],
+          "status": "unverified",
+          "note": "Header at 2815 s (ranked)."
+        },
+        {
+          "text": "CONTROL",
+          "modes": [
+            "control"
+          ],
+          "status": "unverified",
+          "note": "Header at about 3110-3112 s: the summary screen showed for about 3 s, missed by the 5-s sweep, read by the 1-fps re-detect with pack 0.7.0."
+        },
+        {
+          "text": "HARDPOINT",
+          "modes": [
+            "hardpoint"
+          ],
+          "status": "unverified",
+          "note": "Not seen in this header yet; spelling from the 2026-11-08 top-3 screen (S1 modeNames)."
+        }
+      ],
+      "afterEndSec": 30,
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "Context only: never a clip signal or weight, and it reads no name (the summary screen shows MVP badges and names of both teams, so no name-reading detector may run there; tools/game-validate.mjs). A mode name read in the header is evidence for the match whose end screens ended at most afterEndSec before it (match_gate.game_mode, source 'summary header'); it never counts for the next match. afterEndSec: the 9 header frames fell inside the end-screen span of their match (0 s after its last end-screen hit); 30 s is a margin, not measured. 2026-11-09 practice recording (H canvas, game area of the alpha project layout), full-frame OCR every 5 s, checked 2026-11-10 (docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md)."
     },
     {
       "id": "N1",

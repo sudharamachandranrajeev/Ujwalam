@@ -592,10 +592,11 @@ def find_events(boxes, pack, names, name_min):
             ev.append({"det": "W1", "box": b, "result": t})
         if gt.partial_ratio("HELPME", t) >= 0.84 or gt.partial_ratio("WAITINGFORREVIVALFLIGHT", t) >= 0.8:
             ev.append({"det": "N2", "box": b})
-        if "C1" in det:  # game mode cues (match_gate.game_mode): pack texts only, the whole cue within the box
-            cue = _mode_cue(t, det["C1"])
-            if cue:
-                ev.append({"det": "C1", "box": b, "cue": cue})
+        for cid in ("C1", "C2"):  # game mode cues (match_gate.game_mode): pack texts only, the whole cue in the box
+            if cid in det:
+                cue = _mode_cue(t, det[cid])
+                if cue:
+                    ev.append({"det": cid, "box": b, "cue": cue})
     for b in name_boxes:
         ev.append({"det": "NAME", "box": b})
     # kill feeds: boxes whose centre lies in the (slightly widened) feed ROI, grouped into lines
@@ -614,7 +615,10 @@ def find_events(boxes, pack, names, name_min):
                  max(b["x1"] for b in line), max(b["y1"] for b in line)]
             lb = {"text": " | ".join(b["text"] for b in line), "score": min(b["score"] for b in line), "g": g,
                   "_name": {"score": round(sc, 4)}}
-            ev.append({"det": kid, "box": lb, "side": side, "parts": len(line)})
+            e = {"det": kid, "box": lb, "side": side, "parts": len(line)}
+            if side == "killer":
+                e["victim"] = gt.victim_text(line, names, name_min)  # in memory only: the kill counter's key (match_gate)
+            ev.append(e)
     return ev
 
 

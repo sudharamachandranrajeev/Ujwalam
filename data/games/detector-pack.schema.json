@@ -174,9 +174,15 @@
             "note": { "type": "string" }
           }
         },
+        "afterEndSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 300,
+          "description": "Mode cues read after a match end (C2, summary-screen header): a cue counts for the match whose end screens ended at most this many seconds before it, never for the next match (match_gate.segment)."
+        },
         "cues": {
           "type": "array",
-          "description": "Game mode cues (C1): on-screen texts that only some modes show. A cue read inside the detector's ROIs is evidence that the match is one of `modes` (match_gate.game_mode).",
+          "description": "Game mode cues (C1, C2): on-screen texts that only some modes show (C2: the mode name itself). A cue read inside the detector's ROIs is evidence that the match is one of `modes` (match_gate.game_mode).",
           "items": {
             "type": "object",
             "required": ["text", "modes", "status"],
