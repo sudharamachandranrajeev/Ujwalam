@@ -17,7 +17,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlatforms, validate } from '../outputs/validate.mjs';
-import { plan, PLATFORMS_DIR } from '../../app/host/lib/outputs-plan.mjs';
+import { liveSchemesOf, plan, PLATFORMS_DIR } from '../../app/host/lib/outputs-plan.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const SETUP_FILE = 'stream-setup.json';
@@ -142,6 +142,23 @@ function targetOf(o, platform) {
   // Per-account server, stored next to the key: rtmp or rtmps follows the stored address when the platform takes both.
   const transport = protos.includes('rtmp') && protos.includes('rtmps') ? 'auto' : (protos.includes('rtmps') ? 'rtmps' : 'rtmp');
   return { transport, serverRef: keyRefOf(`${o.id}-server`), keyRef: keyRefOf(o.id) };
+}
+
+/**
+ * Credential targets of every output in a setup, for the platform sign-in service (D327): [{ id, platform, canvas,
+ * transport, keyRef, serverRef?, schemes? }]. Same key names as toPlan (Ujwalam/stream/<id>), but all outputs, also those
+ * the current canvas mode leaves out of the plan or that are switched off, so a new output can be connected before use.
+ */
+export function connectTargets(setup, { platforms = loadPlatforms(PLATFORMS_DIR) } = {}) {
+  const out = [];
+  for (const o of Array.isArray(setup?.outputs) ? setup.outputs : []) {
+    const pf = platforms[o?.platform];
+    if (!pf || typeof o.id !== 'string') continue;
+    const t = targetOf(o, pf);
+    out.push({ id: o.id, platform: o.platform, canvas: o.canvas, transport: t.transport, keyRef: t.keyRef, ...(t.serverRef ? { serverRef: t.serverRef } : {}),
+      ...(t.transport === 'auto' ? { schemes: liveSchemesOf(pf) } : {}) });
+  }
+  return out;
 }
 
 /**
