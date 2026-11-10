@@ -660,3 +660,34 @@ each loopback stream may end one frame short at stream stop (encoder flush); tha
 counted as a gap. Timestamp gaps are measured against the planned fps of the sink's rung, never the observed median.
 The four streams youtube-h, youtube-v, twitch and kick are required by id (a plan without one fails), each live in
 every sample and received in full; the recording must start, stay live and be probed like a stream.
+
+## D329 — Device hot-plug: capture layers wait for a missing device; no feature flag (2026-11-10)
+
+User bug: adding a capture-card layer after Ujwalam started failed with `HTTP 502: host-error (... no connected device
+matches)` because Windows did not list the card at that moment. Now:
+
+- The host watches device arrival and removal with `CM_Register_Notification` (cfgmgr32; capture, video, camera and
+  audio interface classes). No window of any kind. Events are debounced (700 ms quiet, at most 3 s), then devices are
+  listed again (list only, nothing opened). The watcher runs only with `--allow-devices` (D38) or `--test-hooks`.
+- A capture layer whose device is not connected (no match, or two connected devices with the same name) is added and
+  loaded as **waiting**: the `dshow_input` source exists with an empty device id and opens nothing. Adding no longer
+  fails. A plain-English sentence says what is missing and what to do.
+- Arrival: the waiting source gets the matched device id through `obs_source_update` (only that source). Removal: the
+  source goes back to waiting and its last frame is cleared; the DirectShow graph is left to win-dshow. A loss is
+  confirmed by a second listing 1 s later, so a USB re-enumeration blip does not drop the layer. A bound source stays
+  bound while its device is still listed (a second card with the same name never steals it).
+- Encoders, outputs, recording and the stream are never touched by a device event.
+- The host publishes `host.status.devices` {seq, waiting, connected}; the UI server turns a moved seq into SSE
+  `devices` + `layers`; the web page and the Qt studio reload the layer list ("waiting for device") and the add-layer
+  device picker ("not connected"), also inside an open Add layer window.
+
+**No feature flag.** Reasons: (1) the change replaces an error with a working add: there is no old behaviour worth
+keeping behind a switch; (2) a device event only ever acts on a capture source whose own device came or went, and never
+on encoders or outputs (the host test records over NVENC through plug, unplug, re-plug and a same-name second card,
+with one file, full span and 30 fps); (3) without `--allow-devices` nothing changes at all (no watcher, capture layers
+stay "forbidden"). Codex second review (2 x P2, fixed): removals are kept through the debounce, so a device that
+leaves and returns with the same id is reactivated (that source only); a bind is "connecting" until the source
+delivers a frame and is re-activated after 3, 6, 12 and 24 s without one (5 attempts), with a plain message. Not
+done: a waiting state for WASAPI microphone and audio-output globals (they keep the current
+behaviour). Real hot-plug with the user's card is UNVERIFIED until the user tests it. Evidence:
+`docs/evidence/2026-11-10-device-hotplug.md`.

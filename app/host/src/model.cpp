@@ -767,22 +767,37 @@ Plan build(const json::Value &doc, const Options &o)
 			std::string kind = d->second->find("kind")->as_string();
 			if (kind != "capture-card" && kind != "camera")
 				throw Error(rpc::INVALID_PARAMS, what + ": capture layers need a capture-card or camera device");
-			src.obs_type = "dshow_input";
+			src.obs_type = o.test_capture ? "ujw_test_capture" : "dshow_input";
 			src.device = did;
 			if (o.devices) {
 				devices::Match m = devices::resolve(*d->second, *o.devices);
 				if (m.entry) {
 					src.matched_by = m.matched_by;
 					st.set("video_device_id", m.entry->obs_id);
-				} else {
+				} else if (m.problem == "unknown device kind") {
 					u = {"unavailable", "device " + did + ": " + m.problem};
+				} else {
+					// D329: built waiting (no device id: dshow_input opens nothing); the device watcher binds it.
+					src.waiting = true;
+					src.wait_problem = m.problem;
+					st.set("video_device_id", "");
 				}
 			} else {
 				u = {"unavailable", "device " + did + ": devices were not listed"};
 			}
-			if (!o.allow_devices) // after resolving, so a dry plan still shows the match (or why it failed)
+			if (!o.allow_devices && !o.test_capture) { // after resolving, so a dry plan still shows the match
 				u = {"forbidden", "capture devices are disabled (host started without --allow-devices)" +
 							  (u.code.empty() ? std::string() : "; also " + u.reason)};
+				src.waiting = false;
+			}
+			if (src.waiting && u.code.empty()) {
+				json::Value w = json::Value::object();
+				w.set("layer", lid);
+				w.set("device", did);
+				w.set("reason", src.wait_problem);
+				w.set("message", devices::waiting_message(*d->second, src.wait_problem));
+				plan.waiting.push(std::move(w));
+			}
 			st.set("active", true);
 			st.set("deactivate_when_not_showing", false);
 			st.set("use_custom_audio_device", false);
@@ -1071,6 +1086,7 @@ json::Value to_json(const Plan &p)
 		if (!s.device.empty()) {
 			o.set("device", s.device);
 			o.set("matchedBy", s.matched_by);
+			o.set("waiting", s.waiting);
 		}
 		if (s.obs_type == "browser_source") { // page URLs carry ports and the feed query only, never a token
 			o.set("url", *s.settings.find("url"));
@@ -1094,6 +1110,7 @@ json::Value to_json(const Plan &p)
 	r.set("audio", std::move(au));
 	r.set("active", p.active.empty() ? json::Value() : json::Value(p.active));
 	r.set("unavailable", p.unavailable);
+	r.set("waiting", p.waiting);
 	r.set("warnings", p.warnings);
 	return r;
 }

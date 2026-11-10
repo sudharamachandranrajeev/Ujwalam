@@ -157,7 +157,7 @@ test('markers token: marker.add (chat/audio) and mixer.list only; every other me
   assert.equal(lines.length, 2, 'the refused hotkey/api markers wrote nothing');
   // Every other method the host serves, including the ones that start/stop outputs or shut the host down.
   const others = ['host.info', 'host.status', 'host.shutdown', 'log.tail', 'project.load', 'project.get', 'project.plan',
-    'devices.list', 'overlay.status', 'overlay.stats', 'effect.fire', 'scenes.list', 'scenes.create', 'scenes.remove',
+    'devices.list', 'devices.testSet', 'overlay.status', 'overlay.stats', 'effect.fire', 'scenes.list', 'scenes.create', 'scenes.remove',
     'scenes.activate', 'layers.list', 'layers.add', 'layers.remove', 'layers.setVisible', 'layers.move', 'preview.open',
     'preview.focus', 'preview.close', 'preview.list', 'mixer.setVolume', 'mixer.setMute', 'mixer.setCue', 'outputs.configure',
     'outputs.clear', 'outputs.status', 'outputs.start', 'outputs.stop', 'stream.start', 'stream.stop', 'record.start',
@@ -205,7 +205,7 @@ test('clips token: frames.grab, replay.save, replay.status, marker.add (clip) an
   const mkr = new HostClient({ port: h.discoveryJson.port, token: MARKERS_TOKEN });
   assert.equal((await mkr.call('marker.add', { source: 'clip' }).then(() => null, (x) => x))?.code, -32001, 'the markers role cannot write clip markers');
   const others = ['host.info', 'host.shutdown', 'log.tail', 'project.load', 'project.get', 'project.plan',
-    'devices.list', 'overlay.status', 'overlay.stats', 'effect.fire', 'scenes.list', 'scenes.create', 'scenes.remove',
+    'devices.list', 'devices.testSet', 'overlay.status', 'overlay.stats', 'effect.fire', 'scenes.list', 'scenes.create', 'scenes.remove',
     'scenes.activate', 'layers.list', 'layers.add', 'layers.remove', 'layers.setVisible', 'layers.setPlacement', 'layers.move',
     'preview.open', 'preview.focus', 'preview.close', 'preview.list', 'mixer.list', 'mixer.setVolume', 'mixer.setMute',
     'mixer.setCue', 'mixer.setTracks', 'outputs.configure', 'outputs.clear', 'outputs.status', 'outputs.start', 'outputs.stop', 'stream.start',

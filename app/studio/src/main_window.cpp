@@ -1549,9 +1549,18 @@ void MainWindow::renderLayers()
 	for (int i = layers_.size() - 1; i >= 0; i--) { // top layer first
 		const QJsonObject l = layers_.at(i).toObject();
 		const bool vis = l.value(QStringLiteral("visible")).toBool();
-		auto *it = new QListWidgetItem((vis ? QStringLiteral("◉  ") : QStringLiteral("○  ")) + l.value(QStringLiteral("name")).toString(), layerList_);
+		// A capture layer whose device is not connected (D329): "waiting for device", the host's sentence as the tooltip.
+		const QJsonObject dev = l.value(QStringLiteral("device")).toObject();
+		const bool waiting = dev.value(QStringLiteral("state")).toString() == QStringLiteral("waiting");
+		const bool connecting = dev.value(QStringLiteral("state")).toString() == QStringLiteral("connecting"); // no picture yet
+		auto *it = new QListWidgetItem((vis ? QStringLiteral("◉  ") : QStringLiteral("○  ")) + l.value(QStringLiteral("name")).toString() +
+						       (waiting ? QStringLiteral("  (waiting for device)")
+							: connecting ? QStringLiteral("  (connecting to device)") : QString()),
+					       layerList_);
 		it->setData(Qt::UserRole, l.value(QStringLiteral("id")).toString());
-		if (!vis)
+		if (waiting || connecting)
+			it->setToolTip(dev.value(QStringLiteral("message")).toString());
+		if (!vis || waiting)
 			it->setForeground(palette().color(QPalette::Disabled, QPalette::Text));
 		if (l.value(QStringLiteral("id")).toString() == selected_)
 			layerList_->setCurrentItem(it);
@@ -2110,6 +2119,18 @@ void MainWindow::pollStatus()
 				loadLayers();
 			}
 			previewSeq_ = seq;
+		}
+		// A device was plugged in or out (D329, status host.devices.seq): reload the layer list (a capture layer waiting
+		// or connected) and the add-layer choices (connected or not), also inside an open Add layer window.
+		const QJsonObject dv = h.value(QStringLiteral("devices")).toObject();
+		if (dv.value(QStringLiteral("seq")).isDouble()) {
+			const int seq = dv.value(QStringLiteral("seq")).toInt();
+			if (devicesSeq_ >= 0 && seq != devicesSeq_) {
+				loadLayers();
+				if (structure_.value(QStringLiteral("available")).toBool())
+					loadStructure();
+			}
+			devicesSeq_ = seq;
 		}
 		const QJsonObject ready = h.value(QStringLiteral("outputsReady")).toObject();
 		streamBtn_->setEnabled(ready.value(QStringLiteral("stream")).toBool());
@@ -2881,6 +2902,8 @@ void MainWindow::loadStructure()
 		if (!b.value(QStringLiteral("available")).toBool())
 			note(QStringLiteral("Scene editing needs a loaded project file."));
 		renderAddPick();
+		if (auto *d = qobject_cast<addui::AddLayerDialog *>(addDlg_.data()); d && b.value(QStringLiteral("available")).toBool())
+			d->setStructure(b); // an open Add layer window follows device plug and unplug (D329)
 	});
 }
 
@@ -3263,11 +3286,16 @@ void MainWindow::structureEdit(const QJsonObject &body)
 	api_->post(QStringLiteral("ui/api/project/structure"), body, [this](bool ok, const QJsonObject &b, const QString &err) {
 		if (!ok) {
 			const QString detail = b.value(QStringLiteral("detail")).toString();
-			note(QStringLiteral("Not done: ") + plainStructureError(err) + (detail.isEmpty() ? QString() : QStringLiteral(" (") + detail + QStringLiteral(")")));
+			// The host's refusals are full sentences (D329): show them alone, not behind an HTTP code.
+			if (b.value(QStringLiteral("error")).toString() == QStringLiteral("host-error") && !detail.isEmpty())
+				note(QStringLiteral("Not done: ") + detail);
+			else
+				note(QStringLiteral("Not done: ") + plainStructureError(err) + (detail.isEmpty() ? QString() : QStringLiteral(" (") + detail + QStringLiteral(")")));
 		} else {
 			if (b.value(QStringLiteral("op")).toString() == QStringLiteral("layer.duplicate") || b.value(QStringLiteral("op")).toString() == QStringLiteral("layer.add"))
 				selected_ = b.value(QStringLiteral("layer")).toObject().value(QStringLiteral("id")).toString(); // select the new layer
-			note(QStringLiteral("Done: ") + b.value(QStringLiteral("op")).toString() +
+			const QString waiting = b.value(QStringLiteral("waiting")).toString(); // capture layer added without its device
+			note((waiting.isEmpty() ? QStringLiteral("Done: ") + b.value(QStringLiteral("op")).toString() : QStringLiteral("Layer added. ") + waiting) +
 			     (b.value(QStringLiteral("saved")).toBool() ? QString() : QStringLiteral(". Not saved to the project file: the change is live only.")));
 			addText_->clear();
 		}

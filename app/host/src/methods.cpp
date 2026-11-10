@@ -157,7 +157,32 @@ json::Value host_status_json(App &a)
 	json::Value ah = a.studio ? a.studio->audio_health() : json::Value::object();
 	ah.set("rtwqHeld", obsrt::rtwq_held());
 	r.set("audioHealth", std::move(ah));
+	// Device hot-plug (D329): the UI server and the studio refresh device pickers and layer lists when seq moves.
+	// Never lists devices here (the newest list of a build or watcher pass is used).
+	json::Value dv = a.studio ? a.studio->devices_status() : json::Value::object();
+	dv.set("watcher", a.device_watch ? a.device_watch->status() : json::Value());
+	r.set("devices", std::move(dv));
 	return r;
+}
+
+json::Value devices_pass(App &a, const char *why, const std::vector<std::string> &removed, bool event)
+{
+	if (!a.studio || a.shutting_down)
+		return json::Value();
+	bool has = false;
+	devices::List l = a.studio->list_devices(has);
+	if (!has)
+		return json::Value();
+	if (a.studio->device_loss_pending(l)) {
+		// A bound capture device looks gone: list again after a pause, so one odd listing never unbinds a working
+		// source. Ends early on shutdown.
+		if (WaitForSingleObject((HANDLE)a.shutdown_event, 1000) == WAIT_OBJECT_0)
+			return json::Value();
+		l = a.studio->list_devices(has);
+		if (!has)
+			return json::Value();
+	}
+	return a.studio->devices_changed(l, why, removed, event);
 }
 
 void on_hotkey(App &a, const std::string &name, const char *via)
@@ -333,6 +358,80 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 			throw Error(rpc::FORBIDDEN, "devices are disabled (start the host with --allow-devices after the user says devices ready)");
 		json::Value r = devices::to_json(devices::enumerate());
 		r.set("devicesEnabled", a.allow_devices);
+		return r;
+	});
+	// devices.testSet {devices: [{kind, name, path, fail?}] | null, removed?: [{kind?, name, path}], viaWatcher?, peek?}
+	// (--test-hooks only, D329): replaces the device list the host sees with a fake one (null: back to the real list)
+	// and runs one hot-plug pass at once, as a plug-in or unplug would. Capture layers then build on ujw_test_capture
+	// (opens nothing). Returns the pass result plus `frames` (frames each fake device id sent).
+	//   fail: n      the next n activations of that video device deliver no frames (busy driver, held by another app)
+	//   removed      these video devices left (their fake sources die until reactivated) and are reported to the pass
+	//                as removed interface paths, even when they are listed again (a quick unplug and re-plug)
+	//   viaWatcher   the removals and one arrival go to the device watcher (debounce) instead of a pass at once;
+	//                returns {queued: true}
+	//   peek         changes nothing; returns {frames}
+	add("devices.testSet", [&a](const json::Value &p) {
+		Params q(p, {"devices", "removed", "viaWatcher", "peek"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "devices.testSet needs a host started with --test-hooks");
+		if (q.has("peek") && q.boolean("peek")) {
+			json::Value r = json::Value::object();
+			r.set("frames", devwatch::test_frames());
+			return r;
+		}
+		std::vector<std::string> removed_paths, removed_ids;
+		if (const json::Value *rm = q.raw().find("removed"); rm && !rm->is_null()) {
+			if (!rm->is_array() || rm->size() > 64)
+				throw Error(rpc::INVALID_PARAMS, "removed must be an array (at most 64)");
+			for (auto &x : rm->as_array()) {
+				Params e(x, {"kind", "name", "path"}); // kind: video only (as a devices[] entry)
+				devices::Entry en = devices::make_entry("video", e.str("name", 256), e.str("path", 512));
+				removed_paths.push_back(en.path);
+				removed_ids.push_back(en.obs_id);
+			}
+		}
+		const json::Value &dv = q.raw().find("devices") ? *q.raw().find("devices") : json::Value();
+		std::vector<std::string> present;
+		if (dv.is_null()) {
+			a.studio->set_test_devices(nullptr);
+		} else {
+			if (!dv.is_array() || dv.size() > 64)
+				throw Error(rpc::INVALID_PARAMS, "devices must be an array (at most 64) or null");
+			devices::List l;
+			for (auto &d : dv.as_array()) {
+				Params e(d, {"kind", "name", "path", "error", "fail"});
+				std::string kind = e.str("kind", 24);
+				if (kind != "video" && kind != "dshow-audio" && kind != "audio-input" && kind != "audio-output")
+					throw Error(rpc::INVALID_PARAMS, "devices[].kind: video | dshow-audio | audio-input | audio-output");
+				if (e.has("error")) { // a category that failed to list: {"kind": "video", "error": true}
+					if (e.boolean("error"))
+						l.errors.push_back(kind + ": 0x80004005");
+					continue;
+				}
+				l.entries.push_back(devices::make_entry(kind, e.str("name", 256), e.str_or("path", "", 512)));
+				if (kind == "video")
+					present.push_back(l.entries.back().obs_id);
+				if (e.has("fail"))
+					devwatch::test_fail_activations(l.entries.back().obs_id, (int)e.integer("fail", 0, 100));
+			}
+			a.studio->set_test_devices(&l);
+		}
+		devwatch::test_remove(removed_ids);
+		devwatch::set_test_present(present);
+		if (q.has("viaWatcher") && q.boolean("viaWatcher")) {
+			if (!a.device_watch)
+				throw Error(rpc::UNAVAILABLE, "no device watcher");
+			for (auto &r : removed_paths)
+				a.device_watch->poke(r);
+			a.device_watch->poke();
+			json::Value r = json::Value::object();
+			r.set("queued", true);
+			return r;
+		}
+		json::Value r = devices_pass(a, "devices.testSet", removed_paths);
+		if (r.is_null())
+			r = json::Value::object();
+		r.set("frames", devwatch::test_frames());
 		return r;
 	});
 

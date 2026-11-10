@@ -283,6 +283,102 @@ Match resolve(const json::Value &device, const List &l)
 	return m;
 }
 
+Entry make_entry(const std::string &kind, const std::string &name, const std::string &path)
+{
+	Entry e;
+	e.kind = kind;
+	e.name = name;
+	e.path = path;
+	e.obs_id = (kind == "video" || kind == "dshow-audio") ? obs_encode(name) + ":" + obs_encode(path) : path;
+	return e;
+}
+
+bool video_listed(const List &l)
+{
+	for (auto &e : l.errors)
+		if (e.rfind("video:", 0) == 0)
+			return false;
+	return true;
+}
+
+bool device_removed(const std::string &path, const std::vector<std::string> &removed)
+{
+	if (path.empty())
+		return false;
+	const std::string p = lower(path), pi = instance_part(path);
+	for (auto &r : removed) {
+		if (r.empty())
+			continue;
+		if (lower(r) == p)
+			return true;
+		std::string ri = instance_part(r);
+		if (!ri.empty() && ri == pi)
+			return true;
+	}
+	return false;
+}
+
+Step reconcile(const json::Value &device, const Binding &cur, const List &l, const std::vector<std::string> &removed)
+{
+	Step s;
+	const json::Value *kind = device.find("kind");
+	std::string pk = kind && kind->is_string() ? kind->as_string() : "";
+	if (!cur.waiting && !cur.bound_id.empty()) {
+		for (auto &e : l.entries)
+			if (kind_fits(pk, e.kind) && lower(e.obs_id) == lower(cur.bound_id)) {
+				if (device_removed(e.path, removed)) { // it left and came back: reactivate this source only
+					s.act = Step::Bind;
+					s.obs_id = e.obs_id;
+					s.matched_by = "reconnect";
+				}
+				return s; // still there
+			}
+		if (!video_listed(l))
+			return s;
+	}
+	Match m = resolve(device, l);
+	if (m.entry) {
+		if (!cur.waiting && lower(m.entry->obs_id) == lower(cur.bound_id))
+			return s;
+		s.act = Step::Bind;
+		s.obs_id = m.entry->obs_id;
+		s.matched_by = m.matched_by;
+		return s;
+	}
+	s.problem = m.problem;
+	if (!cur.waiting)
+		s.act = Step::Lose;
+	return s;
+}
+
+static std::string device_label(const json::Value &device)
+{
+	const json::Value *k = device.find("kind");
+	const json::Value *n = device.find("name");
+	std::string kind = k && k->is_string() ? k->as_string() : "";
+	std::string what = kind == "camera" ? "camera" : kind == "capture-card" ? "capture card" : "device";
+	std::string name = n && n->is_string() ? n->as_string() : "";
+	return what + (name.empty() ? "" : " \"" + name + "\"");
+}
+
+std::string connecting_message(const json::Value &device, bool last)
+{
+	std::string label = device_label(device);
+	if (last)
+		return "No picture from " + label + ". Close any other app that uses it, then unplug it and plug it in again.";
+	return "Connecting to " + label + ": no picture yet. If another app is using it, close that app; Ujwalam tries "
+	       "again by itself.";
+}
+
+std::string waiting_message(const json::Value &device, const std::string &problem)
+{
+	std::string label = device_label(device);
+	if (problem == "name matches more than one device")
+		return "Waiting for " + label + ": more than one connected device has this name, so Ujwalam cannot tell which "
+		       "one to use. Unplug the one you do not want; the layer connects by itself.";
+	return "Waiting for " + label + ": it is not connected. Plug it in; the layer connects by itself.";
+}
+
 json::Value set_monitoring_output(const std::string &name, const List &l)
 {
 	json::Value r = json::Value::object();

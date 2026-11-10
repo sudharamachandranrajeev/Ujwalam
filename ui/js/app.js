@@ -65,7 +65,7 @@
   function renderPick() {
     var kind = $('layer-kind').value, sel = $('layer-pick'), v = $('layer-value'); clear(sel);
     var items = !choices ? [] : kind === 'copy' ? choices.layers.map(function (l) { return { id: l.id, name: l.name + ' (' + l.sceneName + ')' }; })
-      : kind === 'capture' ? choices.devices : kind === 'overlay' ? choices.overlays
+      : kind === 'capture' ? choices.devices.map(function (d) { return { id: d.id, name: d.name + (d.connected === false ? ' (not connected)' : '') }; }) : kind === 'overlay' ? choices.overlays
       : (kind === 'image' || kind === 'media') ? (choices.assets || []).filter(function (a) { return a.kind === kind; }).map(function (a) { return { id: a.rel, name: a.rel }; }) : [];
     items.forEach(function (x) { sel.appendChild(el('option', { value: x.id, text: x.name })); });
     sel.hidden = !(kind === 'copy' || kind === 'capture' || kind === 'overlay' || kind === 'image' || kind === 'media');
@@ -75,7 +75,7 @@
   function structureEdit(body) {
     setText($('struct-note'), '');
     return Api.structureEdit(body).then(function (r) {
-      setText($('struct-note'), r.saved ? 'Done and saved.' : 'Done, but the project file was not saved: it is live-only until the next save.');
+      setText($('struct-note'), (r.waiting ? 'Layer added. ' + r.waiting + ' ' : '') + (r.saved ? 'Done and saved.' : 'Done, but the project file was not saved: it is live-only until the next save.'));
       return Promise.all([loadScenes(), loadChoices()]).then(function () { return true; });
     }).catch(function (e) { setText($('struct-note'), STRUCT_ERRORS[e && e.message] || ('Not done: ' + ((e && (e.detail || e.message)) || 'failed'))); return false; });
   }
@@ -160,7 +160,10 @@
         var vis = el('button', { class: 'icon-btn', type: 'button', text: l.visible ? 'Hide' : 'Show', 'aria-label': (l.visible ? 'Hide ' : 'Show ') + l.name, onclick: function () { guard(Api.host('layers.setVisible', layerArgs({ layer: l.id, visible: !l.visible })).then(loadLayers)); } });
         var up = el('button', { class: 'icon-btn', type: 'button', text: 'Up', 'aria-label': 'Move ' + l.name + ' up', disabled: hi === n - 1, onclick: function () { move(l, hi, hi + 1); } });
         var dn = el('button', { class: 'icon-btn', type: 'button', text: 'Dn', 'aria-label': 'Move ' + l.name + ' down', disabled: hi === 0, onclick: function () { move(l, hi, hi - 1); } });
-        var name = el('span', { class: 'name', text: l.name, tabindex: '0', role: 'button', title: 'Edit in the inspector', 'aria-label': 'Edit ' + l.name + ' in the inspector' });
+        // A capture layer whose device is not connected (D329): "waiting for device", the host's sentence as the title.
+        // "connecting": bound, no picture yet (the host retries by itself).
+        var waiting = l.device && l.device.state === 'waiting', connecting = l.device && l.device.state === 'connecting';
+        var name = el('span', { class: 'name', text: l.name + (waiting ? ' (waiting for device)' : connecting ? ' (connecting to device)' : ''), tabindex: '0', role: 'button', title: waiting ? (l.device.message || 'Waiting for its device.') : connecting ? (l.device.message || 'Connecting to its device.') : 'Edit in the inspector', 'aria-label': 'Edit ' + l.name + ' in the inspector' });
         var pick = function () { state.selected = l.id; renderLayers(); renderInspector(); };
         name.addEventListener('click', pick);
         name.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
@@ -381,6 +384,13 @@
       var first = state.previewSeq === undefined;
       state.previewSeq = pe.seq;
       if (!first && pe.scene === state.activeScene && pe.canvas === state.canvas) { state.selected = pe.layer; loadLayers().catch(function () {}); }
+    }
+    // A device was plugged in or out (D329): reload the layer list (waiting / connected) and the add-layer picker.
+    var dv = h.devices;
+    if (dv && typeof dv.seq === 'number' && dv.seq !== state.devicesSeq) {
+      var firstDv = state.devicesSeq === undefined;
+      state.devicesSeq = dv.seq;
+      if (!firstDv) { loadLayers().catch(function () {}); if (choices) loadChoices(); }
     }
     // When the backend flips between the fake and the real host, the scene ids change: reload the lists.
     if (state.wasBlocked !== undefined && state.wasBlocked !== !!h.blockedOnHost) { state.activeScene = null; loadScenes().then(loadMixer).catch(function () {}); }
