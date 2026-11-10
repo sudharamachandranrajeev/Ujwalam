@@ -104,3 +104,38 @@ test('render cost per effect: 6 full-canvas 1080p layers', { skip: !RUN && 'set 
   }
   for (const r of rows) assert.ok(r.frameMs < 1000 / 60, `${r.name}: ${r.frameMs} ms fits a 60 fps frame`);
 });
+
+// D331 game backdrop: the alpha scene's shape on both canvases. A 1920x1080 still stands in for the game capture (H
+// framed game; V framed game = a duplicate of it, as the alpha build does), then the two full-canvas blurred
+// duplicates behind them: H strength 71 (no crop), V strength 40 (crop 656 left/right). Before = game layers only.
+function backdropDoc(withBackdrop) {
+  const px = (c, o) => ({ [c]: { visible: true, ...o } });
+  const layers = [];
+  if (withBackdrop) {
+    layers.push({ id: 'bd-h', type: 'duplicate', name: 'Backdrop H', source: { layer: 'game' }, effects: [{ type: 'blur', strength: 71 }], placements: px('h', { x: 0, y: 0, width: 1920, height: 1080 }) });
+    layers.push({ id: 'bd-v', type: 'duplicate', name: 'Backdrop V', source: { layer: 'game' }, effects: [{ type: 'blur', strength: 40 }], placements: px('v', { x: 0, y: 0, width: 1080, height: 1920, crop: { left: 656, right: 656 } }) });
+  }
+  layers.push({ id: 'game', type: 'image', name: 'Game', source: { file: file('frame.png') }, placements: px('h', { x: 468, y: 31, width: 1418, height: 978, crop: { left: 177, right: 177 } }) });
+  layers.push({ id: 'game-v', type: 'duplicate', name: 'Game V', source: { layer: 'game' }, placements: px('v', { x: 0, y: 458, width: 1080, height: 935, crop: { left: 336, right: 336 } }) });
+  return {
+    version: 1, id: 'fx-bench-bd', name: 'FX bench backdrop', activeScene: 'main',
+    canvases: [{ id: 'h', width: 1920, height: 1080, fps: 60 }, { id: 'v', width: 1080, height: 1920, fps: 60 }], devices: [], overlays: [], outputs: [],
+    scenes: [{ id: 'main', name: 'Main', layers }],
+    audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+  };
+}
+
+test('game backdrop (D331): H + V full-canvas blurred duplicates, before/after', { skip: !RUN && 'set UJWALAM_FX_BENCH=1' }, async () => {
+  const rows = [];
+  // twice each, alternating, so a drift of the idle GPU clock shows up as a spread between the runs
+  for (const [name, bd] of [['game only (before)', false], ['game + backdrops (after)', true], ['game only (before)', false], ['game + backdrops (after)', true]]) {
+    const r = await loadIntoHost(c, backdropDoc(bd), { bases: { media } });
+    assert.deepEqual(r.unavailable, [], name);
+    rows.push({ name, ...(await measure()) });
+  }
+  const f = (v, d = 2) => (v == null ? 'n/a' : v.toFixed(d));
+  console.log(`| run | frame ms | GPU % |`);
+  console.log(`|---|---|---|`);
+  for (const r of rows) console.log(`| ${r.name} | ${f(r.frameMs, 3)} | ${f(r.gpuPct, 0)} |`);
+  for (const r of rows) assert.ok(r.frameMs < 1000 / 60, `${r.name}: ${r.frameMs} ms fits a 60 fps frame`);
+});
