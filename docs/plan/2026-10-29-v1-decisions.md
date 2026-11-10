@@ -600,3 +600,21 @@ the own name at its end read as a kill; victim keys taken from count digits, a s
 tail of a merged box; the BR feed read on MP frames after one stray BR cue. Fixed in code (no pack value changed);
 each kill now records its feed and a match counts only the feed of its HUD family. Evidence:
 `docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md`.
+
+## D326 — Match reels cut only the streamer's own kills; spectate detector N3; impact-play reels (2026-11-10, user feedback F1/F4)
+
+User feedback on a published reel: it showed the loadout swap, the round intro and another player's gameplay after the
+streamer's death. Root cause (from frames): `match_reels` built its pieces from every signalled kill-feed hit, while
+the match counts already used only the counted own kills. The BR-feed ROI reads the own name inside the custom weapon
+name on the MP "select loadout" panel, which shows before each round and while dead and spectating; those hits made
+pieces. Fix: `segment()` now records the counted kill times per match (`ownKillTimes`) and per round
+(`roundKillTimes`), and reels cut only those. New detector N3 (pack 0.8.0, status unverified) reads the MP "you will
+respawn next round" banner shown while spectating; kills inside an N3 span are not own kills (`spectateDetectors`) and
+N3 is a death detector, so pieces are cut there. A Search and Destroy reel that qualifies only by a round multi-kill
+(`pieces: qualifying-rounds`) shows only those rounds' own kills.
+
+New reel kind `impact-play` (user wish F4): when the streamer's own IMPACT PLAY (M2) shows after the end screen, a
+separate reel runs from the MVP animation through the impact-play camera to the results page (C2). Rule data is
+`impactPlay` in `match-reels.json`; its timing values are agent values, proposed and unverified. It ships behind the
+flag `impact-play-reels`, off by default, and posting does not upload this kind yet. Evidence:
+`docs/evidence/2026-11-10-reel-own-kills-impact-play.md`.

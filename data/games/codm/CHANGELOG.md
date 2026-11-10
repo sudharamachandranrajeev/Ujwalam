@@ -2,6 +2,16 @@
 
 The pack version is `version` in `detectors.json`. It covers every file in this folder (`game.json`, `detectors.json`, `events.json`, `screens.json`, `capture-plan.json`, `match-reels.json`). Validate with `npm run validate:games`.
 
+## 0.8.0 — 2026-11-10 (reels cut only own kills, spectate detector N3, impact-play reels, D326)
+
+Evidence: `docs/evidence/2026-11-10-reel-own-kills-impact-play.md`.
+
+- New detector N3 "Spectating until the next round" (role negative, no weight, nameRequired false, status unverified), screen `mp_gameplay`, mode mp, ROI `respawn_banner` (x 0.36-0.64, y 0.64-0.72 of the game area), pattern YOU WILL RESPAWN NEXT ROUND (fuzzy partial match 0.85, in `services/clip/g1_scan.py`).
+- S1 `stats` gains `spectateDetectors` (["N3"]): own kills read while an N3 span is open are another player's kills and are not counted. `data/clip/ranking.json` `death.detectors` adds N3, so reel pieces are cut where spectating starts.
+- Match reels (code): pieces are cut only around the counted own kills of the match (`ownKillTimes` from `segment()`), not every kill-feed hit; the BR-feed hits read from the MP loadout panel no longer make pieces. A rule may set `pieces` to `qualifying-rounds` (schema `match-reels.schema.json`); `snd-round-multikill` does, so a Search and Destroy reel that qualifies only by a round multi-kill shows that round's own kills.
+- New `impactPlay` object in `match-reels.json` (schema `$defs/impactPlay`, checked by `tools/game-validate.mjs`): a separate `impact-play` reel from the streamer's own IMPACT PLAY (M2) through the results page (C2), behind the flag `impact-play-reels` (off by default). Its timing values are agent values, proposed and unverified.
+- Detection changes: N3 rows are new. Runs detected with 0.7.0 still cut reels from counted kills, but read no spectate spans until re-detected.
+
 ## 0.7.0 — 2026-11-10 (summary-screen mode header, own kill count fixes)
 
 Evidence: `docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md`.
