@@ -139,6 +139,25 @@ describe('Qt studio themes (headless probe)', { skip }, () => {
     assert.equal(back.theme.effects, 'full');
     assert.ok(back.theme.hoverOverlays > 0 && back.theme.depthWidgets > 0, JSON.stringify(back.theme));
   });
+  test('High performance on and off in the same event-loop turn: the hover overlays come back (dying ones are not counted as present)', async () => {
+    const full = await probe({ env: { UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    const quick = await probe({ ms: 7000, actions: 'effects:performance+full', env: { UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    assert.ok(quick.actions.every((a) => a.done), JSON.stringify(quick.actions));
+    assert.equal(quick.theme.effects, 'full');
+    assert.ok(quick.theme.hoverOverlays > 0, JSON.stringify(quick.theme));
+    // About as many as a fresh start (the count moves by ~2 between runs: a few controls are 0 px wide when first
+    // shown). Before the fix, only those few got one: the dying overlays made attachGlow() skip every other control.
+    assert.ok(quick.theme.hoverOverlays >= 0.9 * full.theme.hoverOverlays,`every shown control has its overlay again: ${quick.theme.hoverOverlays} vs ${full.theme.hoverOverlays}`);
+  });
+  test('Settings > Appearance: turning High performance off gives back the Reduce effects choice the user had', async () => {
+    const off = await probe({ ms: 9000, actions: 'settings-open,settings-page:3,settings-performance:on,settings-performance:off,settings-save' });
+    assert.ok(off.actions.every((a) => a.done), JSON.stringify(off.actions));
+    assert.equal(off.theme.effects, 'full', 'Reduce was off before');
+    assert.equal(JSON.parse(readFileSync(path.join(off.dataDir, 'settings.json'), 'utf8')).ui?.effects, undefined, 'back where it started: nothing to save (the bug saved "reduced")');
+    const on = await probe({ ms: 10000, actions: 'settings-open,settings-page:3,settings-reduce-effects:on,settings-performance:on,settings-performance:off,settings-save' });
+    assert.ok(on.actions.every((a) => a.done), JSON.stringify(on.actions));
+    assert.equal(JSON.parse(readFileSync(path.join(on.dataDir, 'settings.json'), 'utf8')).ui.effects, 'reduced', 'Reduce was on before');
+  });
   test('Settings > Appearance: the High performance switch saves ui.effects "performance"; it is applied at the next start', async () => {
     const p = await probe({ ms: 9000, actions: 'settings-open,settings-page:3,settings-theme:daylight-blue,settings-performance:on,settings-save' });
     assert.deepEqual(p.actions.map((a) => a.done), [true, true, true, true, true]);

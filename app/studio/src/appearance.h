@@ -33,6 +33,7 @@ private:
 	QString chosen_;
 	QCheckBox *reduce_ = nullptr;
 	QCheckBox *perf_ = nullptr;
+	bool reduceBefore_ = false; // Reduce effects as the user left it, before High performance went on (opened in performance: off)
 	QComboBox *motion_ = nullptr;
 };
 

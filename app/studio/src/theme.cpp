@@ -770,10 +770,13 @@ bool probeAction(const QString &action)
 	if (action.startsWith(QStringLiteral("theme:")))
 		return setCurrent(action.mid(6));
 	if (action.startsWith(QStringLiteral("effects:"))) {
-		const QString m = action.mid(8);
-		if (m != QStringLiteral("full") && m != QStringLiteral("reduced") && m != QStringLiteral("performance"))
-			return false;
-		setEffects(m);
+		// "effects:a+b" applies a then b in the same event-loop turn (a quick toggle, before deferred deletes run)
+		const QStringList modes = action.mid(8).split(QLatin1Char('+'));
+		for (const QString &m : modes)
+			if (m != QStringLiteral("full") && m != QStringLiteral("reduced") && m != QStringLiteral("performance"))
+				return false;
+		for (const QString &m : modes)
+			setEffects(m);
 		return true;
 	}
 	return false;

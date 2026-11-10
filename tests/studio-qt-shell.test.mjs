@@ -371,6 +371,17 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.ok(f.w > 300 && f.h >= 220, `laid out to the page: ${f.w}x${f.h}`);
     assert.deepEqual([f.scrollX, f.scrollY], [0, 0]);
   });
+  test('Settings deleted without closing (no finished signal): the flag list survives, refreshes and can be shown again', async () => {
+    const p = await probe([], 9000, 'settings-open,settings-page:5,settings-destroy,settings-open,settings-page:5', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    assert.ok(p.flags.length > 0, 'the borrowed list was taken back before the dialog deleted it');
+    assert.equal(p.settings.flagList?.insideBox, true);
+  });
+  test('the app quits cleanly (exit 0) while Settings > Advanced is open', async () => {
+    const p = await probe([], 6000, 'settings-open,settings-page:5', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    assert.equal(p.flagsInSettings, true, 'Settings was still open at quit');
+  });
   test('Settings (D290): layer effects on asks for the typed "yes" and turns flag layer-effects on; animations Off is saved as ui.motion', async () => {
     const p = await probe([], 11000, 'settings-open,settings-layer-effects:on,settings-motion:off,settings-save,type:yes');
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true], ['type:yes', true]]);

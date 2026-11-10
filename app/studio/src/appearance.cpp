@@ -214,8 +214,11 @@ Page::Page(const QString &themeNow, const QString &effectsNow, const QString &mo
 	connect(perf_, &QCheckBox::toggled, this, [this](bool on) {
 		const QSignalBlocker b(reduce_);
 		reduce_->setEnabled(!on);
-		if (on)
+		if (on) { // shown ticked while High performance is on; the user's own choice comes back when it goes off
+			reduceBefore_ = reduce_->isChecked();
 			reduce_->setChecked(true);
+		} else
+			reduce_->setChecked(reduceBefore_);
 		theme::setEffects(effects());
 	});
 	connect(reduce_, &QCheckBox::toggled, this, [this](bool) { theme::setEffects(effects()); });

@@ -3387,6 +3387,21 @@ QString modeWords(const QString &id, bool live)
 			return QString::fromUtf8(live ? m.live : m.recording);
 	return id;
 }
+// Runs a function when its parent is deleted. Made as the dialog's first child, it runs before the dialog's other
+// children (Qt deletes children in creation order), so a borrowed widget can be taken back before it is deleted.
+class OnDelete : public QObject
+{
+public:
+	OnDelete(QObject *parent, std::function<void()> f) : QObject(parent), f_(std::move(f)) {}
+	~OnDelete() override
+	{
+		if (f_)
+			f_();
+	}
+
+private:
+	std::function<void()> f_;
+};
 } // namespace
 
 // The Clips label in the top bar, in plain words, and the questions that need an answer.
@@ -3532,6 +3547,15 @@ void MainWindow::openSettings(bool firstRun)
 		const QString motionNow = st.value(QStringLiteral("ui")).toObject().value(QStringLiteral("motion")).toString(QStringLiteral("system"));
 		auto *dlg = new QDialog(this);
 		dlg->setAttribute(Qt::WA_DeleteOnClose, true);
+		// The flag list is borrowed below. However the dialog goes (closed, deleted directly, or with the window at
+		// quit), the list goes back to its holder first, so flagList_ never points at a deleted widget. When the
+		// holder is already gone (the window is being deleted), the list is deleted with the dialog.
+		new OnDelete(dlg, [this] {
+			if (flagHome_ && flagList_ && flagList_->parentWidget() != flagHome_) {
+				flagList_->hide();
+				flagList_->setParent(flagHome_);
+			}
+		});
 		settingsDlg_ = dlg;
 		dlg->setWindowTitle(firstRun ? QStringLiteral("Welcome: clips") : QStringLiteral("Settings"));
 		auto *outer = new QVBoxLayout(dlg);
@@ -4033,6 +4057,10 @@ bool MainWindow::probeAction(const QString &action)
 			return false;
 		if (p[0] == QStringLiteral("settings-save") || p[0] == QStringLiteral("settings-cancel")) {
 			p[0] == QStringLiteral("settings-save") ? settingsDlg_->accept() : settingsDlg_->reject();
+			return true;
+		}
+		if (p[0] == QStringLiteral("settings-destroy")) { // delete the dialog without closing it (no finished signal)
+			delete settingsDlg_.data();
 			return true;
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-page")) { // show a section (for the picture)

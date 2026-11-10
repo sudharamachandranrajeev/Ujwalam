@@ -121,6 +121,21 @@ check boxes and the Save/Cancel buttons were readable in all four themes. No con
 list sat inside its box, and the `teal-grid` grid shows faintly behind the Settings page. The Posts dialog uses the
 theme's colours but keeps its older plain layout (unchanged by this task).
 
+## Review fixes (second-opinion review, 2026-11-10)
+
+1. **Settings deleted without closing.** The flag list went back to its holder only on `QDialog::finished`. A dialog
+   deleted directly would have deleted the list with it, leaving `flagList_` dangling. Now the dialog's first child
+   object (`OnDelete`) gives the list back before the dialog's other children are deleted. `flagList_` and
+   `flagHome_` are `QPointer`s, so at app quit (the holder already gone) nothing dangles. Tests: probe action
+   `settings-destroy` then reopen (failed before the fix, passes now); the app exits 0 with Settings > Advanced open.
+2. **High performance off left "Reduce effects" ticked.** The user's Reduce choice is now remembered when High
+   performance goes on and restored when it goes off. Test: on then off saves nothing (was "reduced"); with Reduce
+   on first, on then off saves "reduced".
+3. **Quick toggle lost the hover overlays.** Overlays dropped by High performance are deleted later; a switch back
+   to Full in the same event-loop turn saw them as present and made no new ones. Dropped overlays are now renamed,
+   hidden and unhooked at once. Test: probe action `effects:performance+full` (both in one turn); the overlay count
+   is back to a fresh start's count (within 10 %). The test failed before the fix and passes now.
+
 ## UNVERIFIED
 
 - The offset fix on the real screen: the offscreen grab paints the same before and after, so the proof is the

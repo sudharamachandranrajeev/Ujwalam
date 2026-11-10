@@ -257,8 +257,15 @@ void dropHover(bool drop)
 	const auto all = QApplication::allWidgets();
 	if (drop) {
 		for (QWidget *w : all)
-			if (w->objectName() == QStringLiteral("hoverGlow"))
+			if (w->objectName() == QStringLiteral("hoverGlow")) {
+				// renamed and hidden now, deleted later: a quick switch back to Full (before the deferred delete
+				// runs) must not see the dying overlay as "already there" and skip making a new one
+				w->setObjectName(QStringLiteral("hoverGlowGone"));
+				if (QWidget *host = w->parentWidget())
+					host->removeEventFilter(w); // no hover may show it again before it goes
+				w->hide();
 				w->deleteLater();
+			}
 		return;
 	}
 	for (QWidget *w : all) // back from High performance: the shown widgets get their overlay again
