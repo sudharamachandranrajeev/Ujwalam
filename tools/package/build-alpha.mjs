@@ -38,7 +38,7 @@ export const STUDIO_QT = Object.freeze([
   ['studio/platforms/qwindows.dll', 'plugins/platforms/qwindows.dll'], ['studio/platforms/qoffscreen.dll', 'plugins/platforms/qoffscreen.dll'],
 ]);
 import {
-  allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
+  allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
 import { readZip, writeZip } from './zip.mjs';
 import { nvencFileState, readManifest, runtimeNvencState } from '../obs-patch/build-obs-nvenc.mjs';
@@ -224,6 +224,8 @@ export async function buildAlpha(opts = {}) {
   const repoRel = repoFiles(REPO);
   const imp = importProblems(REPO, repoRel);
   if (imp.length) throw new Error(`import closure:\n  ${imp.join('\n  ')}`);
+  const dref = dataRefProblems(REPO, repoRel);
+  if (dref.length) throw new Error(`data files read at run time but not packaged (tools/package/manifest.mjs REPO_FILES):\n  ${dref.join('\n  ')}`);
   const obs = selectObsRuntime(runtime, { hostExe, disabled: disabledModules(REPO) });
   // The shipped obs-nvenc.dll must be the patched build (official 32.1.2 crashes on encoder destroy; ADR
   // docs/adr/2026-11-05-obs-nvenc-destroy-order.md). Fail closed: fix with `node tools/obs-patch/build-obs-nvenc.mjs --install`.

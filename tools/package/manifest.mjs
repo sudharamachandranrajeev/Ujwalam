@@ -5,6 +5,7 @@
 //                                              files; no tests, fixtures, docs, Python, *.local.*)
 //   importProblems(repo, rels)      -> [msg]   every relative import of a packaged .mjs resolves to a packaged file;
 //                                              bare specifiers other than node:* are refused (no node_modules ships)
+//   dataRefProblems(repo, rels)     -> [msg]   every repo data/*.json a packaged .mjs names by literal path ships
 //   disabledModules(repo)           -> [name]  the host's always-disabled libobs modules, read from
 //                                              app/host/src/obs_runtime.cpp (one source of truth)
 //   selectObsRuntime(runtime, opts) -> { files: [{ src, dest, why }], modules, systemDlls, skipped }
@@ -43,6 +44,8 @@ export const REPO_FILES = Object.freeze([
   'data/overlays/feed-scopes.json',
   'data/outputs/alpha-live.json', 'data/outputs/alpha-practice.json', 'data/outputs/guard/live-test-budget.json',
   'data/posting/templates.json', 'data/posting/limits.json',
+  // read at run time by shipped services; missing before alpha.23 (dataRefProblems below now catches this)
+  'data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json',
   'data/schemas/project.schema.json',
   'data/profile.example.json', 'data/profile.schema.json',
   'data/release/alpha.json',
@@ -107,6 +110,28 @@ export function importProblems(repo, rels) {
       if (!spec.startsWith('.')) { problems.push(`${rel}: bare import "${spec}" (no node_modules ships)`); continue; }
       const target = path.posix.normalize(path.posix.join(path.posix.dirname(rel), spec));
       if (!set.has(target)) problems.push(`${rel}: import "${spec}" -> ${target} is not in the package`);
+    }
+  }
+  return problems;
+}
+
+// A data file a packaged module names by literal parts, e.g. path.join(REPO, 'data', 'posting', 'x.json').
+const DATA_REF_RE = /path\.(?:join|resolve)\(\s*[\w.]+\s*,\s*((?:'[^']+'\s*,?\s*)+)\)/g;
+// Local-only files (gitignored, the user's own): never shipped, never a problem.
+const LOCAL_ONLY_DATA = /\.local\./;
+
+/** Every data file a packaged .mjs reads by a literal path (and that exists in the repo) is in the package. */
+export function dataRefProblems(repo, rels) {
+  const set = new Set(rels);
+  const problems = [];
+  for (const rel of rels) {
+    if (!/\.m?js$/.test(rel) || rel.startsWith('ui/')) continue;
+    const text = readFileSync(path.join(repo, rel), 'utf8');
+    for (const m of text.matchAll(DATA_REF_RE)) {
+      const target = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).join('/');
+      if (!target.startsWith('data/') || !/\.json$/.test(target) || LOCAL_ONLY_DATA.test(target)) continue;
+      if (!existsSync(path.join(repo, target))) continue; // a file the user or the app writes, not a shipped one
+      if (!set.has(target)) problems.push(`${rel}: reads ${target}, which is not in the package`);
     }
   }
   return problems;

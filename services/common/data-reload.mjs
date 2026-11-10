@@ -69,7 +69,7 @@ export function createDataSource(opts) {
 
   function tell(ok, why) {
     if (!report) return;
-    try { report({ kind, file, ok, ...(why ? { why } : {}), first: !firstDone }); } catch { /* a notice never breaks a reload */ }
+    try { report({ kind, file, ok, ...(why ? { why } : {}), first: !firstDone, loaded: has }); } catch { /* a notice never breaks a reload */ }
   }
 
   function apply(v, h, viaMissing, quiet) {
@@ -101,7 +101,7 @@ export function createDataSource(opts) {
         if (opts.missing) {
           try { apply(opts.missing(), 'missing', true, quiet); return { changed: true, ok: true }; } catch (err) { reject(err.message); return { changed: false, ok: false, why: rejected.why }; }
         }
-        reject('file missing; the last good version stays');
+        reject('file missing'); // the notice adds what stays in use (createDataNotifier)
         return { changed: false, ok: false, why: rejected.why };
       }
       if (TRANSIENT.has(e?.code)) return { changed: false, ok: !rejected, pending: true };
@@ -213,7 +213,8 @@ export function createDataNotifier({ dataDir = null, writeTask = null, log = (m)
     writeTask(dataDir, {
       id: `data-${e.kind}`, kind: 'data', state: e.ok ? 'done' : 'failed',
       title: e.ok ? `${label} updated` : `${label} not applied: the file has a problem`,
-      note: e.ok ? `${name} was changed on disk and is now in use` : `${name}: ${e.why}. The last good version stays in use.`,
+      // loaded false: there was never a good version (a missing or broken file at start), so none can stay in use
+      note: e.ok ? `${name} was changed on disk and is now in use` : `${name}: ${e.why}. ${e.loaded === false ? 'Nothing from this file is in use until it is fixed.' : 'The last good version stays in use.'}`,
       startedAt: t, updatedAt: t,
     });
   };

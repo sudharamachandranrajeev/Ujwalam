@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXE as STUDIO_EXE, START_EXE } from '../app/studio/tools/build.mjs';
 import { changelogExcerpt, releaseInfo } from '../tools/package/build-alpha.mjs';
-import { allowProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
+import { allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
 import { peInfo } from '../tools/package/pe.mjs';
 import { clipMakerNote, installedSpec, nodeOk, pruneLaunchLogs } from '../tools/package/run-installed.mjs';
 import { CLIP_MAKER_FIX, clipTools } from '../services/studio-ui/record-clips.mjs';
@@ -59,6 +59,10 @@ test('repo file set: no tests, docs, Python or local files; every relative impor
   assert.ok(files.includes('services/studio-ui/launch.mjs'));
   assert.ok(files.includes('tools/diag/bundle.mjs'));
   assert.deepEqual(importProblems(REPO, files), []);
+  // alpha.22 shipped without data/posting/auto-post-rules.json (and three more): the task panel said "file missing"
+  assert.deepEqual(dataRefProblems(REPO, files), []);
+  for (const f of ['data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json']) assert.ok(files.includes(f), f);
+  assert.deepEqual(dataRefProblems(REPO, files.filter((f) => f !== 'data/posting/auto-post-rules.json')).length, 1, 'the check sees a missing file');
   assert.deepEqual(allowProblems(files), []);
   assert.deepEqual(forbiddenProblems(files, { fontNames: ['Corbel', 'Consolas'] }), []);
   const dis = disabledModules(REPO);
