@@ -265,14 +265,39 @@ Rect drag(const DragIn &d, double *line_x, double *line_y)
 		r.y = s.y + s.h / 2 + wy - r.h / 2;
 		return clamp_round(r);
 	}
-	if (d.mode != Mode::Resize || d.corner < 0 || d.corner > 3)
+	if (d.mode != Mode::Resize || d.corner < 0 || d.corner > 7)
 		return r;
 	const Rect &s = d.start;
+	bool upright = std::fabs(std::remainder(s.rot, 360.0)) < 0.01;
+	if (d.corner >= 4) { // an edge handle (D330): that side follows the cursor, the opposite side stays, aspect free
+		const int e = d.corner - 4;
+		const bool horiz = e == 0 || e == 2;
+		double lx, ly;
+		rot_inv(s.rot, dx, dy, lx, ly);
+		double out = e == 0 ? -lx : e == 1 ? -ly : e == 2 ? lx : ly; // outward growth, canvas px
+		const double size0 = horiz ? s.w : s.h;
+		if (d.snap && upright) { // the moving edge to the nearest canvas or layer guide
+			const double pos = e == 0 ? s.x - out : e == 1 ? s.y - out : e == 2 ? s.x + s.w + out : s.y + s.h + out;
+			const double snapped = snap_value(pos, snap_targets(horiz ? d.cw : d.ch, horiz ? d.gx : d.gy), d.snap_tol, horiz ? line_x : line_y);
+			out += (e == 0 || e == 1) ? pos - snapped : snapped - pos;
+		}
+		const double ns = std::max(1.0, size0 + out);
+		out = ns - size0;
+		const double hx = e == 0 ? -out / 2 : e == 2 ? out / 2 : 0, hy = e == 1 ? -out / 2 : e == 3 ? out / 2 : 0;
+		double wx, wy;
+		rot_fwd(s.rot, hx, hy, wx, wy);
+		if (horiz)
+			r.w = ns;
+		else
+			r.h = ns;
+		r.x = s.x + s.w / 2 + wx - r.w / 2;
+		r.y = s.y + s.h / 2 + wy - r.h / 2;
+		return clamp_round(r);
+	}
 	int k = d.corner, o = (k + 2) % 4;
 	double c[4][2];
 	corners(s, c);
 	double mx = c[k][0] + dx, my = c[k][1] + dy; // where the dragged corner is now
-	bool upright = std::fabs(std::remainder(s.rot, 360.0)) < 0.01;
 	if (d.snap && upright) {
 		mx = snap_value(mx, snap_targets(d.cw, d.gx), d.snap_tol, line_x);
 		my = snap_value(my, snap_targets(d.ch, d.gy), d.snap_tol, line_y);
@@ -368,14 +393,19 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 			if (it.id == cur.layer) {
 				bool turn = hit_rotate(it.r, cx, cy, kRotateOff * v.canvas_per_px(), tol);
 				int k = turn ? -1 : hit_corner(it.r, cx, cy, tol);
-				int edge = !turn && k < 0 && m.alt && it.r.sw > 0 && it.r.sh > 0 ? hit_edge(it.r, cx, cy, tol) : -1;
+				// An edge: Alt crops that side (needs the source size); without Alt the edge handle stretches that
+				// side alone (D330, OBS/Meld edge handles).
+				int edge = !turn && k < 0 ? hit_edge(it.r, cx, cy, tol) : -1;
+				const bool crop = edge >= 0 && m.alt;
+				if (crop && (it.r.sw <= 0 || it.r.sh <= 0))
+					edge = -1; // no crop gesture without the source size: the press is a move
 				if (turn || k >= 0 || edge >= 0 || contains(it.r, cx, cy)) {
 					next.has = true;
 					next.scene = scene;
 					next.layer = it.id;
 					next.r = it.r;
-					next.mode = turn ? Mode::Rotate : k >= 0 ? Mode::Resize : edge >= 0 ? Mode::Crop : Mode::Move;
-					next.corner = k >= 0 ? k : edge;
+					next.mode = turn ? Mode::Rotate : k >= 0 ? Mode::Resize : edge >= 0 ? (crop ? Mode::Crop : Mode::Resize) : Mode::Move;
+					next.corner = k >= 0 ? k : edge >= 0 && !crop ? 4 + edge : edge;
 				}
 				break;
 			}
@@ -524,6 +554,46 @@ bool Editor::dragging(const std::string &canvas) const
 	std::lock_guard<std::mutex> l(m_);
 	auto it = sel_.find(canvas);
 	return it != sel_.end() && it->second.has && it->second.mode != Mode::None;
+}
+
+const char *cursor_name(Cursor c)
+{
+	switch (c) {
+	case Cursor::Move: return "move";
+	case Cursor::SizeNWSE: return "nwse";
+	case Cursor::SizeNESW: return "nesw";
+	case Cursor::SizeWE: return "we";
+	case Cursor::SizeNS: return "ns";
+	case Cursor::Rotate: return "rotate";
+	default: return "arrow";
+	}
+}
+
+Cursor Editor::hover(const std::string &canvas, const View &v, double sx, double sy, Mods m) const
+{
+	Rect r;
+	{
+		std::lock_guard<std::mutex> l(m_);
+		auto it = sel_.find(canvas);
+		if (!enabled_ || v.vw <= 0 || v.vh <= 0 || it == sel_.end() || !it->second.has)
+			return Cursor::Arrow;
+		r = it->second.r;
+	}
+	if (be_.locked && be_.locked())
+		return Cursor::Arrow;
+	double cx, cy;
+	to_canvas(v, sx, sy, cx, cy);
+	const double tol = 8 * v.canvas_per_px();
+	if (hit_rotate(r, cx, cy, kRotateOff * v.canvas_per_px(), tol))
+		return Cursor::Rotate;
+	// The arrows follow the handle as drawn on an unturned box; a turned box keeps them (close enough to read).
+	const int k = hit_corner(r, cx, cy, tol);
+	if (k >= 0)
+		return k == 0 || k == 2 ? Cursor::SizeNWSE : Cursor::SizeNESW;
+	const int e = hit_edge(r, cx, cy, tol);
+	if (e >= 0 && (!m.alt || (r.sw > 0 && r.sh > 0)))
+		return e == 0 || e == 2 ? Cursor::SizeWE : Cursor::SizeNS;
+	return contains(r, cx, cy) ? Cursor::Move : Cursor::Arrow;
 }
 
 void Editor::refresh(const std::string &canvas)

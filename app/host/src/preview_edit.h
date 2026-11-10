@@ -14,7 +14,9 @@
 // drag holds a snap, draw_cb shows the guide line it snapped to. The round handle 24 screen px above the top edge turns the layer about its centre
 // (Shift: 15 degree steps); a turn changes only `rotation` (D255). Alt + drag on an edge crops that side (D256): the
 // box edge follows the cursor and the source is cut by the same share, so the picture keeps its scale; the opposite
-// edge stays put. Needs the source size (a source that reports 0 x 0 has no crop gesture).
+// edge stays put. Needs the source size (a source that reports 0 x 0 has no crop gesture). Without Alt an edge is
+// a resize handle (D330): that side follows the cursor (aspect free), the opposite side stays, the moving edge snaps.
+// Over the selected layer the window shows a matching cursor (hover: move, the four size arrows, rotate).
 //
 // Edit path: while dragging, every mouse move applies the rectangle through Backend::apply, which is
 // Studio::layer_set_placement, the code behind the RPC layers.setPlacement (no round trip to the UI per move). The
@@ -70,10 +72,13 @@ bool hit_rotate(const Rect &r, double cx, double cy, double off, double tol);
 int hit_edge(const Rect &r, double cx, double cy, double tol);
 
 enum class Mode { None, Move, Resize, Rotate, Crop };
+// The cursor a point over the selected layer asks for (hover).
+enum class Cursor { Arrow, Move, SizeNWSE, SizeNESW, SizeWE, SizeNS, Rotate };
+const char *cursor_name(Cursor c); // "arrow", "move", "nwse", "nesw", "we", "ns", "rotate"
 struct DragIn {
 	Rect start;
 	Mode mode = Mode::None;
-	int corner = -1;           // Resize: the corner; Crop: the edge (hit_edge)
+	int corner = -1;           // Resize: the corner 0..3, or 4 + the edge (hit_edge) for an edge handle; Crop: the edge
 	double sx = 0, sy = 0;     // press point, canvas px
 	double cx = 0, cy = 0;     // current point, canvas px
 	bool free_aspect = false;  // Shift (Rotate: 15 degree steps)
@@ -121,6 +126,9 @@ public:
 	bool up(const std::string &canvas, const View &v, double sx, double sy, Mods m);
 	void cancel(const std::string &canvas); // lost mouse capture: the layer goes back to where the drag began
 	bool dragging(const std::string &canvas) const;
+	// The cursor for a point (client px) with no button down: the selected layer's handles and box only (no backend
+	// call, so it is cheap on every mouse move); Arrow when off, live-locked or nothing is selected there.
+	Cursor hover(const std::string &canvas, const View &v, double sx, double sy, Mods m) const;
 	// Re-reads the selected layer's rectangle (an inspector edit or a scene switch); clears a selection whose layer
 	// is gone or hidden. UI thread, about 5 times a second while something is selected and no drag runs.
 	void refresh(const std::string &canvas);
