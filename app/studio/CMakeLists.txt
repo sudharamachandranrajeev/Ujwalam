@@ -45,6 +45,10 @@ add_executable(ujwalam-studio WIN32
 	src/motion.h
 	src/stats_cards.cpp
 	src/stats_cards.h
+	src/stream_pages.cpp
+	src/stream_pages.h
+	src/switch_widget.cpp
+	src/switch_widget.h
 	src/studio_log.cpp
 	src/studio_log.h
 	# the host's crash reporter, shared (text report only; 2026-11-08 studio crash)

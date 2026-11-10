@@ -254,9 +254,20 @@ void Studio::set_channel(Canvas &c, Scene *s, bool animate)
 	obs_source_t *want = c.tr_type == "stinger" && c.st ? c.st : c.tr;
 	swap_to(c.id, c.vc, c.routed, want);
 	bool change = animate && src && !c.active.empty() && (!s || c.active != s->id);
+	if (easer_)
+		easer_->end(c.id); // a new switch (or a cut) takes over from a running eased fade
 	if (change && want == c.st) {
 		if (!obs_transition_start(c.st, OBS_TRANSITION_MODE_AUTO, 0, src))
 			obs_transition_set(c.st, src);
+	} else if (change && c.tr_type == "fade" && c.tr_ms > 0 && c.tr_ease != "linear") {
+		// D327 TR1: eased fade = manual mode driven by the easer's tick callback (transition_ease.h).
+		if (obs_transition_start(c.tr, OBS_TRANSITION_MODE_MANUAL, c.tr_ms, src)) {
+			if (!easer_)
+				easer_ = std::make_unique<ease::Easer>();
+			easer_->begin(c.id, c.tr, c.tr_ms, c.tr_ease);
+		} else {
+			obs_transition_set(c.tr, src);
+		}
 	} else if (change && c.tr_type == "fade" && c.tr_ms > 0) {
 		if (!obs_transition_start(c.tr, OBS_TRANSITION_MODE_AUTO, c.tr_ms, src))
 			obs_transition_set(c.tr, src);
@@ -267,11 +278,15 @@ void Studio::set_channel(Canvas &c, Scene *s, bool animate)
 }
 
 json::Value Studio::transition_set(const std::string &cv, const std::string &type, int64_t ms, const json::Value *file,
-				   int64_t point_ms, bool audio)
+				   int64_t point_ms, bool audio, const std::string &easing)
 {
 	std::lock_guard<std::recursive_mutex> lk(m_);
 	if (type != "cut" && type != "fade" && type != "stinger")
 		throw Error(rpc::INVALID_PARAMS, "type must be cut, fade or stinger");
+	if (!ease::known(easing))
+		throw Error(rpc::INVALID_PARAMS, "unknown easing curve");
+	if (easing != "linear" && type != "fade")
+		throw Error(rpc::INVALID_PARAMS, "easing is for a fade only");
 	Canvas *c = canvas(norm_canvas(cv));
 	if (!c)
 		throw Error(rpc::INVALID_PARAMS, "unknown canvas");
@@ -310,6 +325,7 @@ json::Value Studio::transition_set(const std::string &cv, const std::string &typ
 		c->tr_ms = type == "fade" ? (uint32_t)ms : 0;
 	}
 	c->tr_type = type;
+	c->tr_ease = easing;
 	if (c->tr && c->routed) { // put the right transition on the channel now, showing the same scene
 		Scene *cur = c->active.empty() ? nullptr : scene(c->active, c->id);
 		set_channel(*c, cur, false);
@@ -321,8 +337,34 @@ json::Value Studio::transition_set(const std::string &cv, const std::string &typ
 		c->st_point = 0;
 		c->st_audio = true;
 	}
-	hlog::info("transition %s: %s %u ms", c->id.c_str(), c->tr_type.c_str(), type == "stinger" ? c->st_point : c->tr_ms);
+	hlog::info("transition %s: %s %u ms %s", c->id.c_str(), c->tr_type.c_str(), type == "stinger" ? c->st_point : c->tr_ms, c->tr_ease.c_str());
 	return transitions();
+}
+
+json::Value Studio::transition_force_complete(const std::string &cv)
+{
+	std::lock_guard<std::recursive_mutex> lk(m_);
+	Canvas *c = canvas(norm_canvas(cv));
+	if (!c)
+		throw Error(rpc::INVALID_PARAMS, "unknown canvas");
+	if (easer_)
+		easer_->end(c->id);
+	bool completed = false;
+	// The transition on the channel: while it runs, source B is the scene it goes to; set() makes that the shown scene
+	// at once and ends the transition (the OBS frontend does the same for a stuck transition).
+	if (c->routed && (c->routed == c->tr || c->routed == c->st)) { // a plain scene on the channel has nothing to end
+		obs_source_t *dst = obs_transition_get_source(c->routed, OBS_TRANSITION_SOURCE_B);
+		if (dst) {
+			obs_transition_set(c->routed, dst);
+			obs_source_release(dst);
+			completed = true;
+		}
+	}
+	hlog::info("transition %s: force complete (%s)", c->id.c_str(), completed ? "was running" : "nothing running");
+	json::Value r = json::Value::object();
+	r.set("canvas", c->id);
+	r.set("completed", completed);
+	return r;
 }
 
 json::Value Studio::transitions() const
@@ -333,6 +375,8 @@ json::Value Studio::transitions() const
 		json::Value o = json::Value::object();
 		o.set("type", c.tr_type);
 		o.set("durationMs", (int64_t)c.tr_ms);
+		if (c.tr_type == "fade" && c.tr_ease != "linear")
+			o.set("easing", c.tr_ease);
 		if (c.tr_type == "stinger") {
 			o.set("file", c.st_ref);
 			o.set("pointMs", (int64_t)c.st_point);
@@ -424,6 +468,7 @@ void Studio::teardown()
 {
 	std::lock_guard<std::recursive_mutex> l(m_);
 	drop_relay();
+	easer_.reset(); // the tick callback goes before the transitions it drives
 	for (auto &c : canvases_) {
 		set_channel(c, nullptr);
 		if (c.tr || c.st) { // off the output before the release, then the transitions drop their scene references

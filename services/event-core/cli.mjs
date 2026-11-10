@@ -143,8 +143,16 @@ export async function serve(args, io = { out: (s) => console.log(s), signal: nul
   delete process.env.UJWALAM_HOST_MARKERS_TOKEN;
   delete process.env.UJWALAM_HOST_TOKEN;
   delete process.env.UJWALAM_HOST_SYSTEM_TOKEN;
+  // D327 IN1 "Allow remote connections": only with --lan AND the pairing token in UJWALAM_REMOTE_TOKEN (the launcher
+  // sets both only when the user turned the setting on). Taken out of the environment at once; never printed.
+  const remoteToken = process.env.UJWALAM_REMOTE_TOKEN;
+  delete process.env.UJWALAM_REMOTE_TOKEN;
+  const remote = args.lan === true && remoteToken
+    ? { token: remoteToken, ...(typeof args['lan-address'] === 'string' ? { address: args['lan-address'] } : {}), ...(args['lan-port'] !== undefined ? { port: Number(args['lan-port']) } : {}) }
+    : undefined;
+  if (args.lan === true && !remoteToken) io.out('[serve] remote connections: off (--lan without a pairing token)');
   const svc = await startService({
-    hostToken, ...(hostDiscovery ? { hostDiscovery } : {}),
+    hostToken, ...(hostDiscovery ? { hostDiscovery } : {}), ...(remote ? { remote } : {}),
     dataDir: args['data-dir'], port, mock: args.mock === true, url: args.url, allowRemote: args['allow-remote'] === true, credential: args.credential,
     noFixtures: args['no-fixtures'] === true, out: io.out, ...(args['no-stall-tracer'] === true ? { stallTracer: false } : {}),
   });

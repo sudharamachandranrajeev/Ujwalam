@@ -101,6 +101,9 @@ import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../t
 import { writeZip } from '../../tools/package/zip.mjs';
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
+import { readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
+import { botUrl, integrationsInEffect } from './integrations.mjs';
+import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG } from './settings-routes.mjs';
 import { GUARD_ABORT_EXIT, LIVE_TEST_BUDGET, loadBudget, MAX_TEST_MINUTES, parseMinutes, parseSinkMinutes, runGuard } from './live-guard.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -108,6 +111,18 @@ const hex = (n) => randomBytes(n).toString('hex');
 export const HOST_LOGS_KEPT = 10;
 export const HOST_CONFIG_FILE = 'host-config.json';
 export const ALPHA_LIVE_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-live.json');
+
+/** The --live plan file (D327 OS1/OS2). With the `stream-settings` flag on and a saved Settings > Stream setup, the plan
+ *  generated from it (<dataDir>/outputs/stream-setup-plan.json, recording "alpha.mkv" on the main H rung like
+ *  alpha-live.json); otherwise alpha-live.json. A setup with problems throws (the start stops; the user fixes Settings). */
+export function livePlanFile({ dataDir, streamSettingsOn }) {
+  if (!streamSettingsOn) return ALPHA_LIVE_PLAN;
+  const { exists, setup } = readSetup(dataDir);
+  if (!exists) return ALPHA_LIVE_PLAN;
+  const problems = setupProblems(setup);
+  if (problems.length) throw new Error(`Settings > Stream has problems: ${problems.map((p) => p.message).join('; ')}`);
+  return writePlanFile(dataDir, setup, { recordName: 'alpha.mkv' });
+}
 // The folder that holds services/clip and the Python venv (.venv-gpu or .venv): this tree, or for an installed run the
 // clipRoot from ujwalam.json (UJWALAM_CLIP_ROOT; the zip ships no Python, D283).
 export const CLIP_ROOT = process.env.UJWALAM_CLIP_ROOT || REPO;
@@ -319,8 +334,10 @@ export function liveClipsSpec({ project, dataDir, repo = REPO, exists = existsSy
   };
 }
 
-export function coreServeArgs({ dataDir, mock = false, sbWs = {} }) {
+export function coreServeArgs({ dataDir, mock = false, sbWs = {}, remote = null }) {
   const argv = ['serve', '--data-dir', dataDir];
+  // D327 IN1 "Allow remote connections": the LAN listener (the pairing token goes by environment, never argv).
+  if (remote) argv.push('--lan', ...(typeof remote.address === 'string' ? ['--lan-address', remote.address] : []));
   if (mock) return { argv: [...argv, '--mock'], note: null };
   if (typeof sbWs.ws !== 'string' || sbWs.wsError) return { argv, note: `Streamer.bot address refused (${sbWs.wsError ?? 'unset'}); the event core uses its default` };
   return { argv: [...argv, '--url', sbWs.ws], note: null };
@@ -847,6 +864,7 @@ export async function main(argv = process.argv.slice(2)) {
   const children = [];
   let hostChild = null;
   let hostDiscoveryFile = null;
+  let livePlan = null; // the --live plan file, for the UI server's readiness check (D327)
   let alphaClient = null;
   let stopping = false;
   let recordClips = null;
@@ -902,13 +920,21 @@ export async function main(argv = process.argv.slice(2)) {
   // 1. event core (port 0; its own log line reports the port). Its read-only Streamer.bot connection uses the same
   //    address as the bot manager (profile bots.streamerbot_ws, else 8093, D194); the connector's own default is
   //    Streamer.bot's documented 8080, which the user's Streamer.bot does not use (D198).
-  const coreArgs = coreServeArgs({ dataDir, mock: args.mock === true, sbWs: loadBotConfig().streamerbot });
+  // D327 IN1 (flag `integrations`): Settings > Integrations gives the Streamer.bot port and "Allow remote connections".
+  // The remote pairing token is new for each start and lives only in the core's and the UI server's memory.
+  const botCfg = loadBotConfig();
+  const integOn = (() => { try { return createFlags({ dataDir }).isOn(INTEGRATIONS_FLAG); } catch { return false; } })();
+  const integ = integrationsInEffect(dataDir, botCfg, integOn);
+  const remoteToken = integOn && integ.remote.enabled ? hex(32) : null;
+  const coreArgs = coreServeArgs({ dataDir, mock: args.mock === true, sbWs: integOn ? { ws: botUrl(integ.bots.streamerbot.port) } : botCfg.streamerbot,
+    remote: remoteToken ? { address: integ.remote.address } : null });
   if (coreArgs.note) console.log(`[studio] ${coreArgs.note}`);
+  if (remoteToken) console.log('[studio] remote connections: ON (Settings > Integrations); LAN only, pairing token not printed');
   const core = spawn(process.execPath, [path.join(REPO, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], {
     stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true, // stdin: the parent pipe (D234)
     // UJWALAM_HOST_MARKERS_TOKEN: the F6 live markers (flag live-markers) write host markers; the host is found at
     // <dataDir>/host.json. coreEnv never passes the full host token.
-    env: { ...coreEnv({ coreTokens, hostMarkersToken }), ...PARENT_PIPE },
+    env: { ...coreEnv({ coreTokens, hostMarkersToken }), ...PARENT_PIPE, UJWALAM_REMOTE_TOKEN: remoteToken ?? '' },
   });
   children.push(core);
   const corePort = await portFrom(core, /api on 127\.0\.0\.1:(\d+)/);
@@ -949,7 +975,12 @@ export async function main(argv = process.argv.slice(2)) {
     const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system, embedded: !!shellPaths });
     for (const n of spec.notes) console.log(`[studio] WARNING: ${n}`);
     const hostArgs = spec.argv;
-    const planPath = args.live === true ? ALPHA_LIVE_PLAN : typeof args.outputs === 'string' ? path.resolve(args.outputs) : alpha ? ALPHA_RECORD_PLAN : null;
+    let planPath;
+    try {
+      planPath = args.live === true ? livePlanFile({ dataDir, streamSettingsOn: createFlags({ dataDir }).isOn(STREAM_SETTINGS_FLAG) })
+        : typeof args.outputs === 'string' ? path.resolve(args.outputs) : alpha ? ALPHA_RECORD_PLAN : null;
+    } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
+    livePlan = args.live === true ? planPath : null;
     if (planPath) {
       // An O1 plan file (app/host/outputs/*.json): validated against data/platforms, configured at host start, nothing
       // started. Real targets only with --live (alpha-live.json; the host then runs with --allow-live).
@@ -1109,12 +1140,13 @@ export async function main(argv = process.argv.slice(2)) {
   const uiArgs = [path.join(REPO, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--data-dir', dataDir, '--feedback-dir', feedbackDir];
   uiArgs.push('--profile', typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'), '--release', path.join(REPO, 'release.json'));
   if (typeof args['ui-port'] === 'string') uiArgs.push('--port', args['ui-port']);
+  if (livePlan) uiArgs.push('--live-plan', livePlan);
   if (args['fake-host'] === true) uiArgs.push('--fake-host');
   // P5b autosave: layer edits accepted by the host are written into the alpha project file (project-sync.mjs).
   else if (alpha) uiArgs.push('--project', alphaFile(dataDir));
   const ui = spawn(process.execPath, uiArgs, {
     stdio: ['pipe', 'pipe', 'inherit', 'ipc'], windowsHide: true, // stdin: the parent pipe (D234); ipc: the go-live authority (D303)
-    env: { ...process.env, ...PARENT_PIPE, [SESSION_ENV]: liveSession, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' },
+    env: { ...process.env, ...PARENT_PIPE, [SESSION_ENV]: liveSession, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '', UJWALAM_REMOTE_TOKEN: remoteToken ?? '' },
   });
   children.push(ui);
   serveAuthority(ui, authority);

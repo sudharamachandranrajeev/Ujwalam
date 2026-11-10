@@ -25,6 +25,10 @@ const BAD = [
   ['no canvases', (d) => { d.canvases = []; }, true],
   ['canvas id not h or v', (d) => { d.canvases[0].id = 'x'; }, true],
   ['fps zero', (d) => { d.canvases[0].fps = 0; }, true],
+  // D327 TR1: easing is an id, mirror is a boolean and for the portrait canvas only (the last one is validator-only)
+  ['transition easing not an id', (d) => { d.canvases[0].transition = { type: 'fade', durationMs: 500, easing: 'In Out' }; }, true],
+  ['transition mirror not a boolean', (d) => { d.canvases.find((c) => c.id === 'v').transition = { type: 'cut', durationMs: 0, mirror: 'yes' }; }, true],
+  ['transition mirror on the main canvas', (d) => { d.canvases.find((c) => c.id === 'h').transition = { type: 'cut', durationMs: 0, mirror: true }; }, false],
   ['width as string', (d) => { d.canvases[0].width = '1920'; }, true],
   ['device kind unknown', (d) => { d.devices[0].kind = 'toaster'; }, true],
   ['device match empty', (d) => { d.devices[0].match = {}; }, true],
@@ -127,6 +131,14 @@ test('sample fixture is valid for the schema and the validator', () => {
   const r = validateProject(d);
   assert.deepEqual(r.errors, []);
   assert.equal(r.ok, true);
+});
+
+test('D327 TR1: a fade with an easing curve and a mirrored portrait transition are accepted', () => {
+  const d = sample();
+  d.canvases.find((c) => c.id === 'h').transition = { type: 'fade', durationMs: 700, easing: 'in-out-cubic' };
+  d.canvases.find((c) => c.id === 'v').transition = { type: 'cut', durationMs: 0, mirror: true };
+  assert.equal(schemaCheck(d), true, JSON.stringify(schemaCheck.errors));
+  assert.deepEqual(validateProject(d).errors, []);
 });
 
 test('overlay query and device directShowId are accepted', () => {

@@ -75,12 +75,14 @@ function needAudit(c) {
 }
 
 export const METHODS = Object.freeze({
+  // 'remote' = the LAN listener's pairing token (D327 IN1): status and requests only; requests go through the action
+  // gate as source 'remote' (treated like api), and a remote caller can never confirm, panic, export or set live state.
   'core.status': {
-    roles: ['api', 'system'], schema: {},
+    roles: ['api', 'system', 'remote'], schema: {},
     run: (c) => c.status(),
   },
   'actions.request': {
-    roles: ['api', 'system'],
+    roles: ['api', 'system', 'remote'],
     // idempotencyKey (optional, client-chosen, 8-128 of [A-Za-z0-9._:~-]): a retry with the same key, action and params
     // runs at most once, across a core restart too (livelock/idempotency.mjs). The JSON-RPC request id is NOT used: it
     // is per connection, often a counter that restarts with the client, and absent for notifications.

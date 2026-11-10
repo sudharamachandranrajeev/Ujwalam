@@ -91,6 +91,7 @@ add_executable(ujwalam-host
   src/discovery.cpp
   src/obs_runtime.cpp
   src/studio.cpp
+  src/transition_ease.cpp
   src/model.cpp
   src/devices.cpp
   src/preview.cpp
