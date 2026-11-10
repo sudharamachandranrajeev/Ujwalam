@@ -15,6 +15,7 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <future>
 #include <vector>
@@ -22,9 +23,11 @@
 static const wchar_t *kClass = L"UjwalamPreview";
 static const UINT WM_APP_RUN = WM_APP + 1;
 static const UINT_PTR kRefreshTimer = 1; // re-reads the selected layer's placement (inspector edits, scene switches)
+static const UINT_PTR kDragTimer = 2;    // while dragging: applies a rectangle that waits for the apply interval (D335)
 
 struct Previews::Win {
 	std::string canvas;
+	mutable std::atomic<double> dpi{1.0}; // window DPI / 96, set on the UI thread (view_of), read by draw_cb
 	HWND hwnd = nullptr;
 	obs_display_t *display = nullptr;
 	Previews *owner = nullptr;
@@ -163,11 +166,12 @@ void draw_cb(void *param, uint32_t cx, uint32_t cy)
 	else
 		obs_render_canvas_texture(c);
 	pedit::Rect sel; // copied under the editor's lock; drawn with no lock held
+	const double k = vw > 0 ? (double)bw / vw * w->dpi.load() : 1; // canvas px per logical px (D335: DPI-scaled handles)
 	if (w->owner && vw > 0 && w->owner->editor().selection(w->canvas, sel))
-		draw_selection(sel, (double)bw / vw);
+		draw_selection(sel, k);
 	double gx, gy;
 	if (w->owner && vw > 0 && w->owner->editor().snap_lines(w->canvas, gx, gy))
-		draw_guides(gx, gy, bw, bh, (double)bw / vw);
+		draw_guides(gx, gy, bw, bh, k);
 	gs_projection_pop();
 	gs_viewport_pop();
 	if (c)
@@ -184,7 +188,11 @@ pedit::View view_of(const Previews::Win *w)
 	canvas_base(w->canvas, bw, bh, &c);
 	if (c)
 		obs_canvas_release(c);
-	return pedit::fit_view(r.right, r.bottom, bw, bh);
+	pedit::View v = pedit::fit_view(r.right, r.bottom, bw, bh);
+	const UINT dpi = GetDpiForWindow(w->hwnd);
+	v.dpi = dpi ? dpi / 96.0 : 1.0;
+	w->dpi.store(v.dpi);
+	return v;
 }
 
 pedit::Mods mods_of(WPARAM wp)
@@ -203,8 +211,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 	switch (msg) {
 	case WM_LBUTTONDOWN:
 		if (w && w->owner && w->owner->editor().down(w->canvas, view_of(w), GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_of(wp))) {
-			if (w->owner->editor().dragging(w->canvas))
+			if (w->owner->editor().dragging(w->canvas)) {
 				SetCapture(hwnd);
+				SetTimer(hwnd, kDragTimer, 16, nullptr); // the newest drag point reaches libobs even when the mouse rests
+			}
 			return 0;
 		}
 		break;
@@ -216,6 +226,7 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		break;
 	case WM_LBUTTONUP: {
 		bool used = w && w->owner && w->owner->editor().up(w->canvas, view_of(w), GET_X_LPARAM(lp), GET_Y_LPARAM(lp), mods_of(wp));
+		KillTimer(hwnd, kDragTimer);
 		if (GetCapture() == hwnd)
 			ReleaseCapture(); // after up(): the WM_CAPTURECHANGED it sends finds no drag to cancel
 		if (used)
@@ -247,12 +258,20 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		}
 		break;
 	case WM_CAPTURECHANGED: // capture taken away mid-drag: the layer goes back to where the drag began
+		KillTimer(hwnd, kDragTimer);
 		if (w && w->owner)
 			w->owner->editor().cancel(w->canvas);
 		return 0;
 	case WM_TIMER:
 		if (wp == kRefreshTimer && w && w->owner) {
 			w->owner->editor().refresh(w->canvas);
+			return 0;
+		}
+		if (wp == kDragTimer) {
+			if (w && w->owner && w->owner->editor().dragging(w->canvas))
+				w->owner->editor().flush(w->canvas);
+			else
+				KillTimer(hwnd, kDragTimer);
 			return 0;
 		}
 		break;

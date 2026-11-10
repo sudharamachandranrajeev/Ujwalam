@@ -133,6 +133,9 @@ export const HOST_CALLS = Object.freeze({
   // parent/x/y/width/height: the Qt shell embeds the preview in its window (decimal window handle, client pixels).
   'preview.open': { schema: { canvas: CANVAS, parent: { type: 'string', pattern: /^[1-9][0-9]{0,19}$/ }, x: { type: 'int', min: 0, max: 16384 }, y: { type: 'int', min: 0, max: 16384 }, width: { type: 'int', min: 160, max: 8192 }, height: { type: 'int', min: 90, max: 8192 } } },
   'preview.focus': { schema: { canvas: CANVAS } },
+  // D335 F8: the layer selected in the studio's layer list is the one the mouse edits on the preview (no layer: none).
+  // Only changes what the preview's mouse acts on, never the picture: no confirm, allowed while live (the host refuses).
+  'preview.select': { schema: { canvas: CANVAS, layer: { type: 'string', pattern: ID } } },
   'preview.close': { schema: { canvas: CANVAS } },
   // Clipping from the studio (D281): save the replay buffer (the last 60 s of H and V, or one canvas) as clip files, and
   // write a moment marker for the post-stream clipper. Neither changes the stream or the recording: no confirm.
@@ -720,7 +723,7 @@ export function createStudioServer(opts) {
     const snap = {
       at: now(),
       host: { kind: h.kind, available: hs !== null, blockedOnHost: h.kind === 'fake',
-        ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing', 'uptimeMs']) : {}),
+        ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing', 'previewSnap', 'previewSelection', 'uptimeMs']) : {}),
         ...(hs && hs.audioHealth ? { audioHealth: audioReadiness(hs.audioHealth) } : {}),
         ...(previewLast ? { previewEdit: previewLast } : {}),
         ...(dev ? { devices: { seq: dev.seq, waiting: dev.waiting } } : {}),
@@ -734,7 +737,8 @@ export function createStudioServer(opts) {
     return snap;
   }
   // Host preview mouse edits (D230). Called with each host.status: (1) the host's editing switch follows flag
-  // preview-edit (a restarted host starts off and is switched on again here); (2) when previewEditSeq moved, the new
+  // preview-edit (a restarted host starts off and is switched on again here), and its snapping follows settings.json
+  // ui.snap (D335); (2) when previewEditSeq moved, the new
   // edits are read with preview.edits and recorded into the project file through the same projectSync.record as an
   // inspector layers.setPlacement (they already went through the host's layer_set_placement). The first read only
   // notes the current seq: edits from before this server started are not replayed over newer saves. A host restart
@@ -813,6 +817,13 @@ export function createStudioServer(opts) {
         const want = !!flags && flags.isOn(PREVIEW_EDIT_FLAG) && hs.live !== true;
         if (typeof hs.previewEditing === 'boolean' && hs.previewEditing !== want) {
           try { await host.call('preview.setEditing', { enabled: want }); } catch { /* next poll */ }
+        }
+        // D335 F10: snapping follows settings.json ui.snap (off unless the user turned it on in Settings).
+        if (typeof hs.previewSnap === 'boolean') {
+          const snapWant = typeof opts.dataDir === 'string' && readSettings(opts.dataDir).ui?.snap === true;
+          if (hs.previewSnap !== snapWant) {
+            try { await host.call('preview.setSnap', { enabled: snapWant }); } catch { /* older host or busy: next poll */ }
+          }
         }
         const seq = hs.previewEditSeq;
         if (!Number.isSafeInteger(seq) || seq < 0) return;

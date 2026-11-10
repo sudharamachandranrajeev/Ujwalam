@@ -17,6 +17,7 @@
 
 #include <windows.h>
 
+#include <chrono>
 #include <filesystem>
 #include <regex>
 
@@ -151,6 +152,11 @@ json::Value host_status_json(App &a)
 	// preview.edits when previewEditSeq moves (autosave + inspector refresh).
 	r.set("previewEditing", a.previews ? a.previews->editor().enabled() : false);
 	r.set("previewEditSeq", a.previews ? (int64_t)a.previews->editor().seq() : (int64_t)0);
+	// D335: snapping on or off (the UI server keeps it equal to settings.json ui.snap) and the preview selection per
+	// canvas; previewSelection.seq moves when a press on the preview picked another layer (the studio's list follows).
+	r.set("previewSnap", a.previews ? a.previews->editor().snap() : false);
+	if (a.previews)
+		r.set("previewSelection", a.previews->editor().selection_status());
 	r.set("transitions", a.studio ? a.studio->transitions() : json::Value::object());
 	// Audio readiness (D297 proposed): each project device audio source receiving or not, the "<Name> audio missing"
 	// warnings and the watchdog's events. rtwqHeld: the host holds the RTWQ platform (obs_runtime.h).
@@ -620,6 +626,39 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		Params q(p, {"since"});
 		return a.previews->editor().edits((uint64_t)q.int_or("since", 0, 0, INT64_MAX));
 	});
+	// preview.setSnap {enabled} (D335 F10): snapping to the canvas edges and centre and the other layers (D272) while
+	// dragging on the preview. Off by default; the UI server keeps it equal to settings.json ui.snap.
+	add("preview.setSnap", [&a](const json::Value &p) {
+		Params q(p, {"enabled"});
+		bool on = q.boolean("enabled");
+		if (on != a.previews->editor().snap())
+			hlog::info("preview snapping %s", on ? "ON" : "off");
+		a.previews->editor().set_snap(on);
+		json::Value r = json::Value::object();
+		r.set("enabled", on);
+		return r;
+	});
+	// preview.select {canvas, layer | null} (D335 F8): the layer selected in the studio's layer list becomes the one the
+	// mouse moves, resizes, turns and crops on that canvas's preview. layer null (or absent) clears it. Refused when
+	// mouse editing is off, while live (live-lock, D233), during a drag, or when the layer is not a visible layer with a
+	// placement in the canvas's active scene.
+	add("preview.select", [&a](const json::Value &p) {
+		Params q(p, {"canvas", "layer"});
+		std::string canvas = canvas_param(q);
+		std::string layer;
+		if (const json::Value *l = p.find("layer"); l && !l->is_null())
+			layer = q.str("layer", 64);
+		const std::string err = a.previews->editor().select(canvas, layer);
+		if (err == "missing")
+			throw Error(rpc::INVALID_PARAMS, "layer " + layer + " is not a visible layer with a placement in the active scene of " + canvas);
+		if (!err.empty())
+			throw Error(rpc::CONFLICT, err == "off"	       ? std::string("preview mouse editing is off")
+						   : err == "live"     ? std::string("live: the preview selects nothing while a stream runs")
+						   : err == "dragging" ? std::string("a drag is running on that preview")
+								       : std::string("busy: try again"));
+		json::Value r = a.previews->editor().selection_json(canvas);
+		return r;
+	});
 	// audio.status {}: the audio readiness view alone (same object as host.status.audioHealth): {ok, warnings,
 	// sources: [{id, audioSource, name, type, state: ok|starting|missing|inactive|unknown, receiving, lastDataMs,
 	// recreates}], watchdog, seq, events, rtwqHeld}. Read-only; consumed by services/studio-ui/readiness.mjs.
@@ -717,8 +756,11 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 	// preview.editSim {canvas, width, height, steps: [{event: hover|down|move|up|cancel, x, y, shift?, alt?}]}: runs the
 	// window procedure's editor calls for a preview of width x height client px, without a window (headless tests).
 	// Returns the selection after each step and the edit seq. --test-hooks only.
+	// D335: dpi (96..384, default 96) is the window's DPI (handle sizes in logical px); applyEveryMs (0..1000) sets the
+	// drag apply interval for this call only (0: every move, as before D335); event "flush" is the window's drag timer.
+	// The result adds applies (Backend::apply calls made by these steps) and elapsedMs (host time for all the steps).
 	add("preview.editSim", [&a](const json::Value &p) {
-		Params q(p, {"canvas", "width", "height", "steps"});
+		Params q(p, {"canvas", "width", "height", "steps", "dpi", "applyEveryMs"});
 		if (!a.test_hooks)
 			throw Error(rpc::FORBIDDEN, "preview.editSim needs a host started with --test-hooks");
 		std::string canvas = canvas_param(q);
@@ -726,10 +768,21 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		if (!a.studio->canvas_size(canvas, cw, ch, fps))
 			throw Error(rpc::CONFLICT, "canvas " + canvas + " does not exist");
 		pedit::View v = pedit::fit_view((double)q.integer("width", 16, 8192), (double)q.integer("height", 16, 8192), cw, ch);
+		v.dpi = (double)q.int_or("dpi", 96, 96, 384) / 96.0;
 		const json::Value &steps = q.arr("steps");
 		if (steps.size() > 256)
 			throw Error(rpc::INVALID_PARAMS, "too many steps");
 		pedit::Editor &ed = a.previews->editor();
+		const int interval0 = ed.apply_interval_ms();
+		if (q.has("applyEveryMs"))
+			ed.set_apply_interval_ms((int)q.int_or("applyEveryMs", interval0, 0, 1000));
+		struct Restore {
+			pedit::Editor &ed;
+			int ms;
+			~Restore() { ed.set_apply_interval_ms(ms); }
+		} restore{ed, interval0};
+		const uint64_t applies0 = ed.applies();
+		const auto t0 = std::chrono::steady_clock::now();
 		json::Value out = json::Value::array();
 		for (auto &st : steps.as_array()) {
 			Params s(st, {"event", "x", "y", "shift", "alt"});
@@ -750,17 +803,22 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 				used = ed.up(canvas, v, x, y, m);
 			else if (ev == "cancel")
 				ed.cancel(canvas);
+			else if (ev == "flush")
+				used = ed.flush(canvas);
 			else
-				throw Error(rpc::INVALID_PARAMS, "event must be hover, down, move, up or cancel");
+				throw Error(rpc::INVALID_PARAMS, "event must be hover, down, move, up, cancel or flush");
 			json::Value o = ed.selection_json(canvas);
 			o.set("used", used);
 			if (cursor)
 				o.set("cursor", std::string(cursor));
 			out.push(std::move(o));
 		}
+		const double elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 		json::Value r = json::Value::object();
 		r.set("steps", std::move(out));
 		r.set("seq", (int64_t)ed.seq());
+		r.set("applies", (int64_t)(ed.applies() - applies0));
+		r.set("elapsedMs", elapsed);
 		json::Value view = json::Value::object();
 		view.set("x", v.vx);
 		view.set("y", v.vy);

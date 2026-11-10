@@ -42,13 +42,15 @@ async function until(fn, what, ms = 3000) {
 
 // A host that edits like the real one: editing switch, an edit log with a seq, host.status fields.
 function stubHost() {
-  const st = { editing: false, seq: 0, edits: [], calls: [], live: false };
+  const st = { editing: false, seq: 0, edits: [], calls: [], live: false, snap: false };
   return {
     st,
     describe: () => ({ kind: 'host', available: true }),
     call: async (m, p) => {
       st.calls.push([m, p]);
-      if (m === 'host.status') return { live: st.live, recording: false, previewEditing: st.editing, previewEditSeq: st.seq };
+      if (m === 'host.status') return { live: st.live, recording: false, previewEditing: st.editing, previewEditSeq: st.seq, previewSnap: st.snap, previewSelection: { seq: 0, H: null, V: null } };
+      if (m === 'preview.setSnap') { st.snap = p.enabled; return { enabled: p.enabled }; }
+      if (m === 'preview.select') return { layer: p.layer ?? null };
       if (m === 'preview.setEditing') { st.editing = p.enabled; return { enabled: p.enabled }; }
       if (m === 'preview.edits') return { seq: st.seq, truncated: false, edits: st.edits.filter((e) => e.seq > p.since) };
       return {};
@@ -57,7 +59,7 @@ function stubHost() {
   };
 }
 
-async function setup() {
+async function setup({ withDataDir = false } = {}) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-pedit-'));
   const file = path.join(dir, 'alpha.project.json');
   copyFileSync(SAMPLE, file);
@@ -65,7 +67,7 @@ async function setup() {
   const flags = createFlags({ dataDir: dir });
   const projectSync = createProjectSync({ file, delayMs: 5 });
   const core = { describe: () => ({ available: false }), call: async () => { throw new Error('x'); } };
-  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, flags, projectSync, limits: { statusPollMs: 20 } });
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, flags, projectSync, limits: { statusPollMs: 20 }, ...(withDataDir ? { dataDir: dir } : {}) });
   const { port } = await srv.listen();
   const login = await raw(port, { url: `/login?k=${KEY}` });
   const cookie = login.headers?.['set-cookie']?.[0]?.split(';')[0];
@@ -166,5 +168,50 @@ test('live-lock (D233): mouse editing is switched off while live and back on aft
     await until(() => c.host.st.editing === true, 'back on after the stream');
     const idle = JSON.parse((await post('/ui/api/host', { method: 'layers.setPlacement', params })).text);
     assert.notEqual(idle.verdict, 'confirm', 'instant again when nothing is live');
+  } finally { await c.srv.close(); }
+});
+
+test('snap (D335 F10): the host follows settings.json ui.snap, off by default; Settings turns it on and off', async () => {
+  const c = await setup({ withDataDir: true });
+  try {
+    await until(() => c.host.st.editing === true, 'host switched on');
+    await sleep(80);
+    assert.equal(c.host.st.calls.filter(([m]) => m === 'preview.setSnap').length, 0, 'no call while both are off (default)');
+    const s = await raw(c.port, { url: '/ui/api/session', headers: { cookie: c.cookie } });
+    const csrf = JSON.parse(s.text).csrf;
+    const post = (route, body) => raw(c.port, { method: 'POST', url: route, body: JSON.stringify(body),
+      headers: { cookie: c.cookie, origin: `http://127.0.0.1:${c.port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
+    assert.equal((await post('/ui/api/settings', { ui: { snap: true } })).status, 200);
+    await until(() => c.host.st.snap === true, 'host snapping on');
+    assert.equal(JSON.parse(readFileSync(path.join(c.dir, 'settings.json'), 'utf8')).ui.snap, true);
+    c.host.st.snap = false; // host restarted: starts off
+    await until(() => c.host.st.snap === true, 'restarted host gets snapping again');
+    assert.equal((await post('/ui/api/settings', { ui: { snap: false } })).status, 200);
+    await until(() => c.host.st.snap === false, 'host snapping off');
+    assert.equal((await post('/ui/api/settings', { ui: { snap: 'yes' } })).status, 400, 'ui.snap must be true or false');
+    let st;
+    await until(async () => { // the snapshot is the last poll's: wait for one taken after snapping went off
+      st = JSON.parse((await raw(c.port, { url: '/ui/api/status', headers: { cookie: c.cookie } })).text);
+      return st.host?.previewSnap === false;
+    }, 'the status snapshot carries previewSnap');
+    assert.deepEqual(st.host.previewSelection, { seq: 0, H: null, V: null }, 'and previewSelection');
+  } finally { await c.srv.close(); }
+});
+
+test('preview.select (D335 F8): the studio\'s list selection goes through to the host; bad params are refused', async () => {
+  const c = await setup();
+  try {
+    const s = await raw(c.port, { url: '/ui/api/session', headers: { cookie: c.cookie } });
+    const csrf = JSON.parse(s.text).csrf;
+    const post = (body) => raw(c.port, { method: 'POST', url: '/ui/api/host', body: JSON.stringify(body),
+      headers: { cookie: c.cookie, origin: `http://127.0.0.1:${c.port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
+    const ok = await post({ method: 'preview.select', params: { canvas: 'h', layer: 'layer-cam' } });
+    assert.equal(ok.status, 200, ok.text);
+    assert.notEqual(JSON.parse(ok.text).verdict, 'confirm', 'no confirmation: it only changes what the mouse acts on');
+    assert.deepEqual(c.host.st.calls.filter(([m]) => m === 'preview.select').at(-1)[1], { canvas: 'h', layer: 'layer-cam' });
+    assert.equal((await post({ method: 'preview.select', params: { canvas: 'h' } })).status, 200, 'no layer: clear');
+    assert.equal((await post({ method: 'preview.select', params: { canvas: 'x', layer: 'layer-cam' } })).status, 400);
+    assert.equal((await post({ method: 'preview.select', params: { canvas: 'h', layer: 'bad id!' } })).status, 400);
+    assert.equal((await post({ method: 'preview.select', params: {} })).status, 400, 'canvas required');
   } finally { await c.srv.close(); }
 });

@@ -3,6 +3,7 @@
 #include "preview_edit.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 namespace pedit {
@@ -366,6 +367,104 @@ bool Editor::enabled() const
 	return enabled_;
 }
 
+void Editor::set_snap(bool on)
+{
+	std::lock_guard<std::mutex> l(m_);
+	snap_ = on;
+}
+
+bool Editor::snap() const
+{
+	std::lock_guard<std::mutex> l(m_);
+	return snap_;
+}
+
+void Editor::set_apply_interval_ms(int ms)
+{
+	std::lock_guard<std::mutex> l(m_);
+	interval_ms_ = std::clamp(ms, 0, 1000);
+}
+
+int Editor::apply_interval_ms() const
+{
+	std::lock_guard<std::mutex> l(m_);
+	return interval_ms_;
+}
+
+uint64_t Editor::applies() const
+{
+	std::lock_guard<std::mutex> l(m_);
+	return applies_;
+}
+
+std::string Editor::select(const std::string &canvas, const std::string &layer)
+{
+	{
+		std::lock_guard<std::mutex> l(m_);
+		if (!enabled_)
+			return "off";
+		auto it = sel_.find(canvas);
+		if (it != sel_.end() && it->second.has && it->second.mode != Mode::None)
+			return "dragging";
+	}
+	if (be_.locked && be_.locked()) {
+		std::lock_guard<std::mutex> l(m_);
+		sel_[canvas] = Sel(); // live: nothing selected on the preview (live-lock, D233)
+		return "live";
+	}
+	Sel next;
+	if (!layer.empty()) {
+		std::string scene;
+		std::vector<Item> items;
+		const bool ok = be_.layers && be_.layers(canvas, scene, items);
+		if (!ok)
+			return scene == "busy" ? "busy" : "missing";
+		for (auto &it : items)
+			if (it.id == layer && it.r.w > 0 && it.r.h > 0) {
+				next.has = true;
+				next.scene = scene;
+				next.layer = layer;
+				next.r = it.r;
+				next.start = it.r;
+			}
+		if (!next.has)
+			return "missing";
+	}
+	std::lock_guard<std::mutex> l(m_);
+	if (!enabled_)
+		return "off";
+	auto it = sel_.find(canvas);
+	if (it != sel_.end() && it->second.has && it->second.mode != Mode::None)
+		return "dragging"; // a press started meanwhile: the mouse wins
+	sel_[canvas] = next;
+	return "";
+}
+
+uint64_t Editor::sel_seq() const
+{
+	std::lock_guard<std::mutex> l(m_);
+	return sel_seq_;
+}
+
+json::Value Editor::selection_status() const
+{
+	std::lock_guard<std::mutex> l(m_);
+	json::Value o = json::Value::object();
+	o.set("seq", (int64_t)sel_seq_);
+	for (const char *cv : {"H", "V"}) {
+		auto it = sel_.find(cv);
+		if (!enabled_ || it == sel_.end() || !it->second.has) {
+			o.set(cv, json::Value());
+			continue;
+		}
+		json::Value s = json::Value::object();
+		s.set("scene", it->second.scene);
+		s.set("layer", it->second.layer);
+		o.set(cv, std::move(s));
+	}
+	return o;
+}
+
 bool Editor::down(const std::string &canvas, const View &v, double sx, double sy, Mods m)
 {
 	Sel cur;
@@ -377,6 +476,8 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 	}
 	if (be_.locked && be_.locked()) {
 		std::lock_guard<std::mutex> l(m_);
+		if (sel_[canvas].has)
+			sel_seq_++;
 		sel_[canvas] = Sel(); // live: nothing selected, nothing moves
 		return true;
 	}
@@ -386,12 +487,12 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 		items.clear();
 	double cx, cy;
 	to_canvas(v, sx, sy, cx, cy);
-	const double tol = 8 * v.canvas_per_px();
+	const double tol = 8 * v.canvas_per_lpx();
 	Sel next;
 	if (cur.has && cur.scene == scene) { // the selected layer first: its handles, then its box (even under others)
 		for (auto &it : items)
 			if (it.id == cur.layer) {
-				bool turn = hit_rotate(it.r, cx, cy, kRotateOff * v.canvas_per_px(), tol);
+				bool turn = hit_rotate(it.r, cx, cy, kRotateOff * v.canvas_per_lpx(), tol);
 				int k = turn ? -1 : hit_corner(it.r, cx, cy, tol);
 				// An edge: Alt crops that side (needs the source size); without Alt the edge handle stretches that
 				// side alone (D330, OBS/Meld edge handles).
@@ -428,13 +529,24 @@ bool Editor::down(const std::string &canvas, const View &v, double sx, double sy
 	std::lock_guard<std::mutex> l(m_);
 	if (!enabled_)
 		return false;
+	const Sel &was = sel_[canvas];
+	if (was.has != next.has || was.layer != next.layer || was.scene != next.scene)
+		sel_seq_++; // the preview picked another layer (or none): the studio's layer list follows
 	sel_[canvas] = next; // empty canvas: the selection is cleared
 	return true;
 }
 
 bool Editor::move(const std::string &canvas, const View &v, double sx, double sy, Mods m)
 {
+	return step(canvas, v, sx, sy, m, false);
+}
+
+// One drag point: the new rectangle goes into the selection at once (draw_cb shows it); libobs gets it through
+// apply_pending, now when the apply interval has passed (or final: the release), else from flush() or a later move.
+bool Editor::step(const std::string &canvas, const View &v, double sx, double sy, Mods m, bool final)
+{
 	DragIn d;
+	bool snap_on = false;
 	std::string scene, layer;
 	{
 		std::lock_guard<std::mutex> l(m_);
@@ -451,11 +563,12 @@ bool Editor::move(const std::string &canvas, const View &v, double sx, double sy
 		d.gy = s.gy;
 		scene = s.scene;
 		layer = s.layer;
+		snap_on = snap_;
 	}
 	to_canvas(v, sx, sy, d.cx, d.cy);
 	d.free_aspect = m.shift;
-	d.snap = !m.alt;
-	d.snap_tol = 8 * v.canvas_per_px();
+	d.snap = snap_on && !m.alt; // D335 F10: no snapping unless the setting is on; Alt suspends it
+	d.snap_tol = 8 * v.canvas_per_lpx();
 	d.cw = v.cw;
 	d.ch = v.ch;
 	double lx, ly;
@@ -463,30 +576,72 @@ bool Editor::move(const std::string &canvas, const View &v, double sx, double sy
 	{
 		std::lock_guard<std::mutex> l(m_);
 		auto it = sel_.find(canvas);
-		if (it == sel_.end() || !it->second.has)
+		if (it == sel_.end() || !it->second.has || it->second.layer != layer || it->second.mode == Mode::None)
 			return false;
-		// Drag threshold (3 screen px): a click that wobbles a little, or a release on the press point, never
-		// moves or snaps the layer.
-		if (!it->second.moved && same(it->second.r, it->second.start) &&
-		    std::hypot(d.cx - d.sx, d.cy - d.sy) < 3 * v.canvas_per_px())
+		Sel &s = it->second;
+		// Drag threshold (3 px): a click that wobbles a little, or a release on the press point, never moves or
+		// snaps the layer.
+		if (!s.moved && same(s.r, s.start) && std::hypot(d.cx - d.sx, d.cy - d.sy) < 3 * v.canvas_per_lpx())
 			return true;
-		if (same(it->second.r, r))
-			return true; // nothing changed since the last move: no setPlacement call
+		if (!same(s.r, r)) {
+			s.r = r;
+			s.moved = !same(r, s.start);
+			s.pending = true;
+		}
+		s.lx = lx;
+		s.ly = ly;
+		if (!s.pending)
+			return true; // nothing changed since the last apply: no setPlacement call
 	}
-	std::string err = be_.apply ? be_.apply(canvas, scene, layer, patch_json(r, d.mode)) : "no backend";
+	apply_pending(canvas, final);
+	return true;
+}
+
+namespace {
+double now_ms()
+{
+	return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+} // namespace
+
+// Applies the selection's waiting rectangle when the interval since this drag's last apply has passed (force: now).
+// The Backend call runs with no lock held; a failure (the layer went away, project load) drops the selection.
+bool Editor::apply_pending(const std::string &canvas, bool force)
+{
+	std::string scene, layer;
+	Rect r;
+	Mode mode;
+	{
+		std::lock_guard<std::mutex> l(m_);
+		auto it = sel_.find(canvas);
+		if (!enabled_ || it == sel_.end() || !it->second.has || it->second.mode == Mode::None || !it->second.pending)
+			return false;
+		Sel &s = it->second;
+		const double t = now_ms();
+		if (!force && interval_ms_ > 0 && t - s.last_apply < interval_ms_)
+			return false; // too soon: flush() or a later move applies the newest rectangle
+		s.pending = false;
+		s.applied = true;
+		s.last_apply = t;
+		scene = s.scene;
+		layer = s.layer;
+		r = s.r;
+		mode = s.mode;
+		applies_++;
+	}
+	std::string err = be_.apply ? be_.apply(canvas, scene, layer, patch_json(r, mode)) : "no backend";
+	if (err.empty())
+		return true;
 	std::lock_guard<std::mutex> l(m_);
 	auto it = sel_.find(canvas);
-	if (it == sel_.end() || !it->second.has || it->second.layer != layer || it->second.mode == Mode::None)
-		return false; // switched off or cancelled meanwhile
-	if (!err.empty()) { // the layer went away (project load): drop the selection
+	if (it != sel_.end() && it->second.has && it->second.layer == layer)
 		it->second = Sel();
-		return false;
-	}
-	it->second.r = r;
-	it->second.moved = !same(r, it->second.start);
-	it->second.lx = lx;
-	it->second.ly = ly;
-	return true;
+	return false;
+}
+
+bool Editor::flush(const std::string &canvas)
+{
+	return apply_pending(canvas, false);
 }
 
 bool Editor::up(const std::string &canvas, const View &v, double sx, double sy, Mods m)
@@ -494,7 +649,8 @@ bool Editor::up(const std::string &canvas, const View &v, double sx, double sy, 
 	bool was_drag = dragging(canvas);
 	if (!was_drag)
 		return false;
-	bool moved_now = move(canvas, v, sx, sy, m); // the release point is the final placement
+	bool moved_now = step(canvas, v, sx, sy, m, true); // the release point is the final placement
+	apply_pending(canvas, true); // a rectangle still waiting (the release did not change it) goes out now
 	std::lock_guard<std::mutex> l(m_);
 	auto it = sel_.find(canvas);
 	if (it == sel_.end() || !it->second.has)
@@ -505,6 +661,8 @@ bool Editor::up(const std::string &canvas, const View &v, double sx, double sy, 
 	s.mode = Mode::None;
 	s.corner = -1;
 	s.moved = false;
+	s.pending = s.applied = false;
+	s.last_apply = -1e9;
 	s.lx = s.ly = NAN;
 	if (moved) { // one edit per gesture; a plain click, or a drag back to the start, only selects
 		Edit e;
@@ -533,14 +691,16 @@ void Editor::cancel(const std::string &canvas)
 		if (it == sel_.end() || it->second.mode == Mode::None)
 			return;
 		Sel &s = it->second;
-		bool moved = s.moved;
+		const bool put_back = s.applied; // libobs got a drag rectangle: put the start back
 		mode = s.mode;
 		s.mode = Mode::None;
 		s.moved = false;
+		s.pending = s.applied = false;
+		s.last_apply = -1e9;
 		s.lx = s.ly = NAN;
-		if (!moved)
-			return;
 		s.r = s.start;
+		if (!put_back)
+			return;
 		scene = s.scene;
 		layer = s.layer;
 		start = s.start;
@@ -583,8 +743,8 @@ Cursor Editor::hover(const std::string &canvas, const View &v, double sx, double
 		return Cursor::Arrow;
 	double cx, cy;
 	to_canvas(v, sx, sy, cx, cy);
-	const double tol = 8 * v.canvas_per_px();
-	if (hit_rotate(r, cx, cy, kRotateOff * v.canvas_per_px(), tol))
+	const double tol = 8 * v.canvas_per_lpx();
+	if (hit_rotate(r, cx, cy, kRotateOff * v.canvas_per_lpx(), tol))
 		return Cursor::Rotate;
 	// The arrows follow the handle as drawn on an unturned box; a turned box keeps them (close enough to read).
 	const int k = hit_corner(r, cx, cy, tol);

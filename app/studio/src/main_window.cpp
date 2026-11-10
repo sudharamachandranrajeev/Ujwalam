@@ -1546,8 +1546,32 @@ void MainWindow::renderLayers()
 	}
 }
 
+// D335 F8: tells the host which layer the mouse edits on this canvas's preview (the one selected in the list). Sent once
+// per change of canvas, scene, layer or its visibility; a hidden layer, or one without a placement, selects none there.
+// The host refuses while live or mid-drag (the next change sends again). The echo from the host is not sent back.
+void MainWindow::syncPreviewSelection()
+{
+	if (!previewEditing_ || activeScene_.isEmpty())
+		return;
+	const QJsonObject l = selectedLayer();
+	const bool usable = !l.isEmpty() && l.contains(QStringLiteral("placement")) && l.value(QStringLiteral("visible")).toBool();
+	const QString layer = usable ? selected_ : QString();
+	const QString key = canvas_ + QLatin1Char('/') + activeScene_ + QLatin1Char('/') + layer;
+	if (key == previewSelSent_)
+		return;
+	previewSelSent_ = key;
+	QJsonObject x{{QStringLiteral("canvas"), canvas_}};
+	if (!layer.isEmpty())
+		x.insert(QStringLiteral("layer"), layer);
+	api_->host(QStringLiteral("preview.select"), x, [this](bool ok, const QJsonObject &, const QString &) {
+		if (!ok)
+			previewSelSent_.clear(); // refused (live, a drag, an older host): try again on the next change
+	});
+}
+
 void MainWindow::renderInspector()
 {
+	syncPreviewSelection();
 	const QJsonObject l = selectedLayer();
 	const QJsonObject p = l.value(QStringLiteral("placement")).toObject();
 	const bool editable = !l.isEmpty() && l.contains(QStringLiteral("placement"));
@@ -2061,7 +2085,39 @@ void MainWindow::pollStatus()
 				slot->schedule();
 		if (up >= 0)
 			hostUptime_ = up;
-		previewEditing_ = h.value(QStringLiteral("previewEditing")).toBool();
+		if (const bool pe = h.value(QStringLiteral("previewEditing")).toBool(); pe != previewEditing_) {
+			previewEditing_ = pe;
+			previewSelSent_.clear(); // editing (re)started: the host has no selection yet; send the list's
+			if (pe)
+				syncPreviewSelection();
+		}
+		// D335 F8: a click on the preview picked another layer (or none): the layer list follows. Only the seq moving
+		// counts (a selection the studio sent, or the host dropping a hidden layer, does not move it).
+		const QJsonObject ps = h.value(QStringLiteral("previewSelection")).toObject();
+		if (ps.value(QStringLiteral("seq")).isDouble()) {
+			const double seq = ps.value(QStringLiteral("seq")).toDouble();
+			if (previewSelSeq_ >= 0 && seq != previewSelSeq_ && previewEditing_) {
+				const QJsonValue cur = ps.value(canvas_.toUpper());
+				const QJsonObject co = cur.toObject();
+				const QString layer = cur.isObject() && co.value(QStringLiteral("scene")).toString() == activeScene_ ? co.value(QStringLiteral("layer")).toString() : QString();
+				if (cur.isNull() || !layer.isEmpty()) {
+					previewSelSent_ = canvas_ + QLatin1Char('/') + activeScene_ + QLatin1Char('/') + layer; // no echo
+					if (layer != selected_) {
+						selected_ = layer;
+						{
+							const QSignalBlocker block(layerList_);
+							layerList_->setCurrentItem(nullptr);
+							layerList_->clearSelection();
+							for (int i = 0; i < layerList_->count(); i++)
+								if (layerList_->item(i)->data(Qt::UserRole).toString() == layer)
+									layerList_->setCurrentRow(i);
+						}
+						renderInspector();
+					}
+				}
+			}
+			previewSelSeq_ = seq;
+		}
 		if (const bool ee = h.value(QStringLiteral("effectEditing")).toBool(); ee != effectEditing_) {
 			effectEditing_ = ee;
 			renderInspector();
@@ -3795,6 +3851,27 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		auto *appear = new appearance::Page(theme::currentId(), theme::effects(), motionNow, dlg);
 		pap->addWidget(appear, 1);
 
+		// Preview (D335 F10): snapping while dragging layers with the mouse; off unless the user turns it on.
+		auto *ppv = page(QStringLiteral("Preview"));
+		auto *snapBox = new QGroupBox(QStringLiteral("MOVING LAYERS WITH THE MOUSE"), dlg);
+		auto *sv = new QVBoxLayout(snapBox);
+		sv->setSpacing(8);
+		const bool snapStart = st.value(QStringLiteral("ui")).toObject().value(QStringLiteral("snap")).toBool(false);
+		const auto snapParts = switchRow(QStringLiteral("Snap to preview edges and other layers"), snapBox);
+		Switch *snapOn = std::get<1>(snapParts);
+		snapOn->setObjectName(QStringLiteral("settingsSnap"));
+		std::get<2>(snapParts)->setObjectName(QStringLiteral("settingsSnapText"));
+		snapOn->setChecked(snapStart);
+		auto *snapHint = new QLabel(QStringLiteral("On: a layer you drag or resize on the preview jumps into line when it comes close to an edge or the middle of the canvas, "
+							   "or to the edges and middle of another layer; a pink line shows where. Hold Alt while dragging to place it freely. "
+							   "Off: layers go exactly where you drop them. Changes when you click Save."), snapBox);
+		snapHint->setWordWrap(true);
+		snapHint->setObjectName(QStringLiteral("muted"));
+		sv->addWidget(std::get<0>(snapParts));
+		sv->addWidget(snapHint);
+		ppv->addWidget(snapBox);
+		ppv->addStretch(1);
+
 		// Connections (D327, flag platform-connect): sign in to YouTube / Twitch or paste keys per stream output. The page
 		// talks to the studio UI server itself; each write acts on the click there and then (D332).
 		page(QStringLiteral("Connections"))->addWidget(new connections::Page(api_, dlg), 1);
@@ -3899,6 +3976,8 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				return true;
 			if (appear->changedTheme() || appear->changedEffects() || appear->motion() != motionNow)
 				return true;
+			if (snapOn->isChecked() != snapStart)
+				return true;
 			for (auto it = flagDraft->cbegin(); it != flagDraft->cend(); ++it)
 				if (flagStart.value(it.key(), false) != it.value())
 					return true;
@@ -3951,6 +4030,11 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 					ui.insert(QStringLiteral("theme"), appear->themeId());
 				if (appear->changedEffects())
 					ui.insert(QStringLiteral("effects"), appear->effects());
+				body.insert(QStringLiteral("ui"), ui);
+			}
+			if (snapOn->isChecked() != snapStart) { // D335: sent only when it changed (an older server refuses the key)
+				QJsonObject ui = body.value(QStringLiteral("ui")).toObject();
+				ui.insert(QStringLiteral("snap"), snapOn->isChecked());
 				body.insert(QStringLiteral("ui"), ui);
 			}
 			saveSettings(body);
@@ -4149,6 +4233,11 @@ QJsonObject MainWindow::probe() const
 			      {QStringLiteral("layerEffectsText"), fxText ? fxText->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
 			      {QStringLiteral("motionChoices"), mo ? mo->count() : 0}, {QStringLiteral("dirty"), sd->dirty ? sd->dirty() : false},
 			      {QStringLiteral("unsavedAsked"), settingsDlg_->findChild<QMessageBox *>(QStringLiteral("settingsUnsaved")) != nullptr}};
+		if (auto *sn = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsSnap"))) { // D335 F10
+			auto *snText = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsSnapText"));
+			s.insert(QStringLiteral("snap"), sn->isChecked());
+			s.insert(QStringLiteral("snapText"), snText ? snText->text() : QString());
+		}
 		// Advanced page (N2): one row per flag, switch state and description; geometry for the 2026-11-10 offset bug:
 		// where the rows sit in their box and in the dialog, and whether they carry their own native window handle.
 		if (auto *rows = settingsDlg_->findChild<QWidget *>(QStringLiteral("settingsFlagRows"))) {
@@ -4384,6 +4473,13 @@ bool MainWindow::probeAction(const QString &action)
 			if (auto *fx = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsLayerEffects")); fx && fx->isEnabled()) {
 				if (fx->isChecked() != (p[1] == QStringLiteral("on")))
 					fx->click(); // a click on the switch
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-snap")) { // D335: a click on Settings > Preview's snap switch
+			if (auto *sn = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsSnap"))) {
+				if (sn->isChecked() != (p[1] == QStringLiteral("on")))
+					sn->click();
 				return true;
 			}
 		}

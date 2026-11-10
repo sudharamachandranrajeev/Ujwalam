@@ -101,6 +101,7 @@ private:
 	void renderScenes();
 	void renderLayers();
 	void renderInspector();
+	void syncPreviewSelection(); // D335 F8: the list's selected layer is the one the mouse edits on the preview
 	void renderMixer();
 	void applyInspector();
 	void renderEffects();    // effect editor (D260): the working list
@@ -193,6 +194,10 @@ private:
 	bool effDirty_ = false; // changed since it was read from the host
 	int devicesSeq_ = -1; // host device watcher pass seen (status host.devices.seq, D329); -1 = none yet
 	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
+	// D335 F8: the layer-list selection the preview was last told (preview.select), as "canvas/scene/layer/visible";
+	// and the host's previewSelection.seq last seen (it moves when a click on the preview picked another layer).
+	QString previewSelSent_;
+	double previewSelSeq_ = -1;
 
 	QListWidget *sceneList_ = nullptr;
 	QListWidget *layerList_ = nullptr;

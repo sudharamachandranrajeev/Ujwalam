@@ -10,6 +10,8 @@
 //   folders.recordings: where recordings are saved (used from the next start); null = <host data>/recordings
 //   folders.clips: where finished clips are saved; null = <dataDir>/clips
 //   ui.motion (D290), ui.guide (D294 proposed): see the blocks below
+//   ui.snap (D335): true = layers dragged on the preview snap to the canvas edges and centre and to the other layers;
+//                   absent or false (default) = no snapping
 // Read by the launcher (record-clips.mjs), the UI server and the Python clipper (clip_common.clip_settings).
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -94,6 +96,7 @@ const uiProblems = (ui) => {
   for (const [k, v] of Object.entries(ui)) {
     if (k === 'theme' || k === 'effects') out.push(...themeProblems(k, v)); // D293
     else if (k === 'guide') out.push(...guideProblems(v)); // guide
+    else if (k === 'snap') { if (typeof v !== 'boolean') out.push('ui.snap must be true or false'); } // D335
     else if (k !== 'motion') out.push(`unknown ui setting ${k}`);
     else if (!UI_MOTION.includes(v)) out.push(`ui.motion must be one of ${UI_MOTION.join(', ')}`);
   }
@@ -102,6 +105,7 @@ const uiProblems = (ui) => {
 const uiRead = (j) => {
   const ui = { ...(j?.ui && typeof j.ui === 'object' && UI_MOTION.includes(j.ui.motion) ? { motion: j.ui.motion } : {}), ...themeRead(j?.ui) }; // D293
   if (j?.ui && typeof j.ui === 'object' && j.ui.guide !== undefined) ui.guide = readGuide(j.ui.guide); // guide
+  if (typeof j?.ui?.snap === 'boolean') ui.snap = j.ui.snap; // D335
   return Object.keys(ui).length ? { ui } : {};
 };
 /** ui after a checked patch: motion replaces; guide merges part by part (dismissed is replaced whole, de-duplicated). */

@@ -58,6 +58,8 @@ test('flag off by default: no selection, no edit; test-format project: nothing t
   const st = await c.call('host.status');
   assert.equal(st.previewEditing, false, 'mouse editing starts off (flag preview-edit default false)');
   assert.equal(st.previewEditSeq, 0);
+  assert.equal(st.previewSnap, false, 'snapping starts off (D335 F10: an option the user turns on)');
+  assert.deepEqual(st.previewSelection, { seq: 0, H: null, V: null });
   let r = await sim([at('down', 960, 540), at('move', 1000, 560), at('up', 1000, 560)]);
   assert.deepEqual(r.steps.map((s) => s.used), [false, false, false], 'every event ignored while off');
   assert.equal(r.seq, 0);
@@ -69,6 +71,7 @@ test('flag off by default: no selection, no edit; test-format project: nothing t
 test('click selects the topmost visible layer (rotation respected, hidden skipped); empty canvas clears', async () => {
   await loadIntoHost(c, PROJECT);
   await c.call('preview.setEditing', { enabled: true });
+  await c.call('preview.setSnap', { enabled: true }); // the D272 snap tests below need it on
   let r = await sim([at('down', 200, 150), at('up', 200, 150)]);
   assert.equal(r.view.y, 20, 'letterbox as draw_cb draws it');
   assert.equal(r.steps[0].layer, 'box', 'box, not the hidden full-canvas layer above it');
@@ -259,6 +262,146 @@ test('moves and resizes snap to other layers\' edges and centres too (Alt: no sn
   await put({ x: 300, y: 500 });
   await sim([at('down', 400, 550), at('move', 857, 550, { alt: true }), at('up', 857, 550, { alt: true })]);
   assert.equal((await placement('box')).x, 757, 'Alt: no snap');
+});
+
+// ---- D335 (user report 2026-11-10, F8-F10) ----
+const putBox = (pl) => c.call('layers.setPlacement', { scene: 'main', canvas: 'H', layer: 'box',
+  placement: { width: 200, height: 100, rotation: 0, crop: { left: 0, top: 0, right: 0, bottom: 0 }, ...pl } });
+
+test('F8: the layer selected in the list (preview.select) moves even under a topmost layer; a press outside it re-selects the topmost', async () => {
+  await c.call('preview.setEditing', { enabled: true });
+  // box (600,300) 200x100 lies under turned (covers x 650..750, y 250..450): (700,350) is inside both, turned on top
+  await putBox({ x: 600, y: 300 });
+  assert.equal((await c.call('preview.select', { canvas: 'H', layer: null })).layer, null, 'start with nothing selected');
+  const s0 = (await c.call('host.status')).previewSelection.seq;
+  let r = await sim([at('down', 700, 350), at('up', 700, 350)]);
+  assert.equal(r.steps[0].layer, 'turned', 'nothing selected yet: the topmost layer is picked');
+  assert.equal((await c.call('host.status')).previewSelection.seq, s0 + 1, 'a click that picks a layer moves the seq');
+  const sel = await c.call('preview.select', { canvas: 'H', layer: 'box' });
+  assert.equal(sel.layer, 'box');
+  let st = await c.call('host.status');
+  assert.deepEqual(st.previewSelection.H, { scene: 'main', layer: 'box' });
+  assert.equal(st.previewSelection.seq, s0 + 1, 'a selection the studio sent does not move the seq (no echo)');
+  const turned0 = await placement('turned');
+  const seq0 = st.previewEditSeq;
+  r = await sim([at('down', 700, 350), at('move', 740, 360), at('up', 740, 360)]);
+  assert.equal(r.steps[0].layer, 'box', 'the press inside the selected layer acts on it, not on the layer above');
+  assert.equal(r.steps[0].mode, 'move');
+  const b = await placement('box');
+  assert.deepEqual([b.x, b.y], [640, 310], 'the selected layer moved');
+  assert.deepEqual(await placement('turned'), turned0, 'the topmost layer stayed put');
+  assert.equal(r.seq, seq0 + 1, 'one edit');
+  // a press inside turned but outside box (box now y 310..410): the topmost there (turned) is selected
+  r = await sim([at('down', 700, 440), at('up', 700, 440)]);
+  assert.equal(r.steps[0].layer, 'turned');
+  st = await c.call('host.status');
+  assert.deepEqual(st.previewSelection.H, { scene: 'main', layer: 'turned' });
+  assert.equal(st.previewSelection.seq, s0 + 2, 'the studio list follows this click');
+  // the selected layer's handles win too: with box selected again, a press on its bottom-right corner (840,410), which
+  // lies over bg, resizes box instead of selecting bg.
+  await c.call('preview.select', { canvas: 'H', layer: 'box' });
+  r = await sim([at('down', 840, 410), at('up', 840, 410)]);
+  assert.deepEqual([r.steps[0].layer, r.steps[0].mode], ['box', 'resize']);
+});
+
+test('F8: preview.select is checked: hidden, unknown, wrong canvas, editing off; null clears', async () => {
+  await assert.rejects(c.call('preview.select', { canvas: 'H', layer: 'hidden' }), /not a visible layer/, 'hidden layer');
+  await assert.rejects(c.call('preview.select', { canvas: 'H', layer: 'nope' }), /not a visible layer/);
+  await assert.rejects(c.call('preview.select', { canvas: 'V', layer: 'turned' }), /not a visible layer/, 'turned has no V placement');
+  await assert.rejects(c.call('preview.select', { canvas: 'X', layer: 'box' }));
+  await assert.rejects(c.call('preview.select', {}));
+  const v = await c.call('preview.select', { canvas: 'V', layer: 'box' });
+  assert.equal(v.layer, 'box', 'per canvas');
+  const n = await c.call('preview.select', { canvas: 'V', layer: null });
+  assert.equal(n.layer, null, 'null clears');
+  await c.call('preview.setEditing', { enabled: false });
+  await assert.rejects(c.call('preview.select', { canvas: 'H', layer: 'box' }), /editing is off/);
+  assert.deepEqual((await c.call('host.status')).previewSelection.H, null, 'off: no selection');
+  await c.call('preview.setEditing', { enabled: true });
+});
+
+test('F10: snap off = the layer goes exactly where it is dropped (Alt does nothing special); on = D272 snapping', async () => {
+  await putBox({ x: 300, y: 500 });
+  await c.call('preview.select', { canvas: 'H', layer: 'box' });
+  await c.call('preview.setSnap', { enabled: false });
+  assert.equal((await c.call('host.status')).previewSnap, false);
+  // left edge 300 -> 10 (within 16 canvas px of the canvas edge): stays at 10
+  let r = await sim([at('down', 400, 550), at('move', 110, 550), at('up', 110, 550)]);
+  assert.equal(r.steps[1].snap, undefined, 'no guide line');
+  assert.equal((await placement('box')).x, 10, 'snap off: no snap');
+  // an edge resize near another layer's centre line (turned, x 700): no snap either
+  await putBox({ x: 300, y: 500 });
+  r = await sim([at('down', 500, 550), at('move', 695, 550), at('up', 695, 550)]);
+  assert.equal(r.steps[0].mode, 'resize');
+  assert.equal((await placement('box')).width, 395, 'snap off: the edge stays where it was dropped');
+  await c.call('preview.setSnap', { enabled: true });
+  await putBox({ x: 300, y: 500 });
+  r = await sim([at('down', 400, 550), at('move', 110, 550), at('up', 110, 550)]);
+  assert.equal((await placement('box')).x, 0, 'snap on: snapped to the canvas edge');
+  await putBox({ x: 300, y: 500 });
+  await sim([at('down', 400, 550), at('move', 110, 550, { alt: true }), at('up', 110, 550, { alt: true })]);
+  assert.equal((await placement('box')).x, 10, 'snap on + Alt: no snap');
+  await assert.rejects(c.call('preview.setSnap', {}));
+});
+
+test('F9: a drag applies to libobs at most once per interval with the newest point; the release applies the final rectangle as one edit', async (t) => {
+  await putBox({ x: 300, y: 500 });
+  await c.call('preview.select', { canvas: 'H', layer: 'box' });
+  const moves = (n, x0) => Array.from({ length: n }, (_, i) => at('move', x0 + i + 1, 550));
+  // 1 s interval: the first move past the 3 px drag threshold (6 canvas px here) goes out at once, the rest wait;
+  // libobs still has that first point after the call
+  let r = await c.call('preview.editSim', { ...VIEW, applyEveryMs: 1000, steps: [at('down', 400, 550), ...moves(20, 400)] });
+  assert.equal(r.applies, 1, 'one apply for 20 moves');
+  assert.deepEqual(r.steps.at(-1).placement, { x: 320, y: 500, width: 200, height: 100 }, 'the drawn selection follows every move');
+  assert.equal((await placement('box')).x, 306, 'libobs: the first point only, so far');
+  r = await c.call('preview.editSim', { ...VIEW, applyEveryMs: 1000, steps: [{ event: 'flush' }] });
+  assert.equal(r.applies, 0, 'the drag timer waits for the interval');
+  r = await c.call('preview.editSim', { ...VIEW, applyEveryMs: 0, steps: [{ event: 'flush' }] });
+  assert.equal(r.applies, 1, 'the drag timer sends the waiting point once the interval passed');
+  assert.equal((await placement('box')).x, 320);
+  const seq0 = (await c.call('host.status')).previewEditSeq;
+  r = await c.call('preview.editSim', { ...VIEW, applyEveryMs: 1000, steps: [...moves(10, 420), at('up', 430, 550)] });
+  assert.equal(r.applies, 1, 'only the release applies inside the interval');
+  assert.equal((await placement('box')).x, 330, 'the final rectangle');
+  const e = (await c.call('preview.edits', { since: seq0 })).edits;
+  assert.equal(e.length, 1, 'exactly one edit for the gesture');
+  assert.deepEqual(e[0].placement, { x: 330, y: 500, width: 200, height: 100 });
+  assert.deepEqual(e[0].before, { x: 300, y: 500, width: 200, height: 100 });
+  // a cancelled coalesced drag puts back what libobs got
+  await sim([at('down', 430, 550), at('move', 480, 560), at('move', 500, 570), { event: 'cancel' }]);
+  assert.equal((await placement('box')).x, 330, 'cancel: back where the drag began');
+
+  // Timing (evidence numbers, host side, headless): 200 moves applied each time (before D335) and coalesced (16 ms)
+  const run = async (ms) => {
+    await putBox({ x: 300, y: 500 });
+    await c.call('preview.select', { canvas: 'H', layer: 'box' });
+    const out = await c.call('preview.editSim', { ...VIEW, applyEveryMs: ms, steps: [at('down', 400, 550), ...moves(200, 400).map((s, i) => ({ ...s, y: scr(0, 550 + (i % 7)).y })), at('up', 600, 556)] });
+    return { applies: out.applies, elapsedMs: Math.round(out.elapsedMs * 10) / 10, x: (await placement('box')).x };
+  };
+  const every = await run(0), coalesced = await run(16);
+  t.diagnostic(`F9 timing: apply on every move: ${JSON.stringify(every)}; coalesced 16 ms: ${JSON.stringify(coalesced)}`);
+  assert.ok(every.applies >= 190, `before: one apply per move past the drag threshold (${every.applies})`);
+  assert.ok(coalesced.applies < every.applies, `coalesced: fewer applies (${coalesced.applies})`);
+  assert.equal(coalesced.x, every.x, 'same final position');
+});
+
+test('F9: handle sizes follow the window DPI (100 / 125 / 150 %)', async () => {
+  await putBox({ x: 300, y: 500 });
+  await c.call('preview.select', { canvas: 'H', layer: 'box' });
+  // 7 client px right of and below the bottom-right corner (500,600): 9.9 px away. 8 px handles at 96 dpi miss it
+  // (the press picks the layer under it), 10 px at 120 dpi and 12 px at 144 dpi hit the corner.
+  const pt = [500 + 14, 600 + 14];
+  const press = async (dpi) => {
+    await c.call('preview.select', { canvas: 'H', layer: 'box' });
+    const r = await c.call('preview.editSim', { ...VIEW, dpi, steps: [at('down', ...pt), at('up', ...pt)] });
+    return [r.steps[0].layer, r.steps[0].mode];
+  };
+  assert.deepEqual(await press(96), ['bg', 'move'], '100 %: outside the handle');
+  assert.deepEqual(await press(120), ['box', 'resize'], '125 %: the corner handle');
+  assert.deepEqual(await press(144), ['box', 'resize'], '150 %: the corner handle');
+  const hv = await c.call('preview.editSim', { ...VIEW, dpi: 144, steps: [at('hover', ...pt)] });
+  assert.equal(hv.steps[0].cursor, 'nwse', 'the hover cursor uses the same size');
+  await assert.rejects(c.call('preview.editSim', { ...VIEW, dpi: 20, steps: [] }));
 });
 
 test('bad input is refused', async () => {
