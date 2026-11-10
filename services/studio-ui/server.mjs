@@ -51,6 +51,7 @@ import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
+import { CONNECT_FLAG, ERROR_TEXT as CONNECT_ERROR_TEXT, PROBLEM_TEXT as CONNECT_PROBLEM_TEXT, createConnect, outputsFromPlan } from '../platform-connect/index.mjs';
 
 // The app folder (repo or install): settings folders may not point into it (D284).
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -335,10 +336,50 @@ export function createStudioServer(opts) {
       store: (ref) => createCredentialStore(ref), listProcesses: listProcessNames, diskFree: diskFreeBytes, tcp: tcpAnswers,
       botPorts: { streamerbot: bc.streamerbot?.port ?? null, speakerbot: bc.speakerbot?.port ?? null },
       ciPass: () => lastCiPass(REPO_ROOT), clipTools: () => clipTools({ clipRoot }), planTargets: planTargets(opts.livePlanFile),
+      // Platform sign-in (flag platform-connect): the fix points at Settings > Connections; expired sign-ins are warnings.
+      connect: () => (connectOn() ? { fix: 'Studio: Settings > Connections (sign in, or paste the key)', warnings: () => connect().readinessWarnings() } : null),
       ...(opts.readinessDeps ?? {}),
     });
     return readinessRunner;
   }
+  // Platform sign-in (D327 PC1-PC3, flag `platform-connect`; services/platform-connect). Built on first use. The keys and
+  // tokens it writes never pass through a response: status gives presence, the address scheme and at most the last 4
+  // characters. opts.connect is a test seam (extra createConnect options: storeFor, fetchImpl, endpoints, browserOpen,
+  // sleep) or a ready object ({ connect }).
+  const connectOn = () => !!flags && flags.isOn(CONNECT_FLAG) && typeof opts.dataDir === 'string';
+  let connectSvc = opts.connect?.connect ?? null;
+  // Per-output live state from outputs.status (fail closed: unreadable throws; a fallback "something is live" with no
+  // sink ids counts as live for every output).
+  async function outputLive(id) {
+    const st = await ytOutputsStatus();
+    const sinks = Array.isArray(st?.sinks) ? st.sinks.filter((s) => s && s.kind === 'stream') : [];
+    const busy = (s) => s.active === true || ['starting', 'live', 'retrying', 'stopping', 'reconnecting'].includes(s.state);
+    return sinks.some((s) => busy(s) && (s.id === id || s.id === undefined)) ? 'live' : 'idle';
+  }
+  // Start gate (Codex review, D327): a stream key / server update and a stream start never overlap. An update waits for no
+  // start to be on its way (else 'output-starting'), and while it holds the gate a confirmed start is refused (409
+  // credentials-updating). The service re-checks the output after its write and puts the old values back if it went live.
+  let credWrites = 0;
+  const connectGate = {
+    enter() {
+      if (startsInFlight > 0) throw Object.assign(new Error('output-starting'), { code: 'output-starting' });
+      credWrites += 1;
+      let left = false;
+      return () => { if (!left) { left = true; credWrites -= 1; } };
+    },
+  };
+  function connect() {
+    if (connectSvc) return connectSvc;
+    const { connect: _ignored, ...extra } = opts.connect ?? {};
+    connectSvc = createConnect({ dataDir: opts.dataDir, outputs: outputsFromPlan(planTargets(opts.livePlanFile)), outputLive, gate: connectGate, ...extra });
+    return connectSvc;
+  }
+  const CONNECT_STATUS = { 'output-starting': 409, cancelled: 409, 'output-live': 409, 'live-unknown': 409, 'sign-in-busy': 409, 'job-not-waiting': 409, 'unknown-output': 404, 'unknown-job': 404, 'unknown-stream': 404, 'sign-in-not-offered': 400, 'bad-client-id': 400, 'twitch-no-client': 409, 'oauth-no-client': 409 };
+  const connectFail = (res, e) => {
+    const code = typeof e?.code === 'string' ? e.code : 'connect-failed';
+    const status = CONNECT_STATUS[code] ?? (Object.hasOwn(CONNECT_PROBLEM_TEXT, code) ? 400 : 502);
+    return json(res, status, { error: code, message: CONNECT_ERROR_TEXT[code] ?? CONNECT_PROBLEM_TEXT[code] ?? 'Not done.' });
+  };
   // Public form of a readiness result for the page (the Qt shell reads the summary text of the confirm window).
   const publicReadiness = (r) => ({ at: r.at, ok: r.ok, counts: r.counts, items: r.items.map((i) => ({ id: i.id, title: i.title, status: i.status, message: i.message, ...(i.fix ? { fix: i.fix } : {}), ...(i.unknown ? { unknown: true } : {}) })) });
   // End all streams (D299): the host's stream.stop with no sinks stops every stream sink (both YouTube, Twitch, Kick) and
@@ -446,6 +487,84 @@ export function createStudioServer(opts) {
   }
 
   // Settings (D284): clip choices and folders. Refused while live (a change would load the GPU or move files mid-show).
+  // Platform sign-in writes (D327). Every credential write is a studio write: typed "yes", "yes, on air" while live; a
+  // live output's own key is refused (checked now and again at confirm and right before the write). A pasted key waits
+  // in the pending record inside a closure (memory only, gone when the record expires or is cancelled) and is never in a
+  // response. choose / cancel / check belong to a sign-in that was already confirmed, so they need no phrase.
+  async function connectRoute(res, route, body) {
+    const op = route.slice('/ui/api/connect/'.length);
+    const only = (keys) => Object.keys(body).every((k) => keys.includes(k));
+    const str = (v, max) => typeof v === 'string' && v.length > 0 && v.length <= max;
+    let c;
+    try { c = connect(); } catch (e) { return connectFail(res, e); }
+    const label = (id) => c.outputs().find((o) => o.id === id)?.label ?? id;
+    const ask = (summary, rec) => {
+      const id = addPending({ kind: 'connect', summary, phrase: live ? 'yes, on air' : 'yes', ...rec });
+      if (!id) return json(res, 429, { error: 'too-many-pending' });
+      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
+    };
+    const notLive = async (id) => { try { return (await outputLive(id)) === 'idle' ? null : 'output-live'; } catch { return 'live-unknown'; } };
+    try {
+      if (op === 'paste') {
+        if (!only(['output', 'key', 'server']) || !str(body.output, 32) || (body.key !== undefined && !str(body.key, 2048)) || (body.server !== undefined && !str(body.server, 512))) return json(res, 400, { error: 'bad-params' });
+        const bad = c.checkPaste(body.output, { key: body.key, server: body.server });
+        if (bad) return json(res, 400, { error: bad, message: CONNECT_PROBLEM_TEXT[bad] ?? 'Not valid.' });
+        const busy = await notLive(body.output);
+        if (busy) return connectFail(res, { code: busy });
+        const values = { key: body.key, server: body.server };
+        const what = [values.key !== undefined ? 'stream key' : null, values.server !== undefined ? 'server address' : null].filter(Boolean).join(' and ');
+        return ask(`Store the ${what} for ${label(body.output)} in Windows Credential Manager (replaces what is stored)`, { op: 'paste', output: body.output, values: () => values });
+      }
+      if (op === 'sign-in') {
+        if (!only(['output', 'platform']) || !str(body.output, 32) || !['youtube', 'twitch'].includes(body.platform)) return json(res, 400, { error: 'bad-params' });
+        const o = c.outputs().find((x) => x.id === body.output);
+        if (!o) return json(res, 404, { error: 'unknown-output' });
+        if (o.signIn !== body.platform) return connectFail(res, { code: 'sign-in-not-offered' });
+        const busy = await notLive(body.output);
+        if (busy) return connectFail(res, { code: busy });
+        const who = body.platform === 'youtube' ? 'Google (YouTube)' : 'Twitch';
+        return ask(`Sign in with ${who} and store the stream key for ${o.label} in Windows Credential Manager (replaces the stored key). A browser opens for the sign-in.`, { op: 'sign-in', output: body.output, platform: body.platform });
+      }
+      if (op === 'disconnect') {
+        if (!only(['output']) || !str(body.output, 32)) return json(res, 400, { error: 'bad-params' });
+        if (!c.outputs().some((x) => x.id === body.output)) return json(res, 404, { error: 'unknown-output' });
+        const busy = await notLive(body.output);
+        if (busy) return connectFail(res, { code: busy });
+        return ask(`Disconnect ${label(body.output)}: delete its stream key (and server address) from Windows Credential Manager, and the sign-in when no other output uses it. It cannot stream until connected again.`, { op: 'disconnect', output: body.output });
+      }
+      if (op === 'twitch-client') {
+        if (!only(['clientId']) || !str(body.clientId, 64)) return json(res, 400, { error: 'bad-params' });
+        if (!/^[a-z0-9]{20,64}$/.test(body.clientId.trim())) return connectFail(res, { code: 'bad-client-id' });
+        const clientId = body.clientId.trim();
+        return ask('Store the Twitch app client ID in Windows Credential Manager', { op: 'twitch-client', values: () => ({ clientId }) });
+      }
+      if (op === 'choose') {
+        if (!only(['jobId', 'streamId']) || !str(body.jobId, 64) || !(body.streamId === null || str(body.streamId, 64))) return json(res, 400, { error: 'bad-params' });
+        return json(res, 200, { job: await c.choose(body.jobId, body.streamId) });
+      }
+      if (op === 'cancel') {
+        if (!only(['jobId']) || !str(body.jobId, 64)) return json(res, 400, { error: 'bad-params' });
+        return json(res, 200, { job: c.cancelJob(body.jobId) });
+      }
+      if (op === 'check') {
+        if (Object.keys(body).length) return json(res, 400, { error: 'bad-params' });
+        return json(res, 200, { tokens: await c.checkTokens() });
+      }
+      return text(res, 404, 'not-found');
+    } catch (e) { return connectFail(res, e); }
+  }
+  // A confirmed platform sign-in write (kind 'connect').
+  async function connectConfirmed(res, p) {
+    if (!connectOn()) return json(res, 404, { error: 'platform-connect-off' }); // switched off while the phrase was pending
+    const c = connect();
+    try {
+      if (p.op === 'paste') { const v = p.values(); return json(res, 200, { verdict: 'allow', result: await c.paste(p.output, { key: v.key, server: v.server }) }); }
+      if (p.op === 'sign-in') return json(res, 200, { verdict: 'allow', job: await c.startSignIn(p.platform, p.output) });
+      if (p.op === 'disconnect') return json(res, 200, { verdict: 'allow', result: await c.disconnect(p.output) });
+      if (p.op === 'twitch-client') return json(res, 200, { verdict: 'allow', result: await c.setTwitchClientId(p.values().clientId) });
+      return json(res, 400, { error: 'unknown-op' });
+    } catch (e) { return connectFail(res, e); }
+  }
   async function settingsRoute(res, body) {
     if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
     if (live && !guideOnly(body)) return json(res, 409, { error: 'live', detail: 'Change settings after the stream.' }); // guide: tips only change what the window shows
@@ -850,6 +969,11 @@ export function createStudioServer(opts) {
         || (url.searchParams.get('title') ?? '').length > MAX_TITLE * 4 || (url.searchParams.get('note') ?? '').length > MAX_NOTE * 4) return json(res, 400, { error: 'bad-params' });
       try { return json(res, 200, reporter.build(await reportContext(url.searchParams))); } catch { return json(res, 500, { error: 'report-failed' }); }
     }
+    if (route.startsWith('/ui/api/connect') && !connectOn()) return json(res, 404, { error: 'platform-connect-off' });
+    if (req.method === 'GET' && route === '/ui/api/connect') {
+      // Presence, scheme and last 4 characters only; never a key, token, address or account name.
+      try { const c = connect(); return json(res, 200, { ...(await c.status({ fresh: url.searchParams.get('fresh') === '1' })), job: c.currentJob() }); } catch (e) { return connectFail(res, e); }
+    }
     if (route.startsWith('/ui/api/posts') && !postingOn()) return json(res, 404, { error: 'posting-off' });
     if (route.startsWith('/ui/api/bots') && !botsOn()) return json(res, 404, { error: 'bot-manager-off' });
     if (req.method === 'GET' && route === '/ui/api/bots') {
@@ -1007,6 +1131,7 @@ export function createStudioServer(opts) {
       if (!id) return json(res, 429, { error: 'too-many-pending' });
       return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
     }
+    if (route.startsWith('/ui/api/connect/')) return connectRoute(res, route, body);
     if (route === '/ui/api/feedback/note') {
       if (Object.keys(body).some((k) => !NOTE_KEYS.includes(k))) return json(res, 400, { error: 'bad-params' });
       const err = feedback.saveNote(body.id, { text: body.text, tag: body.tag, severity: body.severity });
@@ -1101,7 +1226,7 @@ export function createStudioServer(opts) {
       if (typeof body.text !== 'string' || body.text.length > 40) return json(res, 400, { error: 'bad-text' });
       // The phrase was chosen when the request was made. If the stream went live since, plain "yes" no longer counts:
       // the record upgrades to the on-air phrase and the page shows it again (D151).
-      if ((p.kind === 'host' || p.kind === 'flag' || p.kind === 'bot' || p.kind === 'end-all') && live && p.phrase === 'yes') {
+      if ((p.kind === 'host' || p.kind === 'flag' || p.kind === 'bot' || p.kind === 'end-all' || p.kind === 'connect') && live && p.phrase === 'yes') {
         p.phrase = 'yes, on air';
         return json(res, 200, { verdict: 'wrong-phrase', pending: publicPending(body.pendingId, p) });
       }
@@ -1109,6 +1234,7 @@ export function createStudioServer(opts) {
       pending.delete(body.pendingId);
       try {
         if (p.kind === 'flag') return json(res, 200, { verdict: 'allow', flags: applyFlag(p.flagId, true) });
+        if (p.kind === 'connect') return connectConfirmed(res, p);
         if (p.kind === 'bot') {
           if (!botsOn()) return json(res, 404, { error: 'bot-manager-off' }); // the flag may have been switched off meanwhile
           const r = p.verb === 'start' ? await bots.start(p.bot) : await bots.stop(p.bot);
@@ -1119,6 +1245,7 @@ export function createStudioServer(opts) {
           // quit request in between sees it (closing lock above).
           const starting = START_METHODS.has(p.method);
           if (starting && isClosing()) return json(res, 409, CLOSING_REFUSAL);
+          if (starting && credWrites > 0) return json(res, 409, { error: 'credentials-updating', detail: 'A stream key is being changed; start again in a moment' });
           if (starting) startsInFlight += 1;
           try {
           const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse

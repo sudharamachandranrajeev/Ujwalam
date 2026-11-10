@@ -89,10 +89,12 @@ function tokenRequest(url, form, { request } = {}) {
 
 /** One-shot loopback listener: resolves { code, state } from the redirect, or rejects on timeout/error/cancel.
  *  Serves a tiny HTML page so the browser tab shows something, then closes. Binds 127.0.0.1 only. */
-export function loopbackListener({ timeoutMs = LOOPBACK_TIMEOUT_MS } = {}) {
+export function loopbackListener({ timeoutMs = LOOPBACK_TIMEOUT_MS, signal } = {}) {
   let server;
   const result = new Promise((resolve, reject) => {
     const timer = setTimeout(() => { try { server.close(); } catch { /* already closing */ } reject(new OAuthError('oauth-timeout', 'no redirect received in time')); }, timeoutMs);
+    // signal (optional): the caller gave up (a cancelled sign-in); the listener closes at once instead of waiting.
+    signal?.addEventListener('abort', () => { clearTimeout(timer); try { server.close(); } catch { /* already closing */ } reject(new OAuthError('oauth-cancelled', 'sign-in cancelled')); }, { once: true });
     server = createServer((req, res) => {
       const u = new URL(req.url, 'http://127.0.0.1');
       if (u.pathname !== '/') { res.writeHead(404).end(); return; }
@@ -110,6 +112,7 @@ export function loopbackListener({ timeoutMs = LOOPBACK_TIMEOUT_MS } = {}) {
     });
     server.on('error', (e) => { clearTimeout(timer); reject(new OAuthError('oauth-listener-failed', e.message)); });
   });
+  result.catch(() => {}); // a cancel or time-out before the caller awaits it is not an unhandled rejection
   const ready = new Promise((resolve, reject) => {
     server.listen(0, '127.0.0.1', () => {
       const { port } = server.address();
@@ -141,9 +144,11 @@ export function createYoutubeAuth(opts = {}) {
     return { id, secret };
   }
 
-  async function signIn() {
+  // signal (optional): aborting it closes the loopback listener and ends the sign-in (platform-connect cancel).
+  async function signIn({ signal } = {}) {
     const { id: clientId, secret: clientSecret } = await clientCreds();
-    const { port, redirectUri, result } = await loopbackListener();
+    if (signal?.aborted) throw new OAuthError('oauth-cancelled', 'sign-in cancelled');
+    const { port, redirectUri, result } = await loopbackListener({ signal });
     const { verifier, challenge, state } = makePkce();
     const url = authUrl({ clientId, redirectUri, challenge, state, scope, base: endpoints.authUrl });
     if (typeof opts.browserOpen !== 'function') throw new OAuthError('oauth-no-browser-opener', 'opts.browserOpen is required');
