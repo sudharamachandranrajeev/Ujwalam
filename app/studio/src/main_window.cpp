@@ -4508,6 +4508,10 @@ bool MainWindow::probeAction(const QString &action)
 			tasks_->dismissFirstFinished();
 			return true;
 		}
+		if (p[1] == QStringLiteral("clear")) { // the panel's "Clear finished" button
+			tasks_->clearFinished();
+			return true;
+		}
 		if (p[1] == QStringLiteral("toast-click")) { // a click on the first notification (opens the panel)
 			tasks_->clickFirstToast();
 			return true;
