@@ -125,9 +125,10 @@ export function outputsFromPlan(targets) {
     if (!t || typeof t.id !== 'string' || !/^[a-z0-9-]{1,32}$/.test(t.id)) continue;
     if (typeof t.keyRef !== 'string' || !STREAM_REF_RE.test(t.keyRef)) continue;
     if (t.serverRef !== undefined && (typeof t.serverRef !== 'string' || !STREAM_REF_RE.test(t.serverRef) || t.serverRef === t.keyRef)) continue;
-    const platform = platformOf(t.id);
+    // A setup output (Settings > Stream) names its platform and canvas itself; plan rows derive them from the id.
+    const platform = typeof t.platform === 'string' && Object.hasOwn(PLATFORM_LABEL, t.platform) ? t.platform : platformOf(t.id);
     const schemes = t.transport === 'auto' ? (Array.isArray(t.schemes) && t.schemes.length ? t.schemes : ['rtmp', 'rtmps']) : (t.transport === 'rtmp' || t.transport === 'rtmps' ? [t.transport] : ['rtmps']);
-    const canvas = /-v$/.test(t.id) ? 'V' : 'H';
+    const canvas = t.canvas === 'V' || t.canvas === 'H' ? t.canvas : (/-v$/.test(t.id) ? 'V' : 'H');
     out.push({
       id: t.id, platform, label: `${PLATFORM_LABEL[platform]}${platform === 'youtube' ? ` ${canvas}` : ''}`,
       keyRef: t.keyRef, ...(t.serverRef ? { serverRef: t.serverRef } : {}), schemes,
@@ -197,8 +198,10 @@ export function systemBrowserOpen(url) {
  */
 export function createConnect(opts = {}) {
   if (typeof opts.dataDir !== 'string' || !opts.dataDir) throw new Error('connect: dataDir required');
-  const outputs = Array.isArray(opts.outputs) ? opts.outputs : [];
-  const byId = new Map(outputs.map((o) => [o.id, o]));
+  // opts.outputs: an array, or a function returning one (read on every call, so an output added in Settings > Stream
+  // is known without a restart).
+  const readOutputs = () => { const v = typeof opts.outputs === 'function' ? opts.outputs() : opts.outputs; return Array.isArray(v) ? v : []; };
+  const outputsNow = () => { try { return readOutputs(); } catch { return []; } };
   const storeFor = opts.storeFor ?? ((t) => createCredentialStore(t));
   const stores = new Map();
   const store = (t) => { if (!stores.has(t)) stores.set(t, storeFor(t)); return stores.get(t); };
@@ -282,7 +285,7 @@ export function createConnect(opts = {}) {
     });
   }
   function outputOf(id) {
-    const o = typeof id === 'string' ? byId.get(id) : undefined;
+    const o = typeof id === 'string' ? outputsNow().find((x) => x.id === id) : undefined;
     if (!o) throw new ConnectError('unknown-output');
     return o;
   }
@@ -309,7 +312,9 @@ export function createConnect(opts = {}) {
     } catch { return { present: false, error: true }; }
   }
   async function status({ fresh = false } = {}) {
-    if (!fresh && statusCache && now() - statusCache.at < STATUS_CACHE_MS) return statusCache.value;
+    const outs = outputsNow();
+    const sig = outs.map((o) => `${o.id}|${o.keyRef}|${o.serverRef ?? ''}`).join(',');
+    if (!fresh && statusCache && statusCache.sig === sig && now() - statusCache.at < STATUS_CACHE_MS) return statusCache.value;
     const meta = readMeta(metaFile);
     const [ytId, ytSecret, ytRefresh, twId, twRefresh] = await Promise.all([
       facts(CLIENT_ID_TARGET), facts(CLIENT_SECRET_TARGET), facts(TARGETS.youtubeRefresh), facts(TARGETS.twitchClientId), facts(TARGETS.twitchRefresh),
@@ -320,7 +325,7 @@ export function createConnect(opts = {}) {
       twitch: { clientSet: twId.present, ...account(twRefresh.present, 'twitch') },
     };
     const rows = [];
-    for (const o of outputs) {
+    for (const o of outs) {
       const key = await facts(o.keyRef, { hint: true });
       const server = o.serverRef ? await facts(o.serverRef, { scheme: true }) : null;
       const source = meta.outputs[o.id]?.source ?? null;
@@ -340,7 +345,7 @@ export function createConnect(opts = {}) {
       });
     }
     const value = { outputs: rows, accounts };
-    statusCache = { at: now(), value };
+    statusCache = { at: now(), sig, value };
     return value;
   }
 
@@ -699,7 +704,7 @@ export function createConnect(opts = {}) {
     } catch { return []; }
   }
 
-  return { outputs: () => outputs.map((o) => ({ ...o })), status, checkPaste, paste, disconnect, setTwitchClientId, startSignIn, cancelJob, choose, currentJob, checkTokens, readinessWarnings, _job: () => job };
+  return { outputs: () => outputsNow().map((o) => ({ ...o })), status, checkPaste, paste, disconnect, setTwitchClientId, startSignIn, cancelJob, choose, currentJob, checkTokens, readinessWarnings, _job: () => job };
 }
 
 export const ERROR_TEXT = Object.freeze({

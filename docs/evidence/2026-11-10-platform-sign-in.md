@@ -99,3 +99,35 @@ the fix (checked) and pass after it.
 
 `services/posting/oauth.mjs`: `signIn({ signal })` and `loopbackListener({ signal })` are optional additions; posting's
 calls are unchanged (posting suites pass).
+
+## Edit output > Connect wired to the Connections flow (branch ui/connect-button, 2026-11-10)
+
+What changed:
+- `app/studio/src/stream_pages.cpp`: the "Connect" button of the Edit output window (`outputConnect`) is no longer a placeholder.
+  Flag `platform-connect` off: disabled, tooltip names the flag and Settings > Advanced. On, and the connection service knows
+  the output: enabled; a click opens the Connections flow for that output alone (`connections::openForOutput`, the same
+  `connections::Page` as Settings > Connections with a one-output filter; no sign-in code duplicated). On, but the output is new
+  and not saved yet: disabled, tooltip says to save it first (the service reads saved outputs). The window and each output row
+  show the state: Connected / Sign-in expired / Not connected, with at most `(key ....last4)`.
+- `services/platform-connect/index.mjs`: `outputs` may be a function, read on every call; the status cache is keyed on the
+  output list; `outputsFromPlan` takes an optional `platform` and `canvas` per row.
+- `services/studio-ui/server.mjs` + `stream-setup.mjs` (`connectTargets`): with `stream-settings` on and a saved setup, every
+  output of the setup (also switched-off and portrait ones) is added to the live plan's outputs, key name
+  `Ujwalam/stream/<id>` (and `-server` where the platform has a per-account server), without a restart.
+
+Tests (all headless, in-memory credential store, no real platform or Credential Manager):
+- `tests/studio-ui-connect-setup.test.mjs` (4): a setup-only output (`kick-2`) is listed, pasted under
+  `Ujwalam/stream/kick-2` and `-server` after the typed "yes", status shows only the last 4; an output saved after the server
+  started is known without a restart (status cache does not hide it); `stream-settings` off: not used (404); the platform of a
+  setup output comes from the setup, not its id. Leak check over every HTTP response, log line and data file.
+- `tests/studio-qt-connect-button.test.mjs` (3, Qt shell, `UJWALAM_HEADLESS=1`): flag off: disabled + tooltip, no row status;
+  flag on: enabled, window status `Connected  (key ....yZZ9)`, row statuses, click opens the flow with one row (Twitch);
+  unsaved new output: disabled, "Save this output first". Leak check: the stored key is in no shell output, log line or file.
+  Pictures: `%TEMP%\ujwalam-connect-shots` (not committed).
+- Results: `studio-ui-connect-setup`, `studio-ui-connect`, `platform-connect`, `studio-qt-connect-button`, `studio-qt-d327`,
+  `studio-launch-d327`: 67 pass, 0 fail; `stream-setup`, `studio-ui-stream-settings`, `studio-ui-readiness`: 59 pass, 0 fail.
+  Commit hook (quick CI) passed on every commit.
+
+UNVERIFIED: a real sign-in through the new button (YouTube, Twitch) on a real account; the window on a physical display
+(only the offscreen picture was checked); an output added in Settings > Stream and saved, then connected in the same
+Settings window session (the Stream page must be saved first; the tests cover the server side and the unsaved tooltip).

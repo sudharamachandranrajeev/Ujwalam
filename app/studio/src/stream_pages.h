@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // D327 studio pages, each behind its own flag (off by default):
 //   StreamPage       Settings > Stream (flag stream-settings): canvas mode, video and audio settings, the outputs list
-//                    (Add / Edit / Delete; Edit has the "Connect" hook for platform sign-in, built on its own branch).
+//                    (Add / Edit / Delete; Edit has "Connect": with flag platform-connect on it opens the Connections flow for
+//                    that output and shows its status; off: disabled with a tooltip; connections_page.h).
 //   TransitionsPage  Settings > Transitions (flags transitions + stream-settings): type, easing and duration per canvas,
 //                    "Mirror main canvas transitions" for the portrait canvas, "Force complete transition".
 //   IntegrationsPage Settings > Integrations (flag integrations): Streamer.bot / Speaker.bot ports with a Test button,
@@ -50,12 +51,16 @@ private:
 	void render();
 	QJsonObject current() const;
 	void check();
-	void editOutput(int index); // -1: add
+	void editOutput(int index); // -1: add; asks for the connection state first
+	void openEditor(int index, const QJsonObject &conn);
+	void refreshConnect();
 	void deleteOutput(int index);
 
 	ApiClient *api_;
 	QJsonObject setup_, options_, canvases_, orig_; // orig_: as loaded (Save sends only a change)
 	bool loaded_ = false;
+	bool connectOn_ = false;  // flag platform-connect on (ui/api/connect answers)
+	QJsonObject connectRows_; // output id -> its row of ui/api/connect (presence, last 4 at most)
 	QButtonGroup *mode_ = nullptr;
 	QComboBox *fps_ = nullptr, *res_ = nullptr, *quality_ = nullptr, *audio_ = nullptr;
 	Switch *hw_ = nullptr;

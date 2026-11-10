@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // D327 studio pages: see stream_pages.h.
 #include "stream_pages.h"
+#include "connections_page.h"
 #include "switch_widget.h"
 #include "theme.h"
 
@@ -69,11 +70,13 @@ QString problemsText(const QJsonArray &problems)
 	return out.join(QLatin1Char('\n'));
 }
 
-// The Add / Edit output window. Connect: the platform sign-in hook (branch pc/platform-sign-in builds it); the stream
-// key is never typed or kept here.
+// The Add / Edit output window. Connect (flag platform-connect): opens the Connections flow for this output (sign in or
+// paste the key); the stream key is never typed or kept here. conn: { on: the flag is on, row: this output's row of
+// ui/api/connect (empty: the connection service does not know the output yet, e.g. not saved) }.
 class OutputDialog : public QDialog {
 public:
-	OutputDialog(const QJsonObject &options, const QJsonObject &out, bool multi, QWidget *parent) : QDialog(parent), out_(out)
+	OutputDialog(ApiClient *api, const QJsonObject &options, const QJsonObject &out, const QJsonObject &conn, bool multi, QWidget *parent)
+		: QDialog(parent), out_(out), api_(api)
 	{
 		const bool adding = out.isEmpty();
 		setWindowTitle(adding ? QStringLiteral("Add output") : QStringLiteral("Edit output"));
@@ -112,10 +115,34 @@ public:
 		auto *ch = new QHBoxLayout(connectBox);
 		connect_ = new QPushButton(QStringLiteral("Connect"), connectBox);
 		connect_->setObjectName(QStringLiteral("outputConnect"));
-		connect_->setEnabled(false);
-		connect_->setToolTip(QStringLiteral("Sign in to the platform from Ujwalam: coming with platform sign-in."));
+		status_ = muted(QString(), connectBox);
+		status_->setObjectName(QStringLiteral("outputConnectStatus"));
+		const bool on = conn.value(QStringLiteral("on")).toBool();
+		const QJsonObject row = conn.value(QStringLiteral("row")).toObject();
+		connect_->setEnabled(on && !row.isEmpty());
+		if (!on) {
+			connect_->setToolTip(QStringLiteral("Turn on the feature flag platform-connect (Settings > Advanced) to sign in or paste the stream key from Ujwalam."));
+			status_->setText(QStringLiteral("Sign-in and connection status need the feature flag platform-connect (Settings > Advanced). The stream key is kept in Windows Credential Manager under the name shown below."));
+		} else if (row.isEmpty()) {
+			connect_->setToolTip(QStringLiteral("Save this output first (OK, then Save in Settings), then open it again to connect it."));
+			status_->setText(QStringLiteral("Not connected. Save this output first (OK, then Save in Settings), then open it again to connect it."));
+		} else {
+			connect_->setToolTip(QStringLiteral("Sign in to the platform, or paste the stream key, for this output."));
+			status_->setText(connections::shortStateText(row));
+		}
 		ch->addWidget(connect_);
-		ch->addWidget(muted(QStringLiteral("Signing in from Ujwalam is not in this build yet. The stream key is kept in Windows Credential Manager under the name shown below, never in a file."), connectBox), 1);
+		ch->addWidget(status_, 1);
+		connect(connect_, &QPushButton::clicked, this, [this]() {
+			const QString id = s(out_, "id");
+			connections::openForOutput(api_, id, this);
+			api_->get(QStringLiteral("ui/api/connect"), [alive = QPointer<QLabel>(status_), id](bool ok, const QJsonObject &b, const QString &) {
+				if (!alive || !ok)
+					return;
+				for (const auto &x : b.value(QStringLiteral("outputs")).toArray())
+					if (x.toObject().value(QStringLiteral("id")).toString() == id)
+						alive->setText(connections::shortStateText(x.toObject()));
+			});
+		});
 		v->addWidget(connectBox);
 		keyRef_ = muted(QString(), this);
 		v->addWidget(keyRef_);
@@ -175,8 +202,9 @@ private:
 	QLineEdit *name_;
 	QCheckBox *own_;
 	QSpinBox *ownKbps_;
+	ApiClient *api_;
 	QPushButton *connect_;
-	QLabel *keyRef_;
+	QLabel *keyRef_, *status_;
 };
 
 QString newId(const QJsonArray &outputs, const QString &platform)
@@ -342,6 +370,7 @@ void StreamPage::load()
 		loaded_ = true;
 		lastProblems_ = problemsText(b.value(QStringLiteral("problems")).toArray());
 		problems_->setText(lastProblems_);
+		refreshConnect();
 	});
 }
 
@@ -377,6 +406,10 @@ void StreamPage::render()
 						    QStringLiteral("%1 kbps%2").arg(s(o, "canvas") == QStringLiteral("V") ? pkbps_->value() : o.value(QStringLiteral("video")).toObject().value(QStringLiteral("bitrateKbps")).toInt(kbps_->value()))
 							    .arg(o.value(QStringLiteral("enabled")).toBool(true) ? QString() : QStringLiteral(" · switched off"))),
 				       w);
+		if (connectOn_ && connectRows_.contains(s(o, "id"))) { // flag platform-connect: this output's connection state
+			txt->setObjectName(QStringLiteral("outputRowText"));
+			txt->setText(txt->text().replace(QStringLiteral("</span>"), QStringLiteral(" - ") + connections::shortStateText(connectRows_.value(s(o, "id")).toObject()).toHtmlEscaped() + QStringLiteral("</span>")));
+		}
 		rh->addWidget(txt, 1);
 		it->setData(Qt::UserRole, s(o, "id"));
 		it->setSizeHint(QSize(0, 46));
@@ -426,13 +459,53 @@ void StreamPage::save(const Note &note)
 	});
 }
 
+// The connection state per output (flag platform-connect): ui/api/connect answers 404 while the flag is off, then nothing
+// about connections is shown. Rows hold presence and at most the last 4 characters of a key, never a key.
+void StreamPage::refreshConnect()
+{
+	api_->get(QStringLiteral("ui/api/connect"), [this, alive = QPointer<QObject>(this)](bool ok, const QJsonObject &b, const QString &) {
+		if (!alive)
+			return;
+		connectOn_ = ok;
+		connectRows_ = QJsonObject();
+		if (ok)
+			for (const auto &x : b.value(QStringLiteral("outputs")).toArray())
+				connectRows_.insert(x.toObject().value(QStringLiteral("id")).toString(), x.toObject());
+		if (loaded_)
+			render();
+	});
+}
+
 void StreamPage::editOutput(int index)
+{
+	if (index >= setup_.value(QStringLiteral("outputs")).toArray().size())
+		return;
+	// Fresh connection state first (it may have changed in Settings > Connections), then the window.
+	api_->get(QStringLiteral("ui/api/connect"), [this, alive = QPointer<QObject>(this), index](bool ok, const QJsonObject &b, const QString &) {
+		if (!alive)
+			return;
+		connectOn_ = ok;
+		QJsonObject conn{{QStringLiteral("on"), ok}};
+		QJsonObject rows;
+		if (ok)
+			for (const auto &x : b.value(QStringLiteral("outputs")).toArray())
+				rows.insert(x.toObject().value(QStringLiteral("id")).toString(), x.toObject());
+		connectRows_ = rows;
+		const QJsonArray outs = setup_.value(QStringLiteral("outputs")).toArray();
+		if (index >= 0 && index < outs.size())
+			conn.insert(QStringLiteral("row"), rows.value(outs.at(index).toObject().value(QStringLiteral("id")).toString()).toObject());
+		openEditor(index, conn);
+		render();
+	});
+}
+
+void StreamPage::openEditor(int index, const QJsonObject &conn)
 {
 	QJsonArray outs = setup_.value(QStringLiteral("outputs")).toArray();
 	if (index >= outs.size())
 		return;
 	const bool multi = mode_->checkedButton() && mode_->checkedButton()->property("mode").toString() == QStringLiteral("multi");
-	OutputDialog d(options_, index >= 0 ? outs.at(index).toObject() : QJsonObject(), multi, this);
+	OutputDialog d(api_, options_, index >= 0 ? outs.at(index).toObject() : QJsonObject(), conn, multi, this);
 	if (d.exec() != QDialog::Accepted)
 		return;
 	QJsonObject o = d.value();
@@ -473,7 +546,36 @@ QJsonObject StreamPage::probe() const
 	QJsonArray rows;
 	for (int i = 0; i < outputs_->count(); i++)
 		rows.append(outputs_->item(i)->data(Qt::UserRole).toString());
-	return QJsonObject{{QStringLiteral("loaded"), loaded_}, {QStringLiteral("setup"), current()}, {QStringLiteral("outputs"), rows}, {QStringLiteral("problems"), problems_->text()}};
+	QJsonObject o{{QStringLiteral("loaded"), loaded_}, {QStringLiteral("setup"), current()}, {QStringLiteral("outputs"), rows}, {QStringLiteral("problems"), problems_->text()}};
+	// Connect (flag platform-connect): the open Edit output window's button and status, and the open Connections flow.
+	QJsonArray rowTexts;
+	for (int i = 0; i < outputs_->count(); i++)
+		if (QLabel *l = outputs_->itemWidget(outputs_->item(i))->findChild<QLabel *>(QStringLiteral("outputRowText")))
+			rowTexts.append(l->text());
+	o.insert(QStringLiteral("connectOn"), connectOn_);
+	o.insert(QStringLiteral("rowStatus"), rowTexts);
+	for (QWidget *w : QApplication::topLevelWidgets()) {
+		auto *dlg = qobject_cast<QDialog *>(w);
+		if (!dlg || !dlg->isVisible())
+			continue;
+		if (auto *b = dlg->findChild<QPushButton *>(QStringLiteral("outputConnect"))) {
+			QJsonObject c{{QStringLiteral("enabled"), b->isEnabled()}, {QStringLiteral("tooltip"), b->toolTip()}};
+			if (auto *st = dlg->findChild<QLabel *>(QStringLiteral("outputConnectStatus")))
+				c.insert(QStringLiteral("status"), st->text());
+			o.insert(QStringLiteral("connectButton"), c);
+		}
+		if (dlg->objectName() == QStringLiteral("connectionsFlow")) {
+			QJsonObject f{{QStringLiteral("output"), dlg->property("output").toString()}};
+			if (auto *pg = dlg->findChild<connections::Page *>()) {
+				QJsonArray labels;
+				for (int i = 0; i < pg->rowCount(); i++)
+					labels.append(pg->rowLabel(i));
+				f.insert(QStringLiteral("rows"), labels);
+			}
+			o.insert(QStringLiteral("connectFlow"), f);
+		}
+	}
+	return o;
 }
 
 bool StreamPage::probeAction(const QStringList &p)
@@ -503,6 +605,21 @@ bool StreamPage::probeAction(const QStringList &p)
 		render();
 		check();
 		return true;
+	}
+	if (p.size() == 1 && p[0] == QStringLiteral("stream-output-add")) { // opens the Add window
+		QTimer::singleShot(0, this, [this]() { editOutput(-1); });
+		return true;
+	}
+	if (p.size() == 1 && p[0] == QStringLiteral("stream-output-connect")) { // a click on Connect in the open Edit window
+		for (QWidget *w : QApplication::topLevelWidgets())
+			if (auto *dlg = qobject_cast<QDialog *>(w); dlg && dlg->isVisible())
+				if (auto *b = dlg->findChild<QPushButton *>(QStringLiteral("outputConnect"))) {
+					if (!b->isEnabled())
+						return false;
+					QTimer::singleShot(0, b, [b]() { b->click(); }); // the flow's window runs its own event loop
+					return true;
+				}
+		return false;
 	}
 	if (p.size() == 2 && p[0] == QStringLiteral("stream-output-edit")) { // opens the Edit window (the probe pictures it)
 		const int i = p[1].toInt();

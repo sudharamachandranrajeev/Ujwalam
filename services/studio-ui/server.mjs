@@ -54,6 +54,7 @@ import { createCredentialStore } from '../event-core/streamerbot/credential.mjs'
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
 import { CONNECT_FLAG, ERROR_TEXT as CONNECT_ERROR_TEXT, PROBLEM_TEXT as CONNECT_PROBLEM_TEXT, createConnect, outputsFromPlan } from '../platform-connect/index.mjs';
 import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG, createSettingsRoutes } from './settings-routes.mjs';
+import { connectTargets, readSetup } from './stream-setup.mjs';
 import { integrationsInEffect } from './integrations.mjs';
 
 // Scene transition types and easing curves (D327 TR1, data/transitions/easing.json), read once.
@@ -399,10 +400,27 @@ export function createStudioServer(opts) {
       return () => { if (!left) { left = true; credWrites -= 1; } };
     },
   };
+  // The outputs the sign-in service knows, read on every call: the live plan's targets, plus (flag stream-settings on and a
+  // saved Settings > Stream setup) every output of that setup, so an output added there can be connected before the next
+  // start. A setup output replaces a plan row with the same id. Platform ids come from the setup, not from the id's text.
+  function connectOutputs() {
+    const rows = planTargets(opts.livePlanFile);
+    if (flags && flags.isOn(STREAM_SETTINGS_FLAG) && typeof opts.dataDir === 'string') {
+      try {
+        const { exists, setup } = readSetup(opts.dataDir);
+        if (exists) {
+          const mine = connectTargets(setup);
+          const ids = new Set(mine.map((t) => t.id));
+          return outputsFromPlan([...rows.filter((r) => !ids.has(r.id)), ...mine]);
+        }
+      } catch { /* an unreadable setup: the plan's outputs only */ }
+    }
+    return outputsFromPlan(rows);
+  }
   function connect() {
     if (connectSvc) return connectSvc;
     const { connect: _ignored, ...extra } = opts.connect ?? {};
-    connectSvc = createConnect({ dataDir: opts.dataDir, outputs: outputsFromPlan(planTargets(opts.livePlanFile)), outputLive, gate: connectGate, ...extra });
+    connectSvc = createConnect({ dataDir: opts.dataDir, outputs: connectOutputs, outputLive, gate: connectGate, ...extra });
     return connectSvc;
   }
   const CONNECT_STATUS = { 'output-starting': 409, cancelled: 409, 'output-live': 409, 'live-unknown': 409, 'sign-in-busy': 409, 'job-not-waiting': 409, 'unknown-output': 404, 'unknown-job': 404, 'unknown-stream': 404, 'sign-in-not-offered': 400, 'bad-client-id': 400, 'twitch-no-client': 409, 'oauth-no-client': 409 };
