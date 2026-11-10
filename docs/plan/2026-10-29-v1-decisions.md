@@ -577,3 +577,12 @@ mode name with on-screen spellings such as "SEARCH & DESTROY", new C1 mode cues,
 "unknown" with a reason when the evidence is missing or disagrees; it is never guessed. Open: the post-match lobby
 header shows the mode but sits on the `summary` screen where no detector runs (screen-model change); own kill counts of
 44 and 49 in two matches suggest a kill-feed dedup issue.
+
+## D324 — Live updates, learning while streaming, scene builder from a reference (2026-11-10, user)
+
+User: training data is learnt only while the user streams; every change must apply while the app runs, live on air,
+reliably; a scene builder that builds and restyles scenes (and the app theme) from a reference image or video is a main
+function. Approved plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` (LU1–LU8, LL1–LL5,
+SB1–SB5). Order: LU8 live-soak gate and LU2 data hot-reload first. The libobs host is never swapped while live; its
+updates are staged until the next stop. Learning store capped at 5 GB, oldest streams first. A local vision model for
+layout reading is allowed if the hardware allows it (6 GB VRAM, never loaded while live), asked again before any install.
