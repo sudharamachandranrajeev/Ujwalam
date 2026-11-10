@@ -116,7 +116,10 @@ export function importProblems(repo, rels) {
 }
 
 // A data file a packaged module names by literal parts, e.g. path.join(REPO, 'data', 'posting', 'x.json').
-const DATA_REF_RE = /path\.(?:join|resolve)\(\s*[\w.]+\s*,\s*((?:'[^']+'\s*,?\s*)+)\)/g;
+// The base must be the repo root by name (REPO, REPO_ROOT, ROOT): a join on another folder (a cache, the data dir) names
+// a file the app writes, not a shipped one. Either quote style. Comments are stripped first (Codex review).
+const DATA_REF_RE = /path\.(?:join|resolve)\(\s*(?:REPO|REPO_ROOT|ROOT)\s*,\s*((?:(?:'[^'\n]+'|"[^"\n]+")\s*,?\s*)+)\)/g;
+const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"\\])\/\/.*$/gm, '$1');
 // Local-only files (gitignored, the user's own): never shipped, never a problem.
 const LOCAL_ONLY_DATA = /\.local\./;
 
@@ -126,9 +129,9 @@ export function dataRefProblems(repo, rels) {
   const problems = [];
   for (const rel of rels) {
     if (!/\.m?js$/.test(rel) || rel.startsWith('ui/')) continue;
-    const text = readFileSync(path.join(repo, rel), 'utf8');
+    const text = stripComments(readFileSync(path.join(repo, rel), 'utf8'));
     for (const m of text.matchAll(DATA_REF_RE)) {
-      const target = [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]).join('/');
+      const target = [...m[1].matchAll(/'([^']+)'|"([^"]+)"/g)].map((x) => x[1] ?? x[2]).join('/');
       if (!target.startsWith('data/') || !/\.json$/.test(target) || LOCAL_ONLY_DATA.test(target)) continue;
       if (!existsSync(path.join(repo, target))) continue; // a file the user or the app writes, not a shipped one
       if (!set.has(target)) problems.push(`${rel}: reads ${target}, which is not in the package`);
