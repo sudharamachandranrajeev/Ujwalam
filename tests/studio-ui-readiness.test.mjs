@@ -75,6 +75,10 @@ function deps(over = {}) {
     clipTools: () => over.clip ?? { py: 'python.exe', script: 'clipper.py', reason: null },
     planTargets: planTargets(),
     dataDir: null,
+    // LC1: live clipping wanted and the launcher reports the clipper running; ffmpeg/ffprobe found; live_worker.py there
+    liveClips: () => over.lc ?? { wanted: true, flag: true, setting: false, status: { state: 'running', reason: null, restarts: 0, maxRestarts: 5, at: new Date().toISOString() } },
+    findTool: (n) => (over.tools ? over.tools[n] ?? null : `C:\\ff\\${n}.exe`),
+    liveWorkerExists: () => over.worker ?? true,
     ...(over.audioCheck ? { audioCheck: over.audioCheck } : {}),
   };
 }
@@ -86,7 +90,7 @@ describe('readiness config (data/live/readiness.json)', () => {
     assert.ok(CONFIG.otherEncoders.some((a) => a.label === 'Meld Studio'));
     assert.equal(CONFIG.gpu.preference, 2);
     const raw = JSON.parse(readFileSync(path.join(REPO, 'data', 'live', 'readiness.json'), 'utf8'));
-    for (const k of ['disk', 'otherEncoders', 'bots', 'loopback', 'gpu', 'audio', 'endAll']) assert.equal(typeof raw[k].source, 'string', `${k}.source`);
+    for (const k of ['disk', 'otherEncoders', 'bots', 'loopback', 'gpu', 'audio', 'clips', 'endAll']) assert.equal(typeof raw[k].source, 'string', `${k}.source`);
     const src = readFileSync(path.join(REPO, 'services', 'studio-ui', 'readiness.mjs'), 'utf8');
     for (const n of ['22', '44', 'meldstudio', 'obs64']) assert.ok(!new RegExp(`['"\\s]${n}['"\\s,;)]`).test(src), `module hardcodes ${n}`);
   });
@@ -220,15 +224,69 @@ describe('runReadiness', () => {
     assert.equal(byId(await runReadiness(deps({ ci: { at: old } })), 'loopback').status, 'warn');
   });
 
-  test('clips: no venv warns with the reason', async () => {
-    const c = byId(await runReadiness(deps({ clip: { py: null, reason: 'the clip maker is missing in X' } })), 'clips');
+  const OFF = { wanted: false, flag: false, setting: false, status: null };
+  test('clips, live clipping off: no venv warns with the reason (as before LC1)', async () => {
+    const c = byId(await runReadiness(deps({ lc: OFF, clip: { py: null, reason: 'the clip maker is missing in X' } })), 'clips');
     assert.equal(c.status, 'warn');
     assert.match(c.message, /missing/);
     // the zip ships no Python: the item carries the clip maker's plain reason and the fix
-    const np = byId(await runReadiness(deps({ clip: { py: null, reason: "the clip maker's Python is missing (the Ujwalam download does not include Python; looked in X)", fix: 'To make clips, run Y' } })), 'clips');
+    const np = byId(await runReadiness(deps({ lc: OFF, clip: { py: null, reason: "the clip maker's Python is missing (the Ujwalam download does not include Python; looked in X)", fix: 'To make clips, run Y' } })), 'clips');
     assert.equal(np.status, 'warn');
     assert.match(np.message, /^Clips cannot be made: the clip maker's Python is missing/);
     assert.equal(np.fix, 'To make clips, run Y');
+    // off: no ffmpeg, no worker, no clipper state are not problems
+    const ok = byId(await runReadiness(deps({ lc: OFF, tools: {}, worker: false })), 'clips');
+    assert.deepEqual([ok.status, ok.message], ['pass', 'Clip maker ready. Live clipping is off.']);
+  });
+
+  test('clips, live clipping on (LC1): each thing that stops clips while live fails with the reason and the fix', async () => {
+    const at = new Date().toISOString();
+    const st = (x) => ({ wanted: true, flag: true, setting: false, status: { state: 'running', reason: null, restarts: 0, maxRestarts: 5, at, ...x } });
+    const run = async (over) => byId(await runReadiness(deps(over)), 'clips');
+    const ok = await run({});
+    assert.equal(ok.status, 'pass');
+    assert.match(ok.message, /live clipper is running \(live clipping is on\)/);
+    const py = await run({ clip: { py: null, reason: "the clip maker's Python is missing", fix: 'To make clips, run Y' } });
+    assert.deepEqual([py.status, py.fix], ['fail', 'To make clips, run Y']);
+    assert.match(py.message, /^Clips will not be made while live \(live clipping is on\): the clip maker's Python is missing/);
+    const w = await run({ worker: false });
+    assert.equal(w.status, 'fail');
+    assert.match(w.message, new RegExp(`the live clipper is missing \\(${CONFIG.clips.liveWorker.replaceAll('.', '\\.')}\\)`));
+    const ff = await run({ tools: { ffmpeg: 'C:\\ff\\ffmpeg.exe' } });
+    assert.equal(ff.status, 'fail');
+    assert.match(ff.message, /ffprobe is not on PATH/);
+    assert.equal(ff.fix, CONFIG.clips.toolsFix, 'the fix comes from data/live/readiness.json');
+    const both = await run({ tools: {} });
+    assert.match(both.message, /ffmpeg and ffprobe are not on PATH/);
+    const cap = await run({ lc: st({ state: 'not-started', reason: 'the game layer has no capture device (devices are off or none is chosen)' }) });
+    assert.equal(cap.status, 'fail');
+    assert.match(cap.message, /live clipper is not running: the game layer has no capture device/);
+    const gaveUp = await run({ lc: st({ state: 'stopped', restarts: 5, reason: 'it stopped (exit 1) and was restarted 5 times; restart Ujwalam to try again' }) });
+    assert.equal(gaveUp.status, 'fail');
+    const restarting = await run({ lc: st({ state: 'stopped', restarts: 1, reason: 'it stopped (exit 1); restarting in 10 s' }) });
+    assert.equal(restarting.status, 'warn');
+    assert.match(restarting.message, /restarting \(1 restart\(s\)\)/);
+    // the launcher's state is missing or old: unknown, a warning (never a pass)
+    const none = await run({ lc: { wanted: true, flag: true, status: null } });
+    assert.equal(none.status, 'warn');
+    const old = await run({ lc: st({ at: new Date(Date.now() - CONFIG.clips.statusMaxAgeMs - 1000).toISOString() }) });
+    assert.equal(old.status, 'warn');
+    // wanted through Settings > Clips "while live" (flag off): the same checks, named so
+    const set = await run({ lc: { ...st({ state: 'not-started', reason: 'x' }), flag: false, setting: true } });
+    assert.match(set.message, /Settings > Clips says "while live"/);
+    // without a liveClips dep the flag decides (older callers)
+    const legacy = byId(await runReadiness({ ...deps({}), liveClips: undefined }), 'clips');
+    assert.equal(legacy.status, 'warn', 'flag on, no launcher state: unknown');
+  });
+
+  test('disk (LC1): hours left follow the recordings the host set up (H + V rung bitrates + audio), else gbPerHour', async () => {
+    const sinks = [...LIVE_SINKS.map((x) => (x.id === 'record' ? { ...x, rung: 'yt-h' } : x)), { id: 'record-v', kind: 'record', platform: 'local', rung: 'vert', state: 'idle' }];
+    const methods = { 'outputs.status': () => ({ configured: true, sinks, rungs: [{ id: 'yt-h', bitrate: 17000 }, { id: 'vert', bitrate: 7500 }, { id: 'reencode-tk', bitrate: 6000 }], audio: { bitrate: 160 } }) };
+    const d = byId(await runReadiness({ ...deps({ hostOpts: { methods } }), diskFree: async () => 100 * GB }), 'disk');
+    // (17000 + 160 + 7500 + 160) kbps = 24820 kbps = 11.17e9 bytes per hour = 10.4 GB (1024^3) per hour
+    assert.match(d.message, /about 9\.6 h of recording at 10\.4 GB per hour \(the recordings set up now\)/);
+    const hOnly = { 'outputs.status': () => ({ configured: true, sinks: LIVE_SINKS.map((x) => (x.id === 'record' ? { ...x, rung: 'yt-h' } : x)), rungs: [{ id: 'yt-h', bitrate: 17000 }], audio: { bitrate: 160 } }) };
+    assert.match(byId(await runReadiness({ ...deps({ hostOpts: { methods: hOnly } }), diskFree: async () => 100 * GB }), 'disk').message, /at 7\.2 GB per hour/);
   });
 
   test('audio: host up without the state call = unreadable (fail); a missing source fails; a muted mix source warns; pluggable', async () => {
@@ -306,9 +364,9 @@ describe('failure sims: disk thresholds and unreadable audio state', () => {
     assert.equal((await disk(W * GB)).status, 'pass', 'exactly the warn line passes');
     assert.equal((await disk(0)).status, 'fail', 'a full disk');
     const f = await disk(10 * GB);
-    assert.match(f.message, /^Only 10 GB free on C:\\ \(needs at least 22 GB\)\. Free space before going live\.$/);
+    assert.match(f.message, /^Only 10 GB free on C:\\ \(needs at least 22 GB; about 0\.9 h of recording at 11\.0 GB per hour\)\. Free space before going live\.$/);
     const w = await disk(33 * GB);
-    assert.equal(w.message, `33 GB free on C:\\ (below 44 GB, about ${(33 / H).toFixed(1)} h of H+V recording).`);
+    assert.equal(w.message, `33 GB free on C:\\ (below 44 GB, about ${(33 / H).toFixed(1)} h of recording at ${H.toFixed(1)} GB per hour).`);
     // the drive checked is the host's recordings folder, else the data folder; neither = warn, never pass
     let asked = null;
     const d = { ...deps({ hostOpts: { info: { recordingsDir: 'D:\\rec\\x' } } }), diskFree: async (dir) => { asked = dir; return 100 * GB; } };

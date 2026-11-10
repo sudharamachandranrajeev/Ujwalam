@@ -370,6 +370,20 @@ export function createStudioServer(opts) {
         ? (({ bots }) => ({ streamerbot: bots.streamerbot.port, speakerbot: bots.speakerbot.port }))(integrationsInEffect(opts.dataDir, bc, true))
         : { streamerbot: bc.streamerbot?.port ?? null, speakerbot: bc.speakerbot?.port ?? null },
       ciPass: () => lastCiPass(REPO_ROOT), clipTools: () => clipTools({ clipRoot }), planTargets: planTargets(opts.livePlanFile),
+      // LC1: is live clipping wanted (flag or Settings > Clips "while live"), and the launcher's live clipper state.
+      clipRoot,
+      liveClips: () => {
+        const flag = !!flags && flags.isOn('live-clips');
+        let setting = false; let status = null;
+        if (typeof opts.dataDir === 'string') {
+          try { setting = readSettings(opts.dataDir).clips?.live === 'while'; } catch { setting = false; }
+          try {
+            const j = JSON.parse(readFileSync(path.join(opts.dataDir, 'clips', 'status.json'), 'utf8'));
+            status = j?.liveClipper && typeof j.liveClipper === 'object' ? { ...j.liveClipper, at: j.at } : null;
+          } catch { status = null; }
+        }
+        return { wanted: flag || setting, flag, setting, status };
+      },
       // Platform sign-in (flag platform-connect): the fix points at Settings > Connections; expired sign-ins are warnings.
       connect: () => (connectOn() ? { fix: 'Studio: Settings > Connections (sign in, or paste the key)', warnings: () => connect().readinessWarnings() } : null),
       ...(opts.readinessDeps ?? {}),

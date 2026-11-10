@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CLIP_MAKER_FIX, clipRunSpec, clipTools, countClips, createRecordClips, finishedRecording, isLive, jobStages, parseProgress, stageWords } from '../services/studio-ui/record-clips.mjs';
+import { CLIP_MAKER_FIX, clipRunSpec, clipTools, countClips, countSaves, createRecordClips, finishedRecording, isLive, jobStages, liveClipperTask, parseProgress, reelsNotMade, stageWords } from '../services/studio-ui/record-clips.mjs';
 import { folderProblem, readSettings, settingsProblems, writeSettings } from '../services/studio-ui/user-settings.mjs';
 
 const RUNGS = [{ id: 'rec-h', canvas: 'H' }, { id: 'rec-v', canvas: 'V' }];
@@ -382,5 +382,97 @@ test('D300: a finished clip job hands its run folder to the post chain; every st
     rc.feed(s.S('live')); rc.feed(s.S('stopped'));
     s.spawned[1].c.emit('exit', 1);
     assert.equal(after.length, 1);
+  } finally { rmSync(s.d, { recursive: true, force: true }); }
+});
+
+// --- LC1 (D333 proposed): live clipper state, moments kept, reels not made ---
+test('countSaves: rows of the newest session since a time; nothing yet = 0', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-lc1-'));
+  try {
+    assert.equal(countSaves(d, null), 0);
+    const s = path.join(d, 'live-clips', '20261110-100000');
+    mkdirSync(s, { recursive: true });
+    writeFileSync(path.join(s, 'saves.jsonl'), ['{"v":1,"at":"2026-11-10T09:59:00.000Z"}', '{"v":1,"at":"2026-11-10T10:01:00.000Z"}', 'not json', '', '{"v":1,"at":"2026-11-10T10:02:00.000Z"}'].join('\n'));
+    assert.equal(countSaves(d, '2026-11-10T10:00:00.000Z'), 2);
+    assert.equal(countSaves(d, null), 3);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('liveClipperTask: running while watched (never "stuck"), the reason when it is not running, a finished row once', () => {
+  const lc = { state: 'running', reason: null, restarts: 0, maxRestarts: 5 };
+  const r = liveClipperTask({ lc, watching: true, saves: 2, since: 1000, now: 5000 });
+  assert.deepEqual([r.id, r.kind, r.state, r.title, r.note, r.measured], ['live-clipper', 'live-clips', 'running', 'Live clips: watching the game', '2 moments kept so far', false]);
+  assert.equal(liveClipperTask({ lc: { ...lc, restarts: 1 }, watching: true, saves: 1, since: 1, now: 2 }).note, '1 moment kept so far; restarted 1 time');
+  const no = liveClipperTask({ lc: { state: 'not-started', reason: 'the game layer has no capture device (devices are off or none is chosen)' }, watching: true, now: 1 });
+  assert.deepEqual([no.state, no.title, no.note], ['failed', 'Live clips are not being made', 'the game layer has no capture device (devices are off or none is chosen)']);
+  assert.equal(liveClipperTask({ lc: null, watching: true, now: 1 }).note, 'the live clipper is not running');
+  const end = liveClipperTask({ lc, watching: false, ended: true, saves: 3, since: 1, now: 9 });
+  assert.deepEqual([end.state, end.title, end.note], ['done', 'Live clips: 3 moments kept', 'They become clips after the stream']);
+  assert.equal(liveClipperTask({ lc, watching: false, ended: true, saves: 0, now: 9 }).note, 'No moment was found');
+  assert.equal(liveClipperTask({ lc, watching: false, ended: false, now: 1 }), null, 'nothing to show when nothing is watched');
+});
+
+test('reelsNotMade: why the kill montages and match reels were not made, from the job or render.json', () => {
+  const files = {};
+  const readJson = (f) => { if (!Object.hasOwn(files, f)) throw new Error('missing'); return files[f]; };
+  const exists = () => true;
+  const out = path.join('C:', 'runs', 'x');
+  const rv = { type: 'review', h: 'C:/r/a.mkv', v: 'C:/r/a-v.mkv' };
+  assert.equal(reelsNotMade({ type: 'review' }, out, { readJson, exists }), 'the stream was not recorded');
+  assert.equal(reelsNotMade({ type: 'review', h: 'C:/r/a.mkv' }, out, { readJson, exists }), 'there is no portrait (V) recording of this stream');
+  assert.equal(reelsNotMade(rv, out, { readJson, exists: (p) => p !== rv.v }), 'the portrait (V) recording is missing');
+  assert.equal(reelsNotMade(rv, out, { readJson, exists }), 'the reel step left no result; see the log');
+  files[path.join(out, 'render.json')] = { montage: { status: 'skipped', reason: 'no kills were found in the recording' } };
+  assert.equal(reelsNotMade(rv, out, { readJson, exists }), 'no kills were found in the recording');
+  files[path.join(out, 'render.json')] = { montage: { status: 'failed' } };
+  assert.equal(reelsNotMade(rv, out, { readJson, exists }), 'failed');
+  files[path.join(out, 'render.json')] = { montage: { status: 'made' } };
+  assert.equal(reelsNotMade(rv, out, { readJson, exists }), null);
+  assert.equal(reelsNotMade({ type: 'full', h: 'a' }, out, { readJson, exists }), 'there is no portrait (V) recording');
+  assert.equal(reelsNotMade({ type: 'full', h: 'a', v: 'b' }, out, { readJson, exists }), 'the reel step did not finish; see the log');
+  files[path.join(out, 'montage', 'report.json')] = {};
+  assert.equal(reelsNotMade({ type: 'full', h: 'a', v: 'b' }, out, { readJson, exists }), null);
+});
+
+test('LC1: status.json and the task panel show the live clipper while a stream is watched; a review without V says "Reels not made"', async () => {
+  const s = setup();
+  try {
+    writeSettings(s.dataDir, { clips: { recording: 'off', live: 'while' } });
+    const saves = path.join(s.dataDir, 'live-clips', '20261108-100000');
+    mkdirSync(saves, { recursive: true });
+    writeFileSync(path.join(saves, 'saves.jsonl'), '');
+    const lc = { state: 'running', reason: null, restarts: 0, maxRestarts: 5, flagOn: false };
+    const rc = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: s.log, spawnFn: s.spawnFn, now: s.now, liveClipper: () => lc });
+    const taskFile = path.join(s.dataDir, 'tasks', 'live-clipper.json');
+    const task = () => JSON.parse(readFileSync(taskFile, 'utf8'));
+    rc.feed(s.S('stopped'));
+    assert.equal(existsSync(taskFile), false, 'not live: no row');
+    assert.equal(s.status().liveClipper.watching, false);
+    // live and recording H only (no V recording), so the reels cannot be made after
+    const live = (state) => ({ rungs: RUNGS, sinks: [{ id: 'practice-h', kind: 'record', rung: 'rec-h', state, path: s.h }, { id: 'yt', kind: 'stream', rung: 'rec-h', state }] });
+    rc.feed(live('live'));
+    assert.deepEqual([task().state, task().note], ['running', '0 moments kept so far']);
+    s.advance(30000);
+    writeFileSync(path.join(saves, 'saves.jsonl'), `${JSON.stringify({ v: 1, at: new Date(s.now()).toISOString() })}\n`);
+    rc.feed(live('live'));
+    assert.equal(task().note, '1 moment kept so far');
+    const v = s.status().liveClipper;
+    assert.deepEqual([v.state, v.watching, v.saves, v.restarts], ['running', true, 1, 0]);
+    lc.state = 'not-started'; lc.reason = 'the game layer has no capture device (devices are off or none is chosen)';
+    rc.feed(live('live'));
+    assert.deepEqual([task().state, task().title, task().note], ['failed', 'Live clips are not being made', lc.reason]);
+    lc.state = 'running'; lc.reason = null;
+    s.advance(30000);
+    rc.feed(live('stopped'));
+    assert.deepEqual([task().state, task().title], ['done', 'Live clips: 1 moment kept']);
+    // the review job: H only, so no --montage, and the finished task says why the reels were not made
+    assert.equal(s.spawned.length, 1);
+    assert.equal(s.spawned[0].argv.includes('--montage'), false);
+    s.spawned[0].c.emit('exit', 0);
+    const done = JSON.parse(readFileSync(path.join(s.dataDir, 'tasks', 'clip-practice-h-1.json'), 'utf8'));
+    assert.equal(done.state, 'done');
+    assert.equal(done.note, '0 clips made. Reels not made: there is no portrait (V) recording of this stream');
+    assert.equal(s.status().last.reelsNotMade, 'there is no portrait (V) recording of this stream');
+    assert.ok(s.lines.some((l) => /reels not made from practice-h-1/.test(l)));
   } finally { rmSync(s.d, { recursive: true, force: true }); }
 });

@@ -564,13 +564,13 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     h = JSON.parse(readFileSync(rec, 'utf8'));
     assert.ok(h.argv.includes('--allow-live'));
     assert.equal(h.argv[h.argv.indexOf('--outputs') + 1], path.join(root, 'host', 'outputs-params.json'));
-    assert.deepEqual(h.outputsParams.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record']);
+    assert.deepEqual(h.outputsParams.sinks.map((s) => s.id), ['youtube-h', 'youtube-v', 'twitch', 'kick', 'record', 'record-v']);
     for (const s of h.outputsParams.sinks) assert.ok(!Object.hasOwn(s.target, 'key'), `${s.id}: no key field`);
     // Twitch "auto" (D309 proposed): a stand-in (script) host reaches no platform, so no server address is read.
     assert.equal(h.outputsParams.sinks.find((s) => s.id === 'twitch').target.transport, 'auto');
     assert.match(r.out, /outputs: twitch transport "auto" not chosen \(stand-in host: no server address read\)/);
     assert.match(r.out, /LIVE plan: data[\\/]outputs[\\/]alpha-live\.json/);
-    assert.match(r.out, /\[studio\] outputs: real targets ALLOWED \(--live\); 5 sink\(s\)/);
+    assert.match(r.out, /\[studio\] outputs: real targets ALLOWED \(--live\); 6 sink\(s\)/); // LC1: + record-v
     assert.match(r.out, /sink youtube-h: youtube live, keyPresent no, idle/);
     assert.match(r.out, /sink twitch: twitch live, keyPresent no, urlPresent no, idle/);
     assert.match(r.out, /sink kick: kick live, keyPresent no, urlPresent no, idle/);
@@ -693,4 +693,11 @@ test('live clipper spec: H game capture layer, GPU venv first, no spec for a pla
   assert.equal(liveClipsSpec({ project: scene({ type: 'color' }), dataDir: 'D', repo: 'R', exists: both }).spec, null);
   assert.equal(liveClipsSpec({ project: { scenes: [] }, dataDir: 'D', repo: 'R', exists: both }).spec, null);
   assert.equal(liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: () => false }).spec, null);
+  // LC1: plain reasons for the task panel and readiness; a missing live_worker.py is caught before the spawn.
+  assert.match(liveClipsSpec({ project: scene({ type: 'color' }), dataDir: 'D', repo: 'R', exists: both }).reason, /game layer has no capture device/);
+  assert.match(liveClipsSpec({ project: { scenes: [] }, dataDir: 'D', repo: 'R', exists: both }).reason, /no game layer/);
+  assert.match(liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: () => false }).reason, /Python is missing/);
+  const noWorker = liveClipsSpec({ project: scene({ type: 'capture' }), dataDir: 'D', repo: 'R', exists: (p) => !p.endsWith('live_worker.py') });
+  assert.equal(noWorker.spec, null);
+  assert.match(noWorker.reason, /live clipper is missing .*live_worker\.py/);
 });
