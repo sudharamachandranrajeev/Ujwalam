@@ -125,7 +125,7 @@ private:
 	void renderAddPick();
 	void structureEdit(const QJsonObject &body);
 	// Right-click menus and keys on the layer and scene lists (D292): the same actions as the buttons plus duplicate,
-	// rename, copy / paste look, delete. Duplicate and rename work without the scene-edit flag; delete needs it.
+	// rename, copy / paste look, delete. Duplicate, rename and delete work without the scene-edit flag (delete since D330).
 	void showLayerMenu(const QPoint &pos);
 	void showSceneMenu(const QPoint &pos);
 	QMenu *buildLayerMenu(QWidget *parent, bool blank = false);
@@ -133,7 +133,8 @@ private:
 	void layerDuplicate();
 	void layerRename();
 	void layerDelete();
-	void layerMoveTo(int index);
+	void layerMoveTo(int index);   // saved order offline (structure layer.move to a target, D330), else layerMoveHost
+	void layerMoveHost(int index); // host-only order (layers.move; "yes, on air" while live)
 	void layerToggleVisible();
 	void lookCopy();
 	void lookPaste();
@@ -202,6 +203,7 @@ private:
 	bool hasLookClip_ = false;
 	QPointer<QDialog> addDlg_; // the open Add layer / Add scene window (one at a time)
 	QToolButton *addSceneBtn_ = nullptr, *addLayerBtn_ = nullptr;
+	QToolButton *delLayerBtn_ = nullptr; // trash next to + in the Layers header (D330)
 	QJsonObject lastMenu_;    // the last menu built, for the probe
 	QJsonObject transitions_; // GET /ui/api/project/transitions
 	QGroupBox *structBox_ = nullptr, *transBox_ = nullptr;

@@ -2,6 +2,7 @@
 #include "look_panel.h"
 #include "motion.h"
 #include "theme.h"
+#include "value_slider.h"
 
 #include <QAbstractButton>
 #include <QColorDialog>
@@ -281,34 +282,11 @@ void LookPanel::setTypes(const QList<LookType> &types)
 					c.hex[p.key] = line;
 					c.swatches[p.key] = sw;
 				} else {
-					const int n = std::max(1, std::min(4000, (int)std::lround((p.hi - p.lo) / p.step)));
-					auto *sl = new QSlider(Qt::Horizontal, c.body);
-					sl->setRange(0, n);
-					auto *sp = new QDoubleSpinBox(c.body);
-					sp->setRange(p.lo, p.hi);
-					sp->setDecimals(p.dec);
-					sp->setSingleStep(p.step);
-					sp->setButtonSymbols(QAbstractSpinBox::NoButtons);
-					sp->setFixedWidth(64);
-					const double lo = p.lo, step = p.step;
-					connect(sl, &QSlider::valueChanged, this, [this, sp, type, key, lo, step](int s) {
-						{
-							const QSignalBlocker b(sp);
-							sp->setValue(lo + s * step);
-						}
-						setParam(type, key, sp->value());
-					});
-					connect(sp, &QDoubleSpinBox::valueChanged, this, [this, sl, type, key, lo, step](double val) {
-						{
-							const QSignalBlocker b(sl);
-							sl->setValue((int)std::lround((val - lo) / step));
-						}
-						setParam(type, key, val);
-					});
+					// The shared slider (D330): click jumps, typed value + Enter, keys, wheel only when focused.
+					auto *sl = new ValueSlider(p.lo, p.hi, p.step, p.dec, c.body);
+					connect(sl, &ValueSlider::valueChanged, this, [this, type, key](double val) { setParam(type, key, val); });
 					row->addWidget(sl, 1);
-					row->addWidget(sp);
 					c.sliders[p.key] = sl;
-					c.spins[p.key] = sp;
 				}
 				bv->addLayout(row);
 			}
@@ -345,9 +323,7 @@ void LookPanel::setEffects(const QJsonArray &effects)
 				c.swatches.value(p.key)->setStyleSheet(swatchStyle(col));
 			} else {
 				const double v = e.value(p.key).toDouble(p.def);
-				const QSignalBlocker b1(c.sliders.value(p.key)), b2(c.spins.value(p.key));
-				c.spins.value(p.key)->setValue(v);
-				c.sliders.value(p.key)->setValue((int)std::lround((v - p.lo) / p.step));
+				c.sliders.value(p.key)->setValue(v); // no signal
 			}
 		}
 	}
@@ -387,9 +363,17 @@ bool LookPanel::probeToggle(const QString &type, bool on)
 bool LookPanel::probeSet(const QString &type, const QString &key, double value)
 {
 	for (Card &c : cards_)
-		if (c.t.type == type && c.spins.contains(key) && c.sw->isChecked()) {
-			c.spins.value(key)->setValue(value); // the real spin box: its handler sets the value
+		if (c.t.type == type && c.sliders.contains(key) && c.sw->isChecked()) {
+			c.sliders.value(key)->box()->setValue(value); // the real number box: its handler sets the value
 			return true;
 		}
 	return false;
+}
+
+ValueSlider *LookPanel::probeSlider(const QString &type, const QString &key) const
+{
+	for (const Card &c : cards_)
+		if (c.t.type == type && c.sliders.contains(key) && c.sw->isChecked())
+			return c.sliders.value(key);
+	return nullptr;
 }

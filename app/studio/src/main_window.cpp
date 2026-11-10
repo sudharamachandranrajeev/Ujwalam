@@ -10,6 +10,8 @@
 #include "taskbar.h"
 #include "tray.h"
 #include "theme.h"
+#include "layer_list.h"
+#include "value_slider.h"
 
 #include <QCheckBox>
 #include <QDateTime>
@@ -906,6 +908,19 @@ QWidget *MainWindow::buildLeft()
 	addui::polish(addLayerBtn_);
 	connect(addLayerBtn_, &QToolButton::clicked, this, [this]() { openAddLayer(); });
 	hdr->addWidget(addLayerBtn_);
+	delLayerBtn_ = new QToolButton(w); // D330: delete in plain sight (it was only in the menu, behind a flag)
+	delLayerBtn_->setObjectName(QStringLiteral("addMini"));
+	const auto binIcon = [btn = delLayerBtn_]() { btn->setIcon(icons::make(QStringLiteral("trash"), theme::color(QStringLiteral("text")), 14)); };
+	binIcon();
+	connect(theme::notifier(), &theme::Notifier::changed, delLayerBtn_, binIcon);
+	delLayerBtn_->setIconSize(QSize(14, 14));
+	delLayerBtn_->setStyleSheet(QStringLiteral("QToolButton { padding: 0; }"));
+	delLayerBtn_->setAccessibleName(QStringLiteral("Delete layer"));
+	delLayerBtn_->setToolTip(QStringLiteral("Delete the selected layer (Del). Asks first."));
+	delLayerBtn_->setFixedSize(28, 24);
+	addui::polish(delLayerBtn_);
+	connect(delLayerBtn_, &QToolButton::clicked, this, [this]() { layerDelete(); });
+	hdr->addWidget(delLayerBtn_);
 	updateAddButtons();
 	tabH_ = new QPushButton(QStringLiteral("H"), w);
 	tabV_ = new QPushButton(QStringLiteral("V"), w);
@@ -918,7 +933,13 @@ QWidget *MainWindow::buildLeft()
 	connect(tabH_, &QPushButton::clicked, this, [this]() { canvas_ = QStringLiteral("h"); tabV_->setChecked(false); tabH_->setChecked(true); selected_.clear(); loadLayers(); });
 	connect(tabV_, &QPushButton::clicked, this, [this]() { canvas_ = QStringLiteral("v"); tabH_->setChecked(false); tabV_->setChecked(true); selected_.clear(); loadLayers(); });
 	v->addLayout(hdr);
-	layerList_ = new QListWidget(w);
+	auto *dragList = new LayerList(w); // press and drag a row to reorder (D330)
+	layerList_ = dragList;
+	connect(dragList, &LayerList::moveRequested, this, [this](const QString &id, int to) {
+		if (id != selected_)
+			return;
+		layerMoveTo(layers_.size() - 1 - to); // list rows are top first, host order bottom first
+	});
 	connect(layerList_, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *it) {
 		selected_ = it ? it->data(Qt::UserRole).toString() : QString();
 		renderInspector();
@@ -952,16 +973,7 @@ QWidget *MainWindow::buildLeft()
 			const int to = i + delta; // host order: bottom first; up = higher index
 			if (to < 0 || to >= n)
 				return;
-			QJsonObject x;
-			x.insert(QStringLiteral("layer"), selected_);
-			x.insert(QStringLiteral("index"), to);
-			api_->host(QStringLiteral("layers.move"), layerArgs(x), [this](bool ok, const QJsonObject &b, const QString &err) {
-				if (!ok)
-					note(QStringLiteral("Move failed: ") + err);
-				else if (b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
-					return confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air" (D233)
-				loadLayers();
-			});
+			layerMoveTo(to); // saved into the project offline, live-only with "yes, on air" while live (D330)
 			return;
 		}
 	};
@@ -1166,16 +1178,13 @@ QWidget *MainWindow::buildRight()
 	inW_ = dbl(1, 16384, 0);
 	inH_ = dbl(1, 16384, 0);
 	inRot_ = dbl(-360, 360, 1);
-	// Position and size in one row; rotation and the crop toggle under it; the four crop boxes only when asked for.
+	// Position and size in one row; rotation under it; the four crop boxes always shown (D330: crop is a first-class
+	// edit, also by Alt+drag on an edge handle in the preview).
 	f->addWidget(field(QStringLiteral("X"), inX_), 1, 0);
 	f->addWidget(field(QStringLiteral("Y"), inY_), 1, 1);
 	f->addWidget(field(QStringLiteral("Width"), inW_), 1, 2);
 	f->addWidget(field(QStringLiteral("Height"), inH_), 1, 3);
 	f->addWidget(field(QStringLiteral("Rotation"), inRot_), 2, 0, 1, 2);
-	auto *cropToggle = new QPushButton(QStringLiteral("Crop"), inspForm_);
-	cropToggle->setCheckable(true);
-	cropToggle->setToolTip(QStringLiteral("Show the four crop boxes"));
-	f->addWidget(cropToggle, 2, 2, 1, 2, Qt::AlignBottom);
 	auto crop = [this]() {
 		auto *s = new QSpinBox(inspForm_);
 		s->setRange(0, 16384);
@@ -1194,9 +1203,7 @@ QWidget *MainWindow::buildRight()
 	crl->addWidget(field(QStringLiteral("Crop top"), crT_));
 	crl->addWidget(field(QStringLiteral("Crop right"), crR_));
 	crl->addWidget(field(QStringLiteral("Crop bottom"), crB_));
-	cropRow->setVisible(false);
 	f->addWidget(cropRow, 3, 0, 1, 4);
-	connect(cropToggle, &QPushButton::toggled, cropRow, &QWidget::setVisible);
 	auto *btns = new QHBoxLayout();
 	auto *apply = new QPushButton(QStringLiteral("Apply"), inspForm_);
 	auto *undo = new QPushButton(QStringLiteral("Undo changes"), inspForm_);
@@ -1950,21 +1957,20 @@ void MainWindow::renderMixer()
 		meters_[id] = meter;
 		g->addWidget(meter);
 		auto *bottom = new QHBoxLayout();
-		auto *slider = new QSlider(Qt::Horizontal);
-		slider->setRange(-60, 0);
-		const double db = m.value(QStringLiteral("volumeDb")).toDouble(0);
-		slider->setValue((int)std::lround(std::max(-60.0, std::min(0.0, db))));
-		auto *dbl = new QLabel(QStringLiteral("%1 dB").arg(slider->value()));
-		dbl->setMinimumWidth(48);
-		connect(slider, &QSlider::valueChanged, dbl, [dbl](int v) { dbl->setText(QStringLiteral("%1 dB").arg(v)); });
-		connect(slider, &QSlider::sliderReleased, this, [this, id, slider]() {
+		// D330: the shared slider (click jumps, typed dB, keys); the volume is sent once the user is done (committed).
+		auto *slider = new ValueSlider(-60, 0, 1, 0);
+		slider->setObjectName(QStringLiteral("vol:") + id); // probes find it by the source id
+		slider->setSuffix(QStringLiteral(" dB"));
+		slider->setPageStep(6);
+		slider->setValue(std::max(-60.0, std::min(0.0, m.value(QStringLiteral("volumeDb")).toDouble(0))));
+		slider->setAccessibleName(QStringLiteral("Volume"));
+		connect(slider, &ValueSlider::committed, this, [this, id](double v) {
 			QJsonObject p;
 			p.insert(QStringLiteral("id"), id);
-			p.insert(QStringLiteral("db"), slider->value());
+			p.insert(QStringLiteral("db"), (int)std::lround(v));
 			api_->host(QStringLiteral("mixer.setVolume"), p, [this](bool ok, const QJsonObject &, const QString &err) { if (!ok) note(QStringLiteral("Volume failed: ") + err); });
 		});
 		bottom->addWidget(slider, 1);
-		bottom->addWidget(dbl);
 		g->addLayout(bottom);
 		mixerBox_->insertWidget(row++, strip);
 	}
@@ -2943,6 +2949,10 @@ void MainWindow::updateAddButtons()
 	addLayerBtn_->setEnabled(!live_);
 	addSceneBtn_->setToolTip(live_ ? QStringLiteral("Not while live") : QStringLiteral("Add scene"));
 	addLayerBtn_->setToolTip(live_ ? QStringLiteral("Not while live") : QStringLiteral("Add layer"));
+	if (delLayerBtn_) { // D330: delete follows the same lock
+		delLayerBtn_->setEnabled(!live_);
+		delLayerBtn_->setToolTip(live_ ? QStringLiteral("Not while live") : QStringLiteral("Delete the selected layer (Del). Asks first."));
+	}
 }
 
 // ---- Right-click menus and keys on the layer and scene lists (D292) ----
@@ -3030,10 +3040,7 @@ QMenu *MainWindow::buildLayerMenu(QWidget *parent, bool blank)
 	    hasLookClip_ ? QString() : QStringLiteral("Copy a look first"), [this]() { lookPaste(); });
 	add("look", QStringLiteral("Look…"), QString(), hasPlacement, QString(), [this]() { lookFocus(); });
 	menu->addSeparator();
-	QString delTip = lockTip;
-	if (delTip.isEmpty() && !sceneEditOn_)
-		delTip = QStringLiteral("Turn on scene editing in Settings > Advanced");
-	add("delete", QStringLiteral("Delete…"), QStringLiteral("Del"), has && !live_ && sceneEditOn_, delTip, [this]() { layerDelete(); });
+	add("delete", QStringLiteral("Delete…"), QStringLiteral("Del"), has && !live_, lockTip, [this]() { layerDelete(); }); // no flag (D330)
 	lastMenu_ = QJsonObject{{QStringLiteral("kind"), QStringLiteral("layer")}, {QStringLiteral("items"), items}};
 	return menu;
 }
@@ -3122,15 +3129,46 @@ void MainWindow::layerDelete()
 		return note(QStringLiteral("Select a layer first."));
 	if (live_)
 		return note(QStringLiteral("Not while live."));
-	if (!sceneEditOn_)
-		return note(QStringLiteral("Turn on scene editing in Settings > Advanced to delete layers."));
 	if (QMessageBox::question(this, QStringLiteral("Delete layer"), QStringLiteral("Delete the layer \"%1\" from this scene?\nIt goes from both the H and the V picture.").arg(l.value(QStringLiteral("name")).toString(selected_))) != QMessageBox::Yes)
 		return;
 	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("layer.remove")}, {QStringLiteral("scene"), activeScene_}, {QStringLiteral("layer"), selected_}});
 }
 
-// Host order is bottom first, so a higher index is higher in the picture. Live, the server asks for "yes, on air".
+// Host order is bottom first, so a higher index is higher in the picture. Offline the move is saved into the project
+// (structure op layer.move to a target layer, D330); live, or for a layer the project does not have, it goes to the
+// host only (layers.move) and the server asks for "yes, on air".
 void MainWindow::layerMoveTo(int index)
+{
+	if (selected_.isEmpty() || index < 0 || index >= layers_.size())
+		return;
+	QStringList order; // host order with the moved layer taken out
+	for (const auto &l : layers_)
+		if (const QString id = l.toObject().value(QStringLiteral("id")).toString(); id != selected_)
+			order << id;
+	if (!live_ && order.size() == layers_.size() - 1 && !order.isEmpty()) {
+		const bool below = index == 0; // to the bottom: under the layer that is lowest now
+		const QString target = below ? order.first() : order.at(std::min<int>(index, order.size()) - 1);
+		const QJsonObject body{{QStringLiteral("op"), QStringLiteral("layer.move")}, {QStringLiteral("scene"), activeScene_}, {QStringLiteral("layer"), selected_},
+				       {QStringLiteral("canvas"), canvas_}, {QStringLiteral("target"), target}, {QStringLiteral("place"), below ? QStringLiteral("below") : QStringLiteral("above")}};
+		api_->post(QStringLiteral("ui/api/project/structure"), body, [this, index](bool ok, const QJsonObject &b, const QString &err) {
+			if (!ok && (err.contains(QStringLiteral("unknown-layer")) || err.contains(QStringLiteral("not-on-canvas")) || err.contains(QStringLiteral("unknown-scene")) ||
+				    err.contains(QStringLiteral("no-project-file"))))
+				return layerMoveHost(index); // not a project layer: the live-only order, as before
+			if (!ok)
+				note(QStringLiteral("Not moved: ") + plainStructureError(b.value(QStringLiteral("error")).toString(err)));
+			else if (!b.value(QStringLiteral("saved")).toBool())
+				note(QStringLiteral("Moved. Not saved to the project file: the change is live only."));
+			loadScenes();
+			if (sceneEditOn_)
+				loadStructure();
+			loadEdits(); // a structure edit clears the undo history
+		});
+		return;
+	}
+	layerMoveHost(index);
+}
+
+void MainWindow::layerMoveHost(int index)
 {
 	if (selected_.isEmpty() || index < 0 || index >= layers_.size())
 		return;
@@ -3895,6 +3933,13 @@ QJsonObject MainWindow::probe() const
 		addBtns.insert(QStringLiteral("scene"), QJsonObject{{QStringLiteral("enabled"), addSceneBtn_->isEnabled()}, {QStringLiteral("tip"), addSceneBtn_->toolTip()}, {QStringLiteral("icon"), !addSceneBtn_->icon().isNull()}});
 		addBtns.insert(QStringLiteral("layer"), QJsonObject{{QStringLiteral("enabled"), addLayerBtn_->isEnabled()}, {QStringLiteral("tip"), addLayerBtn_->toolTip()}, {QStringLiteral("icon"), !addLayerBtn_->icon().isNull()}});
 	}
+	if (delLayerBtn_) // D330
+		addBtns.insert(QStringLiteral("delete"), QJsonObject{{QStringLiteral("enabled"), delLayerBtn_->isEnabled()}, {QStringLiteral("tip"), delLayerBtn_->toolTip()}, {QStringLiteral("icon"), !delLayerBtn_->icon().isNull()}});
+	QJsonObject volumes; // D330: the shared volume sliders by source id
+	for (ValueSlider *s : findChildren<ValueSlider *>())
+		if (s->objectName().startsWith(QStringLiteral("vol:")))
+			volumes.insert(s->objectName().mid(4), s->value());
+	o.insert(QStringLiteral("volumes"), volumes);
 	o.insert(QStringLiteral("addButtons"), addBtns);
 	if (auto *d = qobject_cast<addui::AddLayerDialog *>(addDlg_.data()))
 		o.insert(QStringLiteral("addDialog"), d->probe());
@@ -3972,6 +4017,37 @@ bool MainWindow::probeAction(const QString &action)
 				layerList_->setCurrentRow(i);
 				return true;
 			}
+		return false;
+	}
+	// D330: press-and-drag in the layer list (rows top first), the trash button, and the shared sliders.
+	if (p.size() == 3 && p[0] == QStringLiteral("layer-drag"))
+		return static_cast<LayerList *>(layerList_)->probeDrag(p[1].toInt(), p[2].toInt());
+	if (p.size() == 1 && p[0] == QStringLiteral("delete-button")) {
+		if (!delLayerBtn_->isEnabled())
+			return false;
+		delLayerBtn_->click();
+		return true;
+	}
+	// look-slider:<type>:<key>:<op>:<arg> and volume-slider:<source id>:<op>:<arg>; op is click (share 0..1),
+	// type (percent-encoded text, then Enter), key (right|left|up|down|pageup|pagedown|home|end), wheel (notches, with
+	// focus) or wheel-nofocus (notches, focus elsewhere).
+	if ((p.size() == 5 && p[0] == QStringLiteral("look-slider")) || (p.size() == 4 && p[0] == QStringLiteral("volume-slider"))) {
+		ValueSlider *s = p[0] == QStringLiteral("look-slider") ? look_->probeSlider(p[1], p[2]) : findChild<ValueSlider *>(QStringLiteral("vol:") + p[1]);
+		if (!s)
+			return false;
+		const QString op = p[p.size() - 2], arg = p[p.size() - 1];
+		if (op == QStringLiteral("click"))
+			return s->probeClick(arg.toDouble());
+		if (op == QStringLiteral("type"))
+			return s->probeType(QUrl::fromPercentEncoding(arg.toUtf8()));
+		if (op == QStringLiteral("wheel") || op == QStringLiteral("wheel-nofocus"))
+			return s->probeWheel(arg.toInt(), op == QStringLiteral("wheel"));
+		if (op == QStringLiteral("key")) {
+			static const QMap<QString, int> keys{{QStringLiteral("right"), Qt::Key_Right}, {QStringLiteral("left"), Qt::Key_Left}, {QStringLiteral("up"), Qt::Key_Up},
+							     {QStringLiteral("down"), Qt::Key_Down}, {QStringLiteral("pageup"), Qt::Key_PageUp}, {QStringLiteral("pagedown"), Qt::Key_PageDown},
+							     {QStringLiteral("home"), Qt::Key_Home}, {QStringLiteral("end"), Qt::Key_End}};
+			return keys.contains(arg) && s->probeKey(keys.value(arg));
+		}
 		return false;
 	}
 	if (p.size() == 2 && p[0] == QStringLiteral("select-scene")) {

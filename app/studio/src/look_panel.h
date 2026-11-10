@@ -18,6 +18,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QSlider;
+class ValueSlider;
 class QTimer;
 class QVBoxLayout;
 class Switch;
@@ -48,6 +49,7 @@ public:
 	QJsonObject probe() const;
 	bool probeToggle(const QString &type, bool on);
 	bool probeSet(const QString &type, const QString &key, double value);
+	ValueSlider *probeSlider(const QString &type, const QString &key) const; // the shared slider of a number (D330)
 
 signals:
 	void edited(const QJsonArray &effects); // at once, on every change
@@ -60,8 +62,7 @@ private:
 		QFrame *frame = nullptr;
 		Switch *sw = nullptr;
 		QWidget *body = nullptr;
-		QMap<QString, QSlider *> sliders;
-		QMap<QString, QDoubleSpinBox *> spins;
+		QMap<QString, ValueSlider *> sliders; // slider + number box (value_slider.h, D330)
 		QMap<QString, QLineEdit *> hex;
 		QMap<QString, QPushButton *> swatches;
 	};
