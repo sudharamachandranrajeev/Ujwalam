@@ -51,6 +51,11 @@ import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
+import { STREAM_SETTINGS_FLAG, createSettingsRoutes } from './settings-routes.mjs';
+
+// Scene transition types and easing curves (D327 TR1, data/transitions/easing.json), read once.
+let easingCache = null;
+export const easingChoices = () => (easingCache ??= JSON.parse(readFileSync(path.join(path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..'), 'data', 'transitions', 'easing.json'), 'utf8')));
 
 // The app folder (repo or install): settings folders may not point into it (D284).
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -590,23 +595,30 @@ export function createStudioServer(opts) {
   // A stinger the host refused (file missing, module absent) is not asked for again until the project changes it; the
   // canvas cuts meanwhile (D242).
   const trRefused = {};
-  const trKey = (t) => JSON.stringify([t.type, t.durationMs, t.file ?? null, t.pointMs ?? null, t.audio ?? null]);
+  const trKey = (t) => JSON.stringify([t.type, t.durationMs, t.file ?? null, t.pointMs ?? null, t.audio ?? null, t.easing ?? null]);
   async function transitionSync(hs) {
     if (!isPlain(hs.transitions)) return; // older host or fake: nothing to sync
     const on = !!flags && flags.isOn(TRANSITIONS_FLAG);
     const want = on ? projectTransitions() : {};
+    // D327 TR1 (flag stream-settings): easing curves and "Mirror main canvas transitions" for the portrait canvas.
+    const tr1 = !!flags && flags.isOn(STREAM_SETTINGS_FLAG);
     for (const [hid, cur] of Object.entries(hs.transitions)) {
-      const t = want[hid.toLowerCase()];
+      let t = want[hid.toLowerCase()];
+      if (tr1 && hid.toLowerCase() === 'v' && t?.mirror === true) t = want.h;
       let p = { type: 'cut', durationMs: 0 };
-      if (t?.type === 'fade' && Number.isInteger(t.durationMs)) p = { type: 'fade', durationMs: Math.min(10000, Math.max(0, t.durationMs)) };
+      if (t?.type === 'fade' && Number.isInteger(t.durationMs)) {
+        p = { type: 'fade', durationMs: Math.min(10000, Math.max(0, t.durationMs)) };
+        if (tr1 && typeof t.easing === 'string' && t.easing !== 'linear' && trRefused[hid] !== trKey({ ...p, easing: t.easing })) p.easing = t.easing;
+      }
       else if (t?.type === 'stinger' && isPlain(t.file) && typeof t.file.base === 'string' && typeof t.file.rel === 'string' && Number.isInteger(t.pointMs)) {
         p = { type: 'stinger', durationMs: 0, file: { base: t.file.base, rel: t.file.rel }, pointMs: Math.min(10000, Math.max(0, t.pointMs)), audio: t.audio !== false };
       }
       if (p.type === 'stinger' && trRefused[hid] === trKey(p)) p = { type: 'cut', durationMs: 0 };
-      const same = cur?.type === p.type && cur?.durationMs === p.durationMs
+      const same = cur?.type === p.type && cur?.durationMs === p.durationMs && (cur?.easing ?? 'linear') === (p.easing ?? 'linear')
         && (p.type !== 'stinger' || (cur?.file === `${p.file.base}:${p.file.rel}` && cur?.pointMs === p.pointMs && (cur?.audio ?? true) === p.audio));
       if (same) continue;
-      try { await host.call('transitions.set', { canvas: hid, ...p }); } catch { if (p.type === 'stinger') trRefused[hid] = trKey(p); }
+      // A refused stinger or easing (older host, unknown curve) is not asked for again until the project changes it.
+      try { await host.call('transitions.set', { canvas: hid, ...p }); } catch { if (p.type === 'stinger' || p.easing) trRefused[hid] = trKey(p); }
     }
   }
   async function previewSync(hs) {
@@ -675,7 +687,8 @@ export function createStudioServer(opts) {
     let doc;
     try { projectSync.flush(); doc = loadProject(file).project; } catch { return json(res, 200, { on, available: false }); }
     return json(res, 200, { on, available: true, canvases: doc.canvases.map((c) => ({ id: c.id, transition: c.transition ?? { type: 'cut', durationMs: 0 } })),
-      videos: listAssets(assetsDir).filter((a) => a.kind === 'media').map((a) => a.rel) });
+      videos: listAssets(assetsDir).filter((a) => a.kind === 'media').map((a) => a.rel),
+      ...(flags.isOn(STREAM_SETTINGS_FLAG) ? { easing: easingChoices() } : {}) });
   }
   // Sets one canvas's project transition (refused while live); the status poll then applies it to the host.
   async function transitionEdit(res, body) {
@@ -686,8 +699,11 @@ export function createStudioServer(opts) {
     if (!flags || !flags.isOn(TRANSITIONS_FLAG)) return json(res, 404, { error: 'transitions-off' });
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
-    const keys = ['canvas', 'type', 'durationMs', 'file', 'pointMs', 'audio'];
+    // easing / mirror (D327 TR1) only with flag stream-settings.
+    const keys = ['canvas', 'type', 'durationMs', 'file', 'pointMs', 'audio', ...(flags.isOn(STREAM_SETTINGS_FLAG) ? ['easing', 'mirror'] : [])];
     if (!isPlain(body) || Object.keys(body).some((k) => !keys.includes(k)) || !['h', 'v'].includes(body.canvas) || !['cut', 'fade', 'stinger'].includes(body.type)) return json(res, 400, { error: 'bad-params' });
+    if (body.easing !== undefined && (body.type !== 'fade' || !easingChoices().easing.some((e) => e.id === body.easing))) return json(res, 400, { error: 'bad-params' });
+    if (body.mirror !== undefined && (typeof body.mirror !== 'boolean' || body.canvas !== 'v')) return json(res, 400, { error: 'bad-params' });
     const ms = (v) => Number.isInteger(v) && v >= 0 && v <= 10000;
     if (body.type === 'fade' && !ms(body.durationMs)) return json(res, 400, { error: 'bad-params' });
     if (body.type === 'stinger' && (!ms(body.pointMs) || typeof body.file !== 'string' || (body.audio !== undefined && typeof body.audio !== 'boolean'))) return json(res, 400, { error: 'bad-params' });
@@ -702,7 +718,8 @@ export function createStudioServer(opts) {
     const c = doc.canvases.find((x) => x.id === body.canvas);
     if (!c) return json(res, 409, { error: 'unknown-canvas' });
     c.transition = body.type === 'stinger' ? { type: 'stinger', durationMs: 0, file: { base: 'media', rel: body.file }, pointMs: body.pointMs, ...(body.audio === false ? { audio: false } : {}) }
-      : { type: body.type, durationMs: body.type === 'fade' ? body.durationMs : 0 };
+      : { type: body.type, durationMs: body.type === 'fade' ? body.durationMs : 0, ...(body.easing && body.easing !== 'linear' ? { easing: body.easing } : {}) };
+    if (body.mirror === true) c.transition.mirror = true;
     try { saveProject(file, doc); } catch { return json(res, 409, { error: 'not-saved' }); }
     projectSync.reload();
     return json(res, 200, { ok: true, canvas: c.id, transition: c.transition });
@@ -802,6 +819,21 @@ export function createStudioServer(opts) {
     return id;
   }
   const publicPending = (id, p) => ({ pendingId: id, summary: p.summary, phrase: p.phrase, expiresAt: p.expiresAt, ...(p.step ? { step: p.step, of: 2 } : {}), ...(p.readiness ? { readiness: publicReadiness(p.readiness) } : {}) });
+  // D327: Stream settings, Outputs panel, Integrations, Force complete transition (settings-routes.mjs).
+  const settingsRoutes = createSettingsRoutes({
+    dataDir: opts.dataDir, flags, host, json, addPending, publicPending, getPending: (id) => pending.get(id), log,
+    remoteToken: typeof opts.remoteToken === 'string' ? opts.remoteToken : undefined,
+    ...(opts.tcpAnswers ? { tcpAnswers: opts.tcpAnswers } : {}),
+    botConfig: opts.botConfig ?? (() => loadBotConfig()),
+    canvases: () => {
+      // The project's canvas sizes (the Stream page shows them read-only; rungs never upscale them).
+      const file = projectSync?.status?.().file;
+      if (typeof file !== 'string') return undefined;
+      const doc = loadProject(file).project;
+      const c = (id) => doc.canvases.find((x) => x.id === id);
+      return c('h') && c('v') ? { H: { w: c('h').width, h: c('h').height }, V: { w: c('v').width, h: c('v').height } } : undefined;
+    },
+  });
 
   async function handleCoreOutcome(r, summary) {
     // r: { verdict, reason, confirm?, dispatch? } from the event core. The page gets verdict/reason and, when a
@@ -888,6 +920,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/posts/youtube/status') {
       try { const st = await youtubeAuth().status(); return json(res, 200, { signedIn: st.signedIn === true, hasClient: st.hasClient === true, phrase: UPLOAD_PHRASE }); } catch { return json(res, 502, { error: 'youtube-status-failed' }); }
     }
+    if (req.method === 'GET' && await settingsRoutes.handle('GET', route, null, res)) return undefined; // D327 pages
     if (req.method !== 'POST') return text(res, 405, 'method-not-allowed');
     // Mutating: Origin == our origin, CSRF header (timing-safe), JSON body.
     if (req.headers.origin !== origin) return text(res, 403, 'bad-origin');
@@ -895,6 +928,7 @@ export function createStudioServer(opts) {
     if (typeof h !== 'string' || !sameSecret(h, s.csrf)) return text(res, 403, 'bad-csrf');
     const body = await readBody(req, res);
     if (body === null) return undefined;
+    if (await settingsRoutes.handle('POST', route, body, res)) return undefined;
 
     if (route === '/ui/api/edits/undo' || route === '/ui/api/edits/redo') {
       // Not while live (D238): a live layout change needs the typed on-air phrase, so undo there is the inspector's
@@ -1109,6 +1143,7 @@ export function createStudioServer(opts) {
       pending.delete(body.pendingId);
       try {
         if (p.kind === 'flag') return json(res, 200, { verdict: 'allow', flags: applyFlag(p.flagId, true) });
+        if (p.kind === 'output') return settingsRoutes.confirm(p, res); // D327 OS3: one output while live
         if (p.kind === 'bot') {
           if (!botsOn()) return json(res, 404, { error: 'bot-manager-off' }); // the flag may have been switched off meanwhile
           const r = p.verb === 'start' ? await bots.start(p.bot) : await bots.stop(p.bot);
@@ -1123,6 +1158,15 @@ export function createStudioServer(opts) {
           try {
           const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse
           if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
+          // D327 OS3 (flag outputs-panel): Start stream starts the outputs switched on in the panel only.
+          let callParams = p.params;
+          if (p.method === 'stream.start') {
+            const sinks = await settingsRoutes.startSinks();
+            if (Array.isArray(sinks)) {
+              if (!sinks.length) return json(res, 200, { verdict: 'refuse', reason: 'no-outputs-enabled' });
+              callParams = { ...p.params, sinks };
+            }
+          }
           // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
           let overrideLogged;
           if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
@@ -1136,7 +1180,7 @@ export function createStudioServer(opts) {
           }
           const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
           let out;
-          try { out = await callHost(p.method, p.params); } catch (e) { ht?.fail('Did not finish'); throw e; }
+          try { out = await callHost(p.method, callParams); } catch (e) { ht?.fail('Did not finish'); throw e; }
           ht?.done();
           if (Number.isInteger(startGen) && !(await authority.arm(startGen))) {
             // A Stop / End all came in while this start was on its way to the host (after the check above): the newer

@@ -12,6 +12,39 @@ import { createStudioServer, TRANSITIONS_FLAG } from '../services/studio-ui/serv
 
 const UI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'ui');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+test('D327 TR1 (flag stream-settings): easing is sent with a fade; the portrait canvas mirrors the main one; off: no easing', async () => {
+  const tr = { H: { type: 'cut', durationMs: 0, available: true }, V: { type: 'cut', durationMs: 0, available: true } };
+  const calls = [];
+  const host = {
+    describe: () => ({ kind: 'host', available: true }),
+    call: async (m, p) => {
+      if (m === 'host.status') return { live: false, recording: false, transitions: structuredClone(tr) };
+      if (m === 'transitions.set') { calls.push(p); tr[p.canvas] = { type: p.type, durationMs: p.durationMs, ...(p.easing ? { easing: p.easing } : {}), available: true }; return tr; }
+      return {};
+    },
+  };
+  const flags = createFlags({ dataDir: mkdtempSync(path.join(os.tmpdir(), 'ujw-tr-')) });
+  flags.set(TRANSITIONS_FLAG, true);
+  const core = { describe: () => ({ available: false }), call: async () => { throw new Error('x'); } };
+  const transitions = { h: { type: 'fade', durationMs: 800, easing: 'in-out-cubic' }, v: { type: 'cut', durationMs: 0, mirror: true } };
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: 'k'.repeat(48), flags, transitions, limits: { statusPollMs: 20 } });
+  await srv.listen();
+  const until = async (fn, what) => { const t0 = Date.now(); while (Date.now() - t0 < 3000) { if (fn()) return; await sleep(10); } assert.fail(`timed out: ${what}`); };
+  try {
+    // stream-settings off: plain fade on H, V its own cut (mirror and easing ignored)
+    await until(() => tr.H.type === 'fade', 'H fade');
+    await sleep(80);
+    assert.equal(tr.H.easing, undefined);
+    assert.equal(tr.V.type, 'cut');
+    flags.set('stream-settings', true);
+    await until(() => tr.H.easing === 'in-out-cubic' && tr.V.type === 'fade', 'easing on H, V mirrors H');
+    assert.deepEqual(tr.V, { type: 'fade', durationMs: 800, easing: 'in-out-cubic', available: true });
+    const n = calls.length;
+    await sleep(80);
+    assert.equal(calls.length, n, 'a matching host is not set again');
+  } finally { await srv.close(); }
+});
 async function until(fn, what, ms = 3000) {
   const t0 = Date.now();
   while (Date.now() - t0 < ms) { if (fn()) return; await sleep(10); }

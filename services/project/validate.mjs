@@ -145,7 +145,13 @@ export function validateProject(doc) {
         const t = c.transition; const tp = `${p}.transition`;
         if (!isObj(t)) err(tp, 'must be an object');
         else {
-          noExtra(t, ['type', 'durationMs', 'file', 'pointMs', 'audio'], tp); req(t, ['type', 'durationMs'], tp);
+          noExtra(t, ['type', 'durationMs', 'file', 'pointMs', 'audio', 'easing', 'mirror'], tp); req(t, ['type', 'durationMs'], tp);
+          // D327 TR1: easing = a curve id (data/transitions/easing.json; the host refuses an id it does not know), not for
+          // a stinger; mirror = the portrait canvas uses the main canvas transition.
+          if ('easing' in t && (typeof t.easing !== 'string' || !/^[a-z]+(-[a-z]+)*$/.test(t.easing))) err(`${tp}.easing`, 'must be an easing id');
+          if ('easing' in t && t.type === 'stinger') err(`${tp}.easing`, 'is not for a stinger');
+          if ('mirror' in t && typeof t.mirror !== 'boolean') err(`${tp}.mirror`, 'must be true or false');
+          if ('mirror' in t && c.id !== 'v') err(`${tp}.mirror`, 'is for the portrait canvas (v) only');
           if ('type' in t && !['cut', 'fade', 'stinger'].includes(t.type)) err(`${tp}.type`, 'must be "cut", "fade" or "stinger"');
           if ('durationMs' in t) num(t.durationMs, `${tp}.durationMs`, 0, 10000, true);
           if (t.type === 'stinger') { req(t, ['file', 'pointMs'], tp); if ('file' in t) pathRefOk(t.file, `${tp}.file`); }
