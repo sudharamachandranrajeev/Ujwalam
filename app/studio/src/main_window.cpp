@@ -7,6 +7,7 @@
 #include "appearance.h"
 #include "motion.h"
 #include "stats_cards.h"
+#include "stream_pages.h"
 #include "taskbar.h"
 #include "tray.h"
 #include "theme.h"
@@ -1344,6 +1345,14 @@ QWidget *MainWindow::buildRight()
 	botBox_->setVisible(false);
 	v->addWidget(botBox_);
 
+	// Outputs (D327 OS3, flag outputs-panel): stream_pages.h.
+	outputsPanel_ = new streampages::OutputsPanel(api_, body);
+	outputsPanel_->setVisible(false);
+	v->addWidget(outputsPanel_);
+	connect(outputsPanel_, &streampages::OutputsPanel::confirmNeeded, this, [this](const QJsonObject &p) { confirm(p); });
+	connect(outputsPanel_, &streampages::OutputsPanel::message, this, [this](const QString &t) { note(t); });
+	connect(outputsPanel_, &streampages::OutputsPanel::addRequested, this, [this]() { openSettings(false, QStringLiteral("Stream")); });
+
 	v->addStretch(1);
 	stats_ = new StatsCards(body);
 	v->addWidget(stats_);
@@ -2200,6 +2209,13 @@ void MainWindow::loadFlags()
 		}
 		if (botsOn_ && botPoll_++ % 5 == 0)
 			loadBots();
+		bool op = false; // D327 OS3
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("outputs-panel"))
+				op = x.toObject().value(QStringLiteral("on")).toBool();
+		outputsPanel_->setVisible(op);
+		if (op)
+			outputsPanel_->refresh();
 		// Both edit the project and are refused while live (the server checks too).
 		structBox_->setEnabled(!live_);
 		transBox_->setEnabled(!live_);
@@ -3531,13 +3547,13 @@ void MainWindow::saveSettings(const QJsonObject &body, bool retried)
 
 // Settings (D284, D290, D293): sections on the left (Clips, Folders, Layer effects, Appearance, Advanced), the page on the right. The
 // feature flags list lives in Advanced: the window borrows the hidden flag list while Settings is open.
-void MainWindow::openSettings(bool firstRun)
+void MainWindow::openSettings(bool firstRun, const QString &startPage)
 {
 	if (settingsDlg_) { // already open (or its answer is on the way)
 		settingsDlg_->raise();
 		return;
 	}
-	api_->get(QStringLiteral("ui/api/settings"), [this, firstRun](bool ok, const QJsonObject &b, const QString &err) {
+	api_->get(QStringLiteral("ui/api/settings"), [this, firstRun, startPage](bool ok, const QJsonObject &b, const QString &err) {
 		if (!ok)
 			return note(QStringLiteral("Settings not available: ") + err);
 		if (settingsDlg_)
@@ -3678,6 +3694,27 @@ void MainWindow::openSettings(bool firstRun)
 		pf->addWidget(dirBox);
 		pf->addStretch(1);
 
+		// D327: Stream, Transitions and Integrations pages, each behind its flag (stream_pages.h).
+		auto flagOn = [this](const char *id) {
+			for (int i = 0; i < flagList_->count(); i++)
+				if (flagList_->item(i)->data(Qt::UserRole).toString() == QLatin1String(id))
+					return flagList_->item(i)->checkState() == Qt::Checked;
+			return false;
+		};
+		auto scrolled = [dlg](QWidget *w) {
+			auto *sa = new QScrollArea(dlg);
+			sa->setWidgetResizable(true);
+			sa->setFrameShape(QFrame::NoFrame);
+			sa->setWidget(w);
+			return sa;
+		};
+		if (flagOn("stream-settings"))
+			page(QStringLiteral("Stream"))->addWidget(scrolled(new streampages::StreamPage(api_, dlg)), 1);
+		if (flagOn("stream-settings") && flagOn("transitions"))
+			page(QStringLiteral("Transitions"))->addWidget(scrolled(new streampages::TransitionsPage(api_, live_, dlg)), 1);
+		if (flagOn("integrations"))
+			page(QStringLiteral("Integrations"))->addWidget(scrolled(new streampages::IntegrationsPage(api_, dlg)), 1);
+
 		// Layer effects: the scene's own effects (rounded game frame, shadows, the video buttons) are a feature flag
 		// underneath; this is its plain on/off. The Look panel in the inspector needs no setting.
 		auto *pl = page(QStringLiteral("Layer effects"));
@@ -3724,11 +3761,23 @@ void MainWindow::openSettings(bool firstRun)
 		flagList_->setMinimumHeight(220);
 		flagList_->show();
 		pa->addWidget(flagBox, 1);
-		nav->setCurrentRow(firstRun ? 0 : 0);
-
 		connect(nav, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
+		nav->setCurrentRow(0);
+		if (!startPage.isEmpty())
+			if (const auto found = nav->findItems(startPage, Qt::MatchExactly); !found.isEmpty())
+				nav->setCurrentItem(found.first());
 		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
-		connect(bb, &QDialogButtonBox::accepted, dlg, &QDialog::accept);
+		connect(bb, &QDialogButtonBox::accepted, dlg, [this, dlg, nav]() {
+			// D327: a Stream page change over a platform limit keeps Settings open on that page (problems shown there).
+			for (auto *sp : dlg->findChildren<streampages::StreamPage *>())
+				if (sp->blocksSave()) {
+					if (const auto found = nav->findItems(QStringLiteral("Stream"), Qt::MatchExactly); !found.isEmpty())
+						nav->setCurrentItem(found.first());
+					note(QStringLiteral("Not saved: Settings > Stream has a value over a platform limit (shown in red)."));
+					return;
+				}
+			dlg->accept();
+		});
 		connect(bb, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
 		outer->addWidget(bb);
 		dlg->resize(860, std::max(560, dlg->sizeHint().height()));
@@ -3744,6 +3793,14 @@ void MainWindow::openSettings(bool firstRun)
 					saveSettings(QJsonObject{{QStringLiteral("clips"), QJsonObject{{QStringLiteral("recording"), QStringLiteral("ask")}, {QStringLiteral("live"), QStringLiteral("ask")}}}});
 				return;
 			}
+			// D327 pages save through their own routes (the server checks every value again).
+			const streampages::Note pageNote = [this](const QString &t) { note(t); };
+			for (auto *sp : dlg->findChildren<streampages::StreamPage *>())
+				sp->save(pageNote);
+			for (auto *tp : dlg->findChildren<streampages::TransitionsPage *>())
+				tp->save(pageNote);
+			for (auto *ip : dlg->findChildren<streampages::IntegrationsPage *>())
+				ip->save(pageNote);
 			const auto dir = [](QLineEdit *e) { return e->text().trimmed().isEmpty() ? QJsonValue() : QJsonValue(e->text().trimmed()); };
 			QJsonObject body;
 			QJsonObject clipsBody{{QStringLiteral("recording"), rec->currentData().toString()}, {QStringLiteral("live"), liv->currentData().toString()}};
@@ -3914,6 +3971,17 @@ QJsonObject MainWindow::probe() const
 							{QStringLiteral("clip"), clipBtn_->accessibleName()}, {QStringLiteral("mark"), markBtn_->accessibleName()},
 							{QStringLiteral("streamIcon"), streamBtn_->property("iconState").toString()}});
 	o.insert(QStringLiteral("flagsInSettings"), flagList_->parentWidget() != flagHome_); // the list moved out of the main window (D290)
+	QJsonObject op = outputsPanel_->probe(); // D327 OS3
+	op.insert(QStringLiteral("shown"), !outputsPanel_->isHidden());
+	o.insert(QStringLiteral("outputsPanel"), op);
+	if (settingsDlg_) { // D327 pages
+		if (auto *sp = settingsDlg_->findChild<streampages::StreamPage *>())
+			o.insert(QStringLiteral("streamPage"), sp->probe());
+		if (auto *trp = settingsDlg_->findChild<streampages::TransitionsPage *>())
+			o.insert(QStringLiteral("transitionsPage"), trp->probe());
+		if (auto *ip = settingsDlg_->findChild<streampages::IntegrationsPage *>())
+			o.insert(QStringLiteral("integrationsPage"), ip->probe());
+	}
 	if (settingsDlg_) {
 		QJsonArray sections;
 		if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")))
@@ -4052,10 +4120,45 @@ bool MainWindow::probeAction(const QString &action)
 		openSettings(false);
 		return true;
 	}
+	// D327: output-toggle:<id>:<on|off> clicks the Outputs panel switch; stream-*, tr-*, int-* go to the Settings pages.
+	if (p.size() == 3 && p[0] == QStringLiteral("output-toggle"))
+		return outputsPanel_->probeToggle(p[1], p[2] == QStringLiteral("on"));
+	if (p.size() == 1 && p[0] == QStringLiteral("outputs-add")) {
+		if (auto *b = outputsPanel_->findChild<QPushButton *>(QStringLiteral("outputsAdd")); b && !outputsPanel_->isHidden()) {
+			b->click();
+			return true;
+		}
+		return false;
+	}
+	if (settingsDlg_ && (p[0].startsWith(QStringLiteral("stream-")) || p[0].startsWith(QStringLiteral("tr-")) || p[0].startsWith(QStringLiteral("int-")))) {
+		if (auto *sp = settingsDlg_->findChild<streampages::StreamPage *>(); sp && p[0].startsWith(QStringLiteral("stream-")))
+			return sp->probeAction(p);
+		if (auto *tp = settingsDlg_->findChild<streampages::TransitionsPage *>(); tp && p[0].startsWith(QStringLiteral("tr-")))
+			return tp->probeAction(p);
+		if (auto *ip = settingsDlg_->findChild<streampages::IntegrationsPage *>(); ip && p[0].startsWith(QStringLiteral("int-")))
+			return ip->probeAction(p);
+		return false;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("settings-section")) { // show a section by its title (for the picture)
+		if (!settingsDlg_)
+			return false;
+		auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav"));
+		const auto found = nav ? nav->findItems(QUrl::fromPercentEncoding(p[1].toUtf8()), Qt::MatchExactly) : QList<QListWidgetItem *>();
+		if (found.isEmpty())
+			return false;
+		nav->setCurrentItem(found.first());
+		return true;
+	}
 	if (p.size() >= 1 && p[0].startsWith(QStringLiteral("settings-")) && p[0] != QStringLiteral("settings-open")) {
 		if (!settingsDlg_)
 			return false;
 		if (p[0] == QStringLiteral("settings-save") || p[0] == QStringLiteral("settings-cancel")) {
+			if (p[0] == QStringLiteral("settings-save")) // a click on Save, so its checks run (D327)
+				for (auto *bb : settingsDlg_->findChildren<QDialogButtonBox *>())
+					if (QPushButton *b = bb->button(QDialogButtonBox::Save)) {
+						b->click();
+						return true;
+					}
 			p[0] == QStringLiteral("settings-save") ? settingsDlg_->accept() : settingsDlg_->reject();
 			return true;
 		}
