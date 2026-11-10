@@ -92,6 +92,23 @@ node --test tests/studio-qt-d327.test.mjs    # 5/5 pass (76.6 s)
 
 Full regression of `tests/studio-*.test.mjs` before the Qt commit: 320 pass, 1 skipped. Commit hook CI: 9/9 pass.
 
+## Codex review fixes (commit 084efcd)
+
+Two P1 live-path findings, both fixed with regression tests:
+
+1. A live switch-on confirmed just before End all could restart that output after End all. Now it takes the stop
+   generation (and the go-live authority generation with the launcher) before its live check, re-checks before the
+   host call (not sent) and after it (that output is stopped again).
+2. With stream-settings on and outputs-panel off, Start stream started every sink, disabled outputs too. Now the
+   saved enabled outputs are honoured while either flag is on; none enabled refuses with "No output is switched on".
+
+```
+node --test tests/studio-ui-stream-settings.test.mjs     # 13/13 pass (3 race tests, 2 flag tests new)
+node --test app/host/tests/host-output-toggle.test.mjs   # 2/2 pass
+# twitch-2: 132 video packets; kick-4: 0 bytes after End all
+node --test tests/studio-*.test.mjs (Qt tests excluded)  # 250 pass, 1 skipped, 0 fail
+```
+
 ## Screenshots
 
 Headless pictures in `%TEMP%\ujwalam-d327-shots\` only (never in the repo): `stream.png`, `stream-settings.png`,
