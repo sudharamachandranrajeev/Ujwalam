@@ -97,6 +97,20 @@ describe('data source', () => {
     } finally { stop(); }
   });
 
+  test('watch: after stop no pending debounce or retry runs, even when a poll ran in between (review P2)', async () => {
+    const f = path.join(tmp(), 'x.json');
+    writeFileSync(f, '{"n":1}'); old(f);
+    const s = createDataSource({ kind: 'k', file: f, parse: numParse, settleMs: 0 });
+    const stop = s.watch({ debounceMs: 400, pollMs: 40 }); // the poll runs long before the debounce fires
+    writeViaRename(f, '{"n":2}');                            // a watch event: debounce pending
+    assert.ok(await until(() => s.status().version === 1, 300), 'the poll applied the change');
+    stop();
+    const v = s.status().version;
+    writeViaRename(f, '{"n":33}');                           // only the leaked debounce timer could read this
+    await sleep(700);
+    assert.equal(s.status().version, v, 'nothing read the file after stop');
+  });
+
   test('notifier: a rejection writes a failed notice task, a later valid change turns it into done', () => {
     const d = tmp(); const lines = [];
     const n = createDataNotifier({ dataDir: d, writeTask: (dir, t) => { mkdirSync(path.join(dir, 'tasks'), { recursive: true }); writeFileSync(path.join(dir, 'tasks', `${t.id}.json`), JSON.stringify(t)); return true; }, log: (m) => lines.push(m) });
@@ -136,6 +150,25 @@ describe('owners', () => {
     writeFileSync(defsFile, JSON.stringify({ flags: [...defs.flags, { id: 'lu2-test-flag', description: 'test', default: true, since: '2026-11-10' }] })); old(defsFile);
     const later2 = Date.now() + 1100; while (Date.now() < later2) { /* idem */ }
     assert.equal(f.isOn('lu2-test-flag'), true, 'new definition applied');
+  });
+
+  test('flags: a known flag with a non-boolean value rejects the whole file; a default-on flag does not turn on (review P2)', () => {
+    const d = tmp(); const seen = [];
+    const defsFile = path.join(d, 'flags.json');
+    const defs = JSON.parse(readFileSync(DEFAULT_FLAGS_FILE, 'utf8'));
+    defs.flags.push({ id: 'lu2-default-on', description: 'test', default: true, since: '2026-11-10' });
+    writeFileSync(defsFile, JSON.stringify(defs)); old(defsFile);
+    const f = createFlags({ dataDir: d, definitionsFile: defsFile, report: (e) => seen.push(e) });
+    const local = path.join(d, LOCAL_NAME);
+    writeFileSync(local, JSON.stringify({ flags: { 'lu2-default-on': false } })); old(local);
+    assert.equal(f.isOn('lu2-default-on'), false);
+    writeFileSync(local, JSON.stringify({ flags: { 'lu2-default-on': 'false' } })); old(local);
+    assert.equal(f.isOn('lu2-default-on'), false, 'the override stays off');
+    const r = seen.filter((e) => e.kind === 'flags-local' && !e.ok).at(-1);
+    assert.match(r?.why ?? '', /lu2-default-on must be true or false/);
+    writeFileSync(local, JSON.stringify({ flags: { 'lu2-default-on': false, 'not-a-flag': 'x' } })); old(local);
+    assert.equal(f.isOn('lu2-default-on'), false);
+    assert.equal(f.dataStatus().find((x) => x.kind === 'flags-local').rejected, null, 'unknown ids are not checked');
   });
 
   test('posting rules: a valid edit applies, a broken one keeps the last good rules, broken at start fails closed', () => {

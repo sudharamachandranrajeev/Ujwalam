@@ -155,14 +155,21 @@ export function createDataSource(opts) {
   /** Directory watch + slow poll. debounceMs groups the burst of events one save makes. */
   function watch({ debounceMs = 200, pollMs = 2000 } = {}) {
     if (!firstDone) first();
-    let t = null;
-    let retry = null;
+    // Each timer owns its own ref and clears only that ref; nothing runs or is scheduled after stop().
+    let stopped = false;
+    let t = null;     // debounce of file-system events
+    let retry = null; // one retry while the file settles
     const run = () => {
-      t = null;
+      if (stopped) return;
       const r = check();
-      if (r.pending && !retry) { retry = setTimeout(() => { retry = null; run(); }, settleMs); retry.unref?.(); }
+      if (r.pending && !retry && !stopped) { retry = setTimeout(() => { retry = null; run(); }, settleMs); retry.unref?.(); }
     };
-    const kick = () => { if (t) clearTimeout(t); t = setTimeout(run, debounceMs); t.unref?.(); };
+    const kick = () => {
+      if (stopped) return;
+      if (t) clearTimeout(t);
+      t = setTimeout(() => { t = null; run(); }, debounceMs);
+      t.unref?.();
+    };
     let w = null;
     try {
       w = fsWatch(path.dirname(file), { persistent: false }, (_ev, name) => { if (!name || String(name) === base) kick(); });
@@ -170,7 +177,14 @@ export function createDataSource(opts) {
     } catch { w = null; } // the directory may not exist yet: the poll still sees the file when it appears
     const poll = setInterval(() => { if (now() - lastCheck >= pollMs / 2) run(); }, pollMs);
     poll.unref?.();
-    return () => { if (t) clearTimeout(t); if (retry) clearTimeout(retry); clearInterval(poll); try { w?.close(); } catch { /* gone */ } };
+    return () => {
+      stopped = true;
+      if (t) clearTimeout(t);
+      if (retry) clearTimeout(retry);
+      t = null; retry = null;
+      clearInterval(poll);
+      try { w?.close(); } catch { /* gone */ }
+    };
   }
 
   return { get, check, status, watch, onApply: (fn) => { subs.add(fn); return () => subs.delete(fn); }, kind, file };

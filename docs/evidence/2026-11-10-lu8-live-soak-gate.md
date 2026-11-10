@@ -1,6 +1,6 @@
 # LU8 live-soak release gate (2026-11-10): gate built; no PASS yet (every run disturbed by outside load, see "Runs")
 
-Plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` (LU8, D324). Decisions: D325.
+Plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` (LU8, D324). Decisions: D328.
 
 ## How it works
 
@@ -27,6 +27,11 @@ node tools/soak/live-soak.mjs [--minutes N] [--sample-s 10] [--work-dir DIR] [--
   no restart, host exits 0 on shutdown, no crash report, no error-level log line (host incl. overlay child, event core,
   UI server; known benign lines listed with the reason), no process left, a quiet machine during the run (checked
   every minute), every reload applied / kept / cleared.
+- After the second review (2026-11-10): the four streams youtube-h, youtube-v, twitch and kick are required by id (a
+  plan without one, or an empty plan, fails), each live in every sample and received in full; timestamp gaps are
+  measured against the planned fps of the sink's rung (a 60 fps output that delivers 30 fps fails); the recording must
+  start, stay live in every sample and its file is probed (covers the run, 0 gaps). Runs before this change used the
+  observed median step and did not probe the recording.
 - Writes `docs/evidence/YYYY-MM-DD-live-soak-<mode>-HHMM.{json,md}` (numbers and base names only; paths in log lines
   become `<path>`), exit 1 on any failure. Every lost frame is listed with the script action in the 3 s before it and
   the CPU of the stack against the rest of the machine at that moment.

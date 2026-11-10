@@ -67,10 +67,17 @@ export function parseSoakArgs(argv) {
   return { minutes, short: minutes <= 5, sampleS, workDir: o['work-dir'] ?? null, outDir: o['out-dir'] ?? path.join(REPO, 'docs', 'evidence'), keepMedia: !!o['keep-media'], record: !o['no-record'], wait: !!o.wait };
 }
 
-/** Video timestamp gaps (pure; tested): pts in seconds, any order. A gap is a step above 1.5x the median step.
+/** The stream sinks the gate requires: every one must be in the plan, live in every sample, and received in full. */
+export const REQUIRED_STREAMS = Object.freeze(['youtube-h', 'youtube-v', 'twitch', 'kick']);
+
+/** Video timestamp gaps (pure; tested): pts in seconds, any order. fps: the output's planned frame rate; a gap is a
+ *  step above 1.5x the planned frame interval (1/fps). The interval is never inferred from the stream itself: a
+ *  60 fps output that loses every second frame has a 33 ms median step and would show no gap.
  *  tailSec: a gap that ends within tailSec of the last packet is counted apart as endGaps (the last segment of a
  *  stream: the encoder flush at stream stop, after the run, which no viewer sees). */
-export function ptsGaps(pts, { tailSec = 0 } = {}) {
+export function ptsGaps(pts, { fps, tailSec = 0 } = {}) {
+  if (!(Number.isFinite(fps) && fps > 0)) throw new Error('ptsGaps: the planned fps is required');
+  const step = 1 / fps;
   const s = pts.filter(Number.isFinite).sort((a, b) => a - b);
   if (s.length < 3) return { packets: s.length, gaps: 0, endGaps: 0, missingFrames: 0, maxStepMs: null, stepMs: null, spanSec: 0 };
   const steps = []; for (let i = 1; i < s.length; i++) steps.push(s[i] - s[i - 1]);
@@ -79,11 +86,46 @@ export function ptsGaps(pts, { tailSec = 0 } = {}) {
   let gaps = 0; let endGaps = 0; let missing = 0;
   for (let i = 0; i < steps.length; i++) {
     const d = steps[i];
-    if (!(med > 0 && d > med * 1.5)) continue;
+    if (!(d > step * 1.5)) continue;
     if (tailSec > 0 && last - s[i + 1] <= tailSec) { endGaps++; continue; }
-    gaps++; missing += Math.round(d / med) - 1;
+    gaps++; missing += Math.round(d / step) - 1;
   }
-  return { packets: s.length, gaps, endGaps, missingFrames: missing, maxStepMs: +(Math.max(...steps) * 1000).toFixed(1), stepMs: +(med * 1000).toFixed(2), spanSec: +(last - s[0]).toFixed(2) };
+  return { packets: s.length, gaps, endGaps, missingFrames: missing, maxStepMs: +(Math.max(...steps) * 1000).toFixed(1), stepMs: +(med * 1000).toFixed(2), expectedStepMs: +(step * 1000).toFixed(2), spanSec: +(last - s[0]).toFixed(2) };
+}
+
+/** Planned fps per sink id from the output plan (pure; tested): the fps of the rung the sink binds to. */
+export function sinkFps(params) {
+  const rungFps = new Map((params?.rungs ?? []).map((r) => [r.id, r.fps]));
+  return Object.fromEntries((params?.sinks ?? []).map((s) => [s.id, rungFps.get(s.rung) ?? null]));
+}
+
+/** The required stream sinks missing from the plan or not a network stream there (pure; tested). */
+export function missingRequiredStreams(params, required = REQUIRED_STREAMS) {
+  const byId = new Map((params?.sinks ?? []).map((s) => [s.id, s]));
+  return required.filter((id) => { const s = byId.get(id); return !s || !s.target || s.target.transport === 'file'; });
+}
+
+/** The recording passes only when its start was accepted, a file sink exists, it was live in every sample, and the
+ *  probed file covers the run (within slackS) with 0 timestamp gaps (pure; tested). Returns the failed reasons. */
+export function recordingProblems({ start, sinkId, notLiveSamples, samples, probe, durationS, slackS = 15 }) {
+  const why = [];
+  if (start !== 'ok') why.push(`start ${start ?? 'not called'}`);
+  if (!sinkId) why.push('no file sink in the plan');
+  if (!(samples > 0) || notLiveSamples !== 0) why.push(`not live in ${notLiveSamples ?? '?'} of ${samples ?? 0} samples`);
+  if (!probe) why.push('no recording file');
+  else if (probe.error) why.push(`probe: ${probe.error}`);
+  else {
+    if (probe.gaps !== 0) why.push(`${probe.gaps} timestamp gaps`);
+    if (!(probe.spanSec >= durationS - slackS)) why.push(`covers ${Math.round(probe.spanSec ?? 0)} of ${durationS} s`);
+  }
+  return why;
+}
+
+/** Per required id, the samples where that sink was absent or not live (pure; tested). rows: [{ sinks: [{id,state}] }]. */
+export function notLiveByStream(rows, required = REQUIRED_STREAMS) {
+  const out = Object.fromEntries(required.map((id) => [id, 0]));
+  for (const r of rows) for (const id of required) if (r.sinks?.find((s) => s.id === id)?.state !== 'live') out[id]++;
+  return out;
 }
 
 /** Error-level lines of a log text (pure; tested). Host lines: "<ts> error: msg"; Node services: an error/fatal tag,
@@ -205,12 +247,21 @@ export async function main(argv = process.argv.slice(2)) {
   check('a colour scene to switch to on every canvas', Object.keys(home).length > 0 && Object.keys(alt).length === Object.keys(home).length, { canvases: Object.keys(home) });
 
   // ---- start outputs (host API; loopback only) and take the baseline
+  const missingStreams = missingRequiredStreams(st.params);
+  check(`the plan has every required stream (${REQUIRED_STREAMS.join(', ')})`, missingStreams.length === 0, { missing: missingStreams });
+  const fpsBySink = sinkFps(st.params);
+  const recordSink = st.params.sinks.find((s) => s.target.transport === 'file') ?? null;
   const before = await c.call('host.status');
   result.streamStart = await c.call('stream.start').then(() => 'ok', (e) => `error ${e.code ?? e.message}`);
-  if (a.record) result.recordStart = await c.call('record.start').then(() => 'ok', (e) => `error ${e.code ?? e.message}`);
+  check('stream start accepted', result.streamStart === 'ok', result.streamStart);
+  if (a.record) {
+    result.recordStart = await c.call('record.start').then(() => 'ok', (e) => `error ${e.code ?? e.message}`);
+    check('recording start accepted', result.recordStart === 'ok' && !!recordSink, { start: result.recordStart, sink: recordSink?.id ?? null });
+  }
+  const mustBeLive = [...REQUIRED_STREAMS, ...(a.record && recordSink ? [recordSink.id] : [])];
   let allLive = false;
-  for (let i = 0; i < 80 && !allLive; i++) { const o = await c.call('outputs.status').catch(() => null); allLive = !!o && o.sinks.filter((s) => s.kind === 'stream').every((s) => s.state === 'live'); if (!allLive) await sleep(250); }
-  check('all loopback streams live within 20 s', allLive);
+  for (let i = 0; i < 80 && !allLive; i++) { const o = await c.call('outputs.status').catch(() => null); allLive = !!o && mustBeLive.every((id) => o.sinks.find((s) => s.id === id)?.state === 'live'); if (!allLive) await sleep(250); }
+  check(`every required stream${a.record ? ' and the recording' : ''} live within 20 s`, allLive, mustBeLive);
   const base = { dropped: before.droppedFrames ?? 0, lagged: before.render?.renderLagged ?? 0, skipped: before.render?.encodeSkipped ?? 0, overlayRestarts: before.overlay?.restarts ?? 0, overlayFailures: before.overlay?.failures ?? 0 };
   const startedAt = Date.now();
   const endAt = startedAt + a.minutes * 60000;
@@ -448,8 +499,9 @@ export async function main(argv = process.argv.slice(2)) {
   check('0 dropped frames (host)', samples.every((s) => s.dropped === 0), { max: Math.max(0, ...samples.map((s) => s.dropped ?? 0)) });
   check('0 render-lagged frames', samples.every((s) => s.lagged === 0), { max: Math.max(0, ...samples.map((s) => s.lagged ?? 0)) });
   check('0 encode-skipped frames', samples.every((s) => s.skipped === 0), { max: Math.max(0, ...samples.map((s) => s.skipped ?? 0)) });
-  check('0 dropped frames on every sink', (last.sinks ?? []).every((s) => s.dropped === 0), Object.fromEntries((last.sinks ?? []).map((s) => [s.id, { dropped: s.dropped, total: s.total }])));
-  check('every stream live in every sample', worst.notLive === 0 && samples.every((s) => !s.error), { samplesNotLive: worst.notLive, samplesWithError: samples.filter((s) => s.error).length });
+  check('0 dropped frames on every sink', mustBeLive.every((id) => last.sinks?.some((s) => s.id === id)) && (last.sinks ?? []).every((s) => s.dropped === 0), Object.fromEntries((last.sinks ?? []).map((s) => [s.id, { dropped: s.dropped, total: s.total }])));
+  const notLive = notLiveByStream(samples, mustBeLive);
+  check(`every required stream${a.record ? ' and the recording' : ''} live in every sample`, samples.length > 0 && Object.values(notLive).every((n) => n === 0) && worst.notLive === 0 && samples.every((s) => !s.error), { samplesNotLive: notLive, otherStreamsNotLive: worst.notLive, samplesWithError: samples.filter((s) => s.error).length });
   check('overlay server: no restart, no failure', samples.every((s) => !s.overlayRestarts && !s.overlayFailures));
   check('chat reached the event core', actions.chat.sent > 0 && actions.chat.noClient === 0, actions.chat);
   check('scene switches all applied', actions.scenes.ok > 0 && actions.scenes.failed === 0, actions.scenes);
@@ -470,7 +522,7 @@ export async function main(argv = process.argv.slice(2)) {
   for (const f of segs) {
     const id = path.basename(f).replace(/-\d+-\d+\.mkv$/, '');
     try {
-      const g = ptsGaps(videoPts(f), { tailSec: lastSeg[id] === f ? 0.5 : 0 });
+      const g = ptsGaps(videoPts(f), { fps: fpsBySink[id], tailSec: lastSeg[id] === f ? 0.5 : 0 });
       result.received[path.basename(f)] = { sizeMB: Math.round(statSync(f).size / 1048576), ...g };
       const p = perSink[id] ?? { spanSec: 0, gaps: 0, endGaps: 0, missingFrames: 0, segments: 0 };
       p.spanSec += g.spanSec; p.gaps += g.gaps; p.endGaps += g.endGaps; p.missingFrames += g.missingFrames; p.segments++;
@@ -478,9 +530,21 @@ export async function main(argv = process.argv.slice(2)) {
     } catch (e) { result.received[path.basename(f)] = { error: String(e.message).slice(0, 80) }; }
   }
   result.receivedBySink = perSink;
-  const streamIds = st.params.sinks.filter((s) => s.target.transport !== 'file').map((s) => s.id);
-  check('every loopback listener received the whole run', streamIds.every((id) => (perSink[id]?.spanSec ?? 0) >= result.durationS - 15), Object.fromEntries(streamIds.map((id) => [id, Math.round(perSink[id]?.spanSec ?? 0)])));
-  check('0 video timestamp gaps in what the listeners received (ffprobe)', Object.values(result.received).every((x) => !x.error && x.gaps === 0), Object.fromEntries(Object.entries(perSink).map(([k, v]) => [k, { gaps: v.gaps, missingFrames: v.missingFrames, endGaps: v.endGaps }])));
+  const streamIds = [...new Set([...REQUIRED_STREAMS, ...st.params.sinks.filter((s) => s.target.transport !== 'file').map((s) => s.id)])];
+  check('every required loopback listener received the whole run', streamIds.every((id) => (perSink[id]?.spanSec ?? 0) >= result.durationS - 15), Object.fromEntries(streamIds.map((id) => [id, Math.round(perSink[id]?.spanSec ?? 0)])));
+  check('0 video timestamp gaps in what the listeners received (ffprobe, planned fps)', streamIds.every((id) => perSink[id]?.segments > 0) && Object.values(result.received).every((x) => !x.error && x.gaps === 0), Object.fromEntries(streamIds.map((id) => [id, perSink[id] ? { gaps: perSink[id].gaps, missingFrames: perSink[id].missingFrames, endGaps: perSink[id].endGaps } : 'nothing received'])));
+
+  // the recording: the longest video file in the recordings folder (clip saves are short), probed like a stream
+  if (a.record) {
+    const vids = filesUnder(recordingsDir, /\.(mkv|mp4|mov|flv|ts)$/i).map((f) => ({ f, size: statSync(f).size })).sort((x, y) => y.size - x.size);
+    let rec = null;
+    if (vids[0] && recordSink) {
+      try { rec = { file: path.basename(vids[0].f), sizeMB: Math.round(vids[0].size / 1048576), ...ptsGaps(videoPts(vids[0].f), { fps: fpsBySink[recordSink.id], tailSec: 0.5 }) }; } catch (e) { rec = { error: String(e.message).slice(0, 80) }; }
+    }
+    result.recording = rec;
+    const recWhy = recordingProblems({ start: result.recordStart, sinkId: recordSink?.id, notLiveSamples: recordSink ? notLive[recordSink.id] : undefined, samples: samples.length, probe: rec, durationS: result.durationS });
+    check('the recording: started, live throughout, covers the whole run with 0 video timestamp gaps (ffprobe, planned fps)', recWhy.length === 0, recWhy.length ? recWhy : { spanSec: Math.round(rec.spanSec), packets: rec.packets, endGaps: rec.endGaps });
+  }
 
   // crash reports, error-level log lines, strays
   const crashes = [...filesUnder(workDir, /^crash-.*\.txt$/)].map((f) => path.basename(f));

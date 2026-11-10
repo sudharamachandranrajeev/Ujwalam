@@ -6,7 +6,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { errorLines, noPaths, noteChange, parseSoakArgs, ptsGaps, report, stallLines } from '../tools/soak/live-soak.mjs';
+import { errorLines, missingRequiredStreams, noPaths, notLiveByStream, noteChange, parseSoakArgs, ptsGaps, recordingProblems, REQUIRED_STREAMS, report, sinkFps, stallLines } from '../tools/soak/live-soak.mjs';
 import { stageRuntime } from '../tools/soak/stage.mjs';
 
 test('arguments: 30 min by default, --short is 3 min, bad values refused', () => {
@@ -23,12 +23,49 @@ test('arguments: 30 min by default, --short is 3 min, bad values refused', () =>
 
 test('timestamp gaps: a steady 60 fps stream has none; a missing run of frames is one gap', () => {
   const steady = Array.from({ length: 600 }, (_, i) => i / 60);
-  assert.deepEqual({ gaps: ptsGaps(steady).gaps, missing: ptsGaps(steady).missingFrames }, { gaps: 0, missing: 0 });
+  assert.deepEqual({ gaps: ptsGaps(steady, { fps: 60 }).gaps, missing: ptsGaps(steady, { fps: 60 }).missingFrames }, { gaps: 0, missing: 0 });
   const holed = steady.filter((_, i) => i < 100 || i >= 103);
-  const g = ptsGaps(holed.reverse()); // any order (B-frames)
+  const g = ptsGaps(holed.reverse(), { fps: 60 }); // any order (B-frames)
   assert.equal(g.gaps, 1);
   assert.equal(g.missingFrames, 3);
-  assert.equal(ptsGaps([0, 1]).gaps, 0);
+  assert.equal(ptsGaps([0, 1], { fps: 60 }).gaps, 0);
+  const jitter = Array.from({ length: 600 }, (_, i) => Math.round((i * 1000) / 60) / 1000); // 16/17 ms steps (ms timebase)
+  assert.equal(ptsGaps(jitter, { fps: 60 }).gaps, 0);
+});
+
+test('timestamp gaps use the planned fps, never the observed median: losing every second frame is caught (review P2)', () => {
+  const half = Array.from({ length: 300 }, (_, i) => (2 * i) / 60); // a 60 fps output that delivers 30 fps
+  const g = ptsGaps(half, { fps: 60 });
+  assert.equal(g.gaps, 299);
+  assert.equal(g.missingFrames, 299);
+  assert.throws(() => ptsGaps(half), /fps is required/);
+});
+
+test('recording: a rejected start, a gap in liveness, no file or a short or holed file all fail (review P2)', () => {
+  const good = { start: 'ok', sinkId: 'record', notLiveSamples: 0, samples: 18, probe: { gaps: 0, spanSec: 178 }, durationS: 180 };
+  assert.deepEqual(recordingProblems(good), []);
+  assert.match(recordingProblems({ ...good, start: 'error BUSY' }).join(), /start error BUSY/);
+  assert.match(recordingProblems({ ...good, start: undefined }).join(), /start not called/);
+  assert.match(recordingProblems({ ...good, sinkId: undefined, notLiveSamples: undefined }).join(), /no file sink/);
+  assert.match(recordingProblems({ ...good, notLiveSamples: 2 }).join(), /not live in 2 of 18/);
+  assert.match(recordingProblems({ ...good, samples: 0 }).join(), /not live/);
+  assert.match(recordingProblems({ ...good, probe: null }).join(), /no recording file/);
+  assert.match(recordingProblems({ ...good, probe: { error: 'ffprobe failed' } }).join(), /probe: ffprobe failed/);
+  assert.match(recordingProblems({ ...good, probe: { gaps: 3, spanSec: 178 } }).join(), /3 timestamp gaps/);
+  assert.match(recordingProblems({ ...good, probe: { gaps: 0, spanSec: 40 } }).join(), /covers 40 of 180 s/);
+});
+
+test('required streams: a plan without kick, or empty, fails; fps comes from the sink rung (review P2)', () => {
+  const rtmp = { transport: 'rtmp' };
+  const full = { rungs: [{ id: 'a', fps: 60 }, { id: 'v', fps: 30 }], sinks: [{ id: 'youtube-h', rung: 'a', target: rtmp }, { id: 'youtube-v', rung: 'v', target: rtmp }, { id: 'twitch', rung: 'a', target: rtmp }, { id: 'kick', rung: 'a', target: rtmp }, { id: 'record', rung: 'a', target: { transport: 'file' } }] };
+  assert.deepEqual(missingRequiredStreams(full), []);
+  assert.deepEqual(missingRequiredStreams({ ...full, sinks: full.sinks.filter((s) => s.id !== 'kick') }), ['kick']);
+  assert.deepEqual(missingRequiredStreams({ rungs: [], sinks: [] }), [...REQUIRED_STREAMS]);
+  assert.deepEqual(missingRequiredStreams({ ...full, sinks: full.sinks.map((s) => (s.id === 'twitch' ? { ...s, target: { transport: 'file' } } : s)) }), ['twitch']);
+  assert.deepEqual(sinkFps(full), { 'youtube-h': 60, 'youtube-v': 30, twitch: 60, kick: 60, record: 60 });
+  const live = (ids) => ({ sinks: ids.map((id) => ({ id, state: 'live' })) });
+  const rows = [live([...REQUIRED_STREAMS, 'record']), live(['youtube-h', 'youtube-v', 'twitch', 'record']), { sinks: [] }];
+  assert.deepEqual(notLiveByStream(rows, [...REQUIRED_STREAMS, 'record']), { 'youtube-h': 1, 'youtube-v': 1, twitch: 1, kick: 2, record: 1 });
 });
 
 test('error-level lines: host error tags and Node faults count; known benign lines and other levels do not', () => {
@@ -47,10 +84,10 @@ test('error-level lines: host error tags and Node faults count; known benign lin
 
 test('timestamp gaps: a gap at the very end of the last segment (stream stop) is counted apart', () => {
   const s = Array.from({ length: 600 }, (_, i) => i / 60).filter((_, i) => i !== 598);
-  assert.deepEqual([ptsGaps(s).gaps, ptsGaps(s).endGaps], [1, 0]);
-  assert.deepEqual([ptsGaps(s, { tailSec: 0.5 }).gaps, ptsGaps(s, { tailSec: 0.5 }).endGaps], [0, 1]);
+  assert.deepEqual([ptsGaps(s, { fps: 60 }).gaps, ptsGaps(s, { fps: 60 }).endGaps], [1, 0]);
+  assert.deepEqual([ptsGaps(s, { fps: 60, tailSec: 0.5 }).gaps, ptsGaps(s, { fps: 60, tailSec: 0.5 }).endGaps], [0, 1]);
   const mid = Array.from({ length: 600 }, (_, i) => i / 60).filter((_, i) => i !== 300);
-  assert.equal(ptsGaps(mid, { tailSec: 0.5 }).gaps, 1, 'a gap mid-stream still counts');
+  assert.equal(ptsGaps(mid, { fps: 60, tailSec: 0.5 }).gaps, 1, 'a gap mid-stream still counts');
 });
 
 test('stall lines and paths: warnings after the start with t, paths never in the report', () => {

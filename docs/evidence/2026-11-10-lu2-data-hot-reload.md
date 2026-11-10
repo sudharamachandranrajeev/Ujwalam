@@ -1,6 +1,6 @@
 # LU2 data hot-reload (2026-11-10): PASS for the kinds below (theme pack: headless probe PASS)
 
-Plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` (LU2, D324). Decisions: D325.
+Plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` (LU2, D324). Decisions: D328.
 
 ## What reloads while the app runs (also while live)
 

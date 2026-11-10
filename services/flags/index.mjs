@@ -38,13 +38,18 @@ export function loadDefinitions(file = DEFAULT_FLAGS_FILE) {
   return parseDefinitions(j);
 }
 
-/** The local state file as data ({ <id>: bool }); non-boolean values are skipped, a file that is not
- *  { flags: { ... } } is invalid (LU2: an invalid file keeps the last good values). */
-export function parseLocal(text) {
+/** The local state file as data ({ <id>: bool }). A file that is not { flags: { ... } }, or that gives a known flag
+ *  (isKnown(id), default: every id) a value other than true/false, is invalid as a whole (LU2: an invalid file keeps
+ *  the last good values). Dropping only that value would turn a default-on feature on, even while live. Non-boolean
+ *  values of unknown ids are skipped (they are ignored on read anyway). */
+export function parseLocal(text, isKnown = () => true) {
   const j = parseJsonText(text);
   if (!j || typeof j !== 'object' || Array.isArray(j) || !j.flags || typeof j.flags !== 'object' || Array.isArray(j.flags)) throw new Error('needs { "flags": { "<id>": true|false } }');
   const values = {};
-  for (const [k, v] of Object.entries(j.flags)) if (typeof v === 'boolean') values[k] = v;
+  for (const [k, v] of Object.entries(j.flags)) {
+    if (typeof v === 'boolean') values[k] = v;
+    else if (isKnown(k)) throw new Error(`${k} must be true or false, not ${JSON.stringify(v)?.slice(0, 40)}`);
+  }
   return values;
 }
 
@@ -66,7 +71,7 @@ export function createFlags(opts) {
   defs();
   const localFile = path.join(opts.dataDir, LOCAL_NAME);
   const subs = new Set();
-  const localSrc = createDataSource({ kind: 'flags-local', file: localFile, parse: parseLocal, missing: () => ({}), report: opts.report });
+  const localSrc = createDataSource({ kind: 'flags-local', file: localFile, parse: (t) => parseLocal(t, (id) => byId.has(id)), missing: () => ({}), report: opts.report });
 
   function local() {
     defs();
