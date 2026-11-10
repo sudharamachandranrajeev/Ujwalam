@@ -719,11 +719,27 @@ def cmd_montage(a):
         verdict = "REEL" if d["qualifies"] and not d.get("noReel") else "no reel"
         extra = f"; {d['noReel']}" if d.get("noReel") else ""
         print(f"montage: match {m['index']} {m['start']:.0f}-{m['end']:.0f} s: {verdict} ({d['reason']}{extra})")
-    reel_doc["reels"] = [{"id": f"W{i:02d}", "match": r["match"], "rules": r["rules"], "kills": int(r["score"])}
+    reel_doc["reels"] = [{"id": f"W{i:02d}", "match": r["match"], "rules": r["rules"], "kills": int(r["score"]),
+                          "pieces": r["pieces"], "pieceRounds": r.get("pieceRounds")}
                          for i, r in enumerate(reels, 1)]
+    # D326: impact-play reels (match-reels.json impactPlay), only while their flag is on (off by default)
+    ip_spec = ((_gate_pack(a) or {}).get("matchReels") or {}).get("impactPlay")
+    ip_on = bool(ip_spec) and flag_on(resolve_data_dir(a.data_dir), ip_spec.get("flag") or "impact-play-reels")
+    try:  # the result banner's span ends one detector sample after its last read frame
+        fps = float(load_json(os.path.join(os.path.dirname(hits_path), "detector-pass.json"))["config"]["fps"])
+    except (OSError, ClipError, KeyError, TypeError, ValueError):
+        fps = 1.0
+    impacts = (mont.impact_play_reels(hits, matches, ip_spec, min(info["duration"], vinfo["duration"]),
+                                      sample_sec=1.0 / fps if fps > 0 else 1.0) if ip_on else [])
+    reel_doc["impactPlay"] = {"flag": (ip_spec or {}).get("flag"), "on": ip_on,
+                              "reels": [{"id": f"I{i:02d}", "match": r["match"], "pieces": r["pieces"]}
+                                        for i, r in enumerate(impacts, 1)]}
     write_json_atomic(os.path.join(out, MATCH_REELS), reel_doc)
     print(f"montage: {len(reels)} won-match reel(s) (rules: {MATCH_REELS})")
-    jobs = [(f"M{i:02d}", m) for i, m in enumerate(plans, 1)] + [(f"W{i:02d}", m) for i, m in enumerate(reels, 1)]
+    if ip_on:
+        print(f"montage: {len(impacts)} impact-play reel(s)")
+    jobs = ([(f"M{i:02d}", m) for i, m in enumerate(plans, 1)] + [(f"W{i:02d}", m) for i, m in enumerate(reels, 1)]
+            + [(f"I{i:02d}", m) for i, m in enumerate(impacts, 1)])
     rows, failed = [], 0
     for cid, m in jobs:
         wd = os.path.join(out, "clips", cid)
@@ -754,7 +770,8 @@ def cmd_montage(a):
         "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
         "game": _game(a), "failed": failed, "clips": rows,
         "matchReels": {"file": MATCH_REELS, "matches": len(matches),
-                       "qualified": sum(1 for m in matches if m["reel"]["qualifies"]), "reels": len(reels)},
+                       "qualified": sum(1 for m in matches if m["reel"]["qualifies"]), "reels": len(reels),
+                       "impactPlayReels": len(impacts)},
     })
     # candidates.json in the montage folder makes it a clip run folder for posting (services/posting packageRun):
     # times are on the montage's own timeline (0 .. seconds); anchor = the first kill (cover frame); the source
@@ -764,7 +781,7 @@ def cmd_montage(a):
         "tool": "clipper.montage", "toolVersion": TOOL_VERSION, "createdAt": _now(),
         "recording": os.path.basename(a.recording),
         "recordStartUtc": sig.recording_start(a.recording, a.record_start).isoformat().replace("+00:00", "Z"),
-        "candidates": [{"id": r["id"], "rank": i, "kind": "won-match" if r["id"].startswith("W") else "montage",
+        "candidates": [{"id": r["id"], "rank": i, "kind": {"W": "won-match", "I": "impact-play"}.get(r["id"][:1], "montage"),
                         "start": 0.0, "end": r["end"], "anchor": min(pre, r["end"]), "score": r["score"],
                         "labels": r["labels"], "pieces": r["pieces"]}
                        for i, r in enumerate((r for r in rows if r["files"]), 1)],

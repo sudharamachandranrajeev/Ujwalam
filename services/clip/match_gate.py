@@ -448,7 +448,10 @@ def segment(hits, stats, duration, cfg):
     told apart ({source, subtitle} or None). roundKills: with at least one round end, own kills per round, a round
     running from the previous round end (or the match start) to its banner, the last one to the match-end banner;
     otherwise None. Kill-feed kills (ownKills, roundKills) count only the feed of the match's HUD family (M5 in MP,
-    B1 in BR) when match-stats.json records the feed of each kill. No names."""
+    B1 in BR) when match-stats.json records the feed of each kill. D326: kills read inside a hit of the pack's
+    spectateDetectors (S1 stats; the streamer is dead and watches a teammate) never count (spectateDropped says how
+    many); ownKillTimes holds the counted kill-feed kill times of the match and roundKillTimes those per round (the
+    reel cuts these, clip_montage.match_reels). No names."""
     kinds = classify_banners(hits, cfg, duration)
     clusters = end_clusters(hits, cfg, kinds)
     round_hits = []  # one per round banner: hits of the same result closer than banner.sameBannerSec are one banner
@@ -471,6 +474,8 @@ def segment(hits, stats, duration, cfg):
         all_times = killfeed_instances(hits)
         all_feeds = [None] * len(all_times)  # hits-only runs: no feed per kill, count all (aligned with all_times)
         kill_src = "killfeed" if any(h.get("detector") in ("M5", "B1") for h in hits) else None
+    sids = set(cfg.get("spectateDetectors") or [])
+    spectate = [(float(h["t"]), float(h.get("tEnd", h["t"]))) for h in hits if h.get("detector") in sids]
     spans = []
     prev = 0.0
     for c in clusters:
@@ -486,7 +491,8 @@ def segment(hits, stats, duration, cfg):
              "mode": None, "ownRank": None, "ownScore": None, "top3Seen": False, "ownKills": None, "killsSource": None,
              "endScreenAt": round(c["t0"], 2) if c else None, "resultConfirmed": False, "resultAt": None,
              "resultEnd": None, "gameMode": None, "roundKills": None, "rounds": [], "endBanner": None,
-             "modeConfidence": None, "modeEvidence": [], "modeReason": None}
+             "modeConfidence": None, "modeEvidence": [], "modeReason": None, "ownKillTimes": None,
+             "roundKillTimes": None, "spectateDropped": 0}
         m["rounds"] = [{"t": round(float(h["t"]), 2), "tEnd": round(float(h.get("tEnd", h["t"])), 2),
                         "result": h["label"], "source": kinds[id(h)][1], "subtitle": h.get("subtitle")}
                        for h in round_hits if start <= float(h["t"]) < play_end]
@@ -497,7 +503,12 @@ def segment(hits, stats, duration, cfg):
         # read on an MP loadout or end card (2026-11-09 practice) let the BR feed (B1) read name tags and calling
         # cards as own kills until the next MP cue
         other = {"mp": "B1", "br": "M5"}.get(_mode_of(hud))
-        kill_times = [t for t, f in zip(all_times, all_feeds) if f is None or f != other]
+        family = [t for t, f in zip(all_times, all_feeds) if f is None or f != other]
+        # D326: a line read while the streamer is dead and spectating a teammate (pack spectateDetectors, e.g. the
+        # "respawn next round" banner of Search and Destroy) is never an own kill
+        kill_times = [t for t in family if not any(a <= t <= b for a, b in spectate)]
+        m["spectateDropped"] = sum(1 for t in family if start <= t < play_end) - sum(
+            1 for t in kill_times if start <= t < play_end)
         if c:
             if c["results"]:
                 m["result"] = c["results"].most_common(1)[0][0]
@@ -523,9 +534,14 @@ def segment(hits, stats, duration, cfg):
         elif kill_src:
             m["ownKills"] = sum(1 for t in kill_times if start <= t < play_end)
             m["killsSource"] = kill_src
+        # D326: the reel cuts these kills (the counted ones), never the raw kill-feed hits. Full precision: the reel
+        # selects and cuts with them, and a rounded time can cross a round edge (Codex review: 99.9996 -> 100.0)
+        if kill_src:
+            m["ownKillTimes"] = [float(t) for t in kill_times if start <= t < play_end]
         if m["rounds"] and kill_src:
             edges = [start] + [r["tEnd"] for r in m["rounds"]] + [play_end]
-            m["roundKills"] = [sum(1 for t in kill_times if a <= t < b) for a, b in zip(edges, edges[1:])]
+            m["roundKillTimes"] = [[float(t) for t in kill_times if a <= t < b] for a, b in zip(edges, edges[1:])]
+            m["roundKills"] = [len(x) for x in m["roundKillTimes"]]
         if not c:
             tops = []
         in_match = [h for h in hits if start <= float(h["t"]) <= end]
@@ -687,8 +703,10 @@ def reel_rule(m, rule):
 
 
 def reel_decide(m, rules):
-    """Reel decision for one match (D315): it qualifies when any rule passes. -> {qualifies, reason, rules: [...]}.
-    A match with no end screen seen never qualifies (its result and place are unknown)."""
+    """Reel decision for one match (D315): it qualifies when any rule passes. -> {qualifies, reason, rules: [...],
+    pieceRounds}. A match with no end screen seen never qualifies (its result and place are unknown). pieceRounds
+    (D326): None = the reel shows every own kill of the match; a list of round indexes = only those rounds' kills
+    (every passing rule has `pieces` "qualifying-rounds")."""
     if not m.get("endSeen"):
         return {"qualifies": False, "reason": "no end screen seen (the recording stopped mid-match)", "rules": []}
     if not rules:
@@ -699,7 +717,15 @@ def reel_decide(m, rules):
         reason = "; ".join(f"{e['id']} ({e['why']})" for e in passed)
     else:
         reason = "no rule passed: " + "; ".join(f"{e['id']} {e['outcome']} ({e['why']})" for e in ev)
-    return {"qualifies": bool(passed), "reason": reason, "rules": ev}
+    out = {"qualifies": bool(passed), "reason": reason, "rules": ev, "pieceRounds": None}
+    # D326: when every passing rule shows only its qualifying rounds (rule `pieces` "qualifying-rounds", e.g. a
+    # Search and Destroy round multi-kill), the reel cuts the own kills of the rounds that reach the threshold
+    by_id = {r.get("id"): r for r in rules}
+    pr = [by_id.get(e["id"]) or {} for e in passed]
+    if pr and all(r.get("pieces") == "qualifying-rounds" for r in pr) and isinstance(m.get("roundKills"), list):
+        need = min(int((r.get("when") or {}).get("roundKillsAtLeast") or 1) for r in pr)
+        out["pieceRounds"] = [i for i, n in enumerate(m["roundKills"]) if n >= need]
+    return out
 
 
 def match_of(t, matches):

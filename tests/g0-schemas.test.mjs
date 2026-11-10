@@ -61,7 +61,7 @@ test('profile: missing ign, unknown key, bad game id, bad mode rejected', () => 
 // ---- detector pack ----
 test('pack: CODM pack files validate (game, detectors, events, screens, capture plan)', () => {
   ok(vGame, game); ok(vPack, pack); ok(vEvents, events); ok(vScreens, screens); ok(vPlan, plan);
-  assert.equal(pack.version, '0.7.0');
+  assert.equal(pack.version, '0.8.0');
   for (const doc of [pack, events, screens, plan]) assert.equal(doc.game, game.id);
 });
 
@@ -183,12 +183,12 @@ test('pack: name-match flags (player events need a name; own HUD does not)', () 
   assert.deepEqual(byId('M5').modes, ['mp']);
 });
 
-test('pack: suppression hides M3/M4 while M2 is shown; negatives are N1/N2', () => {
+test('pack: suppression hides M3/M4 while M2 is shown; negatives are N1/N2/N3', () => {
   const r = pack.suppressionRules.find((x) => x.while === 'M2');
   assert.ok(r);
   assert.deepEqual([...r.suppress].sort(), ['M3', 'M4']);
   for (const rule of pack.suppressionRules) for (const id of [...rule.suppress, rule.while]) assert.ok(byId(id), id);
-  assert.deepEqual(pack.detectors.filter((d) => d.role === 'negative').map((d) => d.id).sort(), ['N1', 'N2']);
+  assert.deepEqual(pack.detectors.filter((d) => d.role === 'negative').map((d) => d.id).sort(), ['N1', 'N2', 'N3']);
 });
 
 test('pack: OCR engine is rapidocr; versions present', () => {

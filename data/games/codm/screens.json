@@ -39,7 +39,8 @@
         "M5",
         "X1",
         "N1",
-        "C1"
+        "C1",
+        "N3"
       ],
       "status": "unverified",
       "note": "Includes MP killcams (N1 label_mp, killer_header, killer_card). Without a mode gate B1 fired 409 boxes on MP frames (A5c), so B1 is not allowed here.",

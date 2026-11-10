@@ -40,6 +40,8 @@ def _stamp_time(text):
 def kind_of(clip_id, doc_tool=None):
     if str(clip_id).startswith("W"):
         return "won-reel"
+    if str(clip_id).startswith("I") and (doc_tool or "").startswith("clipper.montage"):
+        return "impact-play"  # D326
     if str(clip_id).startswith("M") and (doc_tool or "").startswith("clipper.montage"):
         return "montage"
     return "short"
@@ -52,7 +54,7 @@ def clip_time(clip, rec_start_local, kind):
     if rec_start_local is None:
         return None
     from datetime import timedelta
-    if kind in ("montage", "won-reel") and clip.get("pieces"):
+    if kind in ("montage", "won-reel", "impact-play") and clip.get("pieces"):
         off = min(float(p["start"]) for p in clip["pieces"])
     else:
         off = float(clip.get("start") or 0.0)

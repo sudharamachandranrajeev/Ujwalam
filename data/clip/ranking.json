@@ -37,10 +37,10 @@
   "detectorWeightsApproved": "user 2026-11-07 after reviewing 30 clips of the 2026-11-06 practice session: 'Streaks only' (Triple Kill and above; Double Kill, score pop-ups, single medals, MVP/Impact and BR feed 0). Ladder values Triple 3, Fury 4, Frenzy/Super/Merciless/Ruthless 5, Nuclear/Ultimate Terminator/Relentless 6 from the approved proposal; Mega Kill, Ultra Kill and Brutal placed in the top tier by the agent (UNVERIFIED tier). M5 0 until its whole-recording merge bug is fixed. Values unverified.",
   "sumKinds": ["detector.M3", "detector.X1"],
   "death": {
-    "detectors": ["N1"],
+    "detectors": ["N1", "N3"],
     "endBeforeSec": 2.0,
     "startAfterSec": 1.0,
-    "note": "Streamer death is a hard negative (user 2026-11-07): a clip ends endBeforeSec before the KILLCAM label and never starts inside one; a clip left shorter than clip.minSec is dropped. Offsets proposed, unverified."
+    "note": "Streamer death is a hard negative (user 2026-11-07): a clip ends endBeforeSec before the KILLCAM label and never starts inside one; a clip left shorter than clip.minSec is dropped. Offsets proposed, unverified. N3 (2026-11-10, D326): spectating a teammate after the streamer's death until the next round (Search and Destroy) is part of the death, so no clip, montage or reel piece shows another player's play (user feedback F1, 2026-11-10)."
   },
   "minScore": 3,
   "top": 30

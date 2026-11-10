@@ -42,7 +42,7 @@ class LoaderTests(unittest.TestCase):
     def test_merged_shape(self):
         p = self.pack
         game = _read("game.json")
-        self.assertEqual(p["version"], "0.7.0")
+        self.assertEqual(p["version"], "0.8.0")
         self.assertEqual(p["game"], {"id": game["id"], "name": game["name"]})
         for k in ("modes", "taggingOnlyModes", "gameArea", "nameMatch", "ocr"):
             self.assertEqual(p[k], game[k], k)
@@ -105,7 +105,7 @@ class BrokenPackTests(unittest.TestCase):
             json.dump(doc, f)
 
     def test_copy_loads(self):
-        self.assertEqual(gp.load_pack(self.dir)["version"], "0.7.0")
+        self.assertEqual(gp.load_pack(self.dir)["version"], "0.8.0")
 
     def test_unknown_catalogue_raises(self):
         self._edit("events.json", lambda d: d["catalogues"][0].update(id="awards"))
