@@ -186,6 +186,7 @@ private:
 	bool lookSending_ = false, lookAgain_ = false;
 	int effRev_ = 0;       // bumped on every change of effEdit_; an Apply answer for an older draft keeps it dirty
 	bool effDirty_ = false; // changed since it was read from the host
+	int devicesSeq_ = -1; // host device watcher pass seen (status host.devices.seq, D329); -1 = none yet
 	int previewSeq_ = -1; // newest host preview mouse edit seen (status previewEdit.seq, D230); -1 = none yet
 
 	QListWidget *sceneList_ = nullptr;

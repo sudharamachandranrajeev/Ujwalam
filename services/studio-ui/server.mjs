@@ -379,6 +379,7 @@ export function createStudioServer(opts) {
   let previewSeen = null; // last host preview edit seq handled (null: not read yet)
   let previewBusy = null; // one previewSync at a time
   let previewLast = null; // { seq, scene, canvas, layer } of the newest host preview edit, for the status snapshot
+  let devicesSeen = null; // last host.status devices.seq seen (D329): a change reloads the layer list and device picker
 
   const sec = (res) => {
     res.setHeader('Content-Security-Policy', CSP);
@@ -546,6 +547,8 @@ export function createStudioServer(opts) {
     if (hs) feedbackCollect.observe(hs.live);
     if (hs) await previewSync(hs);
     if (hs) await transitionSync(hs);
+    const dev = hs ? devicesInfo(hs) : null;
+    if (dev) devicesSync(dev);
     const pick = (o, ks) => Object.fromEntries(ks.filter((k) => o && Object.hasOwn(o, k)).map((k) => [k, o[k]]));
     const snap = {
       at: now(),
@@ -553,6 +556,7 @@ export function createStudioServer(opts) {
         ...(hs ? pick(hs, ['live', 'recording', 'droppedFrames', 'totalFrames', 'fps', 'cpuPct', 'gpuPct', 'outputsReady', 'previewEditing', 'uptimeMs']) : {}),
         ...(hs && hs.audioHealth ? { audioHealth: audioReadiness(hs.audioHealth) } : {}),
         ...(previewLast ? { previewEdit: previewLast } : {}),
+        ...(dev ? { devices: { seq: dev.seq, waiting: dev.waiting } } : {}),
         effectEditing: !!flags && flags.isOn('effect-editor') },
       clips: clipStatus(),
       recovery: typeof opts.dataDir === 'string' ? readRecoveryStatus(opts.dataDir, liveSession) : null,
@@ -608,6 +612,23 @@ export function createStudioServer(opts) {
       if (same) continue;
       try { await host.call('transitions.set', { canvas: hid, ...p }); } catch { if (p.type === 'stinger') trRefused[hid] = trKey(p); }
     }
+  }
+  // Device hot-plug (D329). The host has no push channel: its device watcher bumps host.status devices.seq after each
+  // plug or unplug pass. Here a moved seq becomes SSE 'devices' {seq} and 'layers' {source: 'devices'}, so the pages
+  // and the Qt shell reload the layer list (a capture layer's "waiting" state) and the add-layer device picker. The
+  // first read only notes the seq. devicesInfo keeps the numbers and the per-device connected flags only.
+  function devicesInfo(hs) {
+    const d = hs.devices;
+    if (!isPlain(d) || !Number.isSafeInteger(d.seq) || d.seq < 0) return null;
+    const connected = isPlain(d.connected) ? Object.fromEntries(Object.entries(d.connected).filter(([, v]) => typeof v === 'boolean')) : {};
+    return { seq: d.seq, waiting: Array.isArray(d.waiting) ? d.waiting.length : 0, connected, listed: d.listed === true };
+  }
+  function devicesSync(dev) {
+    if (devicesSeen === null) { devicesSeen = dev.seq; return; }
+    if (dev.seq === devicesSeen) return;
+    devicesSeen = dev.seq; // a restarted host (lower seq) is a change too
+    broadcast('devices', { seq: dev.seq, waiting: dev.waiting });
+    broadcast('layers', { source: 'devices' });
   }
   async function previewSync(hs) {
     if (host.describe().kind !== 'host') return;
@@ -708,16 +729,21 @@ export function createStudioServer(opts) {
     return json(res, 200, { ok: true, canvas: c.id, transition: c.transition });
   }
   // What the add-layer form can offer (D240): ids and names from the project file only (shown on this local page).
-  function structureChoices(res) {
+  // Each device carries `connected` (true / false) when the host's device watcher has listed devices (D329); absent
+  // when it has not (devices not allowed, or no host): the picker then shows no state.
+  async function structureChoices(res) {
     const on = !!flags && flags.isOn(SCENE_EDIT_FLAG); // `on` now only says whether removing is allowed; choices need no flag (D292)
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 200, { on, available: false });
     let doc;
     try { projectSync.flush(); doc = loadProject(file).project; } catch { return json(res, 200, { on, available: false }); }
+    let dev = null;
+    try { dev = devicesInfo(await host.call('host.status', {})); } catch { dev = null; }
+    const connected = dev?.listed ? dev.connected : {};
     return json(res, 200, { on, available: true, canvases: doc.canvases.map((c) => c.id),
       scenes: doc.scenes.map((s) => ({ id: s.id, name: s.name, active: s.id === doc.activeScene })),
       layers: doc.scenes.flatMap((s) => s.layers.map((l) => ({ id: l.id, name: l.name, scene: s.id, sceneName: s.name, type: l.type }))),
-      devices: (doc.devices ?? []).filter((d) => d.kind === 'camera' || d.kind === 'capture-card').map((d) => ({ id: d.id, name: d.name })),
+      devices: (doc.devices ?? []).filter((d) => d.kind === 'camera' || d.kind === 'capture-card').map((d) => ({ id: d.id, name: d.name, ...(typeof connected[d.id] === 'boolean' ? { connected: connected[d.id] } : {}) })),
       overlays: (doc.overlays ?? []).map((o) => ({ id: o.id, name: o.name })),
       assets: listAssets(assetsDir) });
   }
@@ -748,10 +774,14 @@ export function createStudioServer(opts) {
       : op === 'scene.duplicate' ? duplicateScene(doc, body) : op === 'scene.rename' ? renameScene(doc, body) : removeLayer(doc, body);
     if (r.error) return json(res, 409, { error: r.error, ...(r.errors ? { detail: r.errors.map((e) => `${e.path}: ${e.message}`).join('; ').slice(0, 300) } : {}) });
     const canvases = doc.canvases.map((c) => c.id.toUpperCase());
+    let waiting = null; // a capture layer added while its device is not connected: the host's plain sentence (D329)
     try {
       if (op === 'scene.add') for (const canvas of canvases) await host.call('scenes.create', { scene: { id: r.scene.id, canvas, name: r.scene.name } });
       else if (op === 'scene.remove') await host.call('scenes.remove', { scene: body.scene });
-      else if (op === 'layer.add') await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
+      else if (op === 'layer.add') {
+        const a = await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
+        if (typeof a?.waiting?.message === 'string') waiting = a.waiting.message.slice(0, 300);
+      }
       else if (op === 'layer.move') await host.call('layers.orderFromProject', { project: r.project, scene: body.scene });
       else if (op === 'layer.duplicate') {
         await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
@@ -773,7 +803,7 @@ export function createStudioServer(opts) {
     history.clear();
     broadcast('edits', history.state());
     broadcast('layers', { source: 'structure', edit: { op, scene: r.scene?.id ?? body.scene, layer: r.layer?.id ?? body.layer ?? null } });
-    return json(res, 200, { ok: true, op, ...(r.scene ? { scene: { id: r.scene.id, name: r.scene.name } } : {}), ...(r.layer ? { layer: { id: r.layer.id, name: r.layer.name, type: r.layer.type } } : {}), saved });
+    return json(res, 200, { ok: true, op, ...(r.scene ? { scene: { id: r.scene.id, name: r.scene.name } } : {}), ...(r.layer ? { layer: { id: r.layer.id, name: r.layer.name, type: r.layer.type } } : {}), ...(waiting ? { waiting } : {}), saved });
   }
   function withRenames(method, result) {
     if (!renamed.size || !isPlain(result)) return result;

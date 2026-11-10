@@ -39,7 +39,11 @@ QList<QPair<QString, QString>> addChoices(const QJsonObject &st, const QString &
 	} else if (kind == QStringLiteral("capture") || kind == QStringLiteral("overlay")) {
 		for (const auto &x : st.value(kind == QStringLiteral("capture") ? QStringLiteral("devices") : QStringLiteral("overlays")).toArray()) {
 			const QJsonObject d = x.toObject();
-			out.append({d.value(QStringLiteral("name")).toString(), d.value(QStringLiteral("id")).toString()});
+			// The host lists devices only with devices allowed; then each says whether it is plugged in (D329). A layer
+			// for an unplugged device can still be added: it waits and connects by itself.
+			const bool off = d.value(QStringLiteral("connected")).isBool() && !d.value(QStringLiteral("connected")).toBool();
+			out.append({d.value(QStringLiteral("name")).toString() + (off ? QStringLiteral(" (not connected)") : QString()),
+				    d.value(QStringLiteral("id")).toString()});
 		}
 	} else if (kind == QStringLiteral("image") || kind == QStringLiteral("media")) {
 		for (const auto &x : st.value(QStringLiteral("assets")).toArray()) {
@@ -204,13 +208,8 @@ AddLayerDialog::AddLayerDialog(const QJsonObject &structure, const QString &scen
 		text_->setVisible(typed);
 		colour_->setVisible(kind == QStringLiteral("color"));
 		text_->setPlaceholderText(kind == QStringLiteral("color") ? QStringLiteral("#RRGGBB") : QStringLiteral("Text"));
-		choices_->clear();
 		search_->clear();
-		for (const auto &c : addChoices(structure_, kind)) {
-			auto *it = new QListWidgetItem(c.first, choices_);
-			it->setData(Qt::UserRole, c.second);
-		}
-		choices_->setCurrentRow(0);
+		fillChoices(QString());
 		add_->setEnabled(k != nullptr);
 	});
 	connect(search_, &QLineEdit::textChanged, this, [this](const QString &q) {
@@ -232,6 +231,33 @@ AddLayerDialog::AddLayerDialog(const QJsonObject &structure, const QString &scen
 			break;
 		}
 	resize(620, 380);
+}
+
+// The right-hand list for the current kind; `keep` (a choice id) stays selected if it is still offered.
+void AddLayerDialog::fillChoices(const QString &keep)
+{
+	const QListWidgetItem *k = kinds_->currentItem();
+	const QString kind = k ? k->data(Qt::UserRole).toString() : QString();
+	choices_->clear();
+	int row = 0;
+	for (const auto &c : addChoices(structure_, kind)) {
+		auto *it = new QListWidgetItem(c.first, choices_);
+		it->setData(Qt::UserRole, c.second);
+		if (!keep.isEmpty() && c.second == keep)
+			row = choices_->count() - 1;
+	}
+	choices_->setCurrentRow(row);
+	const QString q = search_->text();
+	for (int i = 0; i < choices_->count(); i++)
+		choices_->item(i)->setHidden(!q.isEmpty() && !choices_->item(i)->text().contains(q, Qt::CaseInsensitive));
+}
+
+// Newer project choices while the window is open (a device plugged in or out, D329): the list refreshes in place.
+void AddLayerDialog::setStructure(const QJsonObject &structure)
+{
+	structure_ = structure;
+	const QListWidgetItem *cur = choices_->currentItem();
+	fillChoices(cur ? cur->data(Qt::UserRole).toString() : QString());
 }
 
 void AddLayerDialog::send()
