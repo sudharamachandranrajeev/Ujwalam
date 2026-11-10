@@ -22,7 +22,10 @@ export const PACK_FILES = {
 };
 
 // Screen kinds on which no detector runs (also enforced by screens.schema.json).
-const EXCLUDED_KINDS = new Set(['menu', 'overlay', 'summary', 'signal_loss']);
+const EXCLUDED_KINDS = new Set(['menu', 'overlay', 'signal_loss']);
+// Screen kinds that show other players' names and badges next to the profile name: only name-free context
+// detectors (role context, nameRequired false) may run there (2026-11-10: C2 reads the mode header on summary).
+const NAME_FREE_KINDS = new Set(['summary']);
 
 function readJson(file, errors, rel) {
   try {
@@ -116,6 +119,8 @@ export function checkPack(id, p, rel, repoRoot) {
     for (const did of s.detectors) {
       if (!needDet('screens.json', s.id, did)) continue;
       if (!detById.get(did).screens.includes(s.id)) err('detectors.json', `${did}: screens gate lacks "${s.id}", but the screen lists ${did}`);
+      const d = detById.get(did);
+      if (NAME_FREE_KINDS.has(s.kind) && (d.role !== 'context' || d.nameRequired)) err('screens.json', `${s.id}: kind "${s.kind}" runs only name-free context detectors (role context, nameRequired false), not ${did}`);
     }
     for (const c of s.cues) if (c.roi && !(c.roi.x0 < c.roi.x1 && c.roi.y0 < c.roi.y1)) err('screens.json', `${s.id}: cue ROI corners out of order`);
   }

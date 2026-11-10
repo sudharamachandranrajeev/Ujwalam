@@ -577,3 +577,17 @@ mode name with on-screen spellings such as "SEARCH & DESTROY", new C1 mode cues,
 "unknown" with a reason when the evidence is missing or disagrees; it is never guessed. Open: the post-match lobby
 header shows the mode but sits on the `summary` screen where no detector runs (screen-model change); own kill counts of
 44 and 49 in two matches suggest a kill-feed dedup issue.
+
+## D325 — Mode from the summary-screen header; own kill-count fixes (2026-11-10, user approved the screen-model change)
+
+The post-match `summary` screen shows the game mode in its header (`VICTORY | <MODE>`) after most matches. Summary
+screens may now run detectors, but only name-free context detectors (role context, nameRequired false), enforced by
+`tools/game-validate.mjs`; menu, overlay and signal_loss screens still run none. New detector C2 reads the header
+(pack 0.7.0, status unverified); its reads within `afterEndSec` of a match's end screens are one more evidence source
+for `game_mode()`, as strong as the top-3 mode name, and disagreeing evidence still gives no mode. Own kill counts were
+too high (Domination 44 for 20 on the summary card, match 1 8 for 4). Causes, all in the detector pass: ROI-band
+boxes held by the roiEvery cadence overlapped the current kill-feed rows; a whole line merged into one OCR box with
+the own name at its end read as a kill; victim keys taken from count digits, a second own-name box or the own-name
+tail of a merged box; the BR feed read on MP frames after one stray BR cue. Fixed in code (no pack value changed);
+each kill now records its feed and a match counts only the feed of its HUD family. Evidence:
+`docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md`.

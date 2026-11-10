@@ -139,7 +139,7 @@ def _label(e, det):
         return f"+{e['points']}"
     if d == "W1":
         return e["result"]
-    if d == "C1":
+    if d in ("C1", "C2"):
         return e["cue"]
     if d == "X1":
         up = e["box"]["text"].upper()  # raw upper case: normalise() drops the "+" of "5+ MULTI-KILL"
@@ -157,11 +157,11 @@ def _label(e, det):
     return det.get("name", d)
 
 
-def frame_hits(boxes, pack, names, settings, mode=None, kill_keys=None):
+def frame_hits(boxes, pack, names, settings, mode=None, kill_keys=None, kill_feeds=None):
     """Hit rows (single frame, no t) from one frame's OCR boxes (g1_scan scan format: text, score, g).
     kill_keys: optional list; one in-memory victim key (match_gate.victim_key) is appended per own kill-feed line
     that signals (M5 unless the mode is br, B1 unless it is mp), for the match gate's kill count. Keys are never
-    part of a row."""
+    part of a row. kill_feeds: optional list; the feed detector (M5 or B1) of each key, in the same order."""
     det = {d["id"]: d for d in pack["detectors"]}
     name_min = float(settings["nameMin"])
     slack = float(settings["roiSlack"])
@@ -209,7 +209,9 @@ def frame_hits(boxes, pack, names, settings, mode=None, kill_keys=None):
                 why.append("no_name_in_roi")
         if (kill_keys is not None and not why and d in ("M5", "B1")
                 and mode != ("br" if d == "M5" else "mp")):
-            kill_keys.append(match_gate.victim_key(e["box"]["text"]))
+            kill_keys.append(match_gate.victim_key(e["victim"] if "victim" in e else e["box"]["text"]))
+            if kill_feeds is not None:
+                kill_feeds.append(d)
         row = {"detector": d, "label": _label(e, dd), "role": role, "signal": not why, "why": why,
                "clipReason": clip_reason and role == "positive", "weight": weight,
                "detectorStatus": dd.get("status", "unverified"), "mode": mode,
@@ -409,16 +411,24 @@ def _iou(a, b):
     return ov / u if u > 0 else 0.0
 
 
-def band_boxes(per_band, bands, size, edge=2):
+def band_boxes(per_band, bands, size, edge=2, stale=None):
     """OCR boxes per band (band px) -> one list in image px, the coordinate space of a full-frame OCR.
     Overlapping bands can read one text twice: a box cut by an inner band edge is dropped when another band holds
-    it whole, and of two boxes with IoU >= 0.5 the higher score is kept."""
+    it whole, and of two boxes with IoU >= 0.5 the higher score is kept.
+    stale: per band, True when its boxes are held from an earlier frame only because it was not its turn
+    (roiEvery cadence); such a box is dropped when a band that is current this frame (read now, or unchanged by
+    the diff gate) holds it whole. Without this, the every-5th-frame M1/S1 band, which covers the kill feed, put
+    rows of a feed from up to 4 s ago next to the current rows (2026-11-09 practice: own kills counted twice)."""
     w, h = size
+    stale = stale or [False] * len(bands)
     cand = []
-    for boxes, band in zip(per_band, bands):
+    for boxes, band, old in zip(per_band, bands, stale):
         bx0, by0, bx1, by1 = band["px"]
         for b in boxes:
             g = dict(b, x0=b["x0"] + bx0, y0=b["y0"] + by0, x1=b["x1"] + bx0, y1=b["y1"] + by0)
+            if old and any(o is not band and not s and o["px"][0] <= g["x0"] and o["px"][1] <= g["y0"]
+                           and o["px"][2] >= g["x1"] and o["px"][3] >= g["y1"] for o, s in zip(bands, stale)):
+                continue
             cut = ((g["x0"] <= bx0 + edge and bx0 > 0) or (g["y0"] <= by0 + edge and by0 > 0)
                    or (g["x1"] >= bx1 - edge and bx1 < w) or (g["y1"] >= by1 - edge and by1 < h))
             if cut and any(o is not band and o["px"][0] <= g["x0"] - edge and o["px"][1] <= g["y0"] - edge
@@ -475,7 +485,7 @@ class FrameScanner:
         # match gate (match_gate.py): S1 readings with t, own kill-feed lines deduplicated into kills
         mcfg = match_gate.stats_config(pack)
         self.kills = match_gate.KillCounter(mcfg["killLineHoldSec"], mcfg["victimMatchMin"])
-        self.readings, self.prev_keys = [], []
+        self.readings, self.prev_keys, self.prev_feeds = [], [], []
         self.stats = {"frames": 0, "ocrFrames": 0, "diffGateSkips": 0, "ocrCalls": 0, "bandOcr": 0, "bandSkips": 0,
                       "bandHeld": 0, "ocrSeconds": 0.0}
 
@@ -503,6 +513,7 @@ class FrameScanner:
         import numpy as np
         bands = self.active_bands()
         per_band = [None] * len(bands)
+        stale = [False] * len(bands)  # held by cadence only (band_boxes drops those under a current band)
         todo = []  # (index, key, small) of bands OCR'd this frame
         for i, band in enumerate(bands):
             x0, y0, x1, y1 = band["px"]
@@ -511,6 +522,7 @@ class FrameScanner:
             if self.n % band["every"] and seen is not None and self.n - seen < band["every"]:
                 self.stats["bandHeld"] += 1  # not this frame's turn: its last boxes still hold
                 per_band[i] = held
+                stale[i] = True
                 continue
             small = cv2.resize(cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY), None, fx=0.25, fy=0.25,
                                interpolation=cv2.INTER_AREA).astype(np.int16)
@@ -530,7 +542,7 @@ class FrameScanner:
                 self.stats["bandOcr"] += 1
                 self.band_state[key] = (small, got, self.n)
                 per_band[i] = got
-        return band_boxes(per_band, bands, self.size), len(todo)
+        return band_boxes(per_band, bands, self.size, stale=stale), len(todo)
 
     def scan(self, t, img):
         self.stats["frames"] += 1
@@ -550,27 +562,29 @@ class FrameScanner:
             recboxes = rec["boxes"]
         self.stats["ocrFrames"] += 1
         self.mode = g1_scan.classify_frame(recboxes) or self.mode  # keep the last known mode through cue-less frames
-        keys = []
-        self.prev = frame_hits(recboxes, self.pack, self.names, self.settings, self.mode, kill_keys=keys)
+        keys, feeds = [], []
+        self.prev = frame_hits(recboxes, self.pack, self.names, self.settings, self.mode, kill_keys=keys,
+                               kill_feeds=feeds)
         srows, readings = match_gate.frame_stats(recboxes, self.pack, self.names, float(self.settings["nameMin"]),
                                                  self.mode)
         self.prev += srows
         self.readings += [{"t": round(float(t), 3), **r} for r in readings]
-        self.prev_keys = keys
-        self.kills.feed(t, keys)
+        self.prev_keys, self.prev_feeds = keys, feeds
+        self.kills.feed(t, keys, feeds)
         return [dict(h, t=t) for h in self.prev]
 
     def _unchanged(self, t):
         # unchanged frame: whatever was on screen at the last OCR'd frame still is, so its hits continue (and its
         # own kill-feed lines stay the same kills)
         self.stats["diffGateSkips"] += 1
-        self.kills.feed(t, self.prev_keys)
+        self.kills.feed(t, self.prev_keys, self.prev_feeds)
         return [dict(h, t=t) for h in self.prev]
 
     def match_stats(self):
         """match-stats.json content: S1 readings and own-kill times (no names, no OCR text)."""
         return {"readings": self.readings,
-                "ownKills": {"times": list(self.kills.times), "framesWithOwnLines": self.kills.frames,
+                "ownKills": {"times": list(self.kills.times), "feeds": list(self.kills.feeds),
+                             "framesWithOwnLines": self.kills.frames,
                              "holdSec": self.kills.hold}}
 
 

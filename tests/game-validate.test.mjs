@@ -45,7 +45,7 @@ function expectError(t, file, fn, pattern) {
 test('game-validate: committed packs are valid', () => {
   const { errors, packs } = validateGames(games, repo);
   assert.deepEqual(errors, []);
-  assert.deepEqual(packs, [{ id: 'codm', version: '0.6.0' }]);
+  assert.deepEqual(packs, [{ id: 'codm', version: '0.7.0' }]);
 });
 
 test('game-validate: a copy of the pack (without local/) is valid', (t) => {
@@ -111,7 +111,15 @@ test('game-validate: reference dataset must sit in this pack\'s local/ folder', 
 test('game-validate: pairing rule screens must run its detector; excluded screens run nothing', (t) => {
   expectError(t, 'screens.json', (d) => d.pairingRules[0].screens.push('impact_play'), /pairing rule .*: screen "impact_play" does not run M1/);
   expectError(t, 'screens.json', (d) => { d.pairingRules[0].frameLevelName = true; }, /screens\.json: schema/);
-  expectError(t, 'screens.json', (d) => { scr(d, 'summary').detectors = ['M1']; }, /screens\.json: schema/);
+  expectError(t, 'screens.json', (d) => { scr(d, 'lobby').detectors = ['C2']; }, /screens\.json: schema/);
+});
+
+test('game-validate: summary screens run only name-free context detectors (C2 lobby mode header)', (t) => {
+  // M1 reads names: never on the summary screen (MVP badges of both teams beside the profile name, A5c)
+  expectError(t, 'screens.json', (d) => { scr(d, 'summary').detectors.push('M1'); }, /summary: kind "summary" runs only name-free context detectors .*M1/);
+  // a context detector that reads a name is refused too
+  expectError(t, 'detectors.json', (d) => { det(d, 'C2').nameRequired = true; det(d, 'C2').nameSide = 'any'; }, /summary: kind "summary" runs only name-free context detectors .*C2/);
+  expectError(t, 'detectors.json', (d) => { det(d, 'C2').role = 'positive'; }, /summary: kind "summary" runs only name-free context detectors .*C2/);
 });
 
 test('game-validate: missing pack file and evidence file', (t) => {
@@ -125,7 +133,7 @@ test('game-validate: missing pack file and evidence file', (t) => {
 test('game-validate: CLI exit code 0 on the committed packs, 1 on a broken pack', (t) => {
   const good = spawnSync(process.execPath, [tool, games, repo], { encoding: 'utf8', windowsHide: true });
   assert.equal(good.status, 0, good.stderr);
-  assert.match(good.stdout, /OK: 1 game pack\(s\) valid: codm 0\.6\.0/);
+  assert.match(good.stdout, /OK: 1 game pack\(s\) valid: codm 0\.7\.0/);
   const dir = build();
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   edit(dir, 'detectors.json', (d) => { det(d, 'K1').screens = ['mp_top3']; });

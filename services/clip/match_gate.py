@@ -64,6 +64,9 @@ def stats_config(pack):
     st["banner"] = dict(w1.get("banner") or {})
     c1 = next((d for d in pack.get("detectors", []) if d.get("id") == "C1"), None) or {}
     st["modeCues"] = list(c1.get("cues") or [])
+    c2 = next((d for d in pack.get("detectors", []) if d.get("id") == "C2"), None) or {}
+    st["headerCues"] = list(c2.get("cues") or [])
+    st["headerAfterSec"] = float(c2.get("afterEndSec") or 0)
     return st
 
 
@@ -256,12 +259,13 @@ KEY_DUP_MIN = 0.85       # two keys this alike in one frame are one line read tw
 
 
 def _frame_keys(keys):
-    """One frame's keys without repeats of the same line (None keys all kept: each is a line)."""
+    """Indexes of one frame's keys without repeats of the same line (None keys all kept: each is a line)."""
     out = []
-    for k in keys:
-        if k is not None and any(o is not None and (gt.ratio(k, o) >= KEY_DUP_MIN or k in o or o in k) for o in out):
+    for i, k in enumerate(keys):
+        if k is not None and any(keys[j] is not None and (gt.ratio(k, keys[j]) >= KEY_DUP_MIN or k in keys[j]
+                                                          or keys[j] in k) for j in out):
             continue
-        out.append(k)
+        out.append(i)
     return out
 
 
@@ -282,12 +286,14 @@ class KillCounter:
     name, its last 8 characters, a middle part or a 4-character tail on consecutive frames). Two None keys match.
     Within one frame, a key that repeats an earlier key of that frame (ratio >= KEY_DUP_MIN or one inside the other)
     is the same line read twice and is dropped; the other keys pair one to one with the lines on screen, so two
-    different victims at once (clan mates with the same tag too) stay two kills."""
+    different victims at once (clan mates with the same tag too) stay two kills. feeds (optional, one per key): the
+    feed detector of each line (M5 or B1); the feed of each counted kill is kept in `feeds`, parallel to `times`."""
 
     def __init__(self, hold_sec=6.0, key_min=0.7):
         self.hold, self.key_min = float(hold_sec), float(key_min)
         self.active = []  # [key, last_t]
         self.times = []
+        self.feeds = []
         self.frames = 0
 
     def _same(self, a, b):
@@ -295,17 +301,20 @@ class KillCounter:
             return a is None and b is None
         return gt.ratio(a, b) >= self.key_min or _overlap(a, b) >= KEY_OVERLAP_MIN
 
-    def feed(self, t, keys):
+    def feed(self, t, keys, feeds=None):
         self.active = [e for e in self.active if t - e[1] <= self.hold + 1e-6]
+        keys = list(keys or [])
         if keys:
             self.frames += 1
         used, new = set(), 0
-        for k in _frame_keys(keys):
+        for j in _frame_keys(keys):
+            k = keys[j]
             hit = next((i for i, e in enumerate(self.active) if i not in used and self._same(k, e[0])), None)
             if hit is None:
                 self.active.append([k, t])
                 used.add(len(self.active) - 1)
                 self.times.append(round(float(t), 3))
+                self.feeds.append(feeds[j] if feeds and j < len(feeds) else None)
                 new += 1
             else:
                 self.active[hit][1] = t
@@ -431,13 +440,15 @@ def segment(hits, stats, duration, cfg):
     """Matches of a recording. stats: match-stats.json doc (or None). Each match: start, end, endSeen, result,
     mode, ownRank, ownScore, top3Seen, ownKills, killsSource; for the reel rules (D315) also endScreenAt (first
     end-screen hit), resultConfirmed (a signalled W1 box of that result), resultAt/resultEnd (that box's time),
-    gameMode with modeConfidence, modeEvidence and modeReason (game_mode(): top-3 mode name, mode cues, round
-    subtitles; None when the evidence does not decide one mode) and roundKills (own kills per round, from the
+    gameMode with modeConfidence, modeEvidence and modeReason (game_mode(): top-3 mode name, summary-screen header
+    read within headerAfterSec of this match's end screens, mode cues, round subtitles; None when the evidence does
+    not decide one mode) and roundKills (own kills per round, from the
     round-end banners: see below). Round ends (classify_banners) never close a match: they are listed in `rounds`
     [{t, tEnd, result, source, subtitle}] of the match they fall in; endBanner tells how the closing banner was
     told apart ({source, subtitle} or None). roundKills: with at least one round end, own kills per round, a round
     running from the previous round end (or the match start) to its banner, the last one to the match-end banner;
-    otherwise None. No names."""
+    otherwise None. Kill-feed kills (ownKills, roundKills) count only the feed of the match's HUD family (M5 in MP,
+    B1 in BR) when match-stats.json records the feed of each kill. No names."""
     kinds = classify_banners(hits, cfg, duration)
     clusters = end_clusters(hits, cfg, kinds)
     round_hits = []  # one per round banner: hits of the same result closer than banner.sameBannerSec are one banner
@@ -452,9 +463,13 @@ def segment(hits, stats, duration, cfg):
         round_hits.append(h)
     readings = (stats or {}).get("readings") or []
     if stats and isinstance((stats.get("ownKills") or {}).get("times"), list):
-        kill_times, kill_src = [float(t) for t in stats["ownKills"]["times"]], "killfeed"
+        all_times, kill_src = [float(t) for t in stats["ownKills"]["times"]], "killfeed"
+        all_feeds = stats["ownKills"].get("feeds")
+        if not isinstance(all_feeds, list) or len(all_feeds) != len(all_times):
+            all_feeds = [None] * len(all_times)  # older runs: no feed per kill
     else:
-        kill_times = killfeed_instances(hits)
+        all_times = killfeed_instances(hits)
+        all_feeds = [h["detector"] for h in hits if h.get("detector") in ("M5", "B1") and h.get("signal") is True]
         kill_src = "killfeed" if any(h.get("detector") in ("M5", "B1") for h in hits) else None
     spans = []
     prev = 0.0
@@ -478,6 +493,11 @@ def segment(hits, stats, duration, cfg):
         if c and c["banners"]:
             m["endBanner"] = {"source": c["banners"][0][1], "subtitle": c["banners"][0][2]}
         hud = Counter(h["mode"] for h in hits if h.get("mode") in ("mp", "br") and start <= float(h["t"]) <= end)
+        # only the kill feed of the match's HUD family counts: the frame mode sticks after one cue, so a single BR cue
+        # read on an MP loadout or end card (2026-11-09 practice) let the BR feed (B1) read name tags and calling
+        # cards as own kills until the next MP cue
+        other = {"mp": "B1", "br": "M5"}.get(_mode_of(hud))
+        kill_times = [t for t, f in zip(all_times, all_feeds) if f is None or f != other]
         if c:
             if c["results"]:
                 m["result"] = c["results"].most_common(1)[0][0]
@@ -509,7 +529,12 @@ def segment(hits, stats, duration, cfg):
         if not c:
             tops = []
         in_match = [h for h in hits if start <= float(h["t"]) <= end]
-        gm = game_mode(tops, in_match, m["rounds"], m["endBanner"], cfg)
+        # summary-screen header (C2): read after the end screens, so it belongs to the match that just ended; only
+        # from this match's first end-screen hit to headerAfterSec after its last (never the next match's evidence)
+        after = float(cfg.get("headerAfterSec") or 0)
+        header = [h for h in hits if c and h.get("detector") == "C2" and h.get("signal") is True
+                  and c["t0"] <= float(h["t"]) <= c["t1"] + after]
+        gm = game_mode(tops, in_match, m["rounds"], m["endBanner"], cfg, header)
         m["gameMode"], m["modeConfidence"], m["modeEvidence"], m["modeReason"] = gm
         m["mode"] = m["gameMode"] or _mode_of(hud + (c["hudModes"] if c else Counter()))
         out.append(m)
@@ -527,19 +552,26 @@ def _cue_modes(cfg):
     return out
 
 
-def game_mode(tops, hits, rounds, end_banner, cfg):
+def game_mode(tops, hits, rounds, end_banner, cfg, header=()):
     """Game mode of one match from on-screen evidence -> (mode | None, confidence | None, evidence, reason).
-    Evidence items {source, at, text, modes}: the mode name on the top-3 screen (S1 mode_label), mode cues seen
-    during the match (C1 hits: HUD and scoreboard texts that only some modes show) and round-banner subtitles that
-    name modes. Each item allows a set of modes; the match mode is the one mode every item allows. No item: None
-    ("no mode evidence"); items that allow no common mode or more than one: None with the reason (never a guess).
-    Confidence: "high" with the top-3 mode name, else "medium" with two or more items, else "low"."""
+    Evidence items {source, at, text, modes}: the mode name on the top-3 screen (S1 mode_label), the mode name in
+    the summary-screen header (C2 hits given in `header`: segment() passes those of this match's end only), mode
+    cues seen during the match (C1 hits: HUD and scoreboard texts that only some modes show) and round-banner
+    subtitles that name modes. Each item allows a set of modes; the match mode is the one mode every item allows.
+    No item: None ("no mode evidence"); items that allow no common mode or more than one: None with the reason
+    (never a guess). Confidence: "high" with a mode name (top-3 screen or summary header), else "medium" with two
+    or more items, else "low"."""
     cues = _cue_modes(cfg)
+    hcues = {q["text"]: [x.lower() for x in q.get("modes") or []] for q in cfg.get("headerCues") or []}
     ev = []
     for r in tops:
         if r.get("gameMode"):
             ev.append({"source": "top-3 screen", "at": round(float(r["t"]), 2), "text": r["gameMode"],
                        "modes": [r["gameMode"]]})
+    for h in header:
+        if h.get("detector") == "C2" and h.get("signal") is True and h.get("label") in hcues:
+            ev.append({"source": "summary header", "at": round(float(h["t"]), 2), "text": h["label"],
+                       "modes": hcues[h["label"]]})
     seen = set()
     for h in hits:
         if h.get("detector") == "C1" and h.get("signal") is True and h.get("label") in cues:
@@ -566,7 +598,8 @@ def game_mode(tops, hits, rounds, end_banner, cfg):
         why = "evidence disagrees" if not allowed else "evidence fits more than one mode"
         return None, None, uniq, f"{why} ({', '.join(named)})"
     mode = allowed.pop()
-    conf = "high" if any(e["source"] == "top-3 screen" for e in uniq) else "medium" if len(uniq) >= 2 else "low"
+    named = any(e["source"] in ("top-3 screen", "summary header") for e in uniq)
+    conf = "high" if named else "medium" if len(uniq) >= 2 else "low"
     return mode, conf, uniq, f"{len(uniq)} evidence item(s) agree"
 
 

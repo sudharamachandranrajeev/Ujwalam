@@ -2,6 +2,15 @@
 
 The pack version is `version` in `detectors.json`. It covers every file in this folder (`game.json`, `detectors.json`, `events.json`, `screens.json`, `capture-plan.json`, `match-reels.json`). Validate with `npm run validate:games`.
 
+## 0.7.0 — 2026-11-10 (summary-screen mode header, own kill count fixes)
+
+Evidence: `docs/evidence/2026-11-10-lobby-mode-and-kill-dedup.md`.
+
+- New detector C2 "Summary-screen mode header" (role context, no weight, nameRequired false, status unverified), screen `summary`, ROI `mode_header` (x 0.49-0.66, y 0.01-0.07 of the game area), cues SEARCH & DESTROY, DOMINATION, TEAM DEATHMATCH, CONTROL (read on 2026-11-09) and HARDPOINT (not yet seen in the header). New detector field `afterEndSec` (30 s, a margin): how long after a match's end screens a header still belongs to that match. `match_gate.game_mode()` takes the header as another evidence source ("summary header", confidence high like the top-3 mode name); disagreeing evidence still gives no mode, with the reason.
+- Screen model: `summary` screens may now run detectors, but only name-free context detectors (role context, nameRequired false), checked by `tools/game-validate.mjs`; menu, overlay and signal_loss screens still run none.
+- Own kill count (detector pass and match gate code, no pack value changed): ROI-band boxes held from an earlier frame by the roiEvery cadence are dropped under a band read this frame; a whole kill-feed line merged into one box with the profile name at its end is a death, not a kill; kill-feed rows are grouped against the row's first box; the victim key comes from the victim side only (count digits, a second own-name box and the own-name part of a merged box are skipped); a box that is a profile name variant on its own is no line; each kill records its feed (M5 or B1) and a match counts only the feed of its HUD family (M5 in MP, B1 in BR).
+- Detection changes: C2 rows are new; match-stats.json `ownKills` gains `feeds`. `data/clip/detector-pass.json` `splitBySignal` adds C2, so a header read is dated to the summary screen, not to the top-3 screen before it. Runs detected with 0.6.0 segment as before (no header evidence, all kills counted) until re-detected.
+
 ## 0.6.0 — 2026-11-10 (round end vs match end, game mode per match)
 
 Evidence: `docs/evidence/2026-11-10-round-vs-match-end.md`.

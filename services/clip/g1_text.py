@@ -145,14 +145,18 @@ def group_lines(boxes, y_tol: float = 0.5):
 
     boxes: iterable of dicts with "text", "x0", "y0", "x1", "y1" (any unit).
     Two boxes share a line when their vertical centres differ by less than
-    y_tol x the smaller box height. Lines are sorted top to bottom, boxes left to right."""
+    y_tol x the smaller box height. A box is compared with the first box of a line (its anchor), never with the
+    last one added: comparing with the last box let a line creep down through the kill-feed rows (rows 0.026 of the
+    game height apart, boxes 0.025 high, plus stray boxes between rows), so one "line" held three rows and its
+    victim was another row's victim (2026-11-09 practice, 1-fps re-detect). Lines are sorted top to bottom, boxes
+    left to right."""
     items = sorted(boxes, key=lambda b: (b["y0"] + b["y1"]) / 2)
     lines = []
     for b in items:
         cy = (b["y0"] + b["y1"]) / 2
         h = b["y1"] - b["y0"]
         for line in lines:
-            ref = line[-1]
+            ref = line[0]
             rcy = (ref["y0"] + ref["y1"]) / 2
             if abs(cy - rcy) < y_tol * min(h, ref["y1"] - ref["y0"]):
                 line.append(b)
@@ -170,6 +174,11 @@ def _single_box_side(text, names, min_score):
     start means killer, at the end (a trailing kill-count digit ignored) means victim."""
     t = normalise(text)
     best = (None, 0.0)
+    whole = max((ratio(normalise(n), t) for n in names if normalise(n)), default=0.0)
+    if whole >= min_score:
+        # the box is one of the profile names on its own (a name variant such as NAME-TTV on a name tag, whose
+        # suffix would otherwise read as a victim after the base name): no line
+        return None, round(whole, 4)
     for name in names:
         n = normalise(name)
         if not n or len(t) < len(n) + 3:
@@ -185,6 +194,31 @@ def _single_box_side(text, names, min_score):
     return None, round(max(best[1], name_score(text, names)["score"]), 4)
 
 
+def victim_text(line, names, min_score: float = 0.8):
+    """The victim side of an own kill-feed line (killer side = the profile name): the right-most box that can be a
+    name, or, when none is left, the normalised text after the name at the start of the first box (one box holding
+    the whole line). Boxes that cannot be the victim are skipped: under 3 characters or digits only (a kill count or
+    icon read as '2', '4') and the profile name itself (a second row merged into the line). Each of these gave a
+    one-frame key that looked like another victim (2026-11-09 practice, Control match: 5 kills counted for 3 lines).
+    A merged box keyed by its last 8 characters kept part of the own name in the key ('NAMETAIL' + a short victim),
+    so the next frame's two-box read of the same line looked like another victim too."""
+    if not line:
+        return ""
+    for b in reversed(line[1:]):
+        t = normalise(b["text"])
+        if len(t) >= 3 and not t.isdigit() and name_score(b["text"], names)["score"] < min_score:
+            return b["text"]
+    t = normalise(line[0]["text"])
+    best, cut = 0.0, 0
+    for name in names:
+        n = normalise(name)
+        for k in (-1, 0, 1):
+            m = len(n) + k
+            if 0 < m <= len(t) and ratio(n, t[:m]) > best:
+                best, cut = ratio(n, t[:m]), m
+    return t[cut:]
+
+
 def killfeed_side(line, names, min_score: float):
     """Which side of a kill-feed line the name is on.
 
@@ -194,9 +228,15 @@ def killfeed_side(line, names, min_score: float):
     a single box that holds only a name returns (None, score)."""
     if not line:
         return None, 0.0
-    left = name_score(line[0]["text"], names)["score"]
     if len(line) == 1:
         return _single_box_side(line[0]["text"], names, min_score)
+    # The left-most box can itself hold the whole line (ROI-band OCR merges killer, icon gap and victim into one
+    # box and may add the victim again as a second box; 2026-11-09 practice, 1-fps re-detect): the name at the end
+    # of that box, after other text, is the victim side. Without this, every own death read as an own kill.
+    side, sc = _single_box_side(line[0]["text"], names, min_score)
+    if side == "victim":
+        return side, sc
+    left = name_score(line[0]["text"], names)["score"]
     right = max(name_score(b["text"], names)["score"] for b in line[1:])
     if left >= min_score and left >= right:
         return "killer", left
