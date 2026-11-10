@@ -144,6 +144,8 @@ public:
 	void dismissFirstFinished();
 	void clickFirstToast(); // tests: what a click on a notification does
 	QJsonObject probe() const;
+	// A short notification without a task (LU2: a data file that was not applied).
+	void notice(const QString &title, const QString &note, bool failed) { toast(title, note, failed); }
 	int active() const { return running_ + waiting_; } // running + waiting (the close question, D311 proposed)
 	const QJsonArray &tasks() const { return tasks_; }
 

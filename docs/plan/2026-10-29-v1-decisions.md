@@ -623,3 +623,22 @@ Built (2026-11-10, branch `ui/outputs-transitions-integrations`, sections A–C;
 - Virtual Camera is shown as "Not available in this build" (the host has no virtual camera method yet).
 - The remote pairing token is new on every start, passed by environment only, never written to `integrations.json`.
 Evidence: `docs/evidence/2026-11-10-outputs-transitions-integrations.md`.
+
+## D328 — Data hot-reload and the live-soak gate (LU2, LU8; 2026-11-10, agent decision under D324)
+
+Data files reload at their owning process through one data source (`services/common/data-reload.mjs`): a directory
+watch with debounce plus a poll, schema check first; an invalid version keeps the last good one and is shown in the
+task area (`data-<kind>` task) and the log at warn level, never error. Posting rules keep the last good version in a
+running process; with no good version at all they still fail closed. A broken `flags.local.json` keeps the last flag
+values instead of resetting them to the defaults, and so does one that gives a known flag a value other than true or
+false (dropping only that value would turn a default-on feature on). Registry scene presets are not reloaded live: nothing running reads
+them after launch (LU3 decides how a project picks up a changed preset). Game packs and the clip worker are out of
+scope. The live-soak gate (`npm run soak`) runs from a staged copy of the runtime (`tools/soak/stage.mjs`) so it can
+change data files without touching the repo; the host's overlay child gets only whitelisted environment variables, so
+the stage's own profile points its data dir at the run. The gate needs a quiet machine: it refuses to start while Meld
+Studio, an installed Ujwalam or a detector job runs, checks again every minute, and reports CPU per process next to
+every lost frame, because the stack runs at BelowNormal and outside load shows up as render lag. The last segment of
+each loopback stream may end one frame short at stream stop (encoder flush); that one step is reported apart and not
+counted as a gap. Timestamp gaps are measured against the planned fps of the sink's rung, never the observed median.
+The four streams youtube-h, youtube-v, twitch and kick are required by id (a plan without one fails), each live in
+every sample and received in full; the recording must start, stay live and be probed like a stream.

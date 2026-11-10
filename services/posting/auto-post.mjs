@@ -10,6 +10,7 @@
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createDataSource, parseJsonText } from '../common/data-reload.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const AUTO_FLAG = 'auto-post';
@@ -64,6 +65,35 @@ export function initUserRules(dataDir) {
   mkdirSync(path.dirname(dest), { recursive: true });
   copyFileSync(DEFAULT_RULES, dest, constants.COPYFILE_EXCL);
   return { path: dest, created: true };
+}
+
+/**
+ * LU2 (D324): the rules as a live source. get() re-reads the rules file when it changes (the user's file may appear
+ * or be edited while the app runs, also while live): a valid version applies at once; an invalid one keeps the last
+ * good version (the user's own rules, read earlier) and is reported through report(). With no good version yet (a
+ * broken file at start) get() throws AutoPostError 'bad-rules' as loadRules does, so a broken file still fails closed.
+ * opts: { dataDir, explicit?, report? }.
+ */
+export function createRulesSource({ dataDir, explicit, report } = {}) {
+  let src = null;
+  const parse = (text) => {
+    let j;
+    try { j = parseJsonText(text); } catch { throw new AutoPostError('bad-rules', 'rules file: not valid JSON'); }
+    return validateRules(j);
+  };
+  const current = () => {
+    const f = rulesFileFor(dataDir, explicit);
+    if (!src || src.file !== f) src = createDataSource({ kind: 'posting-rules', file: f, parse, report });
+    return src;
+  };
+  return {
+    get() {
+      try { return current().get(); } catch (e) { throw e instanceof AutoPostError ? e : new AutoPostError('bad-rules', e?.message ?? 'rules file: missing or not valid JSON'); }
+    },
+    file: () => current().file,
+    status: () => current().status(),
+    watch: (o) => current().watch(o),
+  };
 }
 
 export function loadRules(file = DEFAULT_RULES) {

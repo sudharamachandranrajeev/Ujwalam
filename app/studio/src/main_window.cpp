@@ -585,6 +585,8 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	note_ = new QLabel(this);
 	statusBar()->addWidget(note_, 1);
 	tasks_ = new TaskBar(this);
+	// LU2: a theme file that changed on disk but has a problem: the look stays, the reason shows as a notification.
+	connect(theme::notifier(), &theme::Notifier::rejected, tasks_, [this](const QString &title, const QString &why) { tasks_->notice(title, why, true); });
 	// The task button sits in the top bar at the right, before My clips (user 2026-11-10: the status-bar strip was hard
 	// to see); its panel and the notifications open under it. Hidden while no task is listed.
 	if (QWidget *topBar = clipsFolderBtn_->parentWidget())
