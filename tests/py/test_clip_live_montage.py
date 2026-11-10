@@ -27,7 +27,7 @@ import clipper  # noqa: E402
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
 START = "2026-11-03T07:00:00Z"
 HITS = ({"t": 3.0, "detector": "M5", "signal": True}, {"t": 5.0, "detector": "M5", "signal": True},
-        {"t": 9.0, "detector": "W1", "label": "VICTORY", "signal": True, "tEnd": 10.0})
+        {"t": 9.0, "detector": "W1", "label": "VICTORY", "signal": True, "tEnd": 10.0, "banner": "match"})
 
 
 def _write(path, text):
