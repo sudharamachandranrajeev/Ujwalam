@@ -99,6 +99,14 @@ test('clipRunSpec: whole recording (after) and moments found while it ran (while
     '--recording', 'C:/r/h.mkv', '--threads', '4', '--encoder', 'h264_nvenc', '--publish', 'E:/clips', '--drop-used-saves', '--out', path.join('D', 'clips', 'runs', 'live-1')]);
   const goneRec = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { ...job, h: 'C:/r/h.mkv' }, saves: 'D/live-clips/s1', exists: has([script, gpu]) });
   assert.ok(!goneRec.spec.argv.includes('--recording'), 'a recording that is gone: no gate input, every save kept');
+  // 2026-11-10: the H recording is a canvas; the project's game layer places the detector boxes (D235).
+  const P = 'D/projects/alpha.project.json';
+  const withProj = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { ...job, h: 'C:/r/h.mkv' }, saves: 'D/live-clips/s1', project: P, exists: has([script, gpu, 'C:/r/h.mkv', P]) });
+  assert.deepEqual(withProj.spec.argv.slice(withProj.spec.argv.indexOf('--recording'), withProj.spec.argv.indexOf('--encoder')), ['--recording', 'C:/r/h.mkv', '--threads', '4', '--project', P]);
+  const fullProj = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { type: 'full', h: 'C:/r/h.mkv', name: 'h' }, project: P, exists: has([script, gpu, P]) });
+  assert.deepEqual(fullProj.spec.argv.slice(fullProj.spec.argv.indexOf('--recording'), fullProj.spec.argv.indexOf('--publish')), ['--recording', 'C:/r/h.mkv', '--project', P]);
+  const noProj = clipRunSpec({ clipRoot: root, dataDir: 'D', outRoot: 'E:/clips', job: { type: 'full', h: 'C:/r/h.mkv', name: 'h' }, project: P, exists: has([script, gpu]) });
+  assert.ok(!noProj.spec.argv.includes('--project'), 'a missing project file is not passed');
 });
 
 function setup() {

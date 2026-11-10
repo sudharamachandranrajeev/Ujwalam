@@ -82,11 +82,14 @@ export function newestSaves(dataDir) {
 
 /** Python and argv for one job, or { spec: null, reason }. job: { type: 'full'|'review', h?, v?, since?, until?, name }.
  *  out = the run folder in app data (workRoot); outRoot = the clips folder that gets the finished videos only. */
-export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(dataDir), workRoot = path.join(dataDir, 'clips', 'runs'), saves = undefined, exists = existsSync }) {
+export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(dataDir), workRoot = path.join(dataDir, 'clips', 'runs'), saves = undefined, exists = existsSync, project = null }) {
   const t = clipTools({ clipRoot, exists });
   if (!t.py) return { spec: null, reason: t.reason };
   const out = path.join(workRoot, job.name);
   const argv = ['-I', t.script, '--data-dir', dataDir];
+  // The recording is the H canvas, not clean game footage: the project's game layer tells the detectors where the game
+  // is (D235). Without it they scan the full frame and the end-screen boxes (top 3, mode) fall in the wrong place.
+  const proj = typeof project === 'string' && project && exists(project) ? ['--project', project] : [];
   if (job.type === 'review') {
     const s = saves === undefined ? newestSaves(dataDir) : saves;
     if (!s) return { spec: null, reason: 'no moments were found while it ran' };
@@ -95,11 +98,11 @@ export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(data
     if (job.until) argv.push('--until', job.until);
     // Match gate on the "while" path (D304 proposed): the stream's own H recording, when there is one, gives the
     // matches (detect + segment in live-review); saves in skipped matches are dropped. Without it every save is kept.
-    if (typeof job.h === 'string' && job.h && exists(job.h)) argv.push('--recording', job.h, '--threads', '4');
+    if (typeof job.h === 'string' && job.h && exists(job.h)) argv.push('--recording', job.h, '--threads', '4', ...proj);
     argv.push('--encoder', 'h264_nvenc', '--publish', outRoot, '--drop-used-saves', '--out', out);
   } else {
     if (!job.h) return { spec: null, reason: 'there is no recording to make clips from' };
-    argv.push('run', '--detect', '--threads', '4', '--encoder', 'h264_nvenc', '--recording', job.h);
+    argv.push('run', '--detect', '--threads', '4', '--encoder', 'h264_nvenc', '--recording', job.h, ...proj);
     if (job.v) argv.push('--v-recording', job.v, '--montage');
     const db = path.join(dataDir, 'event-core.db');
     if (exists(db)) argv.push('--chat-db', db);
@@ -145,7 +148,7 @@ const JOB_KEYS = ['type', 'kind', 'h', 'v', 'since', 'until', 'name', 'minutes']
 const pickJob = (j) => Object.fromEntries(JOB_KEYS.filter((k) => j[k] !== undefined).map((k) => [k, j[k]]));
 
 /** The queue and the child. feed(status) is called with each outputs.status. */
-export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now = Date.now, postChain = null, killTreeFn = killChildTree }) {
+export function createRecordClips({ clipRoot, dataDir, project = null, log, spawnFn = spawn, now = Date.now, postChain = null, killTreeFn = killChildTree }) {
   const stateDir = path.join(dataDir, 'clips');
   const statusFile = path.join(stateDir, 'status.json');
   const answerFile = path.join(stateDir, 'answer.json');
@@ -210,7 +213,7 @@ export function createRecordClips({ clipRoot, dataDir, log, spawnFn = spawn, now
   const start = () => {
     if (child || stopped || !queue.length) return;
     const job = queue[0];
-    const { spec, reason } = clipRunSpec({ clipRoot, dataDir, job });
+    const { spec, reason } = clipRunSpec({ clipRoot, dataDir, job, project });
     if (!spec) {
       queue.shift(); last = { name: job.name, kind: job.kind, result: 'not-made', reason, clips: 0 };
       finishTask(job, false, reason);

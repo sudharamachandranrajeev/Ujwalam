@@ -89,6 +89,25 @@ def end_own_tree(pid=None, run=None):
         os._exit(1)
 
 
+def _take_stdin_pipe():
+    """The watcher's own copy of the parent pipe; fd 0 (and the Windows standard input handle) become NUL.
+    Windows: a blocking read on a synchronous pipe blocks every other call on that handle, and subprocess duplicates
+    the standard input handle for each child it starts. With the watcher reading stdin, the first ffprobe/ffmpeg
+    start hung forever (2026-11-10: live-review stuck 38+ min before its first frame). The copy is not inheritable,
+    so children never see the pipe."""
+    fd = os.dup(0)
+    nul = os.open(os.devnull, os.O_RDONLY)
+    try:
+        os.dup2(nul, 0)
+    finally:
+        os.close(nul)
+    try:
+        sys.stdin = open(os.devnull, encoding="utf-8")
+    except OSError:
+        pass
+    return os.fdopen(fd, "rb", buffering=0)
+
+
 def end_tree_when_parent_gone(env=None, stdin=None, on_gone=None):
     """Parent pipe (D234; user 2026-11-09, D311 proposed): with UJWALAM_PARENT_PIPE=1 the launcher holds our stdin as
     a pipe. End-of-file means Ujwalam is gone (closed, crashed or hard-killed); the clip job then ends itself and its
@@ -96,7 +115,7 @@ def end_tree_when_parent_gone(env=None, stdin=None, on_gone=None):
     import threading
     if (env if env is not None else os.environ).get(PARENT_PIPE_ENV) != "1":
         return None
-    src = stdin if stdin is not None else sys.stdin.buffer
+    src = stdin if stdin is not None else _take_stdin_pipe()
     gone = on_gone or end_own_tree
 
     def read():

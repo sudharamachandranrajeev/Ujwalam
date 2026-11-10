@@ -1029,7 +1029,7 @@ export async function main(argv = process.argv.slice(2)) {
     if (disc && alpha) {
       // Clips from each finished recording (D283, flag clip-pipeline): outputs.status every 5 s; the discovery file is
       // read each time, so a restarted host is followed.
-      recordClips = createRecordClips({ clipRoot: CLIP_ROOT, dataDir, log: (l) => console.log(`[studio] ${l}`), postChain: createPostChain({ dataDir, log: (l) => console.log(`[studio] ${l}`) }) });
+      recordClips = createRecordClips({ clipRoot: CLIP_ROOT, dataDir, project: alpha ? alphaFile(dataDir) : null, log: (l) => console.log(`[studio] ${l}`), postChain: createPostChain({ dataDir, log: (l) => console.log(`[studio] ${l}`) }) });
       const clipTick = async () => {
         if (stopping) return;
         try {

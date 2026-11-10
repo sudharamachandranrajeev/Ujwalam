@@ -94,7 +94,39 @@ class ContainChildren(unittest.TestCase):
         self.assertTrue(gone_within(child), "kill-on-close: the child ended with the job")
 
 
+WATCHED_JOB = r"""
+import os, subprocess, sys, time
+sys.path.insert(0, sys.argv[1])
+import clip_common as cc
+cc.end_tree_when_parent_gone(on_gone=lambda: os._exit(7))
+time.sleep(0.3)  # the watcher is now blocked reading the parent pipe
+r = subprocess.run([sys.executable, "-c", "print('child')"], capture_output=True, timeout=20,
+                   creationflags=0x08000000)
+print("started", r.stdout.decode().strip(), flush=True)
+time.sleep(30)
+"""
+
+
 class ParentPipe(unittest.TestCase):
+    def test_child_starts_while_the_watcher_reads_the_pipe(self):
+        # 2026-11-10: live-review hung 38+ min at its first ffprobe: on Windows the watcher's blocking read on the
+        # stdin pipe blocked subprocess from duplicating that handle for the child.
+        env = dict(os.environ, **{cc.PARENT_PIPE_ENV: "1"})
+        p = subprocess.Popen([sys.executable, "-I", "-c", WATCHED_JOB, _CLIP], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, env=env, creationflags=0x08000000)
+        try:
+            line = []
+            t = threading.Thread(target=lambda: line.append(p.stdout.readline()), daemon=True)
+            t.start()
+            t.join(25)
+            self.assertEqual(line and line[0].decode().strip(), "started child", "child started under the watcher")
+            p.stdin.close()  # parent gone: the watcher still sees end-of-file through its own copy
+            self.assertEqual(p.wait(15), 7)
+        finally:
+            if p.poll() is None:
+                p.kill()
+            p.stdout.close()
+
     def test_eof_on_stdin_calls_gone_once(self):
         hit = threading.Event()
         t = cc.end_tree_when_parent_gone(env={cc.PARENT_PIPE_ENV: "1"}, stdin=io.BytesIO(b"x" * 100), on_gone=hit.set)
