@@ -15,19 +15,20 @@
 //                                                         (action, rule, pseudo id, class, target); NOTHING executes.
 //                                                         chatMode 'on' cannot be loaded in P3 (livelock/catalogue.mjs).
 //   panic.set  (ui|api|system)                         -> allow, engages panic;  other sources refuse
-//   panic.clear (ui|api)                               -> confirm with the live phrase rule; other sources refuse
+//   panic.clear (ui|api, untainted)                    -> allow, clears panic (the user's click); other sources refuse
 //   class read                                         -> allow
-//   write                                              -> confirm: 'yes' offline, 'yes, on air' live or unknown
-//   on-air-write, offline                              -> confirm: 'yes'
-//   on-air-write, live or unknown                      -> TWO confirmations in order: 'yes' (step 1), then, from the
-//                                                         step-2 confirmation that step 1 returns, 'yes, on air'. Each
-//                                                         is single use, hash-bound to action + params + live epoch,
-//                                                         expires after stepTtlMs (default 30 s), and must come from the
-//                                                         same untainted ui/api source.
+//   write / on-air-write from ui or api (untainted)    -> allow and dispatch at once, audit reason 'ui-direct' (D331:
+//                                                         the user's click IS the decision; no typed phrase, no second
+//                                                         step, offline or live)
+//   write / on-air-write from rule, remote or system   -> confirm: one approval click (Allow) from an untainted ui/api
+//                                                         source. The confirmation is single use, hash-bound to action +
+//                                                         params + source + actor, bound to the live epoch and effective
+//                                                         live state at issue, expires after ttlMs (default 60 s). There
+//                                                         is no phrase; a phrase argument to confirm() is ignored.
 //
-// Sources: ui, api, chat, rule, remote, system. 'remote' (P15 LAN remote) is treated like 'api' for requests
-// and may NOT confirm or panic until P15 decides. 'system' requests like 'api'; it may panic and set live
-// state but may not confirm.
+// Sources: ui, api, chat, rule, remote, system. 'remote' (P15 LAN remote) requests need an approval like 'rule'
+// and may NOT confirm or panic until P15 decides. 'system' requests need an approval too; it may panic and set
+// live state but may not confirm.
 //
 // Transport binding: gate.forSource(source) returns a handle whose source is fixed; the request object cannot
 // override it. The E6 API layer must use one handle per authenticated transport and never take `source` from a
@@ -58,13 +59,12 @@ import { BadShape, SOURCES, cleanActor, copyProvenance, isPlainObject, own, summ
 import { SKIPPED_STATES } from './idempotency.mjs';
 
 export const DEFAULT_TTL_MS = 60_000;
-export const DEFAULT_STEP_TTL_MS = 30_000; // each step of a two-step (on-air) confirmation
 export const DEFAULT_MAX_PENDING = 16; // per requesting source
 export const DEFAULT_LIVE_STALE_MS = 15_000;
 export const MAX_PARAMS_BYTES = 8192;
-export const PHRASE_OFFLINE = 'yes';
-export const PHRASE_LIVE = 'yes, on air';
 export const CONFIRM_SOURCES = Object.freeze(['ui', 'api']);
+/** Sources whose own untainted write requests run at once (the user's click, D331). */
+export const DIRECT_SOURCES = CONFIRM_SOURCES;
 export const PANIC_SOURCES = Object.freeze(['ui', 'api', 'system']);
 export const LIVE_STATE_SOURCES = Object.freeze(['system', 'api']);
 export const LIVE_STATES = Object.freeze(['offline', 'live', 'unknown']);
@@ -115,12 +115,9 @@ export function canonicalJson(v, depth = 0) {
   return `{${parts.join(',')}}`;
 }
 
-/** step, epoch and prev (the step-1 hash) are only set for a two-step (on-air while live) confirmation, so the hash of
- *  every other confirmation is unchanged. */
-export function actionHash({ id, params, source, actor, phrase, step, epoch, prev }) {
-  const o = { id, params, source, actor, phrase };
-  if (step !== undefined) { o.step = step; o.epoch = epoch; if (prev !== undefined) o.prev = prev; }
-  return createHash('sha256').update(canonicalJson(o)).digest('hex');
+/** SHA-256 of canonical JSON { id, params, source, actor, epoch }: what an approval click is bound to. */
+export function actionHash({ id, params, source, actor, epoch }) {
+  return createHash('sha256').update(canonicalJson({ id, params, source, actor, epoch })).digest('hex');
 }
 
 /** Idempotency key of one action, or null when it has no origin. base: { id, source, actor, prov } from the gate's
@@ -152,7 +149,8 @@ const posInt = (name, v, dflt) => {
 /** opts: { catalogue: parsed catalogue JSON or a Map from buildCatalogue (either way it is rebuilt and
  *  validated through buildCatalogue, and the gate keeps a private frozen copy), executor?: { execute(action) },
  *  onDecision?(rec), emit?(kind, fields), now?: () => ms (monotonic, expiry), wall?: () => ms (audit stamps),
- *  ttlMs?, stepTtlMs? (each on-air step, default 30 s), maxPending? (per requesting source), liveStaleMs?, random?, originOf?(eventId) }. Throws on a bad catalogue or limit. */
+ *  ttlMs?, maxPending? (per requesting source), liveStaleMs?, random?, originOf?(eventId) }. Throws on a bad catalogue or
+ *  limit. A stepTtlMs option (the old two-step flow) is ignored. */
 export function createActionGate(opts) {
   const src = opts.catalogue;
   if (!(src instanceof Map) && !(src && typeof src === 'object')) throw new TypeError('catalogue must be a catalogue document or a Map from buildCatalogue');
@@ -162,7 +160,6 @@ export function createActionGate(opts) {
   const now = opts.now ?? (() => performance.now());
   const wall = opts.wall ?? Date.now;
   const ttlMs = posInt('ttlMs', opts.ttlMs, DEFAULT_TTL_MS);
-  const stepTtlMs = posInt('stepTtlMs', opts.stepTtlMs, DEFAULT_STEP_TTL_MS);
   const maxPending = posInt('maxPending', opts.maxPending, DEFAULT_MAX_PENDING);
   const liveStaleMs = posInt('liveStaleMs', opts.liveStaleMs, DEFAULT_LIVE_STALE_MS);
   const random = opts.random ?? randomBytes;
@@ -181,7 +178,6 @@ export function createActionGate(opts) {
   const clock = () => { const t = now(); if (!Number.isFinite(t)) throw new TypeError('clock'); return t; };
   const liveState = () => (liveRaw !== 'unknown' && clock() - liveAt > liveStaleMs ? 'unknown' : liveRaw);
   const isLive = (s) => s !== 'offline';
-  const phraseFor = (s) => (isLive(s) ? PHRASE_LIVE : PHRASE_OFFLINE);
   const srcLabel = (v) => (SOURCES.includes(v) ? v : 'invalid');
 
   // Builds the record (throws on a broken clock: the caller turns that into a refusal); the hook cannot throw out.
@@ -268,18 +264,15 @@ export function createActionGate(opts) {
     for (const p of pending.values()) if (p.source === base.source) mine++;
     if (mine >= maxPending) return refuse(base, 'too-many-pending');
     const state = liveState();
-    // An on-air write while live (or unknown) needs two confirmations; step 1 is the offline phrase.
-    const twoStep = kind === 'action' && isLive(state) && catalogue.get(base.id)?.class === 'on-air-write';
-    const phrase = twoStep ? PHRASE_OFFLINE : phraseFor(state);
-    const step = twoStep ? 1 : 0; // 0 = a single confirmation
-    const hash = actionHash({ id: base.id, params, source: base.source, actor: base.actor, phrase, ...(twoStep ? { step: 1, epoch: liveEpoch } : {}) });
+    // One approval click; no phrase, no second step (D331).
+    const hash = actionHash({ id: base.id, params, source: base.source, actor: base.actor, epoch: liveEpoch });
     const confirmId = random(16).toString('hex');
-    const expiresAt = t + (twoStep ? stepTtlMs : ttlMs);
-    audit('confirm-issued', base, 'confirm', 'confirmation-required', { actionHash: hash, ...(twoStep ? { step: 1 } : {}) });
-    pending.set(confirmId, { ...base, params, phrase, hash, kind, liveAtIssue: state, epoch: liveEpoch, expiresAt, idem, step });
+    const expiresAt = t + ttlMs;
+    audit('confirm-issued', base, 'confirm', 'confirmation-required', { actionHash: hash });
+    pending.set(confirmId, { ...base, params, hash, kind, liveAtIssue: state, epoch: liveEpoch, expiresAt, idem });
     return {
       verdict: 'confirm', reason: 'confirmation-required',
-      confirm: { confirmId, phrase, actionHash: hash, liveStateAtRequest: state, expiresAt, ...(twoStep ? { step: 1, of: 2 } : {}) },
+      confirm: { confirmId, actionHash: hash, liveStateAtRequest: state, expiresAt },
     };
   }
 
@@ -313,16 +306,13 @@ export function createActionGate(opts) {
     };
   }
 
-  // What the non-chat rules would answer for this action now (E4b review finding 5): 'allow' (read), 'confirm' with the
-  // number of confirmations (1, or 2 for an on-air write while live or unknown), or 'refuse' with the reason. Chat can
-  // never give a confirmation, so a 'confirm' would-be result is never satisfiable from chat.
+  // What the gate would answer for this action if it did not come from chat (E4b review finding 5): 'allow' (read),
+  // 'confirm' (a write needs the user's approval click; an automatic source never writes on its own), or 'refuse' with
+  // the reason. Chat can never give a confirmation, so a 'confirm' would-be result is never satisfiable from chat.
   function wouldBe(id, entry) {
     if (id === PANIC_SET || id === PANIC_CLEAR) return { wouldDecision: 'refuse', wouldReason: 'source-not-permitted' };
     if (entry.class === 'read') return { wouldDecision: 'allow', wouldReason: 'read' };
-    let st = 'unknown';
-    try { st = liveState(); } catch { /* unknown counts as live */ }
-    const steps = entry.class === 'on-air-write' && isLive(st) ? 2 : 1;
-    return { wouldDecision: 'confirm', wouldReason: steps === 2 ? 'two-step-confirmation' : 'confirmation-required', wouldSteps: steps };
+    return { wouldDecision: 'confirm', wouldReason: 'confirmation-required', wouldSteps: 1 };
   }
 
   // Chat dry run: record what the gate would have decided and execute nothing. The executor is never called and no
@@ -372,7 +362,11 @@ export function createActionGate(opts) {
     if (id === PANIC_CLEAR) {
       if (!CONFIRM_SOURCES.includes(source)) return refuse(base, 'source-not-permitted');
       if (!panicOn) return refuse(base, 'not-in-panic');
-      return issue(base, params, 'panic-clear', idem);
+      // The user's click (untainted ui/api; chat was refused above): clears at once (D331).
+      audit('panic-clear', base, 'allow', 'panic-cleared', { confirmingSource: source });
+      panicOn = false;
+      opts.emit?.('system.panic', { reason: 'cleared' });
+      return { verdict: 'allow', reason: 'panic-cleared' };
     }
 
     if (entry.class === 'read') {
@@ -380,7 +374,13 @@ export function createActionGate(opts) {
       return { verdict: 'allow', reason: 'read', dispatch: dispatch({ ...base, params, idem }) };
     }
 
-    // write / on-air-write from ui, api, remote, system or an untainted rule: confirmation by ui or api.
+    // write / on-air-write from the user's own surface (untainted ui or api): the click is the decision (D331).
+    if (DIRECT_SOURCES.includes(source)) {
+      audit('request', base, 'allow', 'ui-direct');
+      return { verdict: 'allow', reason: 'ui-direct', dispatch: dispatch({ ...base, params, idem }) };
+    }
+
+    // write / on-air-write from remote, system or an untainted rule: one approval click by ui or api.
     return issue(base, params, 'action', idem);
   }
 
@@ -391,7 +391,7 @@ export function createActionGate(opts) {
     }
   }
 
-  function doConfirm(confirmId, phrase, hash, source, confirmTainted) {
+  function doConfirm(confirmId, hash, source, confirmTainted) {
     const p = typeof confirmId === 'string' ? pending.get(confirmId) : undefined;
     const base = p ?? { id: '', source: srcLabel(source), actor: '', prov: summariseCopy('chat', undefined) };
     const no = (reason, extra) => {
@@ -406,45 +406,21 @@ export function createActionGate(opts) {
     if (used.size > USED_CAP) used.delete(used.values().next().value); // older ids then report unknown-confirm
     if (clock() >= p.expiresAt) return no('expired', { actionHash: p.hash });
     if (p.epoch !== liveEpoch || p.liveAtIssue !== liveState()) return no('live-state-changed', { actionHash: p.hash });
-    if (p.step === 2 && p.confirmer !== source) return no('step-source-mismatch', { actionHash: p.hash });
     if (typeof hash !== 'string' || hash !== p.hash) return no('hash-mismatch', { actionHash: p.hash });
-    if (typeof phrase !== 'string' || phrase.trim().toLowerCase() !== p.phrase) return no('wrong-phrase', { actionHash: p.hash });
-    if (p.kind === 'panic-clear') {
-      audit('panic-clear', p, 'allow', 'panic-cleared', { actionHash: p.hash, confirmingSource: source });
-      panicOn = false;
-      opts.emit?.('system.panic', { reason: 'cleared' });
-      return { verdict: 'allow', reason: 'panic-cleared' };
-    }
-    if (p.step === 1) return secondStep(confirmId, p, source);
-    audit('confirm-accepted', p, 'allow', 'confirmed', { actionHash: p.hash, confirmingSource: source, ...(p.step === 2 ? { step: 2 } : {}) });
+    audit('confirm-accepted', p, 'allow', 'confirmed', { actionHash: p.hash, confirmingSource: source });
     return { verdict: 'allow', reason: 'confirmed', dispatch: dispatch(p) };
   }
 
-  // Step 1 accepted: nothing runs. A new single-use confirmation for step 2 is issued, bound to the same action, params,
-  // live epoch and confirming source, and to the step-1 hash. Step 1 is already spent. A refused step 1 never gets here,
-  // so step 2 cannot exist without a valid, unexpired step 1.
-  function secondStep(parentId, p, source) {
-    const t = clock();
-    const hash2 = actionHash({ id: p.id, params: p.params, source: p.source, actor: p.actor, phrase: PHRASE_LIVE, step: 2, epoch: p.epoch, prev: p.hash });
-    const confirmId = random(16).toString('hex');
-    const expiresAt = t + stepTtlMs;
-    audit('confirm-accepted', p, 'confirm', 'step-1-accepted', { actionHash: p.hash, confirmingSource: source, step: 1 });
-    audit('confirm-issued', p, 'confirm', 'second-confirmation-required', { actionHash: hash2, step: 2 });
-    pending.set(confirmId, { ...p, phrase: PHRASE_LIVE, hash: hash2, step: 2, parentId, confirmer: source, expiresAt });
-    return {
-      verdict: 'confirm', reason: 'second-confirmation-required',
-      confirm: { confirmId, phrase: PHRASE_LIVE, actionHash: hash2, liveStateAtRequest: p.liveAtIssue, expiresAt, step: 2, of: 2 },
-    };
-  }
-
-  /** ctx: { source?, provenance? }. A provenance that is chat-tainted (or unreadable) refuses the confirmation. */
-  function confirm(confirmId, phrase, hash, ctx = {}, boundSource) {
+  /** The approval click for a rule / remote / system write. ctx: { source?, provenance? }. A provenance that is
+   *  chat-tainted (or unreadable) refuses the confirmation. The second argument (the old typed phrase) is ignored and
+   *  kept only so existing callers keep their argument order. */
+  function confirm(confirmId, _ignoredPhrase, hash, ctx = {}, boundSource) {
     let source;
     try {
       source = boundSource ?? (isPlainObject(ctx) ? own(ctx, 'source') : undefined);
       const prov = isPlainObject(ctx) ? copyProvenance(own(ctx, 'provenance')) : undefined;
       const tainted = source === 'chat' || (prov !== undefined && taintOfCopy(SOURCES.includes(source) ? source : 'chat', prov));
-      return doConfirm(confirmId, phrase, hash, source, tainted);
+      return doConfirm(confirmId, hash, source, tainted);
     } catch {
       if (typeof confirmId === 'string') pending.delete(confirmId); // fail safe: an errored confirmation is spent
       auditError('confirm-refused', { id: '', source: srcLabel(source) });

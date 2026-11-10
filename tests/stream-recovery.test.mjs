@@ -4,8 +4,8 @@
 // a revoke that fails closes it, a slow start never arms after a newer stop, a stop waits for an in-flight recovery
 // start) and the status text; then the launcher
 // end to end with the fake host (no libobs, no devices, mock Streamer.bot, loopback-only fake stream sinks, nothing
-// reaches a network): the go-live is the control page's own confirm flow ("yes, on air" through the UI server API,
-// logged in by the headless scripted browser), the crash is the fake host exiting with code 3.
+// reaches a network): the go-live is the control page's own Start stream click (through the UI server API, D331: no
+// typed phrase; logged in by the headless scripted browser), the crash is the fake host exiting with code 3.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -112,12 +112,12 @@ test('authority: arms only for the generation a start began in; a revoke wins at
   assert.equal(answered, true);
   // A run after the revoke sees no authority.
   assert.equal((await a.run(async (st) => st.armed)).value, false);
-  // Guard stops: excluded until the next confirmed start.
+  // Guard stops: excluded until the next Start stream click.
   a.arm(a.begin());
   await a.exclude(['twitch']);
   assert.deepEqual(a.state().excluded, ['twitch']);
   a.arm(a.begin());
-  assert.deepEqual(a.state().excluded, [], 'a new confirmed start starts every sink');
+  assert.deepEqual(a.state().excluded, [], 'a new Start stream click starts every sink');
   // Fail closed: closed for good.
   a.close('ui-link-lost');
   assert.equal(a.begin(), null);
@@ -156,7 +156,7 @@ test('authority over IPC: begin/arm/revoke reach the launcher; a revoke that is 
   const b = createLiveAuthority();
   const lost = ipcPair({ launcherAnswers: false });
   serveAuthority(lost.child, b);
-  b.arm(b.begin()); // armed earlier (a confirmed start)
+  b.arm(b.begin()); // armed earlier (a Start stream click)
   const c2 = authorityClient({ proc: lost.proc, timeoutMs: 100 });
   assert.equal(await c2.revoke('stream.stop'), false);
   assert.equal(lost.proc.connected, false, 'the UI server closed the channel');
@@ -269,25 +269,18 @@ function launch(name, { flag = true, crashRuns = '1,2', extraEnv = {}, before = 
     s.port = l.port; s.cookie = l.cookie;
     s.csrf = (await s.req('GET', '/ui/api/session')).body.csrf;
   };
-  // The page's flow: request -> typed phrase -> confirm.
-  s.confirmed = async (route, body, phrase) => {
-    const c = await s.req('POST', route, body);
-    assert.equal(c.status, 200, JSON.stringify(c.body));
-    assert.equal(c.body.verdict, 'confirm');
-    assert.equal(c.body.pending.phrase, phrase);
-    const r = await s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: phrase });
+  // The page's flow (D331): one click acts; no pending entry, no typed phrase.
+  s.clicked = async (route, body) => {
+    const r = await s.req('POST', route, body);
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(r.body.verdict, 'allow', JSON.stringify(r.body));
+    assert.equal(r.body.pending, undefined, 'nothing pending');
     return r.body;
   };
-  // Request + confirm with whatever phrase the page asks for (used while another action is in flight).
-  s.confirmAny = async (route, body) => {
-    const c = await s.req('POST', route, body);
-    assert.equal(c.body?.verdict, 'confirm', JSON.stringify(c.body));
-    return s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: c.body.pending.phrase });
-  };
+  // A click whose answer the caller checks itself (used while another action is in flight).
+  s.click = (route, body) => s.req('POST', route, body);
   s.goLive = async () => {
-    await s.confirmed('/ui/api/host', { method: 'stream.start', params: {} }, 'yes, on air');
+    await s.clicked('/ui/api/host', { method: 'stream.start', params: {} });
     // the launcher's outputs.status poll (200 ms here) must have seen the streams live
     await sleep(800);
   };
@@ -341,7 +334,7 @@ test('crash while live (flag on): the streams that were live come back, the reco
 
     // The user ends all streams: the authority is gone, a crash now brings no stream back.
     await sleep(500);
-    const end = await s.confirmed('/ui/api/streams/end-all', {}, 'yes, on air');
+    const end = await s.clicked('/ui/api/streams/end-all', {});
     assert.equal(end.endAll.allStopped, true, JSON.stringify(end));
     assert.deepEqual([s.authority().armed, s.authority().reason], [false, 'end-all']);
     await sleep(600);
@@ -407,11 +400,9 @@ test('race: a Stop while a slow Start is at the host: the Start does not arm and
   const s = launch('slowstart', { crashRuns: '1', extraEnv: { UJWALAM_FAKE_HOST_START_DELAY_MS: '2500' } });
   try {
     await s.login();
-    const c = await s.req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
-    assert.equal(c.body.pending.phrase, 'yes, on air');
-    const start = s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+    const start = s.click('/ui/api/host', { method: 'stream.start', params: {} }); // not awaited: the host is slow
     await s.until(() => streamStarts(s).length === 1, 'the start reaching the host');
-    const stop = await s.confirmAny('/ui/api/host', { method: 'stream.stop', params: {} });
+    const stop = await s.click('/ui/api/host', { method: 'stream.stop', params: {} });
     assert.equal(stop.body.verdict, 'allow', JSON.stringify(stop.body));
     // The host answers the start last (and turns the sinks live last): the start must not arm, and is undone.
     const r = await start;
@@ -435,10 +426,9 @@ async function overtakenStart(name, failCount) {
   if (failCount !== null) extraEnv.UJWALAM_FAKE_HOST_STOP_FAIL_COUNT = String(failCount);
   const s = launch(name, { crashRuns: '', extraEnv });
   await s.login();
-  const c = await s.req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
-  const start = s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+  const start = s.click('/ui/api/host', { method: 'stream.start', params: {} }); // not awaited: the host is slow
   await s.until(() => streamStarts(s).length === 1, 'the start reaching the host');
-  const stop = await s.confirmAny('/ui/api/host', { method: 'stream.stop', params: {} });
+  const stop = await s.click('/ui/api/host', { method: 'stream.stop', params: {} });
   assert.equal(stop.body.verdict, 'allow', JSON.stringify(stop.body));
   const r = await start;
   const stops = s.calls().filter((x) => x.method === 'stream.stop').map((x) => (x.failed ? 'failed' : 'ok'));
@@ -466,14 +456,13 @@ test('race: a compensating stop that keeps failing is a loud error on the page a
   } finally { await s.stop(); }
 });
 
-test('race: a Stop during the pause before a confirmed Start reaches the host: the Start is not sent', { timeout: 180_000 }, async () => {
+test('race: a Stop during the pause before a clicked Start reaches the host: the Start is not sent', { timeout: 180_000 }, async () => {
   const s = launch('prestart', { crashRuns: '1', extraEnv: { UJWALAM_TEST_START_PAUSE_MS: '2500' } });
   try {
     await s.login();
-    const c = await s.req('POST', '/ui/api/host', { method: 'stream.start', params: {} });
-    const start = s.req('POST', '/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: 'yes, on air' });
+    const start = s.click('/ui/api/host', { method: 'stream.start', params: {} }); // not awaited: it pauses 2.5 s
     await sleep(800); // the start has its generation and waits before the host call
-    const stop = await s.confirmAny('/ui/api/host', { method: 'stream.stop', params: {} });
+    const stop = await s.click('/ui/api/host', { method: 'stream.stop', params: {} });
     assert.equal(stop.body.verdict, 'allow', JSON.stringify(stop.body));
     const r = await start;
     assert.deepEqual([r.body.verdict, r.body.reason], ['refuse', 'stopped-meanwhile'], JSON.stringify(r.body));
@@ -495,7 +484,7 @@ test('race: End all while the recovery start is in flight: the stop reaches the 
     await sleep(800);
     s.crash();
     await s.until(() => s.calls().some((x) => x.method === 'stream.start' && x.run === 2), 'the recovery start reaching the restarted host');
-    const end = await s.confirmed('/ui/api/streams/end-all', {}, 'yes, on air');
+    const end = await s.clicked('/ui/api/streams/end-all', {});
     assert.equal(end.endAll.allStopped, true, JSON.stringify(end));
     const run2 = s.calls().filter((x) => x.run === 2 && /^stream\./.test(x.method ?? ''));
     const done = run2.findIndex((x) => x.method === 'stream.start.done');

@@ -552,7 +552,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		return a.studio->layer_set_placement(q.str("scene", 64), canvas_opt(q), q.str("layer", 64), q.obj("placement"));
 	});
 	// Effect editor (D260): every canvas of the scene; an empty list removes the effects. No live gate here: the
-	// studio UI server asks for "yes, on air" while live, as for layers.setPlacement.
+	// studio UI server applies it on the user's click while live (D331), as for layers.setPlacement.
 	add("layers.setEffects", [&a](const json::Value &p) {
 		Params q(p, {"scene", "layer", "effects"});
 		return a.studio->layer_set_effects(q.str("scene", 64), q.str("layer", 64), q.arr("effects"));

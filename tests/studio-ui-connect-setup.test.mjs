@@ -49,7 +49,6 @@ async function login(port) {
 const get = (c, url) => raw(c.port, { url, headers: { cookie: c.a.cookie } });
 const post = (c, route, body) => raw(c.port, { method: 'POST', url: route, body: JSON.stringify(body),
   headers: { cookie: c.a.cookie, origin: `http://127.0.0.1:${c.port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': c.a.csrf } });
-const confirm = async (c, r) => (await post(c, '/ui/api/confirm', { pendingId: r.json().pending.pendingId, text: 'yes' })).json();
 
 function addOutput(dataDir, extra) {
   const { setup } = readSetup(dataDir);
@@ -91,9 +90,7 @@ describe('connect knows the Settings > Stream outputs (D327)', () => {
     assert.equal(o.state, 'missing');
     assert.equal(o.label, 'Kick');
     const r = await post(c, '/ui/api/connect/paste', { output: 'kick-2', key: NEW_KEY, server: NEW_SERVER });
-    assert.equal(r.json().verdict, 'confirm');
-    assert.equal(c.mem.map.has('Ujwalam/stream/kick-2'), false, 'nothing before the phrase');
-    assert.equal((await confirm(c, r)).verdict, 'allow');
+    assert.equal(r.json().verdict, 'allow', 'stored on the click (D331), no phrase');
     assert.equal(c.mem.map.get('Ujwalam/stream/kick-2'), NEW_KEY);
     assert.equal(c.mem.map.get('Ujwalam/stream/kick-2-server'), NEW_SERVER);
     const k = (await get(c, '/ui/api/connect?fresh=1')).json().outputs.find((x) => x.id === 'kick-2');
@@ -109,7 +106,7 @@ describe('connect knows the Settings > Stream outputs (D327)', () => {
     addOutput(c.dataDir, [{ id: 'kick-2', name: 'Kick 2', platform: 'kick', canvas: 'H', enabled: true, video: { output: '1080p', bitrateKbps: 6000 } }]);
     assert.equal((await get(c, '/ui/api/connect')).json().outputs.some((x) => x.id === 'kick-2'), true, 'the 10 s status cache does not hide it');
     const r = await post(c, '/ui/api/connect/paste', { output: 'kick-2', key: NEW_KEY });
-    assert.equal((await confirm(c, r)).verdict, 'allow');
+    assert.equal(r.json().verdict, 'allow');
     assert.equal(c.mem.map.get('Ujwalam/stream/kick-2'), NEW_KEY);
     leakCheck(c);
   });

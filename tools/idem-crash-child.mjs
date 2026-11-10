@@ -43,10 +43,11 @@ const results = [];
 core.bus.subscribe({
   name: 'idem-crash-rule', kinds: ['chat.'],
   // P3 dry-run: a chat-triggered action never executes. The message triggers an untainted API request with a fixed client key
-  // (the same key on the resend), confirmed in both on-air steps, so the live on-air-write path is still what is killed.
+  // (the same key on the resend); the api client's own write runs on its request (D331), so the live on-air-write path is
+  // still what is killed. A confirmation, if one is ever asked for, is given with one api click.
   handler: () => {
     let c = core.actions.request({ id: 'effect.fire', params: { fx: 'invented' }, source: 'api', actor: 'api', idempotencyKey: 'crash-test-key-0001' });
-    for (let i = 0; i < 2 && c.verdict === 'confirm'; i++) c = core.actions.confirm(c.confirm.confirmId, c.confirm.phrase, c.confirm.actionHash, { source: 'api' });
+    if (c.verdict === 'confirm') c = core.actions.confirm(c.confirm.confirmId, undefined, c.confirm.actionHash, { source: 'api' });
     results.push(c);
   },
 });

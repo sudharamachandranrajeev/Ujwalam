@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // P3 E4b (user decisions 2026-10-28): (1) chat-triggered actions run in DRY-RUN: the gate decides, the audit records what
-// would have run, nothing executes; chatMode "on" is refused at load; (2) an on-air write while live needs TWO
-// confirmations, "yes" then "yes, on air", single use, hash-bound to action + params + live epoch, 30 s per step.
+// would have run, nothing executes; chatMode "on" is refused at load; (2) was the E4b two-step on-air confirmation;
+// D331 (user decision 2026-11-10) replaced it with ONE approval click (section 2). The file name is kept for history.
 // All text, ids and names are invented. Temp dirs and injected clocks only.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -11,7 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import {
-  buildCatalogue, createActionGate, actionHash, CatalogueError, DENY_SET, CHAT_MODES, CHAT_ON_BLOCKER, DEFAULT_STEP_TTL_MS,
+  buildCatalogue, createActionGate, actionHash, CatalogueError, DENY_SET, CHAT_MODES, CHAT_ON_BLOCKER, DEFAULT_TTL_MS,
 } from '../services/event-core/livelock/index.mjs';
 import { createEventCore } from '../services/event-core/index.mjs';
 
@@ -108,8 +108,8 @@ test('dry-run: a chat request is decided and recorded, nothing executes, the ans
   const a = audit[0];
   assert.deepEqual(
     [a.type, a.actionId, a.rule, a.actor, a.verdict, a.reason, a.dryRun, a.wouldDecision, a.wouldReason, a.wouldSteps, a.wouldClass, a.wouldTarget],
-    // E4b review finding 5: the would-be result is what the non-chat rules give (unknown live state: two confirmations)
-    ['request', 'effect.fire', 'burst-rule', PSEUDO, 'dry-run', 'chat-dry-run', true, 'confirm', 'two-step-confirmation', 2, 'on-air-write', 'effect'],
+    // E4b review finding 5: the would-be result is what the non-chat rules give (D331: one approval click)
+    ['request', 'effect.fire', 'burst-rule', PSEUDO, 'dry-run', 'chat-dry-run', true, 'confirm', 'confirmation-required', 1, 'on-air-write', 'effect'],
   );
   assert.match(a.ts, /^2026-10-28T12:00:\d\d\.\d{3}Z$/);
   assert.equal(JSON.stringify(audit).includes(CHAT_TEXT), false);
@@ -207,7 +207,7 @@ test('dry-run end to end: chat -> rule -> gate: nothing executes, no idempotency
   const detail = JSON.parse(row.detail);
   assert.deepEqual(
     { dryRun: detail.dryRun, wouldDecision: detail.wouldDecision, wouldReason: detail.wouldReason, wouldSteps: detail.wouldSteps, wouldClass: detail.wouldClass, wouldTarget: detail.wouldTarget, tainted: detail.tainted, liveState: detail.liveState },
-    { dryRun: true, wouldDecision: 'confirm', wouldReason: 'two-step-confirmation', wouldSteps: 2, wouldClass: 'on-air-write', wouldTarget: 'effect', tainted: true, liveState: 'live' },
+    { dryRun: true, wouldDecision: 'confirm', wouldReason: 'confirmation-required', wouldSteps: 1, wouldClass: 'on-air-write', wouldTarget: 'effect', tainted: true, liveState: 'live' },
   );
   // No chat text, display name, platform user id or params anywhere in the row.
   const blob = JSON.stringify(row);
@@ -261,29 +261,25 @@ test('dry-run rows survive the raw-chat purge; the hash chain still verifies and
 });
 
 // ================================================================================================================
-// 2. Two-step on-air confirmation
+// 2. One approval click (D331, user decision 2026-11-10; replaces the E4b two-step "yes" / "yes, on air")
 // ================================================================================================================
+// A write the user starts on their own surface (ui, api) runs on that click. A write an automatic source asks for
+// (an untainted rule, remote, system) waits for ONE approval click from ui/api: no phrase, no second step. It stays
+// single use, hash-bound to action + params + source + actor + live epoch, and expires after ttlMs (60 s).
 
 const live = (m) => { m.gate.setLiveState('live', { source: 'system' }); return m; };
-const onAir = (gate, over = {}) => gate.request({ id: 'scene.switch', params: { scene: 'Main' }, source: 'ui', actor: 'u1', ...over });
-const send = (gate, c, over = {}, ctx = { source: 'ui' }) => gate.confirm(c.confirm.confirmId, over.phrase ?? c.confirm.phrase, over.hash ?? c.confirm.actionHash, ctx);
-/** Runs step 1 and returns { r, s2 } where s2 is the step-2 answer. */
-const step1 = (gate, over, ctx) => { const r = onAir(gate, over); return { r, s2: send(gate, r, {}, ctx) }; };
+// An untainted automatic rule (a hotkey) asking for an on-air write.
+const onAir = (gate, over = {}) => gate.request({ id: 'scene.switch', params: { scene: 'Main' }, source: 'rule', provenance: { kind: 'hotkey' }, actor: 'u1', ...over });
+const send = (gate, c, over = {}, ctx = { source: 'ui' }) => gate.confirm(c.confirm.confirmId, over.phrase, 'hash' in over ? over.hash : c.confirm.actionHash, ctx);
 
-test('two-step: happy path. Step 1 "yes" runs nothing and returns step 2; step 2 "yes, on air" runs the action once', () => {
-  const m = live(mk());
-  const { gate, calls, clock } = m;
+test('approval: happy path. A rule\'s on-air write while live waits for one click; the click runs it once', () => {
+  const { gate, calls, clock } = live(mk());
   const r = onAir(gate);
-  assert.deepEqual([r.verdict, r.confirm.phrase, r.confirm.step, r.confirm.of], ['confirm', 'yes', 1, 2]);
+  assert.deepEqual([r.verdict, r.reason, r.confirm.phrase, r.confirm.step, r.confirm.of], ['confirm', 'confirmation-required', undefined, undefined, undefined]);
   assert.equal(r.confirm.liveStateAtRequest, 'live');
-  const s2 = send(gate, r);
-  assert.deepEqual([s2.verdict, s2.reason, s2.dispatch], ['confirm', 'second-confirmation-required', undefined]);
-  assert.deepEqual([s2.confirm.phrase, s2.confirm.step, s2.confirm.of], ['yes, on air', 2, 2]);
-  assert.notEqual(s2.confirm.confirmId, r.confirm.confirmId);
-  assert.notEqual(s2.confirm.actionHash, r.confirm.actionHash);
   assert.deepEqual(calls, []);
   assert.equal(gate.state().pending, 1);
-  const fin = send(gate, s2);
+  const fin = send(gate, r);
   assert.deepEqual([fin.verdict, fin.reason, fin.dispatch.ok], ['allow', 'confirmed', true]);
   assert.equal(calls.length, 1);
   assert.deepEqual([calls[0].id, calls[0].params, calls[0].liveState, calls[0].class], ['scene.switch', { scene: 'Main' }, 'live', 'on-air-write']);
@@ -291,124 +287,121 @@ test('two-step: happy path. Step 1 "yes" runs nothing and returns step 2; step 2
   assert.equal(clock(), 1000);
 });
 
-test('two-step: unknown live state counts as live (two steps); a write that is not on-air stays one "yes, on air"; offline stays one "yes"', () => {
+test('approval: the user\'s own ui/api write runs on the click in every live state, one executor call, nothing pending', () => {
+  for (const state of ['offline', 'unknown', 'live']) {
+    for (const source of ['ui', 'api']) {
+      for (const id of ['scene.switch', 'scene.create']) {
+        const m = mk();
+        if (state !== 'unknown') m.gate.setLiveState(state, { source: 'system' });
+        const r = m.gate.request({ id, params: {}, source, actor: 'u1' });
+        assert.deepEqual([r.verdict, r.reason, r.confirm, r.dispatch.ok], ['allow', 'ui-direct', undefined, true], `${state} ${source} ${id}`);
+        assert.deepEqual(m.calls.map((c) => c.id), [id]);
+        assert.equal(m.gate.state().pending, 0);
+      }
+    }
+  }
+});
+
+test('approval: every rule/remote/system write needs one click whatever the class or live state (unknown counts as live)', () => {
   const m = mk();
   assert.equal(m.gate.state().liveState, 'unknown');
   const u = onAir(m.gate);
-  assert.deepEqual([u.confirm.phrase, u.confirm.step, u.confirm.liveStateAtRequest], ['yes', 1, 'unknown']);
-  const w = m.gate.request({ id: 'scene.create', params: {}, source: 'ui', actor: 'u1' });
-  assert.deepEqual([w.confirm.phrase, w.confirm.step], ['yes, on air', undefined]);
+  assert.deepEqual([u.verdict, u.confirm.step, u.confirm.liveStateAtRequest], ['confirm', undefined, 'unknown']);
+  const w = m.gate.request({ id: 'scene.create', params: {}, source: 'system', actor: 'sys' });
+  assert.deepEqual([w.verdict, w.confirm.step], ['confirm', undefined]);
   assert.equal(send(m.gate, w).verdict, 'allow');
   m.gate.setLiveState('offline', { source: 'system' });
-  const o = onAir(m.gate);
-  assert.deepEqual([o.confirm.phrase, o.confirm.step], ['yes', undefined]);
-  const done = send(m.gate, o);
+  const o = m.gate.request({ id: 'scene.switch', params: {}, source: 'remote', actor: 'r1' });
+  assert.equal(o.verdict, 'confirm');
+  const done = send(m.gate, o, {}, { source: 'api' });
   assert.deepEqual([done.verdict, done.reason], ['allow', 'confirmed']);
   assert.deepEqual(m.calls.map((c) => c.id), ['scene.create', 'scene.switch']);
 });
 
-test('two-step: each step expires after 30 s (stepTtlMs); a boundary of 1 ms short still works', () => {
-  assert.equal(DEFAULT_STEP_TTL_MS, 30_000);
+test('approval: the phrase argument is ignored (an old client may still send one)', () => {
+  for (const phrase of [undefined, 'yes', 'yes, on air', 'anything', '']) {
+    const { gate, calls } = live(mk());
+    assert.equal(send(gate, onAir(gate), { phrase }).verdict, 'allow', String(phrase));
+    assert.equal(calls.length, 1);
+  }
+});
+
+test('approval: expires after ttlMs (60 s); 1 ms short still works; a custom ttl is honoured, a bad one refused; stepTtlMs is ignored', () => {
+  assert.equal(DEFAULT_TTL_MS, 60_000);
   const a = live(mk());
   const r = onAir(a.gate);
-  assert.equal(r.confirm.expiresAt, a.clock() + 30_000);
-  a.advance(29_999);
-  const s2 = send(a.gate, r);
-  assert.equal(s2.reason, 'second-confirmation-required');
-  assert.equal(s2.confirm.expiresAt, a.clock() + 30_000); // step 2 has its own 30 s, from when step 1 was accepted
-  a.advance(29_999);
-  assert.equal(send(a.gate, s2).verdict, 'allow'); // 59.998 s after the request, inside both steps
-  // step 1 expired: refused, no step 2 exists, nothing runs
+  assert.equal(r.confirm.expiresAt, a.clock() + 60_000);
+  a.advance(59_999);
+  assert.equal(send(a.gate, r).verdict, 'allow');
   const b = live(mk());
   const r1 = onAir(b.gate);
-  b.advance(30_000);
+  b.advance(60_000);
   assert.equal(send(b.gate, r1).reason, 'expired');
+  assert.equal(send(b.gate, r1).reason, 'replayed');
   assert.equal(b.gate.state().pending, 0);
   assert.deepEqual(b.calls, []);
-  // step 2 expired
-  const c = live(mk());
-  const { s2: s2c } = step1(c.gate);
-  c.advance(30_000);
-  assert.equal(send(c.gate, s2c).reason, 'expired');
-  assert.equal(send(c.gate, s2c).reason, 'replayed');
-  assert.deepEqual(c.calls, []);
-  // a custom step TTL is honoured, a bad one is refused at construction
-  const d = live(mk({ stepTtlMs: 5_000 }));
-  const rd = onAir(d.gate);
-  assert.equal(rd.confirm.expiresAt, d.clock() + 5_000);
-  assert.throws(() => mk({ stepTtlMs: 0 }), TypeError);
-  // the single-confirmation TTL is unchanged (60 s) where there is one step
-  const e = mk();
-  e.gate.setLiveState('offline', { source: 'system' });
+  const d = live(mk({ ttlMs: 5_000 }));
+  assert.equal(onAir(d.gate).confirm.expiresAt, d.clock() + 5_000);
+  assert.throws(() => mk({ ttlMs: 0 }), TypeError);
+  const e = live(mk({ stepTtlMs: 5_000 })); // the old two-step option: accepted and ignored
   assert.equal(onAir(e.gate).confirm.expiresAt, e.clock() + 60_000);
 });
 
-test('two-step: step 1 cannot be skipped. "yes, on air" on the step-1 id is refused and spends it; no step-2 id can be guessed', () => {
+test('approval: no confirmation id can be guessed', () => {
   const { gate, calls } = live(mk());
   const r = onAir(gate);
-  assert.equal(send(gate, r, { phrase: 'yes, on air' }).reason, 'wrong-phrase');
-  assert.equal(send(gate, r).reason, 'replayed'); // spent
   for (const guess of ['0'.repeat(32), r.confirm.confirmId.split('').reverse().join('')]) {
-    assert.equal(gate.confirm(guess, 'yes, on air', r.confirm.actionHash, { source: 'ui' }).reason, 'unknown-confirm');
+    assert.equal(gate.confirm(guess, undefined, r.confirm.actionHash, { source: 'ui' }).reason, 'unknown-confirm');
   }
   assert.deepEqual(calls, []);
-  assert.equal(gate.state().pending, 0);
+  assert.equal(gate.state().pending, 1);
 });
 
-test('two-step: replay. Step 1 cannot be used twice, step 2 cannot be used twice, and a spent step 1 cannot mint another step 2', () => {
+test('approval: replay. A confirmation cannot be used twice', () => {
   const { gate, calls } = live(mk());
   const r = onAir(gate);
-  const s2 = send(gate, r);
-  assert.equal(send(gate, r).reason, 'replayed'); // step 1 again
-  assert.equal(gate.state().pending, 1); // still only the one step 2
-  assert.equal(send(gate, s2).verdict, 'allow');
-  assert.equal(send(gate, s2).reason, 'replayed'); // step 2 again
+  assert.equal(send(gate, r).verdict, 'allow');
   assert.equal(send(gate, r).reason, 'replayed');
+  assert.equal(send(gate, r, {}, { source: 'api' }).reason, 'replayed');
   assert.equal(calls.length, 1);
 });
 
-test('two-step: wrong order and wrong content. The step-1 phrase or hash on step 2 is refused and spends step 2', () => {
-  for (const [label, over] of [['phrase', { phrase: 'yes' }], ['hash of step 1', { useStep1Hash: true }], ['no hash', { hash: undefined, noHash: true }]]) {
+test('approval: a wrong or missing hash is refused and spends the confirmation', () => {
+  for (const [label, hash] of [['other hash', 'f'.repeat(64)], ['no hash', undefined]]) {
     const { gate, calls } = live(mk());
-    const { r, s2 } = step1(gate);
-    const hash = over.useStep1Hash ? r.confirm.actionHash : over.noHash ? undefined : s2.confirm.actionHash;
-    const res = gate.confirm(s2.confirm.confirmId, over.phrase ?? s2.confirm.phrase, hash, { source: 'ui' });
-    assert.equal(res.verdict, 'refuse', label);
-    assert.ok(['wrong-phrase', 'hash-mismatch'].includes(res.reason), label);
-    assert.equal(send(gate, s2).reason, 'replayed', label);
+    const r = onAir(gate);
+    const res = send(gate, r, { hash });
+    assert.deepEqual([res.verdict, res.reason], ['refuse', 'hash-mismatch'], label);
+    assert.equal(send(gate, r).reason, 'replayed', label);
     assert.deepEqual(calls, [], label);
   }
 });
 
-test('two-step: cannot be rebound to another action or other params; the hash is bound to action, params, source, actor, step and epoch', () => {
+test('approval: cannot be rebound to another action or other params; the hash is bound to action, params, source, actor and epoch', () => {
   const { gate, calls } = live(mk());
-  const a = step1(gate, { params: { scene: 'A' } });
-  const b = step1(gate, { params: { scene: 'B' } });
-  const other = step1(gate, { id: 'layer.show', params: { scene: 'A' } });
-  assert.equal(new Set([a.s2.confirm.actionHash, b.s2.confirm.actionHash, other.s2.confirm.actionHash]).size, 3);
-  // A's step-2 id with B's, or with the other action's, step-2 hash
-  assert.equal(send(gate, a.s2, { hash: b.s2.confirm.actionHash }).reason, 'hash-mismatch');
-  assert.equal(send(gate, b.s2, { hash: other.s2.confirm.actionHash }).reason, 'hash-mismatch');
+  const a = onAir(gate, { params: { scene: 'A' } });
+  const b = onAir(gate, { params: { scene: 'B' } });
+  const other = onAir(gate, { id: 'layer.show', params: { scene: 'A' } });
+  assert.equal(new Set([a.confirm.actionHash, b.confirm.actionHash, other.confirm.actionHash]).size, 3);
+  assert.equal(send(gate, a, { hash: b.confirm.actionHash }).reason, 'hash-mismatch');
+  assert.equal(send(gate, b, { hash: other.confirm.actionHash }).reason, 'hash-mismatch');
   assert.deepEqual(calls, []);
-  assert.equal(send(gate, other.s2).verdict, 'allow'); // the third is intact and runs exactly its own action
+  assert.equal(send(gate, other).verdict, 'allow'); // the third is intact and runs exactly its own action
   assert.deepEqual(calls.map((c) => [c.id, c.params]), [['layer.show', { scene: 'A' }]]);
   // Params mutated after the request do not change what runs.
   const params = { scene: 'orig' };
-  const m = step1(gate, { params });
+  const m = onAir(gate, { params });
   params.scene = 'EVIL';
-  send(gate, m.s2);
+  send(gate, m);
   assert.deepEqual(calls[1].params, { scene: 'orig' });
-  // The hash recipe: step, epoch and the step-1 hash are part of it.
-  const base = { id: 'scene.switch', params: { scene: 'Main' }, source: 'ui', actor: 'u1' };
-  const s1 = actionHash({ ...base, phrase: 'yes', step: 1, epoch: 7 });
-  assert.notEqual(s1, actionHash({ ...base, phrase: 'yes', step: 1, epoch: 8 }));
-  assert.notEqual(s1, actionHash({ ...base, phrase: 'yes' }));
-  const s2 = actionHash({ ...base, phrase: 'yes, on air', step: 2, epoch: 7, prev: s1 });
-  assert.notEqual(s2, actionHash({ ...base, phrase: 'yes, on air', step: 2, epoch: 7, prev: s1.replace(/^./, '0') }));
-  assert.notEqual(s2, actionHash({ ...base, phrase: 'yes, on air', step: 2, epoch: 8, prev: s1 }));
-  // The hash of every single-step confirmation is unchanged.
-  assert.equal(actionHash({ ...base, phrase: 'yes' }), actionHash({ id: base.id, params: base.params, source: base.source, actor: base.actor, phrase: 'yes' }));
-  // Epoch is in the issued hash: the same request after a live-state change has a different step-1 hash.
+  // The hash recipe: epoch, source and actor are part of it; a phrase is not any more.
+  const base = { id: 'scene.switch', params: { scene: 'Main' }, source: 'rule', actor: 'u1', epoch: 7 };
+  const h = actionHash(base);
+  assert.notEqual(h, actionHash({ ...base, epoch: 8 }));
+  assert.notEqual(h, actionHash({ ...base, source: 'ui' }));
+  assert.notEqual(h, actionHash({ ...base, actor: 'u2' }));
+  assert.equal(h, actionHash({ ...base, phrase: 'yes, on air', step: 2 }));
+  // Epoch is in the issued hash: the same request after a live-state change has a different hash.
   const g = live(mk());
   const h1 = onAir(g.gate).confirm.actionHash;
   g.gate.setLiveState('offline', { source: 'system' });
@@ -416,111 +409,95 @@ test('two-step: cannot be rebound to another action or other params; the hash is
   assert.notEqual(onAir(g.gate).confirm.actionHash, h1);
 });
 
-test('two-step: step 2 must come from the same source as step 1', () => {
-  const { gate, calls } = live(mk());
-  const { s2 } = step1(gate, {}, { source: 'ui' });
-  assert.equal(send(gate, s2, {}, { source: 'api' }).reason, 'step-source-mismatch');
-  assert.equal(send(gate, s2).reason, 'replayed');
-  assert.deepEqual(calls, []);
-  const x = step1(gate, {}, { source: 'api' });
-  assert.equal(send(gate, x.s2, {}, { source: 'api' }).verdict, 'allow');
+test('approval: either ui or api may give the click (no same-source rule without a second step)', () => {
+  for (const source of ['ui', 'api']) {
+    const { gate, calls } = live(mk());
+    assert.equal(send(gate, onAir(gate), {}, { source }).verdict, 'allow', source);
+    assert.equal(calls.length, 1);
+  }
 });
 
-test('two-step: a live-state change between the steps invalidates step 2 (and before step 1 invalidates step 1)', () => {
-  for (const flip of [['offline'], ['unknown'], ['offline', 'live'], ['live']]) { // 'live' again is a refresh, not a change, except when stale
+test('approval: a live-state change between the request and the click invalidates it', () => {
+  for (const flip of [['offline'], ['unknown'], ['offline', 'live'], ['live']]) { // 'live' again is a refresh, not a change
     const { gate, calls } = live(mk());
-    const { r, s2 } = step1(gate);
+    const r = onAir(gate);
     for (const st of flip) gate.setLiveState(st, { source: 'api' });
-    const res = send(gate, s2);
+    const res = send(gate, r);
     if (flip.length === 1 && flip[0] === 'live') assert.equal(res.verdict, 'allow', 'same state again is not a change');
     else { assert.deepEqual([res.verdict, res.reason], ['refuse', 'live-state-changed'], flip.join('>')); assert.deepEqual(calls, []); }
     assert.equal(send(gate, r).reason, 'replayed');
   }
-  // before step 1
-  const { gate, calls } = live(mk());
-  const r = onAir(gate);
-  gate.setLiveState('offline', { source: 'system' });
-  assert.equal(send(gate, r).reason, 'live-state-changed');
-  assert.deepEqual(calls, []);
-  // a stale live state (no refresh within liveStaleMs) is 'unknown', still live: unchanged phrase, but the epoch is the same, so it still works
+  // a stale live state (no refresh within liveStaleMs) is 'unknown', which differs from the state at issue
   const st = live(mk({ liveStaleMs: 15_000 }));
   const sr = onAir(st.gate);
   st.advance(20_000);
-  assert.equal(send(st.gate, sr).reason, 'live-state-changed'); // live -> unknown(stale) differs from the state at issue
+  assert.equal(send(st.gate, sr).reason, 'live-state-changed');
+  assert.deepEqual(st.calls, []);
 });
 
-test('two-step: panic between the steps drops step 2', () => {
+test('approval: panic drops a pending confirmation', () => {
   const { gate, calls } = live(mk());
-  const { s2 } = step1(gate);
+  const r = onAir(gate);
   gate.panic({ source: 'ui' });
   assert.equal(gate.state().pending, 0);
-  assert.equal(send(gate, s2).reason, 'unknown-confirm');
+  assert.equal(send(gate, r).reason, 'unknown-confirm');
   assert.deepEqual(calls, []);
 });
 
-test('two-step: chat can never supply either confirmation (source and provenance), and a refused attempt does not spend the step', () => {
+test('approval: chat can never give the click (source and provenance), and a refused attempt does not spend it', () => {
   const { gate, calls, audit } = live(mk());
   const r = onAir(gate);
-  // step 1 from chat, in every way
   assert.equal(send(gate, r, {}, { source: 'chat' }).reason, 'source-not-permitted');
-  assert.equal(gate.forSource('chat').confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash).reason, 'source-not-permitted');
-  assert.equal(gate.forSource('rule').confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash).reason, 'source-not-permitted');
+  for (const src of ['chat', 'rule', 'remote', 'system']) assert.equal(gate.forSource(src).confirm(r.confirm.confirmId, undefined, r.confirm.actionHash).reason, 'source-not-permitted', src);
   const chatProv = { kind: 'chat.message', eventId: EVID };
   assert.equal(send(gate, r, {}, { source: 'ui', provenance: chatProv }).reason, 'tainted-confirmation');
   assert.equal(send(gate, r, {}, { source: 'api', provenance: { kind: 'rule', parent: chatProv } }).reason, 'tainted-confirmation');
   assert.equal(send(gate, r, {}, { source: 'ui', provenance: { kind: 'alert.sub' } }).reason, 'tainted-confirmation');
   assert.equal(send(gate, r, {}, { source: 'ui', provenance: { kind: 'webhook.unknown' } }).reason, 'tainted-confirmation'); // fail safe
-  assert.equal(gate.forSource('ui').confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { provenance: chatProv }).reason, 'tainted-confirmation');
-  assert.equal(gate.state().pending, 1); // none of those spent step 1
-  // a clean provenance (a hotkey or a system event) is fine
-  const s2 = send(gate, r, {}, { source: 'ui', provenance: { kind: 'hotkey' } });
-  assert.equal(s2.reason, 'second-confirmation-required');
-  // step 2 from chat, in every way
-  assert.equal(send(gate, s2, {}, { source: 'chat' }).reason, 'source-not-permitted');
-  assert.equal(send(gate, s2, {}, { source: 'remote' }).reason, 'source-not-permitted');
-  assert.equal(send(gate, s2, {}, { source: 'ui', provenance: { kind: 'rule', parent: chatProv } }).reason, 'tainted-confirmation');
-  assert.equal(gate.state().pending, 1);
+  assert.equal(gate.forSource('ui').confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { provenance: chatProv }).reason, 'tainted-confirmation');
+  assert.equal(gate.state().pending, 1); // none of those spent it
   assert.deepEqual(calls, []);
-  assert.equal(send(gate, s2).verdict, 'allow');
+  // a clean provenance (a hotkey) on the click is fine
+  assert.equal(send(gate, r, {}, { source: 'ui', provenance: { kind: 'hotkey' } }).verdict, 'allow');
   assert.equal(calls.length, 1);
   // every refusal is audited, none with free text
   assert.ok(audit.filter((a) => a.reason === 'tainted-confirmation').length >= 5);
   assert.equal(JSON.stringify(audit).includes('webhook'), false); // an unknown kind is reported as invalid, not echoed
-  // a chat-sourced REQUEST for the same action is refused or dry-run, never offered a confirmation
+  // a chat-sourced REQUEST for the same action is refused or dry-run, never offered a confirmation or run
   const chatReq = gate.request({ id: 'scene.switch', params: {}, source: 'chat', actor: PSEUDO });
   assert.equal(chatReq.confirm, undefined);
+  assert.equal(chatReq.dispatch, undefined);
+  // and a ui transport carrying chat provenance is tainted: never direct
+  const tainted = gate.request({ id: 'scene.switch', params: {}, source: 'ui', actor: 'u1', provenance: chatProv });
+  assert.notEqual(tainted.verdict, 'allow');
+  assert.equal(calls.length, 1);
 });
 
-test('two-step: the audit records both steps with the step number, hash and confirming source, in order', () => {
+test('approval: the audit records the issue and the click with the hash and confirming source, in order', () => {
   const { gate, audit } = live(mk());
   const n = audit.length;
-  const { s2 } = step1(gate);
-  send(gate, s2);
+  send(gate, onAir(gate));
   const rows = audit.slice(n).map((a) => [a.type, a.verdict, a.reason, a.step, a.confirmingSource]);
   assert.deepEqual(rows, [
-    ['confirm-issued', 'confirm', 'confirmation-required', 1, undefined],
-    ['confirm-accepted', 'confirm', 'step-1-accepted', 1, 'ui'],
-    ['confirm-issued', 'confirm', 'second-confirmation-required', 2, undefined],
-    ['confirm-accepted', 'allow', 'confirmed', 2, 'ui'],
+    ['confirm-issued', 'confirm', 'confirmation-required', undefined, undefined],
+    ['confirm-accepted', 'allow', 'confirmed', undefined, 'ui'],
   ]);
   for (const a of audit.slice(n)) assert.match(a.actionHash, /^[0-9a-f]{64}$/);
   assert.equal(JSON.stringify(audit).includes('Main'), false); // params never reach the audit
 });
 
-test('two-step: pending quota still holds per source, and step 2 replaces step 1 without taking another slot', () => {
+test('approval: the pending quota still holds per source', () => {
   const { gate } = live(mk({ maxPending: 2 }));
   const a = onAir(gate, { params: { i: 1 } });
   const b = onAir(gate, { params: { i: 2 } });
   assert.equal(onAir(gate, { params: { i: 3 } }).reason, 'too-many-pending');
-  const s2 = send(gate, a);
-  assert.equal(gate.state().pending, 2);
-  assert.equal(onAir(gate, { params: { i: 4 } }).reason, 'too-many-pending');
-  assert.equal(send(gate, s2).verdict, 'allow');
+  assert.equal(send(gate, a).verdict, 'allow');
   assert.equal(gate.state().pending, 1);
+  assert.equal(onAir(gate, { params: { i: 4 } }).verdict, 'confirm');
   assert.equal(b.verdict, 'confirm');
 });
 
-test('two-step over the idempotent executor: a keyed on-air write runs once after both steps; the same client key again is skipped', async () => {
+test('approval over the idempotent executor: a keyed on-air write runs once; the same client key again is skipped', async () => {
   const dir = tmp();
   const ran = [];
   const core = createEventCore({
@@ -529,14 +506,15 @@ test('two-step over the idempotent executor: a keyed on-air write runs once afte
   });
   await core.ready;
   core.actions.setLiveState('live', { source: 'system' });
-  const run = async () => {
-    const r = core.actions.request({ id: 'scene.switch', params: { scene: 'Main' }, source: 'api', actor: 'api', idempotencyKey: 'twostep-key-0001' });
-    const s2 = core.actions.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source: 'api' });
-    const fin = core.actions.confirm(s2.confirm.confirmId, s2.confirm.phrase, s2.confirm.actionHash, { source: 'api' });
-    return fin.dispatch;
+  const direct = () => core.actions.request({ id: 'scene.switch', params: { scene: 'Main' }, source: 'api', actor: 'api', idempotencyKey: 'onestep-key-0001' }).dispatch;
+  assert.deepEqual(await direct(), { ok: true, result: 'ok' });
+  assert.deepEqual(await direct(), { ok: false, error: 'skipped', skipped: 'completed' }); // E4b review finding 8: not ok
+  const approved = () => {
+    const r = core.actions.request({ id: 'scene.switch', params: { scene: 'Main' }, source: 'rule', provenance: { kind: 'hotkey' }, actor: 'hk', idempotencyKey: 'onestep-key-0002' });
+    return core.actions.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: 'api' }).dispatch;
   };
-  assert.deepEqual(await run(), { ok: true, result: 'ok' });
-  assert.deepEqual(await run(), { ok: false, error: 'skipped', skipped: 'completed' }); // E4b review finding 8: not ok
-  assert.deepEqual(ran, ['scene.switch']);
+  assert.deepEqual(await approved(), { ok: true, result: 'ok' });
+  assert.deepEqual(await approved(), { ok: false, error: 'skipped', skipped: 'completed' });
+  assert.deepEqual(ran, ['scene.switch', 'scene.switch']);
   await core.audit.close();
 });

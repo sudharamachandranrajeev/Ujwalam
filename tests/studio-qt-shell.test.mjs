@@ -160,7 +160,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const cam = (await p.fake.call('mixer.list')).sources.find((s) => s.id === 'scene-1/cam');
     assert.equal(cam.muted, true, 'Mute clicked: mixer.setMute reached the host');
     assert.deepEqual(cam.tracks, ['t1', 't2'], 'second track clicked: mixer.setTracks with both tracks');
-    assert.equal(p.store.isOn('scene-edit'), false, 'flag unticked: off at once, no phrase');
+    assert.equal(p.store.isOn('scene-edit'), false, 'flag switched off: off at once');
     assert.equal(p.shown.structure, false, 'the structure box follows the flag');
     assert.equal(p.trackButtons, 6);
   });
@@ -354,33 +354,42 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('controls and flags (D290): round controls carry their captions; the flag list is not on the main window', async () => {
     const p = await probe([]);
     assert.deepEqual(p.controls, { stream: 'Start stream', record: 'Record', clip: 'Save clip', mark: 'Mark moment', streamIcon: 'play-' });
-    assert.equal(p.flagsInSettings, false, 'hidden until Settings > Advanced borrows it');
+    assert.equal(p.flagsInSettings, false, 'the flag rows exist only inside Settings > Advanced');
     assert.ok(p.flags.length > 5, 'still loaded: the list follows the server');
   });
   test('Settings (D290, D294): sections Clips, Folders, Layer effects, Appearance, Connections (D327), Help & tips, Advanced; the layer-effects item and animations choice are there', async () => {
-    const p = await probe([], 6000, 'settings-open');
+    const p = await probe([], 6000, 'settings-open,settings-page:6');
     assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Appearance', 'Connections', 'Help & tips', 'Advanced']);
     assert.equal(p.settings.layerEffects, false);
     assert.equal(p.settings.layerEffectsText, 'Show layer effects from the scene (rounded corners, shadows, video buttons)');
     assert.equal(p.settings.motionChoices, 3, 'Follow Windows / Always on / Off');
     assert.equal(p.settings.motion, 'system');
     assert.equal(p.flagsInSettings, true, 'the feature flags list sits in Settings > Advanced');
+    // N2: one row per flag with a switch and its plain description from data/flags.json, always shown.
+    const rows = p.settings.flagRows;
+    assert.equal(rows.length, p.flags.length, 'a row for every flag the server lists');
+    for (const r of rows) {
+      assert.equal(r.on, p.flags.find((f) => f.id === r.id).on, r.id);
+      assert.ok(r.description.length > 10, `${r.id}: its description is shown`);
+      assert.equal(r.visible, true, r.id);
+    }
+    assert.equal(p.settings.dirty, false, 'nothing changed yet');
   });
-  test('Settings > Advanced (2026-11-10 offset bug): with the window shown, the flag list has no native handle and sits inside its box, also on a second open', async () => {
+  test('Settings > Advanced (2026-11-10 offset bug): with the window shown, the flag rows have no native handle and sit inside their box, also on a second open', async () => {
     const p = await probe([], 8000, 'settings-open,settings-page:6,settings-cancel,settings-open,settings-page:6', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     const f = p.settings.flagList;
-    assert.ok(f, 'the Advanced page reports the flag list');
+    assert.ok(f, 'the Advanced page reports the flag rows');
     assert.equal(f.native, false, 'a native handle made the list a separate child window placed off its box');
     assert.equal(f.nativeAttr, false);
     assert.equal(f.insideBox, true);
     assert.ok(f.w > 300 && f.h >= 220, `laid out to the page: ${f.w}x${f.h}`);
     assert.deepEqual([f.scrollX, f.scrollY], [0, 0]);
   });
-  test('Settings deleted without closing (no finished signal): the flag list survives, refreshes and can be shown again', async () => {
+  test('Settings deleted without closing (no finished signal): the flags still refresh and the rows are built again', async () => {
     const p = await probe([], 9000, 'settings-open,settings-page:6,settings-destroy,settings-open,settings-page:6', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
-    assert.ok(p.flags.length > 0, 'the borrowed list was taken back before the dialog deleted it');
+    assert.ok(p.flags.length > 0, 'the flag list is kept as data in the window, never as a widget in the dialog');
     assert.equal(p.settings.flagList?.insideBox, true);
   });
   test('the app quits cleanly (exit 0) while Settings > Advanced is open', async () => {
@@ -388,14 +397,53 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.equal(p.flagsInSettings, true, 'Settings was still open at quit');
   });
-  test('Settings (D290): layer effects on asks for the typed "yes" and turns flag layer-effects on; animations Off is saved as ui.motion', async () => {
-    const p = await probe([], 11000, 'settings-open,settings-layer-effects:on,settings-motion:off,settings-save,type:yes');
-    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true], ['type:yes', true]]);
-    assert.equal(p.store.isOn('layer-effects'), true, 'the existing flags route, confirmed with the typed phrase');
+  test('Settings (D290, D331): layer effects on turns flag layer-effects on at Save, no phrase; animations Off is saved as ui.motion', async () => {
+    const p = await probe([], 11000, 'settings-open,settings-layer-effects:on,settings-motion:off,settings-save');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true]]);
+    assert.equal(p.store.isOn('layer-effects'), true, 'applied on Save through the flags route');
     assert.equal(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).ui.motion, 'off');
     assert.equal(p.motionMode, 'off');
     assert.equal(p.motion, false, 'no animation while the choice is Off');
-    assert.equal(p.flagsInSettings, false, 'the flag list went back to the window when Settings closed');
+    assert.equal(p.flagsInSettings, false, 'the rows went with the closed Settings window');
+  });
+  test('Settings > Advanced (N2, D331): a flag switch is a draft; Save applies it, on and off alike', async () => {
+    const draft = await probe(['scene-edit'], 7000, 'settings-open,settings-flag:transitions:on,settings-flag:scene-edit:off');
+    assert.ok(draft.actions.every((a) => a.done), JSON.stringify(draft.actions));
+    assert.deepEqual(draft.settings.flagRows.filter((r) => ['transitions', 'scene-edit'].includes(r.id)).map((r) => [r.id, r.on]).sort(), [['scene-edit', false], ['transitions', true]]);
+    assert.equal(draft.settings.dirty, true);
+    assert.equal(draft.store.isOn('transitions'), false, 'not applied before Save');
+    assert.equal(draft.store.isOn('scene-edit'), true, 'off is not applied before Save either');
+    const saved = await probe(['scene-edit'], 8000, 'settings-open,settings-flag:transitions:on,settings-flag:scene-edit:off,settings-save');
+    assert.ok(saved.actions.every((a) => a.done), JSON.stringify(saved.actions));
+    assert.equal(saved.store.isOn('transitions'), true, 'on at Save, no phrase');
+    assert.equal(saved.store.isOn('scene-edit'), false, 'off at Save');
+    assert.equal(saved.shown.transitions, true);
+  });
+  test('Settings > Advanced (N2): the layer-effects row and the Layer effects switch are one setting', async () => {
+    const p = await probe([], 7000, 'settings-open,settings-flag:layer-effects:on');
+    assert.equal(p.settings.layerEffects, true, 'the Layer effects page follows the row');
+    const q = await probe([], 7000, 'settings-open,settings-layer-effects:on');
+    assert.equal(q.settings.flagRows.find((r) => r.id === 'layer-effects').on, true, 'the row follows the Layer effects page');
+  });
+  test('Settings (D331): closing with unsaved edits asks Save changes / Discard / Cancel', async () => {
+    const ask = await probe([], 7000, 'settings-open,settings-flag:transitions:on,settings-cancel');
+    assert.equal(ask.settings?.unsavedAsked, true, 'the question is open and Settings stays open');
+    assert.equal(ask.store.isOn('transitions'), false);
+    const keep = await probe([], 8000, 'settings-open,settings-flag:transitions:on,settings-cancel,settings-unsaved:cancel');
+    assert.ok(keep.actions.every((a) => a.done), JSON.stringify(keep.actions));
+    assert.deepEqual([keep.settings?.unsavedAsked, keep.settings?.dirty], [false, true], 'Cancel: back to Settings with the edits');
+    const discard = await probe([], 8000, 'settings-open,settings-flag:transitions:on,settings-motion:off,settings-cancel,settings-unsaved:discard');
+    assert.ok(discard.actions.every((a) => a.done), JSON.stringify(discard.actions));
+    assert.equal(discard.settings, undefined, 'Settings closed');
+    assert.equal(discard.store.isOn('transitions'), false, 'Discard: nothing applied');
+    assert.equal(existsSync(path.join(discard.dataDir, 'settings.json')), false, 'Discard: nothing saved');
+    const save = await probe([], 9000, 'settings-open,settings-flag:transitions:on,settings-motion:off,settings-cancel,settings-unsaved:save');
+    assert.ok(save.actions.every((a) => a.done), JSON.stringify(save.actions));
+    assert.equal(save.settings, undefined, 'Settings closed');
+    assert.equal(save.store.isOn('transitions'), true, 'Save changes: the flag applied');
+    assert.equal(JSON.parse(readFileSync(path.join(save.dataDir, 'settings.json'), 'utf8')).ui.motion, 'off', 'Save changes: settings saved');
+    const clean = await probe([], 6000, 'settings-open,settings-cancel');
+    assert.equal(clean.settings, undefined, 'no edits: Cancel closes at once, no question');
   });
   test('motion setting (D290): settings.json ui.motion is read at start; UJWALAM_REDUCE_MOTION still overrides it', async () => {
     const prep = (d) => writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ ui: { motion: 'off' } }));
@@ -471,12 +519,12 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.selectedLayer, 'cam');
     assert.deepEqual(p.calls.filter(([m]) => m === 'layers.move').map(([, x]) => [x.scene, x.layer, x.index]), [['scene-1', 'chat', 0]]);
   });
-  test('layer list (D330): the trash button deletes with no flag after a "Yes"; "No" keeps the layer; the button has its icon', async () => {
-    const p = await probe([], 8000, 'select-layer:chat,delete-button,msg:no,delete-button,msg:yes', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' }, { project: true });
+  test('layer list (D330, D331): the trash button deletes on the click, no question and no flag; the button has its icon', async () => {
+    const p = await probe([], 8000, 'select-layer:chat,delete-button', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' }, { project: true });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.deepEqual([p.addButtons.delete.enabled, p.addButtons.delete.icon], [true, true]);
     assert.deepEqual(names(p), ['Camera', 'Game capture']);
-    assert.equal(p.calls.filter(([m]) => m === 'layers.remove').length, 1, 'only the confirmed delete reached the host');
+    assert.equal(p.calls.filter(([m]) => m === 'layers.remove').length, 1, 'one click, one delete');
     assert.deepEqual(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers.map((l) => l.id), ['game', 'cam']);
   });
   test('layer list (D330): while live the trash button is greyed and says why', async () => {
@@ -521,16 +569,16 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(list.find((l) => l.id === 'game').effects, [{ type: 'rounded', radius: 40 }]);
     assert.deepEqual(list.find((l) => l.id === 'cam').effects, [{ type: 'rounded', radius: 40 }]);
   });
-  test('layer menu (D292): Delete asks first; "No" keeps the layer, "Yes" removes it from the host and the project (scene editing on)', async () => {
-    const p = await probe(['scene-edit'], 8000, 'select-layer:chat,layer-menu:delete,msg:no,layer-menu:delete,msg:yes', null, {}, { project: true });
+  test('layer menu (D292, D331): Delete removes the layer from the host and the project on the click (scene editing on)', async () => {
+    const p = await probe(['scene-edit'], 8000, 'select-layer:chat,layer-menu:delete', null, {}, { project: true });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.deepEqual(names(p), ['Camera', 'Game capture']);
-    assert.equal(p.calls.filter(([m]) => m === 'layers.remove').length, 1, 'only the confirmed delete reached the host');
+    assert.equal(p.calls.filter(([m]) => m === 'layers.remove').length, 1, 'one click, one delete');
     assert.deepEqual(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers.map((l) => l.id), ['game', 'cam']);
   });
-  test('layer menu (D330): Delete works with scene editing off and still asks first', async () => {
-    const p = await probe([], 6000, 'select-layer:chat,layer-menu:delete,msg:yes', null, {}, { project: true });
-    assert.deepEqual(p.actions.map((a) => a.done), [true, true, true]);
+  test('layer menu (D330): Delete works with scene editing off', async () => {
+    const p = await probe([], 6000, 'select-layer:chat,layer-menu:delete', null, {}, { project: true });
+    assert.deepEqual(p.actions.map((a) => a.done), [true, true]);
     assert.equal(p.layers, 2);
     assert.deepEqual(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers.map((l) => l.id), ['game', 'cam']);
   });
@@ -545,12 +593,12 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(doc.scenes[2].layers.length, 1);
     assert.equal((await p.fake.call('layers.list', { scene: 'scene-2-copy' })).layers.length, 1, 'the layers reached the host');
   });
-  test('scene menu (D292): Delete is greyed for the active scene and without the flag; with the flag and a "Yes" it removes another scene', async () => {
+  test('scene menu (D292): Delete is greyed for the active scene and without the flag; with the flag the click removes another scene', async () => {
     const off = await probe([], 5000, 'select-scene:scene-2,scene-menu:show', null, {}, { project: true });
     assert.deepEqual(off.menu.items.map((i) => [i.text, i.enabled]), [['Add scene…', true], ['Add layer…', true], ['Rename…', true], ['Duplicate scene', true], ['Delete…', false]]);
     assert.equal(off.menu.items[4].tip, 'Turn on scene editing in Settings > Advanced');
-    const on = await probe(['scene-edit'], 8000, 'select-scene:scene-1,scene-menu:delete,select-scene:scene-2,scene-menu:delete,msg:yes', null, {}, { project: true });
-    assert.deepEqual(on.actions.map((a) => a.done), [true, false, true, true, true], 'the active scene cannot be deleted');
+    const on = await probe(['scene-edit'], 8000, 'select-scene:scene-1,scene-menu:delete,select-scene:scene-2,scene-menu:delete', null, {}, { project: true });
+    assert.deepEqual(on.actions.map((a) => a.done), [true, false, true, true], 'the active scene cannot be deleted');
     assert.equal(on.sceneNames.length, 2);
     assert.deepEqual(JSON.parse(readFileSync(on.file, 'utf8')).scenes.map((s) => s.id), ['scene-1']);
   });
@@ -732,14 +780,11 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.guide.coach.active, true);
   });
   // --- end tips, tour and help ---
-  test('typed confirms (D279): a flag ticked on asks for the phrase; a wrong phrase asks again, "yes" turns it on, Cancel leaves it off', async () => {
-    const p = await probe([], 9000, 'flag-on:transitions,type:nope,type:yes,flag-on:bot-manager,cancel,type:yes');
-    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [
-      ['flag-on:transitions', true], ['type:nope', true], ['type:yes', true], ['flag-on:bot-manager', true], ['cancel', true], ['type:yes', false],
-    ]);
-    assert.equal(p.store.isOn('transitions'), true, 'the phrase typed in the dialog reached /ui/api/confirm');
-    assert.equal(p.store.isOn('bot-manager'), false, 'cancelled: still off');
+  test('no typed confirms (D331): a flag switched on is on at once; no text window opens; an unknown flag is refused', async () => {
+    const p = await probe([], 8000, 'flag-on:transitions,type:yes,flag-on:no-such-flag');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['flag-on:transitions', true], ['type:yes', false], ['flag-on:no-such-flag', false]]);
+    assert.equal(p.store.isOn('transitions'), true, 'on at once through /ui/api/flags/set');
     assert.equal(p.shown.transitions, true, 'the transitions box follows the flag');
-    assert.equal(p.shown.bots, false);
+    assert.equal(p.confirmBox, undefined, 'no confirm window');
   });
 });

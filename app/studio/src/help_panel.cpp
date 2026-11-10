@@ -259,9 +259,9 @@ HelpPanel::HelpPanel(QWidget *host, AnchorResolver resolve) : QFrame(host), host
 	v->addWidget(new HelpArt(HelpArt::Posting, body));
 	v->addWidget(label(QStringLiteral("WORKS TODAY"), body));
 	v->addWidget(bullet(QStringLiteral("Posts (in the More menu, when posting is switched on) shows a package for each clip: the video, a cover picture and text for YouTube Shorts, TikTok and Instagram Reels. You read, edit and approve each one. This step sends nothing."), body));
-	v->addWidget(bullet(QStringLiteral("An approved clip can go to YouTube Shorts as a private video. You type \"yes, upload\" first, and nothing becomes public by itself. Signing in to YouTube is set up from the command line for now."), body));
+	v->addWidget(bullet(QStringLiteral("An approved clip can go to YouTube Shorts as a private video. It goes up only when you click Upload, and nothing becomes public by itself. Signing in to YouTube is set up from the command line for now."), body));
 	v->addWidget(bullet(QStringLiteral("TikTok and Instagram Reels: Ujwalam prepares the package only. You upload those yourself."), body));
-	v->addWidget(label(QStringLiteral("NEEDS YOUR YES"), body));
+	v->addWidget(label(QStringLiteral("NEEDS YOUR CLICK"), body));
 	v->addWidget(bullet(QStringLiteral("Switching posting on, and every upload. Uploads are refused while you are live."), body));
 	v->addWidget(label(QStringLiteral("AUTOMATIC POSTING"), body));
 	v->addWidget(bullet(QStringLiteral("It exists only as an opt-in rule file used from the command line after a stream, and it is off. The rule list is empty, so nothing posts by itself. A rule can approve matching clips, and only if you also allow it, upload them privately to YouTube Shorts. There is no switch for it in this window yet."), body));

@@ -67,11 +67,11 @@ LookPanel::LookPanel(QWidget *parent) : QWidget(parent), debounce_(new QTimer(th
 	debounce_->setSingleShot(true);
 	debounce_->setInterval(250); // short pause after the last change, so a slider drag sends once
 	connect(debounce_, &QTimer::timeout, this, [this]() { emit commit(); });
-	// Live: no automatic sends (each one needs "yes, on air"); the Apply button sends the whole list once.
+	// Live: no automatic sends (each slider step would be its own live change); the Apply button sends the whole list once.
 	liveBar_ = new QWidget(this);
 	auto *lh = new QHBoxLayout(liveBar_);
 	lh->setContentsMargins(0, 0, 0, 0);
-	auto *hint = new QLabel(QStringLiteral("You are live. Changes are sent when you press Apply (it asks for \"yes, on air\")."), liveBar_);
+	auto *hint = new QLabel(QStringLiteral("You are live. Changes are sent when you press Apply."), liveBar_);
 	hint->setWordWrap(true);
 	hint->setObjectName(QStringLiteral("muted"));
 	apply_ = new QPushButton(QStringLiteral("Apply"), liveBar_);

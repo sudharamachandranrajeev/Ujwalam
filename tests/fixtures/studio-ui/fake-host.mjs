@@ -17,7 +17,7 @@
 // stream.start. UJWALAM_FAKE_HOST_CRASH_ON=<file>: a crash run exits (code 3) once that file exists (the file is
 // removed), instead of after UJWALAM_FAKE_HOST_CRASH_MS.
 // Live-test guard simulation: UJWALAM_FAKE_HOST_STREAM_AFTER_MS=N makes every planned sink (streams and recordings) go
-// live N ms after start (as if the user started them with "yes, on air"), with 60 fps frame counters, 6000 kbps and
+// live N ms after start (as if the user clicked Start stream), with 60 fps frame counters, 6000 kbps and
 // UJWALAM_FAKE_HOST_DROP_PCT % network-dropped and UJWALAM_FAKE_HOST_SKIP_PCT % encoder-skipped frames (default 0;
 // the skipped and render-lagged counters start above 0, as host-wide counters do); outputs.stop (logged with its params) stops them.
 // --twitch-bandwidth-test is reflected as bandwidthTest on twitch stream sinks, like the real host.

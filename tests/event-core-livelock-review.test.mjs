@@ -16,12 +16,10 @@ const doc = () => JSON.parse(readFileSync(path.join(repo, 'data', 'actions', 'ca
 const chatOn = (...ids) => { const d = doc(); for (const a of d.actions) if (ids.includes(a.id)) { a.chatAllowed = true; a.chatMode = 'dry-run'; } return d; };
 const PSEUDO = '0123456789abcdef0123456789abcdef';
 
-// Confirms and follows the step-2 confirmation of an on-air write while live (E4b two-step).
-const finish = (gate, r, source = 'ui') => {
-  let c = gate.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source });
-  while (c.verdict === 'confirm') c = gate.confirm(c.confirm.confirmId, c.confirm.phrase, c.confirm.actionHash, { source });
-  return c;
-};
+// The approval click for a rule / remote / system write (D331: one click, no phrase, no second step).
+const finish = (gate, r, source = 'ui') => gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source });
+// An untainted automatic rule (a hotkey): its writes always wait for a ui/api click.
+const RULE = Object.freeze({ source: 'rule', provenance: { kind: 'hotkey' } });
 
 function mk(d = doc(), extra = {}) {
   let t = 1000;
@@ -72,36 +70,41 @@ test('review 4: data cannot chat-allow new ids in a deny category', () => {
 test('review 6: offline -> live -> offline between request and confirm is refused', () => {
   const { gate, calls } = mk();
   gate.setLiveState('offline', { source: 'system' });
-  const r = gate.request({ id: 'scene.switch', params: {}, source: 'ui', actor: 'u1' });
+  const r = gate.request({ id: 'scene.switch', params: {}, ...RULE, actor: 'u1' });
   gate.setLiveState('live', { source: 'system' });
   gate.setLiveState('offline', { source: 'system' });
-  const c = gate.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source: 'ui' });
+  const c = finish(gate, r);
   assert.deepEqual([c.verdict, c.reason], ['refuse', 'live-state-changed']);
   assert.deepEqual(calls, []);
 });
 
-test('review 7: 16 requests from hotkey rules, remote or system cannot evict a ui confirmation', () => {
+test('review 7: 40 requests from hotkey rules, remote, system or api cannot evict a pending approval', () => {
   for (const flood of [
     { source: 'rule', provenance: { kind: 'hotkey' } }, { source: 'rule', provenance: { kind: 'schedule' } },
     { source: 'remote' }, { source: 'system' }, { source: 'api' },
   ]) {
     const { gate, calls } = mk();
-    const mine = gate.request({ id: 'scene.switch', params: { s: 'mine' }, source: 'ui', actor: 'u1' });
+    const mine = gate.request({ id: 'layer.create', params: { s: 'mine' }, source: 'system', actor: 'u1' });
     for (let i = 0; i < 40; i++) gate.request({ id: 'scene.switch', params: { i }, actor: 'x', ...flood });
     const c = finish(gate, mine);
     assert.equal(c.verdict, 'allow', flood.source);
-    assert.deepEqual(calls, ['scene.switch']);
+    // An api flood runs its own writes (the user's surface, D331); nothing else ran besides the approved one.
+    assert.deepEqual(calls.filter((id) => id !== 'scene.switch'), ['layer.create']);
+    assert.equal(calls.filter((id) => id === 'scene.switch').length, flood.source === 'api' ? 40 : 0);
   }
 });
 
-test('review 8: clearing panic while live needs "yes, on air"; "yes" is refused', () => {
+test('review 8 (D331): clearing panic while live is one ui/api click; chat, rule, remote and system cannot clear it', () => {
   const { gate } = mk();
   gate.setLiveState('live', { source: 'system' });
   gate.panic({ source: 'ui' });
-  const r = gate.request({ id: 'panic.clear', params: {}, source: 'ui', actor: 'u1' });
-  assert.equal(r.confirm.phrase, 'yes, on air');
-  assert.equal(gate.confirm(r.confirm.confirmId, 'yes', r.confirm.actionHash, { source: 'ui' }).verdict, 'refuse');
-  assert.equal(gate.state().panic, true);
+  for (const over of [{ source: 'chat' }, RULE, { source: 'remote' }, { source: 'system' }, { source: 'ui', provenance: { kind: 'chat.message' } }]) {
+    assert.equal(gate.request({ id: 'panic.clear', params: {}, actor: PSEUDO, ...over }).verdict, 'refuse', over.source);
+    assert.equal(gate.state().panic, true);
+  }
+  assert.equal(gate.state().pending, 0);
+  assert.deepEqual(gate.request({ id: 'panic.clear', params: {}, source: 'ui', actor: 'u1' }), { verdict: 'allow', reason: 'panic-cleared' });
+  assert.equal(gate.state().panic, false);
 });
 
 test('review 10: ttlMs and maxPending must be finite positive integers', () => {
@@ -142,9 +145,11 @@ test('review 5: a broken wall clock, monotonic clock or random source refuses wi
     const gate = createActionGate({
       catalogue: chatOn('effect.fire'), executor: { execute: (a) => { calls.push(a.id); } }, onDecision: (r) => audit.push(r), ...extra,
     });
+    // D331: a ui write no longer draws a confirmId (no randomness), so the rule write is the one that needs the random
+    // source; a ui write still hits the broken clocks through its audit row.
     for (const action of [
-      { id: 'scene.switch', params: {}, source: 'ui', actor: 'u1' },
-      ...(name === 'throwing random' ? [] : [{ id: 'effect.fire', params: {}, source: 'chat', actor: PSEUDO }, { id: 'state.read', params: {}, source: 'ui', actor: 'u1' }]),
+      { id: 'scene.switch', params: {}, ...RULE, actor: 'u1' },
+      ...(name === 'throwing random' ? [] : [{ id: 'scene.switch', params: {}, source: 'ui', actor: 'u1' }, { id: 'effect.fire', params: {}, source: 'chat', actor: PSEUDO }, { id: 'state.read', params: {}, source: 'ui', actor: 'u1' }]),
     ]) {
       const r = gate.request(action);
       assert.deepEqual([r.verdict, r.reason], ['refuse', 'internal-error'], `${name} ${action.id}`);
@@ -197,16 +202,17 @@ test('review 16: __proto__, constructor or prototype keys anywhere in params, or
   ]) {
     assert.equal(gate.request({ id: 'scene.switch', params, source: 'ui', actor: 'u1' }).reason, 'bad-params');
   }
-  assert.equal(gate.request({ id: 'scene.switch', params: { s: 'x'.repeat(8000) }, source: 'ui', actor: 'u1' }).verdict, 'confirm');
+  assert.equal(gate.request({ id: 'scene.switch', params: { s: 'x'.repeat(8000) }, ...RULE, actor: 'u1' }).verdict, 'confirm');
+  assert.equal(gate.request({ id: 'scene.switch', params: { s: 'x'.repeat(8000) }, source: 'ui', actor: 'u1' }).reason, 'ui-direct');
 });
 
 test('review 17: after 256 used ids, the oldest used id reports unknown-confirm instead of replayed (still refused)', () => {
   const { gate, calls } = mk(doc(), { maxPending: 300 });
-  const first = gate.request({ id: 'scene.switch', params: { n: -1 }, source: 'ui', actor: 'u1' });
+  const first = gate.request({ id: 'scene.switch', params: { n: -1 }, ...RULE, actor: 'u1' });
   const okc = (r) => finish(gate, r);
   assert.equal(okc(first).verdict, 'allow');
   assert.equal(okc(first).reason, 'replayed');
-  for (let i = 0; i < 256; i++) okc(gate.request({ id: 'scene.switch', params: { n: i }, source: 'ui', actor: 'u1' }));
+  for (let i = 0; i < 256; i++) okc(gate.request({ id: 'scene.switch', params: { n: i }, ...RULE, actor: 'u1' }));
   assert.deepEqual([okc(first).verdict, okc(first).reason], ['refuse', 'unknown-confirm']);
   assert.equal(calls.length, 257);
 });
@@ -224,10 +230,18 @@ test('review 18: forSource fixes the source; a request body cannot override it',
   assert.equal(chat.setLiveState('offline', { source: 'system' }).ok, false);
   assert.equal(chat.panic({ source: 'system' }).ok, false);
   const ui = gate.forSource('ui');
-  const pend = ui.request({ id: 'scene.switch', params: {}, actor: 'u1' });
-  assert.equal(chat.confirm(pend.confirm.confirmId, pend.confirm.phrase, pend.confirm.actionHash).reason, 'source-not-permitted');
+  const rule = gate.forSource('rule');
+  // A rule transport claiming to be ui still counts as a rule: its write waits for a click.
+  const pend = rule.request({ id: 'scene.switch', params: {}, source: 'ui', actor: 'u1', provenance: { kind: 'hotkey' } });
+  assert.equal(pend.verdict, 'confirm');
+  assert.deepEqual(calls, []);
+  assert.equal(chat.confirm(pend.confirm.confirmId, undefined, pend.confirm.actionHash).reason, 'source-not-permitted');
   const remote = gate.forSource('remote');
-  assert.equal(remote.confirm(pend.confirm.confirmId, pend.confirm.phrase, pend.confirm.actionHash).reason, 'source-not-permitted');
+  assert.equal(remote.confirm(pend.confirm.confirmId, undefined, pend.confirm.actionHash).reason, 'source-not-permitted');
+  assert.equal(rule.confirm(pend.confirm.confirmId, undefined, pend.confirm.actionHash).reason, 'source-not-permitted');
   assert.equal(finish(ui, pend).verdict, 'allow');
   assert.deepEqual(calls, ['scene.switch']);
+  // The ui transport's own write runs on its click (D331).
+  assert.equal(ui.request({ id: 'layer.create', params: {}, source: 'rule', actor: 'u1' }).reason, 'ui-direct');
+  assert.deepEqual(calls, ['scene.switch', 'layer.create']);
 });

@@ -83,8 +83,8 @@ Page::Page(ApiClient *api, QWidget *parent, const QString &onlyOutput) : QWidget
 	v->setContentsMargins(0, 0, 0, 0);
 	v->setSpacing(12);
 	auto *intro = new QLabel(QStringLiteral("Connect each stream output here instead of the Windows Credential Manager tool. Ujwalam stores the keys in "
-						"Windows Credential Manager itself and shows only their last 4 characters. Every change asks you to type \"yes\" "
-						"(\"yes, on air\" while live); an output that is streaming cannot be changed until it stops. A new key is used from "
+						"Windows Credential Manager itself and shows only their last 4 characters. Each change happens on your click; "
+						"an output that is streaming cannot be changed until it stops. A new key is used from "
 						"the next start of that stream."),
 				 this);
 	intro->setWordWrap(true);
@@ -341,29 +341,17 @@ void Page::post(const QString &route, const QJsonObject &body, bool confirmFirst
 	});
 }
 
-// Typed confirmation (D151): the phrase comes from the server and is checked there.
+// A held change (D331): the user's click on this page was the decision, so the pending id is sent at once. No phrase,
+// no second question. The server checks the id, its expiry and the live state again.
 void Page::confirm(const QJsonObject &pending)
 {
 	const QString id = pending.value(QStringLiteral("pendingId")).toString();
-	bool ok = false;
-	const QString typed = QInputDialog::getText(this, QStringLiteral("Confirm"),
-						    pending.value(QStringLiteral("summary")).toString() + QStringLiteral("\n\nType: ") +
-							    pending.value(QStringLiteral("phrase")).toString(),
-						    QLineEdit::Normal, QString(), &ok);
-	if (!ok) {
-		api_->post(QStringLiteral("ui/api/cancel"), QJsonObject{{QStringLiteral("pendingId"), id}}, [](bool, const QJsonObject &, const QString &) {});
-		return say(QStringLiteral("Cancelled."));
-	}
-	api_->post(QStringLiteral("ui/api/confirm"), QJsonObject{{QStringLiteral("pendingId"), id}, {QStringLiteral("text"), typed}},
+	api_->post(QStringLiteral("ui/api/confirm"), QJsonObject{{QStringLiteral("pendingId"), id}},
 		   [p = QPointer<Page>(this)](bool ok2, const QJsonObject &r, const QString &err) {
 			   if (!p)
 				   return;
 			   if (!ok2)
 				   return p->say(QStringLiteral("Not done: ") + r.value(QStringLiteral("message")).toString(err));
-			   if (r.value(QStringLiteral("verdict")).toString() == QStringLiteral("wrong-phrase")) {
-				   p->say(QStringLiteral("That is not the phrase. Type it exactly."));
-				   return p->confirm(r.value(QStringLiteral("pending")).toObject());
-			   }
 			   p->afterAllow(r);
 		   });
 }

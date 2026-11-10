@@ -14,6 +14,7 @@
 #include "theme.h"
 #include "layer_list.h"
 #include "value_slider.h"
+#include "switch_widget.h"
 
 #include <QCheckBox>
 #include <QDateTime>
@@ -24,6 +25,7 @@
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
+#include <QHash>
 #include <QHBoxLayout>
 #include <QApplication>
 #include <QIcon>
@@ -339,20 +341,10 @@ QString PreviewSlot::message() const
 }
 
 // One close for the whole app (D280): closing this window stops Ujwalam (host, previews, services; the launcher
-// does that when the window exits with code 0). While live it stops every stream and the recording, so it needs the
-// typed "yes, on air" first; anything else keeps the window open.
+// does that when the window exits with code 0). While live it stops every stream and the recording: the close is the
+// user's click and acts at once (D331, no typed phrase, no "are you sure").
 void MainWindow::closeEvent(QCloseEvent *e)
 {
-	if (live_) {
-		bool ok = false;
-		const QString typed = QInputDialog::getText(this, QStringLiteral("Close Ujwalam"),
-							    QStringLiteral("You are live. Closing Ujwalam stops every stream and the recording.\n\nType: yes, on air"),
-							    QLineEdit::Normal, QString(), &ok);
-		if (!ok || typed.trimmed() != QStringLiteral("yes, on air")) {
-			note(QStringLiteral("Still live: Ujwalam was not closed."));
-			return e->ignore();
-		}
-	}
 	// Tasks still running or waiting (user 2026-11-09, D311 proposed): nothing may go on unseen after the window is
 	// gone, so the user picks: keep them in the tray (icon, progress, time left), stop them now, or keep the window.
 	const int n = tasks_ ? tasks_->active() : 0;
@@ -428,12 +420,9 @@ void MainWindow::leaveTray()
 	std::fflush(stdout);
 }
 
-// Stop all from the tray: asked first on a real click (a long clip job is not ended by a slip of the mouse).
-void MainWindow::stopAllFromTray(bool ask)
+// Stop all from the tray: the click acts at once (D331). Unfinished clip jobs run again at the next start.
+void MainWindow::stopAllFromTray()
 {
-	if (ask && QMessageBox::question(nullptr, QStringLiteral("Stop all"),
-					  QStringLiteral("Stop every running task and quit Ujwalam?\nUnfinished clip jobs run again at the next start.")) != QMessageBox::Yes)
-		return;
 	requestQuit([this](bool can, const QString &why, const QString &token) {
 		if (can) {
 			commitQuit(token, []() {
@@ -456,13 +445,9 @@ void MainWindow::stopAllFromTray(bool ask)
 }
 
 // Stop from the task panel (2026-11-10): the background jobs end (clip making, uploads; the same route as the tray's
-// Stop all while live), the studio and host stay. Asked first on a real click.
-void MainWindow::stopTasks(bool ask)
+// Stop all while live), the studio and host stay. The click acts at once (D331).
+void MainWindow::stopTasks()
 {
-	if (ask && QMessageBox::question(this, QStringLiteral("Stop tasks"),
-					  QStringLiteral("Stop the background jobs (clip making and uploads)?\nUnfinished clip jobs run again at the next start.")) !=
-			   QMessageBox::Yes)
-		return;
 	taskStops_++;
 	api_->post(QStringLiteral("ui/api/tasks/stop"), {}, [this](bool ok, const QJsonObject &, const QString &err) {
 		note(ok ? QStringLiteral("Stopping the background jobs...") : QStringLiteral("Could not stop the tasks: ") + err);
@@ -596,7 +581,7 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 			row->insertWidget(row->indexOf(clipsFolderBtn_), tasks_->chip());
 			row->insertSpacing(row->indexOf(clipsFolderBtn_), 6);
 		}
-	connect(tasks_, &TaskBar::stopRequested, this, [this](const QString &) { stopTasks(true); });
+	connect(tasks_, &TaskBar::stopRequested, this, [this](const QString &) { stopTasks(); });
 	{
 		// Tray icon (D311 proposed): the app icon main() set from the embedded PNGs (res/png, no imageformats plugin
 		// needed), else a standard one.
@@ -605,7 +590,7 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 			ico = style()->standardIcon(QStyle::SP_ComputerIcon);
 		tray_ = new TrayKeeper(ico, this);
 		connect(tray_, &TrayKeeper::openRequested, this, &MainWindow::leaveTray);
-		connect(tray_, &TrayKeeper::stopAllRequested, this, [this]() { stopAllFromTray(true); });
+		connect(tray_, &TrayKeeper::stopAllRequested, this, [this]() { stopAllFromTray(); });
 		connect(tray_, &TrayKeeper::allFinished, this, [this](int countdown) {
 			// Exit 0 makes the launcher stop the host: never while a stream or recording runs (it may have been started
 			// from the control page while the window was in the tray). Then the window comes back instead.
@@ -732,7 +717,7 @@ QWidget *MainWindow::buildTop()
 	auto *fbAct = menu->addAction(QStringLiteral("Feedback notes..."), this, &MainWindow::openFeedback);
 	fbAct->setToolTip(QStringLiteral("Add a note to each feedback moment (feedback hotkey while streaming)."));
 	postsAct_ = menu->addAction(QStringLiteral("Posts..."), this, &MainWindow::openPosts);
-	postsAct_->setToolTip(QStringLiteral("Review clip packages. Nothing is uploaded without a typed confirmation."));
+	postsAct_->setToolTip(QStringLiteral("Review clip packages. Nothing is uploaded until you click Upload."));
 	postsAct_->setVisible(false);
 	reportAct_ = menu->addAction(QStringLiteral("Report a problem..."), this, &MainWindow::report);
 	reportAct_->setToolTip(QStringLiteral("Opens a prefilled GitHub issue in your browser; you review it before submitting."));
@@ -799,8 +784,8 @@ void MainWindow::setControl(QPushButton *b, const QString &icon, const QString &
 		cap->setText(caption);
 }
 
-// The four controls (D290, the reference's Controls block). Stream and record changes come back as a typed
-// confirmation, as before; Save clip and Mark moment need none.
+// The four controls (D290, the reference's Controls block). Each acts on the click (D331); a stream start with
+// readiness problems shows them with "Go live anyway".
 QWidget *MainWindow::buildControls()
 {
 	auto *card = new QFrame(this);
@@ -977,7 +962,7 @@ QWidget *MainWindow::buildLeft()
 			const int to = i + delta; // host order: bottom first; up = higher index
 			if (to < 0 || to >= n)
 				return;
-			layerMoveTo(to); // saved into the project offline, live-only with "yes, on air" while live (D330)
+			layerMoveTo(to); // saved into the project offline, host-only while live (D330)
 			return;
 		}
 	};
@@ -1043,8 +1028,6 @@ QWidget *MainWindow::buildLeft()
 		QListWidgetItem *it = sceneList_->currentItem();
 		if (!it)
 			return note(QStringLiteral("Select a scene first."));
-		if (QMessageBox::question(this, QStringLiteral("Remove scene"), QStringLiteral("Remove scene \"%1\" and all its layers from the project?").arg(it->text())) != QMessageBox::Yes)
-			return;
 		QJsonObject b;
 		b.insert(QStringLiteral("op"), QStringLiteral("scene.remove"));
 		b.insert(QStringLiteral("scene"), it->data(Qt::UserRole).toString());
@@ -1054,8 +1037,6 @@ QWidget *MainWindow::buildLeft()
 		const QJsonObject l = selectedLayer();
 		if (l.isEmpty())
 			return note(QStringLiteral("Select a layer first."));
-		if (QMessageBox::question(this, QStringLiteral("Remove layer"), QStringLiteral("Remove layer \"%1\" from this scene on every canvas?").arg(l.value(QStringLiteral("name")).toString(selected_))) != QMessageBox::Yes)
-			return;
 		QJsonObject b;
 		b.insert(QStringLiteral("op"), QStringLiteral("layer.remove"));
 		b.insert(QStringLiteral("scene"), activeScene_);
@@ -1071,20 +1052,11 @@ QWidget *MainWindow::buildLeft()
 	});
 	renderAddPick();
 
-	// Feature flags (D149): new features ship off; switch them in Settings > Advanced (D290). Turning one on asks for
-	// the typed phrase ("yes, on air" while live), turning one off is instant. The list follows the server on every
-	// status poll; the widget lives here, hidden, and the Settings window borrows it while it is open.
-	// It sits in a hidden holder, never directly in the window (2026-11-10 Advanced offset bug): the embedded previews
-	// carry native window handles (PreviewSlot), and Qt then gives every direct child of the main window its own native
-	// handle as well. A list with a native handle, moved into the Settings dialog, kept being placed as a separate
-	// child window (its own position, outside the dialog's fade and DPI scaling) and showed up shifted on the Advanced
-	// page. The holder takes that native handle; the list inside it stays an ordinary (alien) widget.
-	flagHome_ = new QWidget(this);
-	flagHome_->hide();
-	flagList_ = new QListWidget(flagHome_);
-	connect(flagList_, &QListWidget::itemChanged, this, [this](QListWidgetItem *it) {
-		setFlag(it->data(Qt::UserRole).toString(), it->checkState() == Qt::Checked);
-	});
+	// Feature flags (D149): new features ship off; switch them in Settings > Advanced (D290). The list (flags_) follows
+	// the server on every status poll. Settings builds its switch rows fresh from it each time it opens (D331, N2): no
+	// widget is kept here and moved into the dialog (2026-11-10 Advanced offset bug: the embedded previews carry native
+	// window handles, so a widget made in this window and moved into Settings was placed as its own native child window
+	// and showed up shifted).
 	return w;
 }
 
@@ -1222,7 +1194,7 @@ QWidget *MainWindow::buildRight()
 
 	// Look (D290): the friendly effect controls for the selected layer. No flag: this is how rounded corners, shadows and
 	// the other looks are set. Offline every change goes to the host after a short pause (layers.setEffects, saved into the
-	// project, undoable); live the Apply button sends it and the server asks for "yes, on air".
+	// project, undoable); live the Apply button sends it (D331: the click acts).
 	lookCap_ = captionLabel(QStringLiteral("Look"), body);
 	v->addWidget(lookCap_);
 	look_ = new LookPanel(body);
@@ -1652,7 +1624,7 @@ void MainWindow::applyInspector()
 	x.insert(QStringLiteral("placement"), patch);
 	api_->host(QStringLiteral("layers.setPlacement"), layerArgs(x), [this](bool ok, const QJsonObject &b, const QString &err) {
 		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
-			return confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air" (D233)
+			return confirm(b.value(QStringLiteral("pending")).toObject()); // a held action (D331)
 		note(ok ? QStringLiteral("Applied.") : QStringLiteral("Not applied: ") + err);
 		loadLayers();
 	});
@@ -1745,7 +1717,7 @@ void MainWindow::renderEffectForm()
 }
 
 // The whole list goes to the host for every canvas of the scene (layers.setEffects); while live the UI server asks
-// for "yes, on air" first. The host checks each effect; the UI server saves the list into the project (undoable).
+// for nothing more: the click acts (D331). The host checks each effect; the UI server saves the list into the project (undoable).
 void MainWindow::applyEffects()
 {
 	if (selected_.isEmpty() || activeScene_.isEmpty())
@@ -1767,7 +1739,7 @@ void MainWindow::applyEffects()
 }
 
 // The Look panel's send (D290): the whole working list, one send at a time (a change made while one is on its way
-// goes out right after it). Live, the server asks for "yes, on air" first (the Apply button started this).
+// goes out right after it). Live, the Apply click sends it at once (D331).
 void MainWindow::applyLook()
 {
 	if (lookSending_) {
@@ -1801,7 +1773,7 @@ void MainWindow::applyLook()
 }
 
 // Arrow-key nudge (D254): only while preview editing is on and a layer with a placement is selected; off while live
-// (each press would need "yes, on air"). Presses made while a move is on its way add up into one layers.setPlacement.
+// (each press is its own live change). Presses made while a move is on its way add up into one layers.setPlacement.
 void MainWindow::nudge(int dx, int dy)
 {
 	if (!previewEditing_ || selectedLayer().value(QStringLiteral("placement")).toObject().isEmpty())
@@ -2016,7 +1988,7 @@ void MainWindow::setTracks(const QString &id, const QStringList &tracks)
 	api_->host(QStringLiteral("mixer.setTracks"), p, [this](bool ok, const QJsonObject &b, const QString &err) {
 		routeBusy_ = false;
 		if (ok && b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
-			confirm(b.value(QStringLiteral("pending")).toObject()); // live: "yes, on air"; reloads the mixer after
+			confirm(b.value(QStringLiteral("pending")).toObject()); // a held action (D331); reloads the mixer after
 		else if (!ok)
 			note(QStringLiteral("Tracks not changed: ") + err);
 		else
@@ -2142,7 +2114,7 @@ void MainWindow::pollStatus()
 		streamBtn_->setEnabled(ready.value(QStringLiteral("stream")).toBool());
 		recordBtn_->setEnabled(ready.value(QStringLiteral("record")).toBool());
 		// Say why a button is off (D281): no stream target unless Ujwalam was started for live.
-		streamBtn_->setToolTip(streamBtn_->isEnabled() ? (live_ ? QStringLiteral("Stop the stream (you type a confirmation first).") : QStringLiteral("Go live (you type: yes, on air)."))
+		streamBtn_->setToolTip(streamBtn_->isEnabled() ? (live_ ? QStringLiteral("Stop the stream.") : QStringLiteral("Go live."))
 							       : QStringLiteral("Streaming needs the LIVE start: the \"Ujwalam (alpha, LIVE)\" shortcut, or Ujwalam.cmd --live."));
 		recordBtn_->setToolTip(recordBtn_->isEnabled() ? (recording_ ? QStringLiteral("Stop recording.") : QStringLiteral("Start recording to a file."))
 								    : QStringLiteral("No recording output is set up in this start."));
@@ -2169,22 +2141,7 @@ void MainWindow::loadFlags()
 		if (!ok)
 			return;
 		const QJsonArray fl = b.value(QStringLiteral("flags")).toArray();
-		const QSignalBlocker block(flagList_); // a refresh is not a click
-		bool same = flagList_->count() == fl.size();
-		for (int i = 0; same && i < fl.size(); i++)
-			same = flagList_->item(i)->data(Qt::UserRole).toString() == fl.at(i).toObject().value(QStringLiteral("id")).toString();
-		if (!same)
-			flagList_->clear();
-		for (int i = 0; i < fl.size(); i++) {
-			const QJsonObject f = fl.at(i).toObject();
-			QListWidgetItem *it = same ? flagList_->item(i) : new QListWidgetItem(f.value(QStringLiteral("id")).toString(), flagList_);
-			if (!same) {
-				it->setData(Qt::UserRole, f.value(QStringLiteral("id")).toString());
-				it->setToolTip(f.value(QStringLiteral("description")).toString());
-				it->setFlags(it->flags() | Qt::ItemIsUserCheckable);
-			}
-			it->setCheckState(f.value(QStringLiteral("on")).toBool() ? Qt::Checked : Qt::Unchecked);
-		}
+		flags_ = fl; // Settings > Advanced reads it when it opens
 		bool se = false, tr = false;
 		for (const auto &x : fl) {
 			const QJsonObject f = x.toObject();
@@ -2298,14 +2255,14 @@ void MainWindow::loadBots()
 			rv->addWidget(fl);
 			botRows_->addWidget(row);
 		}
-		auto *hint = new QLabel(QStringLiteral("Start and Stop ask you to type yes. Stop only ends a bot that Ujwalam started."), botBox_);
+		auto *hint = new QLabel(QStringLiteral("Start and Stop act on the click. Stop only ends a bot that Ujwalam started."), botBox_);
 		hint->setWordWrap(true);
 		botRows_->addWidget(hint);
 	});
 }
 
 // Meld import: the server writes a new project file (never changes the current one), the host plans it (counts only),
-// and Load asks for the typed phrase before project.load replaces the scenes.
+// and the Load click runs project.load, which replaces the scenes (D331).
 void MainWindow::openImport()
 {
 	auto *dlg = new QDialog(this);
@@ -2367,8 +2324,8 @@ void MainWindow::openImport()
 }
 
 // Posts (P16a, flag posting): the browser page's review form. Edit, approve and reject change local files only.
-// YouTube upload is private, needs the package approved, a CLI sign-in, and the typed phrase in the request;
-// the server refuses it while live. The clip itself is watched from its folder (Open folder).
+// YouTube upload is private, needs the package approved and a CLI sign-in; the Upload click is the decision (D331).
+// The server refuses it while live. The clip itself is watched from its folder (Open folder).
 void MainWindow::openPosts()
 {
 	auto *dlg = new QDialog(this);
@@ -2423,13 +2380,12 @@ void MainWindow::openPosts()
 	auto *yv = new QVBoxLayout(yt);
 	auto *ytInfo = new QLabel(yt);
 	ytInfo->setWordWrap(true);
-	auto *ytConfirm = new QLineEdit(yt);
 	auto *yrow = new QHBoxLayout();
 	auto *upB = new QPushButton(QStringLiteral("Upload as private"), yt);
 	auto *chkB = new QPushButton(QStringLiteral("Check status"), yt);
-	yrow->addWidget(ytConfirm, 1);
 	yrow->addWidget(upB);
 	yrow->addWidget(chkB);
+	yrow->addStretch(1);
 	yv->addWidget(ytInfo);
 	yv->addLayout(yrow);
 	ff->addRow(meta);
@@ -2454,7 +2410,6 @@ void MainWindow::openPosts()
 		QJsonArray posts;
 		QString sel;
 		bool signedIn = false, busy = false;
-		QString phrase = QStringLiteral("yes, upload");
 	};
 	auto st = std::make_shared<State>();
 	QPointer<QDialog> guard(dlg);
@@ -2508,12 +2463,10 @@ void MainWindow::openPosts()
 		const bool uploaded = status == QStringLiteral("uploaded");
 		ytInfo->setText(uploaded ? QStringLiteral("Uploaded as private video %1. Use Check status to see if YouTube finished processing.").arg(p.value(QStringLiteral("videoId")).toString(QStringLiteral("?")))
 				: !st->signedIn ? QStringLiteral("Not signed in. Run in a terminal: node services/posting/cli.mjs youtube signin")
-				: status == QStringLiteral("approved") ? QStringLiteral("Approved. Ready to upload as private. Type: %1").arg(st->phrase)
+				: status == QStringLiteral("approved") ? QStringLiteral("Approved. Ready to upload as private.")
 								       : QStringLiteral("Approve the package first."));
-		ytConfirm->setPlaceholderText(st->phrase);
 		upB->setEnabled(!st->busy && !uploaded && st->signedIn && status == QStringLiteral("approved"));
 		chkB->setEnabled(!st->busy && uploaded);
-		ytConfirm->setEnabled(!uploaded);
 	};
 	const auto fill = [=]() {
 		const QJsonObject p = selPost();
@@ -2561,7 +2514,7 @@ void MainWindow::openPosts()
 				list->setCurrentItem(it);
 		}
 		info->setText(st->posts.isEmpty() ? QStringLiteral("No packages yet. Make them with services/posting/cli.mjs after a stream.")
-						   : QStringLiteral("%1 package(s). Private drafts only; approving marks a package. Upload to YouTube is separate and needs a typed confirmation.").arg(st->posts.size()));
+						   : QStringLiteral("%1 package(s). Private drafts only; approving marks a package. Upload to YouTube is separate (Upload as private).").arg(st->posts.size()));
 		fill();
 	};
 	const auto reload = [=]() {
@@ -2584,7 +2537,6 @@ void MainWindow::openPosts()
 	};
 	connect(list, &QListWidget::currentItemChanged, dlg, [=](QListWidgetItem *it) {
 		st->sel = it ? it->data(Qt::UserRole).toString() : QString();
-		ytConfirm->clear();
 		fill();
 	});
 	// Edit / approve / reject: local files only; the reply carries the updated package.
@@ -2636,8 +2588,6 @@ void MainWindow::openPosts()
 		renderYt();
 		QJsonObject b;
 		b.insert(QStringLiteral("id"), st->sel);
-		if (upload)
-			b.insert(QStringLiteral("confirm"), ytConfirm->text());
 		info->setText(upload ? QStringLiteral("Uploading... this can take a while. Keep this window open.") : QStringLiteral("Checking..."));
 		api_->post(upload ? QStringLiteral("ui/api/posts/youtube/upload") : QStringLiteral("ui/api/posts/youtube/check"), b,
 			   [=](bool ok, const QJsonObject &r, const QString &err) {
@@ -2646,10 +2596,9 @@ void MainWindow::openPosts()
 				   st->busy = false;
 				   if (!ok)
 					   info->setText(QStringLiteral("Not done: ") + err);
-				   else if (upload) {
-					   ytConfirm->clear();
+				   else if (upload)
 					   info->setText(QStringLiteral("Uploaded as private video %1.").arg(r.value(QStringLiteral("videoId")).toString()));
-				   } else
+				   else
 					   info->setText(QStringLiteral("Video %1: %2").arg(r.value(QStringLiteral("videoId")).toString(),
 										      r.value(QStringLiteral("found")).toBool()
 											      ? QStringLiteral("upload %1, processing %2, privacy %3")
@@ -2743,8 +2692,6 @@ void MainWindow::openPosts()
 		if (!guard)
 			return;
 		st->signedIn = ok && r.value(QStringLiteral("signedIn")).toBool();
-		if (ok && r.value(QStringLiteral("phrase")).isString())
-			st->phrase = r.value(QStringLiteral("phrase")).toString();
 		renderYt();
 	});
 	reload();
@@ -3171,14 +3118,12 @@ void MainWindow::layerDelete()
 		return note(QStringLiteral("Select a layer first."));
 	if (live_)
 		return note(QStringLiteral("Not while live."));
-	if (QMessageBox::question(this, QStringLiteral("Delete layer"), QStringLiteral("Delete the layer \"%1\" from this scene?\nIt goes from both the H and the V picture.").arg(l.value(QStringLiteral("name")).toString(selected_))) != QMessageBox::Yes)
-		return;
 	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("layer.remove")}, {QStringLiteral("scene"), activeScene_}, {QStringLiteral("layer"), selected_}});
 }
 
 // Host order is bottom first, so a higher index is higher in the picture. Offline the move is saved into the project
 // (structure op layer.move to a target layer, D330); live, or for a layer the project does not have, it goes to the
-// host only (layers.move) and the server asks for "yes, on air".
+// host only (layers.move), on the click (D331).
 void MainWindow::layerMoveTo(int index)
 {
 	if (selected_.isEmpty() || index < 0 || index >= layers_.size())
@@ -3251,7 +3196,7 @@ void MainWindow::lookCopy()
 	note(lookClip_.isEmpty() ? QStringLiteral("Copied: this layer has no look.") : QStringLiteral("Look copied (%1 effect(s)).").arg(lookClip_.size()));
 }
 
-// Sets the copied list on the selected layer through the Look panel's own send (layers.setEffects, "yes, on air" while live).
+// Sets the copied list on the selected layer through the Look panel's own send (layers.setEffects, on the click also while live).
 void MainWindow::lookPaste()
 {
 	const QJsonObject l = selectedLayer();
@@ -3307,12 +3252,6 @@ void MainWindow::sceneDelete(const QString &id)
 		return note(QStringLiteral("Not while live."));
 	if (!sceneEditOn_)
 		return note(QStringLiteral("Turn on scene editing in Settings > Advanced to delete scenes."));
-	QString cur = id;
-	for (const auto &s : scenes_)
-		if (s.toObject().value(QStringLiteral("id")).toString() == id)
-			cur = s.toObject().value(QStringLiteral("name")).toString();
-	if (QMessageBox::question(this, QStringLiteral("Delete scene"), QStringLiteral("Delete the scene \"%1\" and all its layers from the project?").arg(cur)) != QMessageBox::Yes)
-		return;
 	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("scene.remove")}, {QStringLiteral("scene"), id}});
 }
 
@@ -3471,20 +3410,47 @@ QString modeWords(const QString &id, bool live)
 			return QString::fromUtf8(live ? m.live : m.recording);
 	return id;
 }
-// Runs a function when its parent is deleted. Made as the dialog's first child, it runs before the dialog's other
-// children (Qt deletes children in creation order), so a borrowed widget can be taken back before it is deleted.
-class OnDelete : public QObject
+// The Settings window (D331): Cancel, Escape or the X with edits that are not saved asks "Save changes / Discard /
+// Cancel" first. The question opens without blocking (open(), not exec()), so the probe can answer it.
+class SettingsDialog : public QDialog
 {
 public:
-	OnDelete(QObject *parent, std::function<void()> f) : QObject(parent), f_(std::move(f)) {}
-	~OnDelete() override
+	using QDialog::QDialog;
+	std::function<bool()> dirty; // an edit Save would send
+	std::function<void()> save;  // the Save button's path, with its checks
+
+	void reject() override
 	{
-		if (f_)
-			f_();
+		if (discard_ || !dirty || !dirty())
+			return QDialog::reject();
+		if (findChild<QMessageBox *>(QStringLiteral("settingsUnsaved")))
+			return; // already asking
+		auto *box = new QMessageBox(QMessageBox::Question, QStringLiteral("Unsaved changes"),
+					    QStringLiteral("Some settings were changed but not saved."), QMessageBox::NoButton, this);
+		box->setObjectName(QStringLiteral("settingsUnsaved"));
+		QPushButton *sv = box->addButton(QStringLiteral("Save changes"), QMessageBox::AcceptRole);
+		QPushButton *dc = box->addButton(QStringLiteral("Discard"), QMessageBox::DestructiveRole);
+		QPushButton *cc = box->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
+		sv->setObjectName(QStringLiteral("unsavedSave"));
+		dc->setObjectName(QStringLiteral("unsavedDiscard"));
+		cc->setObjectName(QStringLiteral("unsavedCancel"));
+		box->setDefaultButton(sv);
+		box->setEscapeButton(cc);
+		box->setAttribute(Qt::WA_DeleteOnClose);
+		connect(box, &QMessageBox::finished, this, [this, box, sv, dc]() {
+			QAbstractButton *b = box->clickedButton();
+			if (b == sv && save)
+				QTimer::singleShot(0, this, [this]() { save(); });
+			else if (b == dc) {
+				discard_ = true;
+				QTimer::singleShot(0, this, [this]() { reject(); });
+			} // Cancel: Settings stays open with the edits
+		});
+		box->open();
 	}
 
 private:
-	std::function<void()> f_;
+	bool discard_ = false;
 };
 } // namespace
 
@@ -3614,7 +3580,8 @@ void MainWindow::saveSettings(const QJsonObject &body, bool retried)
 }
 
 // Settings (D284, D290, D293): sections on the left (Clips, Folders, Layer effects, Appearance, Advanced), the page on the right. The
-// feature flags list lives in Advanced: the window borrows the hidden flag list while Settings is open.
+// feature flags are switch rows in Advanced, built fresh each time (D331, N2). Every page is a draft: Save applies it
+// (flags included, on and off), Cancel or the X with edits asks Save changes / Discard / Cancel.
 void MainWindow::openSettings(bool firstRun, const QString &startPage)
 {
 	if (settingsDlg_) { // already open (or its answer is on the way)
@@ -3629,18 +3596,23 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		const QJsonObject st = b.value(QStringLiteral("settings")).toObject(), cl = b.value(QStringLiteral("clips")).toObject();
 		const QJsonObject c = st.value(QStringLiteral("clips")).toObject(), f = st.value(QStringLiteral("folders")).toObject();
 		const QString motionNow = st.value(QStringLiteral("ui")).toObject().value(QStringLiteral("motion")).toString(QStringLiteral("system"));
-		auto *dlg = new QDialog(this);
+		auto *dlg = new SettingsDialog(this);
 		dlg->setAttribute(Qt::WA_DeleteOnClose, true);
-		// The flag list is borrowed below. However the dialog goes (closed, deleted directly, or with the window at
-		// quit), the list goes back to its holder first, so flagList_ never points at a deleted widget. When the
-		// holder is already gone (the window is being deleted), the list is deleted with the dialog.
-		new OnDelete(dlg, [this] {
-			if (flagHome_ && flagList_ && flagList_->parentWidget() != flagHome_) {
-				flagList_->hide();
-				flagList_->setParent(flagHome_);
-			}
-		});
 		settingsDlg_ = dlg;
+		// A switch with its words beside it (N2): the label is the text, the switch shows ON / OFF.
+		auto switchRow = [](const QString &text, QWidget *parent) {
+			auto *row = new QWidget(parent);
+			auto *h = new QHBoxLayout(row);
+			h->setContentsMargins(0, 0, 0, 0);
+			h->setSpacing(10);
+			auto *sw = new Switch(row);
+			sw->setAccessibleName(text);
+			auto *l = new QLabel(text, row);
+			l->setWordWrap(true);
+			h->addWidget(sw, 0, Qt::AlignTop);
+			h->addWidget(l, 1);
+			return std::make_tuple(row, sw, l);
+		};
 		dlg->setWindowTitle(firstRun ? QStringLiteral("Welcome: clips") : QStringLiteral("Settings"));
 		auto *outer = new QVBoxLayout(dlg);
 		outer->setContentsMargins(18, 16, 18, 14);
@@ -3687,6 +3659,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		};
 		QComboBox *rec = mk(false, c.value(QStringLiteral("recording")).toString());
 		QComboBox *liv = mk(true, c.value(QStringLiteral("live")).toString());
+		const QString recStart = rec->currentData().toString(), livStart = liv->currentData().toString();
 		cf->addRow(QStringLiteral("When I record:"), rec);
 		cf->addRow(QStringLiteral("When I stream live:"), liv);
 		if (cl.value(QStringLiteral("available")).isBool() && !cl.value(QStringLiteral("available")).toBool()) {
@@ -3706,23 +3679,31 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		auto *gateBox = new QGroupBox(QStringLiteral("WHICH MATCHES GET CLIPS"), dlg);
 		auto *gv = new QVBoxLayout(gateBox);
 		gv->setSpacing(8);
-		auto *top3 = new QCheckBox(QStringLiteral("Only make clips from matches where I finish in the top 3"), gateBox);
+		const auto top3Parts = switchRow(QStringLiteral("Only make clips from matches where I finish in the top 3"), gateBox);
+		QWidget *top3Row = std::get<0>(top3Parts);
+		Switch *top3 = std::get<1>(top3Parts);
+		top3->setObjectName(QStringLiteral("settingsTop3"));
 		top3->setChecked(gateTop3);
 		auto *killRow = new QWidget(gateBox);
 		auto *kh = new QHBoxLayout(killRow);
 		kh->setContentsMargins(0, 0, 0, 0);
-		auto *killsOn = new QCheckBox(QStringLiteral("...or where I get at least"), killRow);
+		auto *killsOn = new Switch(killRow);
+		killsOn->setObjectName(QStringLiteral("settingsKillsOn"));
+		killsOn->setAccessibleName(QStringLiteral("...or where I get at least"));
+		auto *killsText = new QLabel(QStringLiteral("...or where I get at least"), killRow);
 		auto *kills = new QSpinBox(killRow);
 		kills->setRange(1, 99);
 		kills->setValue(gateKills > 0 ? gateKills : 5);
 		kills->setSuffix(QStringLiteral(" kills"));
 		killsOn->setChecked(gateKills > 0);
 		kills->setEnabled(killsOn->isChecked());
-		connect(killsOn, &QCheckBox::toggled, kills, &QWidget::setEnabled);
+		connect(killsOn, &QAbstractButton::toggled, kills, &QWidget::setEnabled);
+		kh->setSpacing(10);
 		kh->addWidget(killsOn);
+		kh->addWidget(killsText);
 		kh->addWidget(kills);
 		kh->addStretch(1);
-		gv->addWidget(top3);
+		gv->addWidget(top3Row);
 		gv->addWidget(killRow);
 		pc->addWidget(gateBox);
 		pc->addStretch(1);
@@ -3763,12 +3744,12 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		pf->addStretch(1);
 
 		// D327: Stream, Transitions and Integrations pages, each behind its flag (stream_pages.h).
-		auto flagOn = [this](const char *id) {
-			for (int i = 0; i < flagList_->count(); i++)
-				if (flagList_->item(i)->data(Qt::UserRole).toString() == QLatin1String(id))
-					return flagList_->item(i)->checkState() == Qt::Checked;
-			return false;
-		};
+		// The flags as the server last said (flags_); the Advanced switches change a draft that Save applies.
+		QHash<QString, bool> flagStart;
+		for (const auto &x : flags_)
+			flagStart.insert(x.toObject().value(QStringLiteral("id")).toString(), x.toObject().value(QStringLiteral("on")).toBool());
+		auto flagDraft = std::make_shared<QHash<QString, bool>>(flagStart);
+		auto flagOn = [&flagStart](const char *id) { return flagStart.value(QLatin1String(id), false); };
 		auto scrolled = [dlg](QWidget *w) {
 			auto *sa = new QScrollArea(dlg);
 			sa->setWidgetResizable(true);
@@ -3789,21 +3770,20 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		auto *fxBox = new QGroupBox(QStringLiteral("EFFECTS THAT COME WITH THE SCENES"), dlg);
 		auto *fv = new QVBoxLayout(fxBox);
 		fv->setSpacing(8);
-		auto *fxOn = new QCheckBox(QStringLiteral("Show layer effects from the scene (rounded corners, shadows, video buttons)"), fxBox);
+		const auto fxParts = switchRow(QStringLiteral("Show layer effects from the scene (rounded corners, shadows, video buttons)"), fxBox);
+		QWidget *fxRow = std::get<0>(fxParts);
+		Switch *fxOn = std::get<1>(fxParts);
+		QLabel *fxText = std::get<2>(fxParts);
 		fxOn->setObjectName(QStringLiteral("settingsLayerEffects"));
-		bool fxNow = false, fxKnown = false;
-		for (int i = 0; i < flagList_->count(); i++)
-			if (flagList_->item(i)->data(Qt::UserRole).toString() == QStringLiteral("layer-effects")) {
-				fxKnown = true;
-				fxNow = flagList_->item(i)->checkState() == Qt::Checked;
-			}
-		fxOn->setChecked(fxNow);
+		fxText->setObjectName(QStringLiteral("settingsLayerEffectsText"));
+		const bool fxKnown = flagStart.contains(QStringLiteral("layer-effects"));
+		fxOn->setChecked(flagStart.value(QStringLiteral("layer-effects"), false));
 		fxOn->setEnabled(fxKnown);
-		auto *fxHint = new QLabel(QStringLiteral("Turning this on asks you to type \"yes\". The effects appear the next time the scenes are built (start Ujwalam with the rebuild option). "
+		auto *fxHint = new QLabel(QStringLiteral("This is the layer-effects flag; it changes when you click Save. The effects appear the next time the scenes are built (start Ujwalam with the rebuild option). "
 							 "To change the look of one layer, select it and use the Look panel in the inspector; that needs no setting."), fxBox);
 		fxHint->setWordWrap(true);
 		fxHint->setObjectName(QStringLiteral("muted"));
-		fv->addWidget(fxOn);
+		fv->addWidget(fxRow);
 		fv->addWidget(fxHint);
 		pl->addWidget(fxBox);
 		pl->addStretch(1);
@@ -3814,7 +3794,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		pap->addWidget(appear, 1);
 
 		// Connections (D327, flag platform-connect): sign in to YouTube / Twitch or paste keys per stream output. The page
-		// talks to the studio UI server itself; each write asks for the typed phrase there and then.
+		// talks to the studio UI server itself; each write acts on the click there and then (D331).
 		page(QStringLiteral("Connections"))->addWidget(new connections::Page(api_, dlg), 1);
 
 		// Help & tips (D294 proposed): tips on/off, reset "Don't show again", replay the welcome tour
@@ -3824,22 +3804,75 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		auto *pa = page(QStringLiteral("Advanced"));
 		auto *flagBox = new QGroupBox(QStringLiteral("FEATURE FLAGS (FOR TESTING NEW FEATURES)"), dlg);
 		auto *flv = new QVBoxLayout(flagBox);
-		auto *flagHint = new QLabel(QStringLiteral("New features ship switched off. Turning one on asks you to type the confirmation phrase; turning one off is instant."), flagBox);
+		auto *flagHint = new QLabel(QStringLiteral("New features ship switched off. A switch changes when you click Save."), flagBox);
 		flagHint->setWordWrap(true);
 		flagHint->setObjectName(QStringLiteral("muted"));
 		flv->addWidget(flagHint);
-		flagList_->setParent(flagBox);
-		flv->addWidget(flagList_, 1);
-		flagList_->setMinimumHeight(220);
-		flagList_->show();
+		// One row per flag (N2): the switch, the flag's name and its plain description, always shown. Built fresh here,
+		// inside the dialog, so no widget with a native handle is moved in (2026-11-10 offset bug).
+		auto *flagScroll = new QScrollArea(flagBox);
+		flagScroll->setObjectName(QStringLiteral("settingsFlagScroll"));
+		flagScroll->setWidgetResizable(true);
+		flagScroll->setFrameShape(QFrame::NoFrame);
+		flagScroll->setMinimumHeight(220);
+		auto *flagRows = new QWidget(flagScroll);
+		flagRows->setObjectName(QStringLiteral("settingsFlagRows"));
+		auto *frv = new QVBoxLayout(flagRows);
+		frv->setContentsMargins(0, 0, 8, 0);
+		frv->setSpacing(12);
+		Switch *fxFlagSw = nullptr;
+		for (const auto &x : flags_) {
+			const QJsonObject fo = x.toObject();
+			const QString id = fo.value(QStringLiteral("id")).toString();
+			auto *row = new QWidget(flagRows);
+			row->setObjectName(QStringLiteral("flagRow"));
+			row->setProperty("flag", id);
+			auto *rh = new QHBoxLayout(row);
+			rh->setContentsMargins(0, 0, 0, 0);
+			rh->setSpacing(12);
+			auto *sw = new Switch(row);
+			sw->setObjectName(QStringLiteral("flagSwitch"));
+			sw->setProperty("flag", id);
+			sw->setAccessibleName(id);
+			sw->setChecked(flagStart.value(id, false));
+			auto *words = new QVBoxLayout();
+			words->setSpacing(2);
+			auto *name = new QLabel(id, row);
+			name->setObjectName(QStringLiteral("flagName"));
+			auto *desc = new QLabel(fo.value(QStringLiteral("description")).toString(), row);
+			desc->setObjectName(QStringLiteral("muted"));
+			desc->setProperty("flagDesc", true);
+			desc->setWordWrap(true);
+			words->addWidget(name);
+			words->addWidget(desc);
+			rh->addWidget(sw, 0, Qt::AlignTop);
+			rh->addLayout(words, 1);
+			frv->addWidget(row);
+			if (id == QStringLiteral("layer-effects"))
+				fxFlagSw = sw;
+			connect(sw, &QAbstractButton::toggled, dlg, [flagDraft, id](bool on) { flagDraft->insert(id, on); });
+		}
+		if (flags_.isEmpty())
+			frv->addWidget(new QLabel(QStringLiteral("The flags are not loaded yet. Open Settings again in a moment."), flagRows));
+		frv->addStretch(1);
+		flagScroll->setWidget(flagRows);
+		flv->addWidget(flagScroll, 1);
 		pa->addWidget(flagBox, 1);
+		// The Layer effects switch and the layer-effects flag row are one setting: each follows the other.
+		connect(fxOn, &QAbstractButton::toggled, dlg, [flagDraft, fxFlagSw](bool on) {
+			flagDraft->insert(QStringLiteral("layer-effects"), on);
+			if (fxFlagSw)
+				fxFlagSw->setCheckedSilently(on);
+		});
+		if (fxFlagSw)
+			connect(fxFlagSw, &QAbstractButton::toggled, dlg, [fxOn](bool on) { fxOn->setCheckedSilently(on); });
 		connect(nav, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
 		nav->setCurrentRow(0);
 		if (!startPage.isEmpty())
 			if (const auto found = nav->findItems(startPage, Qt::MatchExactly); !found.isEmpty())
 				nav->setCurrentItem(found.first());
 		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
-		connect(bb, &QDialogButtonBox::accepted, dlg, [this, dlg, nav]() {
+		dlg->save = [this, dlg, nav]() {
 			// D327: a Stream page change over a platform limit keeps Settings open on that page (problems shown there).
 			for (auto *sp : dlg->findChildren<streampages::StreamPage *>())
 				if (sp->blocksSave()) {
@@ -3849,15 +3882,39 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 					return;
 				}
 			dlg->accept();
-		});
+		};
+		connect(bb, &QDialogButtonBox::accepted, dlg, [dlg]() { dlg->save(); });
 		connect(bb, &QDialogButtonBox::rejected, dlg, &QDialog::reject);
+		// Anything Save would send (the unsaved-changes question, D331).
+		const int gateKillsN = gateKills > 0 ? gateKills : -1;
+		const QString recDirStart = f.value(QStringLiteral("recordings")).toString(), clipDirStart = f.value(QStringLiteral("clips")).toString();
+		dlg->dirty = [=]() {
+			if (rec->currentData().toString() != recStart || liv->currentData().toString() != livStart)
+				return true;
+			if (top3->isChecked() != gateTop3 || (killsOn->isChecked() ? kills->value() : -1) != gateKillsN)
+				return true;
+			if (recRow.second->text().trimmed() != recDirStart.trimmed() || clipRow.second->text().trimmed() != clipDirStart.trimmed())
+				return true;
+			if (appear->changedTheme() || appear->changedEffects() || appear->motion() != motionNow)
+				return true;
+			for (auto it = flagDraft->cbegin(); it != flagDraft->cend(); ++it)
+				if (flagStart.value(it.key(), false) != it.value())
+					return true;
+			for (auto *sp : dlg->findChildren<streampages::StreamPage *>())
+				if (sp->dirty())
+					return true;
+			for (auto *tp : dlg->findChildren<streampages::TransitionsPage *>())
+				if (tp->dirty())
+					return true;
+			for (auto *ip : dlg->findChildren<streampages::IntegrationsPage *>())
+				if (ip->dirty())
+					return true;
+			return false;
+		};
 		outer->addWidget(bb);
 		dlg->resize(860, std::max(560, dlg->sizeHint().height()));
 
 		connect(dlg, &QDialog::finished, this, [=](int result) {
-			// give the flag list back to the window before the dialog goes
-			flagList_->setParent(flagHome_);
-			flagList_->hide();
 			settingsDlg_.clear();
 			if (result != QDialog::Accepted) {
 				appear->revert(); // a theme tried on the cards goes back (D293)
@@ -3895,8 +3952,10 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				body.insert(QStringLiteral("ui"), ui);
 			}
 			saveSettings(body);
-			if (fxKnown && fxOn->isChecked() != fxNow)
-				setFlag(QStringLiteral("layer-effects"), fxOn->isChecked()); // the existing flags route: "yes" is typed in the confirm window
+			// The flag switches apply now, on and off alike (D331: the Save click is the decision, no phrase).
+			for (auto it = flagDraft->cbegin(); it != flagDraft->cend(); ++it)
+				if (flagStart.value(it.key(), false) != it.value())
+					setFlag(it.key(), it.value());
 		});
 		dlg->open();
 	});
@@ -3916,38 +3975,53 @@ void MainWindow::hostAction(const QString &method)
 	api_->host(method, {}, [this](bool ok, const QJsonObject &b, const QString &err) {
 		if (!ok)
 			return note(QStringLiteral("Not done: ") + err);
-		if (b.value(QStringLiteral("verdict")).toString() == QStringLiteral("confirm"))
-			confirm(b.value(QStringLiteral("pending")).toObject());
-		else
-			pollStatus();
+		const QString v = b.value(QStringLiteral("verdict")).toString();
+		if (v == QStringLiteral("confirm") || v == QStringLiteral("readiness-failed"))
+			return confirm(b.value(QStringLiteral("pending")).toObject());
+		if (!b.value(QStringLiteral("warning")).toString().isEmpty())
+			note(b.value(QStringLiteral("warning")).toString());
+		pollStatus();
 	});
 }
 
-// Typed confirmation (D151): the phrase comes from the server and is typed by the human; the server checks it.
+// One click (D331): a click acts at once. The server holds an action here only when it cannot act on the click alone:
+// the readiness check found problems ("Go live anyway", logged), or a rule or remote request waits for the user's
+// click. Allow sends only the pending id; Cancel drops it. No phrase. Opened without blocking, so the probe answers it.
 void MainWindow::confirm(const QJsonObject &pending)
 {
 	const QString id = pending.value(QStringLiteral("pendingId")).toString();
-	const QString phrase = pending.value(QStringLiteral("phrase")).toString();
-	bool ok = false;
-	const QString typed = QInputDialog::getText(this, QStringLiteral("Confirm"),
-						    pending.value(QStringLiteral("summary")).toString() + QStringLiteral("\n\nType: ") + phrase,
-						    QLineEdit::Normal, QString(), &ok);
-	QJsonObject body;
-	body.insert(QStringLiteral("pendingId"), id);
-	if (!ok) {
+	const QJsonValue rd = pending.value(QStringLiteral("readiness"));
+	const bool anyway = rd.isObject() && !rd.toObject().value(QStringLiteral("ok")).toBool(true);
+	auto *box = new QMessageBox(anyway ? QMessageBox::Warning : QMessageBox::Question, anyway ? QStringLiteral("Not started") : QStringLiteral("Approve this action"),
+				    pending.value(QStringLiteral("summary")).toString(), QMessageBox::NoButton, this);
+	box->setObjectName(QStringLiteral("confirmBox"));
+	QPushButton *okBtn = box->addButton(anyway ? QStringLiteral("Go live anyway") : QStringLiteral("Allow"), QMessageBox::AcceptRole);
+	QPushButton *cancel = box->addButton(QStringLiteral("Cancel"), QMessageBox::RejectRole);
+	okBtn->setObjectName(QStringLiteral("confirmOk"));
+	cancel->setObjectName(QStringLiteral("confirmCancel"));
+	box->setDefaultButton(cancel); // Enter does not go live past the problems; a click does
+	box->setEscapeButton(cancel);
+	box->setAttribute(Qt::WA_DeleteOnClose);
+	connect(box, &QMessageBox::finished, this, [this, box, okBtn, id]() { confirmAnswer(id, box->clickedButton() == okBtn); });
+	box->open();
+}
+
+void MainWindow::confirmAnswer(const QString &id, bool allow)
+{
+	const QJsonObject body{{QStringLiteral("pendingId"), id}};
+	if (!allow) {
 		api_->post(QStringLiteral("ui/api/cancel"), body, [](bool, const QJsonObject &, const QString &) {});
 		return note(QStringLiteral("Cancelled."));
 	}
-	body.insert(QStringLiteral("text"), typed);
 	api_->post(QStringLiteral("ui/api/confirm"), body, [this](bool ok2, const QJsonObject &r, const QString &err) {
 		if (!ok2)
-			return note(QStringLiteral("Confirmation failed: ") + err);
+			return note(QStringLiteral("Not done: ") + err);
 		const QString v = r.value(QStringLiteral("verdict")).toString();
-		if (v == QStringLiteral("wrong-phrase") || v == QStringLiteral("confirm")) {
-			note(v == QStringLiteral("wrong-phrase") ? QStringLiteral("That is not the phrase. Type it exactly.") : QString());
+		if (v == QStringLiteral("confirm") || v == QStringLiteral("readiness-failed"))
 			return confirm(r.value(QStringLiteral("pending")).toObject());
-		}
 		note(v == QStringLiteral("allow") ? QStringLiteral("Done.") : QStringLiteral("Result: ") + v);
+		if (!r.value(QStringLiteral("warning")).toString().isEmpty())
+			note(r.value(QStringLiteral("warning")).toString());
 		if (r.value(QStringLiteral("forced")).toBool())
 			note(QStringLiteral("The bot did not close when asked and was force-closed; unsaved bot changes may be lost."));
 		pollStatus();
@@ -3961,12 +4035,8 @@ void MainWindow::confirm(const QJsonObject &pending)
 QJsonObject MainWindow::probe() const
 {
 	QJsonArray flags;
-	for (int i = 0; i < flagList_->count(); i++) {
-		QJsonObject f;
-		f.insert(QStringLiteral("id"), flagList_->item(i)->data(Qt::UserRole).toString());
-		f.insert(QStringLiteral("on"), flagList_->item(i)->checkState() == Qt::Checked);
-		flags.append(f);
-	}
+	for (const auto &x : flags_)
+		flags.append(QJsonObject{{QStringLiteral("id"), x.toObject().value(QStringLiteral("id"))}, {QStringLiteral("on"), x.toObject().value(QStringLiteral("on")).toBool()}});
 	QJsonObject shown; // isHidden: the window itself is never shown in a probe
 	QJsonArray previews; // each preview slot's message: empty once the host embedded its preview (D280)
 	for (const PreviewSlot *s : slots_)
@@ -4049,7 +4119,10 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("controls"), QJsonObject{{QStringLiteral("stream"), streamBtn_->accessibleName()}, {QStringLiteral("record"), recordBtn_->accessibleName()},
 							{QStringLiteral("clip"), clipBtn_->accessibleName()}, {QStringLiteral("mark"), markBtn_->accessibleName()},
 							{QStringLiteral("streamIcon"), streamBtn_->property("iconState").toString()}});
-	o.insert(QStringLiteral("flagsInSettings"), flagList_->parentWidget() != flagHome_); // the list moved out of the main window (D290)
+	o.insert(QStringLiteral("flagsInSettings"), settingsDlg_ && settingsDlg_->findChild<QWidget *>(QStringLiteral("settingsFlagRows")) != nullptr); // Advanced holds the rows (D290, N2)
+	if (auto *cb = findChild<QMessageBox *>(QStringLiteral("confirmBox")))
+		o.insert(QStringLiteral("confirmBox"), QJsonObject{{QStringLiteral("title"), cb->windowTitle()}, {QStringLiteral("text"), cb->text()},
+								    {QStringLiteral("ok"), cb->findChild<QPushButton *>(QStringLiteral("confirmOk"))->text()}});
 	QJsonObject op = outputsPanel_->probe(); // D327 OS3
 	op.insert(QStringLiteral("shown"), !outputsPanel_->isHidden());
 	o.insert(QStringLiteral("outputsPanel"), op);
@@ -4066,22 +4139,38 @@ QJsonObject MainWindow::probe() const
 		if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")))
 			for (int i = 0; i < nav->count(); i++)
 				sections.append(nav->item(i)->text());
-		auto *fx = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsLayerEffects"));
+		auto *fx = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsLayerEffects"));
+		auto *fxText = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsLayerEffectsText"));
 		auto *mo = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsMotion"));
+		auto *sd = static_cast<SettingsDialog *>(settingsDlg_.data());
 		QJsonObject s{{QStringLiteral("sections"), sections}, {QStringLiteral("layerEffects"), fx ? QJsonValue(fx->isChecked()) : QJsonValue()},
-			      {QStringLiteral("layerEffectsText"), fx ? fx->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
-			      {QStringLiteral("motionChoices"), mo ? mo->count() : 0}};
-		// Advanced page geometry (2026-11-10 offset bug): where the flag list sits in its box and in the dialog, and
-		// whether it carries its own native window handle.
-		if (QWidget *box = flagList_->parentWidget(); box && box != flagHome_) {
-			const QRect g = flagList_->geometry(), inDlg(flagList_->mapTo(settingsDlg_.data(), QPoint(0, 0)), flagList_->size());
-			const QRect bc = box->contentsRect();
-			s.insert(QStringLiteral("flagList"), QJsonObject{{QStringLiteral("native"), flagList_->internalWinId() != 0},
-									 {QStringLiteral("nativeAttr"), flagList_->testAttribute(Qt::WA_NativeWindow)},
-									 {QStringLiteral("x"), g.x()}, {QStringLiteral("y"), g.y()}, {QStringLiteral("w"), g.width()}, {QStringLiteral("h"), g.height()},
-									 {QStringLiteral("dlgX"), inDlg.x()}, {QStringLiteral("dlgY"), inDlg.y()},
-									 {QStringLiteral("insideBox"), bc.contains(g)}, {QStringLiteral("scrollY"), flagList_->verticalScrollBar()->value()},
-									 {QStringLiteral("scrollX"), flagList_->horizontalScrollBar()->value()}});
+			      {QStringLiteral("layerEffectsText"), fxText ? fxText->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
+			      {QStringLiteral("motionChoices"), mo ? mo->count() : 0}, {QStringLiteral("dirty"), sd->dirty ? sd->dirty() : false},
+			      {QStringLiteral("unsavedAsked"), settingsDlg_->findChild<QMessageBox *>(QStringLiteral("settingsUnsaved")) != nullptr}};
+		// Advanced page (N2): one row per flag, switch state and description; geometry for the 2026-11-10 offset bug:
+		// where the rows sit in their box and in the dialog, and whether they carry their own native window handle.
+		if (auto *rows = settingsDlg_->findChild<QWidget *>(QStringLiteral("settingsFlagRows"))) {
+			QJsonArray fr;
+			for (auto *sw : rows->findChildren<QAbstractButton *>(QStringLiteral("flagSwitch"))) {
+				QString desc;
+				for (auto *l : sw->parentWidget()->findChildren<QLabel *>())
+					if (l->property("flagDesc").toBool())
+						desc = l->text();
+				fr.append(QJsonObject{{QStringLiteral("id"), sw->property("flag").toString()}, {QStringLiteral("on"), sw->isChecked()},
+						      {QStringLiteral("description"), desc}, {QStringLiteral("visible"), sw->parentWidget()->isVisibleTo(settingsDlg_.data())}});
+			}
+			s.insert(QStringLiteral("flagRows"), fr);
+			auto *scroll = settingsDlg_->findChild<QScrollArea *>(QStringLiteral("settingsFlagScroll"));
+			QWidget *box = scroll ? scroll->parentWidget() : nullptr;
+			if (scroll && box) {
+				const QRect g = scroll->geometry(), inDlg(scroll->mapTo(settingsDlg_.data(), QPoint(0, 0)), scroll->size());
+				s.insert(QStringLiteral("flagList"), QJsonObject{{QStringLiteral("native"), rows->internalWinId() != 0 || scroll->internalWinId() != 0},
+										 {QStringLiteral("nativeAttr"), rows->testAttribute(Qt::WA_NativeWindow) || scroll->testAttribute(Qt::WA_NativeWindow)},
+										 {QStringLiteral("x"), g.x()}, {QStringLiteral("y"), g.y()}, {QStringLiteral("w"), g.width()}, {QStringLiteral("h"), g.height()},
+										 {QStringLiteral("dlgX"), inDlg.x()}, {QStringLiteral("dlgY"), inDlg.y()},
+										 {QStringLiteral("insideBox"), box->contentsRect().contains(g)}, {QStringLiteral("scrollY"), scroll->verticalScrollBar()->value()},
+										 {QStringLiteral("scrollX"), scroll->horizontalScrollBar()->value()}});
+			}
 		}
 		o.insert(QStringLiteral("settings"), s);
 	}
@@ -4217,11 +4306,12 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		return false;
 	}
-	if (p.size() == 2 && p[0] == QStringLiteral("msg")) { // answer the open question box (delete confirm)
-		auto *box = qobject_cast<QMessageBox *>(QApplication::activeModalWidget());
-		if (!box)
+	if (p.size() == 2 && p[0] == QStringLiteral("confirm")) { // D331: the one-click window, confirm:ok | confirm:cancel
+		auto *box = findChild<QMessageBox *>(QStringLiteral("confirmBox"));
+		QPushButton *b = box ? box->findChild<QPushButton *>(p[1] == QStringLiteral("ok") ? QStringLiteral("confirmOk") : QStringLiteral("confirmCancel")) : nullptr;
+		if (!b)
 			return false;
-		box->button(p[1] == QStringLiteral("yes") ? QMessageBox::Yes : QMessageBox::No)->click();
+		b->click();
 		return true;
 	}
 	if (p.size() == 3 && p[0] == QStringLiteral("look"))
@@ -4289,10 +4379,29 @@ bool MainWindow::probeAction(const QString &action)
 			}
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-layer-effects")) {
-			if (auto *fx = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsLayerEffects")); fx && fx->isEnabled()) {
-				fx->setChecked(p[1] == QStringLiteral("on"));
+			if (auto *fx = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsLayerEffects")); fx && fx->isEnabled()) {
+				if (fx->isChecked() != (p[1] == QStringLiteral("on")))
+					fx->click(); // a click on the switch
 				return true;
 			}
+		}
+		if (p.size() == 3 && p[0] == QStringLiteral("settings-flag")) { // N2: a click on one flag's switch in Advanced
+			for (auto *sw : settingsDlg_->findChildren<QAbstractButton *>(QStringLiteral("flagSwitch")))
+				if (sw->property("flag").toString() == p[1]) {
+					if (sw->isChecked() != (p[2] == QStringLiteral("on")))
+						sw->click();
+					return true;
+				}
+			return false;
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-unsaved")) { // D331: answer save | discard | cancel
+			auto *box = settingsDlg_->findChild<QMessageBox *>(QStringLiteral("settingsUnsaved"));
+			const QString name = p[1] == QStringLiteral("save") ? QStringLiteral("unsavedSave") : p[1] == QStringLiteral("discard") ? QStringLiteral("unsavedDiscard") : QStringLiteral("unsavedCancel");
+			if (auto *b = box ? box->findChild<QPushButton *>(name) : nullptr) {
+				b->click();
+				return true;
+			}
+			return false;
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-theme")) { // a click on the theme card (D293)
 			if (auto *ap = settingsDlg_->findChild<appearance::Page *>())
@@ -4324,25 +4433,18 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		return false;
 	}
-	if (p.size() == 2 && p[0] == QStringLiteral("flag-off")) {
-		for (int i = 0; i < flagList_->count(); i++)
-			if (flagList_->item(i)->data(Qt::UserRole).toString() == p[1]) {
-				flagList_->item(i)->setCheckState(Qt::Unchecked); // itemChanged -> setFlag, as a click does
-				return true;
-			}
-		return false;
-	}
-	if (p.size() == 2 && p[0] == QStringLiteral("flag-on")) { // ticks the flag: the server asks for a phrase (D279)
-		for (int i = 0; i < flagList_->count(); i++)
-			if (flagList_->item(i)->data(Qt::UserRole).toString() == p[1]) {
-				flagList_->item(i)->setCheckState(Qt::Checked);
+	if (p.size() == 2 && (p[0] == QStringLiteral("flag-off") || p[0] == QStringLiteral("flag-on"))) {
+		// A flag switched as Settings > Advanced + Save does (setFlag); false for a flag the server did not list.
+		for (const auto &x : flags_)
+			if (x.toObject().value(QStringLiteral("id")).toString() == p[1]) {
+				setFlag(p[1], p[0] == QStringLiteral("flag-on"));
 				return true;
 			}
 		return false;
 	}
 	if (p[0] == QStringLiteral("type") || (p.size() == 1 && p[0] == QStringLiteral("cancel"))) {
-		// The open typed-confirm dialog (D279): type the text (percent-encoded, so "yes%2C on air") and press OK,
-		// or press Cancel. false when no confirm dialog is open.
+		// The open text window (a rename or a new name): type the text (percent-encoded) and press OK, or press
+		// Cancel. false when no text window is open.
 		auto *dlg = qobject_cast<QInputDialog *>(QApplication::activeModalWidget());
 		if (!dlg)
 			return false;
@@ -4390,7 +4492,7 @@ bool MainWindow::probeAction(const QString &action)
 		else if (p[1] == QStringLiteral("open"))
 			leaveTray();
 		else if (p[1] == QStringLiteral("stop"))
-			stopAllFromTray(false);
+			stopAllFromTray();
 		else
 			return false;
 		return true;
@@ -4408,8 +4510,8 @@ bool MainWindow::probeAction(const QString &action)
 			tasks_->clickFirstToast();
 			return true;
 		}
-		if (p[1] == QStringLiteral("stop")) { // a task's Stop button, without the question
-			stopTasks(false);
+		if (p[1] == QStringLiteral("stop")) { // a task's Stop button
+			stopTasks();
 			return true;
 		}
 		return false;

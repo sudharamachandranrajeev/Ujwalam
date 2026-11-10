@@ -143,7 +143,7 @@ test('the status snapshot names the newest host edit (Qt shell / page refresh th
   } finally { await c.srv.close(); }
 });
 
-test('live-lock (D233): mouse editing is switched off while live and back on after; a layout change while live needs "yes, on air" and then autosaves', async () => {
+test('live-lock (D233): mouse editing is switched off while live and back on after; a layout change while live acts on the click (D331) and then autosaves', async () => {
   const c = await setup();
   try {
     c.flags.set(PREVIEW_EDIT_FLAG, true);
@@ -155,15 +155,11 @@ test('live-lock (D233): mouse editing is switched off while live and back on aft
     const post = (route, body) => raw(c.port, { method: 'POST', url: route, body: JSON.stringify(body),
       headers: { cookie: c.cookie, origin: `http://127.0.0.1:${c.port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
     const params = { scene: 'scene-main', canvas: 'h', layer: 'layer-cam', placement: { x: 11, y: 12, width: 640, height: 360 } };
-    const r = JSON.parse((await post('/ui/api/host', { method: 'layers.setPlacement', params })).text);
-    assert.equal(r.verdict, 'confirm', 'not applied at once while live');
-    assert.equal(r.pending.phrase, 'yes, on air');
-    assert.ok(!c.host.st.calls.some(([m]) => m === 'layers.setPlacement'), 'host not called before the phrase');
-    assert.equal(JSON.parse((await post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes' })).text).verdict, 'wrong-phrase');
-    const ok = JSON.parse((await post('/ui/api/confirm', { pendingId: r.pending.pendingId, text: 'yes, on air' })).text);
-    assert.equal(ok.verdict, 'allow');
+    const ok = JSON.parse((await post('/ui/api/host', { method: 'layers.setPlacement', params })).text);
+    assert.equal(ok.verdict, 'allow', 'acts on the click while live (D331), no "yes, on air"');
+    assert.equal(ok.pending, undefined);
     assert.equal(ok.saved, 'pending');
-    await until(() => placementOf(c.file, 'layer-cam').x === 11, 'saved after the on-air confirm');
+    await until(() => placementOf(c.file, 'layer-cam').x === 11, 'saved after the live click');
     const vis = JSON.parse((await post('/ui/api/host', { method: 'layers.setVisible', params: { scene: 'scene-main', layer: 'layer-cam', visible: false } })).text);
     assert.notEqual(vis.verdict, 'confirm', 'visibility stays instant while live');
     c.host.st.live = false;

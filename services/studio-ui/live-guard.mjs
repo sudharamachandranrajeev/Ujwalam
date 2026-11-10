@@ -2,7 +2,7 @@
 // Live-test guard (Alpha 0 private test stream; launcher --test-stream-minutes N).
 //
 // The guard never starts an output. It waits until a stream sink becomes active, which only happens after the
-// user's typed "yes, on air" on the control page, then polls outputs.status every budget.pollMs and STOPS ALL
+// user's Start stream click, then polls outputs.status every budget.pollMs and STOPS ALL
 // outputs (streams and recording, outputs.stop {}) when:
 //   - a started sink is "failed", or "idle" (the host restarted or reconfigured), or vanishes from the status;
 //   - a started sink stays "starting" or "retrying" (disconnected, reconnecting) longer than notLiveMaxSec;
@@ -316,7 +316,7 @@ export function formatReport(r) {
  */
 export async function runGuard({ getClient, budget, minutes, sinkMinutes = {}, log = console.log, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), isCancelled = () => false, onStop = async () => {} }) {
   const g = createGuard({ budget, minutes, sinkMinutes });
-  log(`[guard] waiting for the first stream to start (control page, "yes, on air"); then ${minutes} min, polling every ${budget.pollMs} ms`);
+  log(`[guard] waiting for the first stream to start (Start stream); then ${minutes} min, polling every ${budget.pollMs} ms`);
   const status = async () => { try { return await getClient().call('outputs.status'); } catch { return null; } };
   for (;;) {
     if (isCancelled()) return null;

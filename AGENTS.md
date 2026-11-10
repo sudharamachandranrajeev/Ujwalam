@@ -32,7 +32,7 @@ When the user types "wind up", in order:
 
 - Platforms: YouTube H, YouTube V (separate 9:16 output), Twitch, Kick. Frame the V scene so nothing important is cut off.
 - Stream keys stay in Windows Credential Manager only (not environment variables; user's choice 2026-11-03). Never write a key into any file, log, commit, email or chat message.
-- Never go live on your own. When the build is ready, tell the user it is ready for a test and wait for the exact words "start stream test" (plus the "yes, on air" confirmation on the control page).
+- Never go live on your own. When the build is ready, tell the user it is ready for a test and wait for the exact words "start stream test".
 - A test stream runs about one hour. During it, show viewers a short message that this is a test of new streaming software; Speaker.bot reads that announcement aloud.
 - Chat feedback: a Streamer.bot action posts the question (video, audio, scenes, lag, anything broken) on YouTube, Twitch and Kick. Ujwalam's Streamer.bot connection stays read-only: it only collects the replies into `feedback/YYYY-MM-DD-stream-feedback.md` (gitignored; viewer names only in that local file, placeholders anywhere committed).
 - Check that Ujwalam, Streamer.bot and Speaker.bot work together without clashing (ports, hotkeys, audio devices, duplicate alerts).
@@ -43,7 +43,7 @@ When the user types "wind up", in order:
 - Don't assume; ask one short question. Mark unverified items UNVERIFIED.
 - Before multi-step work: post a plan and wait for approval; summarise after each major step.
 - Before deleting/overwriting/renaming any existing file: show the change, wait for yes.
-- Studio writes need "yes"; while live, "yes, on air". Reads are free.
+- App actions act on the user's click: no typed phrase and no "are you sure" (D331). Chat and rules never write on their own; a rule, remote or system request waits for one click from the studio or the control page. Agents still need the user's words in chat before any studio write or going live. Reads are free.
 - Presets are data, not code. Every new effect = core function + manifest + ≥1 preset + similar tags.
 - ★ presets must match legacy behaviour; compare against legacy/ before marking done.
 - Scene package import never modifies existing scenes, layers, devices or settings.

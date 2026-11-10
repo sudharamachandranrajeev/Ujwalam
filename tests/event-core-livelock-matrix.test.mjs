@@ -6,13 +6,16 @@
 // The assertions are written from the OWNER'S RULES (P3 E4 task, 2026-10-28), not from the gate's branch order:
 //  R1 never from chat, whatever the data says: stream, record, outputs, deletion, settings, devices, main mic mute;
 //  R2 a rule triggered by chat or an alert, through any chain, counts as chat; unknown/malformed provenance fails safe;
-//  R3 writes need "yes" offline and "yes, on air" while live; unknown live state counts as live; an ON-AIR write
-//     while live needs two confirmations in order, "yes" then "yes, on air" (user decision 2026-10-28, E4b);
+//  R3 (D331, user decision 2026-11-10, replaces the typed "yes" / "yes, on air" and the E4b two-step): a write from
+//     the user's own surface (untainted ui or api) runs on that click; a write from an automatic source (untainted
+//     rule, remote, system) never runs on its own and needs ONE approval click from ui or api, with no phrase;
+//     unknown live state counts as live for the live-state binding;
 //  R9 chat-triggered actions never execute in P3 (dry-run: decided and recorded only; chatMode "on" cannot load);
 //  R4 confirmations are single use, bound, expire, accepted only from ui or api, refused if live state changed;
 //  R5 chat is never offered a confirmation;
 //  R6 live state is set only by privileged sources;
-//  R7 panic stops chat-tainted and rule-sourced actions and clears pending confirmations; clearing needs a confirmation;
+//  R7 panic stops chat-tainted and rule-sourced actions and clears pending confirmations; clearing is a click from
+//     untainted ui or api only (D331), never from chat, rule, remote or system;
 //  R8 data may only restrict, never widen.
 // The categories in R1 and the taint of each scenario are restated here. No gate, catalogue or provenance
 // helper is used to compute what is expected; only the catalogue DATA is read.
@@ -66,8 +69,8 @@ const SCENARIOS = [
   { name: 'system carrying malformed', source: 'system', prov: 'chat', tainted: true },
 ];
 const LIVES = ['offline', 'live', 'unknown'];
-const phraseFor = (live, cls) => (live === 'offline' ? 'yes' : cls === 'on-air-write' ? 'yes' : 'yes, on air'); // R3 (step 1 for an on-air write while live)
 const WRITE = new Set(['write', 'on-air-write']);
+const USER = ['ui', 'api']; // R3: the user's own surface
 
 // Variant B: every action the owner's R1 does not forbid is chat-allowed, to exercise the chat path (R8 says
 // data may restrict; this is the most the data can open).
@@ -97,14 +100,21 @@ function checkCase(entry, sc, live, panicOn, gate, calls) {
   if (r.verdict === 'dry-run' && r.dispatch !== undefined) bad('R9: dry-run carries a dispatch');
   // R7
   if (panicOn && (sc.tainted || sc.source === 'rule') && r.verdict !== 'refuse') bad('R7: panic did not stop chat/rule');
-  // R3: an untainted write is never run without a confirmation; the phrase follows live state
-  if (!sc.tainted && WRITE.has(entry.class) && entry.id !== 'panic.set' && r.verdict === 'allow') bad('R3: write ran unconfirmed');
-  if (r.verdict === 'confirm' && r.confirm?.phrase !== phraseFor(live, entry.class)) bad(`R3: phrase ${r.confirm?.phrase} for ${live}`);
-  // R7: clearing panic is never immediate, only ui/api, only while in panic
+  // R3: an untainted write from an automatic source never runs on its own (one approval, no phrase, no step); an
+  // untainted write from ui or api runs on the click.
+  const userWrite = !sc.tainted && WRITE.has(entry.class) && !entry.id.startsWith('panic.') && USER.includes(sc.source);
+  const autoWrite = !sc.tainted && WRITE.has(entry.class) && !entry.id.startsWith('panic.') && !USER.includes(sc.source);
+  if (autoWrite && r.verdict === 'allow') bad('R3: automatic write ran without an approval click');
+  if (autoWrite && !(panicOn && sc.source === 'rule') && r.verdict !== 'confirm') bad(`R3: automatic write not offered for approval (${r.reason})`);
+  if (userWrite && (r.verdict !== 'allow' || r.reason !== 'ui-direct')) bad(`R3: ui/api write did not run on the click (${r.verdict}/${r.reason})`);
+  if (r.verdict === 'confirm' && (r.confirm?.phrase !== undefined || r.confirm?.step !== undefined)) bad('R3: a phrase or a step was asked for');
+  // R7: clearing panic is a click from untainted ui/api only, only while in panic; never a confirmation
   if (entry.id === 'panic.clear') {
-    if (r.verdict === 'allow') bad('R7: panic cleared without confirmation');
-    if (r.verdict === 'confirm' && (!['ui', 'api'].includes(sc.source) || !panicOn)) bad('R7: panic.clear confirm to wrong source');
-    if (gate.state().panic !== before.panic) bad('R7: panic state changed by a request');
+    const may = !sc.tainted && USER.includes(sc.source) && panicOn;
+    if (r.verdict === 'confirm') bad('R7: panic.clear offered a confirmation');
+    if (r.verdict === 'allow' && !may) bad('R7: panic cleared by a source that may not');
+    if (may && (r.verdict !== 'allow' || gate.state().panic !== false)) bad('R7: the user\'s click did not clear panic');
+    if (!may && gate.state().panic !== before.panic) bad('R7: panic state changed by a request');
   }
   // panic.set takes effect only from ui, api or system, untainted
   if (entry.id === 'panic.set') {
@@ -147,44 +157,34 @@ test('matrix: every action x source x live state x panic x catalogue variant hol
   console.log(`matrix cases: ${cases} (2 catalogues x ${n} actions x ${SCENARIOS.length} sources x ${LIVES.length} live states x 2 panic)`);
 });
 
-test('matrix R4: a confirmation completes only from ui or api, once, with the phrase for the live state', () => {
+test('matrix R4: an automatic write\'s approval completes only from ui or api, once, in one click; the phrase is ignored', () => {
+  const REQUESTERS = [{ source: 'rule', provenance: { kind: 'hotkey' } }, { source: 'remote' }, { source: 'system' }];
   for (const entry of doc().actions.filter((e) => WRITE.has(e.class) && !e.id.startsWith('panic.'))) {
     for (const live of LIVES) {
-      for (const confirmer of ['ui', 'api', 'remote', 'chat', 'rule', 'system']) {
-        const calls = [];
-        const gate = createActionGate({ catalogue: doc(), executor: { execute: (a) => { calls.push(a.id); } } });
-        if (live !== 'unknown') gate.setLiveState(live, { source: 'api' });
-        const r = gate.request({ id: entry.id, params: {}, source: 'ui', actor: 'u1' });
-        assert.equal(r.verdict, 'confirm');
-        // The other phrase never works (R3).
-        const wrong = r.confirm.phrase === 'yes' ? 'yes, on air' : 'yes';
-        const twoStep = live !== 'offline' && entry.class === 'on-air-write';
-        assert.equal(r.confirm.step, twoStep ? 1 : undefined, `${entry.id}/${live} step`);
-        let c = gate.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source: confirmer });
-        if (twoStep && (confirmer === 'ui' || confirmer === 'api')) {
-          // Step 1 runs nothing and returns step 2; only 'yes, on air' from the same source finishes it.
-          assert.deepEqual([c.verdict, c.reason, c.confirm.step, c.confirm.phrase], ['confirm', 'second-confirmation-required', 2, 'yes, on air'], `${entry.id}/${live}/${confirmer}`);
-          assert.deepEqual(calls, []);
-          const other = confirmer === 'ui' ? 'api' : 'ui';
-          assert.equal(gate.confirm(c.confirm.confirmId, c.confirm.phrase, c.confirm.actionHash, { source: other }).reason, 'step-source-mismatch');
-          assert.deepEqual(calls, []);
-          // That attempt spent step 2; start over for the real run.
-          const rr = gate.request({ id: entry.id, params: {}, source: 'ui', actor: 'u1' });
-          const c1 = gate.confirm(rr.confirm.confirmId, rr.confirm.phrase, rr.confirm.actionHash, { source: confirmer });
-          c = gate.confirm(c1.confirm.confirmId, c1.confirm.phrase, c1.confirm.actionHash, { source: confirmer });
+      for (const who of REQUESTERS) {
+        for (const confirmer of ['ui', 'api', 'remote', 'chat', 'rule', 'system']) {
+          const calls = [];
+          const gate = createActionGate({ catalogue: doc(), executor: { execute: (a) => { calls.push(a.id); } } });
+          if (live !== 'unknown') gate.setLiveState(live, { source: 'api' });
+          const r = gate.request({ id: entry.id, params: {}, actor: 'u1', ...who });
+          assert.equal(r.verdict, 'confirm', `${entry.id}/${live}/${who.source}`);
+          assert.equal(r.confirm.step, undefined, 'no second step (D331)');
+          assert.equal(r.confirm.phrase, undefined, 'no phrase (D331)');
+          assert.deepEqual(calls, [], 'nothing runs before the click');
+          const c = gate.confirm(r.confirm.confirmId, 'any words at all', r.confirm.actionHash, { source: confirmer });
+          if (USER.includes(confirmer)) {
+            assert.deepEqual([c.verdict, c.reason], ['allow', 'confirmed'], `${entry.id}/${live}/${who.source}/${confirmer}`);
+            assert.deepEqual(calls, [entry.id]);
+            assert.equal(gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: confirmer }).reason, 'replayed');
+            assert.deepEqual(calls, [entry.id]);
+          } else {
+            assert.deepEqual([c.verdict, c.reason], ['refuse', 'source-not-permitted']);
+            assert.deepEqual(calls, []);
+          }
+          // A wrong hash never works (bound to the action).
+          const r2 = gate.request({ id: entry.id, params: {}, actor: 'u1', ...who });
+          assert.equal(gate.confirm(r2.confirm.confirmId, undefined, 'a'.repeat(64), { source: 'ui' }).reason, 'hash-mismatch');
         }
-        if (confirmer === 'ui' || confirmer === 'api') {
-          assert.equal(c.verdict, 'allow', `${entry.id}/${live}/${confirmer}`);
-          assert.deepEqual(calls, [entry.id]);
-          assert.equal(gate.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source: confirmer }).verdict, 'refuse');
-          assert.deepEqual(calls, [entry.id]);
-        } else {
-          assert.equal(c.verdict, 'refuse');
-          assert.deepEqual(calls, []);
-        }
-        const r2 = gate.request({ id: entry.id, params: {}, source: 'api', actor: 'u1' });
-        const wrong2 = r2.confirm.phrase === 'yes' ? 'yes, on air' : 'yes';
-        assert.equal(gate.confirm(r2.confirm.confirmId, wrong2, r2.confirm.actionHash, { source: 'ui' }).verdict, 'refuse');
       }
     }
   }
@@ -284,24 +284,25 @@ test('matrix R4: offline -> live -> offline (epoch flip) between request and con
     const calls = [];
     const gate = createActionGate({ catalogue: doc(), executor: { execute: (a) => { calls.push(a.id); } } });
     gate.setLiveState(path[0], { source: 'system' });
-    const r = gate.request({ id: 'scene.switch', params: {}, source: 'ui', actor: 'u1' });
+    const r = gate.request({ id: 'scene.switch', params: {}, source: 'rule', provenance: { kind: 'hotkey' }, actor: 'u1' });
     gate.setLiveState(path[1], { source: 'system' });
     gate.setLiveState(path[2], { source: 'api' });
-    assert.equal(gate.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source: 'ui' }).verdict, 'refuse', path.join('>'));
+    assert.equal(gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: 'ui' }).reason, 'live-state-changed', path.join('>'));
     assert.deepEqual(calls, []);
   }
 });
 
-test('matrix R4/E4b: epoch flip BETWEEN step 1 and step 2 refuses step 2; flips back do not revive it', () => {
-  for (const flip of [['offline'], ['unknown'], ['offline', 'live'], ['unknown', 'live']]) {
+test('matrix R4: a live on-air approval is one click; an epoch flip before the click refuses it and flips back do not revive it', () => {
+  for (const flip of [[], ['offline'], ['unknown'], ['offline', 'live'], ['unknown', 'live']]) {
     const calls = [];
     const gate = createActionGate({ catalogue: doc(), executor: { execute: (a) => { calls.push(a.id); } } });
     gate.setLiveState('live', { source: 'system' });
-    const r = gate.request({ id: 'scene.switch', params: {}, source: 'ui', actor: 'u1' });
-    const s2 = gate.confirm(r.confirm.confirmId, r.confirm.phrase, r.confirm.actionHash, { source: 'ui' });
-    assert.equal(s2.verdict, 'confirm');
+    const r = gate.request({ id: 'scene.switch', params: {}, source: 'system', actor: 'u1' }); // on-air-write
     for (const st of flip) gate.setLiveState(st, { source: 'system' });
-    assert.equal(gate.confirm(s2.confirm.confirmId, s2.confirm.phrase, s2.confirm.actionHash, { source: 'ui' }).reason, 'live-state-changed', flip.join('>'));
+    const c = gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: 'ui' });
+    if (!flip.length) { assert.deepEqual([c.verdict, c.confirm], ['allow', undefined]); assert.deepEqual(calls, ['scene.switch']); continue; }
+    assert.equal(c.reason, 'live-state-changed', flip.join('>'));
+    assert.equal(gate.confirm(r.confirm.confirmId, undefined, r.confirm.actionHash, { source: 'ui' }).reason, 'replayed');
     assert.deepEqual(calls, []);
   }
 });
@@ -313,34 +314,40 @@ test('matrix R4: cap abuse by each source never evicts or blocks another source\
     { source: 'chat' }, { source: 'rule', provenance: CHAT },
   ];
   for (const flood of FLOODERS) {
-    for (const victim of ['ui', 'api']) {
-      if (victim === flood.source) continue;
+    // Victims: automatic sources whose writes wait for an approval (ui/api writes do not pend any more, D331).
+    for (const victim of [{ source: 'system' }, { source: 'remote' }, { source: 'rule', provenance: { kind: 'hotkey' } }]) {
+      if (victim.source === flood.source) continue;
       const calls = [];
       const gate = createActionGate({ catalogue: doc(), executor: { execute: (a) => { calls.push(a.id); } } });
-      const mine = gate.request({ id: 'scene.create', params: {}, source: victim, actor: 'u1' });
+      const mine = gate.request({ id: 'scene.create', params: {}, actor: 'u1', ...victim });
       for (let i = 0; i < 100; i++) gate.request({ id: 'scene.switch', params: { i }, actor: PSEUDO, ...flood });
-      const later = gate.request({ id: 'layer.create', params: {}, source: victim, actor: 'u1' });
-      assert.equal(later.verdict, 'confirm', `${flood.source} blocked ${victim}`);
-      assert.equal(gate.confirm(mine.confirm.confirmId, mine.confirm.phrase, mine.confirm.actionHash, { source: 'ui' }).verdict, 'allow', `${flood.source} evicted ${victim}`);
-      assert.equal(gate.confirm(later.confirm.confirmId, later.confirm.phrase, later.confirm.actionHash, { source: 'api' }).verdict, 'allow');
-      assert.deepEqual(calls, ['scene.create', 'layer.create']);
+      const later = gate.request({ id: 'layer.create', params: {}, actor: 'u1', ...victim });
+      assert.equal(later.verdict, 'confirm', `${flood.source} blocked ${victim.source}`);
+      assert.equal(gate.confirm(mine.confirm.confirmId, undefined, mine.confirm.actionHash, { source: 'ui' }).verdict, 'allow', `${flood.source} evicted ${victim.source}`);
+      assert.equal(gate.confirm(later.confirm.confirmId, undefined, later.confirm.actionHash, { source: 'api' }).verdict, 'allow');
+      // A ui/api flood runs its own writes on each click; nothing else ran.
+      assert.deepEqual(calls.filter((id) => id !== 'scene.switch'), ['scene.create', 'layer.create']);
+      assert.equal(calls.filter((id) => id === 'scene.switch').length, USER.includes(flood.source) ? 100 : 0);
     }
   }
 });
 
-test('matrix R3/R7: panic.clear while live needs "yes, on air"; offline needs "yes"; unknown counts as live', () => {
+test('matrix R7: panic.clear is one click from ui or api in every live state; chat, rule, remote, system and tainted ui never clear it', () => {
   for (const live of LIVES) {
-    const gate = createActionGate({ catalogue: doc() });
-    if (live !== 'unknown') gate.setLiveState(live, { source: 'system' });
-    gate.panic({ source: 'ui' });
-    const r = gate.request({ id: 'panic.clear', params: {}, source: 'ui', actor: 'u1' });
-    assert.equal(r.confirm.phrase, phraseFor(live), live);
-    const wrong = phraseFor(live) === 'yes' ? 'yes, on air' : 'yes';
-    assert.equal(gate.confirm(r.confirm.confirmId, wrong, r.confirm.actionHash, { source: 'ui' }).verdict, 'refuse');
-    assert.equal(gate.state().panic, true);
-    const r2 = gate.request({ id: 'panic.clear', params: {}, source: 'api', actor: 'u1' });
-    assert.equal(gate.confirm(r2.confirm.confirmId, phraseFor(live), r2.confirm.actionHash, { source: 'api' }).verdict, 'allow');
-    assert.equal(gate.state().panic, false);
+    for (const clicker of USER) {
+      const gate = createActionGate({ catalogue: doc() });
+      if (live !== 'unknown') gate.setLiveState(live, { source: 'system' });
+      gate.panic({ source: 'ui' });
+      for (const over of [{ source: 'chat' }, { source: 'rule', provenance: { kind: 'hotkey' } }, { source: 'remote' }, { source: 'system' }, { source: clicker, provenance: CHAT }]) {
+        const r = gate.request({ id: 'panic.clear', params: {}, actor: PSEUDO, ...over });
+        assert.equal(r.verdict, 'refuse', `${live} ${over.source}`);
+        assert.equal(gate.state().panic, true);
+      }
+      assert.equal(gate.state().pending, 0);
+      assert.deepEqual(gate.request({ id: 'panic.clear', params: {}, source: clicker, actor: 'u1' }), { verdict: 'allow', reason: 'panic-cleared' });
+      assert.equal(gate.state().panic, false);
+      assert.equal(gate.request({ id: 'panic.clear', params: {}, source: clicker, actor: 'u1' }).reason, 'not-in-panic');
+    }
   }
 });
 
@@ -348,14 +355,15 @@ test('matrix R3/R6: a stale live state counts as unknown (live) until a privileg
   let t = 0;
   const gate = createActionGate({ catalogue: doc(), now: () => t, liveStaleMs: 15_000 });
   gate.setLiveState('offline', { source: 'system' });
-  const fresh = gate.request({ id: 'scene.create', params: {}, source: 'ui', actor: 'u1' });
-  assert.equal(fresh.confirm.phrase, 'yes');
+  const auto = { source: 'system', actor: 'u1' };
+  const fresh = gate.request({ id: 'scene.create', params: {}, ...auto });
+  assert.equal(fresh.confirm.liveStateAtRequest, 'offline');
   t += 15_001;
   assert.equal(gate.state().liveState, 'unknown');
-  const stale = gate.request({ id: 'scene.create', params: {}, source: 'ui', actor: 'u1' });
-  assert.equal(stale.confirm.phrase, 'yes, on air');
-  // The "yes" issued while fresh is refused now (state changed under it).
-  assert.equal(gate.confirm(fresh.confirm.confirmId, 'yes', fresh.confirm.actionHash, { source: 'ui' }).verdict, 'refuse');
+  const stale = gate.request({ id: 'scene.create', params: {}, ...auto });
+  assert.equal(stale.confirm.liveStateAtRequest, 'unknown');
+  // The approval issued while fresh is refused now (state changed under it).
+  assert.equal(gate.confirm(fresh.confirm.confirmId, undefined, fresh.confirm.actionHash, { source: 'ui' }).reason, 'live-state-changed');
   // Non-privileged sources cannot refresh it.
   for (const source of ['ui', 'chat', 'rule', 'remote']) assert.equal(gate.setLiveState('offline', { source }).ok, false);
   assert.equal(gate.state().liveState, 'unknown');
@@ -363,5 +371,5 @@ test('matrix R3/R6: a stale live state counts as unknown (live) until a privileg
   assert.equal(gate.state().liveState, 'offline');
   // A privileged source can say unknown outright.
   assert.equal(gate.setLiveState('unknown', { source: 'api' }).ok, true);
-  assert.equal(gate.request({ id: 'scene.create', params: {}, source: 'ui', actor: 'u1' }).confirm.phrase, 'yes, on air');
+  assert.equal(gate.request({ id: 'scene.create', params: {}, ...auto }).confirm.liveStateAtRequest, 'unknown');
 });

@@ -14,9 +14,12 @@
 //   - Static files: GET only, extension allowlist, no dotfiles, no traversal (checked on the decoded path and again
 //     on the real path), nothing outside ui/.
 //
-// Confirmation channel (ADR 2026-10-29-confirmation-channel.md, D7): this server is the human-facing surface. A
-// confirmation is a typed phrase in the page ("yes", "yes, on air"). The server keeps the pending record, including
-// the event-core confirmId and actionHash, and only calls the backend when the typed text matches the phrase.
+// Confirmation channel (ADR 2026-10-29-confirmation-channel.md, D7; D331 2026-11-10): this server is the human-facing
+// surface. A request from the page or the studio window is the user's own click and acts at once: no typed phrase, no
+// "are you sure", offline or live. Two cases still keep a pending record on the server and wait for one more click
+// (POST /ui/api/confirm { pendingId }, no text): a go-live whose readiness check failed ("Go live anyway", logged as an
+// override) and an event-core confirmation (a rule / remote / system write that needs the user's approval). The
+// event-core confirmId and actionHash stay on the server.
 // TODO(main): event-core still accepts actions.confirm from the api token. When the confirm role exists (ADR option
 // 2) this server must be given the separate confirm credential (env, in memory, never in api.json) and use it in
 // backends.mjs core.confirm(). The api token is used for it today, as the ADR's interim statement says.
@@ -46,7 +49,7 @@ import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
 import { clipsFolder, guideOnly, readSettings, settingsProblems, writeSettings } from './user-settings.mjs';
 import { TASKS_CONFIG, createTasks, loadTaskConfig, parseTaskConfig, writeTaskFile } from './tasks.mjs';
 import { createDataNotifier, createDataSource, parseJsonText } from '../common/data-reload.mjs';
-import { OVERRIDE_PHRASE, READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
+import { READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
 import { STOP_TASKS_FILE, clipTools } from './record-clips.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
@@ -97,8 +100,9 @@ const newId = (n = 32) => randomBytes(n).toString('hex');
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 const pickKeys = (o, ks) => Object.fromEntries(ks.filter((k) => Object.hasOwn(o, k) && Number.isFinite(o[k])).map((k) => [k, o[k]]));
 
-// Calls the page may make on the host. write: true marks a studio write. confirm: when set, the call is not run until
-// the human types the phrase (live-aware). Everything else the page sends is refused. Schema: see validate().
+// Calls the page may make on the host. Everything else the page sends is refused. Schema: see validate(). confirm /
+// liveConfirm mark stream, recording and live layout changes: they run at once on the user's click (D331); the marks
+// keep their summary text and the stream.start readiness check.
 const ID = /^[A-Za-z0-9_.:-]{1,64}$/;
 const MIXER_ID = /^(?:[A-Za-z0-9_.:-]{1,64}\/[A-Za-z0-9_.:-]{1,64}|audio:[A-Za-z0-9_.:-]{1,64})$/; // "<scene>/<layer>" or "audio:<id>"
 const OPT_CANVAS = { type: 'enum', values: ['h', 'v'] };
@@ -119,7 +123,7 @@ export const HOST_CALLS = Object.freeze({
   'scenes.activate': { schema: { scene: SCENE, canvas: OPT_CANVAS } },
   'layers.list': { schema: { scene: SCENE, canvas: OPT_CANVAS } },
   'layers.setVisible': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, visible: { type: 'bool', required: true } } },
-  // liveConfirm: instant while nothing is live; while live, a layout change needs "yes, on air" (live-lock, D233).
+  // liveConfirm: a layout change while live (live-lock, D233); since D331 it runs at once on the user's click too.
   // Scene switches, visibility and the mixer stay instant: they are the controls a live show needs.
   'layers.move': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, index: { type: 'int', min: 0, max: 255, required: true } }, liveConfirm: true, summary: 'Change the layer order while live' },
   'layers.setPlacement': { schema: { scene: SCENE, canvas: OPT_CANVAS, layer: LAYER, placement: PLACEMENT }, liveConfirm: true, summary: 'Move or resize a layer while live' },
@@ -140,7 +144,7 @@ export const HOST_CALLS = Object.freeze({
   // CUE (headphone monitoring, Meld's per-channel button): not a stream change, applied at once.
   'mixer.setCue': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, cue: { type: 'bool', required: true } } },
   // Track routing (D273, flag mixer-routing): which project audio tracks a source goes to. Every output encodes track 1,
-  // so this changes what the stream and recording hear: instant offline, "yes, on air" while live. Saved to the project.
+  // so this changes what the stream and recording hear. Applied on the click, offline or live (D331). Saved to the project.
   'mixer.setTracks': { schema: { id: { type: 'string', pattern: MIXER_ID, required: true }, tracks: { type: 'ids', max: 6, required: true } }, liveConfirm: true, flag: 'mixer-routing', summary: 'Change which tracks a sound goes to while live' },
   'stream.start': { schema: {}, confirm: 'onair', summary: 'Start the stream' },
   'stream.stop': { schema: {}, confirm: 'live', summary: 'Stop the stream' },
@@ -173,7 +177,6 @@ const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'laye
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
 const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
-export const UPLOAD_PHRASE = 'yes, upload';
 const POST_EDIT_KEYS = ['id', 'title', 'description', 'tags', 'hashtags'];
 
 // "Open folder" for a package (local only, no shell). explorer.exe comes from SystemRoot, never from PATH.
@@ -227,8 +230,6 @@ export function validate(schema, p) {
   }
   return null;
 }
-
-const normPhrase = (s) => String(s).trim().toLowerCase().replace(/\s+/g, ' ');
 
 /** opts: { uiRoot, core, host, launchKey, port?, limits?, now? }
  *  core:  { call(method, params) -> Promise, describe() -> { available } }   (event core; may be unavailable)
@@ -286,7 +287,7 @@ export function createStudioServer(opts) {
   }
   // Stream recovery (D303 proposed, stream-recovery.mjs): the launcher owns the go-live authority; this server reaches
   // it over the IPC channel the launcher opens (only when started by the launcher: parent pipe and session id). A
-  // confirmed "yes, on air" start takes a generation before the host call and arms it after (refused when a Stop came
+  // Start stream click takes a generation before the host call and arms it after (refused when a Stop came
   // in between); a confirmed Stop or End all revokes it BEFORE the host is asked and waits for the answer, so an
   // in-flight recovery start reaches the host first and the stop wins. A revoke the launcher does not answer closes
   // the channel, which closes the authority (fail closed). Done whatever the flag; the launcher reads the flag.
@@ -538,10 +539,9 @@ export function createStudioServer(opts) {
   }
 
   // Settings (D284): clip choices and folders. Refused while live (a change would load the GPU or move files mid-show).
-  // Platform sign-in writes (D327). Every credential write is a studio write: typed "yes", "yes, on air" while live; a
-  // live output's own key is refused (checked now and again at confirm and right before the write). A pasted key waits
-  // in the pending record inside a closure (memory only, gone when the record expires or is cancelled) and is never in a
-  // response. choose / cancel / check belong to a sign-in that was already confirmed, so they need no phrase.
+  // Platform sign-in writes (D327). Every credential write is a studio write done on the user's click (D331); a live
+  // output's own key is refused (checked now and again right before the write). A pasted key is held in a closure for
+  // the call only and is never in a response.
   async function connectRoute(res, route, body) {
     const op = route.slice('/ui/api/connect/'.length);
     const only = (keys) => Object.keys(body).every((k) => keys.includes(k));
@@ -549,11 +549,7 @@ export function createStudioServer(opts) {
     let c;
     try { c = connect(); } catch (e) { return connectFail(res, e); }
     const label = (id) => c.outputs().find((o) => o.id === id)?.label ?? id;
-    const ask = (summary, rec) => {
-      const id = addPending({ kind: 'connect', summary, phrase: live ? 'yes, on air' : 'yes', ...rec });
-      if (!id) return json(res, 429, { error: 'too-many-pending' });
-      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
-    };
+    const ask = (summary, rec) => runAction({ kind: 'connect', summary, ...rec }, res); // the click is the decision (D331)
     const notLive = async (id) => { try { return (await outputLive(id)) === 'idle' ? null : 'output-live'; } catch { return 'live-unknown'; } };
     try {
       if (op === 'paste') {
@@ -604,9 +600,9 @@ export function createStudioServer(opts) {
       return text(res, 404, 'not-found');
     } catch (e) { return connectFail(res, e); }
   }
-  // A confirmed platform sign-in write (kind 'connect').
+  // A platform sign-in write (kind 'connect').
   async function connectConfirmed(res, p) {
-    if (!connectOn()) return json(res, 404, { error: 'platform-connect-off' }); // switched off while the phrase was pending
+    if (!connectOn()) return json(res, 404, { error: 'platform-connect-off' });
     const c = connect();
     try {
       if (p.op === 'paste') { const v = p.values(); return json(res, 200, { verdict: 'allow', result: await c.paste(p.output, { key: v.key, server: v.server }) }); }
@@ -1014,7 +1010,8 @@ export function createStudioServer(opts) {
     pending.set(id, { ...rec, expiresAt: t + limits.pendingTtlMs });
     return id;
   }
-  const publicPending = (id, p) => ({ pendingId: id, summary: p.summary, phrase: p.phrase, expiresAt: p.expiresAt, ...(p.step ? { step: p.step, of: 2 } : {}), ...(p.readiness ? { readiness: publicReadiness(p.readiness) } : {}) });
+  // No phrase (D331): the page shows the summary (and the readiness list) with one button.
+  const publicPending = (id, p) => ({ pendingId: id, summary: p.summary, expiresAt: p.expiresAt, ...(p.readiness ? { readiness: publicReadiness(p.readiness) } : {}) });
   // D327 OS3: a live switch-on of one output is a start like Start stream, so a Stop or End all confirmed after it
   // began wins. stopEpoch goes up before any confirmed Stop / End all reaches the host (works without the launcher);
   // with the launcher, the go-live authority generation is checked too. Not armed: the stream was armed at go-live,
@@ -1041,7 +1038,7 @@ export function createStudioServer(opts) {
   };
   // D327: Stream settings, Outputs panel, Integrations, Force complete transition (settings-routes.mjs).
   const settingsRoutes = createSettingsRoutes({
-    dataDir: opts.dataDir, flags, host, json, addPending, publicPending, getPending: (id) => pending.get(id), log,
+    dataDir: opts.dataDir, flags, host, json, log,
     remoteToken: typeof opts.remoteToken === 'string' ? opts.remoteToken : undefined,
     startGuard: outputStartGuard,
     ...(opts.tcpAnswers ? { tcpAnswers: opts.tcpAnswers } : {}),
@@ -1057,10 +1054,11 @@ export function createStudioServer(opts) {
   });
 
   async function handleCoreOutcome(r, summary) {
-    // r: { verdict, reason, confirm?, dispatch? } from the event core. The page gets verdict/reason and, when a
-    // confirmation is needed, the phrase to type. confirmId and actionHash stay on the server.
+    // r: { verdict, reason, confirm?, dispatch? } from the event core. The page gets verdict/reason and, when the core
+    // asks for an approval (a rule / remote / system write), a pending id for one Allow click. confirmId and actionHash
+    // stay on the server.
     if (r && r.confirm && typeof r.confirm.confirmId === 'string') {
-      const id = addPending({ kind: 'core', summary, phrase: normPhrase(r.confirm.phrase), confirmId: r.confirm.confirmId, actionHash: r.confirm.actionHash, step: r.confirm.step });
+      const id = addPending({ kind: 'core', summary, confirmId: r.confirm.confirmId, actionHash: r.confirm.actionHash });
       if (!id) return { verdict: 'refuse', reason: 'too-many-pending' };
       return { verdict: 'confirm', reason: r.reason, pending: publicPending(id, pending.get(id)) };
     }
@@ -1150,7 +1148,7 @@ export function createStudioServer(opts) {
     }
     if (req.method === 'GET' && route === '/ui/api/posts/media') return postMedia(req, res, url);
     if (req.method === 'GET' && route === '/ui/api/posts/youtube/status') {
-      try { const st = await youtubeAuth().status(); return json(res, 200, { signedIn: st.signedIn === true, hasClient: st.hasClient === true, phrase: UPLOAD_PHRASE }); } catch { return json(res, 502, { error: 'youtube-status-failed' }); }
+      try { const st = await youtubeAuth().status(); return json(res, 200, { signedIn: st.signedIn === true, hasClient: st.hasClient === true }); } catch { return json(res, 502, { error: 'youtube-status-failed' }); }
     }
     if (req.method === 'GET' && await settingsRoutes.handle('GET', route, null, res)) return undefined; // D327 pages
     if (req.method !== 'POST') return text(res, 405, 'method-not-allowed');
@@ -1163,8 +1161,7 @@ export function createStudioServer(opts) {
     if (await settingsRoutes.handle('POST', route, body, res)) return undefined;
 
     if (route === '/ui/api/edits/undo' || route === '/ui/api/edits/redo') {
-      // Not while live (D238): a live layout change needs the typed on-air phrase, so undo there is the inspector's
-      // job. Fresh host.status, fail closed.
+      // Not while live (D238): undo there is the inspector's job. Fresh host.status, fail closed.
       let hs = null;
       try { hs = await host.call('host.status', {}); } catch { hs = null; }
       if (!hs || hs.live !== false) return json(res, 409, { error: hs ? 'live-locked' : 'host-unavailable', edits: history.state() });
@@ -1207,28 +1204,33 @@ export function createStudioServer(opts) {
       if (spec.flag && !(flags && flags.isOn(spec.flag))) return json(res, 404, { error: `${spec.flag}-off` });
       if (START_METHODS.has(body.method) && isClosing()) return json(res, 409, CLOSING_REFUSAL);
       if (spec.confirm || (live && spec.liveConfirm)) {
-        // Stream and recording changes need a typed phrase; while live, the on-air phrase (also for layout changes).
-        let phrase = (live || spec.confirm === 'onair') ? 'yes, on air' : 'yes';
-        let summary = spec.summary; let ready = null;
-        // Go-live readiness (flag readiness): the confirm window shows the check first. A failed item asks for the
-        // override phrase instead of "yes, on air"; confirming with it is logged. Warnings never change the phrase.
+        // Stream and recording changes, and layout changes while live: the click is the decision (D331), so they run
+        // now through the same path as before (closing lock, stop-wins generation, autosave).
+        let summary = spec.summary; let ready = null; let warning = null;
+        // Go-live readiness (flag readiness): run first. A failed item does not start the stream: the answer lists the
+        // problems with a pending id for one "Go live anyway" click (logged as an override). Warnings never block.
         if (body.method === 'stream.start' && readinessOn()) {
           try { ready = await readiness().run({ maxAgeMs: readiness().config?.goLiveMaxAgeMs ?? 0 }); } catch { ready = null; }
           if (!ready) return json(res, 503, { error: 'readiness-failed', detail: 'The readiness check could not run; switch the readiness flag off to go live without it.' });
           summary = `${spec.summary}.\n\n${readinessSummary(ready)}`;
-          if (!ready.ok) phrase = OVERRIDE_PHRASE;
         }
         // Pre-stream / pre-recording audio readiness (D297): a device sound that delivers nothing is named in the
-        // confirmation, so "Game audio missing" is seen before going live. Never blocks the start by itself.
+        // answer (warning), so "Game audio missing" is seen. Never blocks the start by itself.
         if (body.method === 'stream.start' || body.method === 'record.start') {
           let hs = null;
           try { hs = await host.call('host.status', {}); } catch { hs = null; }
           const w = hs && hs.audioHealth ? audioReadiness(hs.audioHealth).warnings : [];
-          if (w.length) summary = `${summary}. WARNING: ${w.join(', ')}`;
+          if (w.length) { warning = `WARNING: ${w.join(', ')}`; summary = `${summary}. ${warning}`; }
         }
-        const id = addPending({ kind: 'host', summary, phrase, method: body.method, params, ...(ready ? { readiness: ready, readinessOverride: !ready.ok } : {}) });
-        if (!id) return json(res, 429, { error: 'too-many-pending' });
-        return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
+        // Readiness warnings never block; they come back with the answer so the user still sees them (D331).
+        if (ready && ready.ok && ready.counts?.warn > 0) warning = [warning, readinessSummary(ready)].filter(Boolean).join('\n');
+        const rec = { kind: 'host', summary, method: body.method, params, ...(warning ? { warning } : {}), ...(ready ? { readiness: ready, readinessOverride: !ready.ok } : {}) };
+        if (ready && !ready.ok) {
+          const id = addPending(rec);
+          if (!id) return json(res, 429, { error: 'too-many-pending' });
+          return json(res, 200, { verdict: 'readiness-failed', pending: publicPending(id, pending.get(id)) });
+        }
+        return runAction(rec, res);
       }
       let result;
       const before = await readBefore(body.method, params);
@@ -1243,35 +1245,29 @@ export function createStudioServer(opts) {
     }
     if (route === '/ui/api/streams/end-all') {
       // End all streams (D299, no flag: it is the host's existing stream.stop, plus a check that every stream sink
-      // stopped). A studio write like Stop stream: typed "yes", or "yes, on air" while live. Recording keeps running.
+      // stopped). A studio write like Stop stream: runs on the click (D331). Recording keeps running.
       if (Object.keys(body).length) return json(res, 400, { error: 'bad-params' });
-      const id = addPending({ kind: 'end-all', summary: 'End all streams: both YouTube outputs, Twitch and Kick stop and their connections close. The recording keeps running (stop it separately).', phrase: live ? 'yes, on air' : 'yes' });
-      if (!id) return json(res, 429, { error: 'too-many-pending' });
-      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
+      return runAction({ kind: 'end-all', summary: 'End all streams: both YouTube outputs, Twitch and Kick stop and their connections close. The recording keeps running (stop it separately).' }, res);
     }
     if (route === '/ui/api/bots/start' || route === '/ui/api/bots/stop') {
-      // Studio write: typed "yes", or "yes, on air" while live. Stop only ever ends a copy Ujwalam started (checked in the module).
+      // Studio write on the click (D331). Stop only ever ends a copy Ujwalam started (checked in the module).
       const bad = validate(BOT_SCHEMA, body);
       if (bad) return json(res, 400, { error: bad });
       const verb = route.endsWith('/start') ? 'start' : 'stop';
       // Stop asks the bot to close, then force-closes it after the grace time (Streamer.bot 0.2.8 ignores the request,
-      // BM1 runtime evidence): a forced close can lose unsaved bot changes, so the confirm says so first.
+      // BM1 runtime evidence): a forced close can lose unsaved bot changes; the page says so next to the button.
       const summary = verb === 'start' ? `Start ${BOT_LABELS[body.bot]}`
         : `Stop ${BOT_LABELS[body.bot]}. If it does not close within ${GRACEFUL_MS / 1000} s it is force-closed: save your ${BOT_LABELS[body.bot]} changes first.`;
-      const id = addPending({ kind: 'bot', summary, phrase: live ? 'yes, on air' : 'yes', bot: body.bot, verb });
-      if (!id) return json(res, 429, { error: 'too-many-pending' });
-      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
+      return runAction({ kind: 'bot', summary, bot: body.bot, verb }, res);
     }
     if (route === '/ui/api/flags/set') {
       if (!flags) return json(res, 503, { error: 'flags-unavailable' });
       const bad = validate(FLAG_SET_SCHEMA, body);
       if (bad) return json(res, 400, { error: bad });
       if (!flags.ids().includes(body.id)) return json(res, 404, { error: 'unknown-flag' });
-      if (!body.on) return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, false) }); // OFF is instant safety: never confirmed
+      if (!body.on) return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, false) }); // OFF is instant safety
       if (flags.isOn(body.id)) return json(res, 200, { verdict: 'allow', flags: flags.list() });
-      const id = addPending({ kind: 'flag', summary: `Turn feature flag ${body.id} on`, phrase: live ? 'yes, on air' : 'yes', flagId: body.id });
-      if (!id) return json(res, 429, { error: 'too-many-pending' });
-      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
+      return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, true) }); // ON: the click is the decision (D331)
     }
     if (route.startsWith('/ui/api/connect/')) return connectRoute(res, route, body);
     if (route === '/ui/api/feedback/note') {
@@ -1282,7 +1278,7 @@ export function createStudioServer(opts) {
     }
     if (route === '/ui/api/posts/youtube/upload' || route === '/ui/api/posts/youtube/check') {
       const isUpload = route.endsWith('/upload');
-      if (typeof body.id !== 'string' || body.id.length > 64 || Object.keys(body).some((k) => !(isUpload ? ['id', 'confirm'] : ['id']).includes(k))) return json(res, 400, { error: 'bad-params' });
+      if (typeof body.id !== 'string' || body.id.length > 64 || Object.keys(body).some((k) => k !== 'id')) return json(res, 400, { error: 'bad-params' });
       const fail = (e) => {
         if (e instanceof UploadError) return json(res, YT_ERR[e.code] ?? 502, { error: e.code, detail: e.message.slice(0, 200) });
         if (e?.code === 'oauth-no-client' || e?.code === 'oauth-reauth-needed') return json(res, 401, { error: e.code === 'oauth-no-client' ? 'youtube-no-client' : 'youtube-not-signed-in' });
@@ -1293,7 +1289,7 @@ export function createStudioServer(opts) {
       if (!isUpload) {
         try { return json(res, 200, await checkPostStatus({ id: body.id, store: posting, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl })); } catch (e) { return fail(e); }
       }
-      if (typeof body.confirm !== 'string' || normPhrase(body.confirm) !== UPLOAD_PHRASE) return json(res, 400, { error: 'confirm-required', phrase: UPLOAD_PHRASE });
+      // The Upload click is the decision (D331): no typed phrase. Approved, not uploaded, nothing live (checked below).
       if (v.status === 'uploaded') return json(res, 409, { error: 'already-uploaded', videoId: v.videoId });
       if (v.status !== 'approved') return json(res, 409, { error: 'not-approved' });
       if (uploading.size) return json(res, 409, { error: 'upload-in-progress' });
@@ -1357,98 +1353,95 @@ export function createStudioServer(opts) {
       if (!lastImport) return json(res, 409, { error: 'nothing-imported' });
       if (Object.keys(body).some((k) => k !== 'skipUnavailable') || (body.skipUnavailable !== undefined && typeof body.skipUnavailable !== 'boolean')) return json(res, 400, { error: 'bad-params' });
       const params = { project: lastImport.project, bases: lastImport.bases, ...(body.skipUnavailable === true ? { skipUnavailable: true } : {}) };
-      const id = addPending({ kind: 'host', summary: 'Load the imported project into the studio (replaces the current scenes)', phrase: live ? 'yes, on air' : 'yes', method: 'project.load', params, countsOnly: true });
-      if (!id) return json(res, 429, { error: 'too-many-pending' });
-      return json(res, 200, { verdict: 'confirm', pending: publicPending(id, pending.get(id)) });
+      return runAction({ kind: 'host', summary: 'Load the imported project into the studio (replaces the current scenes)', method: 'project.load', params, countsOnly: true }, res);
     }
     if (route === '/ui/api/confirm' || route === '/ui/api/cancel') {
       const p = typeof body.pendingId === 'string' ? pending.get(body.pendingId) : undefined;
       if (!p || p.expiresAt <= now()) { pending.delete(body.pendingId); return json(res, 410, { error: 'expired-or-unknown' }); }
       if (route === '/ui/api/cancel') { pending.delete(body.pendingId); return json(res, 200, { verdict: 'cancelled' }); }
-      if (typeof body.text !== 'string' || body.text.length > 40) return json(res, 400, { error: 'bad-text' });
-      // The phrase was chosen when the request was made. If the stream went live since, plain "yes" no longer counts:
-      // the record upgrades to the on-air phrase and the page shows it again (D151).
-      if ((p.kind === 'host' || p.kind === 'flag' || p.kind === 'bot' || p.kind === 'end-all' || p.kind === 'connect') && live && p.phrase === 'yes') {
-        p.phrase = 'yes, on air';
-        return json(res, 200, { verdict: 'wrong-phrase', pending: publicPending(body.pendingId, p) });
-      }
-      if (normPhrase(body.text) !== p.phrase) return json(res, 200, { verdict: 'wrong-phrase', pending: publicPending(body.pendingId, p) }); // stays pending until it expires
+      // One click (D331): { pendingId } only; no typed text. Single use.
+      if (Object.keys(body).some((k) => k !== 'pendingId')) return json(res, 400, { error: 'bad-params' });
       pending.delete(body.pendingId);
-      try {
-        if (p.kind === 'flag') return json(res, 200, { verdict: 'allow', flags: applyFlag(p.flagId, true) });
-        if (p.kind === 'connect') return connectConfirmed(res, p);
-        if (p.kind === 'output') return settingsRoutes.confirm(p, res); // D327 OS3: one output while live
-        if (p.kind === 'bot') {
-          if (!botsOn()) return json(res, 404, { error: 'bot-manager-off' }); // the flag may have been switched off meanwhile
-          const r = p.verb === 'start' ? await bots.start(p.bot) : await bots.stop(p.bot);
-          return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, forced: r.forced === true, bots: await bots.statusAll() });
-        }
-        if (p.kind === 'host') {
-          // A stream or recording start: refused while Ujwalam is closing; counted from here (before any await) so a
-          // quit request in between sees it (closing lock above).
-          const starting = START_METHODS.has(p.method);
-          if (starting && isClosing()) return json(res, 409, CLOSING_REFUSAL);
-          if (starting && credWrites > 0) return json(res, 409, { error: 'credentials-updating', detail: 'A stream key is being changed; start again in a moment' });
-          if (starting) startsInFlight += 1;
-          try {
-          const fl = HOST_CALLS[p.method]?.flag; // switched off while the phrase was pending: refuse
-          if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
-          // D327 OS3 (flag outputs-panel): Start stream starts the outputs switched on in the panel only.
-          let callParams = p.params;
-          if (p.method === 'stream.start') {
-            const sinks = await settingsRoutes.startSinks();
-            if (Array.isArray(sinks)) {
-              if (!sinks.length) return json(res, 200, { verdict: 'refuse', reason: 'no-outputs-enabled', detail: 'No output is switched on. Switch one on in the Outputs panel or Settings > Stream.' });
-              callParams = { ...p.params, sinks };
-            }
-          }
-          // A go-live past a failed readiness item (typed override phrase): logged before the stream starts.
-          let overrideLogged;
-          if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
-          if (p.method === 'stream.stop') stopEpoch += 1;
-          if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
-          // stopEpoch: the same check without the launcher (no authority); a Stop / End all confirmed meanwhile wins.
-          const startEpoch = p.method === 'stream.start' ? stopEpoch : null;
-          const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
-          const before = await readBefore(p.method, p.params);
-          if (Number.isInteger(startGen) || startEpoch !== null) {
-            if (startPauseMs) await new Promise((r) => setTimeout(r, startPauseMs));
-            // A Stop / End all confirmed since this start began wins: the start is not sent.
-            if (startEpoch !== stopEpoch) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
-            if (Number.isInteger(startGen) && (await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
-          }
-          const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
-          let out;
-          try { out = await callHost(p.method, callParams); } catch (e) { ht?.fail('Did not finish'); throw e; }
-          ht?.done();
-          if ((startEpoch !== null && startEpoch !== stopEpoch) || (Number.isInteger(startGen) && !(await authority.arm(startGen)))) {
-            // A Stop / End all came in while this start was on its way to the host (after the check above): the newer
-            // stop wins, so the streams this start turned on are stopped again at once.
-            // Tried STOP_AGAIN_WAITS.length + 1 times; if every try fails the streams may still be live: a loud error.
-            let lastErr = null;
-            for (let i = 0; ; i++) {
-              try { await callHost('stream.stop', {}); lastErr = null; break; } catch (e) { lastErr = e; }
-              if (i >= STOP_AGAIN_WAITS.length) break;
-              await new Promise((r) => setTimeout(r, STOP_AGAIN_WAITS[i]));
-            }
-            if (lastErr) {
-              log(`[studio-ui] WARNING: a start overtaken by a Stop could not be stopped again (${String(lastErr?.code ?? lastErr?.message ?? 'error').slice(0, 80)}); streams may still be live`);
-              return json(res, 502, { error: STOP_AGAIN_FAILED, detail: 'stop-again-failed' });
-            }
-            return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', stoppedAgain: true });
-          }
-          remember(p.method, p.params, before);
-          // A layout change confirmed while live autosaves like an instant one (P5b).
-          const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
-          return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
-          } finally { if (starting) { startsInFlight -= 1; lastStartAt = now(); } }
-        }
-        if (p.kind === 'end-all') { stopEpoch += 1; if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
-        const r = await core.confirm({ confirmId: p.confirmId, phrase: p.phrase, actionHash: p.actionHash });
-        return json(res, 200, await handleCoreOutcome(r, p.summary));
-      } catch (e) { return json(res, 502, { error: 'backend-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
+      return runAction(p, res);
     }
     return text(res, 404, 'not-found');
+  }
+
+  // Runs one studio write: the user's click (D331), or the "Go live anyway" / Allow click on a pending record.
+  async function runAction(p, res) {
+    try {
+      if (p.kind === 'connect') return connectConfirmed(res, p);
+      if (p.kind === 'output') return settingsRoutes.confirm(p, res); // D327 OS3: one output while live
+      if (p.kind === 'bot') {
+        if (!botsOn()) return json(res, 404, { error: 'bot-manager-off' }); // the flag may have been switched off meanwhile
+        const r = p.verb === 'start' ? await bots.start(p.bot) : await bots.stop(p.bot);
+        return json(res, 200, { verdict: r.ok ? 'allow' : 'refuse', reason: r.ok ? null : r.reason, forced: r.forced === true, bots: await bots.statusAll() });
+      }
+      if (p.kind === 'host') {
+        // A stream or recording start: refused while Ujwalam is closing; counted from here (before any await) so a
+        // quit request in between sees it (closing lock above).
+        const starting = START_METHODS.has(p.method);
+        if (starting && isClosing()) return json(res, 409, CLOSING_REFUSAL);
+        if (starting && credWrites > 0) return json(res, 409, { error: 'credentials-updating', detail: 'A stream key is being changed; start again in a moment' });
+        if (starting) startsInFlight += 1;
+        try {
+        const fl = HOST_CALLS[p.method]?.flag; // switched off meanwhile: refuse
+        if (fl && !(flags && flags.isOn(fl))) return json(res, 404, { error: `${fl}-off` });
+        // D327 OS3 (flag outputs-panel): Start stream starts the outputs switched on in the panel only.
+        let callParams = p.params;
+        if (p.method === 'stream.start') {
+          const sinks = await settingsRoutes.startSinks();
+          if (Array.isArray(sinks)) {
+            if (!sinks.length) return json(res, 200, { verdict: 'refuse', reason: 'no-outputs-enabled', detail: 'No output is switched on. Switch one on in the Outputs panel or Settings > Stream.' });
+            callParams = { ...p.params, sinks };
+          }
+        }
+        // A go-live past a failed readiness item ("Go live anyway" click): logged before the stream starts.
+        let overrideLogged;
+        if (p.readinessOverride) { try { overrideLogged = logOverride(opts.dataDir, p.readiness, new Date(now())); } catch { overrideLogged = false; } }
+        if (p.method === 'stream.stop') stopEpoch += 1;
+        if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
+        // stopEpoch: the same check without the launcher (no authority); a Stop / End all confirmed meanwhile wins.
+        const startEpoch = p.method === 'stream.start' ? stopEpoch : null;
+        const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
+        const before = await readBefore(p.method, p.params);
+        if (Number.isInteger(startGen) || startEpoch !== null) {
+          if (startPauseMs) await new Promise((r) => setTimeout(r, startPauseMs));
+          // A Stop / End all confirmed since this start began wins: the start is not sent.
+          if (startEpoch !== stopEpoch) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
+          if (Number.isInteger(startGen) && (await authority.begin()) !== startGen) return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile' });
+        }
+        const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
+        let out;
+        try { out = await callHost(p.method, callParams); } catch (e) { ht?.fail('Did not finish'); throw e; }
+        ht?.done();
+        if ((startEpoch !== null && startEpoch !== stopEpoch) || (Number.isInteger(startGen) && !(await authority.arm(startGen)))) {
+          // A Stop / End all came in while this start was on its way to the host (after the check above): the newer
+          // stop wins, so the streams this start turned on are stopped again at once.
+          // Tried STOP_AGAIN_WAITS.length + 1 times; if every try fails the streams may still be live: a loud error.
+          let lastErr = null;
+          for (let i = 0; ; i++) {
+            try { await callHost('stream.stop', {}); lastErr = null; break; } catch (e) { lastErr = e; }
+            if (i >= STOP_AGAIN_WAITS.length) break;
+            await new Promise((r) => setTimeout(r, STOP_AGAIN_WAITS[i]));
+          }
+          if (lastErr) {
+            log(`[studio-ui] WARNING: a start overtaken by a Stop could not be stopped again (${String(lastErr?.code ?? lastErr?.message ?? 'error').slice(0, 80)}); streams may still be live`);
+            return json(res, 502, { error: STOP_AGAIN_FAILED, detail: 'stop-again-failed' });
+          }
+          return json(res, 200, { verdict: 'refuse', reason: 'stopped-meanwhile', stoppedAgain: true });
+        }
+        remember(p.method, p.params, before);
+        // A layout change confirmed while live autosaves like an instant one (P5b).
+        const saved = HOST_CALLS[p.method]?.liveConfirm && projectSync && host.describe().kind === 'host' ? projectSync.record(p.method, syncParams(p.method, p.params, out)) : false;
+        return json(res, 200, { verdict: 'allow', result: p.countsOnly ? countsOnly(out) : (out ?? null), ...(saved ? { saved: 'pending' } : {}), ...(p.warning ? { warning: p.warning } : {}), ...(p.readinessOverride ? { override: true, overrideLogged: overrideLogged === true } : {}) });
+        } finally { if (starting) { startsInFlight -= 1; lastStartAt = now(); } }
+      }
+      if (p.kind === 'end-all') { stopEpoch += 1; if (authority) await authority.revoke('end-all'); return json(res, 200, { verdict: 'allow', endAll: await endAllStreams() }); }
+      if (p.kind !== 'core') return json(res, 400, { error: 'unknown-kind' });
+      const r = await core.confirm({ confirmId: p.confirmId, actionHash: p.actionHash });
+      return json(res, 200, await handleCoreOutcome(r, p.summary));
+    } catch (e) { return json(res, 502, { error: 'backend-error', detail: String(e?.code ?? e?.message ?? 'error').slice(0, 80) }); }
   }
 
   // GET /ui/api/posts/media?id=<post id>&kind=video|cover. The file name never comes from the request: the store maps

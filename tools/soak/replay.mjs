@@ -400,13 +400,14 @@ async function runCrash(args, ctx) {
   const hooks = {
     async before(item) {
       if (!killAt.includes(item.seq)) return;
-      // Prepare the pre-kill facts: api.json identity and three pending confirmations requested through the API.
+      // Prepare the pre-kill facts: api.json identity and three pending confirmations requested through the API. They are
+      // asked by the system role: an api client's own write runs at once (D331), a system write waits for an api click.
       const api = readApiFile(ctx.paths.dataDir);
       const confirms = [];
       for (let i = 0; i < 3; i++) {
-        const r = await rpc(api.port, api.tokens.api, 'actions.request', { id: 'scene.create', params: { crashTest: i } });
+        const r = await rpc(api.port, api.tokens.system, 'actions.request', { id: 'scene.create', params: { crashTest: i } });
         const c = r.body?.result?.confirm;
-        if (c) confirms.push({ confirmId: c.confirmId, phrase: c.phrase, actionHash: c.actionHash });
+        if (c) confirms.push({ confirmId: c.confirmId, actionHash: c.actionHash });
       }
       pre = { api, confirms };
     },
@@ -462,7 +463,7 @@ async function runCrash(args, ctx) {
       row.auditAfterRestart = { ok: verifyRpc.body?.result?.ok === true, integrity: verifyRpc.body?.result?.integrity, rows: verifyRpc.body?.result?.rows };
       const refused = [];
       for (const c of pre.confirms) {
-        const r = await rpc(api2.port, api2.tokens.api, 'actions.confirm', { confirmId: c.confirmId, phrase: c.phrase, actionHash: c.actionHash });
+        const r = await rpc(api2.port, api2.tokens.api, 'actions.confirm', { confirmId: c.confirmId, actionHash: c.actionHash });
         refused.push(r.body?.result?.reason ?? r.body?.error?.code ?? 'none');
       }
       row.pendingConfirms = { requested: pre.confirms.length, refusedUnknownConfirm: refused.filter((x) => x === 'unknown-confirm').length, reasons: [...new Set(refused)] };

@@ -258,8 +258,6 @@
         </div>
         <div id="post-yt" class="fb-form" hidden>
           <div id="post-yt-info" class="muted" role="status"></div>
-          <label for="post-yt-confirm">To upload this video to YouTube as private, type: yes, upload</label>
-          <input id="post-yt-confirm" type="text" autocomplete="off">
           <div class="modal-actions">
             <button id="post-yt-upload" class="btn" type="button">Upload to YouTube (private)</button>
             <button id="post-yt-check" class="btn btn-quiet" type="button">Check status</button>
@@ -275,15 +273,13 @@
 
 <div id="confirm" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="confirm-title">
   <div class="modal-card">
-    <h3 id="confirm-title">Confirm</h3>
+    <h3 id="confirm-title">Not started</h3>
     <p id="confirm-summary"></p>
     <ul id="confirm-ready" class="list ready-list" aria-label="Readiness checks" hidden></ul>
-    <p>Type <code id="confirm-phrase"></code> to confirm.</p>
-    <input id="confirm-input" type="text" autocomplete="off" spellcheck="false" maxlength="40">
     <p id="confirm-msg" class="muted" role="status"></p>
     <div class="modal-actions">
       <button id="confirm-cancel" class="btn btn-quiet" type="button">Cancel</button>
-      <button id="confirm-ok" class="btn btn-live" type="button">Confirm</button>
+      <button id="confirm-ok" class="btn btn-live" type="button">Go live anyway</button>
     </div>
   </div>
 </div>

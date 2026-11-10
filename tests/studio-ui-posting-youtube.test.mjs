@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // F7: Posts view YouTube private upload + status check (flag `posting`). Fake auth and fake fetch only: nothing here touches
-// Google, a browser or Credential Manager. Checks the typed confirmation, live refusal (fail closed), approved-only,
+// Google, a browser or Credential Manager. Checks the Upload click (no typed phrase, D331), live refusal (fail closed), approved-only,
 // no double upload, no token in any response, the status route, and the UI source rules.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -97,7 +97,7 @@ describe('youtube status route', () => {
     try {
       const r = await c.get('/ui/api/posts/youtube/status');
       assert.equal(r.status, 200);
-      assert.deepEqual(Object.keys(r.json()).sort(), ['hasClient', 'phrase', 'signedIn']);
+      assert.deepEqual(Object.keys(r.json()).sort(), ['hasClient', 'signedIn'], 'no phrase (D331)');
       assert.equal(r.json().signedIn, true);
       assert.ok(!r.text.includes(TOKEN));
     } finally { c.srv.close(); }
@@ -107,19 +107,17 @@ describe('youtube status route', () => {
 });
 
 describe('youtube upload route', () => {
-  test('refused without the typed phrase, and while the post is a draft; no network call made', async () => {
+  test('refused while the post is a draft, with extra fields (an old phrase field too) and for an unknown post; no network call made', async () => {
     const c = await boot();
     try {
-      let r = await c.post(UP, { id: c.id, confirm: 'yes, upload' });
+      let r = await c.post(UP, { id: c.id });
       assert.equal(r.status, 409); assert.equal(r.json().error, 'not-approved');
       await c.approve();
-      r = await c.post(UP, { id: c.id });
-      assert.equal(r.status, 400); assert.equal(r.json().error, 'confirm-required');
       r = await c.post(UP, { id: c.id, confirm: 'yes' });
-      assert.equal(r.status, 400);
-      r = await c.post(UP, { id: c.id, confirm: 'yes, upload', extra: 1 });
+      assert.equal(r.status, 400); assert.equal(r.json().error, 'bad-params', 'the body is { id } only (D331)');
+      r = await c.post(UP, { id: c.id, extra: 1 });
       assert.equal(r.status, 400); assert.equal(r.json().error, 'bad-params');
-      r = await c.post(UP, { id: 'nope', confirm: 'yes, upload' });
+      r = await c.post(UP, { id: 'nope' });
       assert.equal(r.status, 404);
       assert.equal(c.calls.length, 0);
     } finally { c.srv.close(); }
@@ -130,7 +128,7 @@ describe('youtube upload route', () => {
       const c = await boot(opts);
       try {
         await c.approve();
-        const r = await c.post(UP, { id: c.id, confirm: 'Yes,  Upload' });
+        const r = await c.post(UP, { id: c.id });
         assert.equal(r.status, 409, JSON.stringify(opts)); assert.equal(r.json().error, 'stream-active');
         assert.equal(c.calls.length, 0);
         assert.equal(c.store.get(c.id).status, 'approved');
@@ -142,7 +140,7 @@ describe('youtube upload route', () => {
     const c = await boot();
     try {
       await c.approve();
-      const r = await c.post(UP, { id: c.id, confirm: 'yes, upload' });
+      const r = await c.post(UP, { id: c.id });
       assert.equal(r.status, 200, r.text);
       assert.deepEqual(r.json(), { videoId: 'VID123', uploadStatus: 'uploaded', thumbnailOk: null, privacy: 'private' });
       assert.ok(!r.text.includes(TOKEN));
@@ -151,7 +149,7 @@ describe('youtube upload route', () => {
       const v = c.store.get(c.id);
       assert.equal(v.status, 'uploaded'); assert.equal(v.videoId, 'VID123');
       assert.ok(!(await c.get('/ui/api/posts')).text.includes(TOKEN));
-      const again = await c.post(UP, { id: c.id, confirm: 'yes, upload' });
+      const again = await c.post(UP, { id: c.id });
       assert.equal(again.status, 409); assert.equal(again.json().error, 'already-uploaded');
       assert.equal(c.calls.filter((x) => x.url.includes('uploadType=resumable')).length, 1);
       assert.equal((await c.post('/ui/api/posts/edit', { id: c.id, title: 'x' })).status, 409);
@@ -163,7 +161,7 @@ describe('youtube upload route', () => {
     const c = await boot({ reauth: true });
     try {
       await c.approve();
-      const r = await c.post(UP, { id: c.id, confirm: 'yes, upload' });
+      const r = await c.post(UP, { id: c.id });
       assert.equal(r.status, 401); assert.equal(r.json().error, 'youtube-not-signed-in');
       assert.equal(c.calls.length, 0);
     } finally { c.srv.close(); }
@@ -177,7 +175,7 @@ describe('youtube check route', () => {
       await c.approve();
       let r = await c.post('/ui/api/posts/youtube/check', { id: c.id });
       assert.equal(r.status, 409); assert.equal(r.json().error, 'not-uploaded');
-      await c.post(UP, { id: c.id, confirm: 'yes, upload' });
+      await c.post(UP, { id: c.id });
       r = await c.post('/ui/api/posts/youtube/check', { id: c.id });
       assert.equal(r.status, 200);
       assert.deepEqual(r.json(), { videoId: 'VID123', found: true, uploadStatus: 'processed', processingStatus: 'succeeded', privacyStatus: 'private', failureReason: null, rejectionReason: null });
@@ -203,12 +201,12 @@ describe('checkUploadStatus (fake fetch)', () => {
 });
 
 describe('UI source rules', () => {
-  test('no innerHTML, no external script, upload button and typed confirmation present', () => {
+  test('no innerHTML, no external script, upload button present, no typed confirmation (D331)', () => {
     const js = readFileSync(path.join(UI, 'js', 'app.js'), 'utf8') + readFileSync(path.join(UI, 'js', 'api.js'), 'utf8');
     const html = readFileSync(path.join(UI, 'index.html'), 'utf8');
     assert.ok(!/innerHTML/.test(js));
     assert.ok(!/<script[^>]+src="https?:/.test(html));
     assert.match(html, /id="post-yt-upload"/);
-    assert.match(html, /id="post-yt-confirm"/);
+    assert.doesNotMatch(html, /id="post-yt-confirm"/);
   });
 });

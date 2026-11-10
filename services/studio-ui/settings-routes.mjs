@@ -1,14 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // UI server routes for D327: Settings > Stream (OS1/OS2, flag stream-settings), the main-window Outputs panel (OS3,
 // flag outputs-panel), Settings > Integrations (IN1, flag integrations) and Force complete transition (TR1, flag
-// stream-settings). Kept out of server.mjs; server.mjs calls handle() for these routes and confirm() for the
-// 'output' confirmations. Every route answers 404 <flag>-off while its flag is off.
+// stream-settings). Kept out of server.mjs; server.mjs calls handle() for these routes. Every route answers 404
+// <flag>-off while its flag is off.
 //
 //   GET  /ui/api/stream/setup             { setup, exists, options, summaries, problems }
 //   POST /ui/api/stream/setup  {setup}    saved (used at the next live start) | 422 { problems } (platform limit shown)
 //   POST /ui/api/stream/check  {setup}    { problems } (nothing saved)
 //   GET  /ui/api/outputs/panel            { outputs: [{ id, name, platform, canvas, enabled, summary, state }], live, virtualCamera }
-//   POST /ui/api/outputs/toggle {id, on}  offline: saves enabled (what Start stream starts); live: "yes, on air", then
+//   POST /ui/api/outputs/toggle {id, on}  offline: saves enabled (what Start stream starts); live: on the click (D331)
 //                                         stream.start/stop { sinks: [id] } for that output only
 //   GET  /ui/api/integrations             { value, bots: { <bot>: { address, port } }, remote: { running, address, port, lan } }
 //   POST /ui/api/integrations  {value}    saved (used at the next start) | 422 { problems }
@@ -32,7 +32,7 @@ const REMOTE_FILE = 'remote.json';
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype;
 
 /**
- * opts: { dataDir, flags, host, addPending, getPending, publicPending, json, canvases?: () => ({ H, V } | undefined),
+ * opts: { dataDir, flags, host, json, canvases?: () => ({ H, V } | undefined),
  *         botConfig?: () => object, tcpAnswers?, remoteToken?: string, log?,
  *         startGuard?: { closing(), credentialsUpdating?(), enter() -> release(), begin() -> token, still(token), pause(), stopAgain(sinks) } }
  */
@@ -116,15 +116,13 @@ export function createSettingsRoutes(opts) {
         if (!w.ok) return json(res, 422, { error: 'refused', problems: w.problems }), true;
         return json(res, 200, { ok: true, id: o.id, enabled: body.on, live: false }), true;
       }
-      // Live: only an output the host has (it was in the plan at go-live) can be switched; "yes, on air" first.
+      // Live: only an output the host has (it was in the plan at go-live) can be switched; the click is the decision (D331).
       const states = await sinkStates();
       if (!states || !states.has(o.id)) return json(res, 409, { error: 'not-in-this-stream', detail: `${label(o)} was not part of this stream. It can be added at the next start.` }), true;
       const summary = body.on
         ? `Start ${label(o)} only. The other outputs keep running.`
         : `Stop ${label(o)} only. The other outputs keep running.`;
-      const id = opts.addPending({ kind: 'output', summary, phrase: 'yes, on air', outputId: o.id, on: body.on });
-      if (!id) return json(res, 429, { error: 'too-many-pending' }), true;
-      return json(res, 200, { verdict: 'confirm', pending: opts.publicPending(id, opts.getPending(id)) }), true;
+      return (await confirm({ kind: 'output', summary, outputId: o.id, on: body.on }, res)), true;
     }
 
     // ---- Integrations ----
@@ -183,9 +181,9 @@ export function createSettingsRoutes(opts) {
     } catch { return { running: false }; }
   }
 
-  /** Confirms a kind 'output' pending (live switch of one output). Re-checks live first: never a go-live from here.
+  /** Runs a live switch of one output (kind 'output'). Re-checks live first: never a go-live from here.
    *  A switch-on goes through opts.startGuard (server.mjs: the same stop generation and go-live authority as Start
-   *  stream): a Stop or End all confirmed after this start began wins. Checked before the host call (the start is not
+   *  stream): a Stop or End all clicked after this start began wins. Checked before the host call (the start is not
    *  sent) and after it (that output is stopped again at once). */
   async function confirm(p, res) {
     if (!on(OUTPUTS_PANEL_FLAG)) return json(res, 404, { error: `${OUTPUTS_PANEL_FLAG}-off` });

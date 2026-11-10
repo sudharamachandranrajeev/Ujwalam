@@ -2,7 +2,7 @@
 // D327 in the Qt studio shell (headless probe, real UI server, fake host, mocked TCP test): Settings > Stream (values,
 // a value over a platform limit refused with the limit, the Edit output window with its Connect button (tests/studio-qt-connect-button.test.mjs)),
 // Settings > Transitions (type, easing, duration per canvas, Force complete), Settings > Integrations (Test, Allow
-// remote connections), and the main-window Outputs panel (offline switch saves; live switch asks for "yes, on air").
+// remote connections), and the main-window Outputs panel (offline switch saves; live switch acts on the click, D331).
 // Pictures go to %TEMP%\ujwalam-d327-shots (never into the repo). Skipped when the shell is not built.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -120,7 +120,7 @@ describe('Qt studio D327 pages (headless probe)', { skip }, () => {
     assert.ok(!/token/i.test(readFileSync(path.join(s.dataDir, 'integrations.json'), 'utf8')), 'no token stored');
   });
 
-  test('Outputs panel: rows with switches and Virtual Camera (not available); offline switch saves; live switch asks first', async () => {
+  test('Outputs panel: rows with switches and Virtual Camera (not available); offline switch saves; live switch acts on the click (D331)', async () => {
     const r = await probe({ actions: ['output-toggle:twitch:off'], shot: 'outputs-panel.png' });
     assert.equal(r.p.outputsPanel.shown, true);
     assert.equal(r.p.outputsPanel.virtualCamera, false, 'Virtual Camera row shown, switched off and disabled');
@@ -132,7 +132,8 @@ describe('Qt studio D327 pages (headless probe)', { skip }, () => {
     const l = await probe({ live: true, actions: ['output-toggle:twitch:off'], shot: 'outputs-panel-live.png' });
     assert.equal(done(l.p)['output-toggle:twitch:off'], true);
     assert.equal(l.p.outputsPanel.live, true);
-    assert.ok(!l.calls.some(([m]) => m === 'stream.stop'), 'nothing stops before "yes, on air" is typed');
-    assert.ok(l.p.dialogShots >= 1, 'the confirm window opened');
+    // D331: no typed phrase and no confirm window; that one output stops at once, the others keep running.
+    assert.deepEqual(l.calls.filter(([m]) => m === 'stream.stop').map(([, x]) => x), [{ sinks: ['twitch'] }], 'only twitch stopped, on the click');
+    assert.ok(!l.calls.some(([m]) => m === 'stream.start'), 'nothing else started');
   });
 });

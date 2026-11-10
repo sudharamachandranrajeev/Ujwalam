@@ -5,7 +5,7 @@
 // status is 'pass' | 'warn' | 'fail'. ok is true when nothing failed (warnings never block). Each check runs in
 // parallel with its own timeout (config.checkTimeoutMs); a check that throws or times out is a 'warn' that says so,
 // except audio: while the host answers, audio state that cannot be read is a 'fail' (a dead game audio must not pass
-// unseen; the override phrase still goes live). The first host probes (host.status, outputs.status, host.info,
+// unseen; the "Go live anyway" click still goes live, D331). The first host probes (host.status, outputs.status, host.info,
 // core.status) have the same timeout, and createReadiness gives a whole run a deadline (readinessDeadlineMs).
 // Items (ITEMS): host, credentials, disk, encoders, streamerbot, speakerbot, loopback, clips, audio, gpu.
 //
@@ -34,8 +34,6 @@ const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '.
 export const READINESS_FLAG = 'readiness';
 export const DEFAULT_CONFIG_FILE = path.join(REPO, 'data', 'live', 'readiness.json');
 export const DEFAULT_PLAN_FILE = path.join(REPO, 'data', 'outputs', 'alpha-live.json');
-// Typed to go live while a readiness item fails. Different from "yes, on air" on purpose: an override is a choice.
-export const OVERRIDE_PHRASE = 'yes, on air, override';
 export const OVERRIDE_LOG = 'readiness-overrides.jsonl';
 export const ITEMS = Object.freeze(['host', 'credentials', 'disk', 'encoders', 'streamerbot', 'speakerbot', 'loopback', 'clips', 'audio', 'gpu']);
 export const TITLES = Object.freeze({
@@ -377,11 +375,11 @@ export function planTargets(file = DEFAULT_PLAN_FILE, platformsDir = path.join(R
   } catch { return []; }
 }
 
-/** One short text for a confirm window (Qt and the page show it above the phrase). */
+/** One short text for the readiness answer (Qt and the page show it above the "Go live anyway" button). */
 export function readinessSummary(r) {
   const lines = [`Ready to go live? ${r.counts.pass} ok, ${r.counts.warn} warning(s), ${r.counts.fail} problem(s).`];
   for (const i of r.items) if (i.status !== 'pass') lines.push(`${i.status === 'fail' ? 'PROBLEM' : 'Warning'} - ${i.title}: ${i.message}`.slice(0, 300));
-  if (!r.ok) lines.push(`Fix the problems first, or type "${OVERRIDE_PHRASE}" to go live anyway (the override is logged).`);
+  if (!r.ok) lines.push('Fix the problems first, or click "Go live anyway" (the override is logged).');
   return lines.join('\n');
 }
 

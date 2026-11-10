@@ -117,38 +117,30 @@ describe('Outputs panel (OS3)', () => {
     assert.equal(t.status, 200, t.text);
     assert.equal(t.json().live, false);
     assert.equal(c.calls.filter(([m]) => m.startsWith('stream.')).length, 0, 'no host call offline');
-    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
-    assert.equal(st.verdict, 'confirm');
-    const ok = (await post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' })).json();
-    assert.equal(ok.verdict, 'allow', JSON.stringify(ok));
+    const ok = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
+    assert.equal(ok.verdict, 'allow', JSON.stringify(ok)); // the click is the decision (D331)
     assert.deepEqual(c.calls.find(([m]) => m === 'stream.start')[1], { sinks: ['youtube-h', 'youtube-v', 'twitch'] });
     const after = (await get(c, '/ui/api/outputs/panel')).json();
     assert.deepEqual(after.outputs.map((o) => [o.id, o.state]), [['youtube-h', 'live'], ['youtube-v', 'live'], ['twitch', 'live'], ['kick', 'idle']]);
   });
 
-  test('live: one output needs "yes, on air" and only that sink starts or stops', async () => {
+  test('live: one output acts on the click (D331, no "yes, on air") and only that sink starts or stops', async () => {
     const c = await boot();
     await c.fake.call('stream.start', {});
     await settle();
-    const t = (await post(c, '/ui/api/outputs/toggle', { id: 'twitch', on: false })).json();
-    assert.equal(t.verdict, 'confirm');
-    assert.equal(t.pending.phrase, 'yes, on air');
-    assert.match(t.pending.summary, /Stop Twitch only/);
-    const wrong = (await post(c, '/ui/api/confirm', { pendingId: t.pending.pendingId, text: 'yes' })).json();
-    assert.equal(wrong.verdict, 'wrong-phrase');
-    assert.equal(c.calls.length, 0, 'nothing sent before the phrase');
-    const ok = (await post(c, '/ui/api/confirm', { pendingId: t.pending.pendingId, text: 'yes, on air' })).json();
+    assert.equal(c.calls.length, 0, 'nothing sent before the click');
+    const ok = (await post(c, '/ui/api/outputs/toggle', { id: 'twitch', on: false })).json();
     assert.equal(ok.verdict, 'allow', JSON.stringify(ok));
+    assert.equal(ok.pending, undefined);
     assert.deepEqual(c.calls, [['stream.stop', { sinks: ['twitch'] }]]);
     const s = (await c.fake.call('outputs.status', {})).sinks;
     assert.deepEqual(s.map((x) => [x.id, x.state]), [['youtube-h', 'live'], ['youtube-v', 'live'], ['twitch', 'stopped'], ['kick', 'live'], ['record', 'idle']]);
     // back on
-    const t2 = (await post(c, '/ui/api/outputs/toggle', { id: 'twitch', on: true })).json();
-    await post(c, '/ui/api/confirm', { pendingId: t2.pending.pendingId, text: 'yes, on air' });
+    assert.equal((await post(c, '/ui/api/outputs/toggle', { id: 'twitch', on: true })).json().verdict, 'allow');
     assert.deepEqual(c.calls.at(-1), ['stream.start', { sinks: ['twitch'] }]);
   });
 
-  test('live: an output the host does not have is refused (added at the next start); a confirm after the stream ended is refused', async () => {
+  test('live: an output the host does not have is refused (added at the next start); a switch-on after the stream ended only saves, never a go-live', async () => {
     const c = await boot();
     const g = (await get(c, '/ui/api/stream/setup')).json();
     const s = structuredClone(g.setup);
@@ -160,34 +152,33 @@ describe('Outputs panel (OS3)', () => {
     const r = await post(c, '/ui/api/outputs/toggle', { id: 'twitch-2', on: true });
     assert.equal(r.status, 409);
     assert.equal(r.json().error, 'not-in-this-stream');
-    const t = (await post(c, '/ui/api/outputs/toggle', { id: 'kick', on: true })).json();
+    // D331: no held confirmation can outlive the stream; a click after it ended is an offline switch (saved only).
     await c.fake.call('stream.stop', {});
-    const late = (await post(c, '/ui/api/confirm', { pendingId: t.pending.pendingId, text: 'yes, on air' })).json();
-    assert.equal(late.verdict, 'refuse');
-    assert.equal(late.reason, 'not-live');
+    await settle();
+    const late = (await post(c, '/ui/api/outputs/toggle', { id: 'kick', on: true })).json();
+    assert.equal(late.live, false, JSON.stringify(late));
+    assert.equal(late.enabled, true);
     assert.ok(!c.calls.some(([m]) => m === 'stream.start'), 'never a go-live from an output switch');
   });
 
-  // Codex review P1 (2026-11-10): a switch-on confirmed live must not outlive a newer End all / Stop.
+  // Codex review P1 (2026-11-10): a switch-on clicked live must not outlive a newer End all / Stop. D331: no pending
+  // entry waits any more; the start's own pause (startPauseMs) and the host call are the windows a Stop can land in.
   const states = async (c) => Object.fromEntries((await c.fake.call('outputs.status', {})).sinks.map((x) => [x.id, x.state]));
   async function kickOffLive(c) {
     const seed = (await get(c, '/ui/api/stream/setup')).json().setup;
     assert.equal((await post(c, '/ui/api/stream/setup', { setup: seed })).status, 200); // saved: live switches are remembered
     await c.fake.call('stream.start', {});
     await settle();
-    const off = (await post(c, '/ui/api/outputs/toggle', { id: 'kick', on: false })).json();
-    assert.equal((await post(c, '/ui/api/confirm', { pendingId: off.pending.pendingId, text: 'yes, on air' })).json().verdict, 'allow');
-    return (await post(c, '/ui/api/outputs/toggle', { id: 'kick', on: true })).json();
+    assert.equal((await post(c, '/ui/api/outputs/toggle', { id: 'kick', on: false })).json().verdict, 'allow');
   }
-  async function endAll(c) {
-    const e = (await post(c, '/ui/api/streams/end-all', {})).json();
-    return (await post(c, '/ui/api/confirm', { pendingId: e.pending.pendingId, text: 'yes, on air' })).json();
-  }
+  /** The switch-on click, not awaited: it pauses (startPauseMs) or waits at the host's door while the race runs. */
+  const switchOn = (c) => post(c, '/ui/api/outputs/toggle', { id: 'kick', on: true });
+  const endAll = async (c) => (await post(c, '/ui/api/streams/end-all', {})).json();
 
-  test('race: End all confirmed while a switch-on waits -> the switch-on is not sent; nothing restarts', async () => {
+  test('race: End all clicked while a switch-on is in its start pause -> the switch-on is not sent; nothing restarts', async () => {
     const c = await boot({ startPauseMs: 400 });
-    const on = await kickOffLive(c);
-    const pendingOn = post(c, '/ui/api/confirm', { pendingId: on.pending.pendingId, text: 'yes, on air' });
+    await kickOffLive(c);
+    const pendingOn = switchOn(c);
     await new Promise((r) => setTimeout(r, 100)); // the switch-on has its token and waits
     assert.equal((await endAll(c)).verdict, 'allow');
     const r = (await pendingOn).json();
@@ -203,9 +194,9 @@ describe('Outputs panel (OS3)', () => {
   test('race: End all lands while the switch-on is on its way to the host -> that output is stopped again', async () => {
     let gate = null;
     const c = await boot({ beforeHost: async (m, p) => { if (m === 'stream.start' && p?.sinks?.[0] === 'kick' && gate) await gate; } });
-    const on = await kickOffLive(c);
+    await kickOffLive(c);
     let open; gate = new Promise((r) => { open = r; });
-    const pendingOn = post(c, '/ui/api/confirm', { pendingId: on.pending.pendingId, text: 'yes, on air' });
+    const pendingOn = switchOn(c);
     await new Promise((r) => setTimeout(r, 100)); // the start is held at the host's door
     const ended = endAll(c);
     await new Promise((r) => setTimeout(r, 100));
@@ -218,13 +209,11 @@ describe('Outputs panel (OS3)', () => {
     assert.notEqual((await states(c)).kick, 'live');
   });
 
-  test('race, no launcher: End all confirmed while Start stream waits -> the start is not sent', async () => {
+  test('race, no launcher: End all clicked while Start stream is in its start pause -> the start is not sent', async () => {
     const c = await boot({ startPauseMs: 400 });
-    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
-    const going = post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' });
+    const going = post(c, '/ui/api/host', { method: 'stream.start', params: {} }); // not awaited: it pauses 400 ms
     await new Promise((r) => setTimeout(r, 100));
-    const e = (await post(c, '/ui/api/streams/end-all', {})).json();
-    assert.equal((await post(c, '/ui/api/confirm', { pendingId: e.pending.pendingId, text: 'yes' })).json().verdict, 'allow');
+    assert.equal((await endAll(c)).verdict, 'allow');
     const r = (await going).json();
     assert.equal(r.reason, 'stopped-meanwhile', JSON.stringify(r));
     assert.ok(!c.calls.some(([m]) => m === 'stream.start'), 'the start never reached the host');
@@ -235,11 +224,9 @@ describe('Outputs panel (OS3)', () => {
     let gate = null;
     const c = await boot({ beforeHost: async (m) => { if (m === 'stream.start' && gate) await gate; } });
     let open; gate = new Promise((r) => { open = r; });
-    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
-    const going = post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' });
+    const going = post(c, '/ui/api/host', { method: 'stream.start', params: {} }); // not awaited: held at the host's door
     await new Promise((r) => setTimeout(r, 100));
-    const e = (await post(c, '/ui/api/streams/end-all', {})).json();
-    const ended = post(c, '/ui/api/confirm', { pendingId: e.pending.pendingId, text: 'yes' });
+    const ended = endAll(c);
     await new Promise((r) => setTimeout(r, 100));
     open();
     await ended;
@@ -250,12 +237,12 @@ describe('Outputs panel (OS3)', () => {
     assert.ok(!Object.values(await states(c)).includes('live'));
   });
 
-  test('race: a launcher revoke (go-live authority) while a switch-on waits also wins', async () => {
+  test('race: a launcher revoke (go-live authority) while a switch-on is in its start pause also wins', async () => {
     let gen = 0;
     const authority = { begin: async () => gen, arm: async (g) => g === gen, revoke: async () => { gen += 1; return true; } };
     const c = await boot({ authority, startPauseMs: 300 });
-    const on = await kickOffLive(c);
-    const pendingOn = post(c, '/ui/api/confirm', { pendingId: on.pending.pendingId, text: 'yes, on air' });
+    await kickOffLive(c);
+    const pendingOn = switchOn(c);
     await new Promise((r) => setTimeout(r, 100));
     await authority.revoke('live-test-guard');
     const r = (await pendingOn).json();
@@ -270,8 +257,7 @@ describe('Start stream honours switched-off outputs (Codex review P1)', () => {
     const s = structuredClone((await get(c, '/ui/api/stream/setup')).json().setup);
     s.outputs.find((o) => o.id === 'kick').enabled = false;
     assert.equal((await post(c, '/ui/api/stream/setup', { setup: s })).status, 200);
-    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
-    const ok = (await post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' })).json();
+    const ok = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
     assert.equal(ok.verdict, 'allow', JSON.stringify(ok));
     assert.deepEqual(c.calls.find(([m]) => m === 'stream.start')[1], { sinks: ['youtube-h', 'youtube-v', 'twitch'] });
     assert.notEqual((await c.fake.call('outputs.status', {})).sinks.find((x) => x.id === 'kick').state, 'live');
@@ -280,8 +266,7 @@ describe('Start stream honours switched-off outputs (Codex review P1)', () => {
     for (const o of s.outputs) o.enabled = false;
     assert.equal((await post(c, '/ui/api/stream/setup', { setup: s })).status, 200);
     const n = c.calls.length;
-    const st2 = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
-    const no = (await post(c, '/ui/api/confirm', { pendingId: st2.pending.pendingId, text: 'yes, on air' })).json();
+    const no = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
     assert.equal(no.verdict, 'refuse');
     assert.equal(no.reason, 'no-outputs-enabled');
     assert.match(no.detail, /No output is switched on/);
@@ -294,8 +279,7 @@ describe('Start stream honours switched-off outputs (Codex review P1)', () => {
     s.outputs.find((o) => o.id === 'kick').enabled = false;
     assert.equal((await post(c, '/ui/api/stream/setup', { setup: s })).status, 200);
     createFlags({ dataDir: c.dataDir }).set('stream-settings', false);
-    const st = (await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json();
-    assert.equal((await post(c, '/ui/api/confirm', { pendingId: st.pending.pendingId, text: 'yes, on air' })).json().verdict, 'allow');
+    assert.equal((await post(c, '/ui/api/host', { method: 'stream.start', params: {} })).json().verdict, 'allow');
     assert.deepEqual(c.calls.find(([m]) => m === 'stream.start')[1], {});
   });
 });

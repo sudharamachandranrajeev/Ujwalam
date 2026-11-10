@@ -43,7 +43,7 @@ public:
 	void setEffects(const QJsonArray &effects);  // shows this list; no signal
 	QJsonArray effects() const { return effects_; }
 	void clearPending();    // drops an unsent change (another layer was selected)
-	void setLive(bool live); // live: changes wait for the Apply button (each send needs "yes, on air")
+	void setLive(bool live); // live: changes wait for the Apply button (one send per click)
 	void setMax(int n) { max_ = n; }
 	// Headless probe: what the panel shows; probe actions toggle and set through the real widgets.
 	QJsonObject probe() const;

@@ -3,13 +3,14 @@
 #include "motion.h"
 #include "theme.h"
 
+#include <QFont>
 #include <QPainter>
 
 Switch::Switch(QWidget *parent) : QAbstractButton(parent)
 {
 	setCheckable(true);
 	setCursor(Qt::PointingHandCursor);
-	setFixedSize(38, 22);
+	setFixedSize(58, 22); // wide enough for the ON / OFF text (user feedback: toggles with visible text)
 	setFocusPolicy(Qt::TabFocus);
 	connect(this, &QAbstractButton::toggled, this, [this](bool on) {
 		motion::run(this, pos_, on ? 1.0 : 0.0, 140, QEasingCurve::OutCubic, [this](const QVariant &v) {
@@ -40,6 +41,15 @@ void Switch::paintEvent(QPaintEvent *)
 	p.setBrush(theme::color(QStringLiteral("text")));
 	const qreal r = 8, x = 11 + pos_ * (width() - 22);
 	p.drawEllipse(QPointF(x, height() / 2.0), r, r);
+	// The state in words on the free side of the knob, so on and off never depend on colour alone.
+	QFont f = font();
+	f.setPixelSize(9);
+	f.setBold(true);
+	p.setFont(f);
+	p.setPen(theme::color(QStringLiteral("text")));
+	const bool on = isChecked();
+	const QRectF textRect = on ? QRectF(4, 0, width() - 26, height()) : QRectF(22, 0, width() - 26, height());
+	p.drawText(textRect, Qt::AlignCenter, on ? QStringLiteral("ON") : QStringLiteral("OFF"));
 	if (hasFocus()) {
 		p.setBrush(Qt::NoBrush);
 		p.setPen(QPen(theme::color(QStringLiteral("accentHi")), 1.5));

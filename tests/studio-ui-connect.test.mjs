@@ -58,7 +58,6 @@ const post = (c, route, body, extra = {}) => raw(c.port, {
   method: 'POST', url: route, body: JSON.stringify(body),
   headers: { cookie: c.a.cookie, origin: `http://127.0.0.1:${c.port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': c.a.csrf, ...extra },
 });
-const confirm = async (c, r, text = 'yes') => (await post(c, '/ui/api/confirm', { pendingId: r.json().pending.pendingId, text })).json();
 
 async function boot({ flagOn = true, live = false, liveSinks = [], stores = {}, browser, storeWrap, hostWrap } = {}) {
   const dataDir = mk();
@@ -123,16 +122,11 @@ describe('flag gate', () => {
 });
 
 describe('paste (PC1, PC2)', () => {
-  test('typed "yes" first; the key is never echoed; stored under the host target names; status masked', async () => {
+  test('stored on the click (D331, no phrase); the key is never echoed; stored under the host target names; status masked', async () => {
     const c = await boot();
-    const r = await post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer });
-    assert.equal(r.json().verdict, 'confirm');
-    assert.equal(r.json().pending.phrase, 'yes');
-    assert.match(r.json().pending.summary, /stream key and server address for Kick/);
-    assert.equal(c.mem.map.has('Ujwalam/stream/kick'), false, 'nothing before the phrase');
-    assert.equal((await confirm(c, r, 'no')).verdict, 'wrong-phrase');
-    const ok = await confirm(c, r);
+    const ok = (await post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer })).json();
     assert.equal(ok.verdict, 'allow');
+    assert.equal(ok.pending, undefined);
     assert.equal(c.mem.map.get('Ujwalam/stream/kick'), SECRETS.kickKey);
     assert.equal(c.mem.map.get('Ujwalam/stream/kick-server'), SECRETS.kickServer);
     const st = (await get(c, '/ui/api/connect?fresh=1')).json();
@@ -142,14 +136,13 @@ describe('paste (PC1, PC2)', () => {
     assert.deepEqual(Object.keys(k.server).sort(), ['present', 'scheme', 'schemes']);
     leakCheck(c);
   });
-  test('a pending paste holds the key only in memory, never in the public pending record; cancel drops it', async () => {
+  test('a paste leaves no pending record behind (the key is never kept in one) and never echoes the key', async () => {
     const c = await boot();
     const r = await post(c, '/ui/api/connect/paste', { output: 'youtube-h', key: SECRETS.ytKeyH });
-    const rec = c.srv._pending().get(r.json().pending.pendingId);
-    assert.equal(JSON.stringify(rec).includes(SECRETS.ytKeyH), false, 'not in the serialised record');
-    assert.equal((await post(c, '/ui/api/cancel', { pendingId: r.json().pending.pendingId })).json().verdict, 'cancelled');
-    assert.equal(c.srv._pending().size, 0);
-    assert.equal(c.mem.map.has('Ujwalam/stream/youtube-h'), false);
+    assert.equal(r.json().verdict, 'allow');
+    assert.equal(c.srv._pending().size, 0, 'nothing held in the pending map');
+    assert.equal(r.text.includes(SECRETS.ytKeyH), false);
+    assert.equal(c.mem.map.get('Ujwalam/stream/youtube-h'), SECRETS.ytKeyH);
   });
   test('bad values refused before any confirm, with a plain message', async () => {
     const c = await boot();
@@ -162,7 +155,7 @@ describe('paste (PC1, PC2)', () => {
 });
 
 describe('live rules', () => {
-  test('the live output itself is refused; another output asks for "yes, on air"', async () => {
+  test('the live output itself is refused; another output is stored on the click (no "yes, on air")', async () => {
     const c = await boot({ live: true, liveSinks: ['youtube-h'] });
     const r = await post(c, '/ui/api/connect/paste', { output: 'youtube-h', key: SECRETS.ytKeyH });
     assert.equal(r.status, 409);
@@ -170,19 +163,15 @@ describe('live rules', () => {
     const d = await post(c, '/ui/api/connect/disconnect', { output: 'youtube-h' });
     assert.equal(d.json().error, 'output-live');
     const v = await post(c, '/ui/api/connect/paste', { output: 'youtube-v', key: SECRETS.ytKeyNew });
-    assert.equal(v.json().pending.phrase, 'yes, on air');
-    assert.equal((await confirm(c, v, 'yes, on air')).verdict, 'allow');
+    assert.equal(v.json().verdict, 'allow');
     assert.equal(c.mem.map.get('Ujwalam/stream/youtube-v'), SECRETS.ytKeyNew);
   });
-  test('the output went live while the phrase was pending: refused at confirm, nothing written', async () => {
+  test('an output that went live since the last status is refused at the click, nothing written', async () => {
     const c = await boot();
-    const r = await post(c, '/ui/api/connect/paste', { output: 'twitch', key: SECRETS.twitchKey });
     c.state.liveSinks = ['twitch'];
     c.state.live = true;
     await new Promise((res) => setTimeout(res, 120));
-    const first = await confirm(c, r, 'yes');
-    assert.equal(first.verdict, 'wrong-phrase', 'upgraded to the on-air phrase');
-    const out = await post(c, '/ui/api/confirm', { pendingId: r.json().pending.pendingId, text: 'yes, on air' });
+    const out = await post(c, '/ui/api/connect/paste', { output: 'twitch', key: SECRETS.twitchKey });
     assert.equal(out.status, 409);
     assert.equal(out.json().error, 'output-live');
     assert.equal(c.mem.map.has('Ujwalam/stream/twitch'), false);
@@ -190,11 +179,9 @@ describe('live rules', () => {
 });
 
 describe('sign-in through the server (PC1)', () => {
-  test('YouTube: confirm, browser sign-in, pick a stream; the key is stored and never in a response or log', async () => {
+  test('YouTube: sign-in on the click, browser sign-in, pick a stream; the key is stored and never in a response or log', async () => {
     const c = await boot();
-    const r = await post(c, '/ui/api/connect/sign-in', { output: 'youtube-h', platform: 'youtube' });
-    assert.match(r.json().pending.summary, /Sign in with Google \(YouTube\)/);
-    const ok = await confirm(c, r);
+    const ok = (await post(c, '/ui/api/connect/sign-in', { output: 'youtube-h', platform: 'youtube' })).json();
     assert.equal(ok.verdict, 'allow');
     const j = await waitJob(c);
     assert.equal(j.state, 'choose', JSON.stringify(j));
@@ -204,25 +191,22 @@ describe('sign-in through the server (PC1)', () => {
     assert.equal((await get(c, '/ui/api/connect?fresh=1')).json().outputs.find((o) => o.id === 'youtube-h').state, 'connected');
     leakCheck(c);
   });
-  test('Twitch: the client id is set through the confirmed route; device code shown; key stored', async () => {
+  test('Twitch: the client id is set on the click; device code shown; key stored', async () => {
     const c = await boot({ browser: () => async () => {} });
     const s = await post(c, '/ui/api/connect/twitch-client', { clientId: 'mocktwitchclientid0000000000zz' });
-    assert.equal((await confirm(c, s)).verdict, 'allow');
+    assert.equal(s.json().verdict, 'allow');
     assert.equal(c.mem.map.get(TARGETS.twitchClientId), 'mocktwitchclientid0000000000zz');
-    const r = await post(c, '/ui/api/connect/sign-in', { output: 'twitch', platform: 'twitch' });
-    await confirm(c, r);
+    await post(c, '/ui/api/connect/sign-in', { output: 'twitch', platform: 'twitch' });
     const j = await waitJob(c);
     assert.equal(j.state, 'done', JSON.stringify(j));
     assert.equal(c.mem.map.get('Ujwalam/stream/twitch'), SECRETS.twitchKey);
     leakCheck(c);
   });
-  test('disconnect (PC3): confirmed, deletes key and token, status missing', async () => {
+  test('disconnect (PC3): on the click, deletes key and token, status missing', async () => {
     const c = await boot({ stores: { [TARGETS.twitchClientId]: 'mocktwitchclientid0000000000zz' }, browser: () => async () => {} });
-    await confirm(c, await post(c, '/ui/api/connect/sign-in', { output: 'twitch', platform: 'twitch' }));
+    await post(c, '/ui/api/connect/sign-in', { output: 'twitch', platform: 'twitch' });
     await waitJob(c);
-    const d = await post(c, '/ui/api/connect/disconnect', { output: 'twitch' });
-    assert.match(d.json().pending.summary, /Disconnect Twitch/);
-    const out = await confirm(c, d);
+    const out = (await post(c, '/ui/api/connect/disconnect', { output: 'twitch' })).json();
     assert.deepEqual(out.result.removed, { key: true, server: true, token: true, revoke: 'revoked' });
     assert.ok(!c.mem.map.has('Ujwalam/stream/twitch') && !c.mem.map.has(TARGETS.twitchRefresh));
     assert.equal((await get(c, '/ui/api/connect?fresh=1')).json().outputs.find((o) => o.id === 'twitch').state, 'missing');
@@ -269,25 +253,21 @@ describe('start gate (key writes and stream starts)', () => {
   test('while a key is being written, a confirmed stream start is refused (409 credentials-updating)', async () => {
     const hold = deferred(); let writing = false;
     const c = await boot({ storeWrap: (t, s) => ({ ...s, set: async (v) => { if (t === 'Ujwalam/stream/kick') { writing = true; await hold.p; } return s.set(v); } }) });
-    const ask = await post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer });
-    const pasting = confirm(c, ask);
+    const pasting = post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer });
     while (!writing) await new Promise((r) => setTimeout(r, 5));
-    const start = await post(c, '/ui/api/host', { method: 'stream.start', params: {} });
-    const r = await post(c, '/ui/api/confirm', { pendingId: start.json().pending.pendingId, text: start.json().pending.phrase });
+    const r = await post(c, '/ui/api/host', { method: 'stream.start', params: {} });
     assert.equal(r.status, 409);
     assert.equal(r.json().error, 'credentials-updating');
     hold.open();
-    assert.equal((await pasting).verdict, 'allow');
+    assert.equal((await pasting).json().verdict, 'allow');
     leakCheck(c);
   });
   test('while a stream start is on its way, a key write is refused (409 output-starting) and nothing is stored', async () => {
     const hold = deferred(); let starting = false;
     const c = await boot({ hostWrap: async (m) => { if (m === 'stream.start') { starting = true; await hold.p; } } });
-    const start = await post(c, '/ui/api/host', { method: 'stream.start', params: {} });
-    const going = post(c, '/ui/api/confirm', { pendingId: start.json().pending.pendingId, text: start.json().pending.phrase });
+    const going = post(c, '/ui/api/host', { method: 'stream.start', params: {} });
     while (!starting) await new Promise((r) => setTimeout(r, 5));
-    const ask = await post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer });
-    const r = await post(c, '/ui/api/confirm', { pendingId: ask.json().pending.pendingId, text: ask.json().pending.phrase });
+    const r = await post(c, '/ui/api/connect/paste', { output: 'kick', key: SECRETS.kickKey, server: SECRETS.kickServer });
     assert.equal(r.status, 409);
     assert.equal(r.json().error, 'output-starting');
     assert.ok(!c.mem.map.has('Ujwalam/stream/kick'));

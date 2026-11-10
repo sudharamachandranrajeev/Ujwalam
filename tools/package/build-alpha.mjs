@@ -151,7 +151,7 @@ function readme({ version, nodeMin }) {
     '  or %LOCALAPPDATA%\\Ujwalam\\Ujwalam.cmd [flags] from a terminal. Logs: %LOCALAPPDATA%\\Ujwalam\\data\\core\\logs\\',
     '  The studio window (Qt) opens by default.  --shell browser   open the web control page instead',
     '  --allow-devices   open the capture devices (game capture, facecam, mic)',
-    '  --live            configure the real stream targets (streaming starts only after "yes, on air")',
+    '  --live            configure the real stream targets (streaming starts only on Start stream)',
     '  --mock --no-open --stop-on-stdin   smoke test without Streamer.bot or a browser',
     '  diag              write a redacted diagnostics zip to %LOCALAPPDATA%\\Ujwalam\\data\\diag\\',
     '',

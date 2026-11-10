@@ -3,8 +3,8 @@
 // only with a lock the UI server grants. The grant and every stream/recording start are serialized in the UI server:
 //   - quit while a stream or recording runs, or while the host cannot be read: refused (fail closed);
 //   - a start already under way when the quit comes: the quit is refused;
-//   - a start that comes after the grant (also one asked for before and confirmed after): refused, 409 "Ujwalam is
-//     closing", and the host never gets it;
+//   - a start that comes after the grant: refused, 409 "Ujwalam is closing", and the host never gets it (a start
+//     acts on the click, D331, so no start can be held open across the grant);
 //   - a released lock lets starts through again; the go-live authority is revoked on a grant;
 //   - round 3: a granted lock never expires (only its token's cancel releases it); the studio exits only when
 //     quit/commit confirms the token still holds the granted lock; a slow or failing revoke cannot end in a grant.
@@ -67,10 +67,9 @@ async function boot(ctl = {}) {
   const csrf = (await raw(port, { url: '/ui/api/session', headers: { cookie } })).body.csrf;
   const post = (route, body = {}) => raw(port, { method: 'POST', url: route, body: JSON.stringify(body),
     headers: { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } });
-  /** Asks for a start; resolves the confirm request's promise (not awaited by the caller when racing). */
-  const ask = async (method) => { const c = await post('/ui/api/host', { method, params: {} }); return c; };
-  const confirm = (c) => post('/ui/api/confirm', { pendingId: c.body.pending.pendingId, text: c.body.pending.phrase });
-  return { post, ask, confirm, calls, revokes, clock, ctl };
+  /** A start click: it acts at once (D331); the promise is not awaited by the caller when racing. */
+  const ask = (method) => post('/ui/api/host', { method, params: {} });
+  return { post, ask, calls, revokes, clock, ctl };
 }
 
 test('quit while a stream or a recording runs, or with the host unreadable: refused (fail closed); idle: granted, authority revoked', async () => {
@@ -91,31 +90,26 @@ test('quit while a stream or a recording runs, or with the host unreadable: refu
 
 test('after the grant every stream and recording start is refused with 409 "Ujwalam is closing"; the host never gets it; cancel releases', async () => {
   const s = await boot();
-  const early = await s.ask('stream.start'); // asked before the quit, confirmed after it
-  assert.equal(early.body.verdict, 'confirm');
   const { token } = (await s.post('/ui/api/quit/begin')).body;
+  assert.equal(s.revokes.length, 1, 'granted');
   for (const m of ['stream.start', 'record.start']) {
     const r = await s.post('/ui/api/host', { method: m, params: {} });
     assert.equal(r.status, 409, m);
     assert.deepEqual(r.body, { error: 'closing', detail: 'Ujwalam is closing' });
   }
-  const late = await s.confirm(early);
-  assert.equal(late.status, 409, 'a start confirmed after the grant is refused too');
   assert.ok(!s.calls.includes('stream.start') && !s.calls.includes('record.start'), 'nothing started on the host');
-  assert.equal((await s.post('/ui/api/host', { method: 'stream.stop', params: {} })).body.verdict, 'confirm', 'stops are never blocked');
+  assert.equal((await s.post('/ui/api/host', { method: 'stream.stop', params: {} })).body.verdict, 'allow', 'stops are never blocked');
   assert.equal((await s.post('/ui/api/quit/cancel', { token: 'f'.repeat(32) })).status, 200);
   assert.equal((await s.post('/ui/api/host', { method: 'record.start', params: {} })).status, 409, 'a wrong token releases nothing');
   await s.post('/ui/api/quit/cancel', { token });
   const again = await s.ask('record.start');
-  assert.equal(again.body.verdict, 'confirm', 'released: starts allowed again');
-  assert.equal((await s.confirm(again)).body.verdict, 'allow');
+  assert.equal(again.body.verdict, 'allow', 'released: starts allowed again');
   assert.ok(s.calls.includes('record.start'));
 });
 
 test('race: a start already on its way to the host refuses the quit; right after it the quit is still refused (the host may not show it yet)', async () => {
   const s = await boot({ startDelayMs: 600 });
-  const c = await s.ask('stream.start');
-  const starting = s.confirm(c); // in flight: the host takes 600 ms
+  const starting = s.ask('stream.start'); // in flight: the host takes 600 ms
   await new Promise((r) => setTimeout(r, 150));
   assert.deepEqual((await s.post('/ui/api/quit/begin')).body, { granted: false, reason: 'starting' });
   assert.equal((await starting).body.verdict, 'allow', 'the start itself goes through: the lock was released at once');
@@ -137,7 +131,7 @@ test('a granted lock never expires (test clock past 60 s): starts stay refused; 
   await s.post('/ui/api/quit/cancel', { token });
   const stale = await s.post('/ui/api/quit/commit', { token });
   assert.deepEqual([stale.status, stale.body.error], [409, 'stale-quit'], 'released: a late commit of the old token fails, so no exit');
-  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).body.verdict, 'confirm', 'released: going live works');
+  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).body.verdict, 'allow', 'released: going live works');
 });
 
 test('the revoke racing time cannot grant: slow revoke holds the lock (no start slips in); a revoke with no answer or a refusal releases without a grant', async () => {
@@ -155,7 +149,8 @@ test('the revoke racing time cannot grant: slow revoke holds the lock (no start 
   await s.post('/ui/api/quit/cancel', { token: g.token });
   s.ctl.revoke = () => new Promise(() => {}); // never answers: bounded (quitWaitMs 400 here, 10 s by default)
   assert.deepEqual((await s.post('/ui/api/quit/begin')).body, { granted: false, reason: 'unreadable' });
-  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).body.verdict, 'confirm', 'released: not locked for ever');
   s.ctl.revoke = async () => false; // the launcher did not confirm the revoke
   assert.deepEqual((await s.post('/ui/api/quit/begin')).body, { granted: false, reason: 'unreadable' });
+  // Checked last: a start that goes through blocks a quit for a while ('starting').
+  assert.equal((await s.post('/ui/api/host', { method: 'stream.start', params: {} })).body.verdict, 'allow', 'released: not locked for ever');
 });

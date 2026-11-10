@@ -53,7 +53,7 @@ Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
 $ShortcutName = 'Ujwalam (alpha).lnk'
 # LIVE start (D281): configures the stream targets (keys from Windows Credential Manager); nothing goes live until
-# Start stream and the typed "yes, on air".
+# the user clicks Start stream.
 $LiveShortcutName = 'Ujwalam (alpha, LIVE).lnk'
 
 function Say([string]$m) { Write-Host "[install] $m" }
@@ -271,7 +271,7 @@ if (-not $NoShortcuts) {
     $lnk.Arguments = '--live --allow-devices'
     $lnk.WorkingDirectory = $InstallRoot
     $lnk.IconLocation = $iconLoc
-    $lnk.Description = 'Ujwalam alpha, stream targets set up (going live still needs Start stream and the typed yes, on air)'
+    $lnk.Description = 'Ujwalam alpha, stream targets set up (going live still needs a Start stream click)'
     $lnk.Save()
     Say "shortcut: $(Join-Path $dir $LiveShortcutName)"
   }
