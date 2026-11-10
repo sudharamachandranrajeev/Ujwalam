@@ -586,3 +586,19 @@ function. Approved plan: `docs/plan/2026-11-10-live-updates-live-learning-scene-
 SB1–SB5). Order: LU8 live-soak gate and LU2 data hot-reload first. The libobs host is never swapped while live; its
 updates are staged until the next stop. Learning store capped at 5 GB, oldest streams first. A local vision model for
 layout reading is allowed if the hardware allows it (6 GB VRAM, never loaded while live), asked again before any install.
+
+## D325 — Data hot-reload and the live-soak gate (LU2, LU8; 2026-11-10, agent decision under D324)
+
+Data files reload at their owning process through one data source (`services/common/data-reload.mjs`): a directory
+watch with debounce plus a poll, schema check first; an invalid version keeps the last good one and is shown in the
+task area (`data-<kind>` task) and the log at warn level, never error. Posting rules keep the last good version in a
+running process; with no good version at all they still fail closed. A broken `flags.local.json` keeps the last flag
+values instead of resetting them to the defaults. Registry scene presets are not reloaded live: nothing running reads
+them after launch (LU3 decides how a project picks up a changed preset). Game packs and the clip worker are out of
+scope. The live-soak gate (`npm run soak`) runs from a staged copy of the runtime (`tools/soak/stage.mjs`) so it can
+change data files without touching the repo; the host's overlay child gets only whitelisted environment variables, so
+the stage's own profile points its data dir at the run. The gate needs a quiet machine: it refuses to start while Meld
+Studio, an installed Ujwalam or a detector job runs, checks again every minute, and reports CPU per process next to
+every lost frame, because the stack runs at BelowNormal and outside load shows up as render lag. The last segment of
+each loopback stream may end one frame short at stream stop (encoder flush); that one step is reported apart and not
+counted as a gap.

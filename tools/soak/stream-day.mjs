@@ -33,158 +33,22 @@
 // (counts only). Output: <run>/result.json and timeseries.jsonl (numbers only). Prints counts and timings only:
 // never chat text, names, ids, tokens or keys.
 
-import { execFile, spawn, spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import http from 'node:http';
-import os from 'node:os';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, readFileSync, statSync, writeFileSync, appendFileSync } from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import { HostClient } from '../../app/host/lib/client.mjs';
-import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
 import { probe } from '../../app/host/lib/ffprobe.mjs';
-import { planFile } from '../../app/host/lib/outputs-plan.mjs';
 import { createFlags } from '../../services/flags/index.mjs';
-import { alphaHostConfig, alphaProject, alphaStatus, coreEnv, coreServeArgs, hostLaunchSpec, openHostLog, waitForDiscovery, writeHostConfig } from '../../services/studio-ui/launch.mjs';
-import { startMockStreamerbot } from '../mock/mock-streamerbot.mjs';
-import { killTree, track } from '../proc-registry.mjs';
 import { scanStrays } from '../stray-procs.mjs';
 import { chooseExport, envelope, pct, purgeProof, readExports, timeline } from './replay.mjs';
+import { filesUnder, gpu, httpReq, LOOPBACK_PORTS, loopbackPlan, openSse, REPO, rpcCore, setBelow, startStack, preflight, summariseProbe, treeOf } from './stack.mjs';
 
-const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-const BELOW = os.constants.priority.PRIORITY_BELOW_NORMAL;
-const FFMPEG = process.env.FFMPEG || 'ffmpeg';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const hex = (n) => randomBytes(n).toString('hex');
 const t0 = Date.now();
 const log = (...a) => console.log(`[stream-day +${Math.round((Date.now() - t0) / 1000)}s]`, ...a);
 export const RUN_FLAGS = Object.freeze(['live-markers', 'posting', 'auto-post', 'chat-effects', 'test-broadcast']);
-export const LOOPBACK_PORTS = Object.freeze({ 'youtube-h': 19551, 'youtube-v': 19552, twitch: 19553, kick: 19554 });
-
-/** The alpha live plan with every stream target replaced by a loopback RTMP listener (pure; same rungs and sinks). */
-export function loopbackPlan(live, ports = LOOPBACK_PORTS) {
-  const targets = {};
-  for (const [id, t] of Object.entries(live.targets)) {
-    if (t.transport === 'file') targets[id] = { ...t };
-    else {
-      if (!Number.isInteger(ports[id])) throw new Error(`no loopback port for sink ${id}`);
-      targets[id] = { transport: 'rtmp', port: ports[id], app: 'live', stream: id };
-    }
-  }
-  return { $comment: 'stream-day mock run: data/outputs/alpha-live.json with loopback targets only', config: live.config, extraSinks: live.extraSinks, targets, policy: live.policy };
-}
-
-function setBelow(pid) { try { os.setPriority(pid, BELOW); return true; } catch { return false; } }
-
-function execText(cmd, args, timeoutMs = 20000) {
-  return new Promise((resolve) => {
-    execFile(cmd, args, { windowsHide: true, timeout: timeoutMs, maxBuffer: 8 << 20 }, (err, stdout) => resolve(err ? null : String(stdout)));
-  });
-}
-
-// Every process below `root` (Windows CIM, one query): [{ pid, ppid, name, wsMB, privMB, handles }].
-const TREE_PS = '$ErrorActionPreference="SilentlyContinue"; Get-CimInstance Win32_Process | ForEach-Object { "{0}|{1}|{2}|{3}|{4}|{5}" -f $_.ProcessId,$_.ParentProcessId,$_.Name,$_.WorkingSetSize,$_.PrivatePageCount,$_.HandleCount }';
-async function treeOf(root) {
-  const out = await execText('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', TREE_PS]);
-  if (!out) return null;
-  const all = out.split(/\r?\n/).filter(Boolean).map((l) => { const [pid, ppid, name, ws, priv, h] = l.split('|'); return { pid: +pid, ppid: +ppid, name, wsMB: +ws / 1048576, privMB: +priv / 1048576, handles: +h }; });
-  const kids = new Map();
-  for (const p of all) { if (!kids.has(p.ppid)) kids.set(p.ppid, []); kids.get(p.ppid).push(p); }
-  const res = []; const stack = [root];
-  while (stack.length) { const id = stack.pop(); for (const c of kids.get(id) ?? []) { if (c.pid === id) continue; res.push(c); stack.push(c.pid); } }
-  return res;
-}
-
-async function gpu() {
-  const out = await execText('nvidia-smi', ['--query-gpu=encoder.stats.sessionCount,encoder.stats.averageFps,memory.used,utilization.gpu,utilization.encoder', '--format=csv,noheader,nounits']);
-  if (!out) return null;
-  const [sessions, encFps, memMB, gpuPct, encPct] = out.trim().split(/\r?\n/)[0].split(',').map((x) => Number(x.trim()));
-  return { sessions, encFps, memMB, gpuPct, encPct };
-}
-
-function rpcCore(port, token, method, params = {}) {
-  return new Promise((resolve) => {
-    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method, params });
-    const t = performance.now();
-    const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/rpc', agent: false, timeout: 10000, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) } }, (res) => {
-      let b = ''; res.setEncoding('utf8'); res.on('data', (d) => { b += d; });
-      res.on('end', () => { let j = null; try { j = JSON.parse(b); } catch { /* none */ } resolve({ ms: performance.now() - t, result: j?.result ?? null, error: j?.error?.code ?? null }); });
-    });
-    req.on('error', () => resolve({ ms: performance.now() - t, result: null, error: 'net' }));
-    req.on('timeout', () => req.destroy(new Error('timeout')));
-    req.end(body);
-  });
-}
-
-// API SSE (chat kinds): delivery time per platformMessageId, compared with the emit time. Ids only, in memory.
-function openSse(port, token, emitted, lat) {
-  const st = { events: 0, matched: 0, status: null };
-  const req = http.request({ host: '127.0.0.1', port, path: '/events?kinds=chat.', agent: false, headers: { authorization: `Bearer ${token}` } }, (res) => {
-    st.status = res.statusCode; res.setEncoding('utf8');
-    let buf = '';
-    res.on('data', (d) => {
-      buf += d; let i;
-      while ((i = buf.indexOf('\n\n')) >= 0) {
-        const block = buf.slice(0, i); buf = buf.slice(i + 2);
-        const line = block.split('\n').find((l) => l.startsWith('data: '));
-        if (!line) continue;
-        st.events++;
-        try {
-          const id = JSON.parse(line.slice(6)).platformMessageId;
-          const at = emitted.get(id);
-          if (at !== undefined) { lat.push(performance.now() - at); emitted.delete(id); st.matched++; }
-        } catch { /* not JSON */ }
-      }
-    });
-  });
-  req.on('error', () => {}); req.end();
-  return { st, close: () => req.destroy() };
-}
-
-function httpReq(port, method, route, { cookie, csrf, body } = {}) {
-  return new Promise((resolve) => {
-    const data = body === undefined ? null : JSON.stringify(body);
-    const headers = { Host: `127.0.0.1:${port}` };
-    if (cookie) headers.Cookie = cookie;
-    if (method === 'POST') Object.assign(headers, { Origin: `http://127.0.0.1:${port}`, 'Content-Type': 'application/json', 'X-Ujwalam-Csrf': csrf ?? '', 'Content-Length': Buffer.byteLength(data ?? '') });
-    const r = http.request({ host: '127.0.0.1', port, path: route, method, headers, timeout: 15000 }, (res) => {
-      let t = ''; res.setEncoding('utf8'); res.on('data', (c) => { t += c; });
-      res.on('end', () => { let j = null; try { j = t ? JSON.parse(t) : null; } catch { j = null; } resolve({ status: res.statusCode, headers: res.headers, body: j }); });
-    });
-    r.on('error', () => resolve({ status: 0, body: null, headers: {} }));
-    r.on('timeout', () => r.destroy(new Error('timeout')));
-    if (data !== null) r.write(data);
-    r.end();
-  });
-}
-
-function portFromLines(child, re, logFile, ms = 60000) {
-  return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: child.stdout });
-    const t = setTimeout(() => resolve(null), ms);
-    let found = false;
-    rl.on('line', (l) => { appendFileSync(logFile, `${l}\n`); if (!found) { const m = re.exec(l); if (m) { found = true; clearTimeout(t); resolve(Number(m[1])); } } });
-    child.once('exit', () => { clearTimeout(t); if (!found) resolve(null); });
-  });
-}
-
-function filesUnder(dir, re) {
-  const out = [];
-  if (!existsSync(dir)) return out;
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    if (e.isDirectory()) out.push(...filesUnder(p, re)); else if (re.test(e.name)) out.push(p);
-  }
-  return out;
-}
-
-function summariseProbe(p) {
-  const v = p.streams.find((s) => s.type === 'video');
-  const a = p.streams.filter((s) => s.type === 'audio');
-  return { durationSec: +(p.durationSec || 0).toFixed(1), video: v ? { codec: v.codec, w: v.width, h: v.height, fps: +v.measuredFps.toFixed(2), kbps: Math.round(v.measuredKbps), gopSec: v.gopSecMedian ?? null } : null, audio: a.map((x) => ({ codec: x.codec, rate: x.sampleRate, ch: x.channels, kbps: Math.round(x.measuredKbps) })) };
-}
+export { LOOPBACK_PORTS, loopbackPlan }; // kept: tests and other tools import them from here
 
 /** Numbers from the time series (pure; tested): memory after a 10 min warm-up (or the first third), frames, sessions. */
 export function summarise(rows, warmS = 600) {
@@ -242,17 +106,13 @@ export async function main(argv = process.argv.slice(2)) {
   const recordingsDir = path.join(mediaDir, 'recordings');
   const feedbackDir = path.join(mediaDir, 'feedback');
   for (const d of [coreDir, hostData, recvDir, recordingsDir, feedbackDir]) mkdirSync(d, { recursive: true });
-  let core = null; let mock = null; let host = null; let c = null; let ui = null; let hostExit = null;
   setBelow(process.pid);
   const result = { runId, startedAt: new Date().toISOString(), minutes, speed, maxGapS: args['max-gap-s'] != null ? Number(args['max-gap-s']) : null, sampleS: sampleMs / 1000, checks: [], notes: [] };
   const check = (name, pass, detail) => { result.checks.push({ name, pass: !!pass, ...(detail === undefined ? {} : { detail }) }); log(pass ? 'PASS' : 'FAIL', name, detail === undefined ? '' : JSON.stringify(detail)); };
   const tsFile = path.join(runDir, 'timeseries.jsonl');
 
   // ---- pre-flight
-  const meld = spawnSync('powershell.exe', ['-NoProfile', '-Command', '(Get-Process MeldStudio* -ErrorAction SilentlyContinue | Measure-Object).Count'], { encoding: 'utf8', windowsHide: true });
-  if (Number(meld.stdout?.trim()) > 0) { log('MeldStudio is running; not starting a heavy run'); return 4; }
-  const patch = spawnSync(process.execPath, [path.join(REPO, 'tools', 'obs-patch', 'build-obs-nvenc.mjs'), '--check'], { encoding: 'utf8', windowsHide: true });
-  check('obs-nvenc.dll patched (build-obs-nvenc --check)', patch.status === 0 && /: patched/.test(patch.stdout));
+  if (!preflight({ log, check })) return 4;
   const gpuBefore = await gpu();
   result.gpuBefore = gpuBefore;
   const exp = chooseExport(readExports(path.join(dataRoot, 'chat', 'twitch')), 3600);
@@ -265,85 +125,13 @@ export async function main(argv = process.argv.slice(2)) {
   result.flags = Object.fromEntries(RUN_FLAGS.map((id) => [id, flags.isOn(id)]));
   check('run flags on in the temp data dir only', RUN_FLAGS.every((id) => flags.isOn(id)) && !createFlags({ dataDir: path.join(runDir, 'nonexistent') }).isOn('live-markers'));
 
-  // ---- loopback listeners
-  const live = JSON.parse(readFileSync(path.join(REPO, 'data', 'outputs', 'alpha-live.json'), 'utf8'));
-  const plan = loopbackPlan(live);
-  const planPath = path.join(runDir, 'plan.json');
-  writeFileSync(planPath, JSON.stringify(plan, null, 2));
-  const { params, report } = planFile(planPath);
-  result.plan = { rungs: params.rungs?.map((r) => ({ id: r.id, canvas: r.canvas, w: r.w, h: r.h, fps: r.fps, kbps: r.bitrate })) ?? null, sinks: params.sinks.map((s) => s.id), warnings: report.warnings.map((w) => w.code) };
-  const listeners = new Map();
-  const startListener = (id) => {
-    const t = params.sinks.find((s) => s.id === id).target;
-    const n = (listeners.get(id)?.n ?? 0) + 1;
-    // Segmented (5 min, last 3 kept) so an hour of 17 Mbps does not fill the disk; each segment is ffprobed.
-    const pattern = path.join(recvDir, `${id}-${n}-%03d.mkv`);
-    const p = track(spawn(FFMPEG, ['-hide_banner', '-loglevel', 'warning', '-listen', '1', '-i', `rtmp://127.0.0.1:${t.port}/${t.app}/${t.stream}`, '-c', 'copy', '-f', 'segment', '-segment_time', '300', '-segment_wrap', '3', '-segment_format', 'matroska', '-reset_timestamps', '1', '-y', pattern], { stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true }));
-    setBelow(p.pid);
-    let errBytes = 0; p.stderr.on('data', (d) => { errBytes += d.length; appendFileSync(path.join(recvDir, `${id}-${n}.ffmpeg.log`), d); });
-    const exited = new Promise((r) => p.once('exit', (c) => r(c)));
-    listeners.set(id, { proc: p, n, exited, errBytes: () => errBytes });
-  };
-  for (const s of params.sinks) if (s.target.transport !== 'file') startListener(s.id);
-  await sleep(1500);
-
-  // ---- mock Streamer.bot + event core
-  mock = await startMockStreamerbot();
-  const coreTokens = { api: hex(32), system: hex(32) };
-  const hostToken = hex(32);
-  const hostMarkersToken = hex(32);
-  const launchKey = hex(32);
-  const coreArgs = coreServeArgs({ dataDir: coreDir, sbWs: { ws: mock.url } });
-  const coreLog = path.join(runDir, 'core.log');
-  core = track(spawn(process.execPath, [path.join(REPO, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: coreEnv({ coreTokens, hostMarkersToken }) }));
-  core.stderr.on('data', (d) => appendFileSync(coreLog, d));
-  const corePort = await portFromLines(core, /api on 127\.0\.0\.1:(\d+)/, coreLog);
-  if (!corePort) { log('event core did not start'); await teardown(); return 1; }
-  await sleep(1000);
-  setBelow(core.pid); // the core raises itself to Normal (live default); this run keeps every process BelowNormal
-
-  // ---- host (alpha spec, headless, hotkeys off, loopback plan)
-  process.env.UJWALAM_HOST_DATA = hostData;
-  const hostCfg = resolveHostConfig({ dataDir: hostData, recordings: recordingsDir });
-  const hcfg = alphaHostConfig({ dataDir: coreDir, feedbackDir });
-  hcfg.hotkeys = { ...(hcfg.hotkeys ?? {}), enabled: false };
-  const hostConfigFile = writeHostConfig(coreDir, hcfg);
-  const hostDiscovery = path.join(coreDir, 'host.json');
-  const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args: {}, alpha: true, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system, headless: true });
-  result.hostNotes = spec.notes;
-  const paramsFile = path.join(hostData, 'outputs-params.json');
-  writeFileSync(paramsFile, JSON.stringify(params, null, 2));
-  const hostLog = openHostLog(path.join(coreDir, 'logs'));
-  host = track(spawn(hostCfg.exe, [...spec.argv, '--outputs', paramsFile], { stdio: ['ignore', hostLog.fd, hostLog.fd], windowsHide: true, env: { ...process.env, ...spec.env, UJWALAM_HEADLESS: '1', UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_DISCOVERY: hostDiscovery } }));
-  host.once('exit', (c) => { hostExit = c; });
-  const disc = await waitForDiscovery(hostDiscovery, host);
-  if (!disc) { log('host not ready'); await teardown(); return 1; }
-  c = new HostClient({ port: disc.port, token: hostToken });
-  const info = await c.call('host.info');
-  result.host = { obsVersion: info.obsVersion, adapter: info.adapter, allowDevices: info.flags?.allowDevices, allowLive: info.flags?.allowLive, disabledModules: info.disabledModules };
-  check('host: devices off, real targets off', info.flags?.allowDevices === false && info.flags?.allowLive !== true);
-  await alphaProject({ client: c, dataDir: coreDir, args: { profile: path.join(REPO, 'data', 'profile.local.json') }, hostCfg });
-  await alphaStatus(c);
-  const ost = await c.call('outputs.status');
-  check('every stream sink is a loopback target', ost.sinks.filter((s) => s.kind === 'stream').every((s) => s.target === 'loopback'), ost.sinks.map((s) => `${s.id}:${s.kind}:${s.target ?? s.container ?? ''}`));
-
-  // ---- UI server
-  const uiLog = path.join(runDir, 'ui.log');
-  ui = track(spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--data-dir', coreDir, '--feedback-dir', feedbackDir, '--profile', path.join(REPO, 'data', 'profile.local.json'), '--release', path.join(REPO, 'release.json')], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_DISCOVERY: hostDiscovery, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' } }));
-  ui.stderr.on('data', (d) => appendFileSync(uiLog, d));
-  const uiPort = await portFromLines(ui, /listening on http:\/\/127\.0\.0\.1:(\d+)\//, uiLog);
-  let cookie = null;
-  if (uiPort) {
-    const l = await httpReq(uiPort, 'GET', `/login?k=${launchKey}`);
-    const set = l.headers['set-cookie'];
-    cookie = Array.isArray(set) && set[0] ? set[0].split(';')[0] : null;
-  }
-  check('UI server up and one-time login works', uiPort && cookie);
-  for (const p of (await treeOf(process.pid)) ?? []) setBelow(p.pid);
-
-  // ---- wait for the core to subscribe to the mock
-  for (let i = 0; i < 600 && !(mock.clientCount() > 0 && mock.subscriptions().some((s) => s.length > 0)); i++) await sleep(100);
-  check('event core subscribed to the mock Streamer.bot', mock.clientCount() > 0);
+  // ---- the stack: loopback listeners, mock Streamer.bot, event core, host, alpha project, UI server (stack.mjs)
+  const st = await startStack({ runDir, coreDir, hostData, recvDir, recordingsDir, feedbackDir, log, check, profile: path.join(REPO, 'data', 'profile.local.json') });
+  if (!st) return 1;
+  const { c, corePort, coreTokens, uiPort, cookie, mock, host, params } = st;
+  result.plan = { rungs: params.rungs?.map((r) => ({ id: r.id, canvas: r.canvas, w: r.w, h: r.h, fps: r.fps, kbps: r.bitrate })) ?? null, sinks: params.sinks.map((s) => s.id), warnings: st.planReport.warnings.map((w) => w.code) };
+  result.hostNotes = st.hostNotes;
+  result.host = st.hostInfo;
   const emitted = new Map(); const lat = [];
   const sse = openSse(corePort, coreTokens.api, emitted, lat);
 
@@ -440,7 +228,7 @@ export async function main(argv = process.argv.slice(2)) {
   while (Date.now() < endAt) {
     const row = await sample('tick');
     const failed = row.sinks?.filter((s) => s.state !== 'live').map((s) => `${s.id}:${s.state}`) ?? [];
-    if (row.hostError || hostExit !== null) { stopEarly = `host ${row.hostError ?? `exited ${hostExit}`}`; break; }
+    if (row.hostError || st.hostExit !== null) { stopEarly = `host ${row.hostError ?? `exited ${st.hostExit}`}`; break; }
     log(`t=${row.t}s fps ${row.host?.fps} lagged ${row.host?.renderLagged} skipped ${row.host?.encodeSkipped} nvenc ${row.gpu?.sessions} hostPriv ${row.mem?.hostPrivMB}MB chat ${row.chat.sent}/${row.chat.sse} markers ${row.markers} effects ${row.overlay?.effects}${failed.length ? ` NOT LIVE ${failed.join(',')}` : ''}`);
     if (Date.now() >= nextEffects) { await effectBurst(); nextEffects += effectsEveryMs; }
     if (Date.now() >= nextReplay) { await replaySave(); nextReplay += replayEveryMs; }
@@ -462,7 +250,7 @@ export async function main(argv = process.argv.slice(2)) {
   result.endSample = last;
 
   // ---- stop outputs
-  if (hostExit === null) {
+  if (st.hostExit === null) {
     result.streamStop = await c.call('stream.stop').then(() => 'ok', (e) => `error ${e.code ?? e.message}`);
     if (args['no-record'] !== true) result.recordStop = await c.call('record.stop').then(() => 'ok', (e) => `error ${e.code ?? e.message}`);
     for (let i = 0; i < 60; i++) { const s = await c.call('outputs.status').catch(() => null); if (!s || s.sinks.every((x) => !['starting', 'live', 'retrying', 'stopping'].includes(x.state))) break; await sleep(500); }
@@ -475,10 +263,10 @@ export async function main(argv = process.argv.slice(2)) {
   result.coreRttMs = { p50: pct(coreRtt, 0.5), p95: pct(coreRtt, 0.95), max: coreRtt.length ? Math.max(...coreRtt) : null };
   sse.close();
 
-  await teardown();
+  await st.teardown();
 
   // ---- after: probes, crash reports, strays, purge, text scan
-  result.hostExitCode = hostExit;
+  result.st.hostExitCode = st.hostExit;
   result.received = {};
   for (const f of filesUnder(recvDir, /\.mkv$/)) {
     try { result.received[path.basename(f)] = summariseProbe(probe(f)); } catch (e) { result.received[path.basename(f)] = { error: String(e.message).slice(0, 80) }; }
@@ -516,19 +304,6 @@ export async function main(argv = process.argv.slice(2)) {
   log('result:', path.join(runDir, 'result.json'));
   return 0;
 
-  async function teardown() {
-    try { ui?.kill(); } catch { /* gone */ }
-    if (host && c && hostExit === null) {
-      try { await c.call('host.shutdown'); } catch { /* fall through */ }
-      for (let i = 0; i < 80 && hostExit === null; i++) await sleep(250);
-      if (hostExit === null) killTree(host.pid);
-    }
-    try { core?.kill(); } catch { /* gone */ }
-    try { await mock?.close(); } catch { /* not started */ }
-    for (const [, l] of listeners) { try { l.proc.stdin.write('q'); } catch { /* gone */ } }
-    await Promise.race([Promise.all([...listeners.values()].map((l) => l.exited)), sleep(15000)]);
-    for (const [, l] of listeners) if (l.proc.exitCode === null) killTree(l.proc.pid);
-  }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exit(await main());

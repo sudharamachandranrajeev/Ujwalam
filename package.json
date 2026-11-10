@@ -20,6 +20,7 @@
     "build:studio": "node app/studio/tools/build.mjs",
     "test:host": "node --test --test-timeout=300000 --test-concurrency=2 \"app/host/tests/*.test.mjs\"",
     "bench": "node tools/bench/run.mjs",
+    "soak": "node tools/soak/live-soak.mjs",
     "fx:test": "node tools/fx-test.mjs",
     "validate:registry": "node tools/registry-validate.mjs registry",
     "legacy:verify": "node tools/legacy-verify.mjs",

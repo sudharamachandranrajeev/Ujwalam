@@ -11,8 +11,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const STAGE_DIRS = Object.freeze(['services', path.join('app', 'host', 'overlay'), path.join('app', 'host', 'lib'), path.join('app', 'host', 'projects'), 'data', 'registry', 'ui']);
-export const STAGE_FILES = Object.freeze(['package.json', 'release.json']);
+// services import tools/diag (report, diagnostics bundle), tools/mock (event core mock mode), tools/package/zip.mjs and
+// app/studio/tools (studio exe path).
+export const STAGE_DIRS = Object.freeze(['services', path.join('app', 'host', 'overlay'), path.join('app', 'host', 'lib'), path.join('app', 'host', 'projects'), path.join('app', 'studio', 'tools'), path.join('tools', 'diag'), path.join('tools', 'mock'), 'data', 'registry', 'ui']);
+export const STAGE_FILES = Object.freeze(['package.json', 'release.json', path.join('tools', 'package', 'zip.mjs')]);
 
 const skip = (src) => {
   const b = path.basename(src);
@@ -30,7 +32,7 @@ export function stageRuntime(dir, { eventCoreData = null, repo = REPO } = {}) {
     const src = path.join(repo, d);
     if (existsSync(src)) cpSync(src, path.join(root, d), { recursive: true, filter: skip });
   }
-  for (const f of STAGE_FILES) if (existsSync(path.join(repo, f))) cpSync(path.join(repo, f), path.join(root, f));
+  for (const f of STAGE_FILES) if (existsSync(path.join(repo, f))) { mkdirSync(path.dirname(path.join(root, f)), { recursive: true }); cpSync(path.join(repo, f), path.join(root, f)); }
   if (eventCoreData) writeFileSync(path.join(root, 'data', 'profile.local.json'), JSON.stringify({ paths: { event_core_data: path.resolve(eventCoreData) } }, null, 2));
   return { root, dataFile: (rel) => path.join(root, 'data', rel), overlayScript: path.join(root, 'app', 'host', 'overlay', 'child.mjs') };
 }
