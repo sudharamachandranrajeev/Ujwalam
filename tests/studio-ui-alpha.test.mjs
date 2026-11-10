@@ -192,13 +192,18 @@ test('alpha build with bound roles and a V preset: one scene, V capture layers d
   assert.deepEqual(project.devices.map((d) => d.kind).sort(), ['camera', 'capture-card', 'microphone', 'microphone'], 'mic + the card audio input');
   const layers = project.scenes[0].layers;
   const caps = layers.filter((l) => l.type === 'capture');
-  const dups = layers.filter((l) => l.type === 'duplicate');
+  const isBackdrop = (l) => l.origin?.id?.endsWith('/game-backdrop');
+  const dups = layers.filter((l) => l.type === 'duplicate' && !isBackdrop(l));
   assert.equal(caps.length, 2, 'one capture layer per device');
   assert.equal(dups.length, 2, 'the V copies are duplicates');
   for (const d of dups) {
     assert.ok(caps.some((c) => c.id === d.source.layer));
     assert.deepEqual(Object.keys(d.placements), ['v']);
   }
+  // D331: one blurred backdrop per canvas, both showing the H game capture layer
+  const bds = layers.filter(isBackdrop);
+  assert.deepEqual(bds.map((l) => Object.keys(l.placements).join()).sort(), ['h', 'v']);
+  for (const b of bds) assert.equal(b.source.layer, caps.find((c) => c.origin.id.endsWith('/game')).id);
   for (const c of caps) assert.deepEqual(Object.keys(c.placements), ['h']);
   assert.equal(report.duplicated, 2);
   assert.deepEqual(report.unbound, []);
@@ -209,20 +214,27 @@ test('alpha build with bound roles and a V preset: one scene, V capture layers d
   assert.equal(project.devices.find((d) => d.id === game.device).name, 'HDMI/Line In (Live Gamer Ultra 2.1-Audio)');
 });
 
-test('alpha build with the real V preset and layer-effects on: the blurred backdrop duplicates the H game layer (never a duplicate of a duplicate)', () => {
+test('alpha build with the real presets (layer-effects on or off): the blurred backdrops duplicate the H game layer (never a duplicate of a duplicate) and sit under every layer of their canvas (D331)', () => {
   const d = tmp('presets-real');
   for (const f of ['scene-default-h.json', 'scene-default-v.json']) copyFileSync(path.join(PRESETS, f), path.join(d, f));
   const bindings = matchRoles({ list: LIST, presets: devicePresets });
-  const { project } = buildAlphaProject({ presetsDir: d, profile: PROFILE, bindings, devicesListed: true, flags: { 'layer-effects': true } });
-  assert.ok(validateProject(project).ok, JSON.stringify(validateProject(project).errors));
-  const layers = project.scenes[0].layers;
-  const byId = new Map(layers.map((l) => [l.id, l]));
-  for (const l of layers.filter((x) => x.type === 'duplicate')) assert.equal(byId.get(l.source.layer).type, 'capture', l.name);
-  const bd = layers.find((l) => l.effects?.some((e) => e.type === 'blur'));
-  assert.ok(bd, 'backdrop present');
-  const hGame = byId.get(bd.source.layer);
-  assert.ok(hGame.placements.h, 'points at the H game capture layer');
-  assert.equal(bd.placements.v.visible, true);
+  for (const flags of [{ 'layer-effects': true }, {}]) {
+    const { project } = buildAlphaProject({ presetsDir: d, profile: PROFILE, bindings, devicesListed: true, flags });
+    assert.ok(validateProject(project).ok, JSON.stringify(validateProject(project).errors));
+    const layers = project.scenes[0].layers;
+    const byId = new Map(layers.map((l) => [l.id, l]));
+    for (const l of layers.filter((x) => x.type === 'duplicate')) assert.equal(byId.get(l.source.layer).type, 'capture', l.name);
+    const bds = layers.filter((l) => l.effects?.some((e) => e.type === 'blur'));
+    assert.equal(bds.length, 2, 'one backdrop per canvas');
+    for (const [canvas, strength] of [['h', 71], ['v', 40]]) {
+      const bd = bds.find((l) => l.placements[canvas]);
+      assert.ok(byId.get(bd.source.layer).placements.h, 'points at the H game capture layer');
+      assert.equal(bd.placements[canvas].visible, true);
+      assert.deepEqual(bd.effects, [{ type: 'blur', strength }]);
+      assert.equal(layers.find((l) => l.placements[canvas]), bd, `${canvas}: backdrop is the bottom layer of its canvas`);
+    }
+    assert.ok(!layers.some((l) => /\/background$/.test(l.origin?.id ?? '')), 'no browser background');
+  }
 });
 
 test('alpha build without the card audio input: the capture layer audio is the Game channel (CUE late, still on)', () => {
