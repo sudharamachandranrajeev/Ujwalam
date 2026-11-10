@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { cleanTask, createTasks, createTiming, ETA_MIN_MS, etaFrom, progressOf, PRUNE_MS, readTaskFiles, tasksDir, writeTaskFile } from '../services/studio-ui/tasks.mjs';
+import { cleanTask, createTasks, createTiming, ETA_MIN_MS, etaFrom, loadTaskConfig, progressOf, PRUNE_MS, readTaskFiles, stallOf, stepOf, tasksDir, writeTaskFile } from '../services/studio-ui/tasks.mjs';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
@@ -114,6 +114,60 @@ test('createTasks list(): every task carries progress, elapsedMs and etaMs (file
     const by = Object.fromEntries(l.map((x) => [x.id.startsWith('ui-') ? 'ui' : x.id, x]));
     assert.equal(by.ui.etaMs, 10_000, 'half in 10 s: 10 s left');
     assert.equal(by['clip-b'].etaMs, 10_000, '0.2 to 0.6 in 10 s, 0.4 left: 10 s');
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+// ---- task panel (user feedback 2026-11-10): stages, step, stall warning ----
+test('task panel: stages, plain stage words, unit, activeAt and progressAt survive cleanTask; bad ones are dropped', () => {
+  const t = cleanTask({ id: 'a', title: 'x', state: 'running', stage: 'detect', stages: ['detect', 'gate', 7, 'x'.repeat(40)], stageText: 's'.repeat(99), unit: 'frame', activeAt: 5, progressAt: -1 });
+  assert.deepEqual(t.stages, ['detect', 'gate', 'x'.repeat(24)]);
+  assert.equal(t.stageText.length, 60);
+  assert.deepEqual([t.unit, t.activeAt, t.progressAt], ['frame', 5, null]);
+  const old = cleanTask({ id: 'a', title: 'x', state: 'running' });
+  assert.deepEqual([old.stages, old.stageText, old.unit, old.activeAt, old.progressAt], [null, null, null, null, null], 'older writers: all optional');
+});
+
+test('task panel: stallAfterMs comes from data/studio/tasks.json; a missing or wrong file turns the warning off', () => {
+  assert.equal(loadTaskConfig().stallAfterMs, 180_000, 'the proposed 3 min');
+  const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-tasks-cfg-'));
+  try {
+    assert.equal(loadTaskConfig(path.join(d, 'none.json')).stallAfterMs, null);
+    writeFileSync(path.join(d, 'bad.json'), JSON.stringify({ stallAfterMs: 5 }));
+    assert.equal(loadTaskConfig(path.join(d, 'bad.json')).stallAfterMs, null, 'below 10 s refused');
+    writeFileSync(path.join(d, 'ok.json'), JSON.stringify({ stallAfterMs: 60_000 }));
+    assert.equal(loadTaskConfig(path.join(d, 'ok.json')).stallAfterMs, 60_000);
+  } finally { rmSync(d, { recursive: true, force: true }); }
+});
+
+test('task panel: stallOf measures silence since the last progress, else since the task began; only running tasks', () => {
+  const N = 180_000;
+  assert.deepEqual(stallOf({ state: 'running', startedAt: 0, activeAt: 1000, progressAt: null }, 1000 + N, N), { silentMs: N, stalled: true }, 'never a progress line: the 38-minute case');
+  assert.deepEqual(stallOf({ state: 'running', startedAt: 0, activeAt: 1000, progressAt: 50_000 }, 1000 + N, N), { silentMs: N + 1000 - 50_000, stalled: false });
+  assert.deepEqual(stallOf({ state: 'running', startedAt: 0 }, N - 1, N), { silentMs: N - 1, stalled: false }, 'no activeAt: from startedAt');
+  assert.deepEqual(stallOf({ state: 'waiting', startedAt: 0 }, 10 * N, N), { silentMs: null, stalled: false });
+  assert.equal(stallOf({ state: 'running', startedAt: 0 }, 10 * N, null).stalled, false, 'no threshold: no warning');
+  assert.deepEqual(stepOf({ stage: 'gate', stages: ['detect', 'candidates', 'gate', 'render', 'validate'] }), { index: 3, count: 5 });
+  assert.equal(stepOf({ stage: 'other', stages: ['detect'] }), null);
+  assert.equal(stepOf({ stage: 'detect', stages: null }), null);
+});
+
+test('task panel: list() carries silentMs, stalled, stallAfterMs and step for files and the server own tasks', () => {
+  const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-tasks-stall-'));
+  try {
+    let t = 9_000_000;
+    const tasks = createTasks({ dataDir: d, now: () => t, stallAfterMs: 180_000 });
+    const t0 = t;
+    // The user's case: a clip job that never wrote a progress line.
+    writeTaskFile(d, { id: 'clip-hung', title: 'Finding the best moments in r1', kind: 'clips', state: 'running', stage: 'detect', stages: ['detect', 'candidates', 'gate', 'render', 'validate'], stageText: 'Starting', activeAt: t0, progressAt: null, startedAt: t0 - 1000, updatedAt: t0 });
+    const ui = tasks.start({ title: 'Upload', kind: 'upload', total: 10 });
+    let by = Object.fromEntries(tasks.list().map((x) => [x.id.startsWith('ui-') ? 'ui' : x.id, x]));
+    assert.deepEqual([by['clip-hung'].stalled, by['clip-hung'].silentMs, by['clip-hung'].step, by['clip-hung'].stallAfterMs], [false, 0, { index: 1, count: 5 }, 180_000]);
+    t += 120_000; ui.update({ done: 3 });
+    t += 61_000;
+    writeTaskFile(d, { id: 'clip-hung', title: 'Finding the best moments in r1', kind: 'clips', state: 'running', stage: 'detect', activeAt: t0, progressAt: null, startedAt: t0 - 1000, updatedAt: t });
+    by = Object.fromEntries(tasks.list().map((x) => [x.id.startsWith('ui-') ? 'ui' : x.id, x]));
+    assert.deepEqual([by['clip-hung'].stalled, by['clip-hung'].silentMs], [true, 181_000], 'rewritten files (updatedAt) do not count as progress');
+    assert.deepEqual([by.ui.stalled, by.ui.silentMs, by.ui.progressAt], [false, 61_000, t0 + 120_000], 'an update with done is progress');
   } finally { rmSync(d, { recursive: true, force: true }); }
 });
 

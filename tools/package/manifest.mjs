@@ -34,6 +34,7 @@ export const REPO_FILES = Object.freeze([
   'data/flags.json',
   'data/audio/health.json', // audio health watchdog values (launch.mjs loadAudioHealth; D297 proposed)
   'data/guide/tour.json', 'data/guide/hints.json', // tips and tours in the studio window (D294 proposed)
+  'data/studio/tasks.json', // task panel: stall warning threshold (2026-11-10)
   // F6 live markers (services/event-core/live-markers.mjs): shared ranking rules + live-only values
   'data/clip/ranking.json', 'data/clip/live-markers.json',
   'data/actions/catalogue.json', 'data/actions/catalogue.schema.json',

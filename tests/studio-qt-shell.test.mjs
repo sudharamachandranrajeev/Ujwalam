@@ -226,7 +226,8 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
       setTimeout(() => task(d, { id: 'ui-x', kind: 'upload', title: 'Uploading a clip to YouTube (private)', state: 'failed', note: 'The upload did not finish' }), 2200);
     });
     assert.equal(p.tasks.toasts, 2, 'one toast for the finished clip run, one for the failed upload');
-    assert.deepEqual([p.tasks.running, p.tasks.chipHidden], [0, true]);
+    assert.deepEqual([p.tasks.running, p.tasks.chipHidden, p.tasks.chipQuiet, p.tasks.chipText], [0, false, true, 'Tasks'], 'only finished tasks listed: a quiet button');
+    assert.equal(p.tasks.lastToast, 'Failed: Uploading a clip to YouTube (private)');
     assert.ok(p.stats.samples >= 2, 'a history sample per status poll');
     assert.equal(p.stats.session, 'Not live');
   });
@@ -245,6 +246,56 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.windowShown, true, 'the probe window was shown (offscreen), so the animations ran');
     assert.equal(p.tasks.running, 0, 'the clip job finished while the window watched');
     assert.ok(p.tasks.titles.includes('Clips ready from practice-h'), JSON.stringify(p.tasks.titles));
+  });
+  // Task panel (user feedback 2026-11-10): the button is in the top bar at the right, the panel and the notifications
+  // open under it at the top right, each task is shown in full (stage words, step, count, time left or "estimating",
+  // last progress), and a task with no progress for stallAfterMs (data/studio/tasks.json, 3 min) warns "it may be stuck".
+  const STAGES = ['detect', 'candidates', 'gate', 'render', 'validate'];
+  const hung = (d) => task(d, { id: 'clip-hung', title: 'Finding the best moments in practice-h-7', state: 'running', stage: 'detect', stages: STAGES, stageText: 'Starting',
+    activeAt: Date.now() - 5 * 60_000 - 5000, progressAt: null, startedAt: Date.now() - 6 * 60_000 });
+  test('task panel (2026-11-10): top-right button and panel; every task in full; a job with no progress for 5 min warns it may be stuck', async () => {
+    const p = await probe([], 6000, 'tasks:open', (d) => {
+      hung(d);
+      task(d, { id: 'clip-a', title: 'Finding the best moments in practice-h-8', state: 'running', stage: 'detect', stages: STAGES, stageText: 'Reading the game screen', unit: 'frame',
+        done: 412, total: 3148, activeAt: Date.now() - 60_000, progressAt: Date.now() });
+      task(d, { id: 'clip-b', title: 'Clips from practice-3', state: 'waiting', note: 'Waiting for its turn' });
+    }, { UJWALAM_STUDIO_PROBE_SHOW: '1' }, { onStatus: (n, d) => { if (n > 1) task(d, { id: 'clip-a', title: 'Finding the best moments in practice-h-8', state: 'running', stage: 'detect', stages: STAGES, stageText: 'Reading the game screen', unit: 'frame', done: Math.min(3148, 412 + n * 3), total: 3148, activeAt: Date.now() - 60_000, progressAt: Date.now() }); } });
+    const t = p.tasks;
+    assert.deepEqual([t.chipInTopBar, t.chipHidden, t.panelOpen, t.running, t.waiting, t.stalled], [true, false, true, 2, 1, 1]);
+    assert.equal(t.chipText, '2 tasks running - 1 may be stuck');
+    assert.equal(t.panel.right, 14, 'anchored at the right edge');
+    assert.ok(t.panel.y >= t.topY && t.panel.y < 140, `under the top bar: ${JSON.stringify(t.panel)} topY ${t.topY}`);
+    assert.ok(t.panel.width >= 400, 'wide enough that lines are read in full');
+    const by = Object.fromEntries(t.detail.map((r) => [r.id, r]));
+    assert.equal(by['clip-hung'].stage, 'Step 1 of 5: Starting');
+    assert.match(by['clip-hung'].warn, /^No progress for 5 min - it may be stuck$/);
+    assert.match(by['clip-hung'].last, /^No progress yet \(started 5 min ago\)$/);
+    assert.equal(by['clip-hung'].count, 'Working; how much is left is not known for this step');
+    assert.match(by['clip-hung'].eta, /^Elapsed \d+:\d\d · Time left unknown$/);
+    assert.deepEqual([by['clip-hung'].stalled, by['clip-hung'].stop], [true, true]);
+    assert.equal(by['clip-a'].stage, 'Step 1 of 5: Reading the game screen');
+    assert.match(by['clip-a'].count, /^4\d\d of 3148 frames \(1[34]%\)$/);
+    assert.match(by['clip-a'].eta, /^Elapsed \d+:\d\d · (Estimating time left\.\.\.|About \d+ (h \d+ )?min left in this step)$/, 'a measured time left, or estimating; never a guess');
+    assert.match(by['clip-a'].last, /^Last progress \d+ s ago$/);
+    assert.deepEqual([by['clip-a'].stalled, by['clip-a'].warn, by['clip-a'].stop], [false, '', true]);
+    assert.deepEqual([by['clip-b'].state, by['clip-b'].stop], ['waiting', true]);
+    assert.match(by['clip-b'].eta, /^Elapsed \d+:\d\d · Waiting its turn$/);
+    assert.ok(t.toastsShown >= 1 && t.toastPos.every((x) => x.y >= t.topY), 'notifications under the top bar');
+    assert.ok(t.toastPos.every((x) => x.x + x.width <= t.panel.x), 'with the panel open, notifications sit to its left');
+  });
+  test('task panel (2026-11-10): the "may be stuck" notification is at the top right; a click opens the panel; Stop reaches the stop route', async () => {
+    const p = await probe([], 5000, 'tasks:toast-click,tasks:stop', (d) => hung(d), { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    const t = p.tasks;
+    assert.ok(t.toastLog.includes('May be stuck: Finding the best moments in practice-h-7'), JSON.stringify(t.toastLog));
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['tasks:toast-click', true], ['tasks:stop', true]]);
+    assert.deepEqual([t.toastClicks, t.panelOpen, t.stopsSent], [1, true, 1]);
+    assert.ok(existsSync(path.join(p.dataDir, 'clips', 'stop-tasks.json')), 'the launcher gets the stop request');
+    const q = await probe([], 3500, '', (d) => hung(d), { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.equal(q.tasks.panelOpen, false, 'collapsed until clicked');
+    assert.ok(q.tasks.toastLog.includes('May be stuck: Finding the best moments in practice-h-7'), JSON.stringify(q.tasks.toastLog));
+    assert.ok(q.tasks.toastPos.length >= 1);
+    assert.ok(q.tasks.toastPos.every((x) => x.right === 14), `notifications at the right edge: ${JSON.stringify(q.tasks.toastPos)}`);
+    assert.ok(q.tasks.toastPos[0].y >= q.tasks.topY && q.tasks.toastPos[0].y < 140, 'the first at the top, under the top bar');
   });
   test('match filter (D287): saved through the settings route; an older server refusing the key gives a plain message', async () => {
     const p = await probe([], 6000, 'match-gate:true:5');

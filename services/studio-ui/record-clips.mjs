@@ -124,9 +124,29 @@ export function countClips(out) {
   } catch { return 0; }
 }
 
-export const PROGRESS_STAGES = Object.freeze(['detect', 'candidates', 'render', 'validate', 'review', 'gate']);
+export const PROGRESS_STAGES = Object.freeze(['detect', 'candidates', 'render', 'validate', 'review', 'gate', 'publish', 'montage']);
 const PROGRESS_RE = /^ujwalam-progress\s+(\{.*\})\s*$/;
-const STAGE_TITLE = { detect: 'Finding the best moments in', candidates: 'Choosing the best moments in', render: 'Editing clips', validate: 'Checking the clips from', review: 'Reviewing the moments in', gate: 'Checking the match results of' };
+const STAGE_TITLE = { detect: 'Finding the best moments in', candidates: 'Choosing the best moments in', render: 'Editing clips from', validate: 'Checking the clips from', review: 'Reviewing the moments in', gate: 'Checking the match results of',
+  publish: 'Saving the clips from', montage: 'Making the kill montage from' };
+// Task panel (2026-11-10): each stage in plain words, what its done/total counts (null = only a percent shown), and
+// whether it reports progress while it works. publish and montage write one line when they start and none after
+// (clipper.py), so their silence is not counted by the stall warning (measured: false; tasks.mjs stallOf).
+const STAGE_TEXT = { detect: ['Reading the game screen', 'frame'], candidates: ['Choosing the best moments', null], gate: ['Sorting clips by match', 'match'],
+  render: ['Making clip videos', 'clip'], validate: ['Checking the clip files', 'clip'], review: ['Making clip videos from live saves', 'clip'],
+  publish: ['Copying the finished clips to your clips folder', null, false], montage: ['Making the kill montage', null, false] };
+/** The stages a job goes through, in order (clipper.py cmd_run: detect, candidates, gate, render, validate, publish,
+ *  then the montage when the V recording exists; live-review: detect and gate over the stream's own recording when
+ *  there is one, then review and publish). */
+export function jobStages(job) {
+  if (job?.type === 'review') return typeof job.h === 'string' && job.h ? ['detect', 'gate', 'review', 'publish'] : ['review', 'publish'];
+  return ['detect', 'candidates', 'gate', 'render', 'validate', 'publish', ...(job?.v ? ['montage'] : [])];
+}
+/** { stageText, unit, measured } of a progress stage for a job (a review's gate sorts saves, counted as one step). */
+export function stageWords(stage, job) {
+  const [text, unit, measured = true] = STAGE_TEXT[stage] ?? [null, null];
+  if (stage === 'gate' && job?.type === 'review') return { stageText: 'Sorting saves by match', unit: null, measured: true };
+  return { stageText: text, unit, measured };
+}
 
 /** One clipper stderr line -> { stage, done, total, note } or null. Defensive: anything else is ignored, lengths capped. */
 export function parseProgress(line) {
@@ -176,9 +196,11 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
     const nm = j.name ?? 'the stream';
     const base = { id: taskId(j), kind: 'clips', startedAt: j.taskStart ?? now(), updatedAt: now() };
     if (j === current && !j.pausedForLive) {
-      const st = p?.stage ?? 'detect';
-      const title = st === 'render' && p?.total ? `Editing clips (${Math.min((p.done ?? 0) + 1, p.total)} of ${p.total})` : `${STAGE_TITLE[st]} ${nm}`;
-      return { ...base, title, state: 'running', stage: st, done: p?.done ?? null, total: p?.total ?? null, note: p?.note ?? null };
+      const st = p?.stage ?? jobStages(j)[0];
+      // No progress line yet: the stage is the first one expected, with no count (the panel says "Starting").
+      const words = p ? stageWords(st, j) : { stageText: 'Starting', unit: null, measured: true };
+      return { ...base, title: `${STAGE_TITLE[st]} ${nm}`, state: 'running', stage: st, done: p?.done ?? null, total: p?.total ?? null, note: p?.note ?? null,
+        stages: jobStages(j), ...words, activeAt: j.activeAt ?? null, progressAt: j.progressAt ?? null };
     }
     return { ...base, title: `Clips from ${nm}`, state: 'waiting', stage: null, done: null, total: null,
       note: j === current ? 'Paused while the stream runs' : liveNow ? 'Waiting until the stream ends' : 'Waiting for its turn' };
@@ -225,6 +247,7 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
     const fd = openSync(logFile, 'a');
     current = job;
     progress = null;
+    job.activeAt = now(); job.progressAt = null; // the stall warning measures silence from here (tasks.mjs stallOf)
     // stdin: the parent pipe (D234): when the launcher is gone (even hard-killed) the clipper ends itself and its ffmpeg
     // children (clip_common.end_tree_when_parent_gone), so nothing runs on unseen after Ujwalam closed (D311 proposed).
     child = spawnFn(spec.exe, spec.argv, { stdio: ['pipe', fd, 'pipe'], windowsHide: true, cwd: clipRoot, env: { ...process.env, [PARENT_PIPE_ENV]: '1' } });
@@ -238,7 +261,7 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
       let i;
       while ((i = pending.indexOf(String.fromCharCode(10))) >= 0) {
         const p = parseProgress(pending.slice(0, i)); pending = pending.slice(i + 1);
-        if (p) progress = p;
+        if (p) { progress = p; job.progressAt = now(); }
       }
       if (pending.length > 4000) pending = '';
       if (progress && now() - lastWrite >= 0) { lastWrite = now(); writeTasks(); }

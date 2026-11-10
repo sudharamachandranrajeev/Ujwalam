@@ -7,6 +7,6 @@
     { "id": "match-skipped", "anchor": "taskBar", "trigger": "match-skipped", "title": "A match was skipped", "text": "This match was skipped because you were not in the top 3 and did not reach the number of kills you set, if you set one. You can change this in Settings, Clips." },
     { "id": "went-live", "anchor": "ctlStream", "trigger": "went-live", "title": "You are live", "text": "While you are live, clip videos are made after the stream. Only light work runs now, such as saving marked moments, so your stream stays smooth." },
     { "id": "first-effect", "anchor": "look", "trigger": "layer-with-effects", "title": "This layer has an effect", "text": "Effects such as rounded corners or shadows are listed in Look. Change them with the sliders, or switch them off." },
-    { "id": "first-task", "anchor": "taskChip", "trigger": "first-task", "title": "Behind the scenes", "text": "Ujwalam just started a job. Jobs are listed in this bar so you can see what is happening. Click it for the list." }
+    { "id": "first-task", "anchor": "taskChip", "trigger": "first-task", "title": "Behind the scenes", "text": "Ujwalam just started a job. This button at the top right shows how many jobs run. Click it for the full list: each step, the progress, the time left and a Stop button." }
   ]
 }

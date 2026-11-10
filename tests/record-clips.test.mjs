@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CLIP_MAKER_FIX, clipRunSpec, clipTools, countClips, createRecordClips, finishedRecording, isLive, parseProgress } from '../services/studio-ui/record-clips.mjs';
+import { CLIP_MAKER_FIX, clipRunSpec, clipTools, countClips, createRecordClips, finishedRecording, isLive, jobStages, parseProgress, stageWords } from '../services/studio-ui/record-clips.mjs';
 import { folderProblem, readSettings, settingsProblems, writeSettings } from '../services/studio-ui/user-settings.mjs';
 
 const RUNGS = [{ id: 'rec-h', canvas: 'H' }, { id: 'rec-v', canvas: 'V' }];
@@ -276,6 +276,39 @@ test('parseProgress: only well-formed ujwalam-progress lines count; lengths capp
   assert.equal(parseProgress(line('see D:\\recordings\\a.mp4 now')).note, 'see  now', 'a Windows path is dropped');
 });
 
+test('task panel: the stages of each job type in order, and their plain words', () => {
+  assert.deepEqual(jobStages({ type: 'full', h: 'a.mkv' }), ['detect', 'candidates', 'gate', 'render', 'validate', 'publish']);
+  assert.deepEqual(jobStages({ type: 'full', h: 'a.mkv', v: 'b.mkv' }), ['detect', 'candidates', 'gate', 'render', 'validate', 'publish', 'montage'], 'a V recording adds the montage');
+  assert.deepEqual(jobStages({ type: 'review', h: 'a.mkv' }), ['detect', 'gate', 'review', 'publish'], 'the stream recording gives the matches');
+  assert.deepEqual(jobStages({ type: 'review' }), ['review', 'publish']);
+  assert.deepEqual(stageWords('detect', { type: 'full' }), { stageText: 'Reading the game screen', unit: 'frame', measured: true });
+  assert.deepEqual(stageWords('gate', { type: 'full' }), { stageText: 'Sorting clips by match', unit: 'match', measured: true });
+  assert.deepEqual(stageWords('gate', { type: 'review' }), { stageText: 'Sorting saves by match', unit: null, measured: true });
+  assert.deepEqual(stageWords('render', {}), { stageText: 'Making clip videos', unit: 'clip', measured: true });
+  assert.deepEqual(stageWords('montage', {}), { stageText: 'Making the kill montage', unit: null, measured: false }, 'no progress while it works');
+  assert.equal(stageWords('publish', {}).measured, false);
+  assert.equal(parseProgress('ujwalam-progress {"stage":"montage","done":0,"total":1,"note":"making the kill montage"}').stage, 'montage');
+});
+
+test('task panel: a long montage (no progress lines) is never called stuck; a silent detect is', async () => {
+  const s = setup();
+  const { PassThrough } = await import('node:stream');
+  const spawnFn = (exe, argv, o) => { const c = new EventEmitter(); c.stderr = new PassThrough(); c.kill = () => {}; s.spawned.push({ exe, argv, o, c }); return c; };
+  const task = () => JSON.parse(readFileSync(path.join(s.dataDir, 'tasks', 'clip-practice-h-1.json'), 'utf8'));
+  try {
+    writeSettings(s.dataDir, { clips: { recording: 'after', live: 'off' } });
+    const rc = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: s.log, spawnFn, now: s.now });
+    rc.feed(s.S('live')); rc.feed(s.S('stopped'));
+    const { stallOf } = await import('../services/studio-ui/tasks.mjs');
+    s.advance(10 * 60_000);
+    assert.equal(stallOf(task(), s.now(), 180_000).stalled, true, 'no line at all for 10 min: stuck');
+    s.spawned[0].c.stderr.write('ujwalam-progress {"stage":"montage","done":0,"total":1,"note":"making the kill montage"}\n'); await tick();
+    assert.deepEqual([task().stageText, task().measured, task().step ?? null], ['Making the kill montage', false, null]);
+    s.advance(20 * 60_000);
+    assert.deepEqual(stallOf(task(), s.now(), 180_000), { silentMs: 20 * 60_000, stalled: false }, '20 min of montage: still not stuck');
+  } finally { rmSync(s.d, { recursive: true, force: true }); }
+});
+
 test('tasks: a queued run shows as waiting while the stream is live, then running', () => {
   const s = setup();
   const task = () => JSON.parse(readFileSync(path.join(s.dataDir, 'tasks', 'clip-practice-h-1.json'), 'utf8'));
@@ -299,14 +332,21 @@ test('tasks: stderr progress lines drive the task title and bar; exit makes it d
   try {
     writeSettings(s.dataDir, { clips: { recording: 'after', live: 'off' } });
     const rc = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: s.log, spawnFn, now: s.now });
-    rc.feed(s.S('live')); rc.feed(s.S('stopped'));
+    rc.feed(s.S('live')); const t0 = s.now(); rc.feed(s.S('stopped'));
+    // Task panel (2026-11-10): before any progress line the task says "Starting", knows its 5 steps, and has no
+    // progressAt (the stall warning then measures from activeAt).
+    assert.deepEqual([task().stage, task().stageText, task().unit, task().stages, task().activeAt, task().progressAt],
+      ['detect', 'Starting', null, ['detect', 'candidates', 'gate', 'render', 'validate', 'publish', 'montage'], t0, null]);
     const err = s.spawned[0].c.stderr;
+    s.advance(5000);
     err.write('warming up\nujwalam-progress {"stage":"detect","done":40,"total":100,"note":"scanning"}\n');
     await tick();
     assert.deepEqual([task().stage, task().done, task().total, task().note], ['detect', 40, 100, 'scanning']);
+    assert.deepEqual([task().stageText, task().unit, task().progressAt], ['Reading the game screen', 'frame', t0 + 5000]);
     err.write('ujwalam-progress {"stage":"rend'); await tick();
     err.write('er","done":2,"total":7}\nnot a progress line\n'); await tick();
-    assert.equal(task().title, 'Editing clips (3 of 7)');
+    assert.equal(task().title, 'Editing clips from practice-h-1');
+    assert.deepEqual([task().stageText, task().unit], ['Making clip videos', 'clip']);
     assert.equal(task().state, 'running');
     s.spawned[0].c.emit('exit', 1);
     assert.equal(task().state, 'failed');

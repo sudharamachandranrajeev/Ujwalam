@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // What the software is doing, in plain words, for the studio window's task bar (it only informs; it never blocks).
 // A task: { id, title, kind, state: running|done|failed|waiting, done, total (null = unknown), stage, note,
-// startedAt, updatedAt } plus, in list(), progress (0..1 | null), elapsedMs and etaMs (null = unknown; D311 proposed). Two sources: files <dataDir>/tasks/<id>.json written by launcher-side jobs (writeTaskFile,
+// startedAt, updatedAt, stages?, stageText?, unit?, activeAt?, progressAt? } plus, in list(), progress (0..1 | null),
+// elapsedMs and etaMs (null = unknown; D311 proposed), silentMs, stalled, stallAfterMs and step (2026-11-10). Two sources: files <dataDir>/tasks/<id>.json written by launcher-side jobs (writeTaskFile,
 // atomic), and in-memory tasks of the UI server for its own long actions (createTasks().track). Finished or silent
 // tasks are dropped after PRUNE_MS. Text only: no chat text, no viewer names, no paths beyond the clips folder.
 
 import { mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const TASK_STATES = Object.freeze(['running', 'done', 'failed', 'waiting']);
 export const PRUNE_MS = 10 * 60_000;
@@ -26,8 +28,14 @@ export function cleanTask(t, id = t?.id) {
   const total = int(t.total);
   let done = int(t.done);
   if (done !== null && total !== null && done > total) done = total;
+  // Panel detail (2026-11-10): the job's known stages in order, the current stage in plain words, what is counted
+  // (frame, clip, MB), when it began working (activeAt; startedAt may be when it was queued) and when its last progress
+  // line came (progressAt; null = none yet). Optional: older writers leave them out.
+  const stages = Array.isArray(t.stages) ? t.stages.slice(0, 8).map((s) => cut(s, 24)).filter(Boolean) : [];
   return { id, title, kind: cut(t.kind, 24) ?? 'task', state, done, total: total === 0 ? null : total, stage: cut(t.stage, 24),
-    note: cut(t.note, 160), startedAt: int(t.startedAt), updatedAt: int(t.updatedAt) };
+    note: cut(t.note, 160), startedAt: int(t.startedAt), updatedAt: int(t.updatedAt),
+    stages: stages.length ? stages : null, stageText: cut(t.stageText, 60), unit: cut(t.unit, 16), activeAt: int(t.activeAt), progressAt: int(t.progressAt),
+    measured: t.measured === false ? false : null }; // false = this stage reports no progress while it works
 }
 
 export const tasksDir = (dataDir) => path.join(dataDir, 'tasks');
@@ -117,11 +125,42 @@ export function createTiming(now = Date.now) {
   return { timing, keep };
 }
 
+// ---- stall warning and step (user 2026-11-10) ----
+// A running task that has sent no progress for stallAfterMs (data/studio/tasks.json), or none at all since it began
+// working, is marked stalled: the panel warns "it may be stuck" and offers Stop. Only a warning; nothing is stopped.
+export const TASKS_CONFIG = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'studio', 'tasks.json');
+
+/** { stallAfterMs } from data/studio/tasks.json; stallAfterMs null (no warning) when the file is missing or wrong. */
+export function loadTaskConfig(file = TASKS_CONFIG) {
+  try {
+    const j = JSON.parse(readFileSync(file, 'utf8'));
+    return { stallAfterMs: Number.isFinite(j.stallAfterMs) && j.stallAfterMs >= 10_000 ? Math.floor(j.stallAfterMs) : null };
+  } catch { return { stallAfterMs: null }; }
+}
+
+/** For a running task: { silentMs, stalled } (silence since the last progress line, else since it began); else nulls. */
+export function stallOf(t, now, stallAfterMs) {
+  if (t?.state !== 'running') return { silentMs: null, stalled: false };
+  const ref = t.progressAt ?? t.activeAt ?? t.startedAt;
+  if (!Number.isFinite(ref)) return { silentMs: null, stalled: false };
+  const silentMs = Math.max(0, now - ref);
+  // A stage that reports no progress while it works (measured: false: publish, montage) is never called stuck.
+  return { silentMs, stalled: t.measured !== false && Number.isFinite(stallAfterMs) && silentMs >= stallAfterMs };
+}
+
+/** { index (1-based), count } of the current stage in the task's known stages, or null. */
+export function stepOf(t) {
+  if (!Array.isArray(t?.stages) || !t.stage) return null;
+  const i = t.stages.indexOf(t.stage);
+  return i < 0 ? null : { index: i + 1, count: t.stages.length };
+}
+
 const RANK = { running: 0, waiting: 1, failed: 2, done: 3 };
 const order = (a, b) => RANK[a.state] - RANK[b.state] || (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
 
-/** opts: { dataDir?, now? }. start() returns a handle; track() runs a function as a task. */
-export function createTasks({ dataDir = null, now = Date.now } = {}) {
+/** opts: { dataDir?, now?, stallAfterMs? (default: data/studio/tasks.json) }. start() returns a handle; track() runs a
+ *  function as a task. */
+export function createTasks({ dataDir = null, now = Date.now, stallAfterMs = loadTaskConfig().stallAfterMs } = {}) {
   const mem = new Map();
   const clock = createTiming(now);
   let seq = 0;
@@ -133,13 +172,13 @@ export function createTasks({ dataDir = null, now = Date.now } = {}) {
   function start({ title, kind = 'task', total = null, stage = null, note = null }) {
     const id = `ui-${now().toString(36)}-${(seq++).toString(36)}`;
     const t = now();
-    const rec = { id, title: cut(title, 120) ?? 'Working', kind: cut(kind, 24) ?? 'task', state: 'running', done: total === null ? null : 0, total: int(total), stage: cut(stage, 24), note: cut(note, 160), startedAt: t, updatedAt: t };
+    const rec = { id, title: cut(title, 120) ?? 'Working', kind: cut(kind, 24) ?? 'task', state: 'running', done: total === null ? null : 0, total: int(total), stage: cut(stage, 24), note: cut(note, 160), startedAt: t, updatedAt: t, activeAt: t, progressAt: null };
     mem.set(id, rec);
     prune();
     const set = (p) => { Object.assign(rec, p, { updatedAt: now() }); };
     return {
       id,
-      update: (p = {}) => set({ ...(p.done !== undefined ? { done: int(p.done) } : {}), ...(p.total !== undefined ? { total: int(p.total) } : {}),
+      update: (p = {}) => set({ ...(p.done !== undefined || p.stage !== undefined ? { progressAt: now() } : {}), ...(p.done !== undefined ? { done: int(p.done) } : {}), ...(p.total !== undefined ? { total: int(p.total) } : {}),
         ...(p.stage !== undefined ? { stage: cut(p.stage, 24) } : {}), ...(p.note !== undefined ? { note: cut(p.note, 160) } : {}), ...(p.title ? { title: cut(p.title, 120) } : {}) }),
       done: (note = null) => set({ state: 'done', note: cut(note, 160), ...(rec.total !== null ? { done: rec.total } : {}) }),
       fail: (note = null) => set({ state: 'failed', note: cut(note, 160) }),
@@ -159,7 +198,9 @@ export function createTasks({ dataDir = null, now = Date.now } = {}) {
     prune();
     const all = [...mem.values()].map((x) => ({ ...x }));
     if (dataDir) all.push(...readTaskFiles(dataDir, now()));
-    const out = all.sort(order).slice(0, MAX_TASKS).map((t) => ({ ...t, ...clock.timing(t) }));
+    const n = now();
+    const out = all.sort(order).slice(0, MAX_TASKS).map((t) => ({ stages: null, stageText: null, unit: null, activeAt: null, progressAt: null, measured: null, ...t,
+      ...clock.timing(t), ...stallOf(t, n, stallAfterMs), stallAfterMs, step: stepOf(t) }));
     clock.keep(new Set(out.map((t) => t.id)));
     return out;
   }

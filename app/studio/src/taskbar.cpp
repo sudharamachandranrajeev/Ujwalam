@@ -11,8 +11,9 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPointer>
+#include <QPushButton>
 #include <QScrollArea>
-#include <QStatusBar>
+#include <QStyle>
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -22,6 +23,11 @@
 #include <iterator>
 
 namespace {
+const int kGap = 14;        // from the window's right edge
+const int kPanelW = 440;    // wide enough that a task's lines are read in full (they wrap, never cut)
+const int kToastW = 360;
+const int kToastMs = 6000;  // a notification stays this long (the x or a click closes it sooner)
+
 QColor stateColour(const QString &s)
 {
 	if (s == QStringLiteral("done"))
@@ -32,16 +38,39 @@ QColor stateColour(const QString &s)
 		return theme::color(QStringLiteral("muted"));
 	return theme::color(QStringLiteral("accent"));
 }
-double fractionOf(const QJsonObject &t)
+QString str(const QJsonObject &t, const char *k)
 {
-	return tasktime::fraction(t);
+	return t.value(QLatin1String(k)).toString();
 }
-// Long jobs get a toast when they start (D311 proposed); the studio's own quick actions (saving settings, a preview)
-// only when they finish, as before.
+bool isRunning(const QJsonObject &t)
+{
+	return str(t, "state") == QStringLiteral("running");
+}
+// Long jobs get a notification when they start (D311 proposed); the studio's own quick actions (saving settings, a
+// preview) only when they finish, as before.
 bool longJob(const QJsonObject &t)
 {
-	const QString k = t.value(QStringLiteral("kind")).toString();
-	return !t.value(QStringLiteral("id")).toString().startsWith(QStringLiteral("ui-")) || k == QStringLiteral("upload") || k == QStringLiteral("import");
+	const QString k = str(t, "kind");
+	return !str(t, "id").startsWith(QStringLiteral("ui-")) || k == QStringLiteral("upload") || k == QStringLiteral("import");
+}
+// The Stop route ends the launcher's background jobs (clip making, uploads); the UI server's own short actions have no stop.
+bool stoppable(const QJsonObject &t)
+{
+	const QString st = str(t, "state");
+	return (st == QStringLiteral("running") || st == QStringLiteral("waiting")) && !str(t, "id").startsWith(QStringLiteral("ui-"));
+}
+QString plural(const QString &unit)
+{
+	if (unit == QStringLiteral("MB"))
+		return unit;
+	if (unit.endsWith(QLatin1Char('s')) || unit.endsWith(QStringLiteral("ch")))
+		return unit + QStringLiteral("es");
+	return unit + QLatin1Char('s');
+}
+void repolish(QWidget *w)
+{
+	w->style()->unpolish(w);
+	w->style()->polish(w);
 }
 } // namespace
 
@@ -49,8 +78,10 @@ bool longJob(const QJsonObject &t)
 
 double tasktime::fraction(const QJsonObject &t)
 {
-	if (t.value(QStringLiteral("state")).toString() == QStringLiteral("done"))
+	if (str(t, "state") == QStringLiteral("done"))
 		return 1.0;
+	if (t.value(QStringLiteral("measured")) == QJsonValue(false)) // a step that reports no progress (publish, montage)
+		return -1.0;
 	const QJsonValue p = t.value(QStringLiteral("progress"));
 	if (p.isDouble())
 		return std::clamp(p.toDouble(), 0.0, 1.0);
@@ -69,9 +100,35 @@ QString tasktime::duration(double ms)
 	return QStringLiteral("%1:%2").arg(m).arg(sec, 2, 10, QLatin1Char('0'));
 }
 
+QString tasktime::ago(double ms)
+{
+	const qint64 s = qint64(std::max(0.0, ms) / 1000.0);
+	if (s < 60)
+		return QStringLiteral("%1 s").arg(s);
+	if (s < 3600)
+		return QStringLiteral("%1 min").arg(s / 60);
+	return QStringLiteral("%1 h %2 min").arg(s / 3600).arg((s % 3600) / 60);
+}
+
+namespace {
+// "about 4 min left" / "less than a minute left" from etaMs, or empty when unknown.
+QString leftText(const QJsonObject &t)
+{
+	const QJsonValue eta = t.value(QStringLiteral("etaMs"));
+	if (!eta.isDouble())
+		return QString();
+	const double sec = eta.toDouble() / 1000.0;
+	if (sec < 60)
+		return QStringLiteral("less than a minute left");
+	if (sec < 3600)
+		return QStringLiteral("about %1 min left").arg(qint64(std::ceil(sec / 60.0)));
+	return QStringLiteral("about %1 h %2 min left").arg(qint64(sec / 3600)).arg(qint64(std::fmod(sec, 3600.0) / 60.0));
+}
+} // namespace
+
 QString tasktime::text(const QJsonObject &t)
 {
-	const QString st = t.value(QStringLiteral("state")).toString();
+	const QString st = str(t, "state");
 	const QJsonValue el = t.value(QStringLiteral("elapsedMs"));
 	QString out = el.isDouble() ? QStringLiteral("%1 elapsed").arg(duration(el.toDouble())) : QString();
 	if (st == QStringLiteral("done") || st == QStringLiteral("failed"))
@@ -80,21 +137,84 @@ QString tasktime::text(const QJsonObject &t)
 	if (st == QStringLiteral("waiting"))
 		left = QStringLiteral("waiting its turn");
 	else {
-		const QJsonValue eta = t.value(QStringLiteral("etaMs"));
-		if (!eta.isDouble())
-			left = QStringLiteral("time left unknown");
-		else {
-			const double sec = eta.toDouble() / 1000.0;
-			const QString step = t.value(QStringLiteral("stage")).toString().isEmpty() ? QString() : QStringLiteral("this step: ");
-			if (sec < 60)
-				left = step + QStringLiteral("less than a minute left");
-			else if (sec < 3600)
-				left = step + QStringLiteral("about %1 min left").arg(qint64(std::ceil(sec / 60.0)));
-			else
-				left = step + QStringLiteral("about %1 h %2 min left").arg(qint64(sec / 3600)).arg(qint64(std::fmod(sec, 3600.0) / 60.0));
-		}
+		const QString l = leftText(t);
+		if (!l.isEmpty())
+			left = (str(t, "stage").isEmpty() ? QString() : QStringLiteral("this step: ")) + l;
+		else // never a guessed number: the rate is being measured, or the amount of work is not known
+			left = fraction(t) >= 0 ? QStringLiteral("estimating time left") : QStringLiteral("time left unknown");
+		if (t.value(QStringLiteral("stalled")).toBool(false))
+			left += QStringLiteral(" · no progress for %1").arg(ago(t.value(QStringLiteral("silentMs")).toDouble()));
 	}
 	return out.isEmpty() ? left : out + QStringLiteral(" · ") + left;
+}
+
+QString tasktime::stageLine(const QJsonObject &t)
+{
+	if (!isRunning(t))
+		return QString();
+	QString words = str(t, "stageText");
+	if (words.isEmpty())
+		words = QStringLiteral("Working");
+	const QJsonObject step = t.value(QStringLiteral("step")).toObject();
+	const int i = step.value(QStringLiteral("index")).toInt(0), n = step.value(QStringLiteral("count")).toInt(0);
+	if (i > 0 && n > 1)
+		return QStringLiteral("Step %1 of %2: %3").arg(i).arg(n).arg(words);
+	return words;
+}
+
+QString tasktime::countLine(const QJsonObject &t)
+{
+	if (!isRunning(t))
+		return QString();
+	const double f = fraction(t);
+	if (f < 0)
+		return QStringLiteral("Working; how much is left is not known for this step");
+	const int pct = int(std::floor(f * 100));
+	const QString unit = str(t, "unit");
+	const QJsonValue d = t.value(QStringLiteral("done")), n = t.value(QStringLiteral("total"));
+	if (unit.isEmpty() || !d.isDouble() || !n.isDouble())
+		return QStringLiteral("%1% done").arg(pct);
+	return QStringLiteral("%1 of %2 %3 (%4%)").arg(qint64(d.toDouble())).arg(qint64(n.toDouble())).arg(plural(unit)).arg(pct);
+}
+
+QString tasktime::etaLine(const QJsonObject &t)
+{
+	const QString st = str(t, "state");
+	const QJsonValue el = t.value(QStringLiteral("elapsedMs"));
+	const QString elapsed = el.isDouble() ? QStringLiteral("Elapsed %1").arg(duration(el.toDouble())) : QString();
+	QString left;
+	if (st == QStringLiteral("done") || st == QStringLiteral("failed"))
+		return el.isDouble() ? QStringLiteral("Took %1").arg(duration(el.toDouble())) : QString();
+	if (st == QStringLiteral("waiting"))
+		left = QStringLiteral("Waiting its turn");
+	else {
+		QString l = leftText(t);
+		if (!l.isEmpty()) {
+			l[0] = l[0].toUpper();
+			left = str(t, "stage").isEmpty() ? l : l + QStringLiteral(" in this step");
+		} else
+			left = fraction(t) >= 0 ? QStringLiteral("Estimating time left...") : QStringLiteral("Time left unknown");
+	}
+	return elapsed.isEmpty() ? left : elapsed + QStringLiteral(" · ") + left;
+}
+
+QString tasktime::lastLine(const QJsonObject &t)
+{
+	if (!isRunning(t))
+		return QString();
+	const QJsonValue s = t.value(QStringLiteral("silentMs"));
+	if (!s.isDouble())
+		return QString();
+	if (t.value(QStringLiteral("progressAt")).isDouble())
+		return QStringLiteral("Last progress %1 ago").arg(ago(s.toDouble()));
+	return QStringLiteral("No progress yet (started %1 ago)").arg(ago(s.toDouble()));
+}
+
+QString tasktime::stallLine(const QJsonObject &t)
+{
+	if (!isRunning(t) || !t.value(QStringLiteral("stalled")).toBool(false))
+		return QString();
+	return QStringLiteral("No progress for %1 - it may be stuck").arg(ago(t.value(QStringLiteral("silentMs")).toDouble()));
 }
 
 // ---- SmoothBar ----
@@ -183,14 +303,11 @@ TaskChip::TaskChip(QWidget *parent) : QWidget(parent)
 	setCursor(Qt::PointingHandCursor);
 	setAttribute(Qt::WA_StyledBackground, true);
 	auto *h = new QHBoxLayout(this);
-	h->setContentsMargins(24, 2, 10, 2); // left room for the pulsing dot
-	h->setSpacing(8);
+	h->setContentsMargins(24, 3, 12, 3); // left room for the pulsing dot
+	h->setSpacing(6);
 	text_ = new QLabel(this);
 	text_->setAttribute(Qt::WA_TransparentForMouseEvents);
-	bar_ = new SmoothBar(4, this);
-	bar_->setFixedWidth(70);
 	h->addWidget(text_);
-	h->addWidget(bar_, 0, Qt::AlignVCenter);
 	hide();
 }
 
@@ -199,7 +316,7 @@ QString TaskChip::text() const
 	return text_->text();
 }
 
-void TaskChip::setState(int running, int waiting, double fraction, const QString &tip)
+void TaskChip::setState(int running, int waiting, int listed, int stalled, const QString &tip)
 {
 	active_ = running + waiting > 0;
 	QString t;
@@ -207,11 +324,21 @@ void TaskChip::setState(int running, int waiting, double fraction, const QString
 		t = running == 1 ? QStringLiteral("1 task running") : QStringLiteral("%1 tasks running").arg(running);
 	else if (waiting > 0)
 		t = waiting == 1 ? QStringLiteral("1 task waiting") : QStringLiteral("%1 tasks waiting").arg(waiting);
+	else
+		t = QStringLiteral("Tasks"); // only finished ones are listed: a quiet button
+	if (stalled > 0)
+		t += QStringLiteral(" - %1 may be stuck").arg(stalled);
 	text_->setText(t);
-	bar_->setProgress(running > 0 ? QStringLiteral("running") : QStringLiteral("waiting"), running > 0 ? fraction : 0.0);
-	setToolTip(tip);
-	setVisible(active_);
+	setToolTip(tip.isEmpty() ? QStringLiteral("Show the task list") : tip);
+	if (property("quiet").toBool() != !active_ || property("stalled").toBool() != (stalled > 0)) {
+		setProperty("quiet", !active_);
+		setProperty("stalled", stalled > 0);
+		repolish(this);
+		repolish(text_);
+	}
+	setVisible(listed > 0);
 	sync();
+	update();
 }
 
 void TaskChip::sync()
@@ -255,8 +382,8 @@ void TaskChip::paintEvent(QPaintEvent *)
 {
 	QPainter p(this);
 	p.setRenderHint(QPainter::Antialiasing);
-	QColor c(theme::color(QStringLiteral("accentHi")));
-	c.setAlphaF(pulse_);
+	QColor c(theme::color(property("stalled").toBool() ? QStringLiteral("danger") : active_ ? QStringLiteral("accentHi") : QStringLiteral("muted")));
+	c.setAlphaF(active_ ? pulse_ : 1.0);
 	p.setPen(Qt::NoPen);
 	p.setBrush(c);
 	p.drawEllipse(QPointF(14, height() / 2.0), 4.0, 4.0);
@@ -268,10 +395,11 @@ TaskRow::TaskRow(const QString &id, QWidget *parent) : QFrame(parent), id_(id)
 {
 	setObjectName(QStringLiteral("taskRow"));
 	auto *v = new QVBoxLayout(this);
-	v->setContentsMargins(12, 8, 8, 10);
+	v->setContentsMargins(12, 10, 10, 10);
 	v->setSpacing(4);
 	auto *top = new QHBoxLayout();
 	title_ = new QLabel(this);
+	title_->setObjectName(QStringLiteral("taskTitle"));
 	title_->setWordWrap(true);
 	state_ = new QLabel(this);
 	state_->setObjectName(QStringLiteral("muted"));
@@ -280,53 +408,74 @@ TaskRow::TaskRow(const QString &id, QWidget *parent) : QFrame(parent), id_(id)
 	close_->setObjectName(QStringLiteral("taskClose"));
 	close_->setProperty("noGlow", true);
 	close_->setFocusPolicy(Qt::NoFocus);
-	close_->setToolTip(QStringLiteral("Dismiss"));
+	close_->setToolTip(QStringLiteral("Remove from the list"));
 	close_->hide();
 	connect(close_, &QToolButton::clicked, this, [this]() { emit dismissed(id_); });
 	top->addWidget(title_, 1);
-	top->addWidget(state_);
-	top->addWidget(close_);
+	top->addWidget(state_, 0, Qt::AlignTop);
+	top->addWidget(close_, 0, Qt::AlignTop);
 	v->addLayout(top);
-	note_ = new QLabel(this);
-	note_->setObjectName(QStringLiteral("muted"));
-	note_->setWordWrap(true);
-	v->addWidget(note_);
-	bar_ = new SmoothBar(5, this);
+	auto line = [&](const QString &name) {
+		auto *l = new QLabel(this);
+		l->setObjectName(name);
+		l->setWordWrap(true);
+		v->addWidget(l);
+		return l;
+	};
+	stage_ = line(QStringLiteral("taskStage")); // "Step 1 of 5: Reading the game screen"
+	count_ = line(QStringLiteral("taskCount")); // "412 of 3148 frames (13%)"
+	bar_ = new SmoothBar(6, this);
 	v->addWidget(bar_);
-	time_ = new QLabel(this); // elapsed and time left (D311 proposed)
-	time_->setObjectName(QStringLiteral("muted"));
-	v->addWidget(time_);
+	time_ = line(QStringLiteral("muted")); // elapsed and time left (D311 proposed)
+	last_ = line(QStringLiteral("muted")); // when the last progress came
+	note_ = line(QStringLiteral("muted")); // the job's own short note
+	warn_ = line(QStringLiteral("taskWarn")); // no progress for a while
+	auto *bottom = new QHBoxLayout();
+	bottom->addStretch(1);
+	stop_ = new QPushButton(QStringLiteral("Stop"), this);
+	stop_->setObjectName(QStringLiteral("taskStop"));
+	stop_->setProperty("role", QStringLiteral("danger"));
+	stop_->setFocusPolicy(Qt::NoFocus);
+	stop_->setCursor(Qt::PointingHandCursor);
+	stop_->setToolTip(QStringLiteral("Stop the background jobs (clip making and uploads). Unfinished clip jobs run again at the next start."));
+	connect(stop_, &QPushButton::clicked, this, [this]() { emit stopRequested(id_); });
+	bottom->addWidget(stop_);
+	v->addLayout(bottom);
 }
 
 void TaskRow::setTask(const QJsonObject &t)
 {
-	const QString st = t.value(QStringLiteral("state")).toString();
+	const QString st = str(t, "state");
 	finished_ = st == QStringLiteral("done") || st == QStringLiteral("failed");
-	title_->setText(t.value(QStringLiteral("title")).toString());
-	const double total = t.value(QStringLiteral("total")).toDouble(-1);
-	QString s;
-	if (st == QStringLiteral("done"))
-		s = QStringLiteral("Done");
-	else if (st == QStringLiteral("failed"))
-		s = QStringLiteral("Failed");
-	else if (st == QStringLiteral("waiting"))
-		s = QStringLiteral("Waiting");
-	else if (total > 0 && !t.value(QStringLiteral("done")).isNull())
-		s = QStringLiteral("%1 of %2").arg(int(t.value(QStringLiteral("done")).toDouble())).arg(int(total));
-	else
-		s = QStringLiteral("Working...");
+	const bool stalled = isRunning(t) && t.value(QStringLiteral("stalled")).toBool(false);
+	title_->setText(str(t, "title"));
+	const QString s = st == QStringLiteral("done")     ? QStringLiteral("Done")
+			  : st == QStringLiteral("failed")  ? QStringLiteral("Failed")
+			  : st == QStringLiteral("waiting") ? QStringLiteral("Waiting")
+			  : stalled                         ? QStringLiteral("May be stuck")
+							    : QStringLiteral("Running");
 	state_->setText(s);
-	state_->setStyleSheet(st == QStringLiteral("failed") ? QStringLiteral("color:%1;").arg(theme::hex(QStringLiteral("danger")))
-			      : st == QStringLiteral("done")  ? QStringLiteral("color:%1;").arg(theme::hex(QStringLiteral("ok")))
-							      : QString());
-	const QString n = t.value(QStringLiteral("note")).toString();
-	note_->setText(n);
-	note_->setVisible(!n.isEmpty());
+	state_->setStyleSheet(st == QStringLiteral("failed") || stalled ? QStringLiteral("color:%1;").arg(theme::hex(QStringLiteral("danger")))
+			      : st == QStringLiteral("done")            ? QStringLiteral("color:%1;").arg(theme::hex(QStringLiteral("ok")))
+									: QString());
+	auto set = [](QLabel *l, const QString &text) {
+		l->setText(text);
+		l->setVisible(!text.isEmpty());
+	};
+	set(stage_, tasktime::stageLine(t));
+	set(count_, tasktime::countLine(t));
+	set(time_, tasktime::etaLine(t));
+	set(last_, tasktime::lastLine(t));
+	set(note_, str(t, "note"));
+	set(warn_, tasktime::stallLine(t));
+	bar_->setProgress(st, st == QStringLiteral("waiting") ? 0.0 : tasktime::fraction(t));
+	bar_->setVisible(st != QStringLiteral("done"));
 	close_->setVisible(finished_);
-	const QString tt = tasktime::text(t);
-	time_->setText(tt);
-	time_->setVisible(!tt.isEmpty());
-	bar_->setProgress(st, st == QStringLiteral("waiting") ? 0.0 : fractionOf(t));
+	stop_->setVisible(stoppable(t));
+	if (property("stalled").toBool() != stalled) {
+		setProperty("stalled", stalled);
+		repolish(this);
+	}
 }
 
 // ---- Toast ----
@@ -336,19 +485,22 @@ Toast::Toast(const QString &title, const QString &note, bool failed, QWidget *pa
 	setObjectName(QStringLiteral("toast"));
 	setProperty("failed", failed);
 	setFocusPolicy(Qt::NoFocus);
-	setAttribute(Qt::WA_TransparentForMouseEvents); // clicks go through to the studio underneath
+	setCursor(Qt::PointingHandCursor);
+	setToolTip(QStringLiteral("Show the task list"));
 	auto *h = new QHBoxLayout(this);
-	h->setContentsMargins(14, 10, 8, 10);
+	h->setContentsMargins(16, 12, 8, 12);
 	auto *v = new QVBoxLayout();
-	v->setSpacing(2);
+	v->setSpacing(3);
 	auto *t = new QLabel(title, this);
+	t->setObjectName(QStringLiteral("toastTitle"));
 	t->setWordWrap(true);
-	t->setStyleSheet(QStringLiteral("font-weight:600;background:transparent;"));
+	t->setAttribute(Qt::WA_TransparentForMouseEvents);
 	v->addWidget(t);
 	if (!note.isEmpty()) {
 		auto *n = new QLabel(note, this);
+		n->setObjectName(QStringLiteral("toastNote"));
 		n->setWordWrap(true);
-		n->setStyleSheet(QStringLiteral("color:%1;background:transparent;").arg(theme::hex(QStringLiteral("muted"))));
+		n->setAttribute(Qt::WA_TransparentForMouseEvents);
 		v->addWidget(n);
 	}
 	h->addLayout(v, 1);
@@ -357,23 +509,30 @@ Toast::Toast(const QString &title, const QString &note, bool failed, QWidget *pa
 	x->setObjectName(QStringLiteral("taskClose"));
 	x->setProperty("noGlow", true);
 	x->setFocusPolicy(Qt::NoFocus);
+	x->setToolTip(QStringLiteral("Close"));
 	connect(x, &QToolButton::clicked, this, [this]() { emit closeRequested(this); });
 	h->addWidget(x, 0, Qt::AlignTop);
-	setFixedWidth(330);
+	setFixedWidth(kToastW);
 	adjustSize();
+}
+
+void Toast::mouseReleaseEvent(QMouseEvent *e)
+{
+	if (e->button() == Qt::LeftButton && rect().contains(e->position().toPoint()))
+		emit clicked(this);
 }
 
 // ---- TaskBar ----
 
 TaskBar::TaskBar(QMainWindow *host) : QObject(host), host_(host)
 {
-	chip_ = new TaskChip(host->statusBar());
+	chip_ = new TaskChip(host);
 	connect(chip_, &TaskChip::clicked, this, [this]() { setPanelOpen(!open_); });
 
 	panel_ = new QFrame(host);
 	panel_->setObjectName(QStringLiteral("taskPanel"));
 	panel_->setFocusPolicy(Qt::NoFocus);
-	panel_->setFixedWidth(380);
+	panel_->setFixedWidth(kPanelW);
 	auto *pv = new QVBoxLayout(panel_);
 	pv->setContentsMargins(12, 10, 12, 12);
 	pv->setSpacing(8);
@@ -384,6 +543,7 @@ TaskBar::TaskBar(QMainWindow *host) : QObject(host), host_(host)
 	count_->setObjectName(QStringLiteral("muted"));
 	auto *hideBtn = new QToolButton(panel_);
 	hideBtn->setText(QStringLiteral("Hide"));
+	hideBtn->setObjectName(QStringLiteral("taskHide"));
 	hideBtn->setFocusPolicy(Qt::NoFocus);
 	connect(hideBtn, &QToolButton::clicked, this, [this]() { setPanelOpen(false); });
 	head->addWidget(ht);
@@ -391,72 +551,74 @@ TaskBar::TaskBar(QMainWindow *host) : QObject(host), host_(host)
 	head->addWidget(count_);
 	head->addWidget(hideBtn);
 	pv->addLayout(head);
-	auto *scroll = new QScrollArea(panel_);
-	scroll->setWidgetResizable(true);
-	scroll->setFocusPolicy(Qt::NoFocus);
-	scroll->setFrameShape(QFrame::NoFrame);
-	scroll->setMaximumHeight(340);
-	scroll->setMinimumHeight(40);
-	auto *inner = new QWidget(scroll);
+	scroll_ = new QScrollArea(panel_);
+	scroll_->setWidgetResizable(true);
+	scroll_->setFocusPolicy(Qt::NoFocus);
+	scroll_->setFrameShape(QFrame::NoFrame);
+	scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // lines wrap; nothing is cut off to the side
+	scroll_->setMinimumHeight(40);
+	auto *inner = new QWidget(scroll_);
 	rows_ = new QVBoxLayout(inner);
 	rows_->setContentsMargins(0, 0, 0, 0);
-	rows_->setSpacing(6);
+	rows_->setSpacing(8);
 	empty_ = new QLabel(QStringLiteral("Nothing is running."), inner);
 	empty_->setObjectName(QStringLiteral("muted"));
 	rows_->addWidget(empty_);
 	rows_->addStretch(1);
-	scroll->setWidget(inner);
-	pv->addWidget(scroll);
+	scroll_->setWidget(inner);
+	pv->addWidget(scroll_);
 	panel_->hide();
 }
 
 void TaskBar::update(const QJsonArray &tasks, double serverNowMs)
 {
 	tasks_ = tasks;
-	running_ = waiting_ = 0;
-	double sum = 0;
-	int determinate = 0, indeterminate = 0;
-	QStringList titles;
+	running_ = waiting_ = stalled_ = 0;
+	QStringList lines;
 	QSet<QString> present;
 	for (const QJsonValue &v : tasks) {
 		const QJsonObject t = v.toObject();
-		const QString id = t.value(QStringLiteral("id")).toString(), st = t.value(QStringLiteral("state")).toString();
+		const QString id = str(t, "id"), st = str(t, "state"), title = str(t, "title");
 		present.insert(id);
 		const QString was = lastState_.value(id);
 		const bool wasActive = was == QStringLiteral("running") || was == QStringLiteral("waiting");
 		const bool finished = st == QStringLiteral("done") || st == QStringLiteral("failed");
-		// A toast when a task we saw working finishes, or one that finished just before this poll (a quick action).
+		// A notification when a task we saw working finishes, or one that finished just before this poll (a quick action).
 		const double age = serverNowMs - t.value(QStringLiteral("updatedAt")).toDouble(0);
 		if (finished && !dismissed_.contains(id) && (wasActive || (was.isEmpty() && !first_ && age >= 0 && age < 6000)))
-			toast(t.value(QStringLiteral("title")).toString(), t.value(QStringLiteral("note")).toString(), st == QStringLiteral("failed"));
-		// A toast when a long job starts (one we did not see before, after the first poll: no burst at window open).
+			toast(st == QStringLiteral("failed") ? QStringLiteral("Failed: %1").arg(title) : QStringLiteral("Done: %1").arg(title), str(t, "note"),
+			      st == QStringLiteral("failed"));
+		// A notification when a long job starts (one we did not see before, after the first poll: no burst at window open).
 		if (!finished && was.isEmpty() && !first_ && longJob(t)) {
 			startToasts_++;
-			toast(QStringLiteral("Started: %1").arg(t.value(QStringLiteral("title")).toString()), QStringLiteral("Its progress is in the task list."), false);
+			toast(QStringLiteral("Started: %1").arg(title), QStringLiteral("Click to see its progress."), false);
 		}
 		lastState_[id] = st;
+		const bool stalled = st == QStringLiteral("running") && t.value(QStringLiteral("stalled")).toBool(false);
+		// Once per stall (again only after progress came back): a notification that it may be stuck.
+		if (stalled && !warned_.contains(id)) {
+			warned_.insert(id);
+			toast(QStringLiteral("May be stuck: %1").arg(title), tasktime::stallLine(t) + QStringLiteral(". Click to see it or stop it."), true);
+		} else if (!stalled)
+			warned_.remove(id);
 		if (st == QStringLiteral("running")) {
 			running_++;
-			const double f = fractionOf(t);
-			if (f >= 0) {
-				sum += f;
-				determinate++;
-			} else
-				indeterminate++;
-			titles << t.value(QStringLiteral("title")).toString();
+			stalled_ += stalled ? 1 : 0;
+			lines << QStringLiteral("%1 - %2").arg(title, tasktime::text(t));
 		} else if (st == QStringLiteral("waiting")) {
 			waiting_++;
-			titles << t.value(QStringLiteral("title")).toString();
+			lines << QStringLiteral("%1 - waiting").arg(title);
 		}
 	}
 	for (auto it = lastState_.begin(); it != lastState_.end();)
 		it = present.contains(it.key()) ? std::next(it) : lastState_.erase(it);
 	dismissed_.intersect(present);
+	warned_.intersect(present);
 	first_ = false;
-	// One bar for the chip: the average of the known fractions; unknown work shows the sweep.
-	const double frac = determinate > 0 && indeterminate == 0 ? sum / determinate : -1.0;
-	chip_->setState(running_, waiting_, frac, titles.join(QLatin1Char('\n')));
 	rebuildRows();
+	chip_->setState(running_, waiting_, shown_, stalled_, lines.join(QLatin1Char('\n')));
+	if (open_ && shown_ == 0)
+		setPanelOpen(false); // nothing left to show: the panel folds away with its button
 }
 
 void TaskBar::rebuildRows()
@@ -465,7 +627,7 @@ void TaskBar::rebuildRows()
 	int idx = 0;
 	for (const QJsonValue &v : tasks_) {
 		const QJsonObject t = v.toObject();
-		const QString id = t.value(QStringLiteral("id")).toString();
+		const QString id = str(t, "id");
 		if (dismissed_.contains(id))
 			continue;
 		want.insert(id);
@@ -476,7 +638,9 @@ void TaskBar::rebuildRows()
 			connect(row, &TaskRow::dismissed, this, [this](const QString &rid) {
 				dismissed_.insert(rid);
 				rebuildRows();
+				chip_->setState(running_, waiting_, shown_, stalled_, chip_->toolTip());
 			});
+			connect(row, &TaskRow::stopRequested, this, &TaskBar::stopRequested);
 		}
 		row->setTask(t);
 		rows_->insertWidget(idx++, row);
@@ -503,15 +667,42 @@ void TaskBar::dismissFirstFinished()
 		if (it.value()->finished()) {
 			dismissed_.insert(it.key());
 			rebuildRows();
+			chip_->setState(running_, waiting_, shown_, stalled_, chip_->toolTip());
 			return;
 		}
+}
+
+void TaskBar::clickFirstToast()
+{
+	if (!toasts_.isEmpty())
+		emit toasts_.first()->clicked(toasts_.first());
+}
+
+// Just under the top bar (the button's row); the window's top before the button is placed.
+int TaskBar::topY() const
+{
+	QWidget *bar = chip_->parentWidget();
+	if (bar && bar != host_)
+		return bar->mapTo(host_, QPoint(0, bar->height())).y() + 6;
+	return 48;
+}
+
+QPoint TaskBar::panelPos() const
+{
+	return {host_->width() - panel_->width() - kGap, topY()};
 }
 
 void TaskBar::reposition()
 {
 	if (open_) {
+		// As tall as its rows need, up to the window's height (then the rows scroll).
+		const int room = std::max(160, host_->height() - topY() - 40);
+		scroll_->setMaximumHeight(std::max(40, room - 60));
+		if (QWidget *inner = scroll_->widget())
+			scroll_->setMinimumHeight(std::min(scroll_->maximumHeight(), std::max(40, inner->sizeHint().height())));
 		panel_->adjustSize();
-		panel_->move(host_->width() - panel_->width() - 14, host_->statusBar()->geometry().top() - 8 - panel_->height());
+		if (!panelAnim_)
+			panel_->move(panelPos());
 	}
 	layoutToasts(false);
 }
@@ -529,18 +720,18 @@ void TaskBar::setPanelOpen(bool open)
 	}
 	if (open) {
 		panel_->show();
-		panel_->adjustSize();
-		const QPoint end(host_->width() - panel_->width() - 14, host_->statusBar()->geometry().top() - 8 - panel_->height());
+		reposition();
+		const QPoint end = panelPos();
 		panel_->raise();
-		if (motion::enabled(host_)) {
-			panel_->move(end + QPoint(0, 24));
+		if (motion::enabled(host_)) { // slides down from under the button while fading in
+			panel_->move(end - QPoint(0, 16));
 			QPointer<QGraphicsOpacityEffect> fx = new QGraphicsOpacityEffect(panel_);
 			fx->setOpacity(0);
 			panel_->setGraphicsEffect(fx);
-			panelAnim_ = motion::run(panel_, 0.0, 1.0, 220, QEasingCurve::OutCubic, [this, fx, end](const QVariant &v) {
+			panelAnim_ = motion::run(panel_, 0.0, 1.0, 200, QEasingCurve::OutCubic, [this, fx, end](const QVariant &v) {
 				if (fx)
 					fx->setOpacity(v.toReal());
-				panel_->move(end + QPoint(0, int(24 * (1.0 - v.toReal()))));
+				panel_->move(end - QPoint(0, int(16 * (1.0 - v.toReal()))));
 			}, [this]() { panel_->setGraphicsEffect(nullptr); depth::attach(panel_, QString()); }); // the fade is done: the theme's depth effect again
 		} else {
 			panel_->move(end);
@@ -554,10 +745,10 @@ void TaskBar::setPanelOpen(bool open)
 			QPointer<QGraphicsOpacityEffect> fx = new QGraphicsOpacityEffect(panel_);
 			panel_->setGraphicsEffect(fx);
 			const QPoint start = panel_->pos();
-			panelAnim_ = motion::run(panel_, 1.0, 0.0, 180, QEasingCurve::OutCubic, [this, fx, start](const QVariant &v) {
+			panelAnim_ = motion::run(panel_, 1.0, 0.0, 160, QEasingCurve::OutCubic, [this, fx, start](const QVariant &v) {
 				if (fx)
 					fx->setOpacity(v.toReal());
-				panel_->move(start + QPoint(0, int(24 * (1.0 - v.toReal()))));
+				panel_->move(start - QPoint(0, int(16 * (1.0 - v.toReal()))));
 			}, [this, start]() {
 				if (!open_) {
 					panel_->hide();
@@ -577,7 +768,17 @@ void TaskBar::toast(const QString &title, const QString &note, bool failed)
 		closeToast(toasts_.first());
 	auto *t = new Toast(title, note, failed, host_);
 	toasts_.append(t);
+	toastsShown_++;
+	lastToast_ = title;
+	toastLog_.append(title);
+	if (toastLog_.size() > 10)
+		toastLog_.removeFirst();
 	connect(t, &Toast::closeRequested, this, &TaskBar::closeToast);
+	connect(t, &Toast::clicked, this, [this](Toast *x) {
+		toastClicks_++;
+		setPanelOpen(true);
+		closeToast(x);
+	});
 	t->show();
 	t->raise();
 	layoutToasts(false);
@@ -595,7 +796,7 @@ void TaskBar::toast(const QString &title, const QString &note, bool failed)
 		if (in)
 			in->setObjectName(QStringLiteral("toastIn"));
 	}
-	QTimer::singleShot(4000, t, [this, t]() { closeToast(t); });
+	QTimer::singleShot(kToastMs, t, [this, t]() { closeToast(t); });
 }
 
 void TaskBar::closeToast(Toast *t)
@@ -626,20 +827,21 @@ void TaskBar::closeToast(Toast *t)
 		done();
 }
 
-// Stack the toasts bottom-up above the status bar (and above the task list when it is open).
+// Stack the notifications top-down at the top right, under the top bar; with the panel open, to its left.
 void TaskBar::layoutToasts(bool animate)
 {
-	int y = (open_ ? panel_->y() : host_->statusBar()->geometry().top()) - 10;
-	for (int i = int(toasts_.size()) - 1; i >= 0; i--) {
-		Toast *t = toasts_[i];
+	int y = topY();
+	for (Toast *t : toasts_) {
 		t->adjustSize();
-		y -= t->height();
-		const QPoint to(host_->width() - t->width() - 14, y);
+		int x = host_->width() - t->width() - kGap;
+		if (open_)
+			x = std::max(kGap, panel_->x() - t->width() - 10);
+		const QPoint to(x, y);
 		if (animate && motion::enabled(host_) && t->isVisible() && t->pos() != to)
 			motion::run(t, t->pos(), to, 200, QEasingCurve::OutCubic, [t](const QVariant &v) { t->move(v.toPoint()); });
 		else
 			t->move(to);
-		y -= 8;
+		y += t->height() + 8;
 	}
 }
 
@@ -648,19 +850,55 @@ QJsonObject TaskBar::probe() const
 	QJsonObject o;
 	o.insert(QStringLiteral("running"), running_);
 	o.insert(QStringLiteral("waiting"), waiting_);
+	o.insert(QStringLiteral("stalled"), stalled_);
 	o.insert(QStringLiteral("total"), int(tasks_.size()));
 	o.insert(QStringLiteral("rows"), shown_);
 	o.insert(QStringLiteral("chipHidden"), chip_->isHidden());
+	o.insert(QStringLiteral("chipQuiet"), chip_->quiet());
 	o.insert(QStringLiteral("chipText"), chip_->text());
+	o.insert(QStringLiteral("chipInTopBar"), chip_->parentWidget() != host_);
 	o.insert(QStringLiteral("panelOpen"), open_);
 	o.insert(QStringLiteral("toasts"), int(toasts_.size()));
+	o.insert(QStringLiteral("toastsShown"), toastsShown_);
+	o.insert(QStringLiteral("toastClicks"), toastClicks_);
+	o.insert(QStringLiteral("lastToast"), lastToast_);
+	o.insert(QStringLiteral("toastLog"), QJsonArray::fromStringList(toastLog_));
 	o.insert(QStringLiteral("startToasts"), startToasts_);
-	QJsonArray titles, times;
+	// Where things are, in window pixels: the panel and the notifications sit at the top right, under the top bar.
+	o.insert(QStringLiteral("windowWidth"), host_->width());
+	o.insert(QStringLiteral("topY"), topY());
+	if (open_) {
+		const QPoint pp = panelPos();
+		o.insert(QStringLiteral("panel"), QJsonObject{{QStringLiteral("x"), pp.x()}, {QStringLiteral("y"), pp.y()}, {QStringLiteral("width"), panel_->width()},
+							       {QStringLiteral("right"), host_->width() - (pp.x() + panel_->width())}});
+	}
+	QJsonArray toastPos;
+	for (const Toast *t : toasts_)
+		toastPos.append(QJsonObject{{QStringLiteral("x"), t->x()}, {QStringLiteral("y"), t->y()}, {QStringLiteral("width"), t->width()},
+					    {QStringLiteral("right"), host_->width() - (t->x() + t->width())}});
+	o.insert(QStringLiteral("toastPos"), toastPos);
+	QJsonArray titles, times, detail;
 	for (const QJsonValue &v : tasks_) {
-		titles.append(v.toObject().value(QStringLiteral("title")).toString());
-		times.append(tasktime::text(v.toObject()));
+		const QJsonObject t = v.toObject();
+		titles.append(str(t, "title"));
+		times.append(tasktime::text(t));
+		const QString id = str(t, "id");
+		if (dismissed_.contains(id))
+			continue;
+		detail.append(QJsonObject{{QStringLiteral("id"), id},
+					  {QStringLiteral("title"), str(t, "title")},
+					  {QStringLiteral("state"), str(t, "state")},
+					  {QStringLiteral("stage"), tasktime::stageLine(t)},
+					  {QStringLiteral("count"), tasktime::countLine(t)},
+					  {QStringLiteral("fraction"), tasktime::fraction(t)},
+					  {QStringLiteral("eta"), tasktime::etaLine(t)},
+					  {QStringLiteral("last"), tasktime::lastLine(t)},
+					  {QStringLiteral("warn"), tasktime::stallLine(t)},
+					  {QStringLiteral("stalled"), isRunning(t) && t.value(QStringLiteral("stalled")).toBool(false)},
+					  {QStringLiteral("stop"), stoppable(t)}});
 	}
 	o.insert(QStringLiteral("titles"), titles);
 	o.insert(QStringLiteral("times"), times);
+	o.insert(QStringLiteral("detail"), detail);
 	return o;
 }

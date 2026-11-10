@@ -338,14 +338,23 @@ QTabBar::tab:selected { background: @accent; color: @onAccent; border-color: @ac
 QLabel#muted { color: @muted; background: transparent; }
 QToolButton#taskClose { border: none; background: transparent; color: @muted; padding: 0 6px; border-radius: @rs; }
 QToolButton#taskClose:hover { background: @border; color: @text; }
-QWidget#taskChip { background: @field; border: @bw solid @border; border-radius: @rpill; }
-QWidget#taskChip QLabel { background: transparent; color: @text; }
+QWidget#taskChip { background: @field; border: @bw solid @accent; border-radius: @rpill; }
+QWidget#taskChip[quiet="true"] { border-color: @border; }
+QWidget#taskChip[stalled="true"] { border: 2px solid @danger; }
+QWidget#taskChip QLabel { background: transparent; color: @text; font-weight: @hw; }
+QWidget#taskChip[quiet="true"] QLabel { color: @muted; font-weight: normal; }
 QFrame#taskPanel { background: @panel; border: @bw solid @border; border-radius: @rpanel; }
 QFrame#taskRow { background: @field; border: @bw solid @border; border-radius: @rpill; }
+QFrame#taskRow[stalled="true"] { border: 2px solid @danger; }
 QFrame#taskRow QLabel { background: transparent; }
-QFrame#toast { background: @field; border: @bw solid @accent; border-radius: @rtoast; }
+QLabel#taskTitle { color: @text; font-weight: @hw; }
+QLabel#taskStage, QLabel#taskCount { color: @text; }
+QLabel#taskWarn { color: @danger; font-weight: @hw; }
+QFrame#toast { background: @panel; border: 2px solid @accent; border-radius: @rtoast; }
 QFrame#toast[failed="true"] { border-color: @danger; }
-QFrame#toast QLabel { background: transparent; }
+QFrame#toast QLabel { background: transparent; color: @text; }
+QLabel#toastTitle { font-weight: @hw; font-size: 11pt; }
+QLabel#toastNote { font-size: 10pt; }
 QFrame#statCard { background: @panel; border: @bw solid @border; border-radius: @rinner; }
 QFrame#statCard QLabel { background: transparent; }
 QLabel#statName { color: @muted; font-size: @cs; font-weight: @hw; }

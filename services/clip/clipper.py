@@ -635,6 +635,7 @@ def cmd_montage(a):
     """Kill montages (clip_montage.py, data/clip/montage.json) from the detector hits of the H recording, cut from the
     V recording of the same session -> DIR/montage/clips/<id>/montage-v.mp4 + DIR/montage/render.json +
     DIR/montage/candidates.json (then `validate --out DIR/montage`; then the folder packages for posting)."""
+    progress_line("montage", 0, 1, "making the kill montage")
     import clip_montage as mont
     ffmpeg, ffprobe = _tools(a)
     hits_path = a.hits or os.path.join(a.out, "detector-hits.jsonl")
@@ -745,6 +746,7 @@ def _game(a):
 
 
 def _publish(a, work, run_name=None, rec_start=None):
+    progress_line("publish", 0, 1, "copying the finished clips to your clips folder")
     lay_doc = load_config("layouts", a.layouts_file)
     ranking = load_config("ranking", a.ranking)
     start = None

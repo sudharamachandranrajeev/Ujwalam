@@ -316,8 +316,11 @@ export function createPostChain(opts) {
       }
       queue.patch(item.id, { state: 'uploading', reason: null, nextAt: null });
       // Task bar and tray (D311 proposed): an upload in progress is a task with its own progress (MB sent of MB).
-      const task = { id: `upload-${String(item.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60)}`, kind: 'upload', title: 'Uploading a clip to YouTube (private)', startedAt: nowMs() };
-      const taskSay = (p) => writeTaskFile(dataDir, { ...task, updatedAt: nowMs(), ...p });
+      const task = { id: `upload-${String(item.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60)}`, kind: 'upload', title: 'Uploading a clip to YouTube (private)', startedAt: nowMs(),
+        stage: 'upload', stages: ['upload'], stageText: 'Uploading to YouTube', unit: 'MB' };
+      task.activeAt = task.startedAt;
+      let progressAt = null; // last chunk sent (the task panel's stall warning, 2026-11-10)
+      const taskSay = (p) => writeTaskFile(dataDir, { ...task, updatedAt: nowMs(), progressAt, ...p });
       taskSay({ state: 'running', note: 'Starting the upload' });
       let taskEnd = { state: 'failed', note: 'Did not finish; it will be tried again' };
       try {
@@ -332,6 +335,7 @@ export function createPostChain(opts) {
             if (b) { taskEnd = { state: 'waiting', note: 'Paused while the stream runs; it resumes after' }; throw new UploadError('stream-active', b); }
             if (pr && Number.isFinite(pr.total) && pr.total > 0) {
               const mb = (n) => Math.round(n / 1048576);
+              progressAt = nowMs();
               taskSay({ state: 'running', done: mb(pr.offset), total: Math.max(1, mb(pr.total)), note: `${mb(pr.offset)} of ${mb(pr.total)} MB sent` });
             }
           },

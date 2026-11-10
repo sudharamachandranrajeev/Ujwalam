@@ -75,8 +75,11 @@ void Guide::attachHelpButton(QAbstractButton *b)
 QRect Guide::rectOf(const QString &name) const
 {
 	QList<QPointer<QWidget>> ws = anchors_.value(name);
-	if (name == QStringLiteral("taskBar"))
-		ws = {QPointer<QWidget>(host_->statusBar())};
+	if (name == QStringLiteral("taskBar")) { // the top bar that holds the task button (2026-11-10; the status bar before)
+		const QList<QPointer<QWidget>> chip = anchors_.value(QStringLiteral("taskChip"));
+		QWidget *bar = !chip.isEmpty() && chip.first() ? chip.first()->parentWidget() : nullptr;
+		ws = {QPointer<QWidget>(bar && bar != host_ ? bar : host_->statusBar())};
+	}
 	else if (ws.isEmpty())
 		if (QWidget *w = host_->findChild<QWidget *>(name)) // a name another part of the window gave its widget
 			ws << QPointer<QWidget>(w);
