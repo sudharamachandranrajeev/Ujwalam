@@ -115,9 +115,10 @@ const mergeUi = (cur, patch) => {
 // --- theme settings (D293) ----------------------------------------------------------------------------------------
 // ui.theme: id of the studio theme (data/themes/<id>.json, or a custom theme file the user added): lower-case letters,
 // digits and dashes. Not checked against the installed list here: the window falls back to "violet-night" when the
-// theme is missing. ui.effects: "full" (shadow, glow and extrusion as the theme says) | "reduced" (none).
+// theme is missing. ui.effects: "full" (shadow, glow and extrusion as the theme says) | "reduced" (none) |
+// "performance" (High performance, 2026-11-10: none, and no gradients, backdrop pattern, hover overlays or animation).
 // Present in the file and in readSettings() only once the user has chosen.
-export const UI_EFFECTS = Object.freeze(['full', 'reduced']);
+export const UI_EFFECTS = Object.freeze(['full', 'reduced', 'performance']);
 export const THEME_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 const themeProblems = (k, v) => {
   if (k === 'theme') return typeof v === 'string' && v.length <= 40 && THEME_ID.test(v) ? [] : ['ui.theme must be a theme id (lower-case letters, digits and dashes, up to 40 characters)'];

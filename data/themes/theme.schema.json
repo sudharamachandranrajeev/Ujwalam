@@ -37,7 +37,9 @@
       "additionalProperties": false,
       "properties": {
         "window": { "$ref": "#/$defs/gradient", "description": "window backdrop" },
-        "accent": { "$ref": "#/$defs/gradient", "description": "fill of primary buttons and round primary controls" }
+        "accent": { "$ref": "#/$defs/gradient", "description": "fill of primary buttons and round primary controls" },
+        "panel": { "$ref": "#/$defs/gradient", "description": "optional: fill of cards, group boxes and the task panel (flat panel colour when absent or in High performance)" },
+        "control": { "$ref": "#/$defs/gradient", "description": "optional: fill of plain buttons (flat field colour when absent or in High performance)" }
       }
     },
     "typography": {
@@ -71,7 +73,12 @@
         },
         "borderWidth": { "type": "integer", "minimum": 0, "maximum": 3 },
         "controlHeight": { "type": "integer", "minimum": 14, "maximum": 40 },
-        "roundControl": { "type": "integer", "minimum": 36, "maximum": 72 }
+        "roundControl": { "type": "integer", "minimum": 36, "maximum": 72 },
+        "controlPadding": {
+          "type": "object", "additionalProperties": false, "required": ["y", "x"],
+          "description": "optional: padding inside buttons in px (default 5 x 12)",
+          "properties": { "y": { "type": "integer", "minimum": 2, "maximum": 12 }, "x": { "type": "integer", "minimum": 4, "maximum": 24 } }
+        }
       }
     },
     "depth": {

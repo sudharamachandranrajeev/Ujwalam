@@ -38,6 +38,10 @@ QVariantAnimation *run(QWidget *context, const QVariant &from, const QVariant &t
 // Hover glow on buttons and cards: a mouse-transparent overlay child that fades in/out (180 ms) on enter/leave.
 // Installed once for the whole app: any shown QPushButton / QToolButton / QFrame#strip gets one.
 void installHover(QApplication &app);
+// High performance (2026-11-10): true removes every hover overlay (and installHover adds none while it is on); false
+// gives the shown widgets their overlay back. hoverCount(): overlays alive (probe).
+void dropHover(bool drop);
+int hoverCount();
 
 // A status chip (QLabel#pill) that fades between its normal look and a filled colour.
 void setChip(QLabel *chip, bool on, const QColor &fill);

@@ -51,7 +51,7 @@ public:
 			return false;
 		auto *w = static_cast<QWidget *>(o);
 		const theme::Background b = theme::background();
-		if (b.kind == QStringLiteral("solid"))
+		if (b.kind == QStringLiteral("solid") || theme::performance()) // High performance: the plain window colour
 			return false;
 		QPainter p(w);
 		p.setClipRegion(static_cast<QPaintEvent *>(e)->region());

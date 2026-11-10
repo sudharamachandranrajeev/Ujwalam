@@ -43,6 +43,7 @@
 #include <QMenu>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QShortcut>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -1057,8 +1058,14 @@ QWidget *MainWindow::buildLeft()
 	// Feature flags (D149): new features ship off; switch them in Settings > Advanced (D290). Turning one on asks for
 	// the typed phrase ("yes, on air" while live), turning one off is instant. The list follows the server on every
 	// status poll; the widget lives here, hidden, and the Settings window borrows it while it is open.
-	flagList_ = new QListWidget(this);
-	flagList_->hide();
+	// It sits in a hidden holder, never directly in the window (2026-11-10 Advanced offset bug): the embedded previews
+	// carry native window handles (PreviewSlot), and Qt then gives every direct child of the main window its own native
+	// handle as well. A list with a native handle, moved into the Settings dialog, kept being placed as a separate
+	// child window (its own position, outside the dialog's fade and DPI scaling) and showed up shifted on the Advanced
+	// page. The holder takes that native handle; the list inside it stays an ordinary (alien) widget.
+	flagHome_ = new QWidget(this);
+	flagHome_->hide();
+	flagList_ = new QListWidget(flagHome_);
 	connect(flagList_, &QListWidget::itemChanged, this, [this](QListWidgetItem *it) {
 		setFlag(it->data(Qt::UserRole).toString(), it->checkState() == Qt::Checked);
 	});
@@ -3380,6 +3387,21 @@ QString modeWords(const QString &id, bool live)
 			return QString::fromUtf8(live ? m.live : m.recording);
 	return id;
 }
+// Runs a function when its parent is deleted. Made as the dialog's first child, it runs before the dialog's other
+// children (Qt deletes children in creation order), so a borrowed widget can be taken back before it is deleted.
+class OnDelete : public QObject
+{
+public:
+	OnDelete(QObject *parent, std::function<void()> f) : QObject(parent), f_(std::move(f)) {}
+	~OnDelete() override
+	{
+		if (f_)
+			f_();
+	}
+
+private:
+	std::function<void()> f_;
+};
 } // namespace
 
 // The Clips label in the top bar, in plain words, and the questions that need an answer.
@@ -3525,6 +3547,15 @@ void MainWindow::openSettings(bool firstRun)
 		const QString motionNow = st.value(QStringLiteral("ui")).toObject().value(QStringLiteral("motion")).toString(QStringLiteral("system"));
 		auto *dlg = new QDialog(this);
 		dlg->setAttribute(Qt::WA_DeleteOnClose, true);
+		// The flag list is borrowed below. However the dialog goes (closed, deleted directly, or with the window at
+		// quit), the list goes back to its holder first, so flagList_ never points at a deleted widget. When the
+		// holder is already gone (the window is being deleted), the list is deleted with the dialog.
+		new OnDelete(dlg, [this] {
+			if (flagHome_ && flagList_ && flagList_->parentWidget() != flagHome_) {
+				flagList_->hide();
+				flagList_->setParent(flagHome_);
+			}
+		});
 		settingsDlg_ = dlg;
 		dlg->setWindowTitle(firstRun ? QStringLiteral("Welcome: clips") : QStringLiteral("Settings"));
 		auto *outer = new QVBoxLayout(dlg);
@@ -3704,7 +3735,7 @@ void MainWindow::openSettings(bool firstRun)
 
 		connect(dlg, &QDialog::finished, this, [=](int result) {
 			// give the flag list back to the window before the dialog goes
-			flagList_->setParent(this);
+			flagList_->setParent(flagHome_);
 			flagList_->hide();
 			settingsDlg_.clear();
 			if (result != QDialog::Accepted) {
@@ -3882,7 +3913,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("controls"), QJsonObject{{QStringLiteral("stream"), streamBtn_->accessibleName()}, {QStringLiteral("record"), recordBtn_->accessibleName()},
 							{QStringLiteral("clip"), clipBtn_->accessibleName()}, {QStringLiteral("mark"), markBtn_->accessibleName()},
 							{QStringLiteral("streamIcon"), streamBtn_->property("iconState").toString()}});
-	o.insert(QStringLiteral("flagsInSettings"), flagList_->parentWidget() != this); // the list moved out of the main window (D290)
+	o.insert(QStringLiteral("flagsInSettings"), flagList_->parentWidget() != flagHome_); // the list moved out of the main window (D290)
 	if (settingsDlg_) {
 		QJsonArray sections;
 		if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")))
@@ -3890,9 +3921,22 @@ QJsonObject MainWindow::probe() const
 				sections.append(nav->item(i)->text());
 		auto *fx = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsLayerEffects"));
 		auto *mo = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsMotion"));
-		o.insert(QStringLiteral("settings"), QJsonObject{{QStringLiteral("sections"), sections}, {QStringLiteral("layerEffects"), fx ? QJsonValue(fx->isChecked()) : QJsonValue()},
-								{QStringLiteral("layerEffectsText"), fx ? fx->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
-								{QStringLiteral("motionChoices"), mo ? mo->count() : 0}});
+		QJsonObject s{{QStringLiteral("sections"), sections}, {QStringLiteral("layerEffects"), fx ? QJsonValue(fx->isChecked()) : QJsonValue()},
+			      {QStringLiteral("layerEffectsText"), fx ? fx->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
+			      {QStringLiteral("motionChoices"), mo ? mo->count() : 0}};
+		// Advanced page geometry (2026-11-10 offset bug): where the flag list sits in its box and in the dialog, and
+		// whether it carries its own native window handle.
+		if (QWidget *box = flagList_->parentWidget(); box && box != flagHome_) {
+			const QRect g = flagList_->geometry(), inDlg(flagList_->mapTo(settingsDlg_.data(), QPoint(0, 0)), flagList_->size());
+			const QRect bc = box->contentsRect();
+			s.insert(QStringLiteral("flagList"), QJsonObject{{QStringLiteral("native"), flagList_->internalWinId() != 0},
+									 {QStringLiteral("nativeAttr"), flagList_->testAttribute(Qt::WA_NativeWindow)},
+									 {QStringLiteral("x"), g.x()}, {QStringLiteral("y"), g.y()}, {QStringLiteral("w"), g.width()}, {QStringLiteral("h"), g.height()},
+									 {QStringLiteral("dlgX"), inDlg.x()}, {QStringLiteral("dlgY"), inDlg.y()},
+									 {QStringLiteral("insideBox"), bc.contains(g)}, {QStringLiteral("scrollY"), flagList_->verticalScrollBar()->value()},
+									 {QStringLiteral("scrollX"), flagList_->horizontalScrollBar()->value()}});
+		}
+		o.insert(QStringLiteral("settings"), s);
 	}
 	return o;
 }
@@ -4000,6 +4044,10 @@ bool MainWindow::probeAction(const QString &action)
 		return look_->probeToggle(p[1], p[2] == QStringLiteral("on"));
 	if (p.size() == 4 && p[0] == QStringLiteral("look-set"))
 		return look_->probeSet(p[1], p[2], p[3].toDouble());
+	if (p.size() == 1 && p[0] == QStringLiteral("posts-open")) { // the Posts window (for the theme pictures, 2026-11-10)
+		openPosts();
+		return true;
+	}
 	if (p.size() == 1 && p[0] == QStringLiteral("settings-open")) {
 		openSettings(false);
 		return true;
@@ -4009,6 +4057,10 @@ bool MainWindow::probeAction(const QString &action)
 			return false;
 		if (p[0] == QStringLiteral("settings-save") || p[0] == QStringLiteral("settings-cancel")) {
 			p[0] == QStringLiteral("settings-save") ? settingsDlg_->accept() : settingsDlg_->reject();
+			return true;
+		}
+		if (p[0] == QStringLiteral("settings-destroy")) { // delete the dialog without closing it (no finished signal)
+			delete settingsDlg_.data();
 			return true;
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-page")) { // show a section (for the picture)
@@ -4029,6 +4081,18 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-reduce-effects")) {
 			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsReduceEffects"))) {
+				cb->setChecked(p[1] == QStringLiteral("on"));
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-scroll")) { // Appearance page scrolled (for the picture)
+			if (auto *sa = settingsDlg_->findChild<QScrollArea *>(QStringLiteral("appearanceScroll"))) {
+				sa->verticalScrollBar()->setValue(p[1] == QStringLiteral("end") ? sa->verticalScrollBar()->maximum() : p[1].toInt());
+				return true;
+			}
+		}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-performance")) { // High performance (2026-11-10)
+			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsPerformance"))) {
 				cb->setChecked(p[1] == QStringLiteral("on"));
 				return true;
 			}

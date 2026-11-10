@@ -24,6 +24,8 @@ const contrast = (a, b) => { const x = lum(a), y = lum(b); return (Math.max(x, y
 test('at least five themes ship, Violet Night is the default look, ids match file names', () => {
   assert.ok(themes.length >= 5, `${themes.length} themes`);
   for (const id of ['violet-night', 'neon-arcade', 'studio-light', 'tactical', 'retro-wave']) assert.ok(files.includes(`${id}.json`), id);
+  // 2026-11-10: four more from the user's reference sheets (described in words in the evidence, no images in the repo)
+  for (const id of ['daylight-blue', 'copper-graphite', 'sand-teal', 'teal-grid']) assert.ok(files.includes(`${id}.json`), id);
   for (const { file, t } of themes) assert.equal(`${t.id}.json`, file);
   assert.equal(new Set(themes.map(({ t }) => t.name)).size, themes.length, 'names are unique');
 });
@@ -59,6 +61,11 @@ test('body text keeps >= 4.5:1 on bg, panel and field; muted too; onAccent on ac
     }
     const g = t.gradients?.accent;
     if (g) for (const end of [g.from, g.to]) assert.ok(contrast(c.onAccent, end) >= 4.5, `${file}: onAccent on the accent gradient end ${end}`);
+    // Optional surface gradients (2026-11-10): body and muted text on both ends of a card fill, body text on a button fill.
+    const p = t.gradients?.panel;
+    if (p) for (const end of [p.from, p.to]) for (const ink of ['text', 'muted']) assert.ok(contrast(c[ink], end) >= 4.5, `${file}: ${ink} on the panel gradient end ${end}`);
+    const b = t.gradients?.control;
+    if (b) for (const end of [b.from, b.to]) assert.ok(contrast(c.text, end) >= 4.5, `${file}: text on the control gradient end ${end}`);
   }
 });
 
@@ -82,6 +89,10 @@ test('effect rules: glow only where it marks primary or active things; extrusion
   assert.ok(Object.values(light.depth).every((d) => !d.glow && !d.extrusion), 'Studio Light: soft shadows only');
   const tac = themes.find(({ t }) => t.id === 'tactical').t;
   assert.ok(tac.depth.roundControl.extrusion.depth >= 3 && tac.depth.primaryButton.extrusion.color2, 'Tactical: bevelled edges');
+  for (const id of ['daylight-blue', 'copper-graphite', 'sand-teal', 'teal-grid']) { // 2026-11-10: no effect on plain buttons (many widgets)
+    const d = themes.find(({ t }) => t.id === id).t.depth.button;
+    assert.deepEqual(d, {}, `${id}: plain buttons carry no depth effect`);
+  }
   const neon = themes.find(({ t }) => t.id === 'neon-arcade').t;
   assert.ok(neon.geometry.radius.large <= 6 && neon.depth.primaryButton.glow.when === 'always', 'Neon: sharp and glowing');
 });

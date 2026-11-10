@@ -46,6 +46,8 @@ bool systemAnimations()
 		return false;
 	if (env == QStringLiteral("0"))
 		return true;
+	if (theme::performance()) // High performance (2026-11-10): no animation at all
+		return false;
 	if (g_mode == QStringLiteral("off"))
 		return false;
 	if (g_mode == QStringLiteral("on"))
@@ -111,6 +113,15 @@ public:
 		parent->installEventFilter(this);
 		setGeometry(parent->rect());
 		hide();
+	}
+	~Glow() override
+	{
+		// High performance removes overlays while one may be fading: its animation calls back into this object.
+		for (QPointer<QVariantAnimation> *slot : {&hoverAnim_, &pressAnim_, &focusAnim_})
+			if (*slot) {
+				(*slot)->stop();
+				(*slot)->deleteLater();
+			}
 	}
 	bool eventFilter(QObject *o, QEvent *e) override
 	{
@@ -207,25 +218,29 @@ private:
 	QPointer<QVariantAnimation> hoverAnim_, pressAnim_, focusAnim_;
 };
 
+// Gives a button, strip or task row its hover overlay (once). None in High performance.
+void attachGlow(QWidget *w)
+{
+	if (!w || theme::performance() || w->findChild<QWidget *>(QStringLiteral("hoverGlow"), Qt::FindDirectChildrenOnly))
+		return;
+	int radius = 0;
+	if (w->objectName() == QStringLiteral("round"))
+		radius = std::min(w->width(), w->height()) / 2; // the round control buttons (D290)
+	else if (qobject_cast<QAbstractButton *>(w) && (w->inherits("QPushButton") || w->inherits("QToolButton")))
+		radius = theme::radius(theme::Radius::Medium);
+	else if (w->objectName() == QStringLiteral("strip") || w->objectName() == QStringLiteral("taskRow"))
+		radius = theme::radius(theme::Radius::Medium) + 2;
+	if (radius && !w->property("noGlow").toBool())
+		new Glow(w, radius);
+}
+
 class HoverFilter : public QObject {
 public:
 	using QObject::QObject;
 	bool eventFilter(QObject *o, QEvent *e) override
 	{
-		if (e->type() != QEvent::Show)
-			return false;
-		auto *w = qobject_cast<QWidget *>(o);
-		if (!w || w->findChild<QWidget *>(QStringLiteral("hoverGlow"), Qt::FindDirectChildrenOnly))
-			return false;
-		int radius = 0;
-		if (w->objectName() == QStringLiteral("round"))
-			radius = std::min(w->width(), w->height()) / 2; // the round control buttons (D290)
-		else if (qobject_cast<QAbstractButton *>(w) && (w->inherits("QPushButton") || w->inherits("QToolButton")))
-			radius = theme::radius(theme::Radius::Medium);
-		else if (w->objectName() == QStringLiteral("strip") || w->objectName() == QStringLiteral("taskRow"))
-			radius = theme::radius(theme::Radius::Medium) + 2;
-		if (radius && !w->property("noGlow").toBool())
-			new Glow(w, radius);
+		if (e->type() == QEvent::Show)
+			attachGlow(qobject_cast<QWidget *>(o));
 		return false;
 	}
 };
@@ -235,6 +250,35 @@ public:
 void installHover(QApplication &app)
 {
 	app.installEventFilter(new HoverFilter(&app));
+}
+
+void dropHover(bool drop)
+{
+	const auto all = QApplication::allWidgets();
+	if (drop) {
+		for (QWidget *w : all)
+			if (w->objectName() == QStringLiteral("hoverGlow")) {
+				// renamed and hidden now, deleted later: a quick switch back to Full (before the deferred delete
+				// runs) must not see the dying overlay as "already there" and skip making a new one
+				w->setObjectName(QStringLiteral("hoverGlowGone"));
+				if (QWidget *host = w->parentWidget())
+					host->removeEventFilter(w); // no hover may show it again before it goes
+				w->hide();
+				w->deleteLater();
+			}
+		return;
+	}
+	for (QWidget *w : all) // back from High performance: the shown widgets get their overlay again
+		if (w->isVisible() && w->objectName() != QStringLiteral("hoverGlow"))
+			attachGlow(w);
+}
+
+int hoverCount()
+{
+	int n = 0;
+	for (QWidget *w : QApplication::allWidgets())
+		n += w->objectName() == QStringLiteral("hoverGlow") ? 1 : 0;
+	return n;
 }
 
 void setChip(QLabel *l, bool on, const QColor &fill)

@@ -1,0 +1,180 @@
+{
+  "$schema": "./theme.schema.json",
+  "id": "copper-graphite",
+  "name": "Copper Graphite",
+  "topic": "Dark graphite metal with warm copper and rose-gold light: brushed panels, a copper glow on the main action and on live controls.",
+  "version": 1,
+  "dark": true,
+  "colors": {
+    "bg": "#18191c",
+    "panel": "#232428",
+    "field": "#2c2d32",
+    "border": "#44454d",
+    "text": "#efedeb",
+    "muted": "#aeaaa6",
+    "accent": "#d08b67",
+    "accentHi": "#f0b99c",
+    "danger": "#ff7470",
+    "ok": "#63d29a",
+    "onAccent": "#1b1210",
+    "disabled": "#6e6d73"
+  },
+  "gradients": {
+    "window": {
+      "from": "#202125",
+      "to": "#141518",
+      "angle": 90
+    },
+    "accent": {
+      "from": "#e4a585",
+      "to": "#c47c58",
+      "angle": 90
+    },
+    "panel": {
+      "from": "#28292e",
+      "to": "#202125",
+      "angle": 90
+    },
+    "control": {
+      "from": "#35363c",
+      "to": "#2a2b30",
+      "angle": 90
+    }
+  },
+  "typography": {
+    "family": "Segoe UI",
+    "fallbacks": [
+      "Segoe UI Variable Text"
+    ],
+    "baseSize": 10,
+    "captionSize": 8,
+    "titleSize": 15,
+    "headingWeight": 600,
+    "letterSpacing": 0.1,
+    "captionLetterSpacing": 1.4,
+    "captionCaps": true
+  },
+  "geometry": {
+    "radius": {
+      "small": 4,
+      "medium": 8,
+      "large": 12
+    },
+    "spacing": {
+      "small": 6,
+      "medium": 10,
+      "large": 14
+    },
+    "borderWidth": 1,
+    "controlHeight": 20,
+    "roundControl": 52,
+    "controlPadding": {
+      "y": 6,
+      "x": 14
+    }
+  },
+  "depth": {
+    "card": {
+      "shadow": {
+        "blur": 18,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.45
+      }
+    },
+    "button": {},
+    "primaryButton": {
+      "shadow": {
+        "blur": 8,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#000000",
+        "opacity": 0.45
+      },
+      "glow": {
+        "blur": 16,
+        "color": "accent",
+        "opacity": 0.45,
+        "when": "always"
+      }
+    },
+    "roundControl": {
+      "shadow": {
+        "blur": 10,
+        "offsetX": 0,
+        "offsetY": 3,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 20,
+        "color": "auto",
+        "opacity": 0.55,
+        "when": "active"
+      },
+      "extrusion": {
+        "depth": 2,
+        "color": "#0e0f11",
+        "color2": "#3b3c42"
+      }
+    },
+    "toast": {
+      "shadow": {
+        "blur": 22,
+        "offsetX": 0,
+        "offsetY": 6,
+        "color": "#000000",
+        "opacity": 0.55
+      },
+      "glow": {
+        "blur": 14,
+        "color": "accentHi",
+        "opacity": 0.22,
+        "when": "always"
+      }
+    },
+    "menu": {
+      "shadow": {
+        "blur": 18,
+        "offsetX": 0,
+        "offsetY": 5,
+        "color": "#000000",
+        "opacity": 0.55
+      }
+    },
+    "taskPanel": {
+      "shadow": {
+        "blur": 22,
+        "offsetX": 0,
+        "offsetY": 6,
+        "color": "#000000",
+        "opacity": 0.5
+      },
+      "glow": {
+        "blur": 14,
+        "color": "accent",
+        "opacity": 0.16,
+        "when": "always"
+      }
+    }
+  },
+  "motion": {
+    "fastMs": 120,
+    "normalMs": 190,
+    "slowMs": 280,
+    "easing": "outCubic",
+    "hoverLift": 1,
+    "pressSink": 1
+  },
+  "background": {
+    "kind": "gradient",
+    "pattern": "none",
+    "patternColor": "#000000",
+    "patternOpacity": 0,
+    "patternSpacing": 24
+  },
+  "icons": {
+    "stroke": 1.5
+  }
+}

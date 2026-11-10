@@ -33,6 +33,6 @@ int count();
 int eligible();
 
 // Repaint-cost measurement (tests/evidence): paint w this many times, return the mean ms per paint.
-double measurePaint(QWidget *w, int repeats);
+double measurePaint(QWidget *w, int repeats, bool dropCaches = true); // dropCaches false: an ordinary repaint (effect caches kept)
 
 } // namespace depth

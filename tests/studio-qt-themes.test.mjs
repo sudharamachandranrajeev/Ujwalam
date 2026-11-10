@@ -93,7 +93,7 @@ describe('Qt studio themes (headless probe)', { skip }, () => {
     assert.equal(p.theme.id, 'violet-night');
     assert.equal(p.theme.effects, 'full');
     assert.ok(p.theme.depthEligible > 0, 'cards, round controls or primary buttons would carry an effect');
-    for (const id of ['violet-night', 'neon-arcade', 'studio-light', 'tactical', 'retro-wave']) assert.ok(p.theme.available.includes(id), id);
+    for (const id of ['violet-night', 'neon-arcade', 'studio-light', 'tactical', 'retro-wave', 'daylight-blue', 'copper-graphite', 'sand-teal', 'teal-grid']) assert.ok(p.theme.available.includes(id), id);
   });
   test('probe action switches the theme live, an unknown id is refused, effects switch live', async () => {
     const p = await probe({ ms: 6500, actions: 'theme:neon-arcade,theme:nope,effects:reduced,effects:bogus' });
@@ -116,6 +116,55 @@ describe('Qt studio themes (headless probe)', { skip }, () => {
     assert.equal(p.theme.id, 'violet-night');
     assert.equal(p.theme.effects, 'full');
     assert.equal(existsSync(path.join(p.dataDir, 'settings.json')), false);
+  });
+  // High performance (2026-11-10): any theme drawn flat. The window is shown (offscreen) so hover overlays exist.
+  test('High performance: no depth effects, no gradient in the stylesheet, no hover overlays; full mode has them', async () => {
+    const full = await probe({ env: { UJWALAM_THEME: 'copper-graphite', UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    assert.equal(full.theme.performance, false);
+    assert.equal(full.theme.gradientsInStyle, true, 'Copper Graphite fills cards and buttons with gradients');
+    assert.ok(full.theme.depthWidgets > 0 && full.theme.hoverOverlays > 0, JSON.stringify(full.theme));
+    const perf = await probe({ env: { UJWALAM_THEME: 'copper-graphite', UJWALAM_EFFECTS: 'performance', UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    assert.equal(perf.theme.id, 'copper-graphite');
+    assert.equal(perf.theme.effects, 'performance');
+    assert.equal(perf.theme.performance, true);
+    assert.equal(perf.theme.gradientsInStyle, false);
+    assert.equal(perf.theme.depthWidgets, 0);
+    assert.equal(perf.theme.hoverOverlays, 0);
+  });
+  test('High performance switches live and back (hover overlays return), any theme', async () => {
+    const p = await probe({ ms: 7000, actions: 'theme:teal-grid,effects:performance,theme:sand-teal', env: { UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    assert.deepEqual([p.theme.id, p.theme.effects, p.theme.gradientsInStyle, p.theme.hoverOverlays], ['sand-teal', 'performance', false, 0], 'a theme switch keeps the flat mode');
+    const back = await probe({ ms: 7000, actions: 'effects:performance,effects:full', env: { UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    assert.equal(back.theme.effects, 'full');
+    assert.ok(back.theme.hoverOverlays > 0 && back.theme.depthWidgets > 0, JSON.stringify(back.theme));
+  });
+  test('High performance on and off in the same event-loop turn: the hover overlays come back (dying ones are not counted as present)', async () => {
+    const full = await probe({ env: { UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    const quick = await probe({ ms: 7000, actions: 'effects:performance+full', env: { UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    assert.ok(quick.actions.every((a) => a.done), JSON.stringify(quick.actions));
+    assert.equal(quick.theme.effects, 'full');
+    assert.ok(quick.theme.hoverOverlays > 0, JSON.stringify(quick.theme));
+    // About as many as a fresh start (the count moves by ~2 between runs: a few controls are 0 px wide when first
+    // shown). Before the fix, only those few got one: the dying overlays made attachGlow() skip every other control.
+    assert.ok(quick.theme.hoverOverlays >= 0.9 * full.theme.hoverOverlays,`every shown control has its overlay again: ${quick.theme.hoverOverlays} vs ${full.theme.hoverOverlays}`);
+  });
+  test('Settings > Appearance: turning High performance off gives back the Reduce effects choice the user had', async () => {
+    const off = await probe({ ms: 9000, actions: 'settings-open,settings-page:3,settings-performance:on,settings-performance:off,settings-save' });
+    assert.ok(off.actions.every((a) => a.done), JSON.stringify(off.actions));
+    assert.equal(off.theme.effects, 'full', 'Reduce was off before');
+    assert.equal(JSON.parse(readFileSync(path.join(off.dataDir, 'settings.json'), 'utf8')).ui?.effects, undefined, 'back where it started: nothing to save (the bug saved "reduced")');
+    const on = await probe({ ms: 10000, actions: 'settings-open,settings-page:3,settings-reduce-effects:on,settings-performance:on,settings-performance:off,settings-save' });
+    assert.ok(on.actions.every((a) => a.done), JSON.stringify(on.actions));
+    assert.equal(JSON.parse(readFileSync(path.join(on.dataDir, 'settings.json'), 'utf8')).ui.effects, 'reduced', 'Reduce was on before');
+  });
+  test('Settings > Appearance: the High performance switch saves ui.effects "performance"; it is applied at the next start', async () => {
+    const p = await probe({ ms: 9000, actions: 'settings-open,settings-page:3,settings-theme:daylight-blue,settings-performance:on,settings-save' });
+    assert.deepEqual(p.actions.map((a) => a.done), [true, true, true, true, true]);
+    const saved = JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8'));
+    assert.deepEqual([saved.ui.theme, saved.ui.effects], ['daylight-blue', 'performance']);
+    const next = await probe({ prepare: (d) => writeFileSync(path.join(d, 'settings.json'), JSON.stringify({ ui: saved.ui })) });
+    assert.deepEqual([next.theme.id, next.theme.effects, next.theme.depthEligible], ['daylight-blue', 'performance', 0]);
   });
   test('a custom theme file in UJWALAM_THEMES_DIR is listed and can be used; a broken one is ignored', async () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-qtt-custom-')); dirs.push(dir);
