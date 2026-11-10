@@ -45,7 +45,7 @@ function expectError(t, file, fn, pattern) {
 test('game-validate: committed packs are valid', () => {
   const { errors, packs } = validateGames(games, repo);
   assert.deepEqual(errors, []);
-  assert.deepEqual(packs, [{ id: 'codm', version: '0.7.0' }]);
+  assert.deepEqual(packs, [{ id: 'codm', version: '0.8.0' }]);
 });
 
 test('game-validate: a copy of the pack (without local/) is valid', (t) => {

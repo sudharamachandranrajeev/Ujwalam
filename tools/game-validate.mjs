@@ -233,6 +233,17 @@ export function checkPack(id, p, rel, repoRoot) {
     if (!w1) err('match-reels.json', `${r.id}: result needs the match-result detector W1`);
     else if (!(w1.patterns || []).includes(r.when.result)) err('match-reels.json', `${r.id}: result "${r.when.result}" is not a pattern of W1`);
   }
+  // D326: qualifying-rounds pieces need a round condition; the impact-play reel names pack detectors
+  for (const r of matchReels.rules) {
+    if (r.pieces === 'qualifying-rounds' && r.when.roundKillsAtLeast === undefined) err('match-reels.json', `${r.id}: pieces "qualifying-rounds" needs when.roundKillsAtLeast`);
+  }
+  const ip = matchReels.impactPlay;
+  if (ip) {
+    for (const k of ['detector', 'resultsDetector']) {
+      if (ip[k] !== undefined && !detectors.detectors.some((d) => d.id === ip[k])) err('match-reels.json', `impactPlay.${k} "${ip[k]}" is not a detector of this pack`);
+    }
+    if (ip.minSec > ip.maxSec) err('match-reels.json', 'impactPlay: minSec is above maxSec');
+  }
 
   // evidence paths exist
   const evidence = [

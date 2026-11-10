@@ -206,19 +206,25 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     return argv
 
 
+def _round_edges(mt):
+    """Round boundaries of a match as match_gate.segment counts roundKills: start, each round banner's end, the
+    first end-screen hit."""
+    end = mt.get("endScreenAt")
+    end = float(end if end is not None else mt["end"])
+    return [float(mt["start"])] + [float(r["tEnd"]) for r in mt.get("rounds") or []] + [end]
+
+
 def match_reels(hits, ranking, cfg, matches, duration=None):
     """Match highlights (D237 pieces, D315 selection): for each match of `matches` (match_gate.segment) whose
     `reel` decision (match_gate.reel_decide) qualifies, every own kill of that match (the kill rule of step 1, streak
     or not), each [kill - preSec, kill + postSec] cut before a death, plus the result screen; no 60 s cap. Kills
     count from the match start to its result screen (the signalled W1 box, else the first end-screen hit). A
     qualifying match with no own kill gives no reel (m["reel"]["noReel"] says so). Pieces end at `duration` (the
-    shorter of the H and V recordings) when it is given."""
-    kills, medals = _kill_events(hits, ranking, cfg)
+    shorter of the H and V recordings) when it is given. D326: the kills are the match's counted own kills
+    (m["ownKillTimes"], or only the rounds in m["reel"]["pieceRounds"]), plus streak medals with no counted kill
+    before them; the death detectors of ranking.json (KILLCAM, spectating) cut every piece."""
+    hit_kills, medals = _kill_events(hits, ranking, cfg)
     near, lead = float(cfg["medalMatchSec"]), float(cfg["medalLeadSec"])
-    for m in medals:  # a medal with no own-kill line before it is its own kill (as in streaks)
-        if not any(m["t"] - near <= k <= m["t"] for k in kills):
-            kills.append(m["t"] - lead)
-    kills.sort()
     deaths = rank.death_spans(hits, ranking)
     out = []
     for mt in matches:
@@ -228,7 +234,23 @@ def match_reels(hits, ranking, cfg, matches, duration=None):
         t = mt.get("resultAt")
         t = float(t if t is not None else mt.get("endScreenAt", mt["end"]))
         start = float(mt["start"])
+        # D326: the match's counted own kills (match_gate.segment: the feed of the match's HUD family, nothing read
+        # while spectating), not every signalled kill-feed hit: on the 2026-11-09 practice the BR feed read the
+        # own name in a weapon's custom name on the MP loadout panel (pre-round and while dead), and those pieces
+        # showed loadout swaps, round intros and a spectated teammate. Runs without counted times use the hits.
+        own = mt.get("ownKillTimes")
+        rounds = dec.get("pieceRounds")
+        if isinstance(rounds, list) and isinstance(mt.get("roundKillTimes"), list):
+            own = [k for i in rounds if i < len(mt["roundKillTimes"]) for k in mt["roundKillTimes"][i]]
+        kills = list(own) if isinstance(own, list) else list(hit_kills)
+        for m in medals:  # a medal with no own-kill line before it is its own kill (as in streaks)
+            if not any(m["t"] - near <= k <= m["t"] for k in kills):
+                kills.append(m["t"] - lead)
+        kills.sort()
         ks = [k for k in kills if start < k <= t]
+        if isinstance(rounds, list):  # only the qualifying rounds: a medal elsewhere in the match adds no piece
+            edges = _round_edges(mt)
+            ks = [k for k in ks if any(i + 1 < len(edges) and edges[i] <= k < edges[i + 1] for i in rounds)]
         if not ks:
             dec["noReel"] = "no own kill in the match"
             continue
@@ -247,8 +269,64 @@ def match_reels(hits, ranking, cfg, matches, duration=None):
                                   kills=merged[-1]["kills"] + p["kills"])
             else:
                 merged.append(dict(p))
+        n = sum(p["kills"] for p in merged)  # kills whose piece survived the death cuts
+        if not n:
+            dec["noReel"] = "no own kill outside a death or spectating span"
+            continue
         rules = [r["id"] for r in dec.get("rules", []) if r.get("outcome") == "pass"]
-        out.append({"pieces": merged, "seconds": round(_length(merged), 3), "score": float(len(ks)),
-                    "labels": [mt.get("result") or "MATCH", f"{len(ks)} kill(s)"], "matchStart": start, "result": t,
-                    "match": mt.get("index"), "rules": rules})
+        out.append({"pieces": merged, "seconds": round(_length(merged), 3), "score": float(n),
+                    "labels": [mt.get("result") or "MATCH", f"{n} kill(s)"], "matchStart": start, "result": t,
+                    "match": mt.get("index"), "rules": rules, "kills": n,
+                    "pieceRounds": dec.get("pieceRounds")})
+    return out
+
+
+def impact_play_reels(hits, matches, spec, duration=None):
+    """Impact-play reels (D326, user feedback F4 2026-11-10: "if there was an impact play by the streamer, create it as
+    a separate reel with MVP animation, Impact play cam and up to the results page"). spec: match-reels.json
+    `impactPlay` (game pack data). For each match whose end was seen and whose end screens hold a signalled
+    spec.detector hit (the IMPACT PLAY screen with the profile name on its card, M2 in CODM), one piece: from
+    startAfterBannerSec after the match-end result banner (the MVP animation follows it) when that banner ends no
+    more than maxBannerLeadSec before the impact play, else fallbackLeadSec before the impact play; to endHoldSec
+    after the last signalled spec.resultsDetector hit (the results page, C2 in CODM) read from the match's first
+    end-screen hit to resultsAfterSec after its last, else after the match's last end-screen hit. At most maxSec
+    long; a piece shorter than minSec is no reel. Pieces end at `duration` when it is given. m["impactPlay"] records
+    the decision. -> [reel] shaped like match_reels (kills 0)."""
+    if not spec:
+        return []
+    det, res = spec["detector"], spec.get("resultsDetector")
+    after, max_lead = float(spec["startAfterBannerSec"]), float(spec["maxBannerLeadSec"])
+    fallback, hold = float(spec["fallbackLeadSec"]), float(spec["endHoldSec"])
+    res_after, max_sec, min_sec = float(spec["resultsAfterSec"]), float(spec["maxSec"]), float(spec["minSec"])
+    out = []
+    for mt in matches:
+        if not mt.get("endSeen") or mt.get("endScreenAt") is None:
+            continue
+        a0, a1 = float(mt["endScreenAt"]), float(mt["end"])
+        own = sorted((h for h in hits if h.get("detector") == det and h.get("signal") is True
+                      and a0 <= float(h["t"]) <= a1), key=lambda h: float(h["t"]))
+        if not own:
+            continue
+        ip = float(own[0]["t"])
+        banner = mt.get("resultEnd")
+        if banner is not None and ip - max_lead <= float(banner) <= ip:
+            s, how = float(banner) + after, "after the result banner"
+        else:
+            s, how = ip - fallback, "before the impact play (no result banner just before it)"
+        ends = [float(h.get("tEnd", h["t"])) for h in hits if res and h.get("detector") == res
+                and h.get("signal") is True and a0 <= float(h["t"]) <= a1 + res_after]
+        e = (max(ends) if ends else max(a1, float(own[-1].get("tEnd", own[-1]["t"])))) + hold
+        s = max(0.0, s)
+        e = min(e, s + max_sec)
+        if duration is not None:
+            e = min(e, float(duration))
+        if e - s < min_sec:
+            mt["impactPlay"] = {"at": round(ip, 3), "noReel": f"piece {e - s:.1f} s is shorter than {min_sec:g} s"}
+            continue
+        mt["impactPlay"] = {"at": round(ip, 3), "start": round(s, 3), "end": round(e, 3), "startRule": how,
+                            "resultsPage": bool(ends)}
+        out.append({"pieces": [{"start": round(s, 3), "end": round(e, 3), "kills": 0}], "seconds": round(e - s, 3),
+                    "score": 0.0, "labels": [mt.get("result") or "MATCH", "IMPACT PLAY"],
+                    "matchStart": float(mt["start"]), "result": ip, "match": mt.get("index"),
+                    "rules": [spec.get("id") or "impact-play"], "kills": 0})
     return out

@@ -491,8 +491,13 @@ class EndToEndTests(unittest.TestCase):
         self.assertEqual(why["decision"], "D315")
         self.assertEqual([(m["index"], m["reel"]["qualifies"]) for m in why["matches"]], [(1, True), (2, False)])
         self.assertIn("won-top3 (VICTORY; placed #1)", why["matches"][0]["reel"]["reason"])
-        self.assertEqual(why["reels"], [{"id": "W01", "match": 1, "rules": ["won-top3"], "kills": 2}])
-        self.assertEqual(cc.load_json(os.path.join(out, clipper.RENDER))["matchReels"]["reels"], 1)
+        self.assertEqual([{k: r[k] for k in ("id", "match", "rules", "kills", "pieceRounds")} for r in why["reels"]],
+                         [{"id": "W01", "match": 1, "rules": ["won-top3"], "kills": 2, "pieceRounds": None}])
+        self.assertTrue(why["reels"][0]["pieces"])
+        # D326: the impact-play reel flag is off by default, so none is made
+        self.assertEqual(why["impactPlay"], {"flag": "impact-play-reels", "on": False, "reels": []})
+        rdoc = cc.load_json(os.path.join(out, clipper.RENDER))
+        self.assertEqual((rdoc["matchReels"]["reels"], rdoc["matchReels"]["impactPlayReels"]), (1, 0))
 
     def test_caption_burn_in(self):
         """Burns a fixture ASS through the libass subtitles filter and validates the file."""

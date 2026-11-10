@@ -126,6 +126,7 @@
             "endGapSec": { "type": "number", "minimum": 0 },
             "killLineHoldSec": { "type": "number", "minimum": 0 },
             "victimMatchMin": { "type": "number", "minimum": 0, "maximum": 1 },
+            "spectateDetectors": { "type": "array", "uniqueItems": true, "description": "Detectors whose hits mark the streamer as dead and spectating; own kill-feed lines read inside such a hit never count.", "items": { "type": "string", "pattern": "^[A-Z][A-Z0-9]*$" } },
             "status": { "$ref": "#/$defs/status" },
             "note": { "type": "string" }
           }

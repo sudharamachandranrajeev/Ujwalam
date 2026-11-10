@@ -45,8 +45,27 @@
       "id": "snd-round-multikill",
       "label": "at least 2 own kills within one Search and Destroy round",
       "when": { "modes": ["search and destroy"], "roundKillsAtLeast": 2 },
+      "pieces": "qualifying-rounds",
       "status": "approved",
-      "note": "User D315: 'muliple kills within a round' (multiple = at least 2). Round boundaries come from W1 round-end banners (pack 0.6.0, status unverified; docs/evidence/2026-11-10-round-vs-match-end.md)."
+      "note": "User D315: 'muliple kills within a round' (multiple = at least 2). Round boundaries come from W1 round-end banners (pack 0.6.0, status unverified; docs/evidence/2026-11-10-round-vs-match-end.md). pieces (D326, user feedback F1 2026-11-10): a match that qualifies only by this rule shows the own kills of the rounds with at least 2 own kills, not the whole match."
     }
-  ]
+  ],
+  "impactPlay": {
+    "id": "impact-play",
+    "label": "the streamer's impact play: MVP animation, impact-play camera, up to the results page",
+    "status": "approved",
+    "user": "if there was an impact play by the streamer, create it as a separate reel with MVP animation, Impact play cam and up to the results page",
+    "decision": "D326",
+    "flag": "impact-play-reels",
+    "detector": "M2",
+    "resultsDetector": "C2",
+    "startAfterBannerSec": 1.0,
+    "maxBannerLeadSec": 10.0,
+    "fallbackLeadSec": 5.0,
+    "resultsAfterSec": 30,
+    "endHoldSec": 0.5,
+    "minSec": 10,
+    "maxSec": 90,
+    "note": "User feedback F4, 2026-11-10 (approved in the user's words). One separate reel per match whose IMPACT PLAY screen (M2, the profile name on the impact player's card) belongs to the streamer, cut from the V recording next to the match reel. 2026-11-09 practice (docs/evidence/2026-11-10-reel-own-kills-impact-play.md): the match-end banner, then the MVP animation (about 4 s), the impact-play camera (16-22 s), a loading screen, the top-3 screen and the results page (summary screen, C2) follow each other; the M2 card showed the own name in 2 of 5 impact plays. Times are agent values (proposed, unverified): startAfterBannerSec skips the banner, fallbackLeadSec is used when no banner was read, endHoldSec keeps the results page on screen, minSec and maxSec bound the reel; resultsAfterSec as C2 afterEndSec. Off until the flag is switched on."
+  }
 }

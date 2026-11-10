@@ -592,6 +592,8 @@ def find_events(boxes, pack, names, name_min):
             ev.append({"det": "W1", "box": b, "result": t})
         if gt.partial_ratio("HELPME", t) >= 0.84 or gt.partial_ratio("WAITINGFORREVIVALFLIGHT", t) >= 0.8:
             ev.append({"det": "N2", "box": b})
+        if "N3" in det and _pattern_hit(t, det["N3"]):  # spectating until the next round: pack texts only
+            ev.append({"det": "N3", "box": b})
         for cid in ("C1", "C2"):  # game mode cues (match_gate.game_mode): pack texts only, the whole cue in the box
             if cid in det:
                 cue = _mode_cue(t, det[cid])
@@ -624,6 +626,17 @@ def find_events(boxes, pack, names, name_min):
 
 KILLFEED_SLACK = 0.03
 MODE_CUE_MIN = 0.85
+PATTERN_MIN = 0.85
+
+
+def _pattern_hit(norm_text, d):
+    """True when a normalised OCR text reads as one of the detector's pack `patterns` (partial ratio >= PATTERN_MIN,
+    the box no more than twice the pattern's length, so a long line that merely contains it does not count)."""
+    for p in d.get("patterns") or []:
+        n = gt.normalise(p)
+        if n and len(norm_text) <= 2 * len(n) and gt.partial_ratio(n, norm_text) >= PATTERN_MIN:
+            return True
+    return False
 
 
 def _mode_cue(norm_text, c1):

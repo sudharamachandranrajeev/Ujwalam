@@ -1,7 +1,7 @@
 {
   "$schema": "../detector-pack.schema.json",
   "$comment": "CODM detector pack. All ROIs, texts and colours are UNVERIFIED until G1/G2 check them on corpus footage (source: docs/evidence/2026-10-27-g1-live-reference.md). Weights, windows and cooldowns are null: G3 proposes them from labelled data. No private names here; names come from data/profile.local.json at runtime. `version` is the pack version for every file in this folder; version history: CHANGELOG.md.",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "engineVersion": "0.1.0",
   "game": "codm",
   "detectors": [
@@ -615,7 +615,10 @@
         "killLineHoldSec": 6,
         "victimMatchMin": 0.7,
         "status": "unverified",
-        "note": "scoreRegex runs on the normalised text (no spaces); SCORE read 9/9 on the 2026-11-08 frames. killsHeaders are an assumption (no scoreboard frame). modeNames: the MP mode cues of g1_scan; only HARDPOINT is seen on a top-3 screen. endGapSec: end-screen hits closer than this are one match end (2026-11-08: VICTORY at 437 s, top 3 until 475 s). killLineHoldSec: an own kill-feed line seen again within this time with a similar victim text (victimMatchMin) is the same kill; the on-screen time of a line is not measured. 0.6.0: ranked Team Deathmatch top-3 cards read RATING n, not SCORE n (2026-11-09 2795-2810 s), so scoreRegex also takes RATING; ownScore then holds the rating. modeNames: objects {text, mode} read an on-screen spelling as a mode."
+        "note": "scoreRegex runs on the normalised text (no spaces); SCORE read 9/9 on the 2026-11-08 frames. killsHeaders are an assumption (no scoreboard frame). modeNames: the MP mode cues of g1_scan; only HARDPOINT is seen on a top-3 screen. endGapSec: end-screen hits closer than this are one match end (2026-11-08: VICTORY at 437 s, top 3 until 475 s). killLineHoldSec: an own kill-feed line seen again within this time with a similar victim text (victimMatchMin) is the same kill; the on-screen time of a line is not measured. 0.6.0: ranked Team Deathmatch top-3 cards read RATING n, not SCORE n (2026-11-09 2795-2810 s), so scoreRegex also takes RATING; ownScore then holds the rating. modeNames: objects {text, mode} read an on-screen spelling as a mode. 0.8.0: spectateDetectors are the detectors whose hits mark the streamer as dead and spectating; own kill-feed lines read inside such a hit (t to tEnd) never count (2026-11-09 practice). No own line was read there on that recording; the rule is a guard.",
+        "spectateDetectors": [
+          "N3"
+        ]
       },
       "nameRequired": true,
       "nameSide": "any",
@@ -912,6 +915,42 @@
       "cooldownSec": null,
       "status": "unverified",
       "note": "The user is down or waiting to redeploy. Negative signal or end-of-life marker."
+    },
+    {
+      "id": "N3",
+      "name": "Spectating until the next round",
+      "role": "negative",
+      "modes": [
+        "mp"
+      ],
+      "screens": [
+        "mp_gameplay"
+      ],
+      "method": "ocr",
+      "rois": [
+        {
+          "id": "respawn_banner",
+          "label": "YOU WILL RESPAWN NEXT ROUND! banner, centre below the crosshair (dead in a round-based mode, watching a teammate)",
+          "x0": 0.36,
+          "y0": 0.64,
+          "x1": 0.64,
+          "y1": 0.72,
+          "status": "unverified",
+          "note": "2026-11-09 practice recording (H canvas, game area of the alpha project layout), checked by eye 2026-11-10 (docs/evidence/2026-11-10-reel-own-kills-impact-play.md): banner box x 0.352-0.647, y 0.657-0.700, text x 0.39-0.61, y 0.67-0.69 on 4 frames of the third Search and Destroy match (1442, 1450, 1540, 1590 s). The spectated teammate's name bar sits above the HP bar at the bottom; the kill feed still runs."
+        }
+      ],
+      "patterns": [
+        "YOU WILL RESPAWN NEXT ROUND"
+      ],
+      "nameRequired": false,
+      "weight": null,
+      "window": {
+        "preSec": null,
+        "postSec": null
+      },
+      "cooldownSec": null,
+      "status": "unverified",
+      "note": "The streamer is dead and spectates a teammate until the round ends (Search and Destroy). Negative signal like N1: data/clip/ranking.json death.detectors lists it, so no clip, montage or reel piece contains spectated play, and the match gate drops own-kill lines read inside it (S1 stats spectateDetectors). The kill feed keeps running while spectating; a teammate's kill is never an own kill (killer-side name rule), but a wrong read would otherwise show another player's play. The text is matched whole (partial ratio 0.85, box no more than twice its length); g1_scan.find_events."
     }
   ],
   "suppressionRules": [
