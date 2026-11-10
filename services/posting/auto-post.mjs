@@ -7,13 +7,14 @@
 // state cannot be read (fail closed); a post is auto-approved/auto-uploaded at most once; per-rule max per UTC day;
 // only posts that AUTO approved are ever auto-uploaded (a post you approved by hand stays yours to upload);
 // every auto action is appended to <dataDir>/posting/auto-log.json with its reason (ids and rule ids only, no text).
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const AUTO_FLAG = 'auto-post';
 export const DEFAULT_RULES = path.join(REPO, 'data', 'posting', 'auto-post-rules.json');
+export const RULES_NAME = 'auto-post-rules.json';
 export const AUTO_LOG_NAME = 'auto-log.json';
 export const UPLOAD_TARGET = 'youtube-shorts';
 /** Targets the auto chain may upload (private YouTube). youtube-video is for finished videos that are not Shorts (D301). */
@@ -43,6 +44,26 @@ export function validateRules(j) {
     return { id: r.id, target: r.target, minScore: r.minScore, layouts: r.layouts ?? null, kinds: r.kinds ?? ['short'], maxPerDay: r.maxPerDay };
   });
   return { autoUpload: j.autoUpload === true, rules };
+}
+
+/** Where the user's own rules live: <dataDir>/posting/auto-post-rules.json (survives app updates). */
+export function userRulesFile(dataDir) { return path.join(dataDir, 'posting', RULES_NAME); }
+
+/** The rules file to read: an explicit file wins; else the user's file in the data dir when it exists; else the shipped
+ *  template (empty rules). A user file that exists is always the one used, so a bad one fails closed in loadRules. */
+export function rulesFileFor(dataDir, explicit) {
+  if (typeof explicit === 'string' && explicit) return explicit;
+  if (typeof dataDir === 'string' && dataDir) { const u = userRulesFile(dataDir); if (existsSync(u)) return u; }
+  return DEFAULT_RULES;
+}
+
+/** Copy the shipped template to the user path unless a file is already there. -> { path, created }. Never overwrites. */
+export function initUserRules(dataDir) {
+  const dest = userRulesFile(dataDir);
+  if (existsSync(dest)) return { path: dest, created: false };
+  mkdirSync(path.dirname(dest), { recursive: true });
+  copyFileSync(DEFAULT_RULES, dest, constants.COPYFILE_EXCL);
+  return { path: dest, created: true };
 }
 
 export function loadRules(file = DEFAULT_RULES) {

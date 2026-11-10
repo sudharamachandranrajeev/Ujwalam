@@ -33,7 +33,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore, packageRun, packageUploads, sha256File } from './index.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, liveBlock, loadRules, runAuto } from './auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, UPLOAD_TARGET, UPLOAD_TARGETS, createAutoLog, liveBlock, loadRules, rulesFileFor, runAuto } from './auto-post.mjs';
 import { READONLY_SCOPE, createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
 import { SCHEDULE_FLAG, ScheduleError, chunkDeadlineMs, fallbackBps, isRetry, loadScheduleConfig, marginMs, minLeadMs, planQueueSlots, toIso } from './schedule.mjs';
@@ -395,7 +395,7 @@ export function createPostChain(opts) {
     if (!flagsOn()) return { skipped: 'flag-off' };
     if (halted) return { skipped: 'stopped' };
     let rules;
-    try { rules = (opts.rulesFile ? loadRules(opts.rulesFile) : loadRules()); } catch (e) { return { skipped: 'bad-rules', detail: e?.code ?? 'error' }; }
+    try { rules = loadRules(rulesFileFor(dataDir, opts.rulesFile)); } catch (e) { return { skipped: 'bad-rules', detail: e?.code ?? 'error' }; }
     if (!rules.rules.length) return { skipped: 'no-rules' };
     if (!recovered) { recovered = true; queue.recover(); }
     const store = createPostStore({ ledgerFile });

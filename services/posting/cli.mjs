@@ -15,7 +15,7 @@ import { READONLY_SCOPE, SCHEDULE_SCOPES, SCOPE, createYoutubeAuth } from './oau
 import { uploadPost, UploadError } from './youtube.mjs';
 import { SCHEDULE_FLAG } from './schedule.mjs';
 import { streamOnly } from './auto-chain.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, loadRules, planAuto, runAuto } from './auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, initUserRules, loadRules, planAuto, rulesFileFor, runAuto } from './auto-post.mjs';
 import { formatPreview, previewRules } from './preview.mjs';
 import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
@@ -95,7 +95,7 @@ export async function main(argv, out = (s) => console.log(s), err = (s) => conso
   if (a._[0] === 'youtube') return youtubeMain(a, out, err, deps);
   if (a._[0] === 'auto') return autoMain(a, out, err, deps);
   if (a._[0] !== 'package' || typeof a.run !== 'string') {
-    err('usage: node services/posting/cli.mjs package --run <clip run folder> [--data-dir DIR] [--profile FILE] [--ffmpeg FILE] [--targets a,b]\n       node services/posting/cli.mjs youtube signin|status|signout\n       node services/posting/cli.mjs youtube upload --id <post id> [--data-dir DIR]\n       node services/posting/cli.mjs auto [--run | --preview [--json]] [--data-dir DIR] [--rules FILE]');
+    err('usage: node services/posting/cli.mjs package --run <clip run folder> [--data-dir DIR] [--profile FILE] [--ffmpeg FILE] [--targets a,b]\n       node services/posting/cli.mjs youtube signin|status|signout\n       node services/posting/cli.mjs youtube upload --id <post id> [--data-dir DIR]\n       node services/posting/cli.mjs auto [--run | --preview [--json]] [--data-dir DIR] [--rules FILE]\n       node services/posting/cli.mjs auto --init-rules [--data-dir DIR]');
     return 2;
   }
   try {
@@ -128,7 +128,13 @@ async function autoMain(a, out, err, deps) {
     const dataDir = cliDataDir(a, out);
     const flags = createFlags({ dataDir });
     const flagOn = flags.isOn(POSTING_FLAG) && flags.isOn(AUTO_FLAG);
-    const rules = deps.rules ?? loadRules(typeof a.rules === 'string' ? a.rules : undefined);
+    if (a['init-rules'] === true) {
+      const r = initUserRules(dataDir);
+      out(r.created ? `auto-post: created your rules file from the template (no rules yet): ${r.path}` : `auto-post: your rules file already exists, left as it is: ${r.path}`);
+      return 0;
+    }
+    const rulesFile = rulesFileFor(dataDir, typeof a.rules === 'string' ? a.rules : undefined);
+    const rules = deps.rules ?? loadRules(rulesFile);
     const store = createPostStore({ ledgerFile: path.join(dataDir, 'posting', LEDGER_NAME) });
     const logFile = path.join(dataDir, 'posting', AUTO_LOG_NAME);
     const mode = describeMode({ flagOn, rules });
@@ -138,7 +144,7 @@ async function autoMain(a, out, err, deps) {
       let profile = {};
       try { if (existsSync(profileFile)) profile = JSON.parse(readFileSync(profileFile, 'utf8')); } catch { /* placeholders stay unresolved and are shown */ }
       const r = await previewRules({
-        dataDir, rules, profile, flagOn, log: createAutoLog(logFile).list(), now: deps.now, scheduleOn: flags.isOn(SCHEDULE_FLAG),
+        dataDir, rules, rulesFile, profile, flagOn, log: createAutoLog(logFile).list(), now: deps.now, scheduleOn: flags.isOn(SCHEDULE_FLAG),
         outputsStatus: streamOnly(deps.outputsStatus ?? outputsStatusFor(dataDir)),
       });
       out(a.json === true ? JSON.stringify(r, null, 2) : formatPreview(r));
@@ -147,6 +153,7 @@ async function autoMain(a, out, err, deps) {
     if (a.run !== true) {
       const plan = planAuto({ posts: store.list(), rules: rules.rules, autoUpload: rules.autoUpload, log: createAutoLog(logFile).list(), now: (deps.now ?? (() => new Date()))() });
       out(`auto-post (dry run): ${mode.enabled ? 'on' : 'off'} (flags posting+auto-post: ${flagOn}), ${mode.ruleCount} rule(s), autoUpload ${mode.autoUpload}, privacy private`);
+      out(`rules file: ${rulesFile}`);
       for (const s of plan) out(`  ${s.action} ${s.id} rule ${s.ruleId}: ${s.reason}`);
       return 0;
     }
