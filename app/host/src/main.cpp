@@ -507,8 +507,14 @@ int wmain(int argc, wchar_t **wargv)
 		}
 		// Device hot-plug (D329): capture layers follow devices plugged in or out while the host runs. Listing is a
 		// device feature (D38): only with --allow-devices, or --test-hooks (fake lists).
-		if (app.allow_devices || app.test_hooks)
-			app.device_watch = std::make_unique<devwatch::Watcher>([&app]() { devices_pass(app, "watcher"); });
+		if (app.allow_devices || app.test_hooks) {
+			app.device_watch = std::make_unique<devwatch::Watcher>(
+				[&app](const std::vector<std::string> &removed, bool event) {
+					devices_pass(app, event ? "watcher" : "connect check", removed, event);
+				});
+			devwatch::Watcher *w = app.device_watch.get();
+			app.studio->set_check_scheduler([w](uint32_t ms) { w->check_after(ms); });
+		}
 		app.outputs = std::make_unique<Outputs>(*app.studio, app.recordings_dir, app.allow_live,
 							app.twitch_bandwidth_test);
 		app.outputs->set_replay_config(app.config.replay);
@@ -719,6 +725,8 @@ int wmain(int argc, wchar_t **wargv)
 			server->stop();
 		if (app.device_watch)
 			app.device_watch->stop(); // no pass runs after this (the studio goes away below)
+		if (app.studio)
+			app.studio->set_check_scheduler(nullptr);
 		app.moments->stop();
 		app.panic->stop();
 		app.outputs->stop_all(5000);

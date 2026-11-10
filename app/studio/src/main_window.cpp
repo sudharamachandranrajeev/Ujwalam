@@ -1540,11 +1540,13 @@ void MainWindow::renderLayers()
 		// A capture layer whose device is not connected (D329): "waiting for device", the host's sentence as the tooltip.
 		const QJsonObject dev = l.value(QStringLiteral("device")).toObject();
 		const bool waiting = dev.value(QStringLiteral("state")).toString() == QStringLiteral("waiting");
+		const bool connecting = dev.value(QStringLiteral("state")).toString() == QStringLiteral("connecting"); // no picture yet
 		auto *it = new QListWidgetItem((vis ? QStringLiteral("◉  ") : QStringLiteral("○  ")) + l.value(QStringLiteral("name")).toString() +
-						       (waiting ? QStringLiteral("  (waiting for device)") : QString()),
+						       (waiting ? QStringLiteral("  (waiting for device)")
+							: connecting ? QStringLiteral("  (connecting to device)") : QString()),
 					       layerList_);
 		it->setData(Qt::UserRole, l.value(QStringLiteral("id")).toString());
-		if (waiting)
+		if (waiting || connecting)
 			it->setToolTip(dev.value(QStringLiteral("message")).toString());
 		if (!vis || waiting)
 			it->setForeground(palette().color(QPalette::Disabled, QPalette::Text));

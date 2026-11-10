@@ -165,7 +165,7 @@ json::Value host_status_json(App &a)
 	return r;
 }
 
-json::Value devices_pass(App &a, const char *why)
+json::Value devices_pass(App &a, const char *why, const std::vector<std::string> &removed, bool event)
 {
 	if (!a.studio || a.shutting_down)
 		return json::Value();
@@ -182,7 +182,7 @@ json::Value devices_pass(App &a, const char *why)
 		if (!has)
 			return json::Value();
 	}
-	return a.studio->devices_changed(l, why);
+	return a.studio->devices_changed(l, why, removed, event);
 }
 
 void on_hotkey(App &a, const std::string &name, const char *via)
@@ -360,13 +360,36 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		r.set("devicesEnabled", a.allow_devices);
 		return r;
 	});
-	// devices.testSet {devices: [{kind, name, path}] | null} (--test-hooks only, D329): replaces the device list the
-	// host sees with a fake one (null: back to the real list) and runs one hot-plug pass at once, as a plug-in or
-	// unplug would. Capture layers then build on ujw_test_capture (opens nothing). Returns the pass result.
+	// devices.testSet {devices: [{kind, name, path, fail?}] | null, removed?: [{kind?, name, path}], viaWatcher?, peek?}
+	// (--test-hooks only, D329): replaces the device list the host sees with a fake one (null: back to the real list)
+	// and runs one hot-plug pass at once, as a plug-in or unplug would. Capture layers then build on ujw_test_capture
+	// (opens nothing). Returns the pass result plus `frames` (frames each fake device id sent).
+	//   fail: n      the next n activations of that video device deliver no frames (busy driver, held by another app)
+	//   removed      these video devices left (their fake sources die until reactivated) and are reported to the pass
+	//                as removed interface paths, even when they are listed again (a quick unplug and re-plug)
+	//   viaWatcher   the removals and one arrival go to the device watcher (debounce) instead of a pass at once;
+	//                returns {queued: true}
+	//   peek         changes nothing; returns {frames}
 	add("devices.testSet", [&a](const json::Value &p) {
-		Params q(p, {"devices"});
+		Params q(p, {"devices", "removed", "viaWatcher", "peek"});
 		if (!a.test_hooks)
 			throw Error(rpc::FORBIDDEN, "devices.testSet needs a host started with --test-hooks");
+		if (q.has("peek") && q.boolean("peek")) {
+			json::Value r = json::Value::object();
+			r.set("frames", devwatch::test_frames());
+			return r;
+		}
+		std::vector<std::string> removed_paths, removed_ids;
+		if (const json::Value *rm = q.raw().find("removed"); rm && !rm->is_null()) {
+			if (!rm->is_array() || rm->size() > 64)
+				throw Error(rpc::INVALID_PARAMS, "removed must be an array (at most 64)");
+			for (auto &x : rm->as_array()) {
+				Params e(x, {"kind", "name", "path"}); // kind: video only (as a devices[] entry)
+				devices::Entry en = devices::make_entry("video", e.str("name", 256), e.str("path", 512));
+				removed_paths.push_back(en.path);
+				removed_ids.push_back(en.obs_id);
+			}
+		}
 		const json::Value &dv = q.raw().find("devices") ? *q.raw().find("devices") : json::Value();
 		std::vector<std::string> present;
 		if (dv.is_null()) {
@@ -376,7 +399,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 				throw Error(rpc::INVALID_PARAMS, "devices must be an array (at most 64) or null");
 			devices::List l;
 			for (auto &d : dv.as_array()) {
-				Params e(d, {"kind", "name", "path", "error"});
+				Params e(d, {"kind", "name", "path", "error", "fail"});
 				std::string kind = e.str("kind", 24);
 				if (kind != "video" && kind != "dshow-audio" && kind != "audio-input" && kind != "audio-output")
 					throw Error(rpc::INVALID_PARAMS, "devices[].kind: video | dshow-audio | audio-input | audio-output");
@@ -388,12 +411,28 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 				l.entries.push_back(devices::make_entry(kind, e.str("name", 256), e.str_or("path", "", 512)));
 				if (kind == "video")
 					present.push_back(l.entries.back().obs_id);
+				if (e.has("fail"))
+					devwatch::test_fail_activations(l.entries.back().obs_id, (int)e.integer("fail", 0, 100));
 			}
 			a.studio->set_test_devices(&l);
 		}
+		devwatch::test_remove(removed_ids);
 		devwatch::set_test_present(present);
-		json::Value r = devices_pass(a, "devices.testSet");
-		return r.is_null() ? json::Value::object() : r;
+		if (q.has("viaWatcher") && q.boolean("viaWatcher")) {
+			if (!a.device_watch)
+				throw Error(rpc::UNAVAILABLE, "no device watcher");
+			for (auto &r : removed_paths)
+				a.device_watch->poke(r);
+			a.device_watch->poke();
+			json::Value r = json::Value::object();
+			r.set("queued", true);
+			return r;
+		}
+		json::Value r = devices_pass(a, "devices.testSet", removed_paths);
+		if (r.is_null())
+			r = json::Value::object();
+		r.set("frames", devwatch::test_frames());
+		return r;
 	});
 
 	// ---- overlays (the overlay server child, overlay.h). Browser layers never see a host or event-core token.

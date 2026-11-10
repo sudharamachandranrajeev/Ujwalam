@@ -161,8 +161,9 @@
         var up = el('button', { class: 'icon-btn', type: 'button', text: 'Up', 'aria-label': 'Move ' + l.name + ' up', disabled: hi === n - 1, onclick: function () { move(l, hi, hi + 1); } });
         var dn = el('button', { class: 'icon-btn', type: 'button', text: 'Dn', 'aria-label': 'Move ' + l.name + ' down', disabled: hi === 0, onclick: function () { move(l, hi, hi - 1); } });
         // A capture layer whose device is not connected (D329): "waiting for device", the host's sentence as the title.
-        var waiting = l.device && l.device.state === 'waiting';
-        var name = el('span', { class: 'name', text: l.name + (waiting ? ' (waiting for device)' : ''), tabindex: '0', role: 'button', title: waiting ? (l.device.message || 'Waiting for its device.') : 'Edit in the inspector', 'aria-label': 'Edit ' + l.name + ' in the inspector' });
+        // "connecting": bound, no picture yet (the host retries by itself).
+        var waiting = l.device && l.device.state === 'waiting', connecting = l.device && l.device.state === 'connecting';
+        var name = el('span', { class: 'name', text: l.name + (waiting ? ' (waiting for device)' : connecting ? ' (connecting to device)' : ''), tabindex: '0', role: 'button', title: waiting ? (l.device.message || 'Waiting for its device.') : connecting ? (l.device.message || 'Connecting to its device.') : 'Edit in the inspector', 'aria-label': 'Edit ' + l.name + ' in the inspector' });
         var pick = function () { state.selected = l.id; renderLayers(); renderInspector(); };
         name.addEventListener('click', pick);
         name.addEventListener('keydown', function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });

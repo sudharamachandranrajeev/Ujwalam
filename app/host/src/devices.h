@@ -66,6 +66,11 @@ bool video_listed(const List &l);
 //   bound, entry gone, nothing matches                                  -> Lose (waiting; the source is kept)
 //   waiting, resolve() finds an entry                                   -> Bind
 //   waiting, nothing (or more than one by name)                         -> None, problem updated
+// Codex review fix: a device that left and came back with the same id inside the watcher's debounce (or the 1 s loss
+// check) is still listed at the end, yet its DirectShow graph may be dead. `removed` holds the interface paths of the
+// removals the watcher saw since the last pass (CM symbolic links); a bound source whose listed entry is one of them
+// (same device instance, see device_removed) gets Bind with the same id, matchedBy "reconnect", so only that source
+// is reactivated. Removals of other devices never touch it.
 struct Binding {
 	std::string bound_id; // the win-dshow id the source was given ("" = none)
 	bool waiting = true;
@@ -74,10 +79,17 @@ struct Step {
 	enum Act { None, Bind, Lose } act = None;
 	std::string obs_id, matched_by, problem;
 };
-Step reconcile(const json::Value &device, const Binding &cur, const List &l);
+Step reconcile(const json::Value &device, const Binding &cur, const List &l, const std::vector<std::string> &removed = {});
+
+// True if one of the removed interface paths names the same device instance as `path` (case-insensitive, the
+// trailing "#{interface class guid}\..." segment ignored on both sides, as a device has one path per interface class).
+bool device_removed(const std::string &path, const std::vector<std::string> &removed);
 
 // Plain-English text for a capture layer waiting for its device (studio layer list, host.status, add result).
 std::string waiting_message(const json::Value &device, const std::string &problem);
+// Plain-English text for a capture layer whose device is listed but has sent no picture after an activation attempt
+// (driver still starting, or another app holds the device). `last`: no more automatic attempts.
+std::string connecting_message(const json::Value &device, bool last);
 
 // Audio monitoring output (what "monitor" layers play through, e.g. headphones). Finds exactly one audio-output
 // entry whose friendly name equals `name` (case-insensitive) and passes its endpoint id to

@@ -55,13 +55,48 @@ node --test tests/studio-ui-device-hotplug.test.mjs tests/project-structure.test
 Also run: `app/host/tests/host-api.test.mjs` and `host-project.test.mjs` (role refusal lists include
 `devices.testSet`), `tests/studio-qt-shell.test.mjs`, and the quick CI on each commit.
 
+## Codex second review fixes (2 x P2)
+
+1. **Quick unplug and re-plug with the same id.** A device that left and came back inside the 700 ms debounce or the
+   1 s loss check is listed again at the end of the pass, so the old code did nothing, while its DirectShow graph may
+   be dead (frozen layer). Now the watcher keeps each removal's interface path (CM symbolic link) through the debounce
+   and hands it to the pass. A bound source whose device instance is one of them is reactivated with the same id
+   (`obs_source_update` on that source only, matchedBy `reconnect`). Removals of other devices never touch it.
+2. **Activation that never delivers a picture.** `obs_source_update` returns before win-dshow activates, so a failed
+   activation (driver still starting, device held by another app) was never retried. Now a bind (or a build with a
+   device) is only an attempt: the source's last frame is cleared first, and it is **connecting** until a new frame
+   arrives. Without one, the same source is updated again after 3, 6, 12 and 24 s without a frame (5 attempts in all), driven by
+   the watcher thread (`check_after`). The layer list shows "(connecting to device)"; from the second attempt the
+   tooltip says "Connecting to capture card "…": no picture yet. If another app is using it, close that app; Ujwalam
+   tries again by itself." After the last attempt: "No picture from capture card "…". Close any other app that uses it,
+   then unplug it and plug it in again." Encoders and outputs are never touched.
+
+Regression tests (fake devices; the test source now dies on a removal until it is reactivated, and `fail: n` makes
+its next n activations deliver nothing):
+
+```
+✔ a quick unplug and re-plug with the same id inside the watcher debounce reactivates that source; other removals never do (1644 ms)
+✔ a bind whose activation delivers no frames is retried with backoff; the layer says "connecting" until a picture comes (10257 ms)
+ℹ pass 7  ℹ fail 0   (whole host-device-hotplug.test.mjs)
+```
+
+## Open items
+
+- **Microphone and audio-output devices (WASAPI) have no waiting state yet.** A missing microphone behaves as before
+  D329; only capture-card and camera layers wait, reconnect and retry.
+
 ## UNVERIFIED
 
 - Real `CM_Register_Notification` events with the user's capture card (plug, unplug, other USB port).
 - How OBS's `dshow_input` reactivates a real card after `obs_source_update` with a new device id (tested only with the
   test source type).
 - What the stream shows after a real unplug (the frame is cleared; the layer should be transparent).
-- Microphone and audio-output globals have no waiting state yet (unchanged behaviour).
+- Whether real CM removal symbolic links match the DirectShow device paths by device instance (the fix for a quick
+  re-plug relies on it; tested with paths of the same form only).
+- Whether a real `dshow_input` re-activates on `obs_source_update` with unchanged settings (win-dshow source reading:
+  it queues an activation on every update while active).
+- A real card with no HDMI signal: if it sends no frames at all, the layer stays "connecting" and is re-activated
+  up to 4 more times over about 45 s (the stream and recording are not affected).
 
 ## Test steps for the user (real card)
 

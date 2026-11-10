@@ -11,6 +11,7 @@
 #include <util/platform.h>
 
 #include <algorithm>
+#include <map>
 #include <set>
 
 namespace devwatch {
@@ -27,11 +28,27 @@ const GUID kClasses[] = {
 	{0xE6327CAD, 0xDCEC, 0x4949, {0xAE, 0x8A, 0x99, 0x1E, 0x97, 0x6A, 0x79, 0xD2}}, // DEVINTERFACE_AUDIO_RENDER
 };
 
-DWORD CALLBACK cm_callback(HCMNOTIFICATION, PVOID ctx, CM_NOTIFY_ACTION action, PCM_NOTIFY_EVENT_DATA, DWORD)
+std::string narrow(const wchar_t *w)
 {
-	// System thread pool: note the time and return. Never list, open or unregister here.
-	if (action == CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL || action == CM_NOTIFY_ACTION_DEVICEINTERFACEREMOVAL)
+	if (!w || !*w)
+		return std::string();
+	int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, nullptr, 0, nullptr, nullptr);
+	if (n <= 1)
+		return std::string();
+	std::string s((size_t)n - 1, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, w, -1, s.data(), n, nullptr, nullptr);
+	return s;
+}
+
+DWORD CALLBACK cm_callback(HCMNOTIFICATION, PVOID ctx, CM_NOTIFY_ACTION action, PCM_NOTIFY_EVENT_DATA data, DWORD)
+{
+	// System thread pool: note the event and return. Never list, open or unregister here.
+	if (action == CM_NOTIFY_ACTION_DEVICEINTERFACEARRIVAL)
 		static_cast<Watcher *>(ctx)->poke();
+	else if (action == CM_NOTIFY_ACTION_DEVICEINTERFACEREMOVAL)
+		static_cast<Watcher *>(ctx)->poke(data && data->FilterType == CM_NOTIFY_FILTER_TYPE_DEVICEINTERFACE
+							  ? narrow(data->u.DeviceInterface.SymbolicLink)
+							  : std::string());
 	return ERROR_SUCCESS;
 }
 
@@ -42,7 +59,7 @@ uint64_t now_ms()
 
 } // namespace
 
-Watcher::Watcher(std::function<void()> on_change, uint32_t quiet_ms, uint32_t max_wait_ms)
+Watcher::Watcher(OnChange on_change, uint32_t quiet_ms, uint32_t max_wait_ms)
 	: on_change_(std::move(on_change)), quiet_ms_(quiet_ms), max_wait_ms_(max_wait_ms)
 {
 	th_ = std::thread([this] { run(); });
@@ -85,7 +102,7 @@ void Watcher::stop()
 		th_.join();
 }
 
-void Watcher::poke()
+void Watcher::poke(const std::string &removed)
 {
 	notifications_++;
 	{
@@ -95,6 +112,20 @@ void Watcher::poke()
 			first_ms_ = t;
 		pending_ = true;
 		last_ms_ = t;
+		if (!removed.empty() && removed_.size() < 256 &&
+		    std::find(removed_.begin(), removed_.end(), removed) == removed_.end())
+			removed_.push_back(removed);
+	}
+	cv_.notify_all();
+}
+
+void Watcher::check_after(uint32_t ms)
+{
+	{
+		std::lock_guard<std::mutex> lk(m_);
+		uint64_t due = now_ms() + ms;
+		if (check_ms_ == 0 || due < check_ms_)
+			check_ms_ = due;
 	}
 	cv_.notify_all();
 }
@@ -104,11 +135,18 @@ void Watcher::run()
 	SetThreadDescription(GetCurrentThread(), L"ujw: device watcher");
 	std::unique_lock<std::mutex> lk(m_);
 	for (;;) {
-		cv_.wait(lk, [this] { return quit_ || pending_; });
+		for (;;) { // a device event, or a check that is due
+			if (quit_ || pending_ || (check_ms_ && now_ms() >= check_ms_))
+				break;
+			if (check_ms_)
+				cv_.wait_for(lk, std::chrono::milliseconds(check_ms_ - now_ms()));
+			else
+				cv_.wait(lk);
+		}
 		if (quit_)
 			return;
 		// Debounce: quiet_ms after the last notification, at most max_wait_ms after the first.
-		for (;;) {
+		while (pending_) {
 			uint64_t t = now_ms();
 			uint64_t due = std::min(last_ms_ + quiet_ms_, first_ms_ + max_wait_ms_);
 			if (t >= due)
@@ -117,10 +155,14 @@ void Watcher::run()
 			if (quit_)
 				return;
 		}
+		const bool event = pending_;
 		pending_ = false;
+		check_ms_ = 0; // every pass also does the checks (the studio asks again for the next one)
+		std::vector<std::string> removed;
+		removed.swap(removed_);
 		lk.unlock();
 		try {
-			on_change_();
+			on_change_(removed, event);
 		} catch (const std::exception &e) {
 			hlog::warn("device watcher: pass failed: %s", e.what());
 		} catch (...) {
@@ -148,21 +190,41 @@ json::Value Watcher::status() const
 namespace {
 
 std::mutex g_present_m;
-std::set<std::string> g_present; // obs_ids of the connected fake video devices
-
-bool present(const std::string &id)
-{
-	std::lock_guard<std::mutex> lk(g_present_m);
-	return g_present.count(id) > 0;
-}
+std::set<std::string> g_present;          // obs_ids of the connected fake video devices
+std::map<std::string, uint64_t> g_gen;    // removals per obs_id: a source activated before the last one is dead
+std::map<std::string, int> g_fail;        // activations of that id still to fail
+std::map<std::string, uint64_t> g_frames; // frames sent per obs_id
 
 struct FakeCapture {
 	obs_source_t *src = nullptr;
 	std::mutex m;
 	std::string id;
+	uint64_t gen = 0;  // g_gen[id] when activated
+	bool dead = false; // this activation failed
 	std::atomic<bool> quit{false};
 	std::thread th;
 };
+
+// An activation (create or settings update), as win-dshow re-activates on obs_source_update.
+void activate(FakeCapture *f, const std::string &id)
+{
+	std::lock_guard<std::mutex> g(g_present_m);
+	f->id = id;
+	f->gen = g_gen[id];
+	f->dead = false;
+	if (auto it = g_fail.find(id); it != g_fail.end() && it->second > 0) {
+		it->second--;
+		f->dead = true;
+	}
+}
+
+bool alive(FakeCapture *f, std::string &id)
+{
+	std::lock_guard<std::mutex> lk(f->m);
+	std::lock_guard<std::mutex> g(g_present_m);
+	id = f->id;
+	return !id.empty() && !f->dead && g_present.count(id) > 0 && g_gen[id] == f->gen;
+}
 
 constexpr uint32_t kW = 64, kH = 36;
 
@@ -170,7 +232,10 @@ void *cap_create(obs_data_t *s, obs_source_t *src)
 {
 	auto *f = new FakeCapture();
 	f->src = src;
-	f->id = obs_data_get_string(s, "video_device_id");
+	{
+		std::lock_guard<std::mutex> lk(f->m);
+		activate(f, obs_data_get_string(s, "video_device_id"));
+	}
 	f->th = std::thread([f]() {
 		SetThreadDescription(GetCurrentThread(), L"ujw: test capture");
 		std::vector<uint8_t> px(kW * kH * 4, 0);
@@ -180,11 +245,7 @@ void *cap_create(obs_data_t *s, obs_source_t *src)
 		}
 		while (!f->quit) {
 			std::string id;
-			{
-				std::lock_guard<std::mutex> lk(f->m);
-				id = f->id;
-			}
-			if (!id.empty() && present(id)) {
+			if (alive(f, id)) {
 				obs_source_frame fr = {};
 				fr.data[0] = px.data();
 				fr.linesize[0] = kW * 4;
@@ -194,6 +255,8 @@ void *cap_create(obs_data_t *s, obs_source_t *src)
 				fr.timestamp = os_gettime_ns();
 				fr.full_range = true;
 				obs_source_output_video(f->src, &fr);
+				std::lock_guard<std::mutex> g(g_present_m);
+				g_frames[id]++;
 			}
 			Sleep(50);
 		}
@@ -214,7 +277,7 @@ void cap_update(void *p, obs_data_t *s)
 {
 	auto *f = static_cast<FakeCapture *>(p);
 	std::lock_guard<std::mutex> lk(f->m);
-	f->id = obs_data_get_string(s, "video_device_id");
+	activate(f, obs_data_get_string(s, "video_device_id"));
 }
 
 const char *cap_name(void *)
@@ -228,6 +291,28 @@ void set_test_present(const std::vector<std::string> &obs_ids)
 {
 	std::lock_guard<std::mutex> lk(g_present_m);
 	g_present = std::set<std::string>(obs_ids.begin(), obs_ids.end());
+}
+
+void test_remove(const std::vector<std::string> &obs_ids)
+{
+	std::lock_guard<std::mutex> lk(g_present_m);
+	for (auto &id : obs_ids)
+		g_gen[id]++;
+}
+
+void test_fail_activations(const std::string &obs_id, int n)
+{
+	std::lock_guard<std::mutex> lk(g_present_m);
+	g_fail[obs_id] = n;
+}
+
+json::Value test_frames()
+{
+	std::lock_guard<std::mutex> lk(g_present_m);
+	json::Value r = json::Value::object();
+	for (auto &[id, n] : g_frames)
+		r.set(id, n);
+	return r;
 }
 
 void register_test_capture_type()

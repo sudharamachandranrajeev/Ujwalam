@@ -27,6 +27,7 @@
 #include <obs.h>
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -165,10 +166,23 @@ public:
 	// Reconciles every capture source with the list (devices::reconcile): binds waiting sources whose device arrived
 	// (obs_source_update with the new video_device_id; only that source re-activates), marks sources whose device left
 	// as waiting (their last frame is cleared; the device graph and every encoder and output are left alone). Bumps the
-	// device seq. Returns {seq, changes:[{layer, device, action, matchedBy?, message?}]}.
-	json::Value devices_changed(const devices::List &l, const char *why);
-	// host.status "devices": {seq, listed, waiting:[{layer, device, message}], connected:{deviceId: bool}} (no listing).
+	// device seq. `removed`: interface paths the watcher saw leave since the last pass (a bound source whose device is
+	// one of them is reactivated even when it is listed again, devices.h reconcile).
+	// Codex review fix: a bind (or a build with a device) is only an attempt. The source is "connecting" until it
+	// delivers a frame (its last frame is cleared before each attempt, so a picture means a new frame). Without a
+	// frame after kConnectDelaysMs[attempt - 1] the same source is updated again (re-activation), with backoff, at
+	// most kConnectAttempts times; then it stays "connecting" with a message until the device is plugged in again.
+	// Encoders and outputs are never touched.
+	// Returns {seq, changes:[{layer, device, action: bound | lost | retry, matchedBy?, attempt?, message?}]}.
+	// `event` false (a connect check, no device event): the seq moves only when a source changed state.
+	json::Value devices_changed(const devices::List &l, const char *why, const std::vector<std::string> &removed = {},
+				    bool event = true);
+	// host.status "devices": {seq, listed, waiting:[{layer, device, message}], connecting:[{layer, device, attempt,
+	// message?}], connected:{deviceId: bool}} (no listing).
 	json::Value devices_status() const;
+	// Where connect checks are asked for (the device watcher's check_after; null: none).
+	void set_check_scheduler(std::function<void(uint32_t)> f);
+	static constexpr uint32_t kConnectAttempts = 5;
 
 private:
 	struct Meter;
@@ -184,6 +198,11 @@ private:
 		std::string device, bound_id, problem, matched_by;
 		bool waiting = false;
 		uint32_t binds = 0; // device binds after the build (arrivals)
+		// Bound but no frame seen since the last activation attempt (Codex review fix): attempts made, and when the
+		// last one was made (os_gettime_ns).
+		bool connecting = false;
+		uint32_t attempts = 0;
+		uint64_t attempt_ns = 0;
 		~Src();
 	};
 	struct Layer {
@@ -236,6 +255,15 @@ private:
 	mutable devices::List last_list_; // newest list seen (a build or a watcher pass); host.status reads it
 	mutable bool have_list_ = false;
 	std::atomic<uint64_t> dev_seq_{0};
+	std::function<void(uint32_t)> check_; // guarded by dev_m_
+	// Connect attempts (studio mutex held): counts one more attempt on `s`; with `update`, clears its last frame and
+	// re-activates it (obs_source_update with video_device_id = obs_id); without, notes the build-time activation.
+	void connect_attempt(Src &s, const std::string &obs_id, bool update);
+	// Connect checks (studio mutex held): retries sources that are still without a frame; returns the retries as
+	// changes and asks the scheduler for the next check.
+	bool connect_checks(json::Value &changes, const char *why); // true: a source got a frame or was retried
+	void schedule_connect_check();
+	static bool has_frame(const Src &s);
 	void note_list(const devices::List &l) const;
 	std::vector<std::shared_ptr<Src>> capture_srcs() const;
 	const json::Value *model_device(const std::string &id) const;

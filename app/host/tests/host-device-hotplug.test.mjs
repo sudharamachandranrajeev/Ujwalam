@@ -236,3 +236,60 @@ test('devices.testSet needs --test-hooks; without --allow-devices nor --test-hoo
     assert.equal((await stopHost(h2)).code, 0);
   }
 });
+
+// Codex review (D329): frames sent by the fake devices (sum over all; one capture layer is loaded in these tests).
+const fakeFrames = async () => Object.values((await c.call('devices.testSet', { peek: true })).frames).reduce((a, b) => a + b, 0);
+const OTHER = '\\\\?\\usb#vid_0000&pid_0009&mi_00#7&9999&0&0000#{65e8773d-8f56-11d0-a3b9-00a0c9223196}\\global';
+async function framesFlow(what) {
+  const f0 = await fakeFrames();
+  await until(async () => (await fakeFrames()) >= f0 + 5, what, 5000);
+}
+
+test('a quick unplug and re-plug with the same id inside the watcher debounce reactivates that source; other removals never do', async () => {
+  await c.call('devices.testSet', { devices: [card(P1), card(OTHER, 'Other camera')] });
+  await loadIntoHost(c, doc({ withCapture: true }));
+  await framesFlow('frames after load');
+  await until(async () => (await capRow()).device.state === 'connected', 'connected after load');
+  const binds0 = (await capRow()).device.binds;
+
+  // another device leaves (and comes back): the working source is left alone
+  let r = await c.call('devices.testSet', { devices: [card(P1), card(OTHER, 'Other camera')], removed: [card(OTHER, 'Other camera')] });
+  assert.deepEqual(r.changes, [], 'an unrelated removal never reactivates a healthy source');
+  assert.equal((await capRow()).device.binds, binds0);
+  await framesFlow('frames keep coming');
+
+  // the card leaves and returns with the same id before the debounce ends: its graph died (fake: until reactivated)
+  const seq0 = (await c.call('host.status')).devices.seq;
+  r = await c.call('devices.testSet', { devices: [card(P1), card(OTHER, 'Other camera')], removed: [card(P1)], viaWatcher: true });
+  assert.equal(r.queued, true);
+  const fDead = await fakeFrames();
+  await until(async () => (await c.call('host.status')).devices.seq > seq0, 'the watcher pass after the debounce', 8000);
+  assert.equal((await capRow()).device.binds, binds0 + 1, 'reactivated once (matchedBy reconnect)');
+  await until(async () => (await fakeFrames()) >= fDead + 5, 'frames again after the reactivation', 5000);
+  await until(async () => (await capRow()).width === 64, 'picture back');
+});
+
+test('a bind whose activation delivers no frames is retried with backoff; the layer says "connecting" until a picture comes', { timeout: 60_000 }, async () => {
+  await c.call('devices.testSet', { devices: [] });
+  await loadIntoHost(c, doc({ withCapture: true }));
+  assert.equal((await capRow()).device.state, 'waiting');
+  // plugged in while the driver is still starting (or another app holds it): the first two activations fail
+  const r = await c.call('devices.testSet', { devices: [{ ...card(P1), fail: 2 }] });
+  assert.deepEqual(r.changes.map((x) => x.action), ['bound']);
+  let row = await capRow();
+  assert.equal(row.device.state, 'connecting');
+  assert.equal(row.device.attempt, 1);
+  assert.equal(row.width, 0);
+  assert.deepEqual((await c.call('host.status')).devices.connecting.map((x) => x.layer), ['cap']);
+  // attempt 2 after about 3 s: fails too; the layer says why in plain words
+  await until(async () => (await capRow()).device.attempt === 2, 'second attempt', 6000);
+  row = await capRow();
+  assert.equal(row.device.state, 'connecting');
+  assert.match(row.device.message, /^Connecting to capture card "Capture card": no picture yet\. If another app is using it, close that app/);
+  // attempt 3 about 6 s later: the picture comes
+  await until(async () => (await capRow()).width === 64, 'picture after the third attempt', 12_000);
+  await until(async () => (await capRow()).device.state === 'connected', 'connected', 2000);
+  const st = await c.call('host.status');
+  assert.deepEqual(st.devices.connecting, []);
+  assert.equal((await capRow()).device.binds, 1, 'retries are not binds: the same device id');
+});

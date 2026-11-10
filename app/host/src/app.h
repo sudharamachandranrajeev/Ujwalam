@@ -20,6 +20,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <vector>
 
 struct App {
 	std::string version = "0.1.0";
@@ -59,4 +60,4 @@ json::Value host_status_json(App &app); // host.status (methods.cpp); also the f
 void on_hotkey(App &app, const std::string &name, const char *via);
 // One device hot-plug pass (D329): list (fake list with devices.testSet), list again after 1 s if a bound capture
 // device looks gone, then reconcile the capture layers. null when devices cannot be listed. Watcher thread or RPC.
-json::Value devices_pass(App &app, const char *why);
+json::Value devices_pass(App &app, const char *why, const std::vector<std::string> &removed = {}, bool event = true);

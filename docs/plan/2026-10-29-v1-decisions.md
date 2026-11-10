@@ -635,6 +635,9 @@ matches)` because Windows did not list the card at that moment. Now:
 keeping behind a switch; (2) a device event only ever acts on a capture source whose own device came or went, and never
 on encoders or outputs (the host test records over NVENC through plug, unplug, re-plug and a same-name second card,
 with one file, full span and 30 fps); (3) without `--allow-devices` nothing changes at all (no watcher, capture layers
-stay "forbidden"). Not done: a waiting state for WASAPI microphone and audio-output globals (they keep the current
+stay "forbidden"). Codex second review (2 x P2, fixed): removals are kept through the debounce, so a device that
+leaves and returns with the same id is reactivated (that source only); a bind is "connecting" until the source
+delivers a frame and is re-activated after 3, 6, 12 and 24 s without one (5 attempts), with a plain message. Not
+done: a waiting state for WASAPI microphone and audio-output globals (they keep the current
 behaviour). Real hot-plug with the user's card is UNVERIFIED until the user tests it. Evidence:
 `docs/evidence/2026-11-10-device-hotplug.md`.

@@ -963,7 +963,89 @@ bool Studio::device_loss_pending(const devices::List &l)
 	return false;
 }
 
-json::Value Studio::devices_changed(const devices::List &l, const char *why)
+// Seconds without a frame before attempt n + 1 (index n - 1); kConnectAttempts attempts in all.
+static constexpr uint32_t kConnectDelaysMs[Studio::kConnectAttempts] = {3000, 6000, 12000, 24000, 30000};
+
+void Studio::set_check_scheduler(std::function<void(uint32_t)> f)
+{
+	std::lock_guard<std::mutex> lk(dev_m_);
+	check_ = std::move(f);
+}
+
+bool Studio::has_frame(const Src &s)
+{
+	// The last frame is cleared before every attempt (obs_source_output_video(nullptr): no size until a new frame),
+	// so a size means this activation delivered a frame.
+	return s.src && obs_source_get_width(s.src) > 0;
+}
+
+void Studio::connect_attempt(Src &s, const std::string &obs_id, bool update)
+{
+	if (update) {
+		// Only this source re-activates (win-dshow queues the activation on its own thread); encoders, outputs
+		// and every other source are untouched.
+		obs_source_output_video(s.src, nullptr);
+		obs_data_t *d = obs_data_create();
+		obs_data_set_string(d, "video_device_id", obs_id.c_str());
+		obs_source_update(s.src, d);
+		obs_data_release(d);
+	}
+	s.connecting = true;
+	s.attempts++;
+	s.attempt_ns = os_gettime_ns();
+}
+
+void Studio::schedule_connect_check()
+{
+	uint64_t now = os_gettime_ns(), next = 0;
+	for (auto &s : capture_srcs()) {
+		if (s->waiting || !s->connecting || s->attempts == 0 || s->attempts > kConnectAttempts)
+			continue;
+		uint64_t due = s->attempt_ns + (uint64_t)kConnectDelaysMs[s->attempts - 1] * 1000000ull;
+		uint64_t in = due > now ? due - now : 0;
+		if (next == 0 || in < next)
+			next = in == 0 ? 1 : in;
+	}
+	if (next == 0)
+		return;
+	std::lock_guard<std::mutex> lk(dev_m_);
+	if (check_)
+		check_((uint32_t)std::min<uint64_t>(next / 1000000ull + 50, 60000));
+}
+
+bool Studio::connect_checks(json::Value &changes, const char *why)
+{
+	uint64_t now = os_gettime_ns();
+	bool moved = false;
+	for (auto &s : capture_srcs()) {
+		if (s->waiting || !s->connecting)
+			continue;
+		if (has_frame(*s)) {
+			s->connecting = false;
+			s->attempts = 0;
+			moved = true;
+			continue;
+		}
+		if (s->attempts == 0 || s->attempts >= kConnectAttempts)
+			continue; // the last attempt failed: stay connecting with a message (a plug event starts over)
+		if (now < s->attempt_ns + (uint64_t)kConnectDelaysMs[s->attempts - 1] * 1000000ull)
+			continue;
+		connect_attempt(*s, s->bound_id, true);
+		json::Value c = json::Value::object();
+		c.set("layer", s->owner);
+		c.set("device", s->device);
+		c.set("action", "retry");
+		c.set("attempt", (uint64_t)s->attempts);
+		hlog::warn("devices (%s): layer %s: no picture from device %s yet; activation attempt %u", why,
+			   s->owner.c_str(), s->device.c_str(), s->attempts);
+		changes.push(std::move(c));
+		moved = true;
+	}
+	schedule_connect_check();
+	return moved;
+}
+
+json::Value Studio::devices_changed(const devices::List &l, const char *why, const std::vector<std::string> &removed, bool event)
 {
 	note_list(l);
 	json::Value changes = json::Value::array();
@@ -974,17 +1056,13 @@ json::Value Studio::devices_changed(const devices::List &l, const char *why)
 			if (!spec)
 				continue;
 			devices::Binding b{s->bound_id, s->waiting};
-			devices::Step st = devices::reconcile(*spec, b, l);
+			devices::Step st = devices::reconcile(*spec, b, l, removed);
 			json::Value c = json::Value::object();
 			c.set("layer", s->owner);
 			c.set("device", s->device);
 			if (st.act == devices::Step::Bind) {
-				// Only this source re-activates (win-dshow queues the activation on its own thread); encoders,
-				// outputs and every other source are untouched.
-				obs_data_t *d = obs_data_create();
-				obs_data_set_string(d, "video_device_id", st.obs_id.c_str());
-				obs_source_update(s->src, d);
-				obs_data_release(d);
+				s->attempts = 0; // a device event starts the attempts over
+				connect_attempt(*s, st.obs_id, true);
 				s->bound_id = st.obs_id;
 				s->matched_by = st.matched_by;
 				s->waiting = false;
@@ -999,6 +1077,8 @@ json::Value Studio::devices_changed(const devices::List &l, const char *why)
 				// win-dshow, and a false alarm only costs one frame (the next frame paints again).
 				obs_source_output_video(s->src, nullptr);
 				s->waiting = true;
+				s->connecting = false;
+				s->attempts = 0;
 				s->problem = st.problem;
 				c.set("action", "lost");
 				c.set("message", devices::waiting_message(*spec, st.problem));
@@ -1010,8 +1090,10 @@ json::Value Studio::devices_changed(const devices::List &l, const char *why)
 			}
 			changes.push(std::move(c));
 		}
+		if (connect_checks(changes, why))
+			event = true; // a source got its picture, or was retried: the pages refresh its state
 	}
-	uint64_t seq = ++dev_seq_;
+	uint64_t seq = event || changes.size() ? ++dev_seq_ : dev_seq_.load();
 	json::Value r = json::Value::object();
 	r.set("seq", seq);
 	r.set("changes", std::move(changes));
@@ -1031,11 +1113,22 @@ json::Value Studio::devices_status() const
 			l = last_list_;
 	}
 	r.set("listed", have);
-	json::Value waiting = json::Value::array();
+	json::Value waiting = json::Value::array(), connecting = json::Value::array();
 	json::Value connected = json::Value::object();
 	std::unique_lock<std::recursive_mutex> lk(m_, std::try_to_lock); // never wait on a load in host.status
 	if (lk.owns_lock()) {
 		for (auto &s : capture_srcs()) {
+			if (!s->waiting && s->connecting && !has_frame(*s)) {
+				const json::Value *spec = model_device(s->device);
+				json::Value w = json::Value::object();
+				w.set("layer", s->owner);
+				w.set("device", s->device);
+				w.set("attempt", (uint64_t)s->attempts);
+				if (s->attempts > 1 && spec)
+					w.set("message", devices::connecting_message(*spec, s->attempts >= kConnectAttempts));
+				connecting.push(std::move(w));
+				continue;
+			}
 			if (!s->waiting)
 				continue;
 			const json::Value *spec = model_device(s->device);
@@ -1055,6 +1148,7 @@ json::Value Studio::devices_status() const
 	}
 	r.set("busy", !lk.owns_lock());
 	r.set("waiting", std::move(waiting));
+	r.set("connecting", std::move(connecting));
 	r.set("connected", std::move(connected));
 	return r;
 }
@@ -1224,6 +1318,12 @@ std::shared_ptr<Studio::Src> Studio::make_src(const model::Source &spec, const s
 		w->waiting = spec.waiting;
 		w->problem = spec.wait_problem;
 		w->matched_by = spec.matched_by;
+		if (!w->waiting && !w->bound_id.empty()) { // built with a device: connecting until its first frame
+			connect_attempt(*w, w->bound_id, false);
+			std::lock_guard<std::mutex> lk(dev_m_);
+			if (check_)
+				check_(kConnectDelaysMs[0] + 50);
+		}
 	}
 	return w;
 }
@@ -1444,10 +1544,15 @@ json::Value Studio::layer_json(const Scene &s, const Layer &l) const
 	if (l.src && !l.src->device.empty()) { // capture layer (D329)
 		json::Value d = json::Value::object();
 		d.set("id", l.src->device);
-		d.set("state", l.src->waiting ? "waiting" : "connected");
+		const bool connecting = !l.src->waiting && l.src->connecting && !has_frame(*l.src);
+		d.set("state", l.src->waiting ? "waiting" : connecting ? "connecting" : "connected");
+		const json::Value *spec = model_device(l.src->device);
 		if (l.src->waiting) {
-			const json::Value *spec = model_device(l.src->device);
 			d.set("message", spec ? devices::waiting_message(*spec, l.src->problem) : std::string("Waiting for its device."));
+		} else if (connecting) {
+			d.set("attempt", (uint64_t)l.src->attempts);
+			if (l.src->attempts > 1 && spec)
+				d.set("message", devices::connecting_message(*spec, l.src->attempts >= kConnectAttempts));
 		}
 		d.set("binds", (uint64_t)l.src->binds);
 		o.set("device", std::move(d));
