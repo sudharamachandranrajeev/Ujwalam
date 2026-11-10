@@ -15,8 +15,8 @@
 // Output layout (user 2026-11-08, D298 proposed): each run works in <dataDir>/clips/runs/<name> (analysis files, logs,
 // render/report JSON, working videos); only finished, validated videos are published to the clips folder from the
 // settings (default <dataDir>/clips) as <YYYY-MM-DD>/<game>_<kind>_<stamp>_<label>_<nn>_<canvas>.mp4
-// (services/clip/clip_names.py). A whole-recording run also makes kill montages when the V recording exists; a
-// review run deletes the live clipper's replay saves it used (host-named intermediates) once every clip rendered.
+// (services/clip/clip_names.py). A whole-recording run also makes kill montages when the V recording exists, and so
+// does a review run of a recorded stream (D322 proposed: H and V recordings both there); a review run deletes the live clipper's replay saves it used (host-named intermediates) once every clip rendered.
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -98,7 +98,12 @@ export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(data
     if (job.until) argv.push('--until', job.until);
     // Match gate on the "while" path (D304 proposed): the stream's own H recording, when there is one, gives the
     // matches (detect + segment in live-review); saves in skipped matches are dropped. Without it every save is kept.
-    if (typeof job.h === 'string' && job.h && exists(job.h)) argv.push('--recording', job.h, '--threads', '4', ...proj);
+    if (typeof job.h === 'string' && job.h && exists(job.h)) {
+      argv.push('--recording', job.h, '--threads', '4', ...proj);
+      // D322 proposed: the kill montages and match reels of the stream's recording, cut from its V recording, after
+      // the short clips. --drop-used-saves still deletes only the live clipper's replay saves, never the recordings.
+      if (typeof job.v === 'string' && job.v && exists(job.v)) argv.push('--v-recording', job.v, '--montage');
+    }
     argv.push('--encoder', 'h264_nvenc', '--publish', outRoot, '--drop-used-saves', '--out', out);
   } else {
     if (!job.h) return { spec: null, reason: 'there is no recording to make clips from' };
@@ -136,9 +141,13 @@ const STAGE_TEXT = { detect: ['Reading the game screen', 'frame'], candidates: [
   publish: ['Copying the finished clips to your clips folder', null, false], montage: ['Making the kill montage', null, false] };
 /** The stages a job goes through, in order (clipper.py cmd_run: detect, candidates, gate, render, validate, publish,
  *  then the montage when the V recording exists; live-review: detect and gate over the stream's own recording when
- *  there is one, then review and publish). */
+ *  there is one, then review and publish, then the montage when the V recording exists too, D322 proposed). */
 export function jobStages(job) {
-  if (job?.type === 'review') return typeof job.h === 'string' && job.h ? ['detect', 'gate', 'review', 'publish'] : ['review', 'publish'];
+  if (job?.type === 'review') {
+    const h = typeof job.h === 'string' && job.h;
+    if (!h) return ['review', 'publish'];
+    return ['detect', 'gate', 'review', 'publish', ...(typeof job.v === 'string' && job.v ? ['montage'] : [])];
+  }
   return ['detect', 'candidates', 'gate', 'render', 'validate', 'publish', ...(job?.v ? ['montage'] : [])];
 }
 /** { stageText, unit, measured } of a progress stage for a job (a review's gate sorts saves, counted as one step). */

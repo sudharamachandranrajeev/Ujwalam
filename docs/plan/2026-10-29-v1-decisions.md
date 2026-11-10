@@ -549,3 +549,16 @@ Services audit form.
 User: task notification at the top right; the always-visible minimal task strip is replaced by a collapsible panel that
 shows each task in full (stage in words, step, done/total, percent, elapsed, ETA from the observed rate), and a stall
 warning when no progress arrives for N minutes. An indeterminate animation with no ETA "provides no insight".
+
+## D322 — Kill montages on the "while" clip path (2026-11-10, proposed)
+
+User: "checked the normal clips. but did not receive the montage clips from Ujwalam". The studio's clip job for a
+recorded stream runs `clipper.py live-review`, which made only the short clips. Now, when the stream has both its H and
+V recordings, the studio passes `--recording H --v-recording V --montage`. After the short clips are rendered, validated
+and published (and the used replay saves dropped), live-review makes the kill montages and match reels of the H
+recording (the same code as `clipper.py montage`, D298/D315) into the run folder's `montage/`, validates them and
+publishes them. It needs the detector hits of the H recording: `detect` runs when the run folder has none and no pass
+has run yet, even with the match gate off. Exit code policy: the montage never changes live-review's exit code (a
+failure would make the studio report the whole job as failed and skip posting of the shorts). The outcome goes to the
+log (`montage: NOT MADE (<reason>)`) and to `render.json` `montage` {status made|failed|skipped, reason, videos}. The
+review job's stage list in the task panel gets `montage` at the end.

@@ -42,9 +42,16 @@
               save is kept and render.json matchGate says why.
               [--publish CLIPS] validate + publish; [--drop-used-saves] then delete the replay saves of the window
               (host-named live clipper intermediates) when every clip rendered.
+              [--montage [--v-recording F] [--montage-config F]] (D322 proposed): with --recording, after the short
+              clips are published (and the used saves dropped), the same work as `montage` (kill montages + match
+              reels) into DIR/montage, validated and published with --publish. It needs detector hits of the
+              recording (`detect` runs when DIR has none and it has not already run) and the V recording. A montage
+              that cannot be made never undoes the short clips: live-review still exits as it would without
+              --montage; the log says "montage: NOT MADE (...)" and render.json `montage` holds the status
+              (made | failed | skipped) and the reason.
 
 Progress (stderr, one per line, for the studio): ujwalam-progress {"stage":"<detect|candidates|render|validate|review|
-gate>","done":<int>,"total":<int>,"note":"<short plain text, no names>"} (clip_common.progress_line). The detector
+gate|publish|montage>","done":<int>,"total":<int>,"note":"<short plain text, no names>"} (clip_common.progress_line). The detector
 pass writes one at least every 2 s; render and live-review one per clip.
 
 Common: [--data-dir DIR] (flags.local.json; default paths.event_core_data from data/profile.local.json)
@@ -515,6 +522,7 @@ def _live_matches(a):
         if not os.path.isfile(a.recording):
             return None, "the stream's recording was not found: every save kept"
         if not _own_hits(a):
+            a.detect_ran = True  # --montage never runs a second (failing) pass after this one
             cmd_detect(a)
         hits_path = _own_hits(a)
         if not hits_path:
@@ -628,7 +636,47 @@ def cmd_live_review(a):
     if a.drop_used_saves and failed == 0 and rc == 0:
         gone = pub.drop_used_saves(window_files)
         print(f"live-review: {len(gone)} used replay save file(s) deleted (live clipper intermediates)")
-    return 0
+    if getattr(a, "montage", False):
+        status = _live_montage(a)
+        rpath = os.path.join(a.out, RENDER)
+        rdoc = load_json(rpath)
+        rdoc["montage"] = status
+        write_json_atomic(rpath, rdoc)
+        if status["status"] != "made":
+            print(f"montage: NOT MADE ({status['reason']}); the short clips are kept"
+                  f"{' and published' if a.publish else ''}")
+    return 0  # a montage outcome never changes the exit code (D322 proposed): see render.json `montage`
+
+
+def _live_montage(a):
+    """live-review --montage (D322 proposed): kill montages and match reels of the stream's H recording, cut from its
+    V recording, into DIR/montage (cmd_montage, published with --publish). Runs after the short clips are rendered and
+    published, so nothing here can lose them. -> {"status": made|failed|skipped, "reason", "rc"?, "videos"?}."""
+    rec = getattr(a, "recording", None)
+    if not rec or not os.path.isfile(rec):
+        return {"status": "skipped", "reason": "no H recording of the stream (--recording)"}
+    if not v_recording(rec, getattr(a, "v_recording", None)):
+        return {"status": "skipped", "reason": "no V recording of the stream (--v-recording)"}
+    try:
+        if not _own_hits(a) and not getattr(a, "detect_ran", False):
+            a.detect_ran = True
+            cmd_detect(a)  # the montage needs the kills of the whole recording (HeavyJobLock inside)
+        if not _own_hits(a):
+            return {"status": "failed", "reason": "no detector hits for the stream's recording"}
+        rc = cmd_montage(argparse.Namespace(**{**vars(a), "hits": None}))
+    except Exception as e:  # noqa: BLE001 - any montage error is reported; the short clips stay as they are
+        eprint(f"montage: FAILED: {type(e).__name__}: {str(e)[-200:]}")
+        return {"status": "failed", "reason": f"{type(e).__name__}: {str(e)[-200:]}"}
+    videos = 0
+    try:
+        videos = sum(1 for r in load_json(os.path.join(a.out, "montage", REPORT)).get("results", []) if r.get("ok"))
+    except ClipError:
+        pass
+    if rc:
+        return {"status": "failed", "rc": rc, "videos": videos,
+                "reason": f"a montage file failed its check (exit {rc}); {videos} passing video(s) kept"}
+    return {"status": "made", "rc": 0, "videos": videos,
+            "reason": f"{videos} montage/reel video(s)" if videos else "no montage or reel in this recording"}
 
 
 def cmd_montage(a):
@@ -908,6 +956,11 @@ def build_parser():
     s.add_argument("--no-decode", action="store_true"); publish_arg(s)
     s.add_argument("--drop-used-saves", action="store_true",
                    help="delete the window's replay saves (live clipper intermediates) once every clip rendered")
+    s.add_argument("--montage", action="store_true",
+                   help="then kill montages + match reels of --recording, cut from the V recording (D322 proposed)")
+    s.add_argument("--v-recording", type=os.path.abspath,
+                   help="V canvas recording for --montage (default: the '-v-' sibling of --recording)")
+    s.add_argument("--montage-config")
     s.set_defaults(fn=cmd_live_review)
     return p
 
