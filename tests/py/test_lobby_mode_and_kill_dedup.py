@@ -125,6 +125,12 @@ class KillFeedReadingTests(unittest.TestCase):
                 {"text": "PLAYER_A", "x0": 0.46, "y0": 0.86, "x1": 0.53, "y1": 0.89}]
         self.assertEqual(gt.killfeed_side(kill, NAMES, 0.8)[0], "killer")
 
+    def test_long_own_name_with_short_victim_in_one_box_is_a_kill(self):
+        # Codex review: a long own name plus a short victim scores above 0.8 as a whole; it is still a merged line
+        names = ["ABCDEFGHIJKLMN"]
+        box = [{"text": "ABCDEFGHIJKLMN XYZ", "x0": 0.35, "y0": 0.86, "x1": 0.53, "y1": 0.89}]
+        self.assertEqual(gt.killfeed_side(box, names, 0.8)[0], "killer")
+
     def test_victim_text_skips_counts_and_the_own_name(self):
         b = lambda text, x0: {"text": text, "x0": x0, "y0": 0.86, "x1": x0 + 0.05, "y1": 0.89}  # noqa: E731
         self.assertEqual(gt.victim_text([b("OWN_NAME", 0.35), b("KESTREL", 0.44), b("2", 0.50)], NAMES), "KESTREL")
@@ -211,6 +217,12 @@ class KillCounterSequenceTests(unittest.TestCase):
         self.assertEqual(ms[0]["ownKills"], 3)
         old = {"readings": [], "ownKills": {"times": [20.0, 28.0, 192.0, 225.0, 316.0]}}
         self.assertEqual(mg.segment(hs, old, 400.0, CFG)[0]["ownKills"], 5, "older runs without feeds: all count")
+
+    def test_hits_only_run_counts_every_feed(self):
+        # Codex review: with no match-stats the kill times come from the hits; a B1 kill on an MP match still counts
+        hs = [hit(t, "M5", "kill") for t in (20, 225)] + [hit(100, "B1", "kill")] + match_end(354)
+        no_stats = mg.segment(hs, None, 400.0, CFG)[0]["ownKills"]
+        self.assertEqual(no_stats, len(mg.killfeed_instances(hs)))
 
     def test_frame_hits_reports_the_feed_of_each_key(self):
         keys, feeds = [], []

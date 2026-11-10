@@ -469,7 +469,7 @@ def segment(hits, stats, duration, cfg):
             all_feeds = [None] * len(all_times)  # older runs: no feed per kill
     else:
         all_times = killfeed_instances(hits)
-        all_feeds = [h["detector"] for h in hits if h.get("detector") in ("M5", "B1") and h.get("signal") is True]
+        all_feeds = [None] * len(all_times)  # hits-only runs: no feed per kill, count all (aligned with all_times)
         kill_src = "killfeed" if any(h.get("detector") in ("M5", "B1") for h in hits) else None
     spans = []
     prev = 0.0

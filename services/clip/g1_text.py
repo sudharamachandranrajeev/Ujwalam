@@ -174,7 +174,10 @@ def _single_box_side(text, names, min_score):
     start means killer, at the end (a trailing kill-count digit ignored) means victim."""
     t = normalise(text)
     best = (None, 0.0)
-    whole = max((ratio(normalise(n), t) for n in names if normalise(n)), default=0.0)
+    # only a box no longer than a name plus a short suffix can be "the name on its own"; a longer box is a merged line
+    # (a long own name + a short victim name scores above min_score as a whole too: Codex review 2026-11-10)
+    whole = max((ratio(normalise(n), t) for n in names if normalise(n) and len(t) < len(normalise(n)) + 3),
+                default=0.0)
     if whole >= min_score:
         # the box is one of the profile names on its own (a name variant such as NAME-TTV on a name tag, whose
         # suffix would otherwise read as a victim after the base name): no line
