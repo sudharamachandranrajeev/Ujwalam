@@ -18,7 +18,7 @@
         { "id": "clip", "anchor": "ctlClip", "title": "Save clip", "text": "Saves the last 60 seconds, in both the wide and the tall picture, as clip files. Use it right after something great happens." },
         { "id": "mark", "anchor": "ctlMark", "title": "Mark moment", "text": "Marks this exact moment so the clip maker looks at it first. Press it when you think a clip is coming." },
         { "id": "chips", "anchor": "chips", "title": "Status chips", "text": "These show what is on right now: Live, Recording, and Clips. Red means on. The Clips chip tells you when Ujwalam is making clips." },
-        { "id": "task-bar", "anchor": "taskBar", "title": "What happens behind the scenes", "text": "When Ujwalam works on something in the background, such as cutting clips or saving settings, it shows up in this bar. Click it for the list. It never blocks you." },
+        { "id": "task-bar", "anchor": "taskBar", "title": "What happens behind the scenes", "text": "When Ujwalam works on something in the background, such as cutting clips or saving settings, a Tasks button appears here at the top right. Click it for the list. It never blocks you." },
         { "id": "my-clips", "anchor": "myClips", "title": "My clips", "text": "Opens the folder with your finished clips." },
         { "id": "settings", "anchor": "settings", "title": "Settings", "text": "Choose when clips are made, which matches get clips, and where files are saved. Tips and this tour can be switched back on under Help and tips." },
         { "id": "help", "anchor": "help", "title": "Need help later?", "text": "Press ? any time to see how clips are made and how posting works, or to replay this tour." }
@@ -31,7 +31,7 @@
         { "id": "clips-mark", "anchor": "ctlMark", "title": "You can point out a moment", "text": "Press Mark moment when something good happens. The clip maker looks at marked moments first." },
         { "id": "clips-save", "anchor": "ctlClip", "title": "Or save the last minute", "text": "Save clip keeps the last 60 seconds, wide and tall, right away." },
         { "id": "clips-chip", "anchor": "chipClips", "title": "The Clips chip", "text": "It tells you if Ujwalam is waiting for your answer, making clips, or done. Hover it to see your choices." },
-        { "id": "clips-bar", "anchor": "taskBar", "title": "Progress", "text": "While clips are made, the steps and progress show in this bar: reading the game screen, then cutting clips." },
+        { "id": "clips-bar", "anchor": "taskBar", "title": "Progress", "text": "While clips are made, the Tasks button here opens each step and its progress: reading the game screen, then making clip videos, with the time left." },
         { "id": "clips-folder", "anchor": "myClips", "title": "Where clips go", "text": "Finished clips are saved in this folder." },
         { "id": "clips-settings", "anchor": "settings", "title": "Your choices", "text": "In Settings, Clips, choose when to make clips and which matches count, for example only matches where you finish in the top 3." }
       ]

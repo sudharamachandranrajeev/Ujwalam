@@ -450,6 +450,20 @@ void MainWindow::stopAllFromTray(bool ask)
 	});
 }
 
+// Stop from the task panel (2026-11-10): the background jobs end (clip making, uploads; the same route as the tray's
+// Stop all while live), the studio and host stay. Asked first on a real click.
+void MainWindow::stopTasks(bool ask)
+{
+	if (ask && QMessageBox::question(this, QStringLiteral("Stop tasks"),
+					  QStringLiteral("Stop the background jobs (clip making and uploads)?\nUnfinished clip jobs run again at the next start.")) !=
+			   QMessageBox::Yes)
+		return;
+	taskStops_++;
+	api_->post(QStringLiteral("ui/api/tasks/stop"), {}, [this](bool ok, const QJsonObject &, const QString &err) {
+		note(ok ? QStringLiteral("Stopping the background jobs...") : QStringLiteral("Could not stop the tasks: ") + err);
+	});
+}
+
 void MainWindow::requestQuit(std::function<void(bool, const QString &, const QString &)> then)
 {
 	api_->post(QStringLiteral("ui/api/quit/begin"), {}, [then](bool ok, const QJsonObject &r, const QString &) {
@@ -568,7 +582,14 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	note_ = new QLabel(this);
 	statusBar()->addWidget(note_, 1);
 	tasks_ = new TaskBar(this);
-	statusBar()->insertPermanentWidget(0, tasks_->chip()); // before host / event core; hidden while nothing runs
+	// The task button sits in the top bar at the right, before My clips (user 2026-11-10: the status-bar strip was hard
+	// to see); its panel and the notifications open under it. Hidden while no task is listed.
+	if (QWidget *topBar = clipsFolderBtn_->parentWidget())
+		if (auto *row = qobject_cast<QHBoxLayout *>(topBar->layout())) {
+			row->insertWidget(row->indexOf(clipsFolderBtn_), tasks_->chip());
+			row->insertSpacing(row->indexOf(clipsFolderBtn_), 6);
+		}
+	connect(tasks_, &TaskBar::stopRequested, this, [this](const QString &) { stopTasks(true); });
 	{
 		// Tray icon (D311 proposed): the app icon main() set from the embedded PNGs (res/png, no imageformats plugin
 		// needed), else a standard one.
@@ -3814,7 +3835,9 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("clipsTip"), pillClips_->toolTip());
 	o.insert(QStringLiteral("clipAsks"), clips_.value(QStringLiteral("asks")).toArray().size());
 	o.insert(QStringLiteral("clipSettings"), clips_.value(QStringLiteral("settings")));
-	o.insert(QStringLiteral("tasks"), tasks_->probe());
+	QJsonObject tp = tasks_->probe();
+	tp.insert(QStringLiteral("stopsSent"), taskStops_);
+	o.insert(QStringLiteral("tasks"), tp);
 	QJsonObject tray = tray_->probe();
 	tray.insert(QStringLiteral("closeAsked"), closeAsked_);
 	tray.insert(QStringLiteral("closeChoice"), closeChoice_);
@@ -4096,6 +4119,14 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		if (p[1] == QStringLiteral("dismiss")) {
 			tasks_->dismissFirstFinished();
+			return true;
+		}
+		if (p[1] == QStringLiteral("toast-click")) { // a click on the first notification (opens the panel)
+			tasks_->clickFirstToast();
+			return true;
+		}
+		if (p[1] == QStringLiteral("stop")) { // a task's Stop button, without the question
+			stopTasks(false);
 			return true;
 		}
 		return false;

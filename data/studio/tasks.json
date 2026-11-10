@@ -1,0 +1,10 @@
+{
+  "$comment": "Task panel in the studio window (services/studio-ui/tasks.mjs, app/studio/src/taskbar.cpp; user feedback 2026-11-10). Every threshold the panel uses lives here, never in code. stallAfterMs: a running task that has sent no progress for this long (or none at all since it started) shows 'No progress for N min - it may be stuck' with a Stop button. It only warns; it never stops anything. status 'proposed' = agent default, not yet approved by the user.",
+  "version": "0.1.0",
+  "status": "proposed",
+  "checked": "2026-11-10",
+  "stallAfterMs": 180000,
+  "source": {
+    "stallAfterMs": "3 min, proposed in the 2026-11-10 task brief. The clip detector pass writes a progress line at most every 2 s (services/clip/detector_pass.py PROGRESS_EVERY_SEC = 2.0), uploads one per chunk; editing one clip writes a line when the clip is done. UNVERIFIED on a real run: a single long step without progress lines (kill montage, publish) may pass 3 min and show the warning although it still works."
+  }
+}

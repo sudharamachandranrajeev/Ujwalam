@@ -368,7 +368,7 @@ class SettingsAndProgressTests(unittest.TestCase):
             line = cc.progress_line("detect", 12, 476, "reading   the game\nscreen")
         self.assertEqual(err.getvalue(), line + "\n")
         self.assertEqual(line, 'ujwalam-progress {"stage":"detect","done":12,"total":476,"note":"reading the game screen"}')
-        pat = re.compile(r'^ujwalam-progress \{"stage":"(detect|candidates|render|validate|review|gate)",'
+        pat = re.compile(r'^ujwalam-progress \{"stage":"(detect|candidates|render|validate|review|gate|publish|montage)",'
                          r'"done":\d+,"total":\d+,"note":"[^"\n]{0,120}"\}$')
         for st in cc.PROGRESS_STAGES:
             with redirect_stderr(io.StringIO()):

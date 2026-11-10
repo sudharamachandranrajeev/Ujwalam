@@ -231,7 +231,9 @@ private:
 	Guide *guide_ = nullptr;       // tips, tour and help (D294 proposed)
 	QPushButton *helpBtn_ = nullptr;
 	QWidget *moreBtn_ = nullptr;
-	TaskBar *tasks_ = nullptr;     // task chip, list and toasts (D287)
+	TaskBar *tasks_ = nullptr;     // task button, panel and notifications at the top right (D287; 2026-11-10)
+	int taskStops_ = 0;            // Stop requests sent from the task panel (probe)
+	void stopTasks(bool ask);
 	TrayKeeper *tray_ = nullptr;  // tasks kept running in the tray after the window closed (D311 proposed)
 	QString closeAsked_;          // the last close question's text (probe)
 	QString closeChoice_;         // tray | stop | cancel: the answer to it (probe)
