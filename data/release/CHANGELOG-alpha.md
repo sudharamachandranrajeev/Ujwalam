@@ -2,6 +2,12 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.20 — 2026-11-10
+
+- Search and Destroy and other round modes are no longer split into one "match" per round: only the large end-of-match banner ends a match. Rounds are listed inside the match with your kills per round, so a multi-kill in one round can get a reel.
+- Ujwalam reads the match type from the screen (Search and Destroy, Domination, Team Deathmatch, Control and more). When the screen does not show it clearly, the match type stays unknown instead of being guessed.
+- Clips made right after a recorded stream now also include kill montages and match reels, after the short clips. A montage problem never stops the short clips.
+
 ## 0.1.0-alpha.19 — 2026-11-10
 
 - Background work shows in a panel at the top right. Open it from the button next to My clips: each task shows its step in words, how far it is (for example frame 412 of 3148), time so far and time left, and a Stop button.
