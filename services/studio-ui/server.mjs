@@ -1207,6 +1207,10 @@ export function createStudioServer(opts) {
         // Stream and recording changes, and layout changes while live: the click is the decision (D332), so they run
         // now through the same path as before (closing lock, stop-wins generation, autosave).
         let summary = spec.summary; let ready = null; let warning = null;
+        // Stop wins (Codex review of D332): a Start's stop generation is taken when the click arrives, before the
+        // readiness and audio checks below await, so a Stop / End all clicked during those checks still wins.
+        const startEpoch = body.method === 'stream.start' ? stopEpoch : null;
+        const startGen = body.method === 'stream.start' && authority ? await authority.begin() : null;
         // Go-live readiness (flag readiness): run first. A failed item does not start the stream: the answer lists the
         // problems with a pending id for one "Go live anyway" click (logged as an override). Warnings never block.
         if (body.method === 'stream.start' && readinessOn()) {
@@ -1230,7 +1234,8 @@ export function createStudioServer(opts) {
           if (!id) return json(res, 429, { error: 'too-many-pending' });
           return json(res, 200, { verdict: 'readiness-failed', pending: publicPending(id, pending.get(id)) });
         }
-        return runAction(rec, res);
+        // Not stored in a pending record: a later "Go live anyway" click is a new decision and takes a fresh one.
+        return runAction({ ...rec, ...(startEpoch !== null ? { startEpoch, startGen } : {}) }, res);
       }
       let result;
       const before = await readBefore(body.method, params);
@@ -1402,8 +1407,10 @@ export function createStudioServer(opts) {
         if (p.method === 'stream.stop') stopEpoch += 1;
         if (p.method === 'stream.stop' && authority) await authority.revoke('stream.stop');
         // stopEpoch: the same check without the launcher (no authority); a Stop / End all confirmed meanwhile wins.
-        const startEpoch = p.method === 'stream.start' ? stopEpoch : null;
-        const startGen = p.method === 'stream.start' && authority ? await authority.begin() : null;
+        // A click's own snapshot (taken before its readiness checks) when it has one, else taken now.
+        const startEpoch = p.method === 'stream.start' ? (Number.isInteger(p.startEpoch) ? p.startEpoch : stopEpoch) : null;
+        const startGen = p.method === 'stream.start' && authority
+          ? (Number.isInteger(p.startGen) ? p.startGen : await authority.begin()) : null;
         const before = await readBefore(p.method, p.params);
         if (Number.isInteger(startGen) || startEpoch !== null) {
           if (startPauseMs) await new Promise((r) => setTimeout(r, startPauseMs));

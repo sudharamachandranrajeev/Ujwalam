@@ -437,7 +437,7 @@ async function bootS(opts) {
   };
   const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
   let runs = 0;
-  const readiness = { config: { ...CONFIG, goLiveMaxAgeMs: 0, endAll: { waitMs: 2000, pollMs: 20 } }, run: async () => { runs++; return opts.result; } };
+  const readiness = { config: { ...CONFIG, goLiveMaxAgeMs: 0, endAll: { waitMs: 2000, pollMs: 20 } }, run: async () => { runs++; if (opts.gate) await opts.gate; return opts.result; } };
   const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, dataDir, readiness, limits: { statusPollMs: 30 } });
   servers.push(srv);
   const { port } = await srv.listen();
@@ -511,6 +511,21 @@ describe('server: readiness route and go-live gate', () => {
     assert.ok(c.calls.some(([m]) => m === 'stream.start'));
     assert.equal(ok.override, undefined);
     assert.equal(existsSync(path.join(c.dataDir, 'logs', OVERRIDE_LOG)), false);
+  });
+
+  test('stop wins (Codex review of D332): Start, then Stop while the readiness check runs: the start never reaches the host', async () => {
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const c = await bootS({ result: WARN, gate });
+    const starting = c.post('/ui/api/host', { method: 'stream.start' });
+    for (let i = 0; i < 200 && c.runs() === 0; i++) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(c.runs(), 1, 'the readiness check did not start');
+    const stop = (await c.post('/ui/api/host', { method: 'stream.stop' })).json();
+    assert.equal(stop.verdict, 'allow');
+    release();
+    const r = (await starting).json();
+    assert.deepEqual([r.verdict, r.reason], ['refuse', 'stopped-meanwhile']);
+    assert.ok(!c.calls.some(([m]) => m === 'stream.start'), 'the earlier Start went live after the Stop');
   });
 
   test('a readiness check that cannot run refuses go-live (fail closed) and says how to bypass', async () => {
