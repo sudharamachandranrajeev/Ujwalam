@@ -180,9 +180,44 @@ test('Alt + edge drag crops that side: the box edge follows, the scale stays, th
   p = await placement('box');
   assert.equal(p.crop.left, 0);
   assert.deepEqual([p.x, p.width], [b.x, b.width]);
-  // without Alt the same press is a move, not a crop
+  // without Alt the same press is the edge handle (resize that side, D330), not a crop
   r = await sim([at('down', p.x + 2, my), at('up', p.x + 2, my)]);
-  assert.equal(r.steps[0].mode, 'move');
+  assert.equal(r.steps[0].mode, 'resize');
+  assert.deepEqual((await placement('box')).crop, { left: 0, top: 0, right: 0, bottom: 0 }, 'a click on the edge cuts nothing');
+});
+
+test('edge handle stretches that side alone (aspect free), snaps the moving edge, the opposite side stays put (D330)', async () => {
+  await c.call('layers.setPlacement', { scene: 'main', canvas: 'H', layer: 'box',
+    placement: { x: 300, y: 500, width: 200, height: 100, rotation: 0, crop: { left: 0, top: 0, right: 0, bottom: 0 } } });
+  await sim([at('down', 400, 550), at('up', 400, 550)]); // select box
+  const seq0 = (await c.call('host.status')).previewEditSeq;
+  // hover cursors over the selected box (WM_SETCURSOR): corner, edges, inside, rotate handle, outside
+  const hv = await sim([at('hover', 500, 600), at('hover', 300, 500), at('hover', 500, 550), at('hover', 400, 600),
+    at('hover', 400, 550), at('hover', 400, 500 - 48), at('hover', 1000, 100)]);
+  assert.deepEqual(hv.steps.map((s) => s.cursor), ['nwse', 'nwse', 'we', 'ns', 'move', 'rotate', 'arrow']);
+  assert.equal(hv.seq, seq0, 'hovering changes nothing');
+  // right edge (x 500) dragged 60 px right: width 260, height and left edge unchanged
+  let r = await sim([at('down', 500, 550), at('move', 560, 552), at('up', 560, 552)]);
+  assert.equal(r.steps[0].mode, 'resize');
+  let p = await placement('box');
+  assert.deepEqual([p.x, p.y, p.width, p.height], [300, 500, 260, 100], 'only the width changed');
+  // bottom edge (y 600) dragged up 40 px: height 60, top stays
+  r = await sim([at('down', 430, 600), at('move', 431, 560), at('up', 431, 560)]);
+  p = await placement('box');
+  assert.deepEqual([p.x, p.y, p.width, p.height], [300, 500, 260, 60], 'only the height changed');
+  // left edge (x 300) dragged to x 6: snaps to the canvas edge (0); the right edge (560) stays
+  r = await sim([at('down', 300, 530), at('move', 6, 530), at('up', 6, 530)]);
+  assert.deepEqual(r.steps[1].snap, { x: 0, y: null }, 'guide line on the snapped edge');
+  p = await placement('box');
+  assert.deepEqual([p.x, p.width, p.height], [0, 560, 60], 'left edge snapped to 0, right edge fixed');
+  // past the opposite edge: the box keeps at least 1 px
+  r = await sim([at('down', 560, 530), at('move', -100, 530, { alt: true }), at('up', -100, 530, { alt: true })]);
+  assert.equal(r.steps[0].mode, 'resize', 'Alt pressed after the press does not turn a resize into a crop');
+  p = await placement('box');
+  assert.deepEqual([p.x, p.width], [0, 1]);
+  const e = (await c.call('preview.edits', { since: seq0 })).edits;
+  assert.equal(e.length, 4, 'one edit per gesture');
+  assert.deepEqual(e[0].before, { x: 300, y: 500, width: 200, height: 100 }, 'undo restores the rectangle');
 });
 
 test('lost capture puts the layer back; switching the flag off clears the selection and ignores the mouse', async () => {

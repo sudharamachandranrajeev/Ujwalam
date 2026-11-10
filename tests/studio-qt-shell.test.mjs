@@ -101,11 +101,17 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const fake = createFakeHost({ outputsReady: !!opts.live });
     if (opts.live) await fake.call('stream.start', {}); // the window sees a live stream
     const calls = [];
-    const host = { describe: () => fake.describe(), call: (m, p) => { calls.push([m, p]); return fake.call(m, p); } };
+    // opts.slowStatusMs: host.status answers late, so a structure reply (the route asks host.status first) arrives after
+    // the user has moved on (D330 review).
+    const host = { describe: () => fake.describe(), call: async (m, p) => {
+      calls.push([m, p]);
+      if (opts.slowStatusMs && m === 'host.status') await new Promise((r) => setTimeout(r, opts.slowStatusMs));
+      return fake.call(m, p);
+    } };
     const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
     const key = 'p'.repeat(40);
     const file = opts.project ? path.join(dataDir, 'p.project.json') : null;
-    if (file) saveProject(file, menuProject());
+    if (file) { const doc = menuProject(); opts.editProject?.(doc); saveProject(file, doc); }
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags, bots: createFakeBots(), limits: { statusPollMs: 50 }, ...(file ? { projectSync: createProjectSync({ file }) } : {}) });
     const { port } = await srv.listen();
     // opts.onStatus(n, dataDir): called once per status request the shell makes (n counts from 1), so a test can change
@@ -127,7 +133,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const p = await probe([]);
     const ids = JSON.parse(readFileSync(path.join(UI, '..', 'data', 'flags.json'), 'utf8')).flags.map((f) => f.id);
     assert.deepEqual(p.flags.map((f) => f.id), ids);
-    assert.ok(p.flags.every((f) => f.on === false));
+    assert.ok(p.flags.every((f) => f.on === (f.id === 'preview-edit')), 'all off but preview-edit (on by default, D330)');
     assert.deepEqual(p.shown, { structure: false, transitions: false, bots: false, report: false, posts: false });
     assert.equal(p.scenes, 3);
     assert.ok(p.layers > 0, 'the active scene\'s layers are listed');
@@ -404,7 +410,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
 
   // --- layer and scene context menus (D292) ---
   const names = (p) => p.layerNames.map((n) => n.slice(3));
-  test('layer menu (D292): items, shortcuts and tips; Delete is greyed with a hint while scene editing is off; keys sit on the list', async () => {
+  test('layer menu (D292, D330): items, shortcuts and tips; Delete needs no flag; keys sit on the list', async () => {
     const p = await probe([], 5000, 'select-layer:game,layer-menu:show', null, {}, { project: true });
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['select-layer:game', true], ['layer-menu:show', true]]);
     assert.equal(p.menu.kind, 'layer');
@@ -413,7 +419,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual([by.duplicate.keys, by.rename.keys, by.delete.keys, by.copylook.keys, by.pastelook.keys], ['Ctrl+D', 'F2', 'Del', 'Ctrl+Shift+C', 'Ctrl+Shift+V']);
     assert.equal(by.duplicate.enabled, true, 'duplicate needs no flag');
     assert.equal(by.rename.enabled, true);
-    assert.deepEqual([by.delete.enabled, by.delete.tip], [false, 'Turn on scene editing in Settings > Advanced']);
+    assert.deepEqual([by.delete.enabled, by.delete.tip], [true, ''], 'D330: delete needs no flag (it still asks first)');
     assert.deepEqual([by.pastelook.enabled, by.pastelook.tip], [false, 'Copy a look first']);
     assert.deepEqual([by.down.enabled, by.up.enabled, by.bottom.enabled, by.top.enabled], [false, true, false, true], 'game is the bottom layer');
     assert.deepEqual(p.listKeys.layers.sort(), ['Ctrl+D', 'Ctrl+Shift+C', 'Ctrl+Shift+V', 'Del', 'F2']);
@@ -436,11 +442,76 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(names(p), ['Chat overlay', 'Facecam big', 'Game capture']);
     assert.equal(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers[1].name, 'Facecam big');
   });
-  test('layer menu (D292): Move to top / bottom and Show/Hide use the host calls the buttons use', async () => {
+  test('layer menu (D292, D330): Move to top / bottom are saved into the project (layer.move to a target); Show/Hide uses the host call', async () => {
     const p = await probe([], 8000, 'select-layer:game,layer-menu:top,layer-menu:visible,select-layer:chat,layer-menu:bottom', null, {}, { project: true });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
-    assert.deepEqual(p.calls.filter(([m]) => m === 'layers.move').map(([, x]) => [x.layer, x.index]), [['game', 2], ['chat', 0]]);
+    assert.equal(p.calls.filter(([m]) => m === 'layers.move').length, 0, 'project layers: no live-only move');
+    assert.equal(p.calls.filter(([m]) => m === 'layers.orderFromProject').length, 2, 'the host takes the saved order each time');
+    assert.deepEqual(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers.map((l) => l.id), ['chat', 'cam', 'game'], 'bottom first: game on top, chat at the bottom');
+    assert.deepEqual(names(p), ['Game capture', 'Camera', 'Chat overlay']);
     assert.deepEqual(p.calls.filter(([m]) => m === 'layers.setVisible').map(([, x]) => [x.layer, x.visible]), [['game', false]]);
+  });
+  test('layer list (D330): press-and-drag a row reorders the layers and saves the order; a layer the project lacks moves live-only', async () => {
+    // rows top first: Chat overlay (0), Camera (1), Game capture (2). Drag Game capture to the top; the rows are then
+    // Game capture, Chat overlay, Camera, and Chat overlay (row 1) goes to the bottom.
+    const p = await probe([], 8000, 'layer-drag:2:0,layer-drag:1:2', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' }, { project: true });
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['layer-drag:2:0', true], ['layer-drag:1:2', true]]);
+    assert.deepEqual(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers.map((l) => l.id), ['chat', 'cam', 'game']);
+    assert.deepEqual(names(p), ['Game capture', 'Camera', 'Chat overlay']);
+    assert.equal(p.calls.filter(([m]) => m === 'layers.orderFromProject').length, 2);
+    const q = await probe([], 6000, 'layer-drag:2:0', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.deepEqual(q.actions.map((a) => a.done), [true]);
+    assert.equal(q.calls.filter(([m]) => m === 'layers.move').length, 1, 'no project file: the live-only host move, as before');
+  });
+  test('layer list (D330 review): a host-only fallback that answers late moves the dragged layer, not the one selected since', async () => {
+    // The project lacks chat, so the structure route answers unknown-layer, 1.5 s late; Camera is selected meanwhile.
+    const p = await probe([], 8000, 'layer-drag:0:2,select-layer:cam', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' },
+      { project: true, slowStatusMs: 1500, editProject: (doc) => { doc.scenes[0].layers = doc.scenes[0].layers.filter((l) => l.id !== 'chat'); } });
+    assert.deepEqual(p.actions.map((a) => a.done), [true, true]);
+    assert.equal(p.selectedLayer, 'cam');
+    assert.deepEqual(p.calls.filter(([m]) => m === 'layers.move').map(([, x]) => [x.scene, x.layer, x.index]), [['scene-1', 'chat', 0]]);
+  });
+  test('layer list (D330): the trash button deletes with no flag after a "Yes"; "No" keeps the layer; the button has its icon', async () => {
+    const p = await probe([], 8000, 'select-layer:chat,delete-button,msg:no,delete-button,msg:yes', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' }, { project: true });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    assert.deepEqual([p.addButtons.delete.enabled, p.addButtons.delete.icon], [true, true]);
+    assert.deepEqual(names(p), ['Camera', 'Game capture']);
+    assert.equal(p.calls.filter(([m]) => m === 'layers.remove').length, 1, 'only the confirmed delete reached the host');
+    assert.deepEqual(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers.map((l) => l.id), ['game', 'cam']);
+  });
+  test('layer list (D330): while live the trash button is greyed and says why', async () => {
+    const p = await probe([], 5000, 'select-layer:chat,delete-button', null, {}, { project: true, live: true });
+    assert.deepEqual(p.actions.map((a) => a.done), [true, false]);
+    assert.deepEqual([p.addButtons.delete.enabled, p.addButtons.delete.tip], [false, 'Not while live']);
+    assert.equal(p.calls.filter(([m]) => m === 'layers.remove').length, 0);
+  });
+  test('shared slider (D330): a click jumps to the value, a typed value + Enter sets it, keys step; each reaches the host', async () => {
+    // rounded radius: range from the effect table; a click at the middle, then typed 12, then Right (+1 step), then PageUp.
+    const p = await probe([], 12000, 'select-layer:cam,look:rounded:on,look-slider:rounded:radius:click:0.9,look-slider:rounded:radius:type:12,look-slider:rounded:radius:key:right',
+      null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    const radii = p.calls.filter(([m]) => m === 'layers.setEffects').map(([, x]) => x.effects.find((e) => e.type === 'rounded')?.radius);
+    assert.ok(radii.some((r) => r > 12 + 1), `the click jumped far along the track: ${radii}`);
+    assert.ok(radii.includes(12), `typed 12: ${radii}`);
+    assert.equal(radii.at(-1), 13, `Right stepped one up from 12: ${radii}`);
+  });
+  test('shared slider (D330): volume click sends mixer.setVolume once on release; the wheel does nothing without focus and steps with it', async () => {
+    const p = await probe([], 9000, 'volume-slider:scene-1/cam:wheel-nofocus:3,volume-slider:scene-1/cam:click:0.25,volume-slider:scene-1/cam:type:-6,volume-slider:scene-1/cam:wheel:-2',
+      null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    const sent = p.calls.filter(([m, x]) => m === 'mixer.setVolume' && x.id === 'scene-1/cam').map(([, x]) => x.db);
+    assert.equal(sent[0], -45, `the click at a quarter of -60..0 dB: ${sent}`);
+    assert.ok(sent.includes(-6), `typed -6: ${sent}`);
+    // one notch = one step (1 dB), not Windows' 3 lines per notch (D330 review)
+    assert.equal(sent.at(-1), -8, `two wheel notches down from -6 with focus: ${sent}`);
+    assert.equal(sent.length, 3, `the unfocused wheel sent nothing: ${sent}`);
+    assert.equal(p.volumes['scene-1/cam'], -8);
+  });
+  test('shared slider (D330 review): press, hold and drag commits once on release; held box steps commit once after the pause', async () => {
+    const p = await probe([], 9000, 'volume-slider:scene-1/cam:hold-drag:0.25~0.75,volume-slider:scene-1/cam:box-up:3', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    const sent = p.calls.filter(([m, x]) => m === 'mixer.setVolume' && x.id === 'scene-1/cam').map(([, x]) => x.db);
+    assert.deepEqual(sent, [-15, -12], `only the released value (-15), then one send for three box steps (-12): ${sent}`);
   });
   test('layer menu (D292): Copy look then Paste look sets the same effects on another layer through layers.setEffects', async () => {
     const p = await probe([], 11000, 'select-layer:cam,look:rounded:on,look-set:rounded:radius:40,layer-menu:copylook,select-layer:game,layer-menu:pastelook', null, {}, { project: true });
@@ -457,10 +528,11 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.calls.filter(([m]) => m === 'layers.remove').length, 1, 'only the confirmed delete reached the host');
     assert.deepEqual(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers.map((l) => l.id), ['game', 'cam']);
   });
-  test('layer menu (D292): Delete is refused (greyed) with scene editing off', async () => {
-    const p = await probe([], 5000, 'select-layer:chat,layer-menu:delete', null, {}, { project: true });
-    assert.deepEqual(p.actions.map((a) => a.done), [true, false]);
-    assert.equal(p.layers, 3);
+  test('layer menu (D330): Delete works with scene editing off and still asks first', async () => {
+    const p = await probe([], 6000, 'select-layer:chat,layer-menu:delete,msg:yes', null, {}, { project: true });
+    assert.deepEqual(p.actions.map((a) => a.done), [true, true, true]);
+    assert.equal(p.layers, 2);
+    assert.deepEqual(JSON.parse(readFileSync(p.file, 'utf8')).scenes[0].layers.map((l) => l.id), ['game', 'cam']);
   });
   test('scene menu (D292): Duplicate scene copies it with its layers; Rename changes the name; both without the flag', async () => {
     const p = await probe([], 8000, 'select-scene:scene-2,scene-menu:duplicate,select-scene:scene-2,scene-menu:rename,type:Intro', null, {}, { project: true });
@@ -488,7 +560,8 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('add buttons (D292): a + above the scene list and the layer list opens the add windows; no flag needed', async () => {
     const p = await probe([], 6500, 'add-button:layer', null, {}, { project: true });
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['add-button:layer', true]]);
-    assert.deepEqual(p.addButtons, { scene: { enabled: true, tip: 'Add scene', icon: true }, layer: { enabled: true, tip: 'Add layer', icon: true } });
+    assert.deepEqual(p.addButtons, { scene: { enabled: true, tip: 'Add scene', icon: true }, layer: { enabled: true, tip: 'Add layer', icon: true },
+      delete: { enabled: true, tip: 'Delete the selected layer (Del). Asks first.', icon: true } }); // the trash beside + (D330)
     assert.equal(p.addDialog.kind, 'layer');
     assert.match(p.addDialog.title, /^Add layer to "Gameplay"$/);
     const by = Object.fromEntries(p.addDialog.kinds.map((k) => [k.kind, k]));
@@ -541,7 +614,8 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('while live (D292): the + buttons and every structure menu item are greyed with "Not while live"; Show/Hide and Move stay on', async () => {
     const p = await probe([], 6500, 'select-layer:game,layer-menu:show,add-button:layer,layer-menu:duplicate', null, {}, { project: true, live: true });
     assert.equal(p.live, true);
-    assert.deepEqual(p.addButtons, { scene: { enabled: false, tip: 'Not while live', icon: true }, layer: { enabled: false, tip: 'Not while live', icon: true } });
+    assert.deepEqual(p.addButtons, { scene: { enabled: false, tip: 'Not while live', icon: true }, layer: { enabled: false, tip: 'Not while live', icon: true },
+      delete: { enabled: false, tip: 'Not while live', icon: true } });
     const by = Object.fromEntries(p.menu.items.map((i) => [i.id, i]));
     for (const id of ['add', 'duplicate', 'rename', 'delete']) assert.deepEqual([id, by[id].enabled, by[id].tip], [id, false, 'Not while live']);
     for (const id of ['visible', 'up', 'copylook', 'look']) assert.equal(by[id].enabled, true, id);

@@ -110,6 +110,12 @@ void draw_selection(const pedit::Rect &r, double k)
 		for (auto &p : c)
 			quad((float)(p[0] - hs), (float)(p[1] - hs), (float)(p[0] + hs), (float)(p[1] - hs), (float)(p[0] + hs),
 			     (float)(p[1] + hs), (float)(p[0] - hs), (float)(p[1] + hs));
+		const double es = hs * 0.75; // edge handles (D330): smaller squares at the middle of each side
+		for (int i = 0; i < 4; i++) {
+			const double ex = (c[i][0] + c[(i + 1) % 4][0]) / 2, ey = (c[i][1] + c[(i + 1) % 4][1]) / 2;
+			quad((float)(ex - es), (float)(ey - es), (float)(ex + es), (float)(ey - es), (float)(ex + es), (float)(ey + es),
+			     (float)(ex - es), (float)(ey + es));
+		}
 	};
 	vec4 rim, fg;
 	vec4_set(&rim, 0.0f, 0.0f, 0.0f, 1.0f);
@@ -216,6 +222,30 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 			return 0;
 		break;
 	}
+	case WM_SETCURSOR: // over the selected layer: move / size / rotate cursors like OBS and Meld (D330)
+		if (w && w->owner && LOWORD(lp) == HTCLIENT) {
+			POINT pt;
+			if (GetCursorPos(&pt) && ScreenToClient(hwnd, &pt)) {
+				pedit::Mods m;
+				m.shift = GetKeyState(VK_SHIFT) < 0;
+				m.alt = GetKeyState(VK_MENU) < 0;
+				LPCWSTR id = nullptr;
+				switch (w->owner->editor().hover(w->canvas, view_of(w), pt.x, pt.y, m)) {
+				case pedit::Cursor::Move: id = IDC_SIZEALL; break;
+				case pedit::Cursor::SizeNWSE: id = IDC_SIZENWSE; break;
+				case pedit::Cursor::SizeNESW: id = IDC_SIZENESW; break;
+				case pedit::Cursor::SizeWE: id = IDC_SIZEWE; break;
+				case pedit::Cursor::SizeNS: id = IDC_SIZENS; break;
+				case pedit::Cursor::Rotate: id = IDC_HAND; break;
+				default: break;
+				}
+				if (id) {
+					SetCursor(LoadCursorW(nullptr, id));
+					return TRUE;
+				}
+			}
+		}
+		break;
 	case WM_CAPTURECHANGED: // capture taken away mid-drag: the layer goes back to where the drag began
 		if (w && w->owner)
 			w->owner->editor().cancel(w->canvas);

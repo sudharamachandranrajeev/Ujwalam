@@ -226,6 +226,89 @@ test('moveLayer (D243): passes the next layer on the chosen canvas; edges, other
   assert.equal(moveLayer(d, { scene: 'zz', layer: 'game', canvas: 'h', direction: 'up' }).error, 'unknown-scene');
 });
 
+test('moveLayer to a target (D330, drag in the layer list): directly above or below it; other canvases keep their place', () => {
+  const doc = base();
+  const s = doc.scenes[0].id;
+  // bottom first: game (H+V), vonly (V), mid (H+V), top (H+V)
+  let d = addLayer(doc, { scene: s, kind: 'color', color: '#ff0000' }).project;
+  const vonly = d.scenes[0].layers.at(-1);
+  vonly.id = 'vonly'; delete vonly.placements.h;
+  d = addLayer(d, { scene: s, kind: 'color', color: '#00ff00' }).project;
+  d.scenes[0].layers.at(-1).id = 'mid';
+  d = addLayer(d, { scene: s, kind: 'color', color: '#0000ff' }).project;
+  d.scenes[0].layers.at(-1).id = 'top';
+  assert.ok(validateProject(d).ok, JSON.stringify(validateProject(d).errors));
+  const ids = (r) => (r.error ? r.error : r.project.scenes[0].layers.map((l) => l.id));
+  const mv = (layer, target, place, canvas = 'h') => ids(moveLayer(d, { scene: s, layer, canvas, target, place }));
+  assert.deepEqual(mv('game', 'top', 'above'), ['vonly', 'mid', 'top', 'game'], 'dragged from the bottom to the top');
+  assert.deepEqual(mv('top', 'game', 'below'), ['top', 'game', 'vonly', 'mid'], 'dragged from the top to the bottom');
+  assert.deepEqual(mv('top', 'game', 'above'), ['game', 'top', 'vonly', 'mid'], 'directly above the target');
+  assert.deepEqual(mv('game', 'mid', 'below'), ['vonly', 'game', 'mid', 'top'], 'already right under mid on H: H order unchanged');
+  assert.deepEqual(mv('game', 'vonly', 'above', 'v'), ['vonly', 'game', 'mid', 'top'], 'on V the V-only layer is a target');
+  assert.equal(d.scenes[0].layers[0].id, 'game', 'input unchanged');
+  assert.equal(mv('game', 'vonly', 'above'), 'not-on-canvas', 'the target must be on the canvas');
+  assert.equal(mv('vonly', 'top', 'above'), 'not-on-canvas');
+  assert.equal(mv('game', 'game', 'above'), 'bad-move', 'not onto itself');
+  assert.equal(mv('game', 'zz', 'above'), 'unknown-layer');
+  assert.equal(mv('game', 'top', 'over'), 'bad-move');
+  assert.equal(ids(moveLayer(d, { scene: s, layer: 'game', canvas: 'h', target: 'top', place: 'above', direction: 'up' })), 'bad-move', 'target and direction together');
+  assert.equal(ids(moveLayer(d, { scene: s, layer: 'game', canvas: 'h', target: 'top' })), 'bad-move', 'place missing');
+});
+
+test('server (D330): layer.remove and layer.move (direction or target) work with scene-edit OFF; still refused while live', async () => {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-struct5-'));
+  const file = path.join(dir, 'p.project.json');
+  let doc = base();
+  const sid = doc.scenes[0].id;
+  doc = addLayer(doc, { scene: sid, kind: 'color', color: '#00ff00' }).project;
+  doc.scenes[0].layers.at(-1).id = 'cam';
+  doc = addLayer(doc, { scene: sid, kind: 'color', color: '#0000ff' }).project;
+  doc.scenes[0].layers.at(-1).id = 'chat';
+  saveProject(file, doc);
+  const calls = [];
+  const state = { live: false };
+  const host = { describe: () => ({ kind: 'host', available: true }), call: async (m, p) => {
+    if (m === 'host.status') return { live: state.live };
+    calls.push([m, p.scene, p.layer, p.project?.scenes?.[0]?.layers?.map((l) => l.id)]);
+    return {};
+  } };
+  const flags = createFlags({ dataDir: dir }); // scene-edit stays off
+  const core = { describe: () => ({ available: false }), call: async () => { throw new Error('x'); } };
+  const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: KEY, flags, projectSync: createProjectSync({ file }), limits: { statusPollMs: 50 } });
+  const { port } = await srv.listen();
+  try {
+    const cookie = await new Promise((resolve) => http.get({ host: '127.0.0.1', port, path: `/login?k=${KEY}` }, (res) => { res.resume(); resolve(res.headers['set-cookie'][0].split(';')[0]); }));
+    const csrf = (await raw(port, { url: '/ui/api/session', headers: { cookie } })).body.csrf;
+    const hdr = { cookie, origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf };
+    const post = (body) => raw(port, { method: 'POST', url: '/ui/api/project/structure', body: JSON.stringify(body), headers: hdr });
+    const order = () => JSON.parse(readFileSync(file, 'utf8')).scenes[0].layers.map((l) => l.id);
+    assert.equal(flags.isOn(SCENE_EDIT_FLAG), false);
+    assert.deepEqual(order(), ['game', 'cam', 'chat']);
+    // drag game (bottom) above chat (top)
+    let r = await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', target: 'chat', place: 'above' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(calls, [['layers.orderFromProject', sid, undefined, ['cam', 'chat', 'game']]], 'the host reorders from the changed document');
+    assert.deepEqual(order(), ['cam', 'chat', 'game'], 'saved');
+    r = await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', direction: 'down' });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.deepEqual(order(), ['cam', 'game', 'chat'], 'the one-step move needs no flag either');
+    assert.equal((await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', target: 'chat', place: 'onto' })).body.error, 'bad-move');
+    assert.equal((await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', target: 7, place: 'above' })).status, 400, 'target must be a string');
+    assert.equal((await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', target: 'chat', place: 'above', extra: 1 })).status, 400, 'unknown key');
+    state.live = true;
+    calls.length = 0;
+    assert.equal((await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', target: 'chat', place: 'above' })).body.error, 'live-locked');
+    assert.equal((await post({ op: 'layer.remove', scene: sid, layer: 'cam' })).body.error, 'live-locked');
+    assert.deepEqual(calls, [], 'nothing reached the host while live');
+    assert.deepEqual(order(), ['cam', 'game', 'chat'], 'nothing saved while live');
+    state.live = false;
+    r = await post({ op: 'layer.remove', scene: sid, layer: 'cam' });
+    assert.equal(r.status, 200, 'deleting a layer needs no flag: ' + JSON.stringify(r.body));
+    assert.deepEqual(calls, [['layers.remove', sid, 'cam', undefined]]);
+    assert.deepEqual(order(), ['game', 'chat']);
+  } finally { await srv.close(); }
+});
+
 test('server: layer.move saves the project order after the host reorders from it; refused while live', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-struct3-'));
   const file = path.join(dir, 'p.project.json');
@@ -356,7 +439,7 @@ test('duplicateScene: every layer copied with a new id in the same order; captur
   assert.equal(duplicateScene(doc, { scene: 'zz' }).error, 'unknown-scene');
 });
 
-test('server (D292): duplicate and rename work with scene-edit OFF; add/remove still need it; refused while live', async () => {
+test('server (D292): duplicate and rename work with scene-edit OFF; removing a scene still needs it; refused while live', async () => {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-struct4-'));
   const file = path.join(dir, 'p.project.json');
   const doc = base();
@@ -383,8 +466,9 @@ test('server (D292): duplicate and rename work with scene-edit OFF; add/remove s
     const post = (body) => raw(port, { method: 'POST', url: '/ui/api/project/structure', body: JSON.stringify(body), headers: hdr });
     const disk = () => JSON.parse(readFileSync(file, 'utf8'));
     assert.equal(flags.isOn(SCENE_EDIT_FLAG), false);
-    assert.equal((await post({ op: 'layer.remove', scene: sid, layer: 'game' })).body.error, 'scene-edit-off');
-    assert.equal((await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', direction: 'up' })).body.error, 'scene-edit-off');
+    assert.equal((await post({ op: 'scene.remove', scene: sid })).body.error, 'scene-edit-off', 'removing a scene still needs the flag');
+    // D330: layer.remove and layer.move need no flag (see the D330 test below); here the single layer is at the edge
+    assert.equal((await post({ op: 'layer.move', scene: sid, layer: 'game', canvas: 'h', direction: 'up' })).body.error, 'at-edge');
     const choices = (await raw(port, { url: '/ui/api/project/structure', headers: { cookie } })).body;
     assert.deepEqual([choices.on, choices.available, choices.canvases], [false, true, ['h', 'v']], 'the add lists need no flag');
     assert.equal((await post({ op: 'layer.duplicate', scene: sid, layer: 'game', name: 'x' })).status, 400, 'unknown key');

@@ -105,6 +105,22 @@ void draw(QPainter &p, const QString &n, const QColor &c)
 			p.drawEllipse(QPointF(7 + 5 * ((i * 2) % 3), y), 2.2, 2.2);
 			p.restore();
 		}
+	} else if (n == QLatin1String("trash")) { // a bin with a lid: delete (D330)
+		p.drawLine(QPointF(4.5, 6.5), QPointF(19.5, 6.5));
+		QPainterPath h;
+		h.moveTo(9.5, 6.5);
+		h.lineTo(9.5, 4.5);
+		h.lineTo(14.5, 4.5);
+		h.lineTo(14.5, 6.5);
+		p.drawPath(h);
+		QPainterPath b;
+		b.moveTo(6.5, 6.5);
+		b.lineTo(7.5, 19.5);
+		b.lineTo(16.5, 19.5);
+		b.lineTo(17.5, 6.5);
+		p.drawPath(b);
+		p.drawLine(QPointF(10.5, 10), QPointF(10.5, 16.5));
+		p.drawLine(QPointF(13.5, 10), QPointF(13.5, 16.5));
 	}
 }
 

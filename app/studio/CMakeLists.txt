@@ -37,6 +37,8 @@ add_executable(ujwalam-studio WIN32
 	src/hints.h
 	src/icons.cpp
 	src/icons.h
+	src/layer_list.cpp
+	src/layer_list.h
 	src/look_panel.cpp
 	src/look_panel.h
 	src/main_window.cpp
@@ -59,7 +61,9 @@ add_executable(ujwalam-studio WIN32
 	src/tray.cpp
 	src/tray.h
 	src/theme.cpp
-	src/theme.h)
+	src/theme.h
+	src/value_slider.cpp
+	src/value_slider.h)
 # Built-in theme packs (D293): data/themes/*.json embedded as :/themes/<id>.json. A file with the same id next to the
 # exe, in the app-data folder or the repo replaces the embedded one; a new id there is a custom theme.
 file(GLOB UJW_THEME_FILES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/../../data/themes/*.json")

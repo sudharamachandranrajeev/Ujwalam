@@ -714,7 +714,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		o.set("h", (int)got.h);
 		return o;
 	});
-	// preview.editSim {canvas, width, height, steps: [{event: down|move|up|cancel, x, y, shift?, alt?}]}: runs the
+	// preview.editSim {canvas, width, height, steps: [{event: hover|down|move|up|cancel, x, y, shift?, alt?}]}: runs the
 	// window procedure's editor calls for a preview of width x height client px, without a window (headless tests).
 	// Returns the selection after each step and the edit seq. --test-hooks only.
 	add("preview.editSim", [&a](const json::Value &p) {
@@ -739,7 +739,10 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 			m.shift = s.bool_or("shift", false);
 			m.alt = s.bool_or("alt", false);
 			bool used = false;
-			if (ev == "down")
+			const char *cursor = nullptr;
+			if (ev == "hover") // the cursor the window shows over that point (D330), no state change
+				cursor = pedit::cursor_name(ed.hover(canvas, v, x, y, m));
+			else if (ev == "down")
 				used = ed.down(canvas, v, x, y, m);
 			else if (ev == "move")
 				used = ed.move(canvas, v, x, y, m);
@@ -748,9 +751,11 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 			else if (ev == "cancel")
 				ed.cancel(canvas);
 			else
-				throw Error(rpc::INVALID_PARAMS, "event must be down, move, up or cancel");
+				throw Error(rpc::INVALID_PARAMS, "event must be hover, down, move, up or cancel");
 			json::Value o = ed.selection_json(canvas);
 			o.set("used", used);
+			if (cursor)
+				o.set("cursor", std::string(cursor));
 			out.push(std::move(o));
 		}
 		json::Value r = json::Value::object();
