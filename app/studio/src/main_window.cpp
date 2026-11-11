@@ -63,6 +63,8 @@
 #include <QTimer>
 #include <QCloseEvent>
 #include <QUrl>
+#include <QImage>
+#include <QPixmap>
 #include <QUrlQuery>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -699,9 +701,16 @@ QWidget *MainWindow::buildTop()
 				note(QStringLiteral("Could not open the clips folder: ") + err);
 		});
 	});
+	// LL3 (D340, flag learning-review): the reads the clip maker was not sure of, to confirm or correct after a stream.
+	// Beside My clips; shown only with the flag on and at least one item queued. Optional: nothing waits for it.
+	reviewBtn_ = tool(QStringLiteral("clip"), QStringLiteral("Review reads"),
+			  QStringLiteral("Optional: confirm or correct what the clip maker was not sure of. Nothing waits for it."));
+	reviewBtn_->setVisible(false);
+	connect(reviewBtn_, &QPushButton::clicked, this, &MainWindow::openReview);
 	settingsBtn_ = tool(QStringLiteral("gear"), QStringLiteral("Settings"), QStringLiteral("Clips, folders, layer effects and advanced options."));
 	connect(settingsBtn_, &QPushButton::clicked, this, [this]() { openSettings(false); });
 	h->addWidget(clipsFolderBtn_);
+	h->addWidget(reviewBtn_);
 	h->addWidget(settingsBtn_);
 	auto *more = new QToolButton(w);
 	more->setObjectName(QStringLiteral("tb"));
@@ -2306,6 +2315,15 @@ void MainWindow::loadFlags()
 		outputsPanel_->setVisible(op);
 		if (op)
 			outputsPanel_->refresh();
+		bool lr = false; // LL3 (D340): Review reads beside My clips; the queue is read every 5th flag read
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("learning-review"))
+				lr = x.toObject().value(QStringLiteral("on")).toBool();
+		learningReviewOn_ = lr;
+		if (!lr)
+			reviewBtn_->setVisible(false);
+		else if (reviewPoll_++ % 5 == 0)
+			loadReviewCount();
 		// Both edit the project and are refused while live (the server checks too).
 		structBox_->setEnabled(!live_);
 		transBox_->setEnabled(!live_);
@@ -2423,6 +2441,191 @@ void MainWindow::openImport()
 		skip->setVisible(plan.value(QStringLiteral("unavailable")).toInt() > 0);
 		load->setEnabled(!plan.isEmpty());
 	});
+	dlg->show();
+}
+
+void MainWindow::loadReviewCount()
+{
+	api_->get(QStringLiteral("ui/api/learning/review"), [this](bool ok, const QJsonObject &b, const QString &) {
+		reviewCount_ = ok ? b.value(QStringLiteral("total")).toInt() : 0;
+		reviewBtn_->setText(reviewCount_ > 0 ? QStringLiteral("Review reads (%1)").arg(reviewCount_) : QStringLiteral("Review reads"));
+		reviewBtn_->setVisible(learningReviewOn_ && reviewCount_ > 0);
+	});
+}
+
+// Review reads (LL3, D340, flag learning-review): one item at a time, its frame, what was read and why it is asked,
+// and the answers the game pack allows. Confirm writes one label in the local learning store (the click is the
+// decision, D332); Close leaves the rest for later. Nothing else waits for these answers.
+void MainWindow::openReview()
+{
+	if (reviewDlg_) {
+		reviewDlg_->raise();
+		return;
+	}
+	auto *dlg = new QDialog(this);
+	reviewDlg_ = dlg;
+	dlg->setObjectName(QStringLiteral("reviewDlg"));
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setWindowTitle(QStringLiteral("Review reads"));
+	dlg->resize(820, 660);
+	auto *v = new QVBoxLayout(dlg);
+	auto *info = new QLabel(QStringLiteral("Loading..."), dlg);
+	info->setWordWrap(true);
+	auto *list = new QListWidget(dlg);
+	list->setObjectName(QStringLiteral("reviewList"));
+	list->setMaximumHeight(150);
+	auto *pic = new QLabel(dlg);
+	pic->setAlignment(Qt::AlignCenter);
+	pic->setMinimumHeight(300);
+	auto *what = new QLabel(dlg);
+	what->setWordWrap(true);
+	what->setTextInteractionFlags(Qt::TextSelectableByMouse);
+	auto *row = new QHBoxLayout();
+	auto *answer = new QComboBox(dlg);
+	answer->setObjectName(QStringLiteral("reviewAnswer"));
+	auto *ok = new QPushButton(QStringLiteral("Confirm"), dlg);
+	ok->setObjectName(QStringLiteral("reviewConfirm"));
+	auto *closeB = new QPushButton(QStringLiteral("Close"), dlg);
+	row->addWidget(new QLabel(QStringLiteral("Answer"), dlg));
+	row->addWidget(answer, 1);
+	row->addWidget(ok);
+	row->addStretch(1);
+	row->addWidget(closeB);
+	v->addWidget(info);
+	v->addWidget(list);
+	v->addWidget(pic, 1);
+	v->addWidget(what);
+	v->addLayout(row);
+	connect(closeB, &QPushButton::clicked, dlg, &QDialog::close);
+
+	struct State {
+		QJsonArray items;
+		int frameGen = 0;
+		bool busy = false;
+		std::function<void()> load;
+	};
+	auto st = std::make_shared<State>();
+	QPointer<QDialog> guard(dlg);
+	const auto selItem = [st, list]() {
+		const int i = list->currentRow();
+		return i >= 0 && i < st->items.size() ? st->items.at(i).toObject() : QJsonObject();
+	};
+	const auto mmss = [](double t) { return QStringLiteral("%1:%2").arg(int(t) / 60).arg(int(t) % 60, 2, 10, QLatin1Char('0')); };
+	const auto showItem = [=]() {
+		const QJsonObject it = selItem();
+		answer->clear();
+		pic->clear();
+		ok->setEnabled(!it.isEmpty() && !st->busy);
+		if (it.isEmpty()) {
+			what->clear();
+			return;
+		}
+		const QString kind = it.value(QStringLiteral("kind")).toString();
+		const QString label = it.value(QStringLiteral("label")).toString();
+		QString text;
+		if (kind == QStringLiteral("unclassified-banner"))
+			text = QStringLiteral("A %1 banner sat at a height that fits neither a round end nor a match end. Which was it?").arg(label);
+		else if (kind == QStringLiteral("ocr-low"))
+			text = QStringLiteral("Read as \"%1\" with confidence %2, below the game pack's %3. Is it right? Pick it, pick \"wrong read\", or type what it says.")
+				       .arg(label)
+				       .arg(it.value(QStringLiteral("ocrScore")).toDouble(), 0, 'f', 2)
+				       .arg(it.value(QStringLiteral("threshold")).toDouble(), 0, 'f', 2);
+		else {
+			QStringList ev;
+			for (const auto &e : it.value(QStringLiteral("modeEvidence")).toArray())
+				ev << e.toObject().value(QStringLiteral("text")).toString();
+			text = QStringLiteral("Match %1 of the recording: the game mode could not be told (%2). Which mode was it?")
+				       .arg(it.value(QStringLiteral("match")).toInt())
+				       .arg(it.value(QStringLiteral("modeReason")).toString());
+			if (!ev.isEmpty())
+				text += QStringLiteral(" Seen: ") + ev.join(QStringLiteral(", ")) + QLatin1Char('.');
+			if (it.value(QStringLiteral("t")).isDouble())
+				text += QStringLiteral(" The picture is from its end screen, %1 into the recording.").arg(mmss(it.value(QStringLiteral("t")).toDouble()));
+		}
+		what->setText(text);
+		answer->setEditable(kind == QStringLiteral("ocr-low"));
+		for (const auto &c : it.value(QStringLiteral("choices")).toArray())
+			answer->addItem(c.toString());
+		if (!it.value(QStringLiteral("hasFrame")).toBool()) {
+			pic->setText(QStringLiteral("No picture for this one."));
+			return;
+		}
+		pic->setText(QStringLiteral("Loading the picture..."));
+		const int gen = ++st->frameGen;
+		api_->get(QStringLiteral("ui/api/learning/frame?session=%1&id=%2")
+				  .arg(QString::fromLatin1(QUrl::toPercentEncoding(it.value(QStringLiteral("session")).toString())),
+				       QString::fromLatin1(QUrl::toPercentEncoding(it.value(QStringLiteral("id")).toString()))),
+			  [=](bool okf, const QJsonObject &b, const QString &err) {
+				  if (!guard || gen != st->frameGen)
+					  return;
+				  QImage img;
+				  if (okf)
+					  img.loadFromData(QByteArray::fromBase64(b.value(QStringLiteral("jpeg")).toString().toLatin1()), "JPG");
+				  if (img.isNull()) {
+					  pic->setText(QStringLiteral("The picture could not be shown") + (okf ? QString() : QStringLiteral(": ") + err));
+					  return;
+				  }
+				  pic->setPixmap(QPixmap::fromImage(img.scaled(QSize(780, 420), Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+			  });
+	};
+	connect(list, &QListWidget::currentRowChanged, dlg, [showItem](int) { showItem(); });
+	st->load = [=]() {
+		api_->get(QStringLiteral("ui/api/learning/review"), [=](bool okl, const QJsonObject &b, const QString &err) {
+			if (!guard)
+				return;
+			const int keep = list->currentRow();
+			st->items = okl ? b.value(QStringLiteral("items")).toArray() : QJsonArray();
+			const int total = okl ? b.value(QStringLiteral("total")).toInt() : 0;
+			info->setText(!okl ? QStringLiteral("Not available: ") + err
+				      : total == 0 ? QStringLiteral("Nothing to review. Thank you.")
+						   : QStringLiteral("%1 read(s) the clip maker was not sure of. Confirm or correct the ones you know; "
+								    "each answer is saved only on this PC and helps the next game pack. Skip any you like.")
+							     .arg(total));
+			reviewCount_ = total;
+			reviewBtn_->setText(total > 0 ? QStringLiteral("Review reads (%1)").arg(total) : QStringLiteral("Review reads"));
+			reviewBtn_->setVisible(learningReviewOn_ && total > 0);
+			{
+				QSignalBlocker block(list);
+				list->clear();
+				for (const auto &x : st->items) {
+					const QJsonObject it = x.toObject();
+					const QString kind = it.value(QStringLiteral("kind")).toString();
+					const QString when = QDateTime::fromString(it.value(QStringLiteral("at")).toString(), Qt::ISODateWithMs).toLocalTime().toString(QStringLiteral("d MMM HH:mm"));
+					QString title;
+					if (kind == QStringLiteral("unclassified-banner"))
+						title = QStringLiteral("Banner: round end or match end?");
+					else if (kind == QStringLiteral("ocr-low"))
+						title = QStringLiteral("Unsure read: ") + it.value(QStringLiteral("label")).toString();
+					else
+						title = QStringLiteral("Game mode of match %1?").arg(it.value(QStringLiteral("match")).toInt());
+					list->addItem(when + QStringLiteral("  ") + title);
+				}
+				if (!st->items.isEmpty())
+					list->setCurrentRow(std::clamp(keep, 0, int(st->items.size()) - 1));
+			}
+			showItem();
+		});
+	};
+	connect(ok, &QPushButton::clicked, dlg, [=]() {
+		const QJsonObject it = selItem();
+		const QString value = answer->currentText().trimmed();
+		if (it.isEmpty() || value.isEmpty() || st->busy)
+			return;
+		st->busy = true;
+		ok->setEnabled(false);
+		QJsonObject body;
+		body.insert(QStringLiteral("session"), it.value(QStringLiteral("session")));
+		body.insert(QStringLiteral("id"), it.value(QStringLiteral("id")));
+		body.insert(QStringLiteral("value"), value);
+		api_->post(QStringLiteral("ui/api/learning/confirm"), body, [=](bool okc, const QJsonObject &, const QString &err) {
+			if (!guard)
+				return;
+			st->busy = false;
+			note(okc ? QStringLiteral("Saved: %1.").arg(value) : QStringLiteral("Answer not saved: ") + err);
+			st->load();
+		});
+	});
+	st->load();
 	dlg->show();
 }
 
@@ -4201,9 +4404,18 @@ QJsonObject MainWindow::probe() const
 	shown.insert(QStringLiteral("bots"), !botBox_->isHidden());
 	shown.insert(QStringLiteral("report"), reportAct_->isVisible());
 	shown.insert(QStringLiteral("posts"), postsAct_->isVisible());
+	shown.insert(QStringLiteral("review"), !reviewBtn_->isHidden()); // LL3 (D340)
 	QJsonObject o;
 	o.insert(QStringLiteral("flags"), flags);
 	o.insert(QStringLiteral("shown"), shown);
+	if (reviewDlg_) { // LL3 (D340): the open Review reads window
+		auto *rl = reviewDlg_->findChild<QListWidget *>(QStringLiteral("reviewList"));
+		auto *ra = reviewDlg_->findChild<QComboBox *>(QStringLiteral("reviewAnswer"));
+		QJsonArray choices;
+		for (int i = 0; ra && i < ra->count(); i++)
+			choices.append(ra->itemText(i));
+		o.insert(QStringLiteral("review"), QJsonObject{{QStringLiteral("items"), rl ? rl->count() : -1}, {QStringLiteral("choices"), choices}});
+	}
 	o.insert(QStringLiteral("previews"), previews);
 	o.insert(QStringLiteral("scenes"), sceneList_->count());
 	o.insert(QStringLiteral("layers"), layerList_->count());
@@ -4489,6 +4701,20 @@ bool MainWindow::probeAction(const QString &action)
 		return look_->probeToggle(p[1], p[2] == QStringLiteral("on"));
 	if (p.size() == 4 && p[0] == QStringLiteral("look-set"))
 		return look_->probeSet(p[1], p[2], p[3].toDouble());
+	if (p.size() == 1 && p[0] == QStringLiteral("review-open")) { // LL3 (D340): the Review reads window
+		openReview();
+		return true;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("review-confirm")) { // pick answer <n> of the selected item, click Confirm
+		QDialog *dlg = reviewDlg_.data();
+		auto *answer = dlg ? dlg->findChild<QComboBox *>(QStringLiteral("reviewAnswer")) : nullptr;
+		auto *b = dlg ? dlg->findChild<QPushButton *>(QStringLiteral("reviewConfirm")) : nullptr;
+		if (!answer || !b || p[1].toInt() >= answer->count() || !b->isEnabled())
+			return false;
+		answer->setCurrentIndex(p[1].toInt());
+		b->click();
+		return true;
+	}
 	if (p.size() == 1 && p[0] == QStringLiteral("posts-open")) { // the Posts window (for the theme pictures, 2026-11-10)
 		openPosts();
 		return true;

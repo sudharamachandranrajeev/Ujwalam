@@ -2,14 +2,15 @@
 // Local learning store (LL1 minimal, LL2, D338). Node stdlib only.
 //
 // Layout: <dataDir>/learning-store/<session>/labels.jsonl, one folder per stream session ("one record per stream").
-// LL1 adds its evidence (detector hits, OCR text, review frames) to the same session folders later. The store lives in
-// the app data folder, never in the repo; `learning-store/` is gitignored and refused by the private scan (LL5) in
-// case a data folder is ever pointed inside a checkout.
+// LL1 (D340, services/clip/learning_capture.py) adds evidence.jsonl, review.jsonl and frames/ to the same session
+// folders. The store lives in the app data folder, never in the repo; `learning-store/` is gitignored and refused by
+// the private scan (LL5) in case a data folder is ever pointed inside a checkout.
 //
 // Format: JSON lines, append-only. Writers live in several processes (launcher, UI server, the feedback collector
 // child); one appended line per label needs no lock and no shared database (SQLite is one file per owning process).
 // A reader takes the newest row per reference. Rows record what the user did and nothing more:
-//   { v: 1, at: ISO, action: kept|deleted|posted|renamed|feedback, source, session, ref: { ... } }
+//   { v: 1, at: ISO, action: kept|deleted|posted|renamed|feedback|confirmed, source, session, ref: { ... } }
+// "confirmed" (source review, LL3, D340): the user's answer to a queued low-confidence read (learning/review.mjs).
 // No event names, weights or windows are added here. Chat text and viewer names are never written to the store;
 // chat-feedback rows only point at the local feedback file and the message id.
 //
@@ -25,8 +26,8 @@ export const STORE_DIR = 'learning-store';
 export const LABELS_FILE = 'labels.jsonl';
 export const SESSION_META = 'session.json';
 export const CAP_BYTES = 5 * 1024 ** 3;
-export const ACTIONS = Object.freeze(['kept', 'deleted', 'posted', 'renamed', 'feedback']);
-export const SOURCES = Object.freeze(['my-clips', 'posting', 'hotkey', 'feedback-form', 'chat-feedback']);
+export const ACTIONS = Object.freeze(['kept', 'deleted', 'posted', 'renamed', 'feedback', 'confirmed']);
+export const SOURCES = Object.freeze(['my-clips', 'posting', 'hotkey', 'feedback-form', 'chat-feedback', 'review']);
 export const SESSION_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const MAX_REF_KEYS = 12;
 const MAX_REF_STR = 260;

@@ -41,6 +41,7 @@ import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { createLearningStore } from '../learning/store.mjs';
+import { createReview } from '../learning/review.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
 import { addLayer, addScene, duplicateLayer, duplicateScene, moveLayer, removeLayer, removeScene, renameLayer, renameScene } from '../project/structure.mjs';
 import { listAssets } from './assets.mjs';
@@ -1155,6 +1156,19 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/bots') {
       try { return json(res, 200, { bots: await bots.statusAll() }); } catch { return json(res, 502, { error: 'bots-error' }); }
     }
+    if (route.startsWith('/ui/api/learning/')) {
+      // LL3 review of low-confidence reads (D340, flag learning-review): list, frame, confirm. Local files only.
+      if (!flags || !flags.isOn('learning-review')) return json(res, 404, { error: 'learning-review-off' });
+      if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+      const review = createReview({ dataDir: opts.dataDir });
+      if (req.method === 'GET' && route === '/ui/api/learning/review') {
+        try { return json(res, 200, await review.list()); } catch { return json(res, 500, { error: 'review-failed' }); }
+      }
+      if (req.method === 'GET' && route === '/ui/api/learning/frame') {
+        const buf = await review.frame(url.searchParams.get('session') ?? '', url.searchParams.get('id') ?? '');
+        return buf ? json(res, 200, { jpeg: buf.toString('base64') }) : json(res, 404, { error: 'no-frame' });
+      }
+    }
     if (req.method === 'GET' && route === '/ui/api/posts') {
       // D300: each post carries its auto-upload queue state; `queue` is the plain-language summary (e.g. not signed in to YouTube).
       let qs = new Map(); let queue = null;
@@ -1313,6 +1327,12 @@ export function createStudioServer(opts) {
       return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, true) }); // ON: the click is the decision (D332)
     }
     if (route.startsWith('/ui/api/connect/')) return connectRoute(res, route, body);
+    if (route === '/ui/api/learning/confirm') {
+      if (Object.keys(body).some((k) => !['session', 'id', 'value'].includes(k)) || typeof body.session !== 'string' || typeof body.id !== 'string' || typeof body.value !== 'string') return json(res, 400, { error: 'bad-params' });
+      const r = await createReview({ dataDir: opts.dataDir }).confirm(body);
+      if (typeof r === 'string') return json(res, r === 'unknown-item' ? 404 : (r === 'write-failed' ? 500 : 400), { error: r });
+      return json(res, 200, { ok: true, label: r });
+    }
     if (route === '/ui/api/feedback/note') {
       if (Object.keys(body).some((k) => !NOTE_KEYS.includes(k))) return json(res, 400, { error: 'bad-params' });
       const err = feedback.saveNote(body.id, { text: body.text, tag: body.tag, severity: body.severity });

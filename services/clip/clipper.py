@@ -83,10 +83,11 @@ import clip_render as rnd  # noqa: E402
 import clip_signals as sig  # noqa: E402
 import clip_validate as val  # noqa: E402
 import game_pack  # noqa: E402
+import learning_capture as lcap  # noqa: E402
 import match_gate as mg  # noqa: E402
 from clip_common import (  # noqa: E402
     CLIP_DATA, EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, clips_allowed, contain_children, corpus_dir, end_tree_when_parent_gone, eprint, find_tool, flag_on, load_config,
-    load_json, lower_own_priority, match_gate_settings, media_info, progress_line, resolve_data_dir, write_json_atomic,
+    load_json, lower_own_priority, match_gate_settings, media_info, progress_line, resolve_data_dir, run_tool, write_json_atomic,
 )
 
 TOOL_VERSION = 1
@@ -551,7 +552,37 @@ def _live_matches(a):
     })
     print(f"live-review: {len(matches)} match(es) in the stream's recording "
           f"({sum(1 for m in matches if m['endSeen'])} with an end screen), {sum(1 for m in matches if m['passed'])} kept")
+    _queue_unknown_modes(a, matches, mg.stats_config(pack))
     return path, None
+
+
+def _queue_unknown_modes(a, matches, cfg):
+    """LL3 (D340): matches whose game mode the gate could not tell go to the review queue of this stream's session in
+    the local learning store (live-<saves folder name>), each with one frame of the recording at its end screen.
+    Post-stream only; any failure is logged and changes nothing else."""
+    data_dir = resolve_data_dir(a.data_dir)
+    if not data_dir or not getattr(a, "saves", None):
+        return 0
+
+    def frame_of(m):
+        t = m.get("endScreenAt")
+        if not isinstance(t, (int, float)):
+            return None
+        ffmpeg = find_tool("ffmpeg", getattr(a, "ffmpeg", None))
+        with tempfile.TemporaryDirectory() as td:
+            out = os.path.join(td, "f.jpg")
+            r = run_tool([ffmpeg, "-v", "error", "-y", "-ss", f"{max(0.0, float(t)):.2f}", "-i", a.recording,
+                          "-frames:v", "1", "-q:v", "3", out], timeout=60)
+            if r.returncode != 0 or not os.path.isfile(out):
+                return None
+            with open(out, "rb") as f:
+                return f.read()
+
+    n = lcap.queue_unknown_modes(data_dir, f"live-{os.path.basename(os.path.normpath(a.saves))}", matches, cfg,
+                                 frame_of=frame_of, log=eprint)
+    if n:
+        print(f"live-review: {n} match(es) with an unknown game mode queued for review")
+    return n
 
 
 def cmd_live_review(a):
