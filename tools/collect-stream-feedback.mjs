@@ -4,7 +4,7 @@
 //
 //   node tools/collect-stream-feedback.mjs --date YYYY-MM-DD [--since ISO --until ISO] [--marker fb:]
 //        [--window-min 10] [--question-prefix TEXT] [--bot-name NAME] [--question-at ISO[,ISO...]]
-//        [--data-dir DIR | --db FILE] [--out-dir DIR] [--json]
+//        [--data-dir DIR | --db FILE] [--out-dir DIR] [--learning-data-dir DIR] [--json]
 //
 // A chat row counts as feedback when (a) it starts with the marker (default "fb:", case-insensitive), or (b) it was
 // received after a question and within --window-min minutes of it. A question is a row whose text starts with
@@ -18,6 +18,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
+import { createLearningStore } from '../services/learning/store.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const MAX_TEXT = 500;
@@ -76,10 +77,10 @@ export function writeFeedbackFile(file, picked, meta) {
       if (m) lines.set(m[3], l);
     }
   }
-  let added = 0;
+  let added = 0; const addedRows = [];
   for (const r of picked) {
     const id = safeId(r.event_id);
-    if (!lines.has(id)) { lines.set(id, fmtLine(r)); added++; }
+    if (!lines.has(id)) { lines.set(id, fmtLine(r)); added++; addedRows.push(r); }
   }
   const all = [...lines.values()].sort();
   const counts = { youtube: 0, twitch: 0, kick: 0, other: 0 };
@@ -96,7 +97,26 @@ export function writeFeedbackFile(file, picked, meta) {
   ].join('\n');
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, body);
-  return { file, total: all.length, added, counts };
+  return { file, total: all.length, added, counts, addedRows };
+}
+
+const stampOf = (ms) => { const d = new Date(ms); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`; };
+
+/**
+ * LL2 (D338): one "feedback" label row (source chat-feedback) per newly collected reply, in the local learning store
+ * <learningDataDir>/learning-store/stream-<start stamp>/. Only the feedback file name, the message id and the platform:
+ * never the viewer's name or text (chat text is untrusted data and stays in the gitignored feedback file).
+ */
+export function labelFeedback({ learningDataDir, file, rows, since }) {
+  const store = createLearningStore({ dataDir: learningDataDir });
+  let n = 0;
+  for (const r of rows) {
+    const t = typeof r.received_at === 'number' ? r.received_at : Date.parse(r.received_at);
+    const row = store.add({ action: 'feedback', source: 'chat-feedback', session: `stream-${stampOf(since)}`, at: Number.isFinite(t) ? new Date(t) : new Date(),
+      ref: { file: path.basename(file), message: safeId(r.event_id), platform: PLATFORMS.includes(r.platform) ? r.platform : 'other' } });
+    if (typeof row !== 'string') n++;
+  }
+  return n;
 }
 
 /** Main entry. opts: { dbFile, date, since?, until?, marker?, windowMin?, questionPrefix?, botName?, questionTimes?, outDir? } */
@@ -124,7 +144,9 @@ export function collectFeedback(opts) {
   }
   const picked = selectFeedback(rows, { ...opts, questionTimes }).filter((r) => r.received_at >= since);
   const file = path.join(opts.outDir ?? path.join(REPO, 'feedback'), `${date}-stream-feedback.md`);
-  return writeFeedbackFile(file, picked, { date, since: new Date(since).toISOString(), until: new Date(until).toISOString() });
+  const r = writeFeedbackFile(file, picked, { date, since: new Date(since).toISOString(), until: new Date(until).toISOString() });
+  const labels = typeof opts.learningDataDir === 'string' && opts.learningDataDir ? labelFeedback({ learningDataDir: opts.learningDataDir, file: r.file, rows: r.addedRows, since }) : 0;
+  return { file: r.file, total: r.total, added: r.added, counts: r.counts, labels };
 }
 
 function parseArgs(argv) {
@@ -140,11 +162,13 @@ function parseArgs(argv) {
 async function main() {
   const a = parseArgs(process.argv.slice(2));
   let dbFile = a.db;
+  let learningDataDir = a['learning-data-dir'];
   if (!dbFile) {
     const { resolveCliDataDir, dataDirNote } = await import('../services/event-core/config.mjs');
     const r = resolveCliDataDir({ dataDir: a['data-dir'] });
     if (r.source !== 'option') console.log(`collect-stream-feedback: ${dataDirNote(r)}`);
     dbFile = path.join(r.dir, 'event-core.db');
+    learningDataDir ??= r.dir;
   }
   // Defaults for the question prefix and the marker come from data/live/test-kit.json (D305 proposed) when it reads.
   let kit = null;
@@ -152,6 +176,7 @@ async function main() {
   const r = collectFeedback({
     dbFile, date: a.date, since: a.since, until: a.until, marker: a.marker ?? kit?.marker, windowMin: a['window-min'] === undefined ? kit?.windowMin : Number(a['window-min']),
     questionPrefix: a['question-prefix'] ?? kit?.questionPrefix, botName: a['bot-name'], questionTimes: a['question-at'] ? a['question-at'].split(',') : [], outDir: a['out-dir'],
+    learningDataDir,
   });
   if (a.json) { console.log(JSON.stringify({ file: r.file, total: r.total, added: r.added, counts: r.counts })); return; }
   console.log(`stream feedback: ${r.total} messages (+${r.added} new; youtube ${r.counts.youtube}, twitch ${r.counts.twitch}, kick ${r.counts.kick}) -> ${path.relative(process.cwd(), r.file)}`);

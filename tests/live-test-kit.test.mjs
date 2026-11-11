@@ -4,7 +4,7 @@
 // to Streamer.bot or Speaker.bot.
 process.env.UJWALAM_HEADLESS = '1';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -144,7 +144,7 @@ describe('createFeedbackAutoCollect', () => {
     let t = t0; let on = true;
     const outDir = path.join(d, 'feedback');
     // no collect seam: the default runs tools/collect-stream-feedback.mjs in a child process
-    const fc = createFeedbackAutoCollect({ dbFile: path.join(d, 'event-core.db'), outDir, kit: () => KIT, enabled: () => on, now: () => t });
+    const fc = createFeedbackAutoCollect({ dbFile: path.join(d, 'event-core.db'), outDir, kit: () => KIT, enabled: () => on, now: () => t, learningDataDir: d });
     fc.observe(false);
     fc.observe(true);
     assert.equal(fc.liveSince(), t0);
@@ -161,6 +161,11 @@ describe('createFeedbackAutoCollect', () => {
     const md = readFileSync(files, 'utf8');
     for (const id of ['r1', 'r2', 'r3']) assert.ok(md.includes(`<!--id:${id}-->`), id);
     for (const id of ['q1', 'n1', 'o1']) assert.ok(!md.includes(`<!--id:${id}-->`), id);
+    // LL2 (D338): the child also wrote one chat-feedback label row per reply into <dataDir>/learning-store/stream-<start>/
+    const sess = readdirSync(path.join(d, 'learning-store')).filter((n) => n.startsWith('stream-'));
+    assert.equal(sess.length, 1);
+    const rows = readFileSync(path.join(d, 'learning-store', sess[0], 'labels.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(rows.map((x) => [x.action, x.source, x.ref.message]).sort(), [['feedback', 'chat-feedback', 'r1'], ['feedback', 'chat-feedback', 'r2'], ['feedback', 'chat-feedback', 'r3']]);
     // a second offline poll does nothing; the next live start clears the result
     fc.observe(false);
     await tick();

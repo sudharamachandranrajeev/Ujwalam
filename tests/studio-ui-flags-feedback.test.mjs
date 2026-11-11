@@ -174,6 +174,10 @@ describe('feedback form API', () => {
     assert.equal(JSON.parse(readFileSync(path.join(dir, 'moment.json'), 'utf8')).scene, 'Default');
     const m = r.json().moments.find((x) => x.id === '2026-11-03/201500');
     assert.equal(m.note.tag, 'bug');
+    // LL2 (D338): a "feedback" label row (tag and severity, never the note text) in the data folder's learning store
+    const rows = readFileSync(path.join(c.dataDir, 'learning-store', 'day-2026-11-03', 'labels.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    assert.deepEqual(rows.map((x) => [x.action, x.source, x.ref.moment, x.ref.tag, x.ref.severity]), [['feedback', 'feedback-form', '2026-11-03/201500', 'bug', 'high']]);
+    assert.ok(!JSON.stringify(rows).includes('overlay flickered'), 'no note text in the store');
     // update replaces
     await post(c.port, c.a, '/ui/api/feedback/note', { id: '2026-11-03/201500', text: 'fine now', tag: 'works-well', severity: 'low' });
     assert.equal(JSON.parse(readFileSync(path.join(dir, 'note.json'), 'utf8')).tag, 'works-well');

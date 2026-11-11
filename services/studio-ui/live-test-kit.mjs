@@ -92,7 +92,8 @@ const MAX_CHILD_OUT = 64 * 1024;
  */
 export function runCollectorChild(o, { script = COLLECTOR_SCRIPT, timeoutMs = COLLECT_TIMEOUT_MS, execPath = process.execPath } = {}) {
   const args = [script, '--json', '--db', String(o.dbFile ?? ''), '--date', String(o.date), '--since', String(o.since), '--until', String(o.until),
-    '--marker', String(o.marker), '--window-min', String(o.windowMin), '--question-prefix', String(o.questionPrefix), '--out-dir', String(o.outDir)];
+    '--marker', String(o.marker), '--window-min', String(o.windowMin), '--question-prefix', String(o.questionPrefix), '--out-dir', String(o.outDir),
+    ...(typeof o.learningDataDir === 'string' ? ['--learning-data-dir', o.learningDataDir] : [])]; // LL2 label rows (D338)
   return new Promise((resolve, reject) => {
     let out = ''; let err = ''; let done = false;
     let child;
@@ -118,7 +119,7 @@ const localDate = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-$
 /**
  * Tracks live on/off and collects feedback when a stream ends.
  * opts: { collect? (o) -> result | Promise<result> (default runCollectorChild), dbFile, outDir, kit () -> config,
- *         enabled () -> bool (the flag), now?, log? }
+ *         enabled () -> bool (the flag), now?, log?, learningDataDir? (LL2 label rows, D338) }
  * observe(live) is called with every status poll; it never throws and never blocks the poll (the collection runs in
  * a child process and its result is recorded when it ends). Returns { observe, liveSince, last }.
  */
@@ -134,7 +135,7 @@ export function createFeedbackAutoCollect(opts) {
       try {
         const kit = opts.kit();
         const r = await collect({ dbFile: opts.dbFile, date: localDate(from), since: new Date(from).toISOString(), until: new Date(to).toISOString(),
-          marker: kit.marker, windowMin: kit.windowMin, questionPrefix: kit.questionPrefix, outDir: opts.outDir });
+          marker: kit.marker, windowMin: kit.windowMin, questionPrefix: kit.questionPrefix, outDir: opts.outDir, ...(opts.learningDataDir ? { learningDataDir: opts.learningDataDir } : {}) });
         last = { ok: true, at: to, total: r.total, added: r.added, counts: r.counts, name: path.basename(r.file) };
         log(`live test kit: viewer feedback ${r.total} message(s) -> feedback/${path.basename(r.file)}`);
       } catch (e) {

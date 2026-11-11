@@ -873,3 +873,43 @@ could turn on in settings as well." Decided:
 Not done: a snap-distance setting (the triage row mentions one; the distance stays 8 px, D272). Real-mouse feel on the
 user's screen is UNVERIFIED until the user tries it.
 Evidence: `docs/evidence/2026-11-10-f8-preview-select-snap.md`.
+
+## D338 — Learning signals become label rows in a local learning store (2026-11-11, LL2 of D324)
+
+Spec: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` section B (approved, D324). LL2 plus the
+parts of LL1 (store, cap) and LL5 (privacy scan) it needs. Decided:
+- **Store:** `<dataDir>/learning-store/<session>/labels.jsonl`, one folder per stream session (LL1 adds its evidence to
+  the same folders). JSON lines, append-only, not SQLite: the writers are three processes (launcher, UI server, the
+  feedback collector child) and one appended line needs no lock or shared database; SQLite would need one database
+  per owning process. A row is `{ v: 1, at, action, source, session, ref }` with action one of kept, deleted, posted,
+  renamed, feedback and source one of my-clips, posting, hotkey, feedback-form, chat-feedback. `ref` holds short
+  primitives only (file name, run, clip id, post id, moment id, message id). No event names, weights or windows.
+- **Signals, hooked where they already happen (no new UI):**
+  - My clips (the clips folder, listed in `<dataDir>/clips/uploads.json` by the clip pipeline): the launcher checks
+    once at start and every minute. Gone with a same-identity file (NTFS file id; size + mtime otherwise) in a day
+    folder of the same clips folder = renamed (old and new file name); gone otherwise = deleted; still there at the
+    first check of a later app start than the one it was published in = kept (once per clip). Clips already missing
+    the first time they are seen get no row. Session = the clip's run.
+  - Posted: `uploadPost` (services/posting/youtube.mjs; Posts view, CLI and the auto-post chain all use it) after a
+    finished upload. Session = the post's run. Posting approve/reject and title edits are not labelled (not in the
+    list of signals; a title is not a clip rename).
+  - Feedback hotkey (Ctrl+Alt+F): each new moment folder the host writes (source hotkey, session `day-<date>`); the
+    feedback form's note adds a row with its tag and severity, never its text (source feedback-form).
+  - Chat-feedback replies: the read-only collector (tools/collect-stream-feedback.mjs, run by the live test kit when
+    a stream ends) adds one row per newly collected reply with the feedback file name, the message id and the
+    platform, never the viewer name or text. Session `stream-<local start stamp>`.
+- **Cap (LL1):** 5 GB for the whole store, whole session folders removed oldest first, never the latest one; run at
+  launcher start and every tenth pass. Implemented now (cheap). Age is the session's start (`session.json`
+  `createdAt`, written once with its first row), not its last write: a late row in an old session (a clip deleted
+  days later) must not make the newest stream removable (Codex review).
+- **Retries (Codex review):** a clip's or moment's state moves on only after its row is written, so a failed write is
+  tried again on the next pass. Moments keep a checkpoint (the newest moment labelled; the host adds moments with the
+  current time), never a trimmed list of ids, so old moments are never labelled twice.
+- **Privacy (LL5):** clip file names in the store (rename rows) are the user's own words; they stay in the local store
+  only and are never committed (store, gitignore and private scan below). The store is in the app data folder, never the repo; `learning-store/` is gitignored and the
+  private scan's local rule refuses any path with a `learning-store/` folder at any depth and case (pre-commit,
+  pre-push, history). Nothing is written to `data/labels/`; its rules are unchanged.
+- **No flag:** pure background label writing with no visible effect; recorded exception to "behind a flag" as the
+  LL2 brief allows. `services/learning` is added to the alpha package manifest.
+Not done: LL1 evidence capture, LL3 review queue, LL4 training. Real use on a stream and on the user's clips folder is
+UNVERIFIED. Evidence: `docs/evidence/2026-11-11-ll2-learning-signals.md`.

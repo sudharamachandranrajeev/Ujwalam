@@ -95,6 +95,7 @@ import { upgradeScenes } from '../project/scene-upgrades.mjs';
 import { createRecordClips, isLive } from './record-clips.mjs';
 import { killChildTree } from '../common/kill-tree.mjs';
 import { createPostChain } from '../posting/auto-chain.mjs';
+import { createLearningSignals } from '../learning/signals.mjs';
 import { folderProblem, readSettings } from './user-settings.mjs';
 import { createMediaInfo } from '../project/media-info.mjs';
 import { rpc } from './backends.mjs';
@@ -892,12 +893,14 @@ export async function main(argv = process.argv.slice(2)) {
   let alphaClient = null;
   let stopping = false;
   let recordClips = null;
+  let learning = null; // LL2 learning signals (D338)
   let endSession = () => {};
   const sessionEnded = new Promise((resolve) => { endSession = resolve; });
   // Ask the host to exit cleanly first (it closes previews and removes its discovery file), then kill what is left.
   const stopAll = async () => {
     stopping = true;
     recordClips?.stop();
+    learning?.stop();
     if (hostChild && hostChild.exitCode === null && hostDiscoveryFile) {
       try {
         const d = JSON.parse(readFileSync(hostDiscoveryFile, 'utf8'));
@@ -1104,6 +1107,10 @@ export async function main(argv = process.argv.slice(2)) {
       setInterval(clipTick, 5000).unref();
       void clipTick();
     }
+    // LL2 learning signals (D338): label rows from what the user already does (clips kept, deleted or renamed in My
+    // clips, feedback-hotkey moments) into the local learning store <dataDir>/learning-store/. Background only, no flag.
+    learning = createLearningSignals({ dataDir, feedbackDir, log: (l) => console.log(`[studio] ${l}`) });
+    learning.start();
     if (disc && alpha) {
       // Live clipper (D226): started with the alpha session, idles while the live-clips flag is off (re-read every
       // 5 s). Only the clips token reaches it. Restarted after a crash at most LIVE_CLIPPER_MAX_RESTARTS times; never

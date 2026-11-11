@@ -40,6 +40,7 @@ import { previewRules } from '../posting/preview.mjs';
 import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
+import { createLearningStore } from '../learning/store.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
 import { addLayer, addScene, duplicateLayer, duplicateScene, moveLayer, removeLayer, removeScene, renameLayer, renameScene } from '../project/structure.mjs';
 import { listAssets } from './assets.mjs';
@@ -319,11 +320,12 @@ export function createStudioServer(opts) {
     ...(opts.testKit?.collect ? { collect: opts.testKit.collect } : {}), // default: the collector in a child process
     dbFile: typeof opts.dataDir === 'string' ? path.join(opts.dataDir, 'event-core.db') : null,
     outDir: opts.feedbackDir ?? DEFAULT_FEEDBACK_DIR,
+    learningDataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null, // LL2 label rows (D338)
     kit: () => { const k = testKit(); if (!k) throw new Error('data/live/test-kit.json could not be read'); return k; },
     enabled: testKitOn, now, log: (m) => log(`[studio-ui] ${m}`),
   });
   // Export-only posting (P16a, flag `posting`): packages are listed from <dataDir>/posting/ledger.json. Nothing is uploaded.
-  const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME) }) : null);
+  const posting = opts.posting ?? (typeof opts.dataDir === 'string' ? createPostStore({ ledgerFile: path.join(opts.dataDir, 'posting', LEDGER_NAME), dataDir: opts.dataDir }) : null);
   // YouTube private upload (P16b, behind `posting`). Sign-in stays CLI-only: tokens live in the Credential Manager and never
   // reach the browser. opts.youtube = { auth, fetchImpl, outputsStatus } are test seams.
   let ytAuth = opts.youtube?.auth ?? null;
@@ -1315,6 +1317,10 @@ export function createStudioServer(opts) {
       if (Object.keys(body).some((k) => !NOTE_KEYS.includes(k))) return json(res, 400, { error: 'bad-params' });
       const err = feedback.saveNote(body.id, { text: body.text, tag: body.tag, severity: body.severity });
       if (err) return json(res, err === 'unknown-moment' ? 404 : (err === 'write-failed' ? 500 : 400), { error: err });
+      // LL2 (D338): the note's tag and severity (never its text) as a "feedback" label row in the local learning store.
+      if (typeof opts.dataDir === 'string') {
+        try { createLearningStore({ dataDir: opts.dataDir }).add({ action: 'feedback', source: 'feedback-form', session: `day-${body.id.slice(0, 10)}`, ref: { moment: body.id, tag: body.tag, severity: body.severity } }); } catch { /* best effort */ }
+      }
       return json(res, 200, { ok: true, moments: feedback.list() });
     }
     if (route === '/ui/api/posts/youtube/upload' || route === '/ui/api/posts/youtube/check') {
