@@ -388,6 +388,9 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
   const versions = Object.fromEntries(PARTS.map((p) => [p, ownVersion]));
   const nOf = Object.fromEntries(PARTS.map((p) => [p, ownN])); // the running release number of each part
   let hostSha = own?.parts?.host?.sha256 ?? null;
+  // LU6 (D349): the LU1 hashes each running part runs from, so a live install hands over only the parts it changes.
+  const pick = (parts, names) => (parts ? Object.fromEntries(names.filter((p) => parts[p]).map((p) => [p, { files: parts[p].files, sha256: parts[p].sha256 }])) : null);
+  const runParts = { 'event-core': pick(own?.parts, SERVICE_PARTS), 'studio-ui': pick(own?.parts, SERVICE_PARTS), 'studio-window': own?.parts?.['studio-window']?.sha256 ?? null };
   if (startupHost?.entry?.version) {
     versions.host = startupHost.entry.version; versions['overlay-server'] = startupHost.entry.version;
     nOf.host = startupHost.entry.n; nOf['overlay-server'] = startupHost.entry.n;
@@ -466,7 +469,11 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
     const bad = servicePrepProblem(w);
     if (bad) { note(w.part, w.version, 'failed', bad); return { result: 'failed', reason: bad }; }
     const r = await swapService(w.part, w.root);
-    if (r?.result === 'swapped') { versions[w.part] = w.version; nOf[w.part] = w.n; }
+    if (r?.result === 'swapped') {
+      versions[w.part] = w.version; nOf[w.part] = w.n;
+      if (w.part === 'studio-window') runParts[w.part] = w.parts?.['studio-window']?.sha256 ?? null;
+      else runParts[w.part] = pick(w.parts, SERVICE_PARTS);
+    }
     note(w.part, w.version, r?.result ?? 'failed', r?.reason ?? r?.failed?.join('; '));
     return r ?? { result: 'failed' };
   }
@@ -558,6 +565,9 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
       });
     },
     tick,
+    /** LU6 (D349): per queue part the LU1 hashes it runs from (null: unknown, a dev checkout). The host is the hash of
+     *  the host that runs (a staged one is not running yet). */
+    runningParts: () => ({ host: hostSha, 'event-core': runParts['event-core'], 'studio-ui': runParts['studio-ui'], 'studio-window': runParts['studio-window'] }),
     state: () => ({ versions: { ...versions }, waiting: waiting.map((w) => ({ id: w.id, part: w.part, version: w.version, click: w.click })), recent: [...recent] }),
     /** The app closes: a staged host update stays in host-update.json (pending) for the next start; services that
      *  wait are dropped. */
