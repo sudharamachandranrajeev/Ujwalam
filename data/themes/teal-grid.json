@@ -84,13 +84,7 @@
         "opacity": 0.4
       }
     },
-    "button": {
-      "rim": {
-        "from": "#6b8d92",
-        "to": "#244a52",
-        "width": 1
-      }
-    },
+    "button": {},
     "primaryButton": {
       "shadow": {
         "blur": 8,
