@@ -1095,7 +1095,9 @@ export async function main(argv = process.argv.slice(2)) {
       // read each time, so a restarted host is followed.
       const liveClipsFlag = () => { try { return createFlags({ dataDir }).isOn('live-clips'); } catch { return false; } };
       recordClips = createRecordClips({ clipRoot: CLIP_ROOT, dataDir, project: alpha ? alphaFile(dataDir) : null, log: (l) => console.log(`[studio] ${l}`), postChain: createPostChain({ dataDir, log: (l) => console.log(`[studio] ${l}`) }),
-        liveClipper: () => ({ ...lcView, flagOn: liveClipsFlag() }) });
+        liveClipper: () => ({ ...lcView, flagOn: liveClipsFlag() }),
+        // LL4 (D342): the after-stream game pack check, last in the clip queue, only with its flag on.
+        trainFlag: () => { try { return createFlags({ dataDir }).isOn('learning-train'); } catch { return false; } } });
       const clipTick = async () => {
         if (stopping) return;
         tryStartClipper(); // a clipper that could not start (no capture device yet) starts once it can
