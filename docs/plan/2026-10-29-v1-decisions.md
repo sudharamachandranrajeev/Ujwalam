@@ -924,8 +924,10 @@ store (same folders, same 5 GB cap; no second store). Decided:
   `review.jsonl` (LL3 items) and `frames/<id>.jpg` (only for review items; no other frame is kept), plus
   `session.json` written once (the cap's age order, as store.mjs). Unchanged frames (diff gate) add nothing. The live
   loop only builds small dicts and puts them on an 8-item queue with `put_nowait`; a daemon thread writes (JPEG
-  encoding with OpenCV on the CPU, appends). A full queue, a failed write or a session at the cap drops the item and
-  logs a line (the first drop and every 100th); `frame()` never raises, and a store that cannot open only turns
+  encoding with OpenCV on the CPU, appends). A full queue, a failed write or a full store drops the item; `frame()`
+  only counts drops and the writer thread logs them (the first and every 100th; a failing log is ignored, Codex
+  review). The writer keeps the whole store under the 5 GB cap: at start, on its own thread, it measures the other
+  sessions and allows this one what is left minus a 16 MB margin for label rows. `frame()` never raises, and a store that cannot open only turns
   capture off. No model, no GPU work and no extra OCR are added (VRAM rule). No flag: background writing with no
   visible effect, as D338. `FrameScanner` now keeps its last OCR boxes and a `fresh` mark (no extra work).
 - **LL3 queue, thresholds from data only:** unclassified-banner = a signalled W1 VICTORY/DEFEAT word whose height fits
@@ -938,7 +940,8 @@ store (same folders, same 5 GB cap; no second store). Decided:
   subtitles). "Match mode" is read as the game mode of a match (match_gate), not the HUD family mp/br. One item per
   appearance (a banner still on screen on the next frame is not queued again). Only signalled rows are looked at.
 - **LL3 review:** `services/learning/review.mjs` lists unanswered items (newest 20 sessions, 200 items), serves an
-  item's own `frames/<id>.jpg` only, and writes the answer as a D338 label row: action `confirmed` (new), source
+  item's own `frames/<id>.jpg` only (every read must resolve, by realpath, inside the store; reads are async, bounded
+  to 2 MB per file and cached by mtime and size, Codex review), and writes the answer as a D338 label row: action `confirmed` (new), source
   `review` (new), `ref { item, kind, detector, label, value, corrected }`. UI server routes
   `/ui/api/learning/review|frame|confirm`, 404 while the flag is off. The Qt studio owns My clips (its top-bar
   button), so the review is a **Review reads (N)** button beside it, shown only with the flag on and items queued,
