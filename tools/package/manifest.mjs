@@ -27,6 +27,7 @@ export const HELPER_EXES = Object.freeze(['obs-ffmpeg-mux.exe', 'obs-nvenc-test.
 export const REPO_DIRS = Object.freeze([
   'app/host/lib', 'app/host/overlay',
   'services/bots', 'services/common', 'services/event-core', 'services/flags', 'services/learning', 'services/outputs', 'services/overlay-server', 'services/platform-connect', 'services/posting', 'services/project', 'services/studio-ui',
+  'services/supervisor', // launch.mjs imports the LU3 swap fronts and slots (D337)
   'ui', 'registry', 'tools/diag',
 ]);
 export const REPO_FILES = Object.freeze([
