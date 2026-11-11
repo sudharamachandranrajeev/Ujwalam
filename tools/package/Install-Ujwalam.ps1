@@ -16,6 +16,13 @@
      User data stays in <InstallRoot>\data and is never touched.
   -Rollback swaps current.txt and previous.txt (both folders must exist). Nothing is ever deleted.
 
+  Live install (LU6, D349): when a program under <InstallRoot> is running (found by its path, never by its name), the
+  install never replaces a file the running copy uses. The new version goes into its own folder next to the running
+  one; current.txt points the next start at it; a top-level launcher file that is in use is kept. Then the new version
+  is handed to the running Ujwalam's update queue (only when its service-swap feature flag is on): nothing live ->
+  the services are updated at once; live -> each service waits for one click on Apply now and the video engine (host)
+  is staged for the stop. Without the flag, the new version runs from the next start.
+
 .PARAMETER InstallRoot   Default %LOCALAPPDATA%\Ujwalam.
 .PARAMETER Rollback      Switch back to the previous version.
 .PARAMETER Force         Reinstall a version that is already installed (the old folder is renamed, not deleted).
@@ -80,6 +87,73 @@ function Write-Pointer([string]$f, [string]$v) {
   $tmp = "$f.partial"
   [System.IO.File]::WriteAllText($tmp, "$v`r`n", (New-Object System.Text.UTF8Encoding $false))
   Move-Item -LiteralPath $tmp -Destination $f -Force
+}
+
+# ---- running install (LU6, D349) -----------------------------------------------------------------------------------
+# Processes whose program or command line lies under $dir (the install guard by path: never by process name, which
+# would also catch test or development copies elsewhere). System.Management, not Get-CimInstance: the CIM module can
+# fail to load in Windows PowerShell 5.1 started from pwsh 7 (inherited PSModulePath).
+# Paths are compared after Norm-Path: '/' read as '\', repeated separators as one (a command line may name the install
+# as C:/Users/.../Ujwalam/... or with escaped backslashes); always case-insensitive (Codex review of D349).
+function Norm-Path([string]$s) {
+  if (-not $s) { return '' }
+  return [regex]::Replace($s.Replace('/', '\'), '(?<=.)\\{2,}', '\')
+}
+function Get-RunningUnder([string]$dir) {
+  $d = Norm-Path ([System.IO.Path]::GetFullPath($dir).TrimEnd('\') + '\')
+  $found = @()
+  try {
+    Add-Type -AssemblyName System.Management
+    $q = New-Object System.Management.ManagementObjectSearcher('SELECT ProcessId, Name, ExecutablePath, CommandLine FROM Win32_Process')
+    foreach ($p in $q.Get()) {
+      $id = [int]$p['ProcessId']
+      if ($id -eq $PID) { continue }
+      $exe = Norm-Path ([string]$p['ExecutablePath']); $cmd = Norm-Path ([string]$p['CommandLine'])
+      if ($exe.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) -or $cmd.IndexOf($d, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $found += [pscustomobject]@{ Id = $id; Name = [string]$p['Name']; Exe = $exe; Cmd = $cmd }
+      }
+    }
+  } catch { Fail "could not list running programs to check whether Ujwalam runs ($($_.Exception.Message)); nothing was installed" 8 }
+  return $found
+}
+
+# A top-level file is in use when a running program is that file or names it on its command line; a folder (ending in
+# '\') when a running program lies under it or names a path under it.
+function Test-InUse($procs, [string]$file) {
+  $file = Norm-Path $file
+  foreach ($p in $procs) {
+    if ($p.Exe -and ($p.Exe -ieq $file)) { return $true }
+    if ($file.EndsWith('\') -and $p.Exe -and $p.Exe.StartsWith($file, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+    if ($p.Cmd -and $p.Cmd.IndexOf($file, [StringComparison]::OrdinalIgnoreCase) -ge 0) { return $true }
+  }
+  return $false
+}
+
+function Get-Sha256([string]$f) {
+  $fs = [System.IO.File]::OpenRead($f)
+  try { return ([System.BitConverter]::ToString([System.Security.Cryptography.SHA256]::Create().ComputeHash($fs)) -replace '-', '').ToLowerInvariant() } finally { $fs.Dispose() }
+}
+
+# Hands the installed new version to the running launcher (services/supervisor/install-channel.mjs): one JSON line out,
+# one back. $null when there is no channel (flag off, an older version, or Ujwalam is just closing).
+function Send-LiveInstall([string]$root, [int]$timeoutMs) {
+  $chanFile = Join-Path $InstallRoot 'data\core\live\install-channel.json'
+  if (-not (Test-Path -LiteralPath $chanFile -PathType Leaf)) { return $null }
+  try { $ch = Get-Content -LiteralPath $chanFile -Raw -Encoding UTF8 | ConvertFrom-Json } catch { return $null }
+  if ($ch.v -ne 1 -or [string]$ch.pipe -notmatch '^ujwalam-install-[0-9a-f]{32}$' -or [string]$ch.token -notmatch '^[0-9a-f]{64}$') { return $null }
+  $pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', [string]$ch.pipe, [System.IO.Pipes.PipeDirection]::InOut)
+  try {
+    try { $pipe.Connect(5000) } catch { return $null }
+    $enc = New-Object System.Text.UTF8Encoding $false
+    $w = New-Object System.IO.StreamWriter($pipe, $enc)
+    $w.AutoFlush = $true
+    $r = New-Object System.IO.StreamReader($pipe, $enc)
+    $w.WriteLine((@{ t = 'ujwalam-install'; token = [string]$ch.token; root = $root } | ConvertTo-Json -Compress))
+    $task = $r.ReadLineAsync()
+    if (-not $task.Wait($timeoutMs)) { return [pscustomobject]@{ ok = $false; reason = 'the running Ujwalam did not answer in time' } }
+    if (-not $task.Result) { return [pscustomobject]@{ ok = $false; reason = 'the running Ujwalam closed the connection' } }
+    return ($task.Result | ConvertFrom-Json)
+  } catch { return [pscustomobject]@{ ok = $false; reason = $_.Exception.Message } } finally { $pipe.Dispose() }
 }
 
 # ---- rollback ------------------------------------------------------------------------------------------------------
@@ -226,7 +300,12 @@ New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 $target = Join-Path $InstallRoot $version
 $pkgFull = [System.IO.Path]::GetFullPath($pkg).TrimEnd('\')
 if ($pkgFull -ieq $target.TrimEnd('\')) { Fail 'run this from the unzipped build, not from the installed folder' 2 }
+# LU6 (D349): is Ujwalam running from this install? Then nothing it uses is replaced (live install).
+$running = @(Get-RunningUnder $InstallRoot | Where-Object { -not ($_.Cmd -and $_.Cmd.IndexOf((Norm-Path ($pkgFull + '\')), [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.Cmd -match 'Install-Ujwalam\.ps1') })
+$live = $running.Count -gt 0
+if ($live) { Say "Ujwalam is running from $InstallRoot ($($running.Count) program(s)): live install. Nothing the running copy uses is replaced; $version goes next to it." }
 if (Test-Path -LiteralPath $target) {
+  if ($live -and @(Get-RunningUnder $target).Count -gt 0) { Fail "$version is the version that is running now; nothing was changed (close Ujwalam first to reinstall it)" 4 }
   if (-not $Force) { Fail "$version is already installed in $target (use -Force to reinstall it; the old folder is kept, renamed)" 4 }
   $kept = "$target.replaced-$((Get-Date).ToString('yyyyMMdd-HHmmss'))"
   Move-Item -LiteralPath $target -Destination $kept
@@ -238,16 +317,63 @@ $bad = @(Test-Sums $staging)
 if ($bad.Count) { Fail "the copy in $staging failed verification ($($bad[0])); it was left there for inspection" 7 }
 Move-Item -LiteralPath $staging -Destination $target
 
+# Top-level launcher files, BEFORE current.txt changes (Codex review of D349): a failure stops the install with
+# current.txt still naming the version that worked. Live install: a file the running copy uses (ujwalam-start.exe it
+# runs from, Ujwalam.cmd a console runs; cmd.exe reads a running batch file again after each call) is never replaced.
+# It is kept only when that is certain: a running program is or names it, or Windows refuses it with a sharing
+# violation. Any other failure (disk full, access denied, a missing file) stops with an error. A replacement goes
+# through a temp file in the same folder and one rename, so a half-written launcher never takes the old one's place.
+$keptTop = @()
+function Copy-Top([string]$name, [bool]$required) {
+  $src = Join-Path $pkg $name
+  $dst = Join-Path $InstallRoot $name
+  if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+    if ($required) { Fail "$name is missing from the unzipped build; current.txt was not changed" 10 }
+    return
+  }
+  $tmp = "$dst.$PID.new"
+  try {
+    # Inside the try: reading a file another program holds open is a sharing violation too.
+    if ((Test-Path -LiteralPath $dst -PathType Leaf) -and ((Get-Sha256 $src) -eq (Get-Sha256 $dst))) { return }
+    if ($live -and (Test-Path -LiteralPath $dst) -and (Test-InUse $running $dst)) { $script:keptTop += $name; return }
+    [System.IO.File]::Copy($src, $tmp, $true)
+    if (Test-Path -LiteralPath $dst -PathType Leaf) { [System.IO.File]::Replace($tmp, $dst, $null) } else { [System.IO.File]::Move($tmp, $dst) }
+  } catch {
+    try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force } } catch { }
+    $e = $_.Exception
+    while ($e.InnerException -and -not ($e -is [System.IO.IOException])) { $e = $e.InnerException }
+    $code = $e.HResult -band 0xFFFF
+    # ERROR_SHARING_VIOLATION (32) or ERROR_LOCK_VIOLATION (33): another program has it open; certain to be in use.
+    if ($live -and ($e -is [System.IO.IOException]) -and ($code -eq 32 -or $code -eq 33)) { $script:keptTop += $name; return }
+    Fail "could not replace $dst ($($e.Message.Trim())); current.txt was not changed, the new version folder $version stays for a retry" 10
+  }
+}
+Copy-Top 'Ujwalam.cmd' $true
+# The shortcuts' target: a windowless exe that runs the version in current.txt (no console window, D191; 2026-11-08).
+Copy-Top 'ujwalam-start.exe' $true
+# The shortcuts' icon (app/studio/res/ujwalam.ico), kept in the install root so it survives version switches.
+Copy-Top 'ujwalam.ico' $false
 $cur = Read-Pointer $currentFile
 if ($cur -and $cur -ne $version) { Write-Pointer $previousFile $cur }
 Write-Pointer $currentFile $version
-Copy-Item -LiteralPath (Join-Path $pkg 'Ujwalam.cmd') -Destination (Join-Path $InstallRoot 'Ujwalam.cmd') -Force
-# The shortcuts' target: a windowless exe that runs the version in current.txt (no console window, D191; 2026-11-08).
-Copy-Item -LiteralPath (Join-Path $pkg 'ujwalam-start.exe') -Destination (Join-Path $InstallRoot 'ujwalam-start.exe') -Force
-# The shortcuts' icon (app/studio/res/ujwalam.ico), kept in the install root so it survives version switches.
-if (Test-Path -LiteralPath (Join-Path $pkg 'ujwalam.ico')) { Copy-Item -LiteralPath (Join-Path $pkg 'ujwalam.ico') -Destination (Join-Path $InstallRoot 'ujwalam.ico') -Force }
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'data') | Out-Null
 Say "installed: current $version$(if ($cur -and $cur -ne $version) { ", previous $cur (Install-Ujwalam.ps1 -Rollback switches back)" })"
+foreach ($k in $keptTop) { Say "kept $k in $InstallRoot`: the running Ujwalam uses it (it still starts the version in current.txt); run this installer again after Ujwalam has closed to replace it" }
+
+# ---- hand-over to the running Ujwalam (LU6, D349) -----------------------------------------------------------------
+if ($live) {
+  Say "handing $version to the running Ujwalam's update queue ..."
+  $reply = Send-LiveInstall $target 600000
+  if ($null -eq $reply) {
+    Say 'the running Ujwalam does not take live updates (feature flag service-swap is off, or it is an older version): the new version runs from the next start.'
+  } elseif (-not $reply.ok) {
+    Say "the running Ujwalam did not take it ($($reply.reason)): the new version runs from the next start."
+  } else {
+    foreach ($x in @($reply.results)) { if ($x) { Say "  $($x.text)" } }
+    foreach ($x in @($reply.skipped)) { if ($x) { Say "  $($x.text)" } }
+    Say 'the next start runs the new version in full.'
+  }
+}
 
 # ---- shortcuts ----------------------------------------------------------------------------------------------------
 if (-not $NoShortcuts) {
@@ -280,6 +406,8 @@ if (-not $NoShortcuts) {
 # ---- older versions (reported, never deleted) ---------------------------------------------------------------------
 $keep = @($version, (Read-Pointer $previousFile)) | Where-Object { $_ }
 $older = Get-ChildItem -LiteralPath $InstallRoot -Directory | Where-Object { $_.Name -match '^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+' -and $keep -notcontains $_.Name }
+# Live install: the folder the running copy uses is never offered for removal.
+if ($live) { $older = $older | Where-Object { -not (Test-InUse $running ($_.FullName.TrimEnd('\') + '\')) } }
 if ($older) { Say "older folders you may remove by hand: $(($older | ForEach-Object { $_.Name }) -join ', ')" }
 Say 'done. Start Ujwalam from the shortcut (no console window; close the studio window to stop), or run Ujwalam.cmd in the install folder from a terminal.'
 exit 0

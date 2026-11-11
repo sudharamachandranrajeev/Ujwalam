@@ -75,6 +75,7 @@
 
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -102,6 +103,7 @@ import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
 import { writeZip } from '../../tools/package/zip.mjs';
 import { createFront } from '../supervisor/front.mjs';
+import { createInstallChannel } from '../supervisor/install-channel.mjs';
 import { createEventCoreSlot, createStudioSlot, createUiSlot } from '../supervisor/slots.mjs';
 import { refuseReason, SERVICES } from '../supervisor/swap.mjs';
 import { acceptHost, createStartGate, createUpdates, hostArgsFor, hostEntryProblem, outputsBusy, partFor, readRelease, rejectHost, serveUpdates, serviceRootProblem, takeStartupHost } from '../supervisor/updates.mjs';
@@ -1033,9 +1035,11 @@ export async function main(argv = process.argv.slice(2)) {
   let hostRun = null; // LU5: { exe, args, script, runtime, root } the host is started from
   let hostSup = null; // superviseHost's handle: current client, planned restart (LU5)
   let updates = null; // LU5/LU7 update queue (services/supervisor/updates.mjs)
+  let installChannel = null; // LU6 live install channel (services/supervisor/install-channel.mjs)
   // Ask the host to exit cleanly first (it closes previews and removes its discovery file), then kill what is left.
   const stopAll = async () => {
     stopping = true;
+    installChannel?.close();
     for (const l of updates?.close() ?? []) console.log(`[studio] ${l}`);
     recordClips?.stop();
     learning?.stop();
@@ -1656,7 +1660,20 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdin.once('data', () => { stopAll().then(() => process.exit(0)); });
     process.stdin.once('end', () => { stopAll().then(() => process.exit(0)); });
   }
-  if (swapOn) serveSwaps({ slots: { 'event-core': coreSlot, 'studio-ui': uiSlot, studio: studioSlot }, log: track.log, updates });
+  if (swapOn) {
+    const slots = { 'event-core': coreSlot, 'studio-ui': uiSlot, studio: studioSlot };
+    serveSwaps({ slots, log: track.log, updates });
+    // LU6 live install (D349): Install-Ujwalam.ps1, run while this launcher runs, hands the new version over through an
+    // owner-only named pipe (services/supervisor/install-channel.mjs). Its requests take the same path as the parent's
+    // IPC requests: serveSwaps on a local channel, then the update queue (a click for services while live, the host at
+    // the stop). An installer that finds no channel installs side by side for the next start.
+    try {
+      installChannel = await createInstallChannel({
+        dataDir, ask: localSwapAsker(slots, track.log, updates), running: () => updates.runningParts(), has: (s) => s === 'host' || !!slots[s], log: track.log, // the queue answers for the host
+      });
+      console.log('[studio] live install: an install while Ujwalam runs is handed to the update queue');
+    } catch (e) { console.log(`[studio] live install channel not started (${e.message}); an install while running takes effect at the next start`); }
+  }
   // Flag on: an exit of the current core or UI process that no swap planned ends the session through endSession.
   const code = await new Promise((resolve) => { core?.once('exit', () => resolve(0)); ui?.once('exit', () => resolve(0)); sessionEnded.then(resolve); });
   await stopAll();
@@ -1713,6 +1730,24 @@ export function serveSwaps({ slots, log, proc = process, updates = null, entryOk
     } catch (e) { reply({ result: 'failed', reason: String(e?.message ?? e).slice(0, 200) }); } finally { running = false; }
   });
   return true;
+}
+
+/**
+ * LU6 (D349): the install channel's requests go through serveSwaps exactly like the parent's IPC requests (the same
+ * checks, then the update queue), over a local in-process channel. -> ask(service, root) -> Promise<reply>
+ */
+export function localSwapAsker(slots, log, updates, { serve = serveSwaps } = {}) {
+  const proc = new EventEmitter();
+  proc.connected = true;
+  const pending = new Map();
+  proc.send = (m) => { const done = pending.get(m?.id); if (done) { pending.delete(m.id); done(m); } };
+  serve({ slots, log, proc, updates });
+  let id = 0;
+  return (service, root) => new Promise((resolve) => {
+    const my = ++id;
+    pending.set(my, resolve);
+    proc.emit('message', { t: 'ujwalam-swap', id: my, service, root });
+  });
 }
 
 /** Whether root holds the entry of service (pure apart from the file checks): the service's cli.mjs, or for the

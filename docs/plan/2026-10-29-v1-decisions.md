@@ -1482,3 +1482,59 @@ studio-light, violet-night, neon-arcade, retro-wave, tactical.
   font resolved by Qt, no stylesheet errors, specimen at 100, 125, 150 %). The two v1-fallback tests in the components
   suite, which used violet-night and retro-wave because they had no block, now strip the block from a copy.
 Evidence: `docs/evidence/2026-11-11-t6-remaining-themes.md`.
+
+## D349 — Live install: an install while Ujwalam runs goes next to it and is handed to the update queue (2026-11-11, LU6)
+
+Plan row LU6 (D324), built on LU3 (D337), LU4 (D346) and LU5/LU7 (D343). Decided:
+- **Running copy found by path.** `Install-Ujwalam.ps1` lists programs whose path or command line lies under the
+  install root (System.Management, not by process name, not Get-CimInstance; the installer itself is left out). A
+  program under a folder with a similar name does not count. If the list cannot be read, nothing is installed (exit 8).
+- **Never a file of the running copy.** Live: the new version is copied and checked into its own folder as before;
+  current.txt points the next start at it and previous.txt names the running one. A top-level file that a running
+  program is or names (`ujwalam-start.exe` it runs from, `Ujwalam.cmd` a console runs: cmd.exe reads a running batch
+  file again after a call) is kept and named in the output; an unchanged one is not touched. Reinstalling the version
+  that runs is refused (exit 4), also with -Force (no rename of a running folder). A folder a running program uses is
+  never offered for removal.
+- **Hand-over channel.** With the flag `service-swap` on, the launcher listens on a named pipe with a random name
+  (`\.\pipe\ujwalam-install-<32 hex>`) and a 64-hex token, both written owner-only (as api.json) to
+  `<data>\core\live\install-channel.json` and removed at the stop. No TCP port. One JSON line in (`t`, token, root =
+  the installed new version folder), one line out. A wrong token, a relative or missing root, or a folder without a
+  release.json with `n` and part hashes is refused before anything is asked. The token is never printed or sent back.
+  Trust line: the same as D343 (the user's own programs; chat, rules, the LAN remote and the event core have no path
+  to it). The launcher's parent IPC (D337) stays as it was.
+- **Same path as a parent request.** The channel asks the launcher's own `serveSwaps` over an in-process message
+  channel (`localSwapAsker`), so every check of D337/D343/D346 runs unchanged: entry file, release.json with `n` and
+  LU1 hashes, the checked private copy, newer than running and waiting, one update at a time. Nothing live: applied at
+  once (the user's own install action). Live: a service waits for one click on Apply now; the host is staged and
+  applied at the stop (LU5). The channel never applies anything itself and never skips the click.
+- **Only what changed.** The queue now keeps the LU1 hashes each running part runs from (`runningParts`: the installed
+  release at start, updated after each swap; the host hash of the host that runs). The plan, in order: event core and
+  control page server when services, data or overlay pages changed (a data change alone swaps both: they read the data
+  of their copy; LU2 hot-reload covers edits of the data files a running service already reads, not a new release); the studio window when its part changed and a studio window runs (a
+  browser page: skipped, next start); the host when its part changed (the queue answers `unchanged` as before). An
+  unknown running hash (a development checkout) counts as changed.
+- **Without the flag** (or an older running version, or no answer): the installer says the new version runs from the
+  next start. Install still succeeds (exit 0).
+- **Fix found by the end-to-end test.** Clicking Apply now for the control page server's own update could never work:
+  the swap's hand-over waits for every request in flight on the front, the click's own request included, so it always
+  ended `kept-old` after 10 s. The UI server now answers that click first (202, `started`, plain words) and starts the
+  swap once the answer has gone out; the page reconnects to the new server, which starts its event stream with the
+  whole state. Other parts answer with the result as before.
+Limits: the hand-over waits at most 10 minutes for the running launcher (a host replacement when nothing is live is
+part of it). A top-level file that was kept is replaced only by an install while Ujwalam is closed. The end-to-end test
+uses the fake host (a recording as the "live" output), not a real loopback stream: the real host's encoders are not
+touched by any service swap (LU3, LU4 evidence), and the host part is only staged. Evidence:
+`docs/evidence/2026-11-11-lu6-live-install.md`.
+Codex review fixes (same day, 2 P2):
+- **Path forms.** A command line may name the install with forward slashes (`C:/.../Ujwalam/<ver>/...`) or repeated
+  separators; such a launcher was missed, and `-Force` could then rename its active folder. Paths and command lines are
+  normalised (`/` read as ``, repeated separators as one) before the case-insensitive match, in both the running check
+  and the in-use check.
+- **Kept only when certain; current.txt last.** Every copy failure counted as "in use", so disk full, access denied or
+  a missing launcher ended with exit 0 after current.txt had changed. Now a top-level file is kept only when a running
+  program is or names it, or Windows reports a sharing or lock violation (32, 33; also when reading it for the hash).
+  Any other failure, and a build without `Ujwalam.cmd` or `ujwalam-start.exe`, stops with exit 10. The top-level files
+  are written before current.txt and previous.txt, so a failed install leaves them on the version that worked. A
+  replacement is copied to `<file>.<pid>.new` in the same folder and swapped in with one File.Replace (a new file: one
+  move); the temp file is removed on failure.
+  Limit: an 8.3 short path on a command line (`C:UsersABCDEF~1...`) is not matched.
