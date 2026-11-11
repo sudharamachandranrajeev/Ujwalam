@@ -140,10 +140,16 @@ export function derivePseudoId(key, platform, platformUserId, displayName = '') 
 }
 
 /** Id generator; see the format at the top of this file. `wall` and `random` are test seams. */
-export function createIdGenerator({ wall = Date.now, random = randomBytes } = {}) {
+// floor (LU3 service swap, D337): the last id the previous event core published. Every id from this generator then
+// sorts after it (same ms: the counter continues above the floor's), so a client that skips ids not newer than the
+// last one it saw never skips a new event. A malformed floor is ignored.
+export const ID_PARTS_RE = /^e([0-9a-f]{12})-([0-9a-f]{8})-[0-9a-f]{8}$/;
+export function createIdGenerator({ wall = Date.now, random = randomBytes, floor = null } = {}) {
   const nonce = random(4).toString('hex');
   let lastMs = 0;
   let counter = 0;
+  const f = typeof floor === 'string' ? ID_PARTS_RE.exec(floor) : null;
+  if (f) { lastMs = parseInt(f[1], 16); counter = parseInt(f[2], 16); }
   return function nextId() {
     const now = wall();
     if (now > lastMs) { lastMs = now; counter = 0; } else { counter++; } // clock stepped back: keep lastMs

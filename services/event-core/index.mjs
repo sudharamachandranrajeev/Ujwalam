@@ -54,8 +54,10 @@ export { createAudit, AuditError } from './audit/index.mjs';
  *  console.warn). */
 export function createEventCore(opts = {}) {
   const key = opts.key ?? loadKey(resolveDataDir(opts)).key;
-  const ctx = { key, nextId: createIdGenerator({ wall: opts.wall }), wall: opts.wall, mono: opts.mono };
-  const bus = createBus({ queueLimit: opts.queueLimit });
+  // LU3 (D337): a swappable service passes the bus its API already serves (opts.bus) and the previous core's last
+  // event id (opts.idFloor), so the new core publishes on the same streams with ids that sort after the old ones.
+  const ctx = { key, nextId: createIdGenerator({ wall: opts.wall, floor: opts.idFloor ?? null }), wall: opts.wall, mono: opts.mono };
+  const bus = opts.bus ?? createBus({ queueLimit: opts.queueLimit });
   const mod = opts.moderation === false ? null : createModeration(opts.moderation ?? {});
   const audit = opts.audit ? createAudit({ now: opts.wall, ...opts.audit }) : null;
   // E7: with an audit attached, every first-seen dedupe key (a SHA-256, never the raw id) is queued for the audit worker.

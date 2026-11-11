@@ -14,6 +14,7 @@ import { readProfile, streamAssetsDir } from './alpha.mjs';
 import { createStudioServer } from './server.mjs';
 import { PARENT_PIPE_ENV, watchParent } from '../common/parent-pipe.mjs';
 
+export const SWAP_MSG = 'ujwalam-swap';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const UI_ROOT = path.resolve(HERE, '..', '..', 'ui');
 
@@ -70,6 +71,16 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
         if (c?.rearm && srv.rearmLaunchKey(c.rearm)) out('[studio-ui] new one-time login key armed (studio window reopened)');
       }
       if (buf.length > 4096) buf = '';
+    });
+  }
+  // LU3 service swap (D337): the launcher moves the login sessions from the old UI server process to the new one over
+  // the IPC channel (never stdout, never a file), so the studio window stays logged in across a swap.
+  if (typeof process.send === 'function') {
+    process.on('message', (m) => {
+      if (m?.t !== SWAP_MSG || !Number.isInteger(m.id)) return;
+      const reply = (r) => { try { if (process.connected) process.send({ t: SWAP_MSG, id: m.id, ...r }); } catch { /* the launcher times out */ } };
+      if (m.op === 'export-sessions') reply({ sessions: srv.exportSessions() });
+      else if (m.op === 'import-sessions') reply({ imported: srv.importSessions(m.sessions) });
     });
   }
   // watchParent: the launcher died (even by a hard kill): stop like on Ctrl-C (D234)

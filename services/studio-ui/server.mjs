@@ -1643,6 +1643,22 @@ export function createStudioServer(opts) {
       launchKey = k; launchBorn = now(); loginFails = 0;
       return true;
     },
+    /** LU3 service swap (D337): the login sessions, for the next UI server process of a swap. Sent over the launcher's
+     *  IPC channel only (cli.mjs), never written or printed. Pending confirmations and undo history are not carried. */
+    exportSessions() { return [...sessions].map(([sid, v]) => ({ sid, csrf: v.csrf })); },
+    /** Takes the sessions of the previous process (exportSessions). Malformed entries are skipped; at most sessionMax.
+     *  Returns the number taken. */
+    importSessions(list) {
+      if (!Array.isArray(list)) return 0;
+      let n = 0;
+      for (const e of list.slice(-limits.sessionMax)) {
+        if (!e || !/^[0-9a-f]{64}$/.test(e.sid ?? '') || typeof e.csrf !== 'string' || !/^[0-9a-f]{16,128}$/.test(e.csrf)) continue;
+        if (sessions.size >= limits.sessionMax && !sessions.has(e.sid)) sessions.delete(sessions.keys().next().value);
+        sessions.set(e.sid, { csrf: e.csrf });
+        n++;
+      }
+      return n;
+    },
     /** Test seam: current pending confirmations (server-side records, never sent to the page). */
     _pending: () => pending,
   };

@@ -133,7 +133,9 @@ export function createLiveAuthority({ onChange = () => {} } = {}) {
 }
 
 /** Launcher: answers the UI server's authority requests on its IPC channel; a closed channel closes the authority. */
-export function serveAuthority(child, authority) {
+/** isOwner (LU3 service swap): when given, only an exit or disconnect of the child that still owns the link closes the
+ *  authority; the old UI server process of a swap leaves it open for the new one. */
+export function serveAuthority(child, authority, { isOwner = () => true } = {}) {
   child.on('message', (m) => {
     if (m?.t !== AUTHORITY_MSG || !Number.isInteger(m.id)) return;
     const reply = (r) => { try { if (child.connected) child.send({ t: AUTHORITY_MSG, id: m.id, ...r }); } catch { /* the UI server times out and fails closed */ } };
@@ -141,7 +143,7 @@ export function serveAuthority(child, authority) {
     else if (m.op === 'arm') reply(authority.arm(m.gen));
     else if (m.op === 'revoke') authority.revoke(m.reason).then(reply, () => reply({ gen: null }));
   });
-  const gone = () => authority.close('ui-link-lost');
+  const gone = () => { if (isOwner(child)) authority.close('ui-link-lost'); };
   child.once('disconnect', gone);
   child.once('exit', gone);
 }

@@ -97,7 +97,30 @@ export function createSseClient(opts) {
     q.length = 0;
   }
 
-  return { close, stats: () => ({ ...totals, queued: q.length, blocked, closed }) };
+  /** LU3 hand-off (D337): waits until every event the bus has queued for this client is written and the socket has
+   *  taken it, then ends the response cleanly (never a destroy, so nothing written is lost) and resolves true. After
+   *  timeoutMs it destroys the connection and resolves false. Call it only once no new events are being published. */
+  function finish(timeoutMs = 5000) {
+    const t0 = Date.now();
+    return new Promise((resolve) => {
+      const tick = () => {
+        if (closed) { resolve(false); return; }
+        const busQueued = bus.stats().subscribers[name]?.queued ?? 0;
+        if (!blocked && busQueued === 0 && q.length === 0 && dropped === 0) {
+          close();
+          try { res.end(() => resolve(true)); } catch { resolve(false); }
+          return;
+        }
+        if (!blocked) pump();
+        if (Date.now() - t0 > timeoutMs) { close(); try { res.destroy(); } catch { /* gone */ } resolve(false); return; }
+        const t = timers.setTimeout(tick, 5);
+        t.unref?.();
+      };
+      tick();
+    });
+  }
+
+  return { close, finish, stats: () => ({ ...totals, queued: q.length, blocked, closed }) };
 }
 
 /** Parse ?kinds=a.,b → prefix list, or null when invalid. Each prefix: lower-case dotted word, 1..32 chars, at most 8. */

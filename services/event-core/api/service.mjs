@@ -34,7 +34,7 @@ export const REMOTE_FILE = 'remote.json'; // { address, port, prefixLen } of the
 export const STALL_DEFAULTS = Object.freeze({ thresholdMs: 200, maxBytes: 1_048_576 });
 
 /** Audit numbers for a stall record: queue depths, the last write and request. Numbers and op names only. */
-function stallContext(getCore) {
+export function stallContext(getCore) {
   const a = getCore()?.audit?.stats();
   if (!a) return { phase: 'start-up' };
   const ago = (t) => (t == null ? null : Math.round(performance.now() - t));
@@ -52,7 +52,7 @@ function stallContext(getCore) {
 /** Live markers (F6, flag 'live-markers'): built only when a host markers token is given (opts.hostToken; the launcher
  *  passes UJWALAM_HOST_MARKERS_TOKEN, see cli.mjs serve; the host lets that role call marker.add and mixer.list only). The host is found through opts.hostDiscovery (default <dataDir>/host.json).
  *  Any failure here is a log line and the service runs without markers. Returns the producer or null. */
-function startLiveMarkers({ core, dataDir, opts, out }) {
+export function startLiveMarkers({ core, dataDir, opts, out }) {
   if (opts.liveMarkers === false) return null;
   const token = opts.hostToken;
   if (!opts.liveMarkers?.host && (token === undefined || token === null || token === '')) { out('[serve] live markers: off (no host token)'); return null; }

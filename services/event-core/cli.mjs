@@ -36,6 +36,8 @@ import { dataDirNote, ensureSecureDir, resolveCliDataDir } from './config.mjs';
 import { createFixtureRecorder } from './streamerbot/anonymise.mjs';
 import { checkUrl, createStreamerbotConnector, DEFAULT_URL, isLoopback } from './streamerbot/connector.mjs';
 import { startService } from './api/service.mjs';
+import { startSwappableService } from './api/swappable.mjs';
+import readline from 'node:readline';
 import { auditCommand } from './audit/cli.mjs';
 import { formatPriority, setLivePriority } from './priority.mjs';
 import { createCredentialStore, credentialProvider, DEFAULT_TARGET } from './streamerbot/credential.mjs';
@@ -47,7 +49,7 @@ function parseArgs(argv) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const k = a.slice(2);
-      if (['show-text', 'no-fixtures', 'stdin', 'all', 'mock', 'no-stall-tracer', 'allow-remote'].includes(k)) out[k] = true;
+      if (['show-text', 'no-fixtures', 'stdin', 'all', 'mock', 'no-stall-tracer', 'allow-remote', 'swap-control', 'standby'].includes(k)) out[k] = true;
       else out[k] = argv[++i];
     } else out._.push(a);
   }
@@ -126,6 +128,39 @@ export async function listen(args, io = { out: (s) => console.log(s), signal: nu
   return { state: sb.state(), counts: Object.fromEntries(counts), stats: sb.stats(), notes };
 }
 
+/** Parses one swap control line from the supervisor (pure; tested): { cmd: 'handoff' | 'activate' | 'exit', params? } or
+ *  null. activate takes a JSON object (at most 4 KiB): { idFloor?, live?, remotePort? }. */
+export function swapCommand(line) {
+  if (typeof line !== 'string' || line.length > 4200) return null;
+  const t = line.trim();
+  if (t === 'swap:handoff') return { cmd: 'handoff' };
+  if (t === 'swap:exit') return { cmd: 'exit' };
+  const m = /^swap:activate(?: ({.*}))?$/.exec(t);
+  if (!m) return null;
+  let p = {};
+  if (m[1]) { try { p = JSON.parse(m[1]); } catch { return null; } }
+  if (!p || typeof p !== 'object' || Array.isArray(p)) return null;
+  const params = {};
+  if (typeof p.idFloor === 'string' && p.idFloor.length <= 64) params.idFloor = p.idFloor;
+  if (p.live && typeof p.live === 'object') params.live = { liveState: String(p.live.liveState ?? ''), panic: p.live.panic === true };
+  if (Number.isInteger(p.remotePort) && p.remotePort > 0 && p.remotePort < 65536) params.remotePort = p.remotePort;
+  return { cmd: 'activate', params };
+}
+
+// Swap control (LU3): one command per stdin line from the supervisor; one answer line per command on stdout
+// ("[swap] handed-off {...}", "[swap] active {...}", "[swap] failed <cmd> <code>"). Never a token or event text.
+function swapControl(svc, io, stop) {
+  const rl = readline.createInterface({ input: io.stdin ?? process.stdin });
+  rl.on('line', (line) => {
+    const c = swapCommand(line);
+    if (!c) return;
+    if (c.cmd === 'exit') { stop(); return; }
+    const run = c.cmd === 'handoff' ? svc.handoff() : svc.activate(c.params);
+    run.then((r) => io.out(`[swap] ${c.cmd === 'handoff' ? 'handed-off' : 'active'} ${JSON.stringify(r)}`),
+      (e) => io.out(`[swap] failed ${c.cmd} ${String(e?.code ?? e?.message ?? 'error').replace(/[^A-Za-z0-9_ :.-]/g, '').slice(0, 80)}`));
+  });
+}
+
 /** Starts the core with Streamer.bot ingest, the audit and the API. Prints the port, never a token. Read-only towards platforms.
  *  io.setPriority is a test seam (default priority.mjs setLivePriority); it returns { ok, target, before, after, error? }. */
 export async function serve(args, io = { out: (s) => console.log(s), signal: null }) {
@@ -151,19 +186,29 @@ export async function serve(args, io = { out: (s) => console.log(s), signal: nul
     ? { token: remoteToken, ...(typeof args['lan-address'] === 'string' ? { address: args['lan-address'] } : {}), ...(args['lan-port'] !== undefined ? { port: Number(args['lan-port']) } : {}) }
     : undefined;
   if (args.lan === true && !remoteToken) io.out('[serve] remote connections: off (--lan without a pairing token)');
-  const svc = await startService({
+  // LU3 service swap (D337, flag service-swap): --swap-control makes the core swappable and reads hand-off commands
+  // from stdin (swapControl below); --standby starts it as the NEW core of a swap (events buffered until activated);
+  // --public-port N is the supervisor's front port, written to api.json instead of this process's own port.
+  const swappable = args['swap-control'] === true;
+  const standby = swappable && args.standby === true;
+  const publicPort = swappable && args['public-port'] !== undefined ? Number(args['public-port']) : undefined;
+  if (publicPort !== undefined && !(Number.isInteger(publicPort) && publicPort > 0 && publicPort < 65536)) { io.out('[serve] --public-port needs a port'); return 2; }
+  const svc = await (swappable ? startSwappableService : startService)({
+    ...(swappable ? { standby, ...(publicPort ? { publicPort } : {}) } : {}),
     hostToken, ...(hostDiscovery ? { hostDiscovery } : {}), ...(remote ? { remote } : {}),
     dataDir: args['data-dir'], port, mock: args.mock === true, url: args.url, allowRemote: args['allow-remote'] === true, credential: args.credential,
     noFixtures: args['no-fixtures'] === true, out: io.out, ...(args['no-stall-tracer'] === true ? { stallTracer: false } : {}),
   });
   io.out(`[serve] stall tracer ${svc.stallTracer ? `on (> ${svc.stallTracer.summary().thresholdMs} ms, ${svc.stallFile ? 'stalls.jsonl in the data dir' : 'no file'})` : 'off'}`);
-  io.out(`[serve] api on 127.0.0.1:${svc.port}${args.mock === true ? ' (mock Streamer.bot)' : ''}; api.json written (${svc.apiFile.protection}); data dir ${svc.dataDirProtection}; no token printed; sending to platforms is off`);
+  if (standby) io.out(`[serve] standby: api on 127.0.0.1:${svc.port}; events are buffered until the supervisor activates this core; no token printed`);
+  else io.out(`[serve] api on 127.0.0.1:${svc.port}${args.mock === true ? ' (mock Streamer.bot)' : ''}; api.json written (${svc.apiFile.protection}); data dir ${svc.dataDirProtection}; no token printed; sending to platforms is off`);
   await new Promise((resolve) => {
     if (args.duration) setTimeout(resolve, Number(args.duration) * 1000);
     process.once('SIGINT', resolve);
     process.once('SIGTERM', resolve);
     io.signal?.addEventListener('abort', resolve);
     watchParent(resolve); // the launcher died (even by a hard kill): stop like on Ctrl-C (D234)
+    if (swappable) swapControl(svc, io, resolve);
   });
   await svc.stop();
   io.out('[serve] stopped; api.json removed');

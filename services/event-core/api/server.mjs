@@ -82,8 +82,18 @@ export function createApiServer(opts) {
   if (!remote && (!TOKEN_HEX.test(tokens.api) || !TOKEN_HEX.test(tokens.system))) throw new TypeError('tokens must be 64 hex characters');
   if (!remote && tokens.api === tokens.system) throw new TypeError('api and system tokens must differ');
   const dig = remote ? { remote: digest(tokens.remote) } : { api: digest(tokens.api), system: digest(tokens.system) };
-  const handles = !core.actions ? { api: null, system: null, remote: null }
-    : remote ? { remote: core.actions.forSource('remote') } : { api: core.actions.forSource('api'), system: core.actions.forSource('system') };
+  // Gate handles per role. Bound again when core.actions changes: a swappable service (LU3, D337) starts its API on a
+  // standby core object that gets its action gate only when it is activated.
+  let handlesOf;
+  let handleSet = null;
+  const handles = () => {
+    if (handleSet && handlesOf === core.actions) return handleSet;
+    handlesOf = core.actions;
+    handleSet = !core.actions ? { api: null, system: null, remote: null }
+      : remote ? { remote: core.actions.forSource('remote') } : { api: core.actions.forSource('api'), system: core.actions.forSource('system') };
+    return handleSet;
+  };
+  let ending = false; // LU3 hand-off: streams are being ended; no new stream is opened
   const timers = opts.timers ?? undefined;
   const now = opts.now ?? Date.now;
   const startedAt = new Date(now()).toISOString();
@@ -225,10 +235,12 @@ export function createApiServer(opts) {
     if (!m) return rpcErr(res, 200, id, E.METHOD_NOT_FOUND, 'method-not-found');
     if (!m.roles.includes(role)) return rpcErr(res, 403, id, E.FORBIDDEN, 'forbidden');
     const params = msg.params === undefined ? {} : msg.params;
+    // LU3 (D337): a standby core (not yet activated) or one that has handed over answers core.status only.
+    if ((core.standby === true || core.handedOff === true) && msg.method !== 'core.status') return rpcErr(res, 503, id, E.UNAVAILABLE, core.standby === true ? 'standby' : 'handed-over');
     const bad = validateParams(m.schema, params);
     if (bad) return rpcErr(res, 200, id, E.INVALID_PARAMS, bad);
     try {
-      const result = await m.run({ core, handle: handles[role], role, status }, params);
+      const result = await m.run({ core, handle: handles()[role], role, status }, params);
       stats.rpcOk++;
       send(res, 200, { jsonrpc: '2.0', id, result });
     } catch (e) {
@@ -245,6 +257,7 @@ export function createApiServer(opts) {
       kinds = kinds.length ? kinds.filter((k) => k.startsWith('system.') || k === 'system') : ['system.'];
       if (!kinds.length) return fail(res, 403, 'kinds-not-permitted');
     }
+    if (ending) return fail(res, 503, 'handing-over');
     if (sse.size >= L.sseMaxClients) return fail(res, 503, 'too-many-streams');
     res.writeHead(200, baseHeaders({ 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive' }));
     req.socket.setNoDelay(true);
@@ -305,6 +318,14 @@ export function createApiServer(opts) {
         });
       });
       return listening;
+    },
+    /** LU3 hand-off (D337): every open event stream sends what is queued for it and ends cleanly (sse.mjs finish).
+     *  New streams are refused from here on. Resolves { streams, clean }. */
+    async endStreams(timeoutMs = 5000) {
+      ending = true;
+      const all = [...sse];
+      const r = await Promise.all(all.map((c) => c.finish(timeoutMs)));
+      return { streams: all.length, clean: r.filter(Boolean).length };
     },
     address: () => { const a = server.address(); return a && typeof a === 'object' ? { host: a.address, port: a.port } : null; },
     async close() {
