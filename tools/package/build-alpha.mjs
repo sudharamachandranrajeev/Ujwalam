@@ -41,6 +41,7 @@ import {
   allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
 import { readZip, writeZip } from './zip.mjs';
+import { releaseParts } from './parts.mjs';
 import { nvencFileState, readManifest, runtimeNvencState } from '../obs-patch/build-obs-nvenc.mjs';
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -269,6 +270,8 @@ export async function buildAlpha(opts = {}) {
       vcRuntimeMin: vcRuntimeMin(path.dirname(hostExe)), commit, hostExeSha256: hostSha, studioExeSha256: sha256(readFileSync(studioExe)), obsRuntime: rel.obsRuntime,
       obsModules: obs.modules.shipped, systemDlls: obs.systemDlls,
       obsPatches: nvenc.sha ? [{ file: 'obs-nvenc.dll', state: nvenc.state, sha256: nvenc.sha, upstreamCommit: readManifest().patch.upstreamCommit }] : [],
+      // LU1 (D343): a hash per part (host, studio window, services, overlay, data), so a live update knows what it changes.
+      parts: releaseParts(files),
     };
     put('release.json', 'generated', { text: `${JSON.stringify(release, null, 2)}\n` });
     put('package.json', 'generated', { text: `${JSON.stringify({ name: 'ujwalam', version, private: true, license: 'GPL-3.0-or-later', type: 'module', engines: { node: `>=${rel.nodeMin}` } }, null, 2)}\n` });
