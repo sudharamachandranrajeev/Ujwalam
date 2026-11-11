@@ -14,7 +14,7 @@
     "muted": "#aaa58c",
     "accent": "#c8b560",
     "accentHi": "#e0cf7e",
-    "danger": "#ee6a50",
+    "danger": "#f47a5e",
     "ok": "#8fbf5a",
     "onAccent": "#1a1d14",
     "disabled": "#767a62"
@@ -32,17 +32,28 @@
     }
   },
   "typography": {
-    "family": "Bahnschrift",
+    "family": "Barlow",
     "fallbacks": [
       "Segoe UI"
     ],
-    "baseSize": 10,
+    "baseSize": 10.5,
     "captionSize": 8.5,
     "titleSize": 15,
     "headingWeight": 700,
     "letterSpacing": 0.2,
     "captionLetterSpacing": 2.2,
-    "captionCaps": true
+    "captionCaps": true,
+    "buttonCaps": true,
+    "tabCaps": true,
+    "headingCaps": true,
+    "scale": {
+      "h1": 15,
+      "h2": 12,
+      "subtitle": 10,
+      "body": 10.5,
+      "caption": 8.5,
+      "button": 10
+    }
   },
   "geometry": {
     "radius": {
@@ -73,12 +84,7 @@
         "color": "#0e100a"
       }
     },
-    "button": {
-      "extrusion": {
-        "depth": 2,
-        "color": "#0e100a"
-      }
-    },
+    "button": {},
     "primaryButton": {
       "shadow": {
         "blur": 6,
@@ -166,5 +172,27 @@
   },
   "icons": {
     "stroke": 2.4
+  },
+  "components": {
+    "button": {
+      "shape": "sharp",
+      "style": "solid",
+      "secondary": "outline",
+      "caps": true
+    },
+    "tabs": "segmented",
+    "input": "filled",
+    "focus": "border",
+    "switch": "plain",
+    "slider": {
+      "track": "thick",
+      "handle": "bar",
+      "valueBubble": false
+    },
+    "sectionHeader": "rule",
+    "card": "raised",
+    "list": "plain",
+    "chip": "bracket",
+    "density": "compact"
   }
 }

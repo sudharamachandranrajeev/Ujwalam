@@ -89,7 +89,7 @@ test('effect rules: glow only where it marks primary or active things; extrusion
   assert.ok(Object.values(light.depth).every((d) => !d.glow && !d.extrusion), 'Studio Light: soft shadows only');
   const tac = themes.find(({ t }) => t.id === 'tactical').t;
   assert.ok(tac.depth.roundControl.extrusion.depth >= 3 && tac.depth.primaryButton.extrusion.color2, 'Tactical: bevelled edges');
-  for (const id of ['daylight-blue', 'copper-graphite', 'teal-grid']) { // 2026-11-10: no effect on plain buttons (many widgets)
+  for (const id of ['daylight-blue', 'copper-graphite', 'teal-grid', 'studio-light', 'violet-night', 'neon-arcade', 'retro-wave', 'tactical']) { // 2026-11-10: no effect on plain buttons (many widgets)
     const d = themes.find(({ t }) => t.id === id).t.depth.button;
     assert.deepEqual(d, {}, `${id}: plain buttons carry no depth effect`);
   }

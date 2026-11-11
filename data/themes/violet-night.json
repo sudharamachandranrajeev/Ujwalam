@@ -32,9 +32,9 @@
     }
   },
   "typography": {
-    "family": "Segoe UI",
+    "family": "Inter",
     "fallbacks": [
-      "Segoe UI Variable Text"
+      "Segoe UI"
     ],
     "baseSize": 10,
     "captionSize": 8,
@@ -42,7 +42,18 @@
     "headingWeight": 600,
     "letterSpacing": 0,
     "captionLetterSpacing": 0.8,
-    "captionCaps": false
+    "captionCaps": false,
+    "buttonCaps": false,
+    "tabCaps": false,
+    "headingCaps": false,
+    "scale": {
+      "h1": 15,
+      "h2": 12,
+      "subtitle": 10.5,
+      "body": 10,
+      "caption": 8,
+      "button": 10
+    }
   },
   "geometry": {
     "radius": {
@@ -149,5 +160,27 @@
   },
   "icons": {
     "stroke": 2
+  },
+  "components": {
+    "button": {
+      "shape": "rounded",
+      "style": "soft",
+      "secondary": "ghost",
+      "caps": false
+    },
+    "tabs": "segmented",
+    "input": "filled",
+    "focus": "glow",
+    "switch": "plain",
+    "slider": {
+      "track": "thin",
+      "handle": "round",
+      "valueBubble": true
+    },
+    "sectionHeader": "plain",
+    "card": "raised",
+    "list": "plain",
+    "chip": "pill",
+    "density": "normal"
   }
 }
