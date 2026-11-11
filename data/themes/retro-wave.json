@@ -32,17 +32,28 @@
     }
   },
   "typography": {
-    "family": "Trebuchet MS",
+    "family": "Barlow",
     "fallbacks": [
       "Segoe UI"
     ],
-    "baseSize": 10,
-    "captionSize": 8,
+    "baseSize": 10.5,
+    "captionSize": 8.5,
     "titleSize": 16,
     "headingWeight": 700,
     "letterSpacing": 0.2,
     "captionLetterSpacing": 1.4,
-    "captionCaps": true
+    "captionCaps": true,
+    "buttonCaps": true,
+    "tabCaps": true,
+    "headingCaps": true,
+    "scale": {
+      "h1": 16,
+      "h2": 12,
+      "subtitle": 10,
+      "body": 10.5,
+      "caption": 8.5,
+      "button": 10
+    }
   },
   "geometry": {
     "radius": {
@@ -73,16 +84,14 @@
         "color": "accent",
         "opacity": 0.14,
         "when": "always"
+      },
+      "rim": {
+        "from": "#b8c4e0",
+        "to": "#5c6a8a",
+        "width": 1
       }
     },
-    "button": {
-      "glow": {
-        "blur": 10,
-        "color": "accentHi",
-        "opacity": 0.3,
-        "when": "hover"
-      }
-    },
+    "button": {},
     "primaryButton": {
       "shadow": {
         "blur": 8,
@@ -101,6 +110,14 @@
         "depth": 2,
         "color": "#8a1e66",
         "color2": "#c04a9a"
+      },
+      "inset": {
+        "blur": 8,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#05010f",
+        "opacity": 0.5,
+        "when": "pressed"
       }
     },
     "roundControl": {
@@ -186,5 +203,27 @@
   },
   "icons": {
     "stroke": 2
+  },
+  "components": {
+    "button": {
+      "shape": "pill",
+      "style": "metal",
+      "secondary": "outline",
+      "caps": true
+    },
+    "tabs": "pill",
+    "input": "inset",
+    "focus": "glow",
+    "switch": "labelled",
+    "slider": {
+      "track": "inset",
+      "handle": "sphere",
+      "valueBubble": true
+    },
+    "sectionHeader": "caps",
+    "card": "raised",
+    "list": "plates",
+    "chip": "pill",
+    "density": "normal"
   }
 }

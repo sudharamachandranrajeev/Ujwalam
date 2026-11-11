@@ -32,9 +32,9 @@
     }
   },
   "typography": {
-    "family": "Segoe UI",
+    "family": "Inter",
     "fallbacks": [
-      "Segoe UI Variable Text"
+      "Segoe UI"
     ],
     "baseSize": 10,
     "captionSize": 8,
@@ -42,7 +42,18 @@
     "headingWeight": 600,
     "letterSpacing": 0,
     "captionLetterSpacing": 0.6,
-    "captionCaps": false
+    "captionCaps": false,
+    "buttonCaps": false,
+    "tabCaps": false,
+    "headingCaps": false,
+    "scale": {
+      "h1": 15,
+      "h2": 12,
+      "subtitle": 10.5,
+      "body": 10,
+      "caption": 8,
+      "button": 10
+    }
   },
   "geometry": {
     "radius": {
@@ -69,15 +80,7 @@
         "opacity": 0.12
       }
     },
-    "button": {
-      "shadow": {
-        "blur": 6,
-        "offsetX": 0,
-        "offsetY": 1,
-        "color": "#1c2030",
-        "opacity": 0.1
-      }
-    },
+    "button": {},
     "primaryButton": {
       "shadow": {
         "blur": 10,
@@ -141,5 +144,27 @@
   },
   "icons": {
     "stroke": 1.8
+  },
+  "components": {
+    "button": {
+      "shape": "rounded",
+      "style": "solid",
+      "secondary": "outline",
+      "caps": false
+    },
+    "tabs": "underline",
+    "input": "outline",
+    "focus": "ring",
+    "switch": "plain",
+    "slider": {
+      "track": "thin",
+      "handle": "round",
+      "valueBubble": false
+    },
+    "sectionHeader": "rule",
+    "card": "raised",
+    "list": "plain",
+    "chip": "pill",
+    "density": "normal"
   }
 }

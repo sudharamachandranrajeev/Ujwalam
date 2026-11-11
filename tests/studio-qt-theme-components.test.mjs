@@ -112,10 +112,15 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
     assert.doesNotMatch(p.err, NO_ERRORS, p.err);
   });
 
-  for (const id of ['violet-night', 'retro-wave']) { // packs still without a components block (copper-graphite has one since T3, D344)
-    test(`${id} (no components block): the same base stylesheet with the flag on and off`, async () => {
-      const off = await probe({ env: { UJWALAM_THEME: id } });
-      const on = await probe({ flagOn: true, env: { UJWALAM_THEME: id } });
+  // Every shipped pack has a components block since T6 (D348), so the v1 case is tested on copies with the block removed.
+  for (const src of ['violet-night', 'retro-wave']) {
+    test(`${src} without its components block: the same base stylesheet with the flag on and off`, async () => {
+      const dir = tmp('ujw-qtc-v1-');
+      const { components, ...v1 } = JSON.parse(readFileSync(path.join(REPO, 'data', 'themes', `${src}.json`), 'utf8'));
+      writeFileSync(path.join(dir, 'v1-copy.json'), JSON.stringify({ ...v1, id: 'v1-copy', name: 'V1 copy' }));
+      const env = { UJWALAM_THEMES_DIR: dir, UJWALAM_THEME: 'v1-copy' };
+      const off = await probe({ env });
+      const on = await probe({ flagOn: true, env });
       assert.equal(on.theme.componentsOn, true);
       assert.equal(off.theme.componentsOn, false);
       assert.ok(off.theme.baseStyleHash && off.theme.baseStyleHash === on.theme.baseStyleHash, `${off.theme.baseStyleHash} vs ${on.theme.baseStyleHash}`);

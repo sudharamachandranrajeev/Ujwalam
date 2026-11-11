@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Reference themes T2-T5 (D344), headless probe: daylight-blue, copper-graphite, sand-teal and teal-grid load with the
+// Reference themes T2-T5 (D344) and the remaining five (T6, D348), headless probe: daylight-blue, copper-graphite, sand-teal and teal-grid load with the
 // flag theme-components on and no stylesheet errors, report the components block they ship, apply their bundled
 // open-licence font (Inter, Barlow, Exo 2: data/fonts, SIL OFL 1.1), and the specimen page is drawn at 100, 125 and
 // 150 % scale. UJWALAM_THEME_EVIDENCE=<dir> keeps the specimen pictures there. Skipped when the shell is not built.
@@ -27,6 +27,12 @@ const THEMES = [
   { id: 'copper-graphite', font: 'Barlow', density: 1, v2Depth: 2 },
   { id: 'sand-teal', font: 'Inter', density: 1.25, v2Depth: 2 },
   { id: 'teal-grid', font: 'Exo 2', density: 0.75, v2Depth: 1 },
+  // T6 (D348): the five remaining packs, same checks
+  { id: 'studio-light', font: 'Inter', density: 1, v2Depth: 0 },
+  { id: 'violet-night', font: 'Inter', density: 1, v2Depth: 0 },
+  { id: 'neon-arcade', font: 'Exo 2', density: 0.75, v2Depth: 1 },
+  { id: 'retro-wave', font: 'Barlow', density: 1, v2Depth: 2 },
+  { id: 'tactical', font: 'Barlow', density: 0.75, v2Depth: 0 },
 ];
 const pack = (id) => JSON.parse(readFileSync(path.join(REPO, 'data', 'themes', `${id}.json`), 'utf8'));
 const flat = (c) => Object.fromEntries(Object.entries(c).flatMap(([k, v]) => (v && typeof v === 'object' ? Object.entries(v).map(([k2, v2]) => [`${k}.${k2}`, String(v2)]) : [[k, String(v)]])));

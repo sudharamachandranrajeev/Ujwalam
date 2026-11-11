@@ -33,12 +33,9 @@ test('every variant in the schema has a contrast table (and only those)', () => 
   for (const [k, values] of keys) assert.deepEqual([...values].map(String).sort(), Object.keys(VARIANTS[k]).sort(), k);
 });
 
-// Gaps in the shipped v1 looks, found by this test (2026-11-11). T1 must not change how existing packs look, so they
-// are listed here and stay until the pack is redesigned (T2-T6). The list is exact: a new gap fails, and so does a
-// fixed one (remove it here).
-const KNOWN_BASE_GAPS = [
-  'tactical normal: error and warning text #ee6a50 on #2d3224 = 4.28 (needs 4.5)', // task row warning on the field colour
-];
+// Gaps in the shipped looks. The list is exact: a new gap fails, and so does a fixed one (remove it here). Empty since
+// T6 (D348): Tactical's warning text was the last one, fixed by a lighter danger colour.
+const KNOWN_BASE_GAPS = [];
 
 test('every pack, every state: text >= 4.5:1, controls and focus >= 3:1 (base look plus the variants it picks)', () => {
   const bad = packs.flatMap(failures);
