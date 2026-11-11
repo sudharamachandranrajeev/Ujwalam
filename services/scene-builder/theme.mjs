@@ -108,7 +108,9 @@ export function mapColours(read) {
   const prov = {};
   const put = (token, l, how, from, why) => { prov[token] = { hex: labHex(l), how, from, why }; return labHex(l); };
   const bg = lab(roles.background.hex);
-  const dark = bg[0] < 0.5;
+  // dark = light text on a darker ground, as the reference shows it (a mid-tone ground goes by its text), else by the
+  // ground's lightness
+  const dark = roles.text ? contrast(rgb(roles.text.hex), [0, 0, 0]) > contrast(rgb(roles.background.hex), [0, 0, 0]) : bg[0] < 0.5;
   const colors = {};
   colors.bg = put('bg', bg, roles.background.how, 'background', roles.background.why);
   let panel = lab(roles.surface.hex);
@@ -289,7 +291,7 @@ export function themeFromRead(read, { name = null, id = null } = {}) {
     return { token, hex, how: pushed.length ? 'derived' : p.how, from: p.from, why: pushed.length ? `${p.why}; pushed for contrast: ${pushed.map((x) => `${x.from} -> ${x.to}`).join(', ')}` : p.why };
   });
   const notes = [];
-  if (deltaE(lab(pack.colors.danger), lab(pack.colors.accent)) < 0.08) notes.push(`danger ${pack.colors.danger} is close to the accent ${pack.colors.accent} (a red reference): the warning colour is told apart by its label and icon only`);
+  if (deltaE(lab(pack.colors.danger), lab(pack.colors.accent)) < 0.08) notes.push(`danger ${pack.colors.danger} is close to the accent ${pack.colors.accent}: the warning colour is told apart by its label and icon only`);
   if (v.glow && read.style.glow.colour) notes.push(`glow colour ${read.style.glow.colour} read from the reference (decoration: not a contrast pair)`);
   notes.push('shadow colour #000000: a shadow darkens what is under it; it is not a palette colour');
   notes.push('motion, control sizes and padding are the studio defaults (a still reference does not show them)');
