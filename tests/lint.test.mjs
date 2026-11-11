@@ -102,11 +102,11 @@ test('trailing-ws: unified diffs are exempt (blank context line is a space by fo
   assert.deepEqual((await run({ 'p/fix.diffx': ' \n' }, 'trailing-ws')).map(formatFinding), ['p/fix.diffx:1: trailing-ws: trailing whitespace']);
 });
 
-test('trailing-ws: licence texts of the bundled fonts are exempt (D344); any other file under data/fonts is not', async () => {
+test('trailing-ws: exactly the three pinned licence texts of the bundled fonts are exempt (D344); any other file under data/fonts is not', async () => {
   const sp = 'x ' + String.fromCharCode(10);
   assert.deepEqual(await run({ 'data/fonts/Inter-OFL.txt': sp }, 'trailing-ws'), []);
-  assert.deepEqual((await run({ 'data/fonts/notes.txt': sp, 'data/other/Inter-OFL.txt': sp }, 'trailing-ws')).map(formatFinding),
-    ['data/fonts/notes.txt:1: trailing-ws: trailing whitespace', 'data/other/Inter-OFL.txt:1: trailing-ws: trailing whitespace']);
+  assert.deepEqual((await run({ 'data/fonts/notes.txt': sp, 'data/other/Inter-OFL.txt': sp, 'data/fonts/Evil-OFL.txt': sp }, 'trailing-ws')).map(formatFinding),
+    ['data/fonts/Evil-OFL.txt:1: trailing-ws: trailing whitespace', 'data/fonts/notes.txt:1: trailing-ws: trailing whitespace', 'data/other/Inter-OFL.txt:1: trailing-ws: trailing whitespace']);
 });
 
 test('spdx: missing header flagged; header after shebang or doctype accepted; json and unknown exempt', async () => {

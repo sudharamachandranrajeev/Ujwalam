@@ -38,7 +38,7 @@ export const STUDIO_QT = Object.freeze([
   ['studio/platforms/qwindows.dll', 'plugins/platforms/qwindows.dll'], ['studio/platforms/qoffscreen.dll', 'plugins/platforms/qoffscreen.dll'],
 ]);
 import {
-  OFL_FONTS, OFL_FONT_LICENCES, allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
+  OFL_FONTS, OFL_FONT_LICENCE_SHA, allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
 import { readZip, writeZip } from './zip.mjs';
 import { nvencFileState, readManifest, runtimeNvencState } from '../obs-patch/build-obs-nvenc.mjs';
@@ -314,7 +314,7 @@ export async function buildAlpha(opts = {}) {
     if (problems.length) throw new Error(`package checks failed:\n  ${problems.join('\n  ')}`);
     // Bundled fonts (D344): the staged bytes must be the pinned OFL files, each with its licence text beside it.
     const fontBad = [...Object.entries(OFL_FONTS).filter(([r, h]) => { const f = files.find((x) => x.rel === r); return !f || sha256(readFileSync(f.abs)) !== h; }).map(([r]) => `font missing or not the pinned file: ${r}`),
-      ...OFL_FONT_LICENCES.filter((r) => !rels.includes(r)).map((r) => `font licence text missing: ${r}`)];
+      ...Object.entries(OFL_FONT_LICENCE_SHA).filter(([r, h]) => { const f = files.find((x) => x.rel === r); return !f || sha256(readFileSync(f.abs)) !== h; }).map(([r]) => `font licence text missing or not the pinned file: ${r}`)];
     if (fontBad.length) throw new Error(`package checks failed:\n  ${fontBad.join('\n  ')}`);
     const scan = privateScan(files.filter((f) => f.origin !== 'obs').map((f) => f.abs), profile);
     if (!scan.ok) throw new Error(`private-term scan failed (terms are never printed):\n${scan.out}`);

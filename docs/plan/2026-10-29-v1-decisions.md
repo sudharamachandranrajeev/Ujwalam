@@ -889,12 +889,12 @@ framework code was added. Branch `theme/t2-t5-reference-themes`.
   `QFontDatabase::addApplicationFont` for each `*.ttf` in `UJWALAM_FONTS_DIR`, `<app>/fonts` or the repo/install
   `data/fonts`. This process only. The probe reports `bundledFamilies`.
 - **Allowlist rule change.** The packager's blanket font-file ban (D133 era, "none ship") becomes an allowlist: only the
-  12 pinned files in `OFL_FONTS` / `OFL_FONT_LICENCES` (`tools/package/manifest.mjs`) ship, each pinned by SHA-256, and
+  12 pinned files in `OFL_FONTS` / `OFL_FONT_LICENCE_SHA` (`tools/package/manifest.mjs`) ship, each pinned by SHA-256, and
   `build-alpha.mjs` fails if a staged font differs from its pin or a licence text is missing. Every other font file is
   still forbidden, and Microsoft fonts (Corbel, Consolas) stay forbidden by name as before.
-- **Lint rule change (a check that flagged a verbatim third-party file).** The `trailing-ws` rule skips the three
-  `data/fonts/<Family>-OFL.txt` licence texts, the same way it already skips vendored `.diff`/`.patch` files: they are
-  byte-identical copies of upstream and their hashes are pinned. Any other file there is still checked
+- **Lint rule change (a check that flagged a verbatim third-party file).** The `trailing-ws` rule skips exactly the three
+  licence paths in `OFL_FONT_LICENCES` (not a pattern), the same way it already skips vendored `.diff`/`.patch` files: they are
+  byte-identical copies of upstream; their SHA-256 is pinned in `OFL_FONT_LICENCE_SHA` and checked by `build-alpha.mjs` and `tests/package-alpha.test.mjs`. Fonts register once per process (`loadBundledFonts` guard; Codex review). Any other file there is still checked
   (`tests/lint.test.mjs`).
 - **Theme designs** (measurement to value per theme: `docs/evidence/2026-11-11-t2-t5-reference-themes.md`):
   - daylight-blue: rounded solid buttons with outline secondary, underline tabs, outline inputs, ring focus, plain

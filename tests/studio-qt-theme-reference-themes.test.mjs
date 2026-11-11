@@ -89,6 +89,12 @@ describe('Qt studio reference themes T2-T5 (D344, headless probe)', { skip }, ()
     });
   }
 
+  test('fonts register once per process: a second load adds no font files', async () => {
+    const p = await probe({ ms: 5000, actions: 'fonts:load,fonts:load', env: { UJWALAM_THEME: 'teal-grid' } });
+    assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
+    assert.equal(p.theme.fontAdds, 9, 'nine ttf files, added once');
+  });
+
   test('the three families each ship regular, semibold and bold (the weights the packs use)', async () => {
     const p = await probe({ ms: 4500, env: { UJWALAM_THEME: 'teal-grid' } });
     for (const f of ['Inter', 'Barlow', 'Exo 2']) assert.ok(p.theme.bundledFamilies.some((x) => x === f || x.startsWith(`${f} `)), `${f}: ${JSON.stringify(p.theme.bundledFamilies)}`);

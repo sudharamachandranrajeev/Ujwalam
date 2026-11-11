@@ -104,9 +104,14 @@ QStringList searchDirs()
 // Bundled open-licence fonts (SIL OFL 1.1, D344): data/fonts beside the app (package: <root>/data/fonts, studio exe in
 // <root>/studio), or UJWALAM_FONTS_DIR. Loaded for this process only with addApplicationFont; never installed into Windows.
 QStringList g_bundledFamilies;
+bool g_fontsLoaded = false;
+int g_fontAdds = 0; // addApplicationFont calls (probe): stays at the file count however often this runs
 
 void loadBundledFonts()
 {
+	if (g_fontsLoaded) // once per process: every call would register the same files again (Codex review)
+		return;
+	g_fontsLoaded = true;
 	QStringList dirs;
 	const QString env = qEnvironmentVariable("UJWALAM_FONTS_DIR");
 	if (!env.isEmpty())
@@ -125,6 +130,7 @@ void loadBundledFonts()
 				continue;
 			seen.insert(fi.fileName());
 			const int id = QFontDatabase::addApplicationFont(fi.absoluteFilePath());
+			g_fontAdds++;
 			if (id >= 0)
 				for (const QString &fam : QFontDatabase::applicationFontFamilies(id))
 					if (!g_bundledFamilies.contains(fam))
@@ -1418,6 +1424,7 @@ QJsonObject probe()
 	o.insert(QStringLiteral("family"), g_cur.family);
 	o.insert(QStringLiteral("appliedFamily"), QFontInfo(QApplication::font()).family());
 	o.insert(QStringLiteral("bundledFamilies"), QJsonArray::fromStringList(g_bundledFamilies));
+	o.insert(QStringLiteral("fontAdds"), g_fontAdds);
 	o.insert(QStringLiteral("depthWidgets"), depth::count());
 	o.insert(QStringLiteral("depthEligible"), depth::eligible());
 	o.insert(QStringLiteral("backgroundKind"), g_cur.bg.kind);
@@ -1458,6 +1465,10 @@ bool probeAction(const QString &action)
 {
 	if (action.startsWith(QStringLiteral("theme:")))
 		return setCurrent(action.mid(6));
+	if (action == QStringLiteral("fonts:load")) { // (tests) a second load must register nothing
+		loadBundledFonts();
+		return true;
+	}
 	if (action == QStringLiteral("components:on") || action == QStringLiteral("components:off")) { // D336 (tests)
 		setComponents(action.endsWith(QStringLiteral("on")));
 		return true;

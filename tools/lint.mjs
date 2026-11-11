@@ -22,6 +22,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { OFL_FONT_LICENCES } from './package/manifest.mjs';
 
 export const RULES = ['syntax-js', 'syntax-py', 'eol', 'trailing-ws', 'spdx', 'secret', 'user-path', 'hidden-window'];
 // Rules whose findings an allow marker can silence.
@@ -205,9 +206,10 @@ function checkText(rel, text, lines, out, wanted, ctx) {
   // Unified diffs (.diff/.patch): a blank context line is a single space by format, and vendored patches
   // must stay byte-identical to upstream, so trailing whitespace is content there, not a defect. Only this
   // rule is off for them; every other rule (secret, user-path, eol, spdx) still runs.
-  // Same for the bundled fonts' licence texts (data/fonts/<Family>-OFL.txt, D344): copied byte for byte from the
-  // upstream font repository, and their SHA-256 is pinned in tools/package/manifest.mjs.
-  const isDiff = /\.(diff|patch)$/i.test(rel) || /^data\/fonts\/[A-Za-z0-9]+-OFL\.txt$/.test(rel);
+  // Same for the three bundled fonts' licence texts (exactly the paths in OFL_FONT_LICENCES, D344): copied byte for
+  // byte from the upstream font repositories; their SHA-256 is pinned in tools/package/manifest.mjs and checked by the
+  // package build and tests/package-alpha.test.mjs.
+  const isDiff = /\.(diff|patch)$/i.test(rel) || OFL_FONT_LICENCES.includes(rel);
   if (wanted('trailing-ws') && !isDiff) {
     lines.forEach((l, i) => {
       if (/[ \t]+$/.test(l)) out.push([rel, i + 1, 'trailing-ws', 'trailing whitespace']);
