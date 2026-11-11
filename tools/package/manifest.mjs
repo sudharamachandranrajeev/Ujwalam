@@ -64,7 +64,7 @@ export const REPO_FILES = Object.freeze([
   'data/effects/guards.json', 'data/effects/flash-measurements.json',
   'data/moderation/blocklist.json', 'data/moderation/blocklist.schema.json',
   'data/overlays/feed-scopes.json',
-  'data/outputs/alpha-live.json', 'data/outputs/alpha-practice.json', 'data/outputs/guard/live-test-budget.json',
+  'data/outputs/alpha-live.json', 'data/outputs/alpha-practice.json', 'data/outputs/guard/live-test-budget.json', 'data/outputs/addons/instagram-live.json',
   'data/posting/templates.json', 'data/posting/limits.json',
   // read at run time by shipped services; missing before alpha.23 (dataRefProblems below now catches this)
   'data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json',

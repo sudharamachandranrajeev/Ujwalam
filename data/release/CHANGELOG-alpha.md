@@ -2,6 +2,13 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.25 — 2026-11-11
+
+- Fixed a crash: switching an effect (for example a shadow) on or off for a layer that was selected in the preview could close the video engine. The same fault caused the crash on 10 November. The engine was also checked for related faults, and four were fixed: changing a layer's effects could flash the new copy for one frame; a scene could be deleted while a fade was still showing it; a stuck overlay helper could hang the engine; a shadow on a very small, large-source layer could make the layer disappear.
+- Reels stay within the longest length per reel type (60 s by default) and are split into parts at clip boundaries when longer. Settings > Clips sets the shortest and longest length per type.
+- Reel opening (switch "reel-hook", off): each reel opens on its best moment in the first seconds. Burned-in captions (switch "reel-captions", off) from local speech to text, shown only when the words are heard clearly.
+- Instagram Live (switch "instagram-live", off; read when a stream starts): the vertical picture can go to Instagram with the key you paste for each broadcast.
+- The desktop shortcut starts Ujwalam ready for a live stream; practice has its own shortcut.
 ## 0.1.0-alpha.24 — 2026-11-11
 
 - Nine full studio themes (four reference designs and five reworked ones) using bundled open-licence fonts (Inter, Exo 2, Barlow). Switch "theme-components" (off) turns on their buttons, tabs, cards and edges; Settings > Appearance > Preview all components shows them. Every theme passes the contrast check.
