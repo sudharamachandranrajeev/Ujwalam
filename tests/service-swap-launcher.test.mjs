@@ -93,3 +93,49 @@ test('launcher with the flag on: the event core and the UI server swap over IPC 
   assert.equal(code, 0);
   assert.doesNotMatch(out, /stopping Ujwalam|did not start/);
 });
+
+test('launcher with the flag on: the one-time login key stays one-time across UI swaps (Codex review P2, security)', async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'lu3-key-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const dataDir = path.join(root, 'core');
+  mkdirSync(dataDir, { recursive: true });
+  writeFileSync(path.join(dataDir, 'flags.local.json'), JSON.stringify({ flags: { [SERVICE_SWAP_FLAG]: true } }));
+  // A stand-in "browser" that only records the login URL (in this temp folder, deleted with it) and does not use it.
+  const catcher = path.join(root, 'catch-url.mjs');
+  const urlFile = path.join(root, 'url.txt');
+  writeFileSync(catcher, "import { writeFileSync } from 'node:fs';\nwriteFileSync(process.argv[2], process.argv.at(-1));\n");
+  const child = spawn(process.execPath, [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--mock', '--fake-host', '--stop-on-stdin', '--data-dir', dataDir,
+    '--feedback-dir', path.join(root, 'feedback'), '--profile', path.join(REPO, 'tests', 'fixtures', 'project', 'profile.fixture.json')], {
+    stdio: ['pipe', 'pipe', 'pipe', 'ipc'], windowsHide: true,
+    env: { ...process.env, UJWALAM_HEADLESS: '1', UJWALAM_BROWSER: process.execPath, UJWALAM_BROWSER_ARGS: `${catcher} ${urlFile}`,
+      UJWALAM_HOST_EXE: path.join(root, 'no-host.exe'), UJWALAM_OBS_RUNTIME: root, UJWALAM_HOST_DATA: path.join(root, 'host') },
+  });
+  t.after(() => killChildTree(child));
+  let out = '';
+  child.stdout.on('data', (d) => { out += d; });
+  child.stderr.on('data', (d) => { out += d; });
+  let url = '';
+  for (let i = 0; i < 600 && !url; i++) { await sleep(50); try { url = readFileSync(urlFile, 'utf8'); } catch { /* not yet */ } }
+  assert.match(url, /^http:\/\/127\.0\.0\.1:\d+\/login\?k=[0-9a-f]{64}$/, out.slice(-2000));
+  const u = new URL(url);
+  const login = () => new Promise((resolve) => { http.get({ host: '127.0.0.1', port: Number(u.port), path: `${u.pathname}${u.search}`, agent: false }, (r) => { r.resume(); resolve(r.statusCode); }).on('error', () => resolve(0)); });
+  let id = 0;
+  const swap = (service) => new Promise((resolve) => {
+    const my = ++id;
+    const on = (m) => { if (m?.t === 'ujwalam-swap' && m.id === my) { child.off('message', on); resolve(m); } };
+    child.on('message', on);
+    child.send({ t: 'ujwalam-swap', id: my, service, root: REPO });
+  });
+  const first = (await swap('studio-ui')).result; // before the login: the unused key moves to the new process
+  const used = await login();
+  const second = (await swap('studio-ui')).result; // after the login: the used key stays used
+  const again = await login();
+  const third = (await swap('studio-ui')).result;
+  const stillRefused = await login();
+  child.stdin.end();
+  await new Promise((r) => child.once('exit', r));
+  assert.deepEqual([first, second, third], ['swapped', 'swapped', 'swapped'], out.slice(-3000));
+  assert.equal(used, 302, 'an unused key still logs in once after a swap');
+  assert.equal(again, 401, 'a used key never logs in again on the new process');
+  assert.equal(stillRefused, 401);
+});

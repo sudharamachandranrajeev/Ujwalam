@@ -1227,10 +1227,15 @@ export async function main(argv = process.argv.slice(2)) {
     await uiFront.listen();
   }
   let uiSlot = null;
+  // Only the first UI process gets the one-time login key. A swap replacement starts with key login off and takes the
+  // key's state (used or not, its age, failures, lock) from the old process inside the front's switch (Codex review P2,
+  // security), so a login URL already used can never log in again after a swap.
+  let uiSpawned = 0;
   const spawnUi = (root) => {
+    const first = uiSpawned++ === 0;
     const c = spawn(process.execPath, [path.join(root, 'services', 'studio-ui', 'cli.mjs'), ...uiArgs.slice(1)], {
       stdio: ['pipe', 'pipe', 'inherit', 'ipc'], windowsHide: true, // stdin: the parent pipe (D234); ipc: the go-live authority (D303)
-      env: { ...process.env, ...PARENT_PIPE, [SESSION_ENV]: liveSession, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '', UJWALAM_REMOTE_TOKEN: remoteToken ?? '' },
+      env: { ...process.env, ...PARENT_PIPE, [SESSION_ENV]: liveSession, UJWALAM_UI_LAUNCH_KEY: first ? launchKey : '', UJWALAM_UI_KEY_LOGIN: first ? '' : 'off', UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '', UJWALAM_REMOTE_TOKEN: remoteToken ?? '' },
     });
     // Every UI server process serves the one authority; only the exit of the current one closes it (LU3).
     serveAuthority(c, authority, { isOwner: (x) => !uiSlot || x === uiSlot.child() });
@@ -1302,7 +1307,8 @@ export async function main(argv = process.argv.slice(2)) {
           return;
         }
         const key = hex(32);
-        try { uiChild().stdin.write(`rearm ${key}\n`); } catch { console.log(`[studio] Qt shell ended unexpectedly (${what}); could not reopen it`); return; }
+        // Through the slot when swaps are on: a rearm during a swap waits and goes to the process that serves after it.
+        try { if (uiSlot) { if (!uiSlot.control(`rearm ${key}`)) throw new Error('not sent'); } else uiChild().stdin.write(`rearm ${key}\n`); } catch { console.log(`[studio] Qt shell ended unexpectedly (${what}); could not reopen it`); return; }
         console.log(`[studio] Qt shell ended unexpectedly (${what}); the studio keeps running. Reopening the window in 2 s.`);
         setTimeout(() => {
           if (stopping) return;

@@ -39,7 +39,9 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   try { dataDir = resolveDataDir({ dataDir: typeof args['data-dir'] === 'string' ? args['data-dir'] : undefined }); } catch (e) { out(`[studio-ui] no data dir (${e.message}); event core and host discovery files are not available`); }
   const core = createCoreClient({ dataDir, env });
   const host = createHostRouter({ dataDir, env, forceFake: args['fake-host'] === true });
-  const launchKey = env.UJWALAM_UI_LAUNCH_KEY && env.UJWALAM_UI_LAUNCH_KEY.length >= 32 ? env.UJWALAM_UI_LAUNCH_KEY : randomBytes(32).toString('hex');
+  // UJWALAM_UI_KEY_LOGIN=off (LU3 swap replacement): no key until the launcher imports the previous one or arms one.
+  const launchKey = env.UJWALAM_UI_KEY_LOGIN === 'off' ? null
+    : env.UJWALAM_UI_LAUNCH_KEY && env.UJWALAM_UI_LAUNCH_KEY.length >= 32 ? env.UJWALAM_UI_LAUNCH_KEY : randomBytes(32).toString('hex');
   // --feedback-dir: the folder the host's feedback hotkey writes (launch.mjs passes the same one); default <repo>/feedback.
   const feedbackDir = typeof args['feedback-dir'] === 'string' ? path.resolve(args['feedback-dir']) : undefined;
   // --profile / --release: for the Report button only (links.issues_url, version). launch.mjs passes the same files as the diag bundle.
@@ -79,8 +81,8 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
     process.on('message', (m) => {
       if (m?.t !== SWAP_MSG || !Number.isInteger(m.id)) return;
       const reply = (r) => { try { if (process.connected) process.send({ t: SWAP_MSG, id: m.id, ...r }); } catch { /* the launcher times out */ } };
-      if (m.op === 'export-sessions') reply({ sessions: srv.exportSessions() });
-      else if (m.op === 'import-sessions') reply({ imported: srv.importSessions(m.sessions) });
+      if (m.op === 'export-sessions') reply({ sessions: srv.exportSessions(), login: srv.exportLogin() });
+      else if (m.op === 'import-sessions') reply({ imported: srv.importSessions(m.sessions), login: srv.importLogin(m.login) });
     });
   }
   // watchParent: the launcher died (even by a hard kill): stop like on Ctrl-C (D234)

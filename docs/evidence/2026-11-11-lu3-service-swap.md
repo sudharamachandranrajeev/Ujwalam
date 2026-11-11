@@ -83,6 +83,40 @@ HTTP; the host's render and encode path does not wait on the event core or the U
   failed core buffered are lost (double failure).
 - The Python workers are not wired to the worker slot in the launcher yet. The swap soak uses a stand-in worker.
 - Host and overlay server: never swapped while live (LU5).
+- A studio-window rearm that arrives during a UI swap waits until the swap ends (up to the swap's time limits).
+- A hand-over that ignores its abort for longer than the grace (30 s) ends the swap as `failed` with nothing
+  restored; the supervisor then needs a manual look.
+
+## Codex review fixes (2026-11-11)
+
+Codex reviewed the branch and found 1 P1 and 6 P2 problems. Each fix has a regression test that failed before the fix
+(checked with the fix stashed) and passes after it.
+
+- P1, `swap.mjs`: a step that timed out kept running. Each step now gets an AbortSignal. A timed-out step is aborted
+  and awaited before the rollback or restore. A hand-over that ignores the abort past the grace ends the swap as
+  `failed`, and nothing is restored on top of it. Tests: `service-swap-machine` (2), `service-swap-front` (1).
+- P2, `event-core/api/server.mjs`: a core activated again refused event streams (`ending` stayed set). Fixed with
+  `reopenStreams()`. Test: `service-swap-event-core`.
+- P2, `supervisor/front.mjs`: the connect timeout of a handed-over stream was never cleared, so a quiet stream was cut
+  after 5 s. Test: a stream quiet for 5.6 s survives.
+- P2, `front.mjs`: streams were collected before in-flight requests drained. Test: a stream opened during the drain
+  moves too.
+- P2, `swappable.mjs`: a standby buffer overflow still let the swap succeed. The candidate now fails its check, is
+  refused before the hand-off and can never activate. Test: overflow refusal (activate guard).
+- P2, `sse.mjs`: the hand-off deadline ended at `res.end()`. It now lasts until finish, close or error. Test.
+- P2 (security), `studio-ui/launch.mjs`: each new UI process got the original one-time login key, so a login URL
+  already used worked again after a swap. Now only the first process gets the key. A replacement starts with key
+  login off (`UJWALAM_UI_KEY_LOGIN=off`). Inside the front's switch it imports the key's state from the old process
+  over IPC (`exportLogin`/`importLogin`: the key or null once used, its age, failures and lock). Malformed state keeps
+  key login off. A studio-window rearm sent during a swap waits for the swap and goes to the process that serves after
+  it (`uiSlot.control`). Tests: `service-swap-launcher` (the real launcher: unused key logs in once after a swap; a
+  used key gets 401 after two more swaps; before the fix it got 302), `service-swap-ui-worker` (export/import cases;
+  rearm during a swap; before the fix `control` did not exist).
+
+Suites after the fixes, one at a time with `--test-timeout=60000`: machine 12, front 10, event-core 8 (20 swaps, 6486
+events sent and received), event-core-api-sse 11, event-core-api 27, ui-worker 4, launcher 4, studio-ui-server 40,
+studio-ui-alpha 37 (1 skipped, as before), studio-crash-capture 4, studio-tray 14, studio-ui-crash-recovery 5: all
+pass. The full CI and the swap soak were not run (the soak stays UNVERIFIED, above).
 
 ## Also fixed
 

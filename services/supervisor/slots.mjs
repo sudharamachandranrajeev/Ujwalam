@@ -110,7 +110,7 @@ function slotBase({ name, onUnexpectedExit, onSpawn, onGone, log }) {
       if (st.swaps.length > 100) st.swaps.shift();
       st.log(`[swap ${name}] ${r.result} in ${r.ms} ms${r.result === 'swapped' ? '' : ` (${r.history.filter((h) => !h.ok).map((h) => `${h.action}: ${h.error}`).join('; ')})`}`);
       return r;
-    } finally { st.busy = false; }
+    } finally { st.busy = false; st.afterRun?.(); }
   };
   return st;
 }
@@ -248,6 +248,9 @@ const UI_PORT_RE = /listening on http:\/\/127\.0\.0\.1:(\d+)\//;
 export function createUiSlot(opts) {
   const st = slotBase({ ...opts, name: 'studio-ui' });
   const { front } = opts;
+  const queued = []; // control lines that arrived during a swap
+  const send = (line) => { try { st.current?.child.stdin?.write(`${line}\n`); return true; } catch { return false; } };
+  st.afterRun = () => { while (queued.length) send(queued.shift()); };
   function launch(root) {
     const child = opts.spawn(root);
     const lines = lineReader(child, (l) => opts.onLine?.(l, child));
@@ -267,6 +270,13 @@ export function createUiSlot(opts) {
     root: () => st.root,
     busy: () => st.busy,
     history: () => [...st.swaps],
+    /** A control line for the current UI server (the launcher's `rearm <key>`). During a swap it waits and goes to
+     *  whichever process serves when the swap ends, so a new key never lands on a process that already exported its
+     *  login state (Codex review P2). */
+    control(line) {
+      if (st.busy) { queued.push(line); return true; }
+      return send(line);
+    },
     async swap(root) {
       const old = st.current;
       if (!old) return { result: 'refused', reason: 'not started' };
@@ -292,9 +302,12 @@ export function createUiSlot(opts) {
               endOld: 'cut',
               // Requests are held while this runs, so no login can happen between the copy and the switch.
               prepare: async () => {
+                // The one-time login key's state moves with them (Codex review P2): the new process starts with key
+                // login off, so a key used on the old one is never accepted again.
                 const ex = await ask(old.child, { op: 'export-sessions' });
-                const im = await ask(neu.child, { op: 'import-sessions', sessions: ex.sessions ?? [] });
+                const im = await ask(neu.child, { op: 'import-sessions', sessions: ex.sessions ?? [], login: ex.login });
                 if (im.imported !== (ex.sessions ?? []).length) throw new Error(`sessions: ${im.imported} of ${(ex.sessions ?? []).length} taken`);
+                if (im.login !== true) throw new Error('the login key state was not taken');
               },
             });
           } catch (e) {

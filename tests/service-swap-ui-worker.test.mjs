@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { createFront, splitFrames } from '../services/supervisor/front.mjs';
 import { createUiSlot, createWorkerSlot } from '../services/supervisor/slots.mjs';
 import { killChildTree } from '../services/common/kill-tree.mjs';
+import { createFakeHost } from '../services/studio-ui/backends.mjs';
+import { createStudioServer } from '../services/studio-ui/server.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -117,6 +119,78 @@ test('studio-ui: 20 swaps keep the login session, the API answers throughout, on
   assert.equal(names.filter((n) => n === 'flags').length, 21);
   assert.deepEqual(unexpected, []);
   t.diagnostic(`ui swaps 20, api calls ${calls.ok}, held ${front.stats().held}`);
+});
+
+test('studio-ui server: key login off until imported; exportLogin/importLogin carry used, unused, aged and locked keys; malformed state keeps it off', async (t) => {
+  const mk = async (launchKey, limits = {}) => {
+    const s = createStudioServer({ uiRoot: path.join(REPO, 'ui'), core: { describe: () => ({ available: false }), call: async () => null, confirm: async () => null }, host: createFakeHost({}), launchKey, dataDir: tmp(), limits: { statusPollMs: 1000, ...limits }, log: () => {} });
+    const { port } = await s.listen();
+    t.after(() => s.close());
+    return { s, login: async (k) => (await get(port, `/login?k=${k}`)).status };
+  };
+  const key = randomBytes(32).toString('hex');
+  const a = await mk(key);
+  const b = await mk(null);
+  assert.equal(await b.login(key), 401, 'a replacement with key login off accepts no key before the import');
+  // Unused key: moves and logs in once, on the new process only.
+  assert.equal(b.s.importLogin(a.s.exportLogin()), true);
+  assert.equal(await b.login(key), 302);
+  assert.equal(await b.login(key), 401);
+  // Used key: stays used.
+  assert.equal(await a.login(key), 302);
+  const c = await mk(null);
+  assert.equal(a.s.exportLogin().key, null);
+  assert.equal(c.s.importLogin(a.s.exportLogin()), true);
+  assert.equal(await c.login(key), 401);
+  // The age moves too: a key past its time limit stays expired.
+  const d = await mk(null);
+  assert.equal(d.s.importLogin({ key, ageMs: 10 * 60_000, fails: 0, lockedForMs: 0 }), true);
+  assert.equal(await d.login(key), 401);
+  // A lock moves: no login while it lasts, even with the right key.
+  const e = await mk(null);
+  assert.equal(e.s.importLogin({ key, ageMs: 0, fails: 0, lockedForMs: 60_000 }), true);
+  assert.equal(await e.login(key), 429);
+  // Malformed state: refused, key login stays off.
+  for (const bad of [null, 'x', { key: 'not-hex', ageMs: 0, fails: 0, lockedForMs: 0 }, { key, ageMs: -1, fails: 0, lockedForMs: 0 }, { key, ageMs: 0, fails: 1.5, lockedForMs: 0 }, { key, ageMs: 0, fails: 0, lockedForMs: Infinity }]) {
+    const f = await mk(null);
+    assert.equal(f.s.importLogin(bad), false, JSON.stringify(bad));
+    assert.equal(await f.login(key), 401);
+  }
+});
+
+test('studio-ui: a rearm sent during a swap waits for it and arms the process that serves after it (Codex review P2)', async (t) => {
+  const dataDir = tmp();
+  const launchKey = randomBytes(32).toString('hex');
+  let n = 0;
+  // Like the launcher: only the first process gets the key; a replacement starts with key login off.
+  const spawnUi = (root) => {
+    const first = n++ === 0;
+    const c = spawn(process.execPath, [path.join(root, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--fake-host', '--data-dir', dataDir], {
+      stdio: ['pipe', 'pipe', 'pipe', 'ipc'], windowsHide: true,
+      env: { ...process.env, UJWALAM_UI_LAUNCH_KEY: first ? launchKey : '', UJWALAM_UI_KEY_LOGIN: first ? '' : 'off', UJWALAM_PARENT_PIPE: '1', UJWALAM_EVENT_CORE_API_TOKEN: '', UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '', UJWALAM_HOST_TOKEN: '', UJWALAM_HEADLESS: '1' },
+    });
+    c.stderr.resume();
+    t.after(() => killChildTree(c));
+    return c;
+  };
+  const front = createFront({ backendPort: null, name: 'studio-ui' });
+  const fport = await front.listen();
+  t.after(() => front.close());
+  const slot = createUiSlot({ front, root: REPO, spawn: spawnUi, onLine: () => {}, onUnexpectedExit: () => {} });
+  await slot.start();
+  assert.equal((await get(fport, `/login?k=${launchKey}`)).status, 302);
+  const rearmed = randomBytes(32).toString('hex');
+  const swapping = slot.swap(REPO);
+  await sleep(200);
+  assert.equal(slot.busy(), true, 'the rearm lands during the swap');
+  assert.equal(slot.control(`rearm ${rearmed}`), true);
+  assert.equal((await swapping).result, 'swapped');
+  let status = 0;
+  // At most 4 tries: 5 failed logins would lock login (loginFailMax).
+  for (let i = 0; i < 4 && status !== 302; i++) { await sleep(150); status = (await get(fport, `/login?k=${rearmed}`)).status; }
+  assert.equal(status, 302, 'the new process has the rearmed key');
+  assert.equal((await get(fport, `/login?k=${rearmed}`)).status, 401, 'once only');
+  await slot.stop?.();
 });
 
 test('worker (stop-start): 20 swaps; a crashing build restores the old version; planned stops are no crash', async (t) => {

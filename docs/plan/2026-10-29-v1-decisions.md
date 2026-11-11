@@ -912,4 +912,13 @@ Limits: an event without a platform message id that both cores saw in the overla
 id); if the new core fails while activating, the events it buffered are lost (double failure). Also fixed while
 wiring this: the event-core serve parser took `--lan` as a value-taking option, so the launcher's `--lan` swallowed
 the next argument (`--url` or `--lan-address`) and remote connections never switched on.
+After the Codex review (same day):
+- **One-time login key.** Only the first UI process gets the key. A replacement starts with key login off and takes
+  the key's state (used or not, age, failures, lock) from the old process over IPC inside the switch, so a used login
+  URL never works again after a swap. A studio-window rearm sent during a swap waits and goes to the process that
+  serves after it.
+- **Timed-out steps.** Each step gets an abort signal and is awaited before the rollback. A hand-over still running
+  after a 30 s grace ends the swap as `failed` with nothing restored, so two cores are never activated.
+- **Overflow.** A standby core whose buffer overflowed is never used: it fails its check, is refused before the
+  hand-off and cannot activate.
 Evidence: `docs/evidence/2026-11-11-lu3-service-swap.md`.
