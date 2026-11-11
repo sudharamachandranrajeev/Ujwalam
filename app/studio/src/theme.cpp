@@ -48,6 +48,7 @@ struct Data {
 	QString id, name, topic;
 	bool dark = true;
 	bool custom = false;
+	QJsonObject src; // the accepted pack JSON this look was parsed from (D336: a flag switch parses it again)
 	QHash<QString, QColor> colors;
 	Grad gradWindow, gradAccent, gradPanel, gradControl; // panel / control: optional surface gradients (cards, buttons)
 	QString family;
@@ -182,7 +183,8 @@ Shadow shadowPart(const QJsonObject &s, const QString &color)
 		num(s.value(QStringLiteral("opacity")), 0.3, 0, 1)};
 }
 
-DepthSpec depthSpec(const QJsonValue &v, const DepthSpec &fallback)
+// v2: the pack has a components block and the flag theme-components is on (D336); otherwise only the v1 parts.
+DepthSpec depthSpec(const QJsonValue &v, const DepthSpec &fallback, bool v2)
 {
 	if (!v.isObject())
 		return fallback;
@@ -190,7 +192,7 @@ DepthSpec depthSpec(const QJsonValue &v, const DepthSpec &fallback)
 	DepthSpec d;
 	if (o.value(QStringLiteral("shadow")).isObject())
 		d.shadow = shadowPart(o.value(QStringLiteral("shadow")).toObject(), QStringLiteral("#000000"));
-	if (g_components) { // schema v2 (D336): only with the flag theme-components
+	if (v2) { // schema v2 (D336): only with the flag theme-components and the pack's components block
 		if (o.value(QStringLiteral("highlight")).isObject())
 			d.highlight = shadowPart(o.value(QStringLiteral("highlight")).toObject(), QStringLiteral("#ffffff"));
 		if (o.value(QStringLiteral("inset")).isObject()) {
@@ -303,6 +305,9 @@ QHash<QString, QString> readComponents(const QJsonObject &pack)
 Data parse(const QJsonObject &o, const Data *base)
 {
 	Data d = base ? *base : Data();
+	// Schema v2 parts (D336) apply only with the flag on AND a components block in this pack: a pack without one looks
+	// exactly as it does with the flag off, whatever other v2 fields it carries (Codex review of T1).
+	const bool v2 = g_components && o.contains(QStringLiteral("components"));
 	d.id = str(o.value(QStringLiteral("id")), d.id);
 	d.name = str(o.value(QStringLiteral("name")), d.name.isEmpty() ? d.id : d.name);
 	d.topic = str(o.value(QStringLiteral("topic")), d.topic);
@@ -347,7 +352,7 @@ Data parse(const QJsonObject &o, const Data *base)
 	d.padX = inum(pad.value(QStringLiteral("x")), 12, 4, 24);
 	const QJsonObject dp = o.value(QStringLiteral("depth")).toObject();
 	for (const QString &k : kDepthClasses)
-		d.depth[k] = depthSpec(dp.value(k), d.depth.value(k));
+		d.depth[k] = depthSpec(dp.value(k), d.depth.value(k), v2);
 	const QJsonObject m = o.value(QStringLiteral("motion")).toObject();
 	d.fast = inum(m.value(QStringLiteral("fastMs")), d.fast, 0, 400);
 	d.normal = inum(m.value(QStringLiteral("normalMs")), d.normal, 0, 600);
@@ -362,14 +367,14 @@ Data parse(const QJsonObject &o, const Data *base)
 	d.bg.patternOpacity = num(b.value(QStringLiteral("patternOpacity")), d.bg.patternOpacity, 0, 0.15);
 	d.bg.patternSpacing = inum(b.value(QStringLiteral("patternSpacing")), d.bg.patternSpacing, 3, 80);
 	d.stroke = num(o.value(QStringLiteral("icons")).toObject().value(QStringLiteral("stroke")), d.stroke, 1.2, 3);
-	// Schema v2 (D336): the pack's own parts only (never the default pack's), and only with the flag on. Flag off: the
+	// Schema v2 (D336): the pack's own parts only (never the default pack's), and only when v2 (above). Otherwise the
 	// v2 patterns draw as the nearest v1 look (blueprint as grid, columns as none).
 	d.comp.clear();
 	d.scale.clear();
 	d.buttonCaps = d.tabCaps = d.headingCaps = false;
 	d.bg.frame = d.bg.frameTicks = false;
 	d.bg.frameOpacity = 0;
-	if (g_components) {
+	if (v2) {
 		d.comp = readComponents(o);
 		d.buttonCaps = boolean(t.value(QStringLiteral("buttonCaps")), false);
 		d.tabCaps = boolean(t.value(QStringLiteral("tabCaps")), false);
@@ -443,22 +448,30 @@ void rememberFile(const QString &id)
 		g_watch->addPath(p);
 }
 
-Data load(const QString &id)
+// A pack's JSON made into the look (merged over the default pack). The JSON is kept with the look, so a flag switch
+// parses the accepted version again, never a newer file on disk that live reload refused (D336).
+Data fromJson(const QJsonObject &o, bool custom)
 {
-	bool custom = false;
-	const QJsonObject o = packJson(id, &custom);
 	if (o.isEmpty())
 		return Data();
 	if (const QString why = componentsProblem(o); !why.isEmpty()) { // D336: an unknown variant makes the pack unusable
-		qWarning("theme: %s not usable: %s", qPrintable(id), qPrintable(why));
+		qWarning("theme: %s not usable: %s", qPrintable(o.value(QStringLiteral("id")).toString()), qPrintable(why));
 		return Data();
 	}
 	Data d = parse(o, &defaultData());
+	d.src = o;
 	d.custom = custom;
 	d.bg.from = d.gradWindow.from;
 	d.bg.to = d.gradWindow.to;
 	d.bg.angle = d.gradWindow.angle;
 	return d;
+}
+
+Data load(const QString &id)
+{
+	bool custom = false;
+	const QJsonObject o = packJson(id, &custom); // before fromJson: argument order is unspecified
+	return fromJson(o, custom);
 }
 
 QString gradientQss(const Grad &g)
@@ -1089,7 +1102,7 @@ void setComponents(bool on)
 	g_components = on;
 	if (!g_cur.valid)
 		return;
-	const Data d = load(g_cur.id); // the same pack read again with or without its v2 parts
+	const Data d = fromJson(g_cur.src, g_cur.custom); // the accepted pack parsed again with or without its v2 parts
 	if (!d.valid)
 		return;
 	g_cur = d;
@@ -1398,6 +1411,11 @@ QJsonObject probe()
 	o.insert(QStringLiteral("frame"), g_cur.bg.frame);
 	o.insert(QStringLiteral("baseStyleHash"), g_baseStyleHash);
 	o.insert(QStringLiteral("fragmentLength"), g_fragmentLength);
+	int v2Depth = 0; // depth classes using a v2 part (highlight, inset or rim)
+	for (const DepthSpec &ds : g_cur.depth)
+		if (ds.highlight.enabled || ds.inset.enabled || ds.rim.enabled)
+			v2Depth++;
+	o.insert(QStringLiteral("depthV2Classes"), v2Depth);
 	return o;
 }
 

@@ -16,6 +16,7 @@ import { createFakeBots, createFakeHost } from '../services/studio-ui/backends.m
 import { createFlags } from '../services/flags/index.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { EXE, qtDir } from '../app/studio/tools/build.mjs';
+import { writeViaRename } from '../tools/soak/stage.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const UI = path.join(REPO, 'ui');
@@ -59,6 +60,7 @@ function runShell(env) {
   });
 }
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const pngSize = (f) => { const b = readFileSync(f); return [b.readUInt32BE(16), b.readUInt32BE(20)]; };
 
 describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
@@ -74,7 +76,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
     writeFileSync(path.join(packsDir, 'bad-key.json'), JSON.stringify({ ...allVariantsPack(), id: 'bad-key', name: 'Bad Key', components: { sparkle: 'on' } }));
     return packsDir;
   };
-  async function probe({ ms = 4500, actions = '', flagOn = false, env = {}, shot = null } = {}) {
+  async function probe({ ms = 4500, actions = '', flagOn = false, env = {}, shot = null, during = null } = {}) {
     const dataDir = tmp('ujw-qtc-');
     if (flagOn) writeFileSync(path.join(dataDir, 'flags.local.json'), JSON.stringify({ flags: { 'theme-components': true } }));
     const flags = createFlags({ dataDir });
@@ -85,7 +87,9 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
     const srv = createStudioServer({ uiRoot: UI, core, host, launchKey: key, dataDir, flags, bots: createFakeBots(), limits: { statusPollMs: 50 } });
     const { port } = await srv.listen();
     try {
-      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms), UJWALAM_STUDIO_PROBE_ACTIONS: actions, ...(shot ? { UJWALAM_STUDIO_PROBE_SHOT: shot } : {}), ...env });
+      const run = runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: String(ms), UJWALAM_STUDIO_PROBE_ACTIONS: actions, ...(shot ? { UJWALAM_STUDIO_PROBE_SHOT: shot } : {}), ...env });
+      if (during) await during();
+      const r = await run;
       assert.equal(r.code, 0, r.err);
       const m = /^studio probe: (.+)$/m.exec(r.out);
       assert.ok(m, `no probe line: ${r.out} ${r.err}`);
@@ -125,6 +129,47 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
     });
   }
 
+  // Codex review of T1: v2 typography, backdrop and depth fields apply only with a components block in the same pack.
+  test('flag on, a pack with v2 type, frame and depth fields but no components block keeps its v1 look', async () => {
+    const dir = tmp('ujw-qtc-nocomp-');
+    const { components, ...noComp } = allVariantsPack();
+    writeFileSync(path.join(dir, 'no-comp.json'), JSON.stringify({ ...noComp, id: 'no-comp', name: 'No Components' }));
+    const off = await probe({ env: { UJWALAM_THEMES_DIR: dir, UJWALAM_THEME: 'no-comp' } });
+    const on = await probe({ flagOn: true, env: { UJWALAM_THEMES_DIR: dir, UJWALAM_THEME: 'no-comp' } });
+    assert.equal(on.theme.componentsOn, true);
+    assert.deepEqual(on.theme.caps, { button: false, tab: false, heading: false });
+    assert.equal(on.theme.frame, false);
+    assert.equal(on.theme.pattern, 'grid', 'blueprint shows as the v1 grid');
+    assert.equal(on.theme.baseStyleHash, off.theme.baseStyleHash);
+    assert.ok(on.theme.fragmentLength < 400, 'no type scale rules');
+    assert.equal(on.theme.depthWidgets, off.theme.depthWidgets);
+    assert.equal(on.theme.depthV2Classes, 0, 'no highlight, inset or rim');
+  });
+
+  test('flag off after live reload refused an edit: the accepted pack is parsed again, all v2 parts go', async () => {
+    const dir = tmp('ujw-qtc-reload-');
+    const file = path.join(dir, 'reload-comp.json');
+    const pack = { ...allVariantsPack(), id: 'reload-comp', name: 'Reload Components' };
+    writeViaRename(file, `${JSON.stringify(pack, null, 2)}
+`);
+    // actions every 700 ms from 2.5 s: the refused edit lands at 3 s, the flag goes off at 6 s
+    const p = await probe({
+      ms: 8000, flagOn: true, actions: 'wait,wait,wait,wait,wait,flag-off:theme-components', env: { UJWALAM_THEMES_DIR: dir, UJWALAM_THEME: 'reload-comp' },
+      during: async () => { await sleep(3000); writeViaRename(file, `${JSON.stringify({ ...pack, components: { tabs: 'wavy' } }, null, 2)}
+`); },
+    });
+    assert.equal(p.actions.at(-1).done, true, JSON.stringify(p.actions));
+    assert.equal(p.theme.rejects, 1, 'the edit was refused');
+    assert.equal(p.theme.id, 'reload-comp');
+    assert.equal(p.theme.componentsOn, false);
+    assert.deepEqual(p.theme.components, {});
+    assert.equal(p.theme.fragmentLength, 0, 'the component stylesheet is gone');
+    assert.equal(p.theme.density, 1);
+    assert.equal(p.theme.frame, false);
+    assert.equal(p.theme.pattern, 'grid');
+    assert.equal(p.theme.depthV2Classes, 0);
+  });
+
   test('a pack using every variant: parts reported, no stylesheet errors, the specimen shows every section', async () => {
     const p = await probe({ ms: 9000, flagOn: true, actions: 'settings-open,settings-page:3,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants' } });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
@@ -134,6 +179,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
     assert.deepEqual(p.theme.caps, { button: true, tab: true, heading: true });
     assert.equal(p.theme.pattern, 'blueprint');
     assert.equal(p.theme.frame, true);
+    assert.ok(p.theme.depthV2Classes >= 2, String(p.theme.depthV2Classes));
     assert.ok(p.theme.fragmentLength > 1000, String(p.theme.fragmentLength));
     assert.doesNotMatch(p.err, NO_ERRORS, p.err);
     assert.equal(p.specimen.open, true);

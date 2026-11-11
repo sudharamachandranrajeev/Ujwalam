@@ -914,5 +914,12 @@ no theme is designed and no font is added here. Decided:
   because T1 must not change existing looks: Tactical's warning text on the field colour (4.28:1), and the base
   Switch (knob and ON in the text colour on the accent track, below 3:1 in most packs). Every switch variant paints
   onAccent on the "on" side and passes on every pack; the base switch is fixed when the packs are redesigned (T2-T6).
+- **v2 needs a components block** (Codex review of T1): every v2 rendering change (variants, caps, type scale, frame,
+  blueprint and columns, depth highlight, inset and rim) applies only with the flag on AND a `components` block in the
+  same pack. A pack with other v2 fields but no block keeps its v1 look with the flag on. Reason: the block is what
+  marks a pack as designed for v2; the parity promise for packs without it then holds whatever they carry.
+- **A flag switch re-parses the accepted pack** (Codex review of T1): the look keeps the JSON it was parsed from, and
+  switching the flag parses that again instead of reading the file, so a newer file that live reload refused can
+  never stop the switch (before, switching off after a refused edit left the component look on).
 - Not in T1: elevation levels 1-5 (spec §3) and the per-theme designs and fonts (T2-T6).
 Evidence: `docs/evidence/2026-11-11-t1-theme-framework.md`.

@@ -124,6 +124,28 @@ UJWALAM_HEADLESS=1 UJWALAM_THEME_EVIDENCE=docs/evidence/2026-11-11-t1-theme-fram
 The pictures contain only generic sample labels (no names, ids or reference images). The pack has no components
 block, so these show the base look the framework keeps.
 
+## Codex review fixes (2026-11-11)
+
+Two P2 findings, each with a probe test that failed on a build without the fix (the fix lines reverted, rebuilt) and
+passes with it:
+
+```
+UJWALAM_HEADLESS=1 node --test --test-name-pattern="no components block keeps|refused an edit" tests/studio-qt-theme-components.test.mjs
+```
+
+Without the fixes:
+```
+✖ flag on, a pack with v2 type, frame and depth fields but no components block keeps its v1 look
+  (caps reported heading: true, tab: true)
+✖ flag off after live reload refused an edit: the accepted pack is parsed again, all v2 parts go
+  AssertionError [ERR_ASSERTION]: the component stylesheet is gone
+ℹ pass 0  ℹ fail 2
+```
+
+With the fixes (whole suite): `ℹ tests 13  ℹ pass 13  ℹ fail 0`. Also passing after the fixes:
+studio-qt-themes 21/21, studio-qt-theme-reload 1/1. The probe gained `depthV2Classes` (depth classes using
+highlight, inset or rim): 0 for a pack without a components block, >= 2 for the all-variants pack.
+
 ## Not checked / UNVERIFIED
 
 - UNVERIFIED: the look on the user's screen at real DPI (only headless offscreen renders).
