@@ -112,7 +112,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
     assert.doesNotMatch(p.err, NO_ERRORS, p.err);
   });
 
-  for (const id of ['violet-night', 'copper-graphite']) {
+  for (const id of ['violet-night', 'retro-wave']) { // packs still without a components block (copper-graphite has one since T3, D344)
     test(`${id} (no components block): the same base stylesheet with the flag on and off`, async () => {
       const off = await probe({ env: { UJWALAM_THEME: id } });
       const on = await probe({ flagOn: true, env: { UJWALAM_THEME: id } });
