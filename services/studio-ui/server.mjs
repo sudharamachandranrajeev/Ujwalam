@@ -259,11 +259,32 @@ export function audioReadiness(ah) {
 const STOP_AGAIN_WAITS = [300, 1000];
 const STOP_AGAIN_FAILED = 'Streams may still be live: press Stop or End all';
 
+/**
+ * LU5 maintenance lock (Codex review of D343): every stream.start / record.start this server sends to the host (a click,
+ * a confirmed pending action, an automatic recording start, a per-output switch) first takes a lease from the
+ * launcher (getAuthority().lease, over the authority channel) and gives it back after the host answered. While the
+ * launcher replaces the host the lease is refused and the start is not sent (code HOST_UPDATING). Without the launcher
+ * (no authority, or a test seam without lease) nothing changes.
+ */
+export function gateStarts(host, getAuthority) {
+  if (!host) return host;
+  const call = async (method, params) => {
+    const a = START_METHODS.has(method) ? getAuthority() : null;
+    if (!a || typeof a.lease !== 'function') return host.call(method, params);
+    const l = await a.lease();
+    if (!l?.ok) throw Object.assign(new Error(`start refused: ${l?.reason ?? 'refused'}`), { code: 'HOST_UPDATING' });
+    try { return await host.call(method, params); } finally { await a.release(l.lease); }
+  };
+  return new Proxy(host, { get(t, k) { if (k === 'call') return call; const v = t[k]; return typeof v === 'function' ? v.bind(t) : v; } });
+}
+
 export function createStudioServer(opts) {
   const limits = { ...LIMITS, ...(opts.limits ?? {}) };
   const now = opts.now ?? Date.now;
   const root = realpathSync(path.resolve(opts.uiRoot));
-  const { core, host } = opts;
+  const { core } = opts;
+  // LU5 maintenance lock (D343): every stream or recording start to the host holds a launcher lease (authority below).
+  const host = gateStarts(opts.host, () => authority);
   // P5b autosave of layer edits into the project file (project-sync.mjs); null: edits stay live-only.
   const projectSync = opts.projectSync ?? null;
   // The user's stream assets folder (D241; base "media" of the alpha load); null: no image or video layers.

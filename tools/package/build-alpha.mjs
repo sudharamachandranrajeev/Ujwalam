@@ -41,7 +41,7 @@ import {
   allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
 import { readZip, writeZip } from './zip.mjs';
-import { releaseParts } from './parts.mjs';
+import { releaseParts } from '../../services/supervisor/parts.mjs';
 import { nvencFileState, readManifest, runtimeNvencState } from '../obs-patch/build-obs-nvenc.mjs';
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');

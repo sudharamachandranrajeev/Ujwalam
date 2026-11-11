@@ -1,9 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // LU5 host staging with the real launcher (D343): the fake host (tests/fixtures/studio-ui/fake-host.mjs) records while
 // "live"; a host update from a staged fixture release (temp folder) arrives over the launcher's IPC channel, is staged
-// and applied only after the user's stop (a fresh outputs.status with everything stopped). A service update while live
-// waits for a click. Closing with a staged host update starts the next session from it. A broken host update is rolled
-// back to the previous host. No window (UJWALAM_HEADLESS=1, windowsHide), no device, nothing outside temp folders.
+// (from a checked private copy) and applied only after the user's stop (a fresh outputs.status with everything
+// stopped). A service update while live waits for a click, also after the stop. Closing with a staged host update
+// tries it at the next start; a broken one is rejected there and the installed host starts instead, and it is never
+// tried again (Codex review of D343). A broken host update while running is rolled back to the previous host. No
+// window (UJWALAM_HEADLESS=1, windowsHide), no device, nothing outside temp folders.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -13,12 +15,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { killChildTree } from '../services/common/kill-tree.mjs';
+import { folderFiles, releaseParts } from '../services/supervisor/parts.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FIX = path.join(REPO, 'tests', 'fixtures');
 const FAKE_HOST = path.join(FIX, 'studio-ui', 'fake-host.mjs');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function until(fn, ms = 20_000) { const end = Date.now() + ms; for (;;) { const v = fn(); if (v) return v; if (Date.now() > end) return v; await sleep(50); } }
+const partsOf = (root) => releaseParts(folderFiles(root).filter((f) => f.rel !== 'release.json'));
 
 function setup(t, name) {
   const root = mkdtempSync(path.join(os.tmpdir(), `ujw-lu5-${name}-`));
@@ -38,15 +42,20 @@ function setup(t, name) {
     '--profile', path.join(FIX, 'project', 'profile.fixture.json'), '--feedback-dir', path.join(root, 'feedback')];
   const calls = () => { try { return readFileSync(`${rec}.calls.jsonl`, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)); } catch { return []; } };
   const live = (n) => { try { return JSON.parse(readFileSync(path.join(dataDir, 'live', n), 'utf8')); } catch { return null; } };
-  for (const k of Object.keys(env)) if (k.startsWith('NODE_TEST')) delete env[k]; // the launcher is not a test-runner child
-  return { root, dataDir, env, args, calls, live, children };
+  const copies = path.join(dataDir, 'live', 'releases');
+  return { root, dataDir, env, args, calls, live, children, copies };
 }
 
 function stagedRelease(dir, { n = 99, broken = false } = {}) {
   mkdirSync(path.join(dir, 'bin'), { recursive: true });
   const exe = path.join(dir, 'bin', 'ujwalam-host.mjs');
   if (broken) writeFileSync(exe, 'process.exit(3);\n'); else copyFileSync(FAKE_HOST, exe);
-  writeFileSync(path.join(dir, 'release.json'), JSON.stringify({ version: `0.1.0-alpha.${n}`, n, hostExeSha256: createHash('sha256').update(readFileSync(exe)).digest('hex') }));
+  writeFileSync(path.join(dir, 'release.json'), JSON.stringify({ version: `0.1.0-alpha.${n}`, n, hostExeSha256: createHash('sha256').update(readFileSync(exe)).digest('hex'), parts: partsOf(dir) }));
+  return dir;
+}
+function serviceRelease(dir, { n = 99 } = {}) {
+  for (const s of ['event-core', 'studio-ui']) { mkdirSync(path.join(dir, 'services', s), { recursive: true }); writeFileSync(path.join(dir, 'services', s, 'cli.mjs'), `// stand-in ${s}\n`); }
+  writeFileSync(path.join(dir, 'release.json'), JSON.stringify({ version: `0.1.0-alpha.${n}`, n, parts: partsOf(dir) }));
   return dir;
 }
 
@@ -68,53 +77,79 @@ async function launch(t, s, extraEnv = {}) {
   return o;
 }
 
-test('LU5: a host update during a recording is staged, not applied while live, and applied after the stop; a service update waits for a click', { timeout: 120_000 }, async (t) => {
+test('LU5: a host update during a recording is staged, not applied while live, and applied after the stop; a service update waits for a click, also after the stop', { timeout: 120_000 }, async (t) => {
   const s = setup(t, 'stage');
   const stopFile = path.join(s.root, 'stop');
   const rel = stagedRelease(path.join(s.root, 'release'));
   const l = await launch(t, s, { UJWALAM_FAKE_HOST_RECORDING: '1', UJWALAM_FAKE_HOST_STOP_ON: stopFile });
   const host = await l.ask('host', rel);
   assert.equal(host.result, 'staged', l.out.slice(-2000));
-  const svc = await l.ask('event-core', REPO);
-  assert.equal(svc.result, 'waiting');
+  const svc = await l.ask('event-core', serviceRelease(path.join(s.root, 'svc'), { n: 98 }));
+  assert.equal(svc.result, 'waiting', l.out.slice(-2000));
   const m = s.live('updates.json');
-  assert.deepEqual(m.waiting.map((w) => [w.part, w.version, w.click]), [['host', '0.1.0-alpha.99', false], ['event-core', 'unversioned', true]]);
+  assert.deepEqual(m.waiting.map((w) => [w.part, w.version, w.click]), [['host', '0.1.0-alpha.99', false], ['event-core', '0.1.0-alpha.98', true]]);
   assert.equal(m.parts.find((p) => p.part === 'host').version, 'dev');
-  assert.equal(s.live('host-update.json').state, 'staged');
+  assert.equal(s.live('host-update.json').pending.n, 99);
   await sleep(1500); // several queue polls while the recording runs
   assert.deepEqual(s.calls().filter((c) => c.event === 'start').map((c) => c.run), [1], 'the host was not touched while live');
   writeFileSync(stopFile, 'stop'); // the user's Stop
   assert.ok(await until(() => s.calls().filter((c) => c.event === 'start').length === 2), l.out.slice(-3000));
-  assert.ok(await until(() => s.live('updates.json')?.waiting.length === 0 && /\(host\) updated to 0\.1\.0-alpha\.99/.test(l.out)), l.out.slice(-3000));
+  assert.ok(await until(() => s.live('updates.json')?.waiting.length === 1 && /\(host\) updated to 0\.1\.0-alpha\.99/.test(l.out)), l.out.slice(-3000));
   const starts = s.calls().filter((c) => c.event === 'start');
-  assert.equal(starts[1].dir, path.join(rel, 'bin'), 'the new host runs from the staged release');
+  assert.ok(starts[1].dir.startsWith(s.copies), 'the new host runs from the checked copy of the staged release');
   const all = s.calls();
   const stopIdx = all.findIndex((c) => c.event === 'stopped-by-user');
   assert.ok(stopIdx >= 0 && stopIdx < all.findIndex((c) => c.event === 'start' && c.run === 2), 'applied only after the stop');
   const after = s.live('updates.json');
   assert.equal(after.parts.find((p) => p.part === 'host').version, '0.1.0-alpha.99');
   assert.equal(after.parts.find((p) => p.part === 'overlay-server').version, '0.1.0-alpha.99');
-  assert.equal(s.live('host-update.json').state, 'applied');
+  assert.deepEqual(after.waiting.map((w) => w.part), ['event-core'], 'the stop does not apply a service: it waits for the click');
+  assert.doesNotMatch(l.out, /Event core updated/);
+  const st = s.live('host-update.json');
+  assert.deepEqual([st.pending, st.good.n], [null, 99]);
   const code = await l.close();
   assert.equal(code, 0, l.out.slice(-3000));
+  assert.match(l.out, /event-core update 0\.1\.0-alpha\.98 not applied \(Ujwalam closed\)/);
   assert.doesNotMatch(l.out, /HOST EXITED UNEXPECTEDLY|HOST CRASHED|shut itself down/, 'a planned restart is not a crash');
   assert.doesNotMatch(l.out, /[0-9a-f]{64}/, 'no token-shaped value printed');
 });
 
-test('LU5: closing the app with a staged host update applies it at the next start', { timeout: 120_000 }, async (t) => {
+test('LU5: closing the app with a staged host update tries it at the next start', { timeout: 120_000 }, async (t) => {
   const s = setup(t, 'close');
   const rel = stagedRelease(path.join(s.root, 'release'), { n: 42 });
   const a = await launch(t, s, { UJWALAM_FAKE_HOST_RECORDING: '1' });
   assert.equal((await a.ask('host', rel)).result, 'staged');
   assert.equal(await a.close(), 0);
-  assert.match(a.out, /host update 0\.1\.0-alpha\.42 waits: it is applied at the next start/);
+  assert.match(a.out, /host update 0\.1\.0-alpha\.42 waits: it is tried at the next start/);
   assert.equal(s.calls().filter((c) => c.event === 'start').length, 1, 'not applied while live, not at the close');
   const b = await launch(t, s);
-  assert.match(b.out, /host update 0\.1\.0-alpha\.42 staged before the last close is applied now/);
+  assert.match(b.out, /host update 0\.1\.0-alpha\.42 staged before the last close is tried now/);
+  assert.match(b.out, /host update 0\.1\.0-alpha\.42 started and is now the last good host/);
   const starts = s.calls().filter((c) => c.event === 'start');
-  assert.equal(starts.at(-1).dir, path.join(rel, 'bin'));
+  assert.ok(starts.at(-1).dir.startsWith(s.copies));
   assert.ok(await until(() => s.live('updates.json')?.parts?.find((p) => p.part === 'host')?.version === '0.1.0-alpha.42'));
+  assert.deepEqual([s.live('host-update.json').pending, s.live('host-update.json').good.n], [null, 42]);
   assert.equal(await b.close(), 0);
+});
+
+test('P1-3: a broken host staged at close is rejected at the next start, the installed host starts, and it is never tried again', { timeout: 120_000 }, async (t) => {
+  const s = setup(t, 'trial');
+  const bad = stagedRelease(path.join(s.root, 'bad'), { n: 43, broken: true });
+  const a = await launch(t, s, { UJWALAM_FAKE_HOST_RECORDING: '1' });
+  assert.equal((await a.ask('host', bad)).result, 'staged');
+  assert.equal(await a.close(), 0);
+  const b = await launch(t, s);
+  assert.match(b.out, /host update 0\.1\.0-alpha\.43 did not start \(the host did not get ready\); it is not tried again/);
+  assert.match(b.out, /starting the installed host/);
+  const starts = s.calls().filter((c) => c.event === 'start');
+  assert.equal(starts.at(-1).dir, path.dirname(FAKE_HOST), 'the installed host runs');
+  const st = s.live('host-update.json');
+  assert.deepEqual([st.pending, st.good, st.rejected.map((r) => r.n)], [null, null, [43]]);
+  assert.ok(await until(() => s.live('updates.json')?.parts?.find((p) => p.part === 'host')?.version === 'dev'));
+  assert.equal(await b.close(), 0);
+  const c = await launch(t, s);
+  assert.doesNotMatch(c.out, /0\.1\.0-alpha\.43/, 'not tried again');
+  assert.equal(await c.close(), 0);
 });
 
 test('LU5: a host update that does not start is rolled back to the previous host (nothing live: applied at once)', { timeout: 120_000 }, async (t) => {
@@ -127,7 +162,8 @@ test('LU5: a host update that does not start is rolled back to the previous host
   assert.equal(starts.length, 2, 'the previous host started again (the broken one logs nothing)');
   assert.equal(starts[1].dir, path.dirname(FAKE_HOST));
   assert.equal(s.live('updates.json').parts.find((p) => p.part === 'host').version, 'dev');
-  assert.equal(s.live('host-update.json'), null, 'nothing for the next start');
+  const st = s.live('host-update.json');
+  assert.deepEqual([st.pending, st.good, st.rejected.map((x) => x.n)], [null, null, [77]], 'nothing for the next start; never tried again');
   assert.equal(await l.close(), 0);
   assert.doesNotMatch(l.out, /HOST CRASHED/);
 });

@@ -135,15 +135,20 @@ export function createLiveAuthority({ onChange = () => {} } = {}) {
 /** Launcher: answers the UI server's authority requests on its IPC channel; a closed channel closes the authority. */
 /** isOwner (LU3 service swap): when given, only an exit or disconnect of the child that still owns the link closes the
  *  authority; the old UI server process of a swap leaves it open for the new one. */
-export function serveAuthority(child, authority, { isOwner = () => true } = {}) {
+/** gate (LU5, D343): the host-update maintenance lock (supervisor/updates.mjs createStartGate). A UI server takes a
+ *  lease before each stream or recording start ('lease') and gives it back after the host answered ('release'); while
+ *  the launcher holds the gate a lease is refused. A UI server that goes away gives back its leases. */
+export function serveAuthority(child, authority, { isOwner = () => true, gate = null } = {}) {
   child.on('message', (m) => {
     if (m?.t !== AUTHORITY_MSG || !Number.isInteger(m.id)) return;
     const reply = (r) => { try { if (child.connected) child.send({ t: AUTHORITY_MSG, id: m.id, ...r }); } catch { /* the UI server times out and fails closed */ } };
     if (m.op === 'begin') reply({ gen: authority.begin() });
     else if (m.op === 'arm') reply(authority.arm(m.gen));
     else if (m.op === 'revoke') authority.revoke(m.reason).then(reply, () => reply({ gen: null }));
+    else if (m.op === 'lease') reply(gate ? gate.lease(child) : { ok: true, lease: null });
+    else if (m.op === 'release') { if (gate && Number.isInteger(m.lease)) gate.release(m.lease); reply({ ok: true }); }
   });
-  const gone = () => { if (isOwner(child)) authority.close('ui-link-lost'); };
+  const gone = () => { gate?.releaseOwner(child); if (isOwner(child)) authority.close('ui-link-lost'); };
   child.once('disconnect', gone);
   child.once('exit', gone);
 }
@@ -178,6 +183,11 @@ export function authorityClient({ proc = process, timeoutMs = 10_000 } = {}) {
       failClosed();
       return false;
     },
+    /** LU5 maintenance lock: -> { ok, lease } or { ok: false, reason }. No answer: refused (fail closed). */
+    async lease() {
+      try { const m = await ask('lease'); return m.ok === true ? { ok: true, lease: Number.isInteger(m.lease) ? m.lease : null } : { ok: false, reason: typeof m.reason === 'string' ? m.reason : 'refused' }; } catch { return { ok: false, reason: 'the launcher did not answer' }; }
+    },
+    async release(lease) { if (!Number.isInteger(lease)) return; try { await ask('release', { lease }); } catch { /* the launcher frees it when this process goes away */ } },
   };
 }
 

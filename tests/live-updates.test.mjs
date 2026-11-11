@@ -1,24 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // LU5/LU7 live updates (D343), unit, server and page tests: the busy rule (fresh outputs.status, streams and
 // recordings), host staging and its apply at the stop, the one-click gate for services while live (no typed phrase,
-// no "are you sure"), close with a staged host update, the control page's versions and waiting items, LU1 parts, and
-// that every feature flag added since 2026-11-10 is off by default.
+// no "are you sure"; nothing applies a service on its own), close with a staged host update, the control page's
+// versions and waiting items, LU1 parts, and that every feature flag added since 2026-11-10 is off by default.
+// Codex review of D343: the maintenance lock on starts, release integrity (metadata, whole-part hashes, a private
+// copy), the startup trial records (pending / good / rejected), stale and superseded updates, confirmed host exit.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import {
-  createUpdates, HOST_STAGE_FILE, hostArgsFor, hostEntry, outputsBusy, readUpdatesStatus, serveUpdates, takeStartupHost, UPDATE_MSG, updatesClient, UPDATES_FILE,
+  acceptHost, createStartGate, createUpdates, HOST_STAGE_FILE, hostArgsFor, hostEntry, outputsBusy, readHostStage, readUpdatesStatus, rejectHost, RELEASES_DIR,
+  serveUpdates, takeStartupHost, UPDATE_MSG, updatesClient, UPDATES_FILE,
 } from '../services/supervisor/updates.mjs';
-import { changedParts, partOf, releaseParts } from '../tools/package/parts.mjs';
-import { createStudioServer } from '../services/studio-ui/server.mjs';
+import { changedParts, folderFiles, partOf, releaseParts } from '../services/supervisor/parts.mjs';
+import { createStudioServer, gateStarts } from '../services/studio-ui/server.mjs';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
+import { authorityClient, createLiveAuthority, serveAuthority } from '../services/studio-ui/stream-recovery.mjs';
+import { stopHostChild } from '../services/studio-ui/launch.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE_HOST = path.join(REPO, 'tests', 'fixtures', 'studio-ui', 'fake-host.mjs');
@@ -28,14 +33,29 @@ const tmp = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-lu5-')); d
 test.after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
 const tick = () => new Promise((r) => setTimeout(r, 0));
 async function settle(n = 20) { for (let i = 0; i < n; i++) await tick(); }
+const sha = (f) => createHash('sha256').update(readFileSync(f)).digest('hex');
+const partsOf = (root) => releaseParts(folderFiles(root).filter((f) => f.rel !== 'release.json'));
 
-/** A staged fixture release: bin/ujwalam-host.mjs (the fake host) and release.json with its hash. */
-function stagedRelease(root, { n = 99, version = `0.1.0-alpha.${n}`, badHash = false, parts = null } = {}) {
+/** A staged fixture release: bin/ujwalam-host.mjs (the fake host, or a broken one), release.json with the exe hash and
+ *  the LU1 part hashes. omit: leave a field out of release.json. */
+function stagedRelease(root, { n = 99, version = `0.1.0-alpha.${n}`, badHash = false, parts = null, broken = false, omit = [] } = {}) {
   mkdirSync(path.join(root, 'bin'), { recursive: true });
   const exe = path.join(root, 'bin', 'ujwalam-host.mjs');
-  copyFileSync(FAKE_HOST, exe);
-  const sha = createHash('sha256').update(readFileSync(exe)).digest('hex');
-  writeFileSync(path.join(root, 'release.json'), JSON.stringify({ version, n, hostExeSha256: badHash ? '0'.repeat(64) : sha, ...(parts ? { parts } : {}) }));
+  if (broken) writeFileSync(exe, 'process.exit(3);\n'); else copyFileSync(FAKE_HOST, exe);
+  writeFileSync(path.join(root, 'bin', 'stamp.txt'), version); // each fixture release has its own host part hash
+  const rel = { version, n, hostExeSha256: badHash ? '0'.repeat(64) : sha(exe), parts: parts ?? partsOf(root) };
+  for (const k of omit) delete rel[k];
+  writeFileSync(path.join(root, 'release.json'), JSON.stringify(rel));
+  return root;
+}
+/** A service fixture release: both service entry files, data and release.json with the part hashes. */
+function serviceRelease(root, { n = 99, version = `0.1.0-alpha.${n}`, omit = [] } = {}) {
+  for (const s of ['event-core', 'studio-ui']) { mkdirSync(path.join(root, 'services', s), { recursive: true }); writeFileSync(path.join(root, 'services', s, 'cli.mjs'), `// ${s} ${n}\n`); }
+  mkdirSync(path.join(root, 'data'), { recursive: true });
+  writeFileSync(path.join(root, 'data', 'flags.json'), '{}\n');
+  const rel = { version, n, parts: partsOf(root) };
+  for (const k of omit) delete rel[k];
+  writeFileSync(path.join(root, 'release.json'), JSON.stringify(rel));
   return root;
 }
 const sinks = (...xs) => ({ sinks: xs.map(([kind, state]) => ({ id: `${kind}-${state}`, kind, state })) });
@@ -51,7 +71,7 @@ test('busy: a stream or a recording starting, live, reconnecting, retrying or st
   assert.equal(outputsBusy({}), true);
 });
 
-test('hostEntry: the package layout, the hash in release.json, a stand-in script only for a stand-in host', () => {
+test('hostEntry: the package layout, the hashes in release.json (required), a stand-in script only for a stand-in host', () => {
   const r = stagedRelease(path.join(tmp(), 'rel'));
   const e = hostEntry(r, { script: true, runtime: 'RT' });
   assert.equal(e.problem, undefined);
@@ -60,15 +80,21 @@ test('hostEntry: the package layout, the hash in release.json, a stand-in script
   assert.match(hostEntry('relative', { script: true }).problem, /absolute/);
   assert.match(hostEntry(tmp(), { script: true }).problem, /release\.json/);
   assert.match(hostEntry(stagedRelease(path.join(tmp(), 'bad'), { badHash: true }), { script: true }).problem, /does not match the hash/);
+  // Codex review: metadata is required, not optional.
+  assert.match(hostEntry(stagedRelease(path.join(tmp(), 'noexe'), { omit: ['hostExeSha256'] }), { script: true }).problem, /no host exe hash/);
+  assert.match(hostEntry(stagedRelease(path.join(tmp(), 'noparts'), { omit: ['parts'] }), { script: true }).problem, /no host hash/);
+  assert.match(hostEntry(stagedRelease(path.join(tmp(), 'non'), { omit: ['n'] }), { script: true }).problem, /release number/);
   // A real host also needs the OBS runtime of the release (obs/).
   const real = path.join(tmp(), 'real');
   mkdirSync(path.join(real, 'bin'), { recursive: true });
   writeFileSync(path.join(real, 'bin', 'ujwalam-host.exe'), 'x');
-  writeFileSync(path.join(real, 'release.json'), JSON.stringify({ version: '0.1.0-alpha.5', n: 5 }));
+  const relOf = () => writeFileSync(path.join(real, 'release.json'), JSON.stringify({ version: '0.1.0-alpha.5', n: 5, hostExeSha256: sha(path.join(real, 'bin', 'ujwalam-host.exe')), parts: partsOf(real) }));
+  relOf();
   assert.match(hostEntry(real).problem, /OBS runtime/);
   mkdirSync(path.join(real, 'obs'));
   mkdirSync(path.join(real, 'app', 'host', 'overlay'), { recursive: true });
   writeFileSync(path.join(real, 'app', 'host', 'overlay', 'child.mjs'), '');
+  relOf();
   const re = hostEntry(real);
   assert.deepEqual([re.runtime, re.overlayScript], [path.join(real, 'obs'), path.join(real, 'app', 'host', 'overlay', 'child.mjs')], 'the overlay server follows the host');
   assert.deepEqual(hostArgsFor(['--runtime', 'A', '--x', '1', '--overlay-script', 'B'], re), ['--runtime', re.runtime, '--x', '1', '--overlay-script', re.overlayScript]);
@@ -84,12 +110,13 @@ function queue(over = {}) {
     outputs: async () => { if (st.unreadable) throw new Error('no answer'); return st.busy ? sinks(['stream', 'live']) : sinks(['stream', 'stopped'], ['record', 'stopped']); },
     applyHost: async (entry) => { calls.push(['host', entry.version]); return over.hostResult ?? { result: 'swapped' }; },
     swapService: async (service, root) => { calls.push([service, root]); return { result: 'swapped' }; },
-    hostInfo: () => ({ script: true, runtime: 'RT', root: null }),
+    hostInfo: () => ({ script: true, runtime: 'RT' }),
     ...over,
   });
   const mirror = () => JSON.parse(readFileSync(path.join(dataDir, 'live', UPDATES_FILE), 'utf8'));
-  const stage = () => { try { return JSON.parse(readFileSync(path.join(dataDir, 'live', HOST_STAGE_FILE), 'utf8')); } catch { return null; } };
-  return { u, calls, st, dataDir, mirror, stage };
+  const stage = () => readHostStage(dataDir);
+  const copies = () => path.join(dataDir, 'live', RELEASES_DIR);
+  return { u, calls, st, dataDir, mirror, stage, copies };
 }
 const until = async (fn, ms = 3000) => { const end = Date.now() + ms; while (!fn()) { if (Date.now() > end) return false; await new Promise((r) => setTimeout(r, 10)); } return true; };
 
@@ -100,7 +127,8 @@ test('LU5: a host update while live is staged, never applied while busy (not eve
   assert.equal(r.result, 'staged');
   assert.match(r.reason, /waits until every stream and recording has stopped/);
   assert.deepEqual(q.calls, [], 'nothing applied while live');
-  assert.equal(q.stage().state, 'staged');
+  assert.equal(q.stage().pending.n, 99);
+  assert.ok(q.stage().pending.root.startsWith(q.copies()), 'staged from a private copy, not the offered folder');
   const m = q.mirror();
   assert.equal(m.waiting.length, 1);
   assert.deepEqual([m.waiting[0].part, m.waiting[0].click, m.waiting[0].version], ['host', false, '0.1.0-alpha.99']);
@@ -109,7 +137,6 @@ test('LU5: a host update while live is staged, never applied while busy (not eve
   // Unreadable status counts as busy.
   q.st.unreadable = true; await q.u.tick(); assert.deepEqual(q.calls, []);
   q.st.unreadable = false;
-  // Recording only (stream stopped) is still busy: the stop rule covers recordings.
   q.st.busy = true; await q.u.tick(); assert.deepEqual(q.calls, []);
   q.st.busy = false;
   assert.ok(await until(() => q.calls.length === 1), 'applied by the poll after the stop');
@@ -120,7 +147,7 @@ test('LU5: a host update while live is staged, never applied while busy (not eve
   assert.equal(after.parts.find((p) => p.part === 'host').version, '0.1.0-alpha.99');
   assert.equal(after.parts.find((p) => p.part === 'overlay-server').version, '0.1.0-alpha.99', 'the overlay server follows the host');
   assert.match(after.recent[0].text, /updated to 0\.1\.0-alpha\.99/);
-  assert.equal(q.stage().state, 'applied', 'kept, so the next start does not go back to the older host');
+  assert.deepEqual([q.stage().pending, q.stage().good.n], [null, 99], 'the last known good host for the next start');
 });
 
 test('LU5: the overlay server alone is updated as a host update; not busy applies at once; a newer host update replaces the waiting one', async () => {
@@ -146,74 +173,80 @@ test('LU5: refused updates: bad hash, no host, unchanged host part, unknown serv
   assert.match((await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'bad'), { badHash: true }) })).reason, /hash/);
   const noHost = queue({ applyHost: null });
   assert.match((await noHost.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'x')) })).reason, /no host/);
-  const same = { host: { files: 3, sha256: 'f'.repeat(64) } };
-  const cur = stagedRelease(path.join(tmp(), 'cur'), { n: 10, parts: same });
-  const q2 = queue({ hostInfo: () => ({ script: true, runtime: 'RT', root: cur }) });
-  assert.equal((await q2.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'nxt'), { n: 11, parts: same }) })).result, 'unchanged');
-  assert.equal((await q.u.request({ service: 'live-clipper', root: REPO })).result, 'refused');
+  const nxt = stagedRelease(path.join(tmp(), 'nxt'), { n: 11 });
+  const same = JSON.parse(readFileSync(path.join(nxt, 'release.json'), 'utf8')).parts;
+  const q2 = queue({ own: { version: '0.1.0-alpha.10', n: 10, parts: same } });
+  assert.equal((await q2.u.request({ service: 'host', root: nxt })).result, 'unchanged');
+  const svc = serviceRelease(path.join(tmp(), 'svc'));
+  assert.equal((await q.u.request({ service: 'live-clipper', root: svc })).result, 'refused');
   const off = queue({ accepting: false });
-  assert.match((await off.u.request({ service: 'event-core', root: REPO })).reason, /flag service-swap/);
+  assert.match((await off.u.request({ service: 'event-core', root: svc })).reason, /flag service-swap/);
   q.u.close();
-  assert.match((await q.u.request({ service: 'event-core', root: REPO })).reason, /closing/);
+  assert.match((await q.u.request({ service: 'event-core', root: svc })).reason, /closing/);
   assert.deepEqual([...q.calls, ...noHost.calls, ...q2.calls, ...off.calls], []);
 });
 
-test('LU7: a service update while live waits for ONE click (no phrase, no question); not busy it applies at once', async () => {
+test('LU7: a service update while live waits for ONE click (no phrase, no question); nothing applies it on its own, not even the stop', async () => {
   const q = queue();
-  const r = await q.u.request({ service: 'event-core', root: REPO });
+  const svc = serviceRelease(path.join(tmp(), 'svc'), { n: 5 });
+  const r = await q.u.request({ service: 'event-core', root: svc });
   assert.equal(r.result, 'waiting');
   assert.deepEqual(q.calls, [], 'not applied on its own while live');
   const w = q.mirror().waiting[0];
   assert.deepEqual([w.part, w.click], ['event-core', true]);
   assert.match(w.text, /Apply now/);
-  // The click: applied while live (LU3 keeps the stream), nothing else asked.
+  assert.doesNotMatch(w.text, /applied when every stream/, 'the page does not promise an apply at the stop');
+  // The click: applied while live (LU3 keeps the stream), nothing else asked; from the private copy.
   const c = await q.u.apply(w.id);
   assert.equal(c.result, 'swapped');
-  assert.deepEqual(q.calls, [['event-core', REPO]]);
+  assert.equal(q.calls.length, 1);
+  assert.equal(q.calls[0][0], 'event-core');
+  assert.ok(q.calls[0][1].startsWith(q.copies()), 'swapped from the checked copy');
   assert.equal((await q.u.apply(w.id)).result, 'refused', 'a click is single-use');
-  // Unreadable status: also waits for the click.
+  // Codex review P2-5: the stop does not apply a waiting service; it waits for its click.
   q.st.unreadable = true;
-  assert.equal((await q.u.request({ service: 'studio-ui', root: REPO })).result, 'waiting');
+  const ui = await q.u.request({ service: 'studio-ui', root: svc });
+  assert.equal(ui.result, 'waiting');
   q.st.unreadable = false; q.st.busy = false;
-  assert.ok(await until(() => q.calls.length === 2), 'nobody clicked: applied at the stop');
-  // Not live: applied at once.
-  assert.equal((await q.u.request({ service: 'studio-ui', root: REPO })).result, 'swapped');
+  for (let i = 0; i < 5; i++) { await q.u.tick(); await new Promise((res) => setTimeout(res, 30)); }
+  assert.equal(q.calls.length, 1, 'nobody clicked: still waiting after the stop');
+  assert.deepEqual(q.mirror().waiting.map((x) => x.part), ['studio-ui']);
+  assert.equal((await q.u.apply(ui.id)).result, 'swapped');
+  // Not live: a request is the user's own install action and applies at once.
+  assert.equal((await q.u.request({ service: 'studio-ui', root: serviceRelease(path.join(tmp(), 'svc6'), { n: 6 }) })).result, 'swapped');
   assert.equal(q.calls.length, 3);
   assert.match((await q.u.request({ service: 'event-core', root: path.join(REPO, 'docs') })).reason, /entry file/);
 });
 
-test('LU5: closing with a staged host update keeps it for the next start; waiting services are dropped; the next start uses it until the installed release has it', async () => {
+test('LU5: closing with a staged host update keeps it pending for the next start; waiting services are dropped; the start trial order is pending, then good', async () => {
   const q = queue();
   const rel = stagedRelease(path.join(tmp(), 'rel'), { n: 30 });
   await q.u.request({ service: 'host', root: rel });
-  await q.u.request({ service: 'event-core', root: REPO });
+  await q.u.request({ service: 'event-core', root: serviceRelease(path.join(tmp(), 'svc'), { n: 3 }) });
   const lines = q.u.close();
-  assert.deepEqual(lines, ['host update 0.1.0-alpha.30 waits: it is applied at the next start', 'event-core update unversioned not applied (Ujwalam closed)']);
-  assert.equal(q.stage().state, 'staged');
-  // Next start (dev checkout, no release.json): the staged host is used.
+  assert.deepEqual(lines, ['host update 0.1.0-alpha.30 waits: it is tried at the next start', 'event-core update 0.1.0-alpha.3 not applied (Ujwalam closed)']);
+  assert.equal(q.stage().pending.n, 30);
+  // Next start (dev checkout, no release.json): the staged host is the first candidate.
   const t = takeStartupHost({ dataDir: q.dataDir, own: null, script: true, runtime: 'RT' });
-  assert.equal(t.state, 'staged');
-  assert.deepEqual([t.entry.exe, t.entry.version, t.entry.root], [path.join(rel, 'bin', 'ujwalam-host.mjs'), '0.1.0-alpha.30', rel]);
-  assert.ok(existsSync(path.join(q.dataDir, 'live', HOST_STAGE_FILE)), 'kept until the installed release catches up');
+  assert.deepEqual(t.candidates.map((c) => [c.kind, c.entry.version]), [['pending', '0.1.0-alpha.30']]);
+  assert.ok(t.candidates[0].entry.exe.startsWith(q.copies()));
+  assert.equal(readdirSync(q.copies()).length, 1, 'the service copy no record names is removed at the start');
   // The installed release is now as new: the record is dropped.
-  assert.equal(takeStartupHost({ dataDir: q.dataDir, own: { version: 'x', n: 30 }, script: true }).dropped, 'the running release already has it');
+  const t2 = takeStartupHost({ dataDir: q.dataDir, own: { version: 'x', n: 30 }, script: true });
+  assert.deepEqual([t2.candidates.length, t2.dropped], [0, ['0.1.0-alpha.30: the running release already has it']]);
   assert.equal(existsSync(path.join(q.dataDir, 'live', HOST_STAGE_FILE)), false);
-  // A folder that went away (or was tampered with) is dropped with the reason.
-  const q2 = queue();
-  const gone = stagedRelease(path.join(tmp(), 'gone'), { n: 31 });
-  await q2.u.request({ service: 'host', root: gone });
-  q2.u.close();
-  writeFileSync(path.join(gone, 'bin', 'ujwalam-host.mjs'), 'changed');
-  assert.match(takeStartupHost({ dataDir: q2.dataDir, own: null, script: true }).dropped, /hash/);
 });
 
-test('LU5: a failed host apply keeps the previous applied release for the next start', async () => {
-  const startup = { entry: hostEntry(stagedRelease(path.join(tmp(), 'old'), { n: 40 }), { script: true }), state: 'applied' };
-  const q2 = queue({ startupHost: startup, hostResult: { result: 'restored-old', reason: 'the host did not get ready' } });
+test('LU5: a failed host apply is rejected for good; the last known good stays the one the next start uses', async () => {
+  const dataDir = tmp();
+  const old = hostEntry(stagedRelease(path.join(tmp(), 'old'), { n: 40 }), { script: true });
+  acceptHost(dataDir, old);
+  const q2 = queue({ dataDir, startupHost: { entry: old, kind: 'good' }, hostResult: { result: 'restored-old', reason: 'the host did not get ready' } });
   q2.st.busy = false;
   const r = await q2.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'new'), { n: 41 }) });
   assert.equal(r.result, 'restored-old');
-  assert.equal(q2.stage().n, 40, 'the previous applied release stays the one the next start uses');
+  const st = q2.stage();
+  assert.deepEqual([st.good.n, st.pending, st.rejected.map((x) => x.n)], [40, null, [41]]);
   assert.equal(q2.mirror().parts.find((p) => p.part === 'host').version, '0.1.0-alpha.40');
 });
 
@@ -353,16 +386,185 @@ test('LU7: every feature flag added since 2026-11-10 is off by default, and ever
   assert.deepEqual(recent.filter((f) => f.default !== false).map((f) => f.id), [], 'on by default');
 });
 
+
 test('LU5: a stream started between the check and the restart sends the host update back to waiting', async () => {
   let answer = { result: 'busy' };
   const q = queue({ applyHost: async (entry) => { q.calls.push(['host', entry.version]); return answer; } });
   q.st.busy = false;
   const r = await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'r'), { n: 60 }) });
   assert.equal(r.result, 'staged', 'the launcher\'s last check saw a stream: staged, not lost');
-  assert.equal(q.stage().state, 'staged');
+  assert.equal(q.stage().pending.n, 60);
   answer = { result: 'swapped' };
   assert.ok(await until(() => q.calls.length === 2));
   await q.u.tick();
   assert.equal(q.mirror().waiting.length, 0);
-  assert.equal(q.stage().state, 'applied');
+  assert.deepEqual([q.stage().pending, q.stage().good.n], [null, 60]);
+});
+
+// ---- Codex review of D343 ----
+
+test('P1-1 maintenance lock: hold refuses new starts at once, waits for starts on their way, and ends after the replacement', async () => {
+  const g = createStartGate();
+  const a = g.lease('ui1');
+  assert.equal(a.ok, true);
+  let held = false;
+  const h = g.hold('the video engine (host) is being updated', 2000).then((v) => { held = v; });
+  await settle();
+  assert.equal(held, false, 'not held while a start is on its way to the host');
+  const b = g.lease('ui1');
+  assert.deepEqual([b.ok, b.reason], [false, 'the video engine (host) is being updated'], 'no new start once the hold began');
+  g.release(a.lease);
+  await h;
+  assert.equal(held, true);
+  assert.equal(await g.hold('again'), false, 'one hold at a time');
+  g.end();
+  assert.equal(g.lease('ui1').ok, true, 'starts allowed again after the replacement or rollback');
+  // A start that never finishes: the hold gives up (the update goes back to waiting) and lifts the lock.
+  const g2 = createStartGate();
+  g2.lease('ui2');
+  assert.equal(await g2.hold('x', 50), false);
+  assert.equal(g2.lease('ui2').ok, true);
+  // A UI server that goes away gives its leases back.
+  const g3 = createStartGate();
+  g3.lease('gone');
+  const h3 = g3.hold('x', 2000);
+  g3.releaseOwner('gone');
+  assert.equal(await h3, true);
+});
+
+test('P1-1 maintenance lock: the UI server sends no stream or recording start while the launcher holds the gate (IPC lease)', async () => {
+  // The launcher side and the UI server side of the authority channel, wired like IPC.
+  const child = new EventEmitter(); child.connected = true;
+  const ui = new EventEmitter(); ui.connected = true;
+  child.send = (m) => { setImmediate(() => ui.emit('message', m)); };
+  ui.send = (m) => { setImmediate(() => child.emit('message', m)); };
+  ui.disconnect = () => {};
+  const gate = createStartGate();
+  serveAuthority(child, createLiveAuthority(), { gate });
+  const client = authorityClient({ proc: ui, timeoutMs: 1000 });
+  const sent = [];
+  const host = { describe: () => ({ kind: 'fake' }), call: async (m) => { sent.push(m); return { ok: true }; } };
+  const gated = gateStarts(host, () => client);
+  await gated.call('stream.start', {});
+  assert.deepEqual(sent, ['stream.start']);
+  assert.equal(gate.state().inFlight, 0, 'the lease is given back after the host answered');
+  assert.equal(await gate.hold('the video engine (host) is being updated'), true);
+  await assert.rejects(gated.call('record.start', {}), (e) => e.code === 'HOST_UPDATING');
+  await assert.rejects(gated.call('stream.start', {}), (e) => e.code === 'HOST_UPDATING');
+  assert.deepEqual(sent, ['stream.start'], 'nothing reached the host while held');
+  await gated.call('stream.stop', {});
+  await gated.call('scenes.list', {});
+  assert.deepEqual(sent, ['stream.start', 'stream.stop', 'scenes.list'], 'stops and reads are never held');
+  gate.end();
+  await gated.call('record.start', {});
+  assert.equal(sent.at(-1), 'record.start');
+  assert.equal(gated.describe().kind, 'fake');
+  // A launcher that does not answer: the start is refused (fail closed).
+  const mute = new EventEmitter(); mute.connected = true; mute.send = () => {}; mute.disconnect = () => {};
+  const silent = authorityClient({ proc: mute, timeoutMs: 50 });
+  await assert.rejects(gateStarts(host, () => silent).call('stream.start', {}), (e) => e.code === 'HOST_UPDATING');
+  // Started by hand or a test seam without a lease: unchanged.
+  await gateStarts(host, () => null).call('stream.start', {});
+  await gateStarts(host, () => ({ begin: async () => 0 })).call('stream.start', {});
+});
+
+test('P1-2 integrity: release metadata is required, the whole host part is hashed, the update runs from a checked private copy', async () => {
+  const q = queue();
+  for (const [name, opt, re] of [['noexe', { omit: ['hostExeSha256'] }, /no host exe hash/], ['noparts', { omit: ['parts'] }, /no host hash/], ['non', { omit: ['n'] }, /release number/]]) {
+    assert.match((await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), name), opt) })).reason, re, name);
+  }
+  // A non-exe file of the host part (an OBS DLL, the overlay child) changed after release.json was written.
+  const dll = stagedRelease(path.join(tmp(), 'dll'));
+  mkdirSync(path.join(dll, 'obs', 'bin'), { recursive: true });
+  writeFileSync(path.join(dll, 'obs', 'bin', 'obs.dll'), 'not in the hash');
+  assert.match((await q.u.request({ service: 'host', root: dll })).reason, /host files do not match/);
+  const ov = stagedRelease(path.join(tmp(), 'ov'));
+  mkdirSync(path.join(ov, 'app', 'host', 'overlay'), { recursive: true });
+  writeFileSync(path.join(ov, 'app', 'host', 'overlay', 'child.mjs'), 'added later');
+  assert.match((await q.u.request({ service: 'host', root: ov })).reason, /host files do not match/);
+  // Services: release.json and its part hashes are required too.
+  assert.match((await q.u.request({ service: 'event-core', root: serviceRelease(path.join(tmp(), 's1'), { omit: ['parts'] }) })).reason, /no services hash/);
+  const s2 = serviceRelease(path.join(tmp(), 's2'));
+  rmSync(path.join(s2, 'release.json'));
+  assert.match((await q.u.request({ service: 'event-core', root: s2 })).reason, /no readable release\.json/);
+  const s3 = serviceRelease(path.join(tmp(), 's3'));
+  writeFileSync(path.join(s3, 'services', 'event-core', 'cli.mjs'), 'changed');
+  assert.match((await q.u.request({ service: 'event-core', root: s3 })).reason, /services files do not match/);
+  assert.deepEqual(q.calls, []);
+  // The offered folder changes after the check: the copy runs, unchanged.
+  const rel = stagedRelease(path.join(tmp(), 'rel'), { n: 70 });
+  assert.equal((await q.u.request({ service: 'host', root: rel })).result, 'staged');
+  writeFileSync(path.join(rel, 'bin', 'ujwalam-host.mjs'), 'process.exit(9);\n');
+  q.st.busy = false;
+  assert.ok(await until(() => q.calls.length === 1));
+  await q.u.tick();
+  assert.equal(q.stage().good.n, 70);
+  assert.equal(readFileSync(path.join(q.stage().good.root, 'bin', 'ujwalam-host.mjs'), 'utf8'), readFileSync(FAKE_HOST, 'utf8'));
+  // The copy itself changed before it runs: checked right before the restart, rejected, never started.
+  const q2 = queue();
+  assert.equal((await q2.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'r2'), { n: 71 }) })).result, 'staged');
+  appendFileSync(path.join(q2.stage().pending.root, 'bin', 'ujwalam-host.mjs'), '\n// tampered\n');
+  q2.st.busy = false;
+  assert.ok(await until(() => q2.mirror().waiting.length === 0));
+  assert.deepEqual(q2.calls, [], 'the host was not restarted');
+  assert.deepEqual([q2.stage().pending, q2.stage().rejected.map((x) => x.n)], [null, [71]]);
+  assert.match(q2.mirror().recent[0].text, /0\.1\.0-alpha\.71 not applied \(failed: the host exe does not match/);
+});
+
+test('P1-3 startup records: a rejected release is never a candidate again; a failed pending falls back to the last good', () => {
+  const dataDir = tmp();
+  const good = hostEntry(stagedRelease(path.join(tmp(), 'good'), { n: 80 }), { script: true });
+  const bad = hostEntry(stagedRelease(path.join(tmp(), 'bad'), { n: 81, broken: true }), { script: true });
+  acceptHost(dataDir, good);
+  writeFileSync(path.join(dataDir, 'live', HOST_STAGE_FILE), JSON.stringify({ ...JSON.parse(readFileSync(path.join(dataDir, 'live', HOST_STAGE_FILE), 'utf8')), pending: { root: bad.root, version: bad.version, n: bad.n, sha256: bad.sha256, files: bad.files } }));
+  const t = takeStartupHost({ dataDir, own: null, script: true });
+  assert.deepEqual(t.candidates.map((c) => [c.kind, c.entry.n]), [['pending', 81], ['good', 80]], 'pending first, then the last good');
+  // The launcher's trial of 81 failed (readiness or project load).
+  rejectHost(dataDir, bad, 'the host did not get ready');
+  const st = readHostStage(dataDir);
+  assert.deepEqual([st.pending, st.good.n, st.rejected.map((x) => x.n)], [null, 80, [81]]);
+  assert.deepEqual(takeStartupHost({ dataDir, own: null, script: true }).candidates.map((c) => c.entry.n), [80]);
+  // Offered again (same release): never tried again.
+  writeFileSync(path.join(dataDir, 'live', HOST_STAGE_FILE), JSON.stringify({ ...JSON.parse(readFileSync(path.join(dataDir, 'live', HOST_STAGE_FILE), 'utf8')), pending: { root: bad.root, version: bad.version, n: bad.n, sha256: bad.sha256, files: bad.files } }));
+  const t2 = takeStartupHost({ dataDir, own: null, script: true });
+  assert.deepEqual([t2.candidates.map((c) => c.entry.n), t2.dropped], [[80], ['0.1.0-alpha.81: it failed before']]);
+  // A last good whose files changed is dropped with the reason.
+  appendFileSync(path.join(good.root, 'bin', 'ujwalam-host.mjs'), '\n// changed\n');
+  assert.match(takeStartupHost({ dataDir, own: null, script: true }).dropped[0], /0\.1\.0-alpha\.80: the host exe does not match/);
+});
+
+test('P2-4 stale and superseded: an older waiting update never runs after a newer one; not-newer releases are refused', async () => {
+  const q = queue();
+  const a = stagedRelease(path.join(tmp(), 'a'), { n: 90 });
+  const b = stagedRelease(path.join(tmp(), 'b'), { n: 91 });
+  assert.equal((await q.u.request({ service: 'host', root: a })).result, 'staged');
+  // The stop came, and B is offered before the poll ran: B applies at once and A is dropped first.
+  q.st.busy = false;
+  const ab = q.u.request({ service: 'host', root: b });
+  assert.equal((await ab).result, 'swapped');
+  await new Promise((r) => setTimeout(r, 100));
+  await q.u.tick();
+  assert.deepEqual(q.calls.map((c) => c[1]).filter((v) => v === '0.1.0-alpha.90'), [], 'A never applied after B');
+  assert.equal(q.mirror().parts.find((p) => p.part === 'host').version, '0.1.0-alpha.91');
+  // Not newer than the running host, or than a waiting one: refused.
+  assert.match((await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'old'), { n: 91, version: '0.1.0-alpha.91b', broken: true }) })).reason, /not newer than the running host/);
+  q.st.busy = true;
+  assert.equal((await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'c'), { n: 95 }) })).result, 'staged');
+  assert.match((await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'd'), { n: 93 }) })).reason, /release 95 of the Video engine \(host\) already waits/);
+  // Services too.
+  assert.equal((await q.u.request({ service: 'event-core', root: serviceRelease(path.join(tmp(), 's7'), { n: 7 }) })).result, 'waiting');
+  assert.match((await q.u.request({ service: 'event-core', root: serviceRelease(path.join(tmp(), 's6'), { n: 6 }) })).reason, /already waits/);
+  assert.equal((await q.u.request({ service: 'event-core', root: serviceRelease(path.join(tmp(), 's8'), { n: 8 }) })).result, 'waiting');
+  assert.deepEqual(q.mirror().waiting.map((w) => [w.part, w.version]), [['host', '0.1.0-alpha.95'], ['event-core', '0.1.0-alpha.8']]);
+});
+
+test('P2-6 confirmed exit: stopHostChild reports a host that does not exit; it returns true only after the exit', async () => {
+  const stuck = new EventEmitter(); stuck.exitCode = null; stuck.signalCode = null; stuck.kill = () => {};
+  const asked = [];
+  assert.equal(await stopHostChild({ call: async (m) => { asked.push(m); } }, stuck, { askMs: 10, exitMs: 20, killMs: 30 }), false);
+  assert.deepEqual(asked, ['host.shutdown']);
+  const quits = new EventEmitter(); quits.exitCode = null; quits.signalCode = null;
+  const p = stopHostChild({ call: async () => { setTimeout(() => { quits.exitCode = 0; quits.emit('exit', 0); }, 20); } }, quits, { askMs: 10, exitMs: 2000, killMs: 30 });
+  assert.equal(await p, true);
+  assert.equal(await stopHostChild(null, { exitCode: 3, signalCode: null }), true, 'already gone');
 });

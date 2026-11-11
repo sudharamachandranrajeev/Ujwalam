@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,9 +13,23 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { serveSwaps, SERVICE_SWAP_FLAG } from '../services/studio-ui/launch.mjs';
 import { killChildTree } from '../services/common/kill-tree.mjs';
+import { folderFiles, releaseParts } from '../services/supervisor/parts.mjs';
+import { repoFiles } from '../tools/package/manifest.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * LU5/LU7 (D343): a swap now needs a release folder (release.json with n and the part hashes) and runs from a checked
+ * private copy. This builds one in a temp folder from the files the alpha package ships (tools/package/manifest.mjs);
+ * next() writes a newer release number before each request (an update not newer than the running one is refused).
+ */
+function serviceRelease(dir) {
+  for (const rel of repoFiles(REPO)) { const to = path.join(dir, ...rel.split('/')); mkdirSync(path.dirname(to), { recursive: true }); cpSync(path.join(REPO, ...rel.split('/')), to); }
+  const parts = releaseParts(folderFiles(dir).filter((f) => f.rel !== 'release.json'));
+  let n = 0;
+  return { dir, next: () => { n += 1; writeFileSync(path.join(dir, 'release.json'), JSON.stringify({ version: `0.1.0-alpha.${n}`, n, parts })); return dir; } };
+}
 
 function fakeProc() {
   const p = new EventEmitter();
@@ -73,11 +87,12 @@ test('launcher with the flag on: the event core and the UI server swap over IPC 
   const corePort = Number(/event core is reached through port (\d+)/.exec(out)?.[1]);
   assert.ok(uiPort && corePort, out.slice(-2000));
   let id = 0;
+  const rel = serviceRelease(path.join(root, 'release'));
   const swap = (service) => new Promise((resolve) => {
     const my = ++id;
     const on = (m) => { if (m?.t === 'ujwalam-swap' && m.id === my) { child.off('message', on); resolve(m); } };
     child.on('message', on);
-    child.send({ t: 'ujwalam-swap', id: my, service, root: REPO });
+    child.send({ t: 'ujwalam-swap', id: my, service, root: rel.next() });
   });
   const results = [];
   for (let i = 0; i < 3; i++) { results.push((await swap('event-core')).result); results.push((await swap('studio-ui')).result); }
@@ -120,11 +135,12 @@ test('launcher with the flag on: the one-time login key stays one-time across UI
   const u = new URL(url);
   const login = () => new Promise((resolve) => { http.get({ host: '127.0.0.1', port: Number(u.port), path: `${u.pathname}${u.search}`, agent: false }, (r) => { r.resume(); resolve(r.statusCode); }).on('error', () => resolve(0)); });
   let id = 0;
+  const rel = serviceRelease(path.join(root, 'release'));
   const swap = (service) => new Promise((resolve) => {
     const my = ++id;
     const on = (m) => { if (m?.t === 'ujwalam-swap' && m.id === my) { child.off('message', on); resolve(m); } };
     child.on('message', on);
-    child.send({ t: 'ujwalam-swap', id: my, service, root: REPO });
+    child.send({ t: 'ujwalam-swap', id: my, service, root: rel.next() });
   });
   const first = (await swap('studio-ui')).result; // before the login: the unused key moves to the new process
   const used = await login();

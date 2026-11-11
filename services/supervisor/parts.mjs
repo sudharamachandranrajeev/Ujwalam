@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // LU1 update kinds (D343): each packaged file belongs to one part; release.json carries a hash per part, so the update
-// queue (services/supervisor/updates.mjs) can tell what a new release changes. Node stdlib only.
+// queue (services/supervisor/updates.mjs) can tell what a new release changes and check a staged release before it
+// runs. Used by the packager (tools/package/build-alpha.mjs) and the launcher. Node stdlib only.
 //
 //   partOf(rel)           -> 'host' | 'studio-window' | 'services' | 'overlay' | 'data' | 'meta'  (package-relative, '/')
 //   releaseParts(files)   -> { host: { files, sha256 }, ... } for [{ rel, abs }] (meta files are not a part)
 //   changedParts(a, b)    -> part names whose hash differs between two release.json `parts` objects (missing = changed)
+//   folderFiles(root)     -> [{ rel, abs }] of every file under root; throws on a link (a staged release has none)
+//   partsProblem(root, names, expected) -> null when each named part of the folder matches expected[name] (release.json
+//                            `parts`: file count and hash), else the problem in plain words
 //
 // host: the host exe, the OBS runtime and the overlay server child (a child of the host, updated with it), plus the
 // test-card project the host loads at start. studio-window: the Qt shell and its start stub and icon. services: Node
 // services, the control page (ui/, served by the UI server), the tools and host libraries they import. overlay: overlay
 // pages, if a release ships any. data: data/ and registry/ (presets, themes, rules, flags).
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 
 export const PART_NAMES = Object.freeze(['host', 'studio-window', 'services', 'overlay', 'data']);
 
@@ -49,4 +54,34 @@ export function releaseParts(files, read = (abs) => readFileSync(abs)) {
 
 export function changedParts(a, b) {
   return PART_NAMES.filter((p) => !a?.[p]?.sha256 || a[p].sha256 !== b?.[p]?.sha256);
+}
+
+export function folderFiles(root) {
+  const out = [];
+  const walk = (dir, rel) => {
+    for (const d of readdirSync(dir, { withFileTypes: true })) {
+      const abs = path.join(dir, d.name);
+      const r = rel ? `${rel}/${d.name}` : d.name;
+      const st = lstatSync(abs);
+      if (st.isSymbolicLink()) throw new Error(`a staged release must not hold links (${r})`);
+      if (st.isDirectory()) walk(abs, r);
+      else if (st.isFile()) out.push({ rel: r, abs });
+    }
+  };
+  walk(root, '');
+  return out;
+}
+
+const HEX64 = /^[0-9a-f]{64}$/;
+
+export function partsProblem(root, names, expected) {
+  let files;
+  try { files = folderFiles(root); } catch (e) { return String(e?.message ?? e).slice(0, 200); }
+  const got = releaseParts(files);
+  for (const n of names) {
+    const want = expected?.[n];
+    if (!want || !HEX64.test(want.sha256 ?? '') || !Number.isInteger(want.files)) return `its release.json has no ${n} hash`;
+    if (got[n].sha256 !== want.sha256 || got[n].files !== want.files) return `the ${n} files do not match the hash in its release.json`;
+  }
+  return null;
 }
