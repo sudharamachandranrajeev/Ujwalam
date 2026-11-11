@@ -1067,18 +1067,40 @@ Plan rows LU5 and LU7 (D324), built on LU3 (D337). Decided:
   release folder (`bin/ujwalam-host.exe`, `obs/`, the overlay server child `app/host/overlay/child.mjs`), must write its
   discovery file and load the project (alpha), else the previous host is started again (`restored-old`). A planned
   restart is not a crash (the crash supervisor ignores it). The overlay server is a child of the host: an update named
-  `overlay-server` is a host update. Release folders are checked: `release.json` readable, the host exe present and,
-  when release.json names `hostExeSha256`, matching it; a stand-in script host (tests) is replaced only by
-  `bin/ujwalam-host.mjs`. With LU1 hashes in both releases, a host part that did not change is answered `unchanged`.
-- **Close with a staged host update.** `<dataDir>/live/host-update.json` holds the staged (or applied) release folder.
-  The next start uses it while its release `n` is newer than the running one (a checkout without release.json counts as
-  0), so a close does not lose it and a later start does not go back to the older host. It is removed once the
-  installed release has caught up, or when the folder is no longer usable (the reason is logged). Waiting service
-  updates are dropped at a close (logged).
+  `overlay-server` is a host update. A stand-in script host (tests) is replaced only by `bin/ujwalam-host.mjs`. A host
+  part that did not change (LU1 hash equal to the running one) is answered `unchanged`.
+- **Maintenance lock (Codex review, P1).** The queue's status check alone left a gap: a start could reach the host
+  between the last `outputs.status` and `host.shutdown`. Now every `stream.start` and `record.start` the UI server sends
+  to the host (clicks, confirmed actions, the automatic recording start, the per-output switch) first takes a lease
+  from the launcher over the authority IPC channel and gives it back after the host answered (`gateStarts`,
+  `createStartGate`). Before the host update the launcher holds the gate: new leases are refused at once (the start is
+  not sent, `HOST_UPDATING`), then it waits for leases on their way (15 s, else the update goes back to waiting), then
+  revokes the go-live authority (no stream recovery), then reads the last status. The gate stays held until the new
+  host runs or the old one is back. A launcher that does not answer a lease refuses the start (fail closed). The
+  launcher's own crash restarts are not gated: they cannot run during a planned restart (one host supervisor, busy).
+- **Integrity (Codex review, P1).** An update needs `release.json` with version, `n` >= 1 and the LU1 hash (file count
+  and sha256) of each part it runs from; the host also `hostExeSha256`. No metadata: refused. The whole part is hashed
+  (host: exe, OBS runtime, overlay child, projects; a service: services, data and overlay parts), copied into
+  `<dataDir>/live/releases/<kind>-<n>-<hash>`, and the copy is hashed again; the update runs only from the copy, so the
+  offered folder can change after the check without effect. Right before a host copy is started (and at every start
+  that uses it) its exe and part hash are checked once more; a failure rejects it. Copies that no record names are
+  deleted at the next start.
+- **Close with a staged host update; start trial (Codex review, P1).** `<dataDir>/live/host-update.json` (v2) keeps
+  `pending` (the host release to try next: staged, or being applied), `good` (the last host release that got ready and
+  loaded the project) and `rejected` (releases that failed: never tried again). The next start tries pending, then
+  good, then the installed host; each try is a trial: it must write its discovery file and (alpha) load the project, or
+  it is stopped (exit confirmed), recorded as rejected, and the next one starts. A candidate is used only while its `n`
+  is newer than the installed release (a checkout counts as 0). Waiting service updates are dropped at a close (logged).
 - **Services (LU7).** Not live: applied at once (the request is the user's own install action). Live: the update waits
   for one click, "Apply now" on the control page (D332: no typed phrase, no "are you sure"); the click runs the LU3
-  swap while live. Without a click it is applied at the stop. A newer update of the same part replaces a waiting one.
-  One update runs at a time.
+  swap while live. **Reversed after the Codex review (P2):** a waiting service is NOT applied at the stop; nothing
+  applies it but its click (AGENTS: a system request waits for one click). Only the host is applied by the poll.
+- **Order (Codex review, P2).** An update whose `n` is not newer than the running release of its part, or than a
+  waiting update of the same part, is refused. A same-part waiting update is dropped before a newer one is applied at
+  once or queued, so an older waiting item never runs after a newer one. One update runs at a time.
+- **Confirmed exit (Codex review, P2).** A host is replaced only after its exit is confirmed (`stopHostChild`:
+  `host.shutdown`, then the process tree, then a wait). If it is still running, the update is aborted with the host's
+  state in the reason and nothing else starts; a new host that failed and does not exit is not joined by the old one.
 - **Visible.** `<dataDir>/live/updates.json` (versions per part, waiting items in plain words, last 8 results; no paths)
   goes into the UI server's status snapshot (`updates`) and `GET /ui/api/updates`. The control page shows a "Versions
   and updates" card (host, overlay server, event core, control page server, studio window, data) and an "Updates
@@ -1086,10 +1108,13 @@ Plan rows LU5 and LU7 (D324), built on LU3 (D337). Decided:
 - **Flags.** A test checks that every flag in data/flags.json has a `since` date and that every flag since 2026-11-10 is
   off by default.
 - **LU1 (part).** The packager writes `parts` into release.json: per part (host, studio-window, services, overlay, data)
-  the file count and a hash over the files' paths and hashes (`tools/package/parts.mjs`). Not yet in a built alpha.
+  the file count and a hash over the files' paths and hashes (`services/supervisor/parts.mjs`, moved from tools/package
+  so the launcher can check a release; tools/package is not packaged). Not yet in a built alpha.
 - Also fixed: `services/supervisor` was missing from the package (LU3's imports failed the import-closure check).
 - `updates.json` writes retry a rename that Windows refuses while the UI server reads the file; the launcher's swap reply
   keeps the asker's `id` (the queue item id is sent as `item`).
-Limits: a Start stream clicked while the host restarts for an update fails (host not ready) and must be clicked again;
-the live clipper and face worker are not updated by the queue (not wired, D337).
+Limits: a Start stream clicked while the host is replaced is refused ("the video engine (host) is being updated") and
+must be clicked again; the live clipper and face worker are not updated by the queue (not wired, D337); a service copy
+holds only the services, data and overlay parts of its release (enough for the event core and the UI server, checked
+with real swaps in tests/service-swap-launcher.test.mjs).
 Evidence: `docs/evidence/2026-11-11-lu5-lu7-host-staging.md`.
