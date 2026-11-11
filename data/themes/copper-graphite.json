@@ -42,17 +42,28 @@
     }
   },
   "typography": {
-    "family": "Segoe UI",
+    "family": "Barlow",
     "fallbacks": [
-      "Segoe UI Variable Text"
+      "Segoe UI"
     ],
-    "baseSize": 10,
-    "captionSize": 8,
-    "titleSize": 15,
+    "baseSize": 10.5,
+    "captionSize": 8.5,
+    "titleSize": 16,
     "headingWeight": 600,
-    "letterSpacing": 0.1,
-    "captionLetterSpacing": 1.4,
-    "captionCaps": true
+    "letterSpacing": 0.3,
+    "captionLetterSpacing": 1.6,
+    "captionCaps": true,
+    "buttonCaps": true,
+    "tabCaps": true,
+    "headingCaps": true,
+    "scale": {
+      "h1": 16,
+      "h2": 12,
+      "subtitle": 10,
+      "body": 10.5,
+      "caption": 8.5,
+      "button": 10
+    }
   },
   "geometry": {
     "radius": {
@@ -76,14 +87,47 @@
   "depth": {
     "card": {
       "shadow": {
-        "blur": 18,
+        "blur": 24,
         "offsetX": 0,
-        "offsetY": 5,
+        "offsetY": 8,
         "color": "#000000",
-        "opacity": 0.45
+        "opacity": 0.55
+      },
+      "highlight": {
+        "blur": 4,
+        "offsetX": 0,
+        "offsetY": -1,
+        "color": "accentHi",
+        "opacity": 0.14
+      },
+      "rim": {
+        "from": "#b9826a",
+        "to": "#4a3b36",
+        "width": 1
       }
     },
-    "button": {},
+    "button": {
+      "shadow": {
+        "blur": 6,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#000000",
+        "opacity": 0.45
+      },
+      "rim": {
+        "from": "#9c6e55",
+        "to": "#3a2a24",
+        "width": 1
+      },
+      "inset": {
+        "blur": 8,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#000000",
+        "opacity": 0.55,
+        "when": "pressed"
+      }
+    },
     "primaryButton": {
       "shadow": {
         "blur": 8,
@@ -97,6 +141,24 @@
         "color": "accent",
         "opacity": 0.45,
         "when": "always"
+      },
+      "rim": {
+        "from": "accentHi",
+        "to": "#8a5436",
+        "width": 2,
+        "innerGlow": {
+          "color": "accent",
+          "opacity": 0.4,
+          "width": 1
+        }
+      },
+      "inset": {
+        "blur": 8,
+        "offsetX": 0,
+        "offsetY": 2,
+        "color": "#000000",
+        "opacity": 0.5,
+        "when": "pressed"
       }
     },
     "roundControl": {
@@ -132,6 +194,11 @@
         "color": "accentHi",
         "opacity": 0.22,
         "when": "always"
+      },
+      "rim": {
+        "from": "accent",
+        "to": "#5a3b2b",
+        "width": 1
       }
     },
     "menu": {
@@ -156,6 +223,11 @@
         "color": "accent",
         "opacity": 0.16,
         "when": "always"
+      },
+      "rim": {
+        "from": "#b9826a",
+        "to": "#4a3b36",
+        "width": 1
       }
     }
   },
@@ -176,5 +248,26 @@
   },
   "icons": {
     "stroke": 1.5
+  },
+  "components": {
+    "button": {
+      "shape": "pill",
+      "style": "metal",
+      "caps": true
+    },
+    "tabs": "pill",
+    "input": "inset",
+    "focus": "glow",
+    "switch": "bezel",
+    "slider": {
+      "track": "inset",
+      "handle": "sphere",
+      "valueBubble": true
+    },
+    "sectionHeader": "caps",
+    "card": "raised",
+    "list": "plates",
+    "chip": "pill",
+    "density": "normal"
   }
 }
