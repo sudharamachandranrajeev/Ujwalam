@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/reference-read.schema.json",
+  "title": "Scene builder reference read (SB2, D339)",
+  "description": "What services/scene-builder/read.mjs reads from a reference image or video: palette (build plan 4.6 method), type feel, corner radius, glow and shadow use, and layout slots (game, camera, chat, alerts, graphics) with a confidence each. Data only: it never changes a scene. Boxes are fractions of the reference frame (0..1). source 'rules' = the rule-based detector; 'model' = a local vision model through the typed hook (never a paid API).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "tool", "reference", "canvas", "detector", "palette", "style", "slots", "notes"],
+  "$defs": {
+    "unit": { "type": "number", "minimum": 0, "maximum": 1 },
+    "hex": { "type": "string", "pattern": "^#[0-9a-f]{6}$" },
+    "box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h"],
+      "properties": { "x": { "$ref": "#/$defs/unit" }, "y": { "$ref": "#/$defs/unit" }, "w": { "$ref": "#/$defs/unit" }, "h": { "$ref": "#/$defs/unit" } }
+    },
+    "role": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["hex", "how", "why"],
+          "properties": { "hex": { "$ref": "#/$defs/hex" }, "how": { "enum": ["extracted", "derived"] }, "why": { "type": "string", "maxLength": 200 } }
+        }
+      ]
+    },
+    "slot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "box", "confidence", "evidence", "source"],
+      "properties": {
+        "role": { "enum": ["game", "camera", "chat", "alerts", "graphics"] },
+        "box": { "$ref": "#/$defs/box" },
+        "confidence": { "$ref": "#/$defs/unit" },
+        "evidence": { "type": "array", "maxItems": 12, "items": { "type": "string", "maxLength": 120 } },
+        "source": { "enum": ["rules", "model"] }
+      }
+    }
+  },
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "tool": { "const": "scene-builder/reference-read" },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "width", "height", "rotation", "durationS", "frameTimesS", "analysisWidth", "analysisHeight"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Base name of the file only, never a folder." },
+        "kind": { "enum": ["image", "video"] },
+        "width": { "type": "integer", "minimum": 1, "description": "Display width: the stored size turned by the display rotation." },
+        "height": { "type": "integer", "minimum": 1, "description": "Display height: the stored size turned by the display rotation." },
+        "rotation": { "enum": [0, 90, 180, 270], "description": "Display rotation from the file's side data or rotate tag, in degrees." },
+        "durationS": { "type": ["number", "null"], "minimum": 0 },
+        "frameTimesS": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "type": "number", "minimum": 0 } },
+        "analysisWidth": { "type": "integer", "minimum": 1 },
+        "analysisHeight": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "canvas": { "enum": ["H", "V"] },
+    "detector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rulesVersion", "model"],
+      "properties": {
+        "rulesVersion": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+        "model": { "type": ["string", "null"], "maxLength": 80, "description": "Id of the local vision model whose answer was merged, or null (rules only)." }
+      }
+    },
+    "palette": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["k", "clusters", "roles", "contrast"],
+      "properties": {
+        "k": { "type": "integer", "minimum": 1, "maximum": 32 },
+        "clusters": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["hex", "share", "L", "C", "h"],
+            "properties": {
+              "hex": { "$ref": "#/$defs/hex" },
+              "share": { "$ref": "#/$defs/unit" },
+              "L": { "type": "number" },
+              "C": { "type": "number", "minimum": 0 },
+              "h": { "type": "integer", "minimum": 0, "maximum": 360 }
+            }
+          }
+        },
+        "roles": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["background", "surface", "text", "accent", "accentAlt"],
+          "properties": {
+            "background": { "$ref": "#/$defs/role" },
+            "surface": { "$ref": "#/$defs/role" },
+            "text": { "$ref": "#/$defs/role" },
+            "accent": { "$ref": "#/$defs/role" },
+            "accentAlt": { "$ref": "#/$defs/role" }
+          }
+        },
+        "contrast": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["textOnBackground"],
+          "properties": { "textOnBackground": { "type": ["number", "null"], "minimum": 1 } }
+        }
+      }
+    },
+    "style": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "cornerRadius", "glow", "shadow"],
+      "properties": {
+        "type": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["weight", "weightRatio", "size", "glyphHeightPx1080", "polarity", "family", "glyphs", "confidence"],
+          "properties": {
+            "weight": { "enum": ["light", "regular", "bold", "black", null] },
+            "weightRatio": { "type": ["number", "null"], "minimum": 0 },
+            "size": { "enum": ["small", "medium", "large", "display", null] },
+            "glyphHeightPx1080": { "type": ["integer", "null"], "minimum": 0 },
+            "polarity": { "enum": ["light-on-dark", "dark-on-light", null] },
+            "family": { "enum": ["sans", "serif", "mono", "display", "script", null], "description": "Rules leave this null; only the model hook may set it." },
+            "glyphs": { "type": "integer", "minimum": 0 },
+            "confidence": { "$ref": "#/$defs/unit" }
+          }
+        },
+        "cornerRadius": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["px1080", "class", "corners", "confidence"],
+          "properties": {
+            "px1080": { "type": ["integer", "null"], "minimum": 0, "description": "Radius in px on a canvas whose short side is 1080." },
+            "class": { "enum": ["none", "small", "medium", "large", "pill", null] },
+            "corners": { "type": "integer", "minimum": 0 },
+            "confidence": { "$ref": "#/$defs/unit" }
+          }
+        },
+        "glow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["used", "share", "colour", "marks", "confidence"],
+          "properties": {
+            "used": { "type": "boolean" },
+            "share": { "$ref": "#/$defs/unit" },
+            "strength": { "type": "number", "minimum": 0 },
+            "colour": { "oneOf": [{ "$ref": "#/$defs/hex" }, { "type": "null" }] },
+            "marks": { "type": "integer", "minimum": 0 },
+            "confidence": { "$ref": "#/$defs/unit" }
+          }
+        },
+        "shadow": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["used", "share", "offset", "depth", "boxes", "confidence"],
+          "properties": {
+            "used": { "type": "boolean" },
+            "share": { "$ref": "#/$defs/unit" },
+            "offset": { "enum": ["below", "around", null] },
+            "depth": { "type": "number", "minimum": 0 },
+            "boxes": { "type": "integer", "minimum": 0 },
+            "confidence": { "$ref": "#/$defs/unit" }
+          }
+        }
+      }
+    },
+    "slots": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/slot" } },
+    "notes": { "type": "array", "maxItems": 20, "items": { "type": "string", "maxLength": 300 } }
+  }
+}
