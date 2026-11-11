@@ -71,6 +71,7 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <memory>
+#include <vector>
 #include <tuple>
 #include <cmath>
 
@@ -4057,6 +4058,87 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		gv->addWidget(top3Row);
 		gv->addWidget(killRow);
 		pc->addWidget(gateBox);
+		// Reel length (CL1, D350): the shortest and longest reel of each type, whole seconds. A reel over its longest is
+		// split into parts at clip boundaries; the longest is at most reelLimit s for now (data/clip/reel-length.json).
+		struct ReelRow {
+			QString id;
+			QSpinBox *lo, *hi;
+			int loStart, hiStart, loDefault, hiDefault;
+		};
+		auto reelRows = std::make_shared<std::vector<ReelRow>>();
+		const QJsonObject reelInfo = b.value(QStringLiteral("reelLengths")).toObject();
+		const int reelLimit = reelInfo.value(QStringLiteral("limitMaxSec")).toInt(60);
+		QLabel *reelErr = nullptr;
+		if (!reelInfo.value(QStringLiteral("types")).toArray().isEmpty()) {
+			auto *reelBox = new QGroupBox(QStringLiteral("REEL LENGTH"), dlg);
+			auto *rv = new QVBoxLayout(reelBox);
+			theme::space(rv, 8);
+			auto *reelNote = new QLabel(QStringLiteral("A reel longer than its maximum is split into parts (part 1 of 2, part 2 of 2) between clips. The maximum is at most %1 seconds for now.").arg(reelLimit), reelBox);
+			reelNote->setObjectName(QStringLiteral("muted"));
+			reelNote->setWordWrap(true);
+			rv->addWidget(reelNote);
+			auto *rf = new QFormLayout();
+			rf->setVerticalSpacing(10);
+			for (const QJsonValue &tv : reelInfo.value(QStringLiteral("types")).toArray()) {
+				const QJsonObject t = tv.toObject();
+				const QString id = t.value(QStringLiteral("id")).toString();
+				auto *row = new QWidget(reelBox);
+				auto *rh = new QHBoxLayout(row);
+				rh->setContentsMargins(0, 0, 0, 0);
+				theme::space(rh, 8);
+				auto *lo = new QSpinBox(row), *hi = new QSpinBox(row);
+				lo->setRange(0, reelLimit);
+				hi->setRange(5, reelLimit);
+				lo->setSuffix(QStringLiteral(" s"));
+				hi->setSuffix(QStringLiteral(" s"));
+				lo->setObjectName(QStringLiteral("reelMin_") + id);
+				hi->setObjectName(QStringLiteral("reelMax_") + id);
+				lo->setAccessibleName(t.value(QStringLiteral("label")).toString() + QStringLiteral(" shortest"));
+				hi->setAccessibleName(t.value(QStringLiteral("label")).toString() + QStringLiteral(" longest"));
+				const int l0 = qRound(t.value(QStringLiteral("minSec")).toDouble()), h0 = qRound(t.value(QStringLiteral("maxSec")).toDouble());
+				lo->setValue(l0);
+				hi->setValue(h0);
+				rh->addWidget(new QLabel(QStringLiteral("Shortest"), row));
+				rh->addWidget(lo);
+				rh->addWidget(new QLabel(QStringLiteral("Longest"), row));
+				rh->addWidget(hi);
+				rh->addStretch(1);
+				auto *name = new QLabel(t.value(QStringLiteral("label")).toString(), reelBox);
+				name->setToolTip(t.value(QStringLiteral("hint")).toString());
+				rf->addRow(name, row);
+				reelRows->push_back({id, lo, hi, l0, h0, qRound(t.value(QStringLiteral("defaultMinSec")).toDouble()), qRound(t.value(QStringLiteral("defaultMaxSec")).toDouble())});
+			}
+			rv->addLayout(rf);
+			reelErr = new QLabel(reelBox);
+			reelErr->setObjectName(QStringLiteral("settingsReelError"));
+			reelErr->setStyleSheet(QStringLiteral("color: #e5484d;"));
+			reelErr->setWordWrap(true);
+			reelErr->hide();
+			rv->addWidget(reelErr);
+			auto *reelReset = new QPushButton(QStringLiteral("Reset to defaults"), reelBox);
+			reelReset->setObjectName(QStringLiteral("settingsReelReset"));
+			rv->addWidget(reelReset, 0, Qt::AlignLeft);
+			// The shortest cannot be longer than the longest: say which type, and Save keeps Settings open.
+			auto check = [reelRows, reelErr]() {
+				QString bad;
+				for (const ReelRow &r : *reelRows)
+					if (r.lo->value() > r.hi->value())
+						bad += (bad.isEmpty() ? QString() : QStringLiteral(" ")) + QStringLiteral("%1: the shortest (%2 s) is longer than the longest (%3 s).").arg(r.id).arg(r.lo->value()).arg(r.hi->value());
+				reelErr->setText(bad);
+				reelErr->setVisible(!bad.isEmpty());
+			};
+			for (const ReelRow &r : *reelRows) {
+				connect(r.lo, qOverload<int>(&QSpinBox::valueChanged), dlg, [check](int) { check(); });
+				connect(r.hi, qOverload<int>(&QSpinBox::valueChanged), dlg, [check](int) { check(); });
+			}
+			connect(reelReset, &QPushButton::clicked, dlg, [reelRows]() {
+				for (const ReelRow &r : *reelRows) {
+					r.lo->setValue(r.loDefault);
+					r.hi->setValue(r.hiDefault);
+				}
+			});
+			pc->addWidget(reelBox);
+		}
 		pc->addStretch(1);
 
 		// Folders
@@ -4244,7 +4326,14 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			if (const auto found = nav->findItems(startPage, Qt::MatchExactly); !found.isEmpty())
 				nav->setCurrentItem(found.first());
 		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
-		dlg->save = [this, dlg, nav]() {
+		dlg->save = [this, dlg, nav, reelRows]() {
+			for (const ReelRow &r : *reelRows)
+				if (r.lo->value() > r.hi->value()) {
+					if (const auto found = nav->findItems(QStringLiteral("Clips"), Qt::MatchExactly); !found.isEmpty())
+						nav->setCurrentItem(found.first());
+					note(QStringLiteral("Not saved: Settings > Clips has a reel whose shortest length is longer than its longest."));
+					return;
+				}
 			// D327: a Stream page change over a platform limit keeps Settings open on that page (problems shown there).
 			for (auto *sp : dlg->findChildren<streampages::StreamPage *>())
 				if (sp->blocksSave()) {
@@ -4267,6 +4356,9 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				return true;
 			if (recLive->isChecked() != recordLiveStart)
 				return true;
+			for (const ReelRow &r : *reelRows)
+				if (r.lo->value() != r.loStart || r.hi->value() != r.hiStart)
+					return true;
 			if (recRow.second->text().trimmed() != recDirStart.trimmed() || clipRow.second->text().trimmed() != clipDirStart.trimmed())
 				return true;
 			if (appear->changedTheme() || appear->changedEffects() || appear->motion() != motionNow)
@@ -4314,6 +4406,12 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				clipsBody.insert(QStringLiteral("matchGate"), matchGateJson(top3->isChecked(), newKills));
 			if (hadRecordLive || recLive->isChecked() != recordLiveStart) // sent only when it matters: an older server refuses the key
 				clipsBody.insert(QStringLiteral("recordLive"), recLive->isChecked());
+			QJsonObject reelBody;
+			for (const ReelRow &r : *reelRows)
+				if (r.lo->value() != r.loStart || r.hi->value() != r.hiStart) // sent only when it changed: an older server refuses the key
+					reelBody.insert(r.id, QJsonObject{{QStringLiteral("minSec"), r.lo->value()}, {QStringLiteral("maxSec"), r.hi->value()}});
+			if (!reelBody.isEmpty())
+				clipsBody.insert(QStringLiteral("reelLengths"), reelBody);
 			body.insert(QStringLiteral("clips"), clipsBody);
 			body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
 			const QString motionNew = appear->motion();

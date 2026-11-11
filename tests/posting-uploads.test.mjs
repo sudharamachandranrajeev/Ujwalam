@@ -60,6 +60,20 @@ describe('target by length and aspect (from limits.json, not code)', () => {
 });
 
 describe('packageUploads', () => {
+  test('CL1: the parts of a split reel are packaged as separate reels, each a Short at 60 s or less', async () => {
+    const e = setup([
+      { name: 'codm_montage_20261111-200000_kills-12-part-1-of-2_01_v.mp4', kind: 'montage', seconds: 60 },
+      { name: 'codm_montage_20261111-200500_kills-6-part-2-of-2_02_v.mp4', kind: 'montage', seconds: 33.5 },
+      { name: 'codm_won-reel_20261111-201000_victory-kills-30-part-1-of-3_01_v.mp4', kind: 'won-reel', seconds: 59.9 },
+    ]);
+    const r = await packageUploads({ dataDir: e.dataDir, ledgerFile: e.ledgerFile, profile: PROFILE, ffmpeg: FFMPEG });
+    assert.equal(r.packaged.length, 3);
+    assert.ok(r.packaged.every((p) => p.target === 'youtube-shorts' && p.limitsOk));
+    const posts = createPostStore({ ledgerFile: e.ledgerFile }).list();
+    assert.equal(new Set(posts.map((p) => p.clipId)).size, 3, 'each part has its own post');
+    const again = await packageUploads({ dataDir: e.dataDir, ledgerFile: e.ledgerFile, profile: PROFILE, ffmpeg: FFMPEG });
+    assert.equal(again.packaged.length, 0, 'a part is not packaged twice');
+  });
   test('packages shorts, montages and reels; right target and text per kind; private draft; second run adds nothing', async () => {
     const e = setup([...ROWS,
       { name: 'codm_short_20261108-185900_double-kill_02_v.mp4', kind: 'short', seconds: 8, posted: [{ platform: 'youtube', videoId: 'old' }] },
