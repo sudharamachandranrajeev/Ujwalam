@@ -26,6 +26,16 @@
 // default; --apply saves <id>.json in the user themes folder (UJWALAM_THEMES_DIR, else %APPDATA%Ujwalam Studio	hemes;
 // --themes-dir picks another), never over an existing file and never with a built-in theme's id. --name sets the
 // theme's name (the id follows it). A pack that cannot pass the contrast check is never written (exit 1).
+// SB5 iterate (D347). None of these writes the project; to use a result, import the saved package (above).
+//   node services/scene-builder/cli.mjs export <scene-id-or-name> --project FILE [--out PACKAGE.json] [--json]
+//   node services/scene-builder/cli.mjs edit <PACKAGE.json> --project FILE --out PACKAGE.json [--json]
+//        [--move C:KEY=X,Y] [--resize C:KEY=W,H] [--place C:KEY=X,Y,W,H] [--swap C:KEYA,KEYB]...
+//   node services/scene-builder/cli.mjs variants <PACKAGE.json> --project FILE [--count N] [--seed TEXT] [--out-dir DIR] [--json]
+// export saves a scene of the project (for example a built scene the user then adjusted in the studio) as a scene
+// package; layers it cannot carry are listed with the reason. edit applies moves, resizes and slot swaps to a package
+// (C is h or v, numbers are fractions of the canvas) and saves a new package. variants makes up to 8 similar packages
+// (seeded: the same seed gives the same variants); it saves them as <id>.json in --out-dir, never over a file, and
+// without --out-dir only lists them. --project gives the canvas sizes and is only read.
 // Behind the feature flag `scene-builder` (off by default): with the flag off it says so and exits 2. --data-dir
 // picks the folder whose flags.local.json is read (the usual CLI order otherwise).
 // Exit codes: 0 done, 1 bad arguments or the work failed, 2 the flag is off.
@@ -38,6 +48,8 @@ import { createFlags } from '../flags/index.mjs';
 import { applyScenePackageFile, diffText, packageProblems } from '../project/scene-package.mjs';
 import { loadProject } from '../project/index.mjs';
 import { buildPackage } from './build.mjs';
+import { packageFromScene } from './export.mjs';
+import { editPackage, similarVariants } from './iterate.mjs';
 import { readReference } from './read.mjs';
 import { reportText, themeFromRead, userThemesDir, writeProblems, writeThemePack } from './theme.mjs';
 
@@ -47,16 +59,43 @@ const USAGE = [
   '       cli.mjs build <image-or-video> --project FILE [--bind ROLE=ID]... [--theme ID] [--out PACKAGE.json] [--apply] [--json]',
   '       cli.mjs import <PACKAGE.json> --project FILE [--apply] [--json]',
   '       cli.mjs theme <image-or-video> [--name N] [--themes-dir DIR] [--apply] [--json]',
+  '       cli.mjs export <scene-id-or-name> --project FILE [--out PACKAGE.json] [--json]',
+  '       cli.mjs edit <PACKAGE.json> --project FILE --out PACKAGE.json [--move C:KEY=X,Y] [--resize C:KEY=W,H] [--place C:KEY=X,Y,W,H] [--swap C:A,B]',
+  '       cli.mjs variants <PACKAGE.json> --project FILE [--count N] [--seed TEXT] [--out-dir DIR] [--json]',
 ].join('\n');
-const VALUE = new Set(['--frames', '--long-side', '--data-dir', '--project', '--theme', '--out', '--name', '--themes-dir']);
+const VALUE = new Set(['--frames', '--long-side', '--data-dir', '--project', '--theme', '--out', '--name', '--themes-dir', '--count', '--seed', '--out-dir']);
+const EDIT_FLAGS = new Set(['--move', '--resize', '--place', '--swap']);
 const SWITCH = new Set(['--apply', '--json']);
 const BIND_ROLES = new Set(['game', 'camera', 'chat', 'alerts']);
 
+const NUM = '(-?\\d*\\.?\\d+)';
+const KEY = '[a-z][a-z0-9-]*';
+const EDIT_RE = {
+  move: new RegExp(`^([hv]):(${KEY})=${NUM},${NUM}$`),
+  resize: new RegExp(`^([hv]):(${KEY})=${NUM},${NUM}$`),
+  place: new RegExp(`^([hv]):(${KEY})=${NUM},${NUM},${NUM},${NUM}$`),
+  swap: new RegExp(`^([hv]):(${KEY}),(${KEY})$`),
+};
+const EDIT_FORM = { move: 'C:KEY=X,Y', resize: 'C:KEY=W,H', place: 'C:KEY=X,Y,W,H', swap: 'C:KEYA,KEYB' };
+function parseEdit(op, v) {
+  const m = EDIT_RE[op].exec(v);
+  if (!m) throw new Error(`--${op} needs ${EDIT_FORM[op]} (C is h or v; numbers are fractions of the canvas)`);
+  if (op === 'swap') return { op, canvas: m[1], a: m[2], b: m[3] };
+  const n = m.slice(3).map(Number);
+  if (op === 'move') return { op, canvas: m[1], key: m[2], x: n[0], y: n[1] };
+  if (op === 'resize') return { op, canvas: m[1], key: m[2], w: n[0], h: n[1] };
+  return { op, canvas: m[1], key: m[2], x: n[0], y: n[1], w: n[2], h: n[3] };
+}
+
 export function parseArgs(argv) {
-  const out = { _: [], bind: {} };
+  const out = { _: [], bind: {}, edits: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (VALUE.has(a) || a === '--bind') {
+    if (EDIT_FLAGS.has(a)) {
+      const v = argv[++i];
+      if (v === undefined || v.startsWith('--')) throw new Error(`${a} needs a value`);
+      out.edits.push(parseEdit(a.slice(2), v));
+    } else if (VALUE.has(a) || a === '--bind') {
       const v = argv[++i];
       if (v === undefined || v.startsWith('--')) throw new Error(`${a} needs a value`);
       if (a === '--bind') {
@@ -76,7 +115,8 @@ export async function main(argv, out = (s) => process.stdout.write(`${s}\n`), er
   let args;
   try { args = parseArgs(argv); } catch (e) { err(`scene-builder: ${e.message}\n${USAGE}`); return 1; }
   const cmd = args._[0];
-  if (!['read', 'build', 'import', 'theme'].includes(cmd) || args._.length !== 2) { err(USAGE); return 1; }
+  const ITERATE = ['export', 'edit', 'variants'];
+  if (!['read', 'build', 'import', 'theme', ...ITERATE].includes(cmd) || args._.length !== 2) { err(USAGE); return 1; }
   if (cmd !== 'theme' && (args.name !== undefined || args['themes-dir'] !== undefined)) { err(`scene-builder: --name and --themes-dir are for theme
 ${USAGE}`); return 1; }
   if (cmd === 'theme' && (args.project || args.out || args.theme || Object.keys(args.bind).length)) { err(`scene-builder: theme takes no project options
@@ -84,6 +124,11 @@ ${USAGE}`); return 1; }
   if (cmd !== 'read' && cmd !== 'theme' && !args.project) { err(`scene-builder: ${cmd} needs --project FILE\n${USAGE}`); return 1; }
   if (cmd === 'read' && (args.project || args.apply || args.out || args.theme || args.json || Object.keys(args.bind).length)) { err(`scene-builder: read takes no project options\n${USAGE}`); return 1; }
   if (cmd === 'import' && (args.out || args.theme || args.frames || args['long-side'] || Object.keys(args.bind).length)) { err(`scene-builder: import takes the package as it is\n${USAGE}`); return 1; }
+  if (ITERATE.includes(cmd) && (args.apply || args.theme || args.frames || args['long-side'] || args.name || Object.keys(args.bind).length)) { err(`scene-builder: ${cmd} never changes the project; import the saved package to use it\n${USAGE}`); return 1; }
+  if (cmd !== 'edit' && args.edits.length) { err(`scene-builder: --move, --resize, --place and --swap are for edit\n${USAGE}`); return 1; }
+  if (cmd !== 'variants' && (args.count !== undefined || args.seed !== undefined || args['out-dir'] !== undefined)) { err(`scene-builder: --count, --seed and --out-dir are for variants\n${USAGE}`); return 1; }
+  if (cmd === 'edit' && (!args.out || !args.edits.length)) { err(`scene-builder: edit needs --out and at least one edit\n${USAGE}`); return 1; }
+  if (cmd === 'variants' && args.out) { err(`scene-builder: variants saves into --out-dir\n${USAGE}`); return 1; }
   const num = (k, d) => (args[k] === undefined ? d : Number(args[k]));
   const frames = num('frames', 8), longSide = num('long-side', 960);
   if (!Number.isInteger(frames) || !Number.isInteger(longSide)) { err('scene-builder: --frames and --long-side must be whole numbers'); return 1; }
@@ -100,6 +145,7 @@ ${USAGE}`); return 1; }
       return 0;
     }
     if (cmd === 'theme') return await themeCommand(args, { frames, longSide }, out, err, deps);
+    if (ITERATE.includes(cmd)) return iterateCommand(cmd, args, out, deps);
     let pkg;
     if (cmd === 'build') {
       const read = await readReference(args._[1], { frames, longSide });
@@ -116,6 +162,50 @@ ${USAGE}`); return 1; }
     out(args.json ? JSON.stringify({ dryRun, diff }, null, 2) : diffText(diff, { dryRun }));
     return 0;
   } catch (e) { err(`scene-builder: ${e.message}`); return 1; }
+}
+
+function summary(pkg) {
+  const n = pkg.presets.map((p) => `${p.params.canvas.toUpperCase()} ${p.params.layers.length}`).join(', ');
+  return `"${pkg.name}" (${pkg.id}; layers ${n})`;
+}
+
+// SB5 (D347): export, edit, variants. Never touches the project file; files are written only with --out / --out-dir.
+function iterateCommand(cmd, args, out, deps) {
+  const { project } = loadProject(args.project);
+  const canvases = Object.fromEntries(project.canvases.map((c) => [c.id, { width: c.width, height: c.height }]));
+  const save = (file, pkg) => writeFileSync(file, `${JSON.stringify(pkg, null, 2)}\n`, { flag: 'wx' });
+  const readPackage = () => {
+    const pkg = JSON.parse(readFileSync(args._[1], 'utf8'));
+    const bad = packageProblems(pkg);
+    if (bad.length) throw new Error(`not a scene package: ${bad.join('; ')}`);
+    return pkg;
+  };
+  const now = deps.now?.();
+  if (cmd === 'export') {
+    const { package: pkg, skipped } = packageFromScene(project, args._[1], { now });
+    if (args.out) save(args.out, pkg);
+    out(args.json ? JSON.stringify({ saved: args.out ?? null, package: pkg, skipped }, null, 2)
+      : [`${args.out ? `Saved ${args.out}: ` : 'Not saved (no --out): '}${summary(pkg)}`, ...skipped.map((s) => `  - not carried: ${s.canvas.toUpperCase()} ${s.name}: ${s.reason}`)].join('\n'));
+    return 0;
+  }
+  if (cmd === 'edit') {
+    const r = editPackage(readPackage(), args.edits, { canvases, now });
+    save(args.out, r.package);
+    out(args.json ? JSON.stringify({ saved: args.out, changes: r.changes, warnings: r.warnings, package: r.package }, null, 2)
+      : [`Saved ${args.out}: ${summary(r.package)}`, ...r.changes.map((c) => `  * ${c}`), ...r.warnings.map((w) => `  ! ${w}`)].join('\n'));
+    return 0;
+  }
+  const dir = args['out-dir'];
+  if (dir && !existsSync(dir)) throw new Error('--out-dir must be an existing folder');
+  const list = similarVariants(readPackage(), { count: args.count === undefined ? 3 : Number(args.count), seed: args.seed ?? 'sb5', canvases, now });
+  const files = list.map((v) => (dir ? path.join(dir, `${v.package.id}.json`) : null));
+  if (dir) {
+    for (const f of files) if (existsSync(f)) throw new Error(`${f} already exists; nothing was saved`);
+    list.forEach((v, i) => save(files[i], v.package));
+  }
+  out(args.json ? JSON.stringify(list.map((v, i) => ({ file: files[i], kind: v.kind, distance: v.distance, package: v.package })), null, 2)
+    : [`${list.length} similar variant(s)${dir ? ' saved' : ' (not saved: no --out-dir)'}`, ...list.map((v, i) => `  ${i + 1}. ${v.kind}, largest edge move ${v.distance}: ${files[i] ?? summary(v.package)}`)].join('\n'));
+  return 0;
 }
 
 async function themeCommand(args, { frames, longSide }, out, err, deps) {
