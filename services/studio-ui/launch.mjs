@@ -101,6 +101,9 @@ import { createMediaInfo } from '../project/media-info.mjs';
 import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
 import { writeZip } from '../../tools/package/zip.mjs';
+import { createFront } from '../supervisor/front.mjs';
+import { createEventCoreSlot, createUiSlot } from '../supervisor/slots.mjs';
+import { refuseReason, SERVICES } from '../supervisor/swap.mjs';
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
 import { readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
@@ -109,6 +112,8 @@ import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG } from './settings-routes.mjs';
 import { GUARD_ABORT_EXIT, LIVE_TEST_BUDGET, loadBudget, MAX_TEST_MINUTES, parseMinutes, parseSinkMinutes, runGuard } from './live-guard.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+// LU3 service swap (D337): off by default; read once at start (the fronts must exist before the services start).
+export const SERVICE_SWAP_FLAG = 'service-swap';
 const hex = (n) => randomBytes(n).toString('hex');
 export const HOST_LOGS_KEPT = 10;
 export const HOST_CONFIG_FILE = 'host-config.json';
@@ -896,6 +901,7 @@ export async function main(argv = process.argv.slice(2)) {
   let learning = null; // LL2 learning signals (D338)
   let endSession = () => {};
   const sessionEnded = new Promise((resolve) => { endSession = resolve; });
+  const fronts = []; // LU3 (flag service-swap): the stable-port fronts, closed after the services
   // Ask the host to exit cleanly first (it closes previews and removes its discovery file), then kill what is left.
   const stopAll = async () => {
     stopping = true;
@@ -909,7 +915,8 @@ export async function main(argv = process.argv.slice(2)) {
       } catch { /* fall through to kill */ }
     }
     // The whole tree of each child (D311 proposed): a plain kill left a clip job's ffmpeg running after close.
-    for (const c of children) killChildTree(c);
+    for (const c of [...children]) killChildTree(c);
+    for (const f of fronts) f.close();
     // BM6: with the `bot-manager` flag on, close the bots Ujwalam started. A copy the user started is never touched.
     try {
       if (createFlags({ dataDir }).isOn('bot-manager')) {
@@ -957,14 +964,33 @@ export async function main(argv = process.argv.slice(2)) {
     remote: remoteToken ? { address: integ.remote.address } : null });
   if (coreArgs.note) console.log(`[studio] ${coreArgs.note}`);
   if (remoteToken) console.log('[studio] remote connections: ON (Settings > Integrations); LAN only, pairing token not printed');
-  const core = spawn(process.execPath, [path.join(REPO, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], {
+  // LU3 service swap (D337, flag service-swap, off by default): the event core and the UI server sit behind fronts the
+  // launcher owns (services/supervisor/front.mjs). Clients only ever see the front ports, so a swap to a new version
+  // (serveSwaps below) changes no port, token or connection. Flag off: started exactly as before.
+  const swapOn = (() => { try { return createFlags({ dataDir }).isOn(SERVICE_SWAP_FLAG); } catch { return false; } })();
+  const track = { onSpawn: (c) => children.push(c), onGone: (c) => { const i = children.indexOf(c); if (i >= 0) children.splice(i, 1); }, log: (l) => console.log(`[studio] ${l}`) };
+  let coreFront = null;
+  if (swapOn) { coreFront = createFront({ backendPort: null, name: 'event-core', log: track.log }); fronts.push(coreFront); await coreFront.listen(); }
+  // The swap switches go right after 'serve', before the arguments that take values.
+  const spawnCore = (root, { standby = false } = {}) => spawn(process.execPath, [path.join(root, 'services', 'event-core', 'cli.mjs'), coreArgs.argv[0],
+    ...(coreFront ? ['--swap-control', '--public-port', String(coreFront.port()), ...(standby ? ['--standby'] : [])] : []), ...coreArgs.argv.slice(1)], {
     stdio: ['pipe', 'pipe', 'inherit'], windowsHide: true, // stdin: the parent pipe (D234)
     // UJWALAM_HOST_MARKERS_TOKEN: the F6 live markers (flag live-markers) write host markers; the host is found at
     // <dataDir>/host.json. coreEnv never passes the full host token.
     env: { ...coreEnv({ coreTokens, hostMarkersToken }), ...PARENT_PIPE, UJWALAM_REMOTE_TOKEN: remoteToken ?? '' },
   });
-  children.push(core);
-  const corePort = await portFrom(core, /api on 127\.0\.0\.1:(\d+)/);
+  let core = null; // flag off: the event core process; flag on: coreSlot owns it
+  let coreSlot = null;
+  let corePort = null;
+  if (coreFront) {
+    coreSlot = createEventCoreSlot({ front: coreFront, root: REPO, spawn: spawnCore, systemToken: coreTokens.system, onLine: (l) => console.log(l), onUnexpectedExit: () => endSession(0), ...track });
+    try { await coreSlot.start(); corePort = coreFront.port(); } catch (e) { console.log(`[studio] event core: ${e.message}`); }
+    if (corePort) console.log(`[studio] service swap on: the event core is reached through port ${corePort}`);
+  } else {
+    core = spawnCore(REPO);
+    children.push(core);
+    corePort = await portFrom(core, /api on 127\.0\.0\.1:(\d+)/);
+  }
   if (!corePort) { console.log('[studio] event core did not start; stopping'); await stopAll(); return 1; }
 
   // 2. host (optional). Config (exe, OBS runtime, data) comes from app/host/lib/config.mjs (env or host.local.json).
@@ -1198,13 +1224,41 @@ export async function main(argv = process.argv.slice(2)) {
   if (args['fake-host'] === true) uiArgs.push('--fake-host');
   // P5b autosave: layer edits accepted by the host are written into the alpha project file (project-sync.mjs).
   else if (alpha) uiArgs.push('--project', alphaFile(dataDir));
-  const ui = spawn(process.execPath, uiArgs, {
-    stdio: ['pipe', 'pipe', 'inherit', 'ipc'], windowsHide: true, // stdin: the parent pipe (D234); ipc: the go-live authority (D303)
-    env: { ...process.env, ...PARENT_PIPE, [SESSION_ENV]: liveSession, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '', UJWALAM_REMOTE_TOKEN: remoteToken ?? '' },
-  });
-  children.push(ui);
-  serveAuthority(ui, authority);
-  const uiPort = await portFrom(ui, /listening on http:\/\/127\.0\.0\.1:(\d+)\//);
+  // Flag service-swap: the front takes --ui-port (the port the user chose); each UI server process gets a free one.
+  let uiFront = null;
+  if (swapOn) {
+    const want = uiArgs.indexOf('--port');
+    uiFront = createFront({ backendPort: null, name: 'studio-ui', log: track.log, ...(want >= 0 ? { port: Number(uiArgs[want + 1]) } : {}) });
+    if (want >= 0) uiArgs.splice(want, 2);
+    fronts.push(uiFront);
+    await uiFront.listen();
+  }
+  let uiSlot = null;
+  // Only the first UI process gets the one-time login key. A swap replacement starts with key login off and takes the
+  // key's state (used or not, its age, failures, lock) from the old process inside the front's switch (Codex review P2,
+  // security), so a login URL already used can never log in again after a swap.
+  let uiSpawned = 0;
+  const spawnUi = (root) => {
+    const first = uiSpawned++ === 0;
+    const c = spawn(process.execPath, [path.join(root, 'services', 'studio-ui', 'cli.mjs'), ...uiArgs.slice(1)], {
+      stdio: ['pipe', 'pipe', 'inherit', 'ipc'], windowsHide: true, // stdin: the parent pipe (D234); ipc: the go-live authority (D303)
+      env: { ...process.env, ...PARENT_PIPE, [SESSION_ENV]: liveSession, UJWALAM_UI_LAUNCH_KEY: first ? launchKey : '', UJWALAM_UI_KEY_LOGIN: first ? '' : 'off', UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '', UJWALAM_REMOTE_TOKEN: remoteToken ?? '' },
+    });
+    // Every UI server process serves the one authority; only the exit of the current one closes it (LU3).
+    serveAuthority(c, authority, { isOwner: (x) => !uiSlot || x === uiSlot.child() });
+    return c;
+  };
+  let ui = null; // flag off: the UI server process; flag on: uiSlot owns it (uiChild() is the current one)
+  let uiPort = null;
+  if (uiFront) {
+    uiSlot = createUiSlot({ front: uiFront, root: REPO, spawn: spawnUi, onLine: (l) => console.log(l), onUnexpectedExit: () => endSession(0), ...track });
+    try { await uiSlot.start(); uiPort = uiFront.port(); } catch (e) { console.log(`[studio] UI server: ${e.message}`); }
+  } else {
+    ui = spawnUi(REPO);
+    children.push(ui);
+    uiPort = await portFrom(ui, /listening on http:\/\/127\.0\.0\.1:(\d+)\//);
+  }
+  const uiChild = () => uiSlot?.child() ?? ui;
   if (!uiPort) { console.log('[studio] UI server did not start; stopping'); await stopAll(); return 1; }
 
   console.log(`[studio] UI at http://127.0.0.1:${uiPort}/ (the login key is one-time and not printed). ${process.env.UJWALAM_NO_CONSOLE === '1' ? 'Closing the studio window stops everything (started without a console: ujwalam-start.exe).' : 'Ctrl-C stops everything.'}`);
@@ -1246,7 +1300,7 @@ export async function main(argv = process.argv.slice(2)) {
         const what = `exit ${code}${rec?.codeHex ? ` = ${rec.codeHex}` : ''}${rec?.report ? `; crash report logs/${rec.report}` : ''}`;
         const t = Date.now();
         crashTimes.push(t);
-        if (!shellRelaunchAllowed(crashTimes, t) || !ui.stdin?.writable) {
+        if (!shellRelaunchAllowed(crashTimes, t) || !uiChild()?.stdin?.writable) {
           // Nothing may run on with no window (user 2026-11-09, D311 proposed): unless a stream is live (a UI crash
           // never cuts a stream), everything stops, the clip job's whole process tree included.
           console.log(`[studio] Qt shell ended unexpectedly (${what}); NOT reopened (more than ${SHELL_RELAUNCH_MAX} crashes in ${SHELL_RELAUNCH_WINDOW_MS / 60000} min).`);
@@ -1260,7 +1314,8 @@ export async function main(argv = process.argv.slice(2)) {
           return;
         }
         const key = hex(32);
-        try { ui.stdin.write(`rearm ${key}\n`); } catch { console.log(`[studio] Qt shell ended unexpectedly (${what}); could not reopen it`); return; }
+        // Through the slot when swaps are on: a rearm during a swap waits and goes to the process that serves after it.
+        try { if (uiSlot) { if (!uiSlot.control(`rearm ${key}`)) throw new Error('not sent'); } else uiChild().stdin.write(`rearm ${key}\n`); } catch { console.log(`[studio] Qt shell ended unexpectedly (${what}); could not reopen it`); return; }
         console.log(`[studio] Qt shell ended unexpectedly (${what}); the studio keeps running. Reopening the window in 2 s.`);
         setTimeout(() => {
           if (stopping) return;
@@ -1312,9 +1367,37 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdin.once('data', () => { stopAll().then(() => process.exit(0)); });
     process.stdin.once('end', () => { stopAll().then(() => process.exit(0)); });
   }
-  const code = await new Promise((resolve) => { core.once('exit', () => resolve(0)); ui.once('exit', () => resolve(0)); sessionEnded.then(resolve); });
+  if (swapOn) serveSwaps({ slots: { 'event-core': coreSlot, 'studio-ui': uiSlot }, log: track.log });
+  // Flag on: an exit of the current core or UI process that no swap planned ends the session through endSession.
+  const code = await new Promise((resolve) => { core?.once('exit', () => resolve(0)); ui?.once('exit', () => resolve(0)); sessionEnded.then(resolve); });
   await stopAll();
   return code;
+}
+
+/**
+ * LU3 swap requests (D337, flag service-swap). Only the process that started this launcher can ask, over its IPC
+ * channel (no port, no file): { t: 'ujwalam-swap', id, service, root } -> { t, id, result, ... }. root is the folder
+ * of the new version (a staged install, LU6) and must hold the service's entry file. The host and the overlay server
+ * (a child of the host) are refused (LU5); the workers have a stop-start slot (slots.mjs) that is not wired here yet.
+ */
+export function serveSwaps({ slots, log, proc = process }) {
+  if (typeof proc.send !== 'function') return false;
+  proc.on('message', async (m) => {
+    if (m?.t !== 'ujwalam-swap' || !Number.isInteger(m.id)) return;
+    const reply = (r) => { try { if (proc.connected) proc.send({ t: 'ujwalam-swap', id: m.id, ...r }); } catch { /* the asker is gone */ } };
+    const why = refuseReason(m.service, {});
+    if (why) { reply({ result: 'refused', reason: why }); return; }
+    const slot = slots[m.service];
+    if (!slot) { reply({ result: 'refused', reason: SERVICES[m.service] ? 'not wired in the launcher yet' : 'unknown service' }); return; }
+    const entry = m.service === 'event-core' ? ['services', 'event-core', 'cli.mjs'] : ['services', 'studio-ui', 'cli.mjs'];
+    if (typeof m.root !== 'string' || !path.isAbsolute(m.root) || !existsSync(path.join(m.root, ...entry))) { reply({ result: 'refused', reason: 'root must be an absolute folder that holds the service entry file' }); return; }
+    log(`swap ${m.service} requested`);
+    try {
+      const r = await slot.swap(path.resolve(m.root));
+      reply({ result: r.result, ms: r.ms, reason: r.reason, failed: r.history?.filter((h) => !h.ok).map((h) => `${h.action}: ${h.error}`) });
+    } catch (e) { reply({ result: 'failed', reason: String(e?.message ?? e).slice(0, 200) }); }
+  });
+  return true;
 }
 
 if (process.argv[1] && process.argv[1].endsWith('launch.mjs') && process.argv[1].includes('studio-ui')) process.exit(await main());

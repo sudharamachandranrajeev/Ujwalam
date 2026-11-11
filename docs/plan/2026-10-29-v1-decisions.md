@@ -999,3 +999,52 @@ store (same folders, same 5 GB cap; no second store). Decided:
   fixtures are synthetic with placeholder texts.
 Not done: LL4 training. Real use on a live stream and a real recording is UNVERIFIED. Evidence:
 `docs/evidence/2026-11-11-ll1-ll3-capture-review.md`.
+
+## D337 — Service swap while live: fronts, hand-off, rollback; behind the service-swap flag (2026-11-11, LU3)
+
+Plan row LU3 (D324): the supervisor starts the new version of a service next to the old one, health-checks it, moves
+the API over, then stops the old one; on a failed check it keeps the old one. Decided:
+- **Stable ports.** The launcher owns a front (`services/supervisor/front.mjs`) on 127.0.0.1 for the event core and
+  one for the studio UI server. Clients (studio window, browser, host, overlay child, LAN remote) only see the front
+  ports; api.json names the front port. Tokens never change. The front rewrites Host/Origin only when they name the
+  front, so the backends' own DNS-rebinding and same-origin checks run unchanged. WebSocket upgrades are refused.
+- **Moving the API (0 events lost).** During a switch the front holds new requests (queued, not refused) and waits
+  for requests in flight. Every open event stream gets a second upstream to the new backend whose frames are queued.
+  The old event core then hands off: it stops taking events (Streamer.bot closed), drains the bus, ends its streams
+  cleanly and closes its audit database (one writer per file). The new core, which started in standby (Streamer.bot
+  connected, ingest buffered, no database), activates: it opens the database, continues the event ids above the old
+  core's last id (id floor), takes over the live lock state and panic, and replays its buffer through dedupe (an event
+  both cores saw is dropped as a duplicate). The front sends the queued frames, skipping ids not newer than the last
+  one sent, and then pipes live. The client keeps its TCP connection.
+- **Health check and rollback.** Core: the standby core answers core.status with the system token and is connected
+  to Streamer.bot when the old one is. UI: HTTP answers. A new version that exits, hangs or fails its check is stopped
+  and the old one never notices (kept-old). A failure during the hand-off re-activates the old core (restored-old).
+- **UI server.** Side by side; the login sessions are copied over the IPC channel inside the switch, so the page
+  stays logged in. Its event stream is carried by the front; each new server starts the stream with the whole state
+  the page listens to (status, flags, edits) and `retry: 500`. Pending Allow clicks and the undo history are not
+  carried (memory only): a pending confirmation must be clicked again, and undo starts empty after a swap.
+- **Workers (live clipper, face worker).** Stop-start, not side by side: two clip workers would save every clip
+  twice, the face link is one per host, and VRAM has no room for two (D1). The new worker must stay up for a health
+  window; if it exits, the old version starts again (restored-old). The slot is built and tested; wiring it to the
+  launcher's Python workers is not done yet (their own restart rules are in launch.mjs).
+- **Never swapped while live:** the host (LU5) and the overlay server (a child of the host, which pins its ports and
+  restarts it). Refused with that reason.
+- **Trigger.** Only the process that started the launcher can ask, over its IPC channel:
+  `{ t: 'ujwalam-swap', id, service, root }`; root is the folder of the new version and must hold the entry file.
+  LU6 (live install) will use it. No port, no file, no chat path.
+- **Flag.** `service-swap`, off by default, read at start (the fronts must exist before the services). Off: the
+  services start exactly as before.
+Limits: an event without a platform message id that both cores saw in the overlap can appear twice (dedupe needs an
+id); if the new core fails while activating, the events it buffered are lost (double failure). Also fixed while
+wiring this: the event-core serve parser took `--lan` as a value-taking option, so the launcher's `--lan` swallowed
+the next argument (`--url` or `--lan-address`) and remote connections never switched on.
+After the Codex review (same day):
+- **One-time login key.** Only the first UI process gets the key. A replacement starts with key login off and takes
+  the key's state (used or not, age, failures, lock) from the old process over IPC inside the switch, so a used login
+  URL never works again after a swap. A studio-window rearm sent during a swap waits and goes to the process that
+  serves after it.
+- **Timed-out steps.** Each step gets an abort signal and is awaited before the rollback. A hand-over still running
+  after a 30 s grace ends the swap as `failed` with nothing restored, so two cores are never activated.
+- **Overflow.** A standby core whose buffer overflowed is never used: it fails its check, is refused before the
+  hand-off and cannot activate.
+Evidence: `docs/evidence/2026-11-11-lu3-service-swap.md`.

@@ -474,7 +474,9 @@ export function createStudioServer(opts) {
       await new Promise((r) => setTimeout(r, pollMs));
     }
   }
-  if (typeof opts.launchKey !== 'string' || opts.launchKey.length < 32) throw new Error('launchKey must be at least 32 characters');
+  // launchKey null (LU3 swap replacement, D337): key login is off until the previous process's key state is imported
+  // (importLogin) or the launcher arms a new key, so a key already used can never log in again on a new process.
+  if (opts.launchKey !== null && (typeof opts.launchKey !== 'string' || opts.launchKey.length < 32)) throw new Error('launchKey must be at least 32 characters');
   let launchKey = opts.launchKey;
   let launchBorn = now(); // reset by rearmLaunchKey
   let loginFails = 0;
@@ -1562,8 +1564,12 @@ export function createStudioServer(opts) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     const client = { write: (f) => res.write(f) };
     sseClients.add(client);
-    res.write(': open\n\n');
+    // LU3 service swap (D337): a swap cuts this stream; the page reconnects after `retry` ms and every stream starts with
+    // the whole state it listens to (status, flags, edits), so a change made during the gap is never missed.
+    res.write('retry: 500\n: open\n\n');
     if (lastSnapshot) res.write(`event: status\ndata: ${JSON.stringify(lastSnapshot)}\n\n`);
+    if (flags) res.write(`event: flags\ndata: ${JSON.stringify({ flags: flags.list() })}\n\n`);
+    res.write(`event: edits\ndata: ${JSON.stringify(history.state())}\n\n`);
     const hb = setInterval(() => res.write(': hb\n\n'), limits.sseHeartbeatMs);
     hb.unref();
     const done = () => { clearInterval(hb); sseClients.delete(client); };
@@ -1668,6 +1674,46 @@ export function createStudioServer(opts) {
       if (typeof k !== 'string' || k.length < 32) return false;
       launchKey = k; launchBorn = now(); loginFails = 0;
       return true;
+    },
+    /** LU3 service swap (D337): the login sessions, for the next UI server process of a swap. Sent over the launcher's
+     *  IPC channel only (cli.mjs), never written or printed. Pending confirmations and undo history are not carried. */
+    exportSessions() { return [...sessions].map(([sid, v]) => ({ sid, csrf: v.csrf })); },
+    /** LU3 service swap (Codex review P2, security): the one-time login key's state for the next process: the key
+     *  (null once used), its absolute expiry, the failure count and the lock's absolute end. Sent with the sessions
+     *  over the launcher's IPC channel only, inside the front's switch (requests held), so a used key stays used and an
+     *  unused one keeps its deadline. Times are absolute wall-clock ms (both processes run on the same machine), so the
+     *  time between export and import counts and a swap never extends the key's life or shortens the lock
+     *  (Codex re-review P2). */
+    exportLogin() {
+      return { key: launchKey, expiresAt: launchBorn + limits.launchKeyTtlMs, fails: loginFails, lockedUntil: loginLockedUntil };
+    },
+    /** Takes exportLogin() of the previous process. Returns false (and keeps key login off) on anything malformed.
+     *  The deadlines are kept as sent; they are only capped so that they never lie further ahead than a fresh key's
+     *  time limit or a fresh lock would. */
+    importLogin(s) {
+      if (!s || typeof s !== 'object') return false;
+      const okKey = s.key === null || (typeof s.key === 'string' && /^[0-9a-f]{32,256}$/.test(s.key));
+      const num = (v) => Number.isFinite(v) && v >= 0;
+      if (!okKey || !num(s.expiresAt) || !Number.isInteger(s.fails) || s.fails < 0 || !num(s.lockedUntil)) { launchKey = null; return false; }
+      const t = now();
+      launchKey = s.key;
+      launchBorn = Math.min(s.expiresAt, t + limits.launchKeyTtlMs) - limits.launchKeyTtlMs;
+      loginFails = Math.min(s.fails, limits.loginFailMax);
+      loginLockedUntil = Math.min(s.lockedUntil, t + limits.loginLockMs);
+      return true;
+    },
+    /** Takes the sessions of the previous process (exportSessions). Malformed entries are skipped; at most sessionMax.
+     *  Returns the number taken. */
+    importSessions(list) {
+      if (!Array.isArray(list)) return 0;
+      let n = 0;
+      for (const e of list.slice(-limits.sessionMax)) {
+        if (!e || !/^[0-9a-f]{64}$/.test(e.sid ?? '') || typeof e.csrf !== 'string' || !/^[0-9a-f]{16,128}$/.test(e.csrf)) continue;
+        if (sessions.size >= limits.sessionMax && !sessions.has(e.sid)) sessions.delete(sessions.keys().next().value);
+        sessions.set(e.sid, { csrf: e.csrf });
+        n++;
+      }
+      return n;
     },
     /** Test seam: current pending confirmations (server-side records, never sent to the page). */
     _pending: () => pending,

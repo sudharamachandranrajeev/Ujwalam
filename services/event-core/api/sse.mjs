@@ -97,7 +97,46 @@ export function createSseClient(opts) {
     q.length = 0;
   }
 
-  return { close, stats: () => ({ ...totals, queued: q.length, blocked, closed }) };
+  /** LU3 hand-off (D337): waits until every event the bus has queued for this client is written and the socket has
+   *  taken it, then ends the response cleanly (never a destroy, so nothing written is lost) and resolves true. After
+   *  timeoutMs it destroys the connection and resolves false. Call it only once no new events are being published. */
+  // The deadline covers the whole hand-off, the end of the response included (Codex review P2): an end that never
+  // completes (stalled socket) or a connection closed meanwhile settles it, so a hand-off can never hang here.
+  function finish(timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      let done = false;
+      let tickTimer = null;
+      const settle = (v) => {
+        if (done) return;
+        done = true;
+        timers.clearTimeout(deadline);
+        if (tickTimer) timers.clearTimeout(tickTimer);
+        resolve(v);
+      };
+      const deadline = timers.setTimeout(() => { close(); try { res.destroy(); } catch { /* gone */ } settle(false); }, timeoutMs);
+      deadline.unref?.();
+      const tick = () => {
+        tickTimer = null;
+        if (done) return;
+        if (closed) { settle(false); return; }
+        const busQueued = bus.stats().subscribers[name]?.queued ?? 0;
+        if (!blocked && busQueued === 0 && q.length === 0 && dropped === 0) {
+          close();
+          res.once?.('finish', () => settle(true));
+          res.once?.('close', () => settle(false)); // after 'finish' this is a no-op
+          res.once?.('error', () => settle(false));
+          try { res.end(); } catch { settle(false); }
+          return;
+        }
+        if (!blocked) pump();
+        tickTimer = timers.setTimeout(tick, 5);
+        tickTimer.unref?.();
+      };
+      tick();
+    });
+  }
+
+  return { close, finish, stats: () => ({ ...totals, queued: q.length, blocked, closed }) };
 }
 
 /** Parse ?kinds=a.,b → prefix list, or null when invalid. Each prefix: lower-case dotted word, 1..32 chars, at most 8. */
