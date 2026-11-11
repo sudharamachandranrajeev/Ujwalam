@@ -110,7 +110,7 @@ import { acceptHost, createStartGate, createUpdates, hostArgsFor, hostEntryProbl
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
 import { readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
-import { INSTAGRAM_FLAG, writeInstagramPlan } from '../outputs/instagram.mjs';
+import { INSTAGRAM_FLAG, loadAddon as instagramAddon, writeInstagramPlan } from '../outputs/instagram.mjs';
 import { botUrl, integrationsInEffect } from './integrations.mjs';
 import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG } from './settings-routes.mjs';
 import { GUARD_ABORT_EXIT, LIVE_TEST_BUDGET, loadBudget, MAX_TEST_MINUTES, parseMinutes, parseSinkMinutes, runGuard } from './live-guard.mjs';
@@ -1033,6 +1033,7 @@ export async function main(argv = process.argv.slice(2)) {
   let hostChild = null;
   let hostDiscoveryFile = null;
   let livePlan = null; // the --live plan file, for the UI server's readiness check (D327)
+  let instagramLive = false; // IG1 (D351): the configured --live plan has the instagram sink (flag latched at start)
   let alphaClient = null;
   let stopping = false;
   let recordClips = null;
@@ -1214,6 +1215,7 @@ export async function main(argv = process.argv.slice(2)) {
         planned = planFile(planPath, { allowLive: args.live === true, ...(lt.select ? { select: lt.select } : {}), ...(schemes ? { schemes } : {}) });
       } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
       const { params, report } = planned;
+      instagramLive = args.live === true && params.sinks.some((s) => s.id === instagramAddon().sink.id);
       if (planned.dropped?.length) console.log(`[studio] outputs: ${planned.dropped.join(', ')} left out (optional recording; its stream is not in this start, so it would add an encoder)`);
       if (planned.unresolved?.length) console.log(`[studio] outputs: ${planned.unresolved.join(', ')} transport "auto" not chosen (stand-in host: no server address read)`);
       else if (args.live === true) for (const s of params.sinks) if (s.target?.urlRef) console.log(`[studio] sink ${s.id}: transport ${s.target.transport} (the scheme of the server address in ${s.target.urlRef})`);
@@ -1481,6 +1483,7 @@ export async function main(argv = process.argv.slice(2)) {
   uiArgs.push('--profile', typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'), '--release', path.join(REPO, 'release.json'));
   if (typeof args['ui-port'] === 'string') uiArgs.push('--port', args['ui-port']);
   if (livePlan) uiArgs.push('--live-plan', livePlan);
+  if (instagramLive) uiArgs.push('--instagram-live');
   if (args['fake-host'] === true) uiArgs.push('--fake-host');
   // P5b autosave: layer edits accepted by the host are written into the alpha project file (project-sync.mjs).
   else if (alpha) uiArgs.push('--project', alphaFile(dataDir));

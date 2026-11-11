@@ -30,7 +30,7 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { systemTool } from '../event-core/config.mjs';
 import { createYoutubeAuth, CLIENT_ID_TARGET, CLIENT_SECRET_TARGET } from '../posting/oauth.mjs';
@@ -377,12 +377,16 @@ export function createConnect(opts = {}) {
     const bad = checkPaste(id, { key, server });
     if (bad) throw new ConnectError(bad, PROBLEM_TEXT[bad]);
     // Key and server address change together (updateOutput): a start in between is refused, or the old pair returns.
+    // IG1 (Codex review of D351): a per-broadcast output compares the pasted key with the stored one, in memory and in
+    // constant time, before it is overwritten; the same key pasted again keeps its state (a used key stays used).
+    let sameKey = false;
     await updateOutput(o, async () => {
+      if (o.perBroadcast && key !== undefined) sameKey = sameSecret(await store(o.keyRef).get().catch(() => null), key.trim());
       if (server !== undefined) await store(o.serverRef).set(server.trim());
       if (key !== undefined) await store(o.keyRef).set(key.trim());
     });
     noteOutput(o.id, key !== undefined ? 'pasted' : (readMeta(metaFile).outputs[o.id]?.source ?? 'pasted'));
-    if (o.perBroadcast) noteKeySaved(opts.dataDir, { now }); // times only: never the key, the URL or a part of them
+    if (o.perBroadcast) noteKeySaved(opts.dataDir, { now, sameKey }); // times only: never the key, the URL, a hash or a part of them
     invalidate();
     return { ok: true, output: o.id };
   }
@@ -769,4 +773,15 @@ export function createMemoryStores(initial = {}) {
     async delete() { calls.push(['delete', target]); return m.delete(target); },
   });
   return { storeFor, map: m, calls };
+}
+
+/**
+ * Two secrets equal? Constant time, also in length: both are HMAC-ed with a one-time random key and the digests compared
+ * with timingSafeEqual. Memory only: the digests and the HMAC key are dropped on return and never written anywhere.
+ */
+export function sameSecret(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const k = randomBytes(32);
+  const d = (s) => createHmac('sha256', k).update(s, 'utf8').digest();
+  return timingSafeEqual(d(a), d(b));
 }

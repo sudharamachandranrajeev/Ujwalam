@@ -13,11 +13,14 @@
 // Key per broadcast: Instagram's Live Producer gives a new stream URL and key for every broadcast. They are pasted in
 // Settings > Connections or on the control page and stored only in Windows Credential Manager (the target names in the
 // add-on; services/platform-connect is the writer). This module keeps non-secret bookkeeping only, in
-// <dataDir>/outputs/instagram-key.json: { savedAt, liveAt, usedAt } (ISO times; never a key, a URL or part of one).
-//   savedAt: the URL and key were pasted through Ujwalam.
-//   liveAt:  the instagram sink was seen live with that key.
-//   usedAt:  the broadcast that went live ended (the sink was seen not running after liveAt, or at the next studio
-//            start after a crash). A key with usedAt >= savedAt is "used": readiness fails until a new one is pasted.
+// <dataDir>/outputs/instagram-key.json: { savedAt, startedAt, usedAt } (ISO times; never a key, a URL, a hash or any
+// other part or derivative of them).
+//   savedAt:   a new URL and key were pasted through Ujwalam (pasting the key already stored keeps the times).
+//   startedAt: a start was sent for the instagram sink with that key (noteKeyStarted, before the host call), or the
+//              host reported the sink started since its configure (attempts > 0, or running). Any start attempt counts:
+//              it may have reached Instagram, so the key is consumed.
+//   usedAt:    after startedAt the sink was seen not running (stopped, failed, gone, or the next studio start after a
+//              crash). A key with usedAt >= savedAt is "used": readiness fails until a new one is pasted.
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -125,28 +128,41 @@ export function connectRow({ platforms = loadPlatforms(PLATFORMS_DIR), addon = l
 const stateFile = (dataDir, addon) => path.join(dataDir, 'outputs', addon.keyStateName);
 const ms = (v) => (typeof v === 'string' ? Date.parse(v) : NaN);
 
-/** { savedAt, liveAt, usedAt } (ISO strings or null). */
+/** { savedAt, startedAt, usedAt } (ISO strings or null). */
 export function readKeyState(dataDir, { addon = loadAddon() } = {}) {
   try {
     const j = JSON.parse(readFileSync(stateFile(dataDir, addon), 'utf8'));
     const t = (v) => (Number.isFinite(ms(v)) ? v : null);
-    return { savedAt: t(j.savedAt), liveAt: t(j.liveAt), usedAt: t(j.usedAt) };
-  } catch { return { savedAt: null, liveAt: null, usedAt: null }; }
+    return { savedAt: t(j.savedAt), startedAt: t(j.startedAt), usedAt: t(j.usedAt) };
+  } catch { return { savedAt: null, startedAt: null, usedAt: null }; }
 }
 function writeKeyState(dataDir, st, addon) {
   const f = stateFile(dataDir, addon);
   mkdirSync(path.dirname(f), { recursive: true });
-  const clean = { version: 1, savedAt: st.savedAt ?? null, liveAt: st.liveAt ?? null, usedAt: st.usedAt ?? null };
+  const clean = { version: 2, savedAt: st.savedAt ?? null, startedAt: st.startedAt ?? null, usedAt: st.usedAt ?? null };
   writeFileSync(`${f}.tmp`, `${JSON.stringify(clean, null, 2)}\n`);
   renameSync(`${f}.tmp`, f);
   return clean;
 }
-/** The URL and key were pasted through Ujwalam: a fresh key. */
-export function noteKeySaved(dataDir, { now = Date.now, addon = loadAddon() } = {}) {
-  return writeKeyState(dataDir, { savedAt: new Date(now()).toISOString(), liveAt: null, usedAt: null }, addon);
+/**
+ * The URL and key were pasted through Ujwalam. sameKey (the caller compared the pasted key with the stored one in
+ * memory): the state is kept, so a used key pasted again stays used; only a key never pasted through Ujwalam gets its
+ * savedAt. Otherwise a fresh key.
+ */
+export function noteKeySaved(dataDir, { now = Date.now, addon = loadAddon(), sameKey = false } = {}) {
+  const st = readKeyState(dataDir, { addon });
+  if (sameKey && st.savedAt) return writeKeyState(dataDir, st, addon);
+  return writeKeyState(dataDir, { savedAt: new Date(now()).toISOString(), startedAt: null, usedAt: null }, addon);
+}
+/** A start that includes the instagram sink is about to be sent: the key is consumed (called before the host call). */
+export function noteKeyStarted(dataDir, { now = Date.now, addon = loadAddon() } = {}) {
+  const st = readKeyState(dataDir, { addon });
+  if (!Number.isFinite(ms(st.savedAt)) || ms(st.startedAt) >= ms(st.savedAt)) return null;
+  return writeKeyState(dataDir, { ...st, startedAt: new Date(now()).toISOString() }, addon);
 }
 /**
- * Freshness: { fresh, state: 'fresh' | 'live' | 'used' | 'not-pasted', savedAt, usedAt }. A key never pasted through
+ * Freshness: { fresh, state: 'fresh' | 'started' | 'used' | 'not-pasted', savedAt, startedAt, usedAt }. 'started': the
+ * broadcast with this key has not been seen ending yet. A key never pasted through
  * Ujwalam (no savedAt, e.g. set with the credential command) is not fresh: there is no way to know it is this broadcast's.
  */
 export function keyFreshness(dataDir, { addon = loadAddon() } = {}) {
@@ -154,35 +170,51 @@ export function keyFreshness(dataDir, { addon = loadAddon() } = {}) {
   const saved = ms(st.savedAt);
   if (!Number.isFinite(saved)) return { fresh: false, state: 'not-pasted', ...st };
   if (ms(st.usedAt) >= saved) return { fresh: false, state: 'used', ...st };
-  if (ms(st.liveAt) >= saved) return { fresh: true, state: 'live', ...st };
+  if (ms(st.startedAt) >= saved) return { fresh: true, state: 'started', ...st };
   return { fresh: true, state: 'fresh', ...st };
 }
 
 /**
- * Watches outputs.status for the instagram sink: live -> liveAt; then not running (stopped, failed, gone, or a new
- * studio after a crash) -> usedAt. observe(status) returns 'live' | 'used' | null (what it wrote). Only sink ids and
- * states are read.
+ * Reconciles the key state with outputs.status (the host's lifecycle record of the sink; polled, and read again right
+ * before each start and at studio start). observe(status, { startInFlight }) returns 'started' | 'used' | null (the
+ * last thing it wrote). Only sink ids, states and start counts are read.
+ *   - The sink running, or its start count (attempts, counted by the host since configure and kept after a stop) grown
+ *     since the last observation, marks the key started: a broadcast shorter than a poll, or a start sent by another
+ *     path (crash recovery), is still seen. The first observation only takes the count (the host reads the key at each
+ *     start, so starts before it may belong to an earlier key), and a count that grew while a new key was pasted is not
+ *     counted for that key (the start may have been the earlier one's); starts sent through the studio server are marked
+ *     before they are sent (noteKeyStarted), so a crash in between still leaves the key started.
+ *   - Started and the sink not running (stopped, failed, gone; a new host after a crash has it stopped with no
+ *     attempts) marks it used, unless a start is on its way (startInFlight), when the sink may not have begun yet.
  */
 export function createUseWatcher({ dataDir, now = Date.now, addon = loadAddon() } = {}) {
   if (typeof dataDir !== 'string' || !dataDir) throw new Error('instagram watcher: dataDir required');
+  let lastAttempts = null; // the sink's start count at the last observation (null: none yet)
+  let lastAt = -Infinity; // the time of the last observation
   return {
-    observe(status) {
+    observe(status, { startInFlight = false } = {}) {
       const sinks = Array.isArray(status?.sinks) ? status.sinks : null;
       if (!sinks) return null; // unreadable: decide nothing
       const s = sinks.find((x) => x && x.id === addon.sink.id && (x.kind === undefined || x.kind === 'stream'));
-      const st = readKeyState(dataDir, { addon });
-      const saved = ms(st.savedAt); const live = ms(st.liveAt); const used = ms(st.usedAt);
+      const attempts = s && Number.isInteger(s.attempts) && s.attempts >= 0 ? s.attempts : 0;
+      const grew = lastAttempts !== null && attempts > lastAttempts;
+      const since = lastAt;
+      lastAttempts = attempts; // a lower count: a new configure or a new host, counted from there
+      lastAt = now();
+      let st = readKeyState(dataDir, { addon });
+      const saved = ms(st.savedAt);
+      if (!Number.isFinite(saved)) return null; // never pasted through Ujwalam: already not fresh
+      const running = !!s && (s.state === 'live' || ACTIVE.has(s.state) || s.active === true);
+      const reached = running || (grew && saved < since);
       const iso = new Date(now()).toISOString();
-      if (s && s.state === 'live') {
-        if (Number.isFinite(saved) && !(live >= saved)) { writeKeyState(dataDir, { ...st, liveAt: iso }, addon); return 'live'; }
-        return null;
-      }
-      if (s && ACTIVE.has(s.state)) return null; // still on its way or reconnecting: the broadcast has not ended
-      if (Number.isFinite(live) && (!Number.isFinite(saved) || live >= saved) && !(used >= live)) {
+      let wrote = null;
+      if (reached && !(ms(st.startedAt) >= saved)) { st = writeKeyState(dataDir, { ...st, startedAt: iso }, addon); wrote = 'started'; }
+      const started = ms(st.startedAt);
+      if (!running && !startInFlight && started >= saved && !(ms(st.usedAt) >= started)) {
         writeKeyState(dataDir, { ...st, usedAt: iso }, addon);
-        return 'used';
+        wrote = 'used';
       }
-      return null;
+      return wrote;
     },
   };
 }

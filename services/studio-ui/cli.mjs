@@ -58,7 +58,10 @@ export async function serve(args, env = process.env, out = (s) => console.log(s)
   // --live-plan: the plan file the launcher configured for --live (alpha-live.json, or the Settings > Stream plan, D327);
   // readiness checks its targets' keys.
   const livePlanFile = typeof args['live-plan'] === 'string' ? path.resolve(args['live-plan']) : undefined;
-  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, projectSync, assetsDir, remoteToken, livePlanFile, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
+  // --instagram-live (IG1, D351): the launched plan has the instagram sink (the flag is read at start; readiness and the
+  // key tracking follow the plan, not the flag's current value).
+  const instagramLive = args['instagram-live'] === true;
+  const srv = createStudioServer({ uiRoot: UI_ROOT, core, host, launchKey, dataDir, feedbackDir, profileFile, releaseFile, projectSync, assetsDir, remoteToken, livePlanFile, instagramLive, ...(args['fake-host'] === true ? { bots: createFakeBots() } : {}), port: args.port === undefined ? 0 : Number(args.port) });
   const { port } = await srv.listen();
   out(`[studio-ui] listening on http://127.0.0.1:${port}/ (no token printed)`);
   if (host.describe().kind === 'fake') out('[studio-ui] BLOCKED-ON-HOST: no libobs host found, using the in-memory fake backend');

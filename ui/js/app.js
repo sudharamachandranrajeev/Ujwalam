@@ -540,9 +540,12 @@
     renderTransitionCard((list || []).some(function (f) { return f.id === 'transitions' && f.on; }));
     var reportOn = (list || []).some(function (f) { return f.id === 'report-button' && f.on; });
     $('report').hidden = !reportOn;
-    var igOn = (list || []).some(function (f) { return f.id === 'instagram-live' && f.on; }); // IG1, D351
+    // IG1, D351: the card shows while the flag is on or the running plan has Instagram (the flag applies at next start).
+    var ig = (list || []).filter(function (f) { return f.id === 'instagram-live'; })[0];
+    var igOn = !!ig && (ig.on || ig.effective === true);
     $('instagram').hidden = !igOn;
     if (igOn) loadInstagram(); else setText($('ig-state'), '');
+    setText($('ig-note'), ig && ig.note ? 'Instagram Live flag: ' + ig.note + '.' : '');
     var readyOn = (list || []).some(function (f) { return f.id === 'readiness' && f.on; }); // D299
     $('readiness').hidden = !readyOn;
     if (!readyOn) { clear($('ready-list')); setText($('ready-summary'), ''); }
@@ -556,7 +559,9 @@
           if (r.flags) renderFlags(r.flags);
         }));
       });
-      ul.appendChild(el('li', { class: 'row flag-row', title: f.description }, [el('span', { class: 'name', text: f.id }), el('label', null, [cb])]));
+      var name = [el('span', { class: 'name', text: f.id })];
+      if (f.note) name.push(el('span', { class: 'muted', text: ' (' + f.note + ')' })); // e.g. instagram-live: applies at next start
+      ul.appendChild(el('li', { class: 'row flag-row', title: f.description }, name.concat([el('label', null, [cb])])));
     });
     if (!list || !list.length) setText($('flag-note'), 'No feature flags defined.');
     else setText($('flag-note'), 'A flag switches on or off when you tick it.');

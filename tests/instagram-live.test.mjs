@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // IG1 (D351, flag instagram-live): Instagram Live as an output. Plan (V canvas, rung reuse only when the validator says
 // it fits, else one added GPU-scaled rung; audio once), flag default off, the --live plan file, the key per broadcast
-// (paste both, fresh / live / used), Settings > Connections rows (last 4 characters only) and the readiness failure.
+// (paste both, fresh / started / used; the same key pasted again stays used; starts between polls, crashes and the
+// flag latched at start, from the Codex review), Settings > Connections rows (last 4 characters only) and the readiness failure.
 // In-memory credential stores only: no test touches Credential Manager, a key file or a real platform. The values here
 // are throwaway test strings, never a real key or URL.
 import assert from 'node:assert/strict';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { loadPlatforms, validate } from '../services/outputs/validate.mjs';
-import { addInstagram, connectRow, createUseWatcher, keyFreshness, loadAddon, noteKeySaved, readKeyState, rungProblems, writeInstagramPlan, INSTAGRAM_FLAG } from '../services/outputs/instagram.mjs';
+import { addInstagram, connectRow, createUseWatcher, keyFreshness, loadAddon, noteKeySaved, noteKeyStarted, readKeyState, rungProblems, writeInstagramPlan, INSTAGRAM_FLAG } from '../services/outputs/instagram.mjs';
 import { planFile } from '../app/host/lib/outputs-plan.mjs';
-import { loadDefinitions } from '../services/flags/index.mjs';
+import { createFlags, loadDefinitions } from '../services/flags/index.mjs';
 import { ALPHA_LIVE_PLAN, livePlanFile } from '../services/studio-ui/launch.mjs';
-import { createConnect, createMemoryStores, outputsFromPlan } from '../services/platform-connect/index.mjs';
+import { createConnect, createMemoryStores, outputsFromPlan, sameSecret } from '../services/platform-connect/index.mjs';
+import { createFakeHost } from '../services/studio-ui/backends.mjs';
+import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { loadReadinessConfig, planTargets, runReadiness } from '../services/studio-ui/readiness.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -141,7 +145,7 @@ describe('flag instagram-live', () => {
 });
 
 describe('key per broadcast (no secrets on disk)', () => {
-  test('pasted -> fresh; seen live -> live; ended -> used; a retry is not an end', () => {
+  test('pasted -> fresh; seen starting -> started; ended -> used; a retry is not an end', () => {
     const d = mk();
     let t = Date.parse('2026-11-11T10:00:00Z');
     const now = () => t;
@@ -149,9 +153,9 @@ describe('key per broadcast (no secrets on disk)', () => {
     noteKeySaved(d, { now });
     assert.deepEqual([keyFreshness(d).fresh, keyFreshness(d).state], [true, 'fresh']);
     const w = createUseWatcher({ dataDir: d, now });
-    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'starting' }] }), null);
-    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'live' }] }), 'live');
-    assert.equal(keyFreshness(d).state, 'live');
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'starting' }] }), 'started');
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'live' }] }), null);
+    assert.equal(keyFreshness(d).state, 'started');
     assert.equal(keyFreshness(d).fresh, true, 'still this broadcast\'s key while on air');
     t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'retrying' }] }), null);
     t += 1000; assert.equal(w.observe(null), null, 'unreadable status decides nothing');
@@ -161,7 +165,7 @@ describe('key per broadcast (no secrets on disk)', () => {
     t += 1000; noteKeySaved(d, { now });
     assert.equal(keyFreshness(d).state, 'fresh', 'a new paste is fresh again');
     const text = readFileSync(path.join(d, 'outputs', ADDON.keyStateName), 'utf8');
-    assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ['liveAt', 'savedAt', 'usedAt', 'version']);
+    assert.deepEqual(Object.keys(JSON.parse(text)).sort(), ['savedAt', 'startedAt', 'usedAt', 'version']);
   });
   test('a crash mid-broadcast: the next studio start marks the key used (sink gone)', () => {
     const d = mk();
@@ -170,6 +174,38 @@ describe('key per broadcast (no secrets on disk)', () => {
     t += 1000; createUseWatcher({ dataDir: d, now: () => t }).observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'live' }] });
     t += 1000; assert.equal(createUseWatcher({ dataDir: d, now: () => t }).observe({ sinks: [] }), 'used');
     assert.equal(readKeyState(d).usedAt, new Date(t).toISOString());
+  });
+  test('a broadcast shorter than a poll: the start count grew, the sink is stopped -> used', () => {
+    const d = mk();
+    let t = Date.parse('2026-11-11T12:00:00Z');
+    const now = () => t;
+    noteKeySaved(d, { now });
+    const w = createUseWatcher({ dataDir: d, now });
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 0 }] }), null, 'first look: only the count');
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 1 }] }), 'used');
+    assert.equal(keyFreshness(d).state, 'used');
+  });
+  test('a start count that grew while a new key was pasted is not counted for the new key', () => {
+    const d = mk();
+    let t = Date.parse('2026-11-11T12:10:00Z');
+    const now = () => t;
+    const w = createUseWatcher({ dataDir: d, now });
+    w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 3 }] });
+    t += 1000; noteKeySaved(d, { now });
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 4 }] }), null);
+    assert.equal(keyFreshness(d).state, 'fresh');
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 5 }] }), 'used', 'a later start counts');
+  });
+  test('a start marked before it is sent, then a crash: the next studio start marks the key used', () => {
+    const d = mk();
+    let t = Date.parse('2026-11-11T12:20:00Z');
+    const now = () => t;
+    noteKeySaved(d, { now });
+    t += 1000; noteKeyStarted(d, { now });
+    assert.equal(keyFreshness(d).state, 'started');
+    const w = createUseWatcher({ dataDir: d, now });
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 0 }] }, { startInFlight: true }), null, 'a start on its way is not an end');
+    t += 1000; assert.equal(createUseWatcher({ dataDir: d, now }).observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 0 }] }), 'used');
   });
   test('a sink that never went live does not use the key', () => {
     const d = mk();
@@ -216,10 +252,29 @@ describe('Settings > Connections: the Instagram entry', () => {
     st = (await c.status({ fresh: true })).outputs.find((o) => o.id === 'instagram');
     assert.equal(st.state, 'used');
     assert.match(st.detail, /Paste the new server URL and stream key/);
+    // Codex review P1: the same (used) key pasted again stays used; a new key is fresh.
+    await c.paste('instagram', { key: ' ' + TEST_KEY + ' ', server: TEST_URL });
+    assert.equal(keyFreshness(dataDir).state, 'used', 'the same key pasted again is still used');
+    assert.equal((await c.status({ fresh: true })).outputs.find((o) => o.id === 'instagram').state, 'used');
+    await c.paste('instagram', { key: TEST_KEY + 'x', server: TEST_URL });
+    assert.equal(keyFreshness(dataDir).state, 'fresh', 'a different key is fresh');
+    assert.deepEqual(Object.keys(JSON.parse(readFileSync(path.join(dataDir, 'outputs', ADDON.keyStateName), 'utf8'))).sort(), ['savedAt', 'startedAt', 'usedAt', 'version'], 'times only: no hash or other key derivative');
     for (const f of allFiles(dataDir)) {
       const text = readFileSync(f, 'utf8');
       assert.ok(!text.includes(TEST_KEY) && !text.includes(TEST_KEY.slice(-4) + '"') && !text.includes('ingest.test.example'), `${path.basename(f)} holds no key, key part or URL`);
     }
+  });
+  test('sameSecret: equal only for the same string; no secret, no match', () => {
+    assert.equal(sameSecret(TEST_KEY, TEST_KEY), true);
+    assert.equal(sameSecret(TEST_KEY, TEST_KEY + 'x'), false);
+    assert.equal(sameSecret(TEST_KEY, TEST_KEY.slice(0, -1)), false);
+    assert.equal(sameSecret(null, TEST_KEY), false);
+  });
+  test('the same key pasted for a key set outside Ujwalam (never pasted here) counts as pasted', async () => {
+    const { c, mem, dataDir } = setup();
+    mem.map.set('Ujwalam/stream/instagram', TEST_KEY);
+    await c.paste('instagram', { key: TEST_KEY, server: TEST_URL });
+    assert.equal(keyFreshness(dataDir).state, 'fresh');
   });
   test('the other outputs keep their rules (a Twitch key still refuses a "?" part)', () => {
     const { c } = setup();
@@ -269,5 +324,68 @@ describe('no hardcoded Instagram limit in code', () => {
   test('services/outputs/instagram.mjs names no limit value', () => {
     const src = readFileSync(path.join(REPO, 'services', 'outputs', 'instagram.mjs'), 'utf8');
     for (const n of ['2250', '6000', '720', '1280', '44100', '256']) assert.ok(!new RegExp(`\\b${n}\\b`).test(src), `instagram.mjs hardcodes ${n}`);
+  });
+});
+
+// Codex review P2s: the studio server follows the launched plan (cli --instagram-live), marks a start that includes the
+// instagram sink before it is sent, and judges the end from the host's status (a broadcast between polls is seen).
+describe('studio server: Instagram latched at start, starts consume the key', () => {
+  const LKEY = 'k'.repeat(48);
+  const servers = [];
+  after(async () => { for (const s of servers) await s.close(); });
+  function req(port, { method = 'GET', url, headers = {}, body } = {}) {
+    return new Promise((resolve, reject) => {
+      const h = { host: '127.0.0.1:' + port, ...headers };
+      if (body !== undefined) h['content-length'] = Buffer.byteLength(body);
+      const r = http.request({ host: '127.0.0.1', port, method, path: url, headers: h }, (res) => {
+        const chunks = []; res.on('data', (x) => chunks.push(x));
+        res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') }));
+      });
+      r.on('error', reject); r.end(body);
+    });
+  }
+  async function boot({ instagramLive, flagOn, status = () => ({ sinks: [] }) }) {
+    const dataDir = mk();
+    createFlags({ dataDir }).set(INSTAGRAM_FLAG, flagOn);
+    const fake = createFakeHost({ outputsReady: true });
+    const host = { describe: () => fake.describe(), call: async (m, p) => (m === 'outputs.status' ? status() : fake.call(m, p)) };
+    const core = { describe: () => ({ available: false }), call: async () => null, confirm: async () => null };
+    const srv = createStudioServer({ uiRoot: path.join(REPO, 'ui'), core, host, launchKey: LKEY, dataDir, instagramLive, limits: { statusPollMs: 30 }, log: () => {} });
+    servers.push(srv);
+    const { port } = await srv.listen();
+    const login = await req(port, { url: '/login?k=' + LKEY });
+    const cookie = login.headers['set-cookie'][0].split(';')[0];
+    const csrf = JSON.parse((await req(port, { url: '/ui/api/session', headers: { cookie } })).text).csrf;
+    const get = async (url) => JSON.parse((await req(port, { url, headers: { cookie } })).text);
+    const post = async (url, b) => JSON.parse((await req(port, { method: 'POST', url, body: JSON.stringify(b), headers: { cookie, origin: 'http://127.0.0.1:' + port, 'content-type': 'application/json', 'x-ujwalam-csrf': csrf } })).text);
+    return { dataDir, get, post };
+  }
+  const flagRow = async (c) => (await c.get('/ui/api/flags')).flags.find((f) => f.id === INSTAGRAM_FLAG);
+  const until = async (fn, ms = 2000) => { const end = Date.now() + ms; while (Date.now() < end) { if (fn()) return true; await new Promise((r) => setTimeout(r, 20)); } return fn(); };
+
+  test('a flag that differs from the launched plan shows "applies at next start"', async () => {
+    let r = await flagRow(await boot({ instagramLive: false, flagOn: true }));
+    assert.equal(r.on, true); assert.equal(r.effective, false); assert.match(r.note, /applies at next start/);
+    r = await flagRow(await boot({ instagramLive: true, flagOn: false }));
+    assert.equal(r.on, false); assert.equal(r.effective, true); assert.match(r.note, /applies at next start/);
+    r = await flagRow(await boot({ instagramLive: true, flagOn: true }));
+    assert.equal(r.note, undefined);
+  });
+  test('launched with Instagram: Start stream marks the key started before the host call; the end between polls makes it used', async () => {
+    let sinks = [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 0 }];
+    const c = await boot({ instagramLive: true, flagOn: false, status: () => ({ sinks }) });
+    noteKeySaved(c.dataDir);
+    const r = await c.post('/ui/api/host', { method: 'stream.start', params: {} });
+    assert.equal(r.verdict, 'allow', JSON.stringify(r));
+    assert.ok(readKeyState(c.dataDir).startedAt, 'started when the start was sent');
+    sinks = [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 1 }]; // ended before any poll saw it live
+    assert.ok(await until(() => keyFreshness(c.dataDir).state === 'used', 8000), 'used after the start window');
+  });
+  test('launched without Instagram (flag switched on later): starts and polls leave the key alone', async () => {
+    const c = await boot({ instagramLive: false, flagOn: true, status: () => ({ sinks: [{ id: 'instagram', kind: 'stream', state: 'live', attempts: 1 }] }) });
+    noteKeySaved(c.dataDir);
+    await c.post('/ui/api/host', { method: 'stream.start', params: {} });
+    await new Promise((r) => setTimeout(r, 200));
+    assert.equal(keyFreshness(c.dataDir).state, 'fresh');
   });
 });
