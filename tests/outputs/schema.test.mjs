@@ -18,8 +18,8 @@ const platformFiles = list(path.join(repo, 'data', 'platforms')).filter((f) => !
 const presetFiles = list(path.join(repo, 'data', 'outputs', 'presets'));
 const META = new Set(['id', 'name', 'notes']);
 
-test('platform files exist for youtube, twitch, kick, local', () => {
-  assert.deepEqual(platformFiles.map((f) => path.basename(f)), ['kick.json', 'local.json', 'twitch.json', 'youtube.json']);
+test('platform files exist for youtube, twitch, kick, instagram, local', () => {
+  assert.deepEqual(platformFiles.map((f) => path.basename(f)), ['instagram.json', 'kick.json', 'local.json', 'twitch.json', 'youtube.json']);
 });
 
 for (const f of platformFiles) {
@@ -47,8 +47,9 @@ for (const f of platformFiles) {
 
   // A0 (2026-11-03): a source that is not an official page is allowed only on a value marked unverified:true
   // (e.g. the YouTube ingest URL, taken from OBS services.json because the official page prints none).
+  // IG1 (D351): Instagram's own pages (about.instagram.com blog, help.instagram.com) count as official.
   test(`platform ${name}: sources are official https URLs or "ujwalam" (others only on unverified values)`, () => {
-    const official = (s) => s === 'ujwalam' || s === 'user-reference-2026-10-27' || s === 'legacy-observed' || /^https:\/\/(support\.google\.com|blog\.twitch\.tv|dev\.twitch\.tv|help\.twitch\.tv|ingest\.twitch\.tv|help\.kick\.com|docs\.kick\.com)\//.test(s);
+    const official = (s) => s === 'ujwalam' || s === 'user-reference-2026-10-27' || s === 'legacy-observed' || /^https:\/\/(support\.google\.com|blog\.twitch\.tv|dev\.twitch\.tv|help\.twitch\.tv|ingest\.twitch\.tv|help\.kick\.com|docs\.kick\.com|about\.instagram\.com|help\.instagram\.com)\//.test(s);
     const bad = [];
     const walk = (o, p) => {
       if (!o || typeof o !== 'object') return;
