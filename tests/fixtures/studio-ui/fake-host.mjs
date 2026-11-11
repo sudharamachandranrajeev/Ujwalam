@@ -25,7 +25,7 @@
 // like the real host's markers role; any other method with it answers -32001 forbidden. Recorded: shape ok, whether it
 // equals the api token or appears in argv (never the value).
 import http from 'node:http';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const argv = process.argv.slice(2);
@@ -84,7 +84,21 @@ const stopFailCount = Number(process.env.UJWALAM_FAKE_HOST_STOP_FAIL_COUNT ?? In
 let stopCalls = 0;
 const streamState = new Map(fakeStreams.map((x) => [x.id, 'idle']));
 const callLog = (o) => appendFileSync(`${process.env.UJWALAM_FAKE_HOST_RECORD}.calls.jsonl`, `${JSON.stringify({ run, ...o })}\n`);
-callLog({ event: 'start' });
+// LU5 host update tests: the start event names the folder this copy runs from (a staged release copies this file to
+// <release>/bin/ujwalam-host.mjs). UJWALAM_FAKE_HOST_STOP_ON=<file>: once that file exists, the recording and every
+// stream sink stop (as if the user clicked Stop), so the update queue sees everything stopped.
+callLog({ event: 'start', dir: path.dirname(process.argv[1]), runtime: arg('--runtime') ?? null });
+if (process.env.UJWALAM_FAKE_HOST_STOP_ON) {
+  const stopOn = process.env.UJWALAM_FAKE_HOST_STOP_ON;
+  const iv = setInterval(() => {
+    if (!existsSync(stopOn)) return;
+    clearInterval(iv);
+    if (recordState === 'live') recordState = 'stopped';
+    for (const id of streamState.keys()) if (streamState.get(id) === 'live') streamState.set(id, 'stopped');
+    callLog({ event: 'stopped-by-user' });
+  }, 100);
+  iv.unref();
+}
 const save = () => writeFileSync(process.env.UJWALAM_FAKE_HOST_RECORD, JSON.stringify(record, null, 2));
 save();
 
@@ -105,7 +119,20 @@ const sim = (s, base) => {
 };
 
 const methods = {
-  'host.shutdown': () => { setTimeout(() => { save(); process.exit(0); }, 50); return { shuttingDown: true }; },
+  'host.shutdown': () => {
+    // LU5 test (Codex re-review): a pointer file names a file the old host changes while it shuts down, so the
+    // launcher's last check before the new host's spawn sees a copy that changed after the queue's check.
+    const tamper = process.env.UJWALAM_FAKE_HOST_TAMPER_ON_SHUTDOWN;
+    // "dir:<file>": the file is replaced by a folder, so reading it for the hash throws (EISDIR, Codex review of the merge).
+    if (tamper && existsSync(tamper)) {
+      const t = readFileSync(tamper, 'utf8').trim(); rmSync(tamper);
+      const f = t.replace(/^dir:/, '');
+      chmodSync(f, 0o666);
+      if (t.startsWith('dir:')) { rmSync(f); mkdirSync(f); } else appendFileSync(f, '// changed\n');
+    }
+    setTimeout(() => { save(); process.exit(0); }, 50);
+    return { shuttingDown: true };
+  },
   'overlay.status': () => ({ state: 'ready', staticPort: 50101, feedPort: 50102, eventFeed: argv.includes('--overlay-events-url'), childHasEventToken: record.eventTokenOk, browserAllowed: argv.includes('--allow-browser') }),
   'overlay.stats': () => ({ clients: 3, chatFrames: 7, busFrames: 2, effects: 0, effectsBlocked: 0, chatEffects: 0, chatGated: 0, slowDropped: 0, refused: 0 }),
   'devices.list': () => {

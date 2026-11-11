@@ -104,6 +104,7 @@ import { writeZip } from '../../tools/package/zip.mjs';
 import { createFront } from '../supervisor/front.mjs';
 import { createEventCoreSlot, createStudioSlot, createUiSlot } from '../supervisor/slots.mjs';
 import { refuseReason, SERVICES } from '../supervisor/swap.mjs';
+import { acceptHost, createStartGate, createUpdates, hostArgsFor, hostEntryProblem, outputsBusy, partFor, readRelease, rejectHost, serveUpdates, serviceRootProblem, takeStartupHost } from '../supervisor/updates.mjs';
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
 import { readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
@@ -742,6 +743,20 @@ async function writeSnapshot(client, logsDir) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// LU5 (D343): how long a new host release gets to write its discovery file (an update while running, or a trial at start).
+const updateReadyMs = () => Math.max(1000, Number(process.env.UJWALAM_HOST_UPDATE_READY_MS ?? 60_000) || 60_000);
+/**
+ * LU5 (Codex review of D343): stops a host and CONFIRMS its exit (host.shutdown, then the process tree). -> true when
+ * the process has exited; false when it was still running after the kill (the caller must not start another host).
+ */
+export async function stopHostChild(c, child, { askMs = 2000, exitMs = 8000, killMs = 10_000 } = {}) {
+  if (!child || child.exitCode !== null || child.signalCode !== null) return true;
+  const gone = new Promise((r) => child.once('exit', () => r(true)));
+  if (c) { try { await Promise.race([c.call('host.shutdown', {}), sleep(askMs)]); } catch { /* kill below */ } }
+  if (await Promise.race([gone, sleep(exitMs).then(() => false)])) return true;
+  killChildTree(child);
+  return Promise.race([gone, sleep(killMs).then(() => false)]);
+}
 
 // Crash recovery (see the header). Arms an exit handler on the running host child and on every restarted one.
 function superviseHost(o) {
@@ -822,8 +837,10 @@ function superviseHost(o) {
   writeSnapshot(client, logsDir);
 
   const arm = (child) => child.once('exit', (code, signal) => { onExit(child, code, signal).catch((e) => console.log(`[studio] crash recovery failed: ${e.message}`)); });
+  // LU5 (D343): a host stopped on purpose for an update is not a crash.
+  const planned = new WeakSet();
   async function onExit(child, code, signal) {
-    if (isStopping() || child !== getChild()) return;
+    if (isStopping() || child !== getChild() || planned.has(child)) return;
     busy = true;
     const at = new Date();
     const recording = activeSinks(lastOutputs, 'record');
@@ -894,6 +911,92 @@ function superviseHost(o) {
     busy = false;
   }
   arm(getChild());
+
+  // LU5 host update (D343): called by the update queue only when a fresh outputs.status showed every stream and
+  // recording stopped. The old host is asked to exit (its overlay server child goes with it), the new one starts from the
+  // update's folder and must write its discovery file and load the project; otherwise the old host is started again.
+  // A host is replaced only after its exit is confirmed (stopHostChild); two hosts never run at once.
+  const readyMs = updateReadyMs();
+  const msg = (e) => String(e?.message ?? e).slice(0, 120);
+  // Never throws (Codex review of the merge): any failure before the switch stops what was spawned (exit confirmed) and
+  // answers { ok: false, stuck }; after the switch the new host runs, and a failed status line or snapshot is only
+  // logged.
+  async function startAndLoad({ isPlanned }) {
+    if (isStopping()) return { ok: false, reason: 'Ujwalam is closing' };
+    let next = null; let c = null;
+    try {
+      next = spawnHost();
+      if (isPlanned) planned.add(next);
+      arm(next);
+      const disc = await waitForDiscovery(hostDiscovery, next, readyMs);
+      if (!disc) {
+        const gone = await stopHostChild(null, next, { exitMs: 0 });
+        return { ok: false, stuck: !gone, reason: `the host did not get ready${gone ? '' : ` and did not exit (pid ${next.pid} still running)`}` };
+      }
+      c = new HostClient({ port: disc.port, token: hostToken });
+      if (alpha) {
+        try { await alphaProject({ client: c, dataDir, args, hostCfg, embedded }); } catch (e) {
+          const gone = await stopHostChild(c, next);
+          return { ok: false, stuck: !gone, reason: `the project did not load on it (${msg(e)})${gone ? '' : `; it did not exit (pid ${next.pid} still running)`}` };
+        }
+      }
+    } catch (e) {
+      if (!next) return { ok: false, reason: `the host could not be started (${msg(e)})` };
+      const gone = await stopHostChild(c, next).catch(() => false);
+      return { ok: false, stuck: !gone, reason: `starting it failed (${msg(e)})${gone ? '' : `; it did not exit (pid ${next.pid} still running)`}` };
+    }
+    planned.delete(next); // from here on an exit is a crash again
+    client = c;
+    onClient(c);
+    try {
+      if (alpha) await alphaStatus(c);
+      await writeSnapshot(c, logsDir);
+    } catch (e) { console.log(`[studio] WARNING: the new host runs, but its status or snapshot failed (${msg(e)})`); }
+    return { ok: true };
+  }
+  return {
+    client: () => client,
+    restarting: () => busy,
+    // check(): the candidate's last hash, run after the old host has exited and right before the new one is spawned
+    // (Codex re-review). candidateFailed in the answer: the candidate itself failed (check, readiness, project load);
+    // without it nothing of the candidate ran (it is kept for a retry). running (Codex review of the merge): which host
+    // runs afterwards: 'new', 'old', 'none' (the crash restart policy takes over) or 'unknown'. The replacement is one
+    // transaction: an exception in the check, the switch or the start never skips the previous host's restart, and a
+    // replacement that was spawned is confirmed gone (startAndLoad) before the previous host starts.
+    async restartPlanned(useNew, useOld, check = () => null) {
+      if (busy || isStopping()) return { result: 'refused', reason: 'the host is restarting' };
+      busy = true;
+      try {
+        const old = getChild();
+        planned.add(old);
+        let exited;
+        try { exited = await stopHostChild(client, old); } catch (e) { exited = false; console.log(`[studio] WARNING: stopping the host failed (${msg(e)})`); }
+        if (!exited) {
+          // Not replaced: a second host next to one that did not exit would fight over devices and encoders. Its
+          // exit from here on counts as a crash again (the crash restart policy brings back the same host).
+          planned.delete(old);
+          const reason = `the running host did not exit within the stop window (pid ${old.pid}, still running after host.shutdown and the kill); nothing was replaced`;
+          console.log(`[studio] WARNING: host update aborted: ${reason}`);
+          return { result: 'failed', reason, running: old.exitCode === null ? 'old' : 'unknown' };
+        }
+        let up;
+        try {
+          const bad = check();
+          up = bad ? { ok: false, reason: `its files changed before it started (${bad})` } : (useNew(), await startAndLoad({ isPlanned: true }));
+        } catch (e) { up = { ok: false, reason: `its last check failed (${msg(e)})` }; }
+        if (up.ok) return { result: 'swapped', running: 'new' };
+        if (up.stuck) {
+          console.log(`[studio] WARNING: host update failed (${up.reason}); the previous host is NOT started next to it`);
+          return { result: 'failed', reason: up.reason, candidateFailed: true, running: 'unknown' };
+        }
+        console.log(`[studio] WARNING: host update failed (${up.reason}); starting the previous host again`);
+        try { useOld(); } catch (e) { console.log(`[studio] WARNING: ${msg(e)}`); }
+        // Not planned: if the previous host cannot start either, the crash restart policy takes over.
+        const back = await startAndLoad({ isPlanned: false });
+        return back.ok ? { result: 'restored-old', reason: up.reason, candidateFailed: true, running: 'old' } : { result: 'failed', reason: `${up.reason}; the previous host did not come back (${back.reason})`, candidateFailed: true, running: 'none' };
+      } finally { busy = false; }
+    },
+  };
 }
 
 export async function main(argv = process.argv.slice(2)) {
@@ -927,9 +1030,13 @@ export async function main(argv = process.argv.slice(2)) {
   let endSession = () => {};
   const sessionEnded = new Promise((resolve) => { endSession = resolve; });
   const fronts = []; // LU3 (flag service-swap): the stable-port fronts, closed after the services
+  let hostRun = null; // LU5: { exe, args, script, runtime, root } the host is started from
+  let hostSup = null; // superviseHost's handle: current client, planned restart (LU5)
+  let updates = null; // LU5/LU7 update queue (services/supervisor/updates.mjs)
   // Ask the host to exit cleanly first (it closes previews and removes its discovery file), then kill what is left.
   const stopAll = async () => {
     stopping = true;
+    for (const l of updates?.close() ?? []) console.log(`[studio] ${l}`);
     recordClips?.stop();
     learning?.stop();
     if (hostChild && hostChild.exitCode === null && hostDiscoveryFile) {
@@ -967,6 +1074,8 @@ export async function main(argv = process.argv.slice(2)) {
   // tags this launcher's recovery events for the control page.
   const liveSession = hex(16);
   const authority = createLiveAuthority({ onChange: (st) => writeAuthorityMirror(dataDir, liveSession, st) });
+  // LU5 maintenance lock (D343): stream and recording starts take a lease; a host update holds the gate.
+  const startGate = createStartGate();
   writeAuthorityMirror(dataDir, liveSession, authority.state());
   // Face link key (D295): the host gets it by environment, the face worker on its stdin (faceControlLine), nobody else.
   const faceKey = hex(32);
@@ -1039,6 +1148,23 @@ export async function main(argv = process.argv.slice(2)) {
       try { mkdirSync(rf, { recursive: true }); hostCfg.recordings = rf; console.log(`[studio] recordings folder (Settings): ${rf}`); } catch (e) { console.log(`[studio] WARNING: recordings folder from Settings not usable (${e.message}); using ${hostCfg.recordings}`); }
     }
   }
+  // LU5 (D343, flag service-swap): a host update staged while live and not applied before the app closed, or applied at
+  // an earlier stop, is started from its checked copy (live/releases) until the installed release catches up.
+  // Each one is a TRIAL (Codex review): it must get ready (and load the project in alpha mode) or it is rejected for
+  // good and the next one (pending, then last known good, then the installed host) starts instead.
+  const ownRelease = readRelease(REPO);
+  let startupHost = null;
+  let startupCandidates = [];
+  const installedHost = hostCfg ? { exe: hostCfg.exe, runtime: hostCfg.runtime, overlayScript: hostCfg.overlayScript } : null;
+  const useHost = (e) => { hostCfg.exe = e.exe; hostCfg.runtime = e.runtime; hostCfg.overlayScript = e.overlayScript ?? installedHost.overlayScript; };
+  const tryNote = (c) => console.log(`[studio] host update ${c.entry.version} ${c.kind === 'pending' ? 'staged before the last close is tried now' : 'in use (last good)'} (the overlay server follows the host)`);
+  if (swapOn && hostCfg && args['fake-host'] !== true) {
+    const t = takeStartupHost({ dataDir, own: ownRelease, script: /\.m?js$/i.test(hostCfg.exe ?? ''), runtime: hostCfg.runtime ?? null });
+    for (const d of t.dropped) console.log(`[studio] host update record removed (${d})`);
+    startupCandidates = t.candidates;
+    startupHost = startupCandidates.shift() ?? null;
+    if (startupHost) { useHost(startupHost.entry); tryNote(startupHost); }
+  }
   const hostExe = hostCfg?.exe;
   const hostDiscovery = path.join(dataDir, 'host.json');
   if (args['fake-host'] !== true && hostExe && existsSync(hostExe) && hostCfg.runtime) {
@@ -1091,11 +1217,13 @@ export async function main(argv = process.argv.slice(2)) {
       hostArgs.push('--outputs', f);
     }
     const logsDir = path.join(dataDir, 'logs');
-    const script = /\.m?js$/i.test(hostExe);
+    // What spawnHost starts; an LU5 host update (D343) replaces it, a failed one puts the previous one back.
+    hostRun = { exe: hostExe, args: hostArgs, script: /\.m?js$/i.test(hostExe), runtime: hostCfg.runtime, root: startupHost?.entry?.root ?? null };
     const spawnHost = () => {
       removeStaleDiscovery(hostDiscovery);
       const hostLog = openHostLog(logsDir);
-      const child = spawn(script ? process.execPath : hostExe, script ? [hostExe, ...hostArgs] : hostArgs, {
+      const { exe: runExe, args: runArgs, script } = hostRun;
+      const child = spawn(script ? process.execPath : runExe, script ? [runExe, ...runArgs] : runArgs, {
         stdio: ['pipe', hostLog.fd, hostLog.fd], // stdin: the parent pipe (D234)
         env: { ...process.env, ...spec.env, ...PARENT_PIPE, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_MARKERS_TOKEN: hostMarkersToken, UJWALAM_HOST_CLIPS_TOKEN: hostClipsToken, UJWALAM_HOST_DISCOVERY: hostDiscovery, UJWALAM_FACE_LINK_KEY: faceKey },
         windowsHide: true,
@@ -1109,16 +1237,67 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`[studio] host log: ${hostLog.file}`);
       return child;
     };
+    // A candidate's copy is hashed once more right before its spawn (Codex re-review); a changed copy is rejected and
+    // the next candidate (finally the installed host) is used.
+    const nextCandidate = () => {
+      startupHost = startupCandidates.shift() ?? null;
+      const e = startupHost?.entry ?? installedHost;
+      if (startupHost) tryNote(startupHost); else console.log('[studio] starting the installed host');
+      useHost(e);
+      hostRun = { exe: e.exe, args: hostArgsFor(hostRun.args, { runtime: e.runtime, overlayScript: hostCfg.overlayScript }), script: /\.m?js$/i.test(e.exe), runtime: e.runtime, root: startupHost?.entry?.root ?? null };
+    };
+    const checkCandidate = () => {
+      while (startupHost) {
+        const bad = hostEntryProblem(startupHost.entry, { script: /\.m?js$/i.test(hostCfg?.exe ?? ''), runtime: hostCfg?.runtime ?? null });
+        if (!bad) return;
+        rejectHost(dataDir, startupHost.entry, bad, (l) => console.log(`[studio] ${l}`));
+        console.log(`[studio] WARNING: host update ${startupHost.entry.version} not started (${bad}); it is not tried again`);
+        nextCandidate();
+      }
+    };
+    checkCandidate();
     spawnHost();
     hostDiscoveryFile = hostDiscovery;
     // The UI server and the browser start only after the host has written its discovery file (up to 60 s), so the page never meets the fake backend first.
-    const disc = await waitForDiscovery(hostDiscovery, hostChild);
+    let disc = await waitForDiscovery(hostDiscovery, hostChild, startupHost ? updateReadyMs() : undefined);
+    let projectLoaded = false;
+    // LU5 startup trial (Codex review of D343): a host release from host-update.json must get ready and load the
+    // project; otherwise it is rejected (never tried again) and the next candidate, finally the installed host, starts.
+    while (startupHost) {
+      let problem = disc ? null : 'the host did not get ready';
+      if (!problem && alpha) {
+        try {
+          alphaClient = new HostClient({ port: disc.port, token: hostToken });
+          await alphaProject({ client: alphaClient, dataDir, args, hostCfg, embedded: !!shellPaths });
+          projectLoaded = true;
+        } catch (e) { alphaClient = null; problem = `the project did not load on it (${String(e?.message ?? e).slice(0, 120)})`; }
+      }
+      if (!problem) {
+        acceptHost(dataDir, startupHost.entry, (l) => console.log(`[studio] ${l}`));
+        console.log(`[studio] host update ${startupHost.entry.version} started and is now the last good host`);
+        break;
+      }
+      rejectHost(dataDir, startupHost.entry, problem, (l) => console.log(`[studio] ${l}`));
+      console.log(`[studio] WARNING: host update ${startupHost.entry.version} did not start (${problem}); it is not tried again`);
+      const failed = hostChild;
+      if (!(await stopHostChild(disc ? new HostClient({ port: disc.port, token: hostToken }) : null, failed))) {
+        console.log(`[studio] the failed host did not exit (pid ${failed.pid}); stopping`);
+        await stopAll();
+        return 1;
+      }
+      nextCandidate();
+      checkCandidate();
+      spawnHost();
+      disc = await waitForDiscovery(hostDiscovery, hostChild, startupHost ? updateReadyMs() : undefined);
+    }
     console.log(`[studio] libobs host ${disc ? 'started' : 'NOT ready (see the host log)'}${args['allow-devices'] === true ? ' (devices ALLOWED)' : ' (devices off)'}${alpha ? ', previews H and V' : ''}`);
     if (alpha) {
       if (!disc) { console.log('[studio] alpha: the host is not ready; stopping'); await stopAll(); return 1; }
       try {
-        alphaClient = new HostClient({ port: disc.port, token: hostToken });
-        await alphaProject({ client: alphaClient, dataDir, args, hostCfg, embedded: !!shellPaths });
+        if (!projectLoaded) {
+          alphaClient = new HostClient({ port: disc.port, token: hostToken });
+          await alphaProject({ client: alphaClient, dataDir, args, hostCfg, embedded: !!shellPaths });
+        }
         await alphaStatus(alphaClient);
         if (lt.bandwidthTest) {
           const bp = bandwidthTestProblems(await alphaClient.call('outputs.status'));
@@ -1230,7 +1409,7 @@ export async function main(argv = process.argv.slice(2)) {
       }
     }
     if (disc) {
-      superviseHost({
+      hostSup = superviseHost({
         logsDir, dataDir, hostCfg, args, alpha, hostToken, hostDiscovery, spawnHost, embedded: !!shellPaths,
         getChild: () => hostChild, isStopping: () => stopping,
         initialClient: alphaClient ?? new HostClient({ port: disc.port, token: hostToken }),
@@ -1242,6 +1421,48 @@ export async function main(argv = process.argv.slice(2)) {
     console.log('[studio] BLOCKED-ON-HOST: no libobs host executable (build it with node app/host/tools/build.mjs, or set UJWALAM_HOST_EXE / --host-exe); the UI uses its fake backend');
     if (alpha) { console.log('[studio] alpha needs the libobs host; stopping'); await stopAll(); return 1; }
   }
+
+  // LU5/LU7 update queue (D343): versions per part on the control page; with the flag service-swap on, updates from the
+  // launcher's parent are applied at once when nothing is live, wait for one click (services) or for the stop (host)
+  // when something is. outputs() reads a fresh outputs.status from the running host (none: nothing can be live).
+  updates = createUpdates({
+    dataDir, session: liveSession, own: ownRelease, accepting: swapOn, startupHost,
+    outputs: async () => {
+      if (!hostSup) return null;
+      if (hostSup.restarting()) throw new Error('host restarting');
+      return hostSup.client().call('outputs.status');
+    },
+    applyHost: hostSup ? async (entry) => {
+      // Maintenance lock (Codex review of D343): first no new stream or recording start can reach the host (the gate
+      // refuses leases and waits for starts on their way), then the go-live authority is revoked (no stream recovery),
+      // then a last fresh status; a stream or recording that started before the lock sends the update back to waiting.
+      // The lock is held until the new host runs or the old one is back.
+      if (!(await startGate.hold('the video engine (host) is being updated'))) return { result: 'busy' };
+      try {
+        await authority.revoke('host-update');
+        let st = null;
+        try { st = await hostSup.client().call('outputs.status'); } catch { st = null; }
+        if (outputsBusy(st)) return { result: 'busy' };
+        const prev = hostRun;
+        return await hostSup.restartPlanned(
+          () => { hostRun = { ...prev, exe: entry.exe, script: /\.m?js$/i.test(entry.exe), args: hostArgsFor(prev.args, entry), runtime: entry.runtime, root: entry.root ?? null }; },
+          () => { hostRun = prev; },
+          () => hostEntryProblem(entry, { script: prev.script === true, runtime: prev.runtime ?? null }));
+      } finally { startGate.end(); }
+    } : null,
+    hostInfo: () => ({ script: hostRun?.script === true, runtime: hostRun?.runtime ?? null }),
+    swapService: async (service, root) => {
+      // studio-window (LU4, D346): the studio slot, with the same entry check as a direct swap (the copy holds
+      // studio/ujwalam-studio.exe). The queue runs it alone: never during a host replacement or another swap.
+      const slot = service === 'event-core' ? coreSlot : service === 'studio-ui' ? uiSlot : service === 'studio-window' ? studioSlot : null;
+      if (!slot) return { result: 'refused', reason: 'not wired in the launcher yet' };
+      if (service === 'studio-window' && !swapEntryOk('studio', root)) return { result: 'refused', reason: 'the update copy holds no studio exe' };
+      return slot.swap(path.resolve(root));
+    },
+    log: (l) => console.log(`[studio] ${l}`),
+    pollMs: Math.max(100, Number(process.env.UJWALAM_UPDATE_POLL_MS ?? 2000) || 2000),
+  });
+  updates.mirror();
 
   // 3. UI server
   const uiArgs = [path.join(REPO, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--data-dir', dataDir, '--feedback-dir', feedbackDir];
@@ -1272,7 +1493,8 @@ export async function main(argv = process.argv.slice(2)) {
       env: { ...process.env, ...PARENT_PIPE, [SESSION_ENV]: liveSession, UJWALAM_UI_LAUNCH_KEY: first ? launchKey : '', UJWALAM_UI_KEY_LOGIN: first ? '' : 'off', UJWALAM_HOST_TOKEN: hostToken, UJWALAM_EVENT_CORE_PORT: String(corePort), UJWALAM_EVENT_CORE_API_TOKEN: coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '', UJWALAM_REMOTE_TOKEN: remoteToken ?? '' },
     });
     // Every UI server process serves the one authority; only the exit of the current one closes it (LU3).
-    serveAuthority(c, authority, { isOwner: (x) => !uiSlot || x === uiSlot.child() });
+    serveAuthority(c, authority, { isOwner: (x) => !uiSlot || x === uiSlot.child(), gate: startGate });
+    serveUpdates(c, updates); // LU7: an Apply now click on the control page or in the studio
     return c;
   };
   let ui = null; // flag off: the UI server process; flag on: uiSlot owns it (uiChild() is the current one)
@@ -1434,7 +1656,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdin.once('data', () => { stopAll().then(() => process.exit(0)); });
     process.stdin.once('end', () => { stopAll().then(() => process.exit(0)); });
   }
-  if (swapOn) serveSwaps({ slots: { 'event-core': coreSlot, 'studio-ui': uiSlot, studio: studioSlot }, log: track.log });
+  if (swapOn) serveSwaps({ slots: { 'event-core': coreSlot, 'studio-ui': uiSlot, studio: studioSlot }, log: track.log, updates });
   // Flag on: an exit of the current core or UI process that no swap planned ends the session through endSession.
   const code = await new Promise((resolve) => { core?.once('exit', () => resolve(0)); ui?.once('exit', () => resolve(0)); sessionEnded.then(resolve); });
   await stopAll();
@@ -1448,12 +1670,35 @@ export async function main(argv = process.argv.slice(2)) {
  * or this checkout's development build; LU4, D346). One swap runs at a time; others are refused while it runs. The host and the overlay server
  * (a child of the host) are refused (LU5); the workers have a stop-start slot (slots.mjs) that is not wired here yet.
  */
-export function serveSwaps({ slots, log, proc = process, entryOk = swapEntryOk }) {
+export function serveSwaps({ slots, log, proc = process, updates = null, entryOk = swapEntryOk }) {
   if (typeof proc.send !== 'function') return false;
   let running = false; // one swap at a time over all services (a studio swap needs the UI server for its login key)
   proc.on('message', async (m) => {
     if (m?.t !== 'ujwalam-swap' || !Number.isInteger(m.id)) return;
     const reply = (r) => { try { if (proc.connected) proc.send({ t: 'ujwalam-swap', id: m.id, ...r }); } catch { /* the asker is gone */ } };
+    if (updates) {
+      // LU5/LU7 (D343): through the update queue. The host and the overlay server (its child) are staged while live and
+      // applied at the stop; a service (the event core, the UI server, the studio window since LU4) waits for one click
+      // while live. Workers are still refused (not wired). The queue runs one update at a time (host replacements, swaps
+      // and clicks alike), so a studio swap never overlaps a host replacement; a second request while one is being
+      // handled is refused, as without the queue (LU4).
+      const known = Object.hasOwn(SERVICES, m.service);
+      if (!known) { reply({ result: 'refused', reason: refuseReason(m.service, {}) }); return; }
+      if (running) { reply({ result: 'refused', reason: refuseReason('studio', { busy: true }) }); return; }
+      const mode = SERVICES[m.service].mode;
+      if (mode && !slots[m.service]) { reply({ result: 'refused', reason: 'not wired in the launcher yet' }); return; }
+      if (mode && (typeof m.root !== 'string' || !path.isAbsolute(m.root) || !entryOk(m.service, m.root))) { reply({ result: 'refused', reason: 'root must be an absolute folder that holds the service entry file' }); return; }
+      const bad = mode ? serviceRootProblem(partFor(m.service), m.root) : null;
+      if (bad) { reply({ result: 'refused', reason: bad }); return; }
+      log(`update ${m.service} requested`);
+      running = true;
+      try {
+        const r = await updates.request({ service: m.service, root: typeof m.root === 'string' ? path.resolve(m.root) : m.root });
+        const checked = r.history?.find((h) => h.action === 'check-new' && h.ok)?.value;
+        reply({ result: r.result, ms: r.ms, reason: r.reason, item: r.id, failed: r.history?.filter((h) => !h.ok).map((h) => `${h.action}: ${h.error}`), ...(checked && m.service === 'studio' ? { studio: checked } : {}) });
+      } catch (e) { reply({ result: 'failed', reason: String(e?.message ?? e).slice(0, 200) }); } finally { running = false; }
+      return;
+    }
     const why = refuseReason(m.service, { busy: running });
     if (why) { reply({ result: 'refused', reason: why }); return; }
     const slot = slots[m.service];

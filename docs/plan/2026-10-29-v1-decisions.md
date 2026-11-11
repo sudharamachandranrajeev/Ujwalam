@@ -1098,6 +1098,102 @@ After the Codex review (same day):
   hand-off and cannot activate.
 Evidence: `docs/evidence/2026-11-11-lu3-service-swap.md`.
 
+## D343 — Host updates wait for the stop; a live update is one click; versions on the control page (2026-11-11, LU5 and LU7, LU1 hashes)
+
+Plan rows LU5 and LU7 (D324), built on LU3 (D337). Decided:
+- **Flag.** No new flag: the existing `service-swap` (off by default, read at start) now covers the whole live-update
+  queue. Reason: with one flag there is no setting in which an update while live skips the click, and the queue needs
+  the same IPC channel LU3 opened. Its description in data/flags.json says what it now does.
+- **Queue.** `services/supervisor/updates.mjs`, owned by the launcher. Updates still arrive only from the process that
+  started the launcher (`{ t: 'ujwalam-swap', id, service, root }`, LU6 will use it). A click arrives only from a UI
+  server process over its IPC channel (`ujwalam-update`), which only a logged-in page or the studio window can reach
+  (session cookie, same origin, CSRF). The event core (chat, rules, the LAN remote) has no channel to the launcher, so
+  chat, rules and agents can never trigger an update.
+- **Live (busy).** The D334 rule widened to recordings: a fresh `outputs.status` shows a stream or record sink starting,
+  live, reconnecting, retrying or stopping. A status that cannot be read counts as live. No host: not live.
+- **Host (LU5).** While live, a host update is staged and never applied, not even on a click. The queue polls a fresh
+  status (2 s) and applies it once everything has stopped: the old host is asked to exit, the new one starts from the
+  release folder (`bin/ujwalam-host.exe`, `obs/`, the overlay server child `app/host/overlay/child.mjs`), must write its
+  discovery file and load the project (alpha), else the previous host is started again (`restored-old`). A planned
+  restart is not a crash (the crash supervisor ignores it). The overlay server is a child of the host: an update named
+  `overlay-server` is a host update. A stand-in script host (tests) is replaced only by `bin/ujwalam-host.mjs`. A host
+  part that did not change (LU1 hash equal to the running one) is answered `unchanged`.
+- **Maintenance lock (Codex review, P1).** The queue's status check alone left a gap: a start could reach the host
+  between the last `outputs.status` and `host.shutdown`. Now every `stream.start` and `record.start` the UI server sends
+  to the host (clicks, confirmed actions, the automatic recording start, the per-output switch) first takes a lease
+  from the launcher over the authority IPC channel and gives it back after the host answered (`gateStarts`,
+  `createStartGate`). Before the host update the launcher holds the gate: new leases are refused at once (the start is
+  not sent, `HOST_UPDATING`), then it waits for leases on their way (15 s, else the update goes back to waiting), then
+  revokes the go-live authority (no stream recovery), then reads the last status. The gate stays held until the new
+  host runs or the old one is back. A launcher that does not answer a lease refuses the start (fail closed). The
+  launcher's own crash restarts are not gated: they cannot run during a planned restart (one host supervisor, busy).
+  Codex re-review: a grant is tied to its request id; a grant that arrives after its request timed out is given back
+  at once, and a release without an answer is sent again (growing wait, up to 30 s) while the link is up, so a lost
+  message cannot block host updates for good. Active leases never expire on their own; a UI server that goes away
+  gives back all its leases.
+- **Integrity (Codex review, P1).** An update needs `release.json` with version, `n` >= 1 and the LU1 hash (file count
+  and sha256) of each part it runs from; the host also `hostExeSha256`. No metadata: refused. The whole part is hashed
+  (host: exe, OBS runtime, overlay child, projects; a service: services, data and overlay parts), copied into
+  `<dataDir>/live/releases/<kind>-<n>-<hash>`, and the copy is hashed again; the update runs only from the copy, so the
+  offered folder can change after the check without effect. Codex re-review: release.json is read once; that snapshot
+  is checked, written into the copy and used for every later check (the copy's entry, its `n` against the running and
+  the waiting release, the unchanged check), so a release.json that changes during the request cannot mix two
+  releases. The copied files are made read-only. The host copy is hashed when the queue picks it, and again after the
+  old host has exited, right before the new one is spawned (the same right before each startup candidate's spawn); a
+  failure rejects it and the previous host (or the next candidate) starts. Out of scope: full immutability against a
+  local writer. The data folder belongs to the same Windows user, who can clear read-only and change a file between
+  the last hash and the spawn (milliseconds); that user can change the installed app as well. Copies that no record
+  names are deleted at the next start.
+- **Close with a staged host update; start trial (Codex review, P1).** `<dataDir>/live/host-update.json` (v2) keeps
+  `pending` (the host release to try next: staged, or being applied), `good` (the last host release that got ready and
+  loaded the project) and `rejected` (releases that failed: never tried again). The next start tries pending, then
+  good, then the installed host; each try is a trial: it must write its discovery file and (alpha) load the project, or
+  it is stopped (exit confirmed), recorded as rejected, and the next one starts. A candidate is used only while its `n`
+  is newer than the installed release (a checkout counts as 0). Waiting service updates are dropped at a close (logged).
+  Codex re-review: only the candidate's own failure rejects it (its hash right before the start, readiness, project
+  load). A replacement aborted before the candidate ran (the old host did not exit, Ujwalam closing) keeps it pending
+  in host-update.json and back in the queue; it is tried again at the next poll once nothing is live.
+  Codex review of the merge: the replacement is one transaction. An exception anywhere after the old host stopped
+  (the last hash cannot read a file, the switch, the start) never skips the previous host's restart; a replacement
+  that was spawned is stopped with its exit confirmed first; the hash check never throws (an unreadable file is a
+  problem like a wrong hash). The launcher answers which host runs (`running`: new, old, none, unknown) and the queue
+  moves the shown versions only when the new one runs.
+- **Services (LU7).** Not live: applied at once (the request is the user's own install action). Live: the update waits
+  for one click, "Apply now" on the control page (D332: no typed phrase, no "are you sure"); the click runs the LU3
+  swap while live. **Reversed after the Codex review (P2):** a waiting service is NOT applied at the stop; nothing
+  applies it but its click (AGENTS: a system request waits for one click). Only the host is applied by the poll.
+- **Studio window (merge with LU4, D346).** With the flag on, a `studio` swap request goes through this queue as the
+  part `studio-window`: release.json with `n` and the LU1 `studio-window` hash is required (this checkout's dev build is
+  not an update), the part is copied to `<dataDir>/live/releases/studio-<n>-<hash>` and checked, and LU4's studio
+  slot swaps to the copy after the same entry check (`swapEntryOk`). Not live: at once. Live: one click, like the
+  other services. The queue runs one update at a time (host replacement, service swaps and clicks), so a studio swap
+  never overlaps a host replacement or another swap, and the maintenance lock is held only around a host replacement
+  (a studio swap does not touch the host's outputs). A second swap request while one is being handled is refused,
+  as in LU4. The control page's "Studio window" version follows the swapped release.
+- **Order (Codex review, P2).** An update whose `n` is not newer than the running release of its part, or than a
+  waiting update of the same part, is refused. A same-part waiting update is dropped before a newer one is applied at
+  once or queued, so an older waiting item never runs after a newer one. One update runs at a time.
+- **Confirmed exit (Codex review, P2).** A host is replaced only after its exit is confirmed (`stopHostChild`:
+  `host.shutdown`, then the process tree, then a wait). If it is still running, the update is aborted with the host's
+  state in the reason and nothing else starts; a new host that failed and does not exit is not joined by the old one.
+- **Visible.** `<dataDir>/live/updates.json` (versions per part, waiting items in plain words, last 8 results; no paths)
+  goes into the UI server's status snapshot (`updates`) and `GET /ui/api/updates`. The control page shows a "Versions
+  and updates" card (host, overlay server, event core, control page server, studio window, data) and an "Updates
+  waiting: N" pill. The studio window (Qt) does not show it yet: that needs a C++ change and a studio build.
+- **Flags.** A test checks that every flag in data/flags.json has a `since` date and that every flag since 2026-11-10 is
+  off by default.
+- **LU1 (part).** The packager writes `parts` into release.json: per part (host, studio-window, services, overlay, data)
+  the file count and a hash over the files' paths and hashes (`services/supervisor/parts.mjs`, moved from tools/package
+  so the launcher can check a release; tools/package is not packaged). Not yet in a built alpha.
+- Also fixed: `services/supervisor` was missing from the package (LU3's imports failed the import-closure check).
+- `updates.json` writes retry a rename that Windows refuses while the UI server reads the file; the launcher's swap reply
+  keeps the asker's `id` (the queue item id is sent as `item`).
+Limits: a Start stream clicked while the host is replaced is refused ("the video engine (host) is being updated") and
+must be clicked again; the live clipper and face worker are not updated by the queue (not wired, D337); a service copy
+holds only the services, data and overlay parts of its release (enough for the event core and the UI server, checked
+with real swaps in tests/service-swap-launcher.test.mjs).
+Evidence: `docs/evidence/2026-11-11-lu5-lu7-host-staging.md`.
+
 ## D336 — Theme framework T1: components block (schema v2), variant fragments, flag theme-components (2026-11-11, user request R10)
 
 Spec `docs/plan/2026-11-10-theme-framework.md` §3 and §5 row T1; the user's answers in §6. The user asked that each

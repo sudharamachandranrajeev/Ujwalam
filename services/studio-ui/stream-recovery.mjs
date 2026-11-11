@@ -135,15 +135,20 @@ export function createLiveAuthority({ onChange = () => {} } = {}) {
 /** Launcher: answers the UI server's authority requests on its IPC channel; a closed channel closes the authority. */
 /** isOwner (LU3 service swap): when given, only an exit or disconnect of the child that still owns the link closes the
  *  authority; the old UI server process of a swap leaves it open for the new one. */
-export function serveAuthority(child, authority, { isOwner = () => true } = {}) {
+/** gate (LU5, D343): the host-update maintenance lock (supervisor/updates.mjs createStartGate). A UI server takes a
+ *  lease before each stream or recording start ('lease') and gives it back after the host answered ('release'); while
+ *  the launcher holds the gate a lease is refused. A UI server that goes away gives back its leases. */
+export function serveAuthority(child, authority, { isOwner = () => true, gate = null } = {}) {
   child.on('message', (m) => {
     if (m?.t !== AUTHORITY_MSG || !Number.isInteger(m.id)) return;
     const reply = (r) => { try { if (child.connected) child.send({ t: AUTHORITY_MSG, id: m.id, ...r }); } catch { /* the UI server times out and fails closed */ } };
     if (m.op === 'begin') reply({ gen: authority.begin() });
     else if (m.op === 'arm') reply(authority.arm(m.gen));
     else if (m.op === 'revoke') authority.revoke(m.reason).then(reply, () => reply({ gen: null }));
+    else if (m.op === 'lease') reply(gate ? gate.lease(child) : { ok: true, lease: null });
+    else if (m.op === 'release') { if (gate && Number.isInteger(m.lease)) gate.release(m.lease); reply({ ok: true }); }
   });
-  const gone = () => { if (isOwner(child)) authority.close('ui-link-lost'); };
+  const gone = () => { gate?.releaseOwner(child); if (isOwner(child)) authority.close('ui-link-lost'); };
   child.once('disconnect', gone);
   child.once('exit', gone);
 }
@@ -152,25 +157,41 @@ export function serveAuthority(child, authority, { isOwner = () => true } = {}) 
  * UI server: the launcher's authority over this process's IPC channel, or null without one (started by hand, tests).
  * revoke() never throws: when the launcher does not answer within timeoutMs it closes the channel (the launcher then
  * closes the authority) and returns false. begin()/arm() failures only mean the start is not armed.
+ * Leases (LU5, Codex re-review): a grant that arrives after its request timed out is given back at once (the request
+ * id ties the grant to it), and a release that gets no answer is sent again while the link is up, so a lost message
+ * never leaves the maintenance lock blocked. Active leases never expire on their own.
  */
-export function authorityClient({ proc = process, timeoutMs = 10_000 } = {}) {
+export function authorityClient({ proc = process, timeoutMs = 10_000, retryMs = 1_000 } = {}) {
   if (typeof proc.send !== 'function' || proc.connected !== true) return null;
   try { proc.channel?.unref?.(); } catch { /* keeps the process alive only while it has other work */ }
   let seq = 0;
   const waiting = new Map();
+  const lateLease = new Set(); // ids of lease requests that timed out: their grant, if it comes, is given back
   proc.on('message', (m) => {
-    if (m?.t !== AUTHORITY_MSG || !waiting.has(m.id)) return;
+    if (m?.t !== AUTHORITY_MSG) return;
+    if (lateLease.delete(m.id)) { if (m.ok === true && Number.isInteger(m.lease)) void client.release(m.lease); return; }
+    if (!waiting.has(m.id)) return;
     const done = waiting.get(m.id); waiting.delete(m.id); done(m);
   });
   const ask = (op, extra = {}) => new Promise((resolve, reject) => {
     if (proc.connected !== true) { reject(new Error('launcher link closed')); return; }
     const id = ++seq;
-    const t = setTimeout(() => { waiting.delete(id); reject(new Error('launcher did not answer')); }, timeoutMs);
+    const t = setTimeout(() => { waiting.delete(id); if (op === 'lease') lateLease.add(id); reject(new Error('launcher did not answer')); }, timeoutMs);
     waiting.set(id, (m) => { clearTimeout(t); resolve(m); });
     try { proc.send({ t: AUTHORITY_MSG, id, op, ...extra }); } catch (e) { clearTimeout(t); waiting.delete(id); reject(e); }
   });
   const failClosed = () => { try { if (proc.connected) proc.disconnect(); } catch { /* already gone: the launcher closed it */ } };
-  return {
+  const sendRelease = async (lease) => { try { await ask('release', { lease }); return true; } catch { return false; } };
+  // Retried in the background with a growing wait while the link is up; a closed link frees the leases on the
+  // launcher side (serveAuthority releaseOwner), so nothing is left to retry then.
+  const retryRelease = (lease, wait) => {
+    const t = setTimeout(async () => {
+      if (proc.connected !== true || await sendRelease(lease)) return;
+      retryRelease(lease, Math.min(wait * 2, 30_000));
+    }, wait);
+    t.unref?.();
+  };
+  const client = {
     async begin() { try { const m = await ask('begin'); return Number.isInteger(m.gen) ? m.gen : null; } catch { return null; } },
     async arm(gen) { if (!Number.isInteger(gen)) return false; try { return (await ask('arm', { gen })).armed === true; } catch { return false; } },
     async revoke(reason) {
@@ -178,7 +199,17 @@ export function authorityClient({ proc = process, timeoutMs = 10_000 } = {}) {
       failClosed();
       return false;
     },
+    /** LU5 maintenance lock: -> { ok, lease } or { ok: false, reason }. No answer: refused (fail closed). */
+    async lease() {
+      try { const m = await ask('lease'); return m.ok === true ? { ok: true, lease: Number.isInteger(m.lease) ? m.lease : null } : { ok: false, reason: typeof m.reason === 'string' ? m.reason : 'refused' }; } catch { return { ok: false, reason: 'the launcher did not answer' }; }
+    },
+    /** The first try is awaited; a release without an answer is retried in the background while the link is up. */
+    async release(lease) {
+      if (!Number.isInteger(lease)) return;
+      if (!(await sendRelease(lease)) && proc.connected === true) retryRelease(lease, retryMs);
+    },
   };
+  return client;
 }
 
 /** Launcher: the diagnostic mirror of the authority (never read for a decision). Best effort. */

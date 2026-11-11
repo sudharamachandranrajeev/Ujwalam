@@ -149,6 +149,12 @@
       <button id="btn-report" class="btn" type="button">Report</button>
       <p id="report-note-out" class="muted" role="status"></p>
     </section>
+    <section class="panel" id="updates" aria-labelledby="updates-title">
+      <h2 id="updates-title">Versions and updates</h2>
+      <ul id="upd-parts" class="list" aria-label="Version of each part"></ul>
+      <ul id="upd-list" class="list" aria-label="Updates waiting"></ul>
+      <p id="upd-note" class="muted" role="status"></p>
+    </section>
     <section class="panel">
       <h2>Feature flags</h2>
       <ul id="flag-list" class="list" aria-label="Feature flags"></ul>
@@ -169,6 +175,7 @@
     <span id="st-core" class="pill">Event core</span>
     <span id="st-host" class="pill">Host</span>
     <span id="st-recovery" class="pill" hidden></span>
+    <span id="st-updates" class="pill" hidden></span>
     <span id="st-clips" class="pill" hidden></span>
     <span id="st-testkit" class="pill" hidden></span>
   </footer>

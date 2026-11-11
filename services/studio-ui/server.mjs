@@ -55,6 +55,7 @@ import { READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcess
 import { STOP_TASKS_FILE, clipTools } from './record-clips.mjs';
 import { createRecordLive } from './record-live.mjs';
 import { authorityClient, readRecoveryStatus, SESSION_ENV, SESSION_RE } from './stream-recovery.mjs';
+import { readUpdatesStatus, updatesClient } from '../supervisor/updates.mjs';
 import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig } from './live-test-kit.mjs';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
@@ -258,11 +259,32 @@ export function audioReadiness(ah) {
 const STOP_AGAIN_WAITS = [300, 1000];
 const STOP_AGAIN_FAILED = 'Streams may still be live: press Stop or End all';
 
+/**
+ * LU5 maintenance lock (Codex review of D343): every stream.start / record.start this server sends to the host (a click,
+ * a confirmed pending action, an automatic recording start, a per-output switch) first takes a lease from the
+ * launcher (getAuthority().lease, over the authority channel) and gives it back after the host answered. While the
+ * launcher replaces the host the lease is refused and the start is not sent (code HOST_UPDATING). Without the launcher
+ * (no authority, or a test seam without lease) nothing changes.
+ */
+export function gateStarts(host, getAuthority) {
+  if (!host) return host;
+  const call = async (method, params) => {
+    const a = START_METHODS.has(method) ? getAuthority() : null;
+    if (!a || typeof a.lease !== 'function') return host.call(method, params);
+    const l = await a.lease();
+    if (!l?.ok) throw Object.assign(new Error(`start refused: ${l?.reason ?? 'refused'}`), { code: 'HOST_UPDATING' });
+    try { return await host.call(method, params); } finally { await a.release(l.lease); }
+  };
+  return new Proxy(host, { get(t, k) { if (k === 'call') return call; const v = t[k]; return typeof v === 'function' ? v.bind(t) : v; } });
+}
+
 export function createStudioServer(opts) {
   const limits = { ...LIMITS, ...(opts.limits ?? {}) };
   const now = opts.now ?? Date.now;
   const root = realpathSync(path.resolve(opts.uiRoot));
-  const { core, host } = opts;
+  const { core } = opts;
+  // LU5 maintenance lock (D343): every stream or recording start to the host holds a launcher lease (authority below).
+  const host = gateStarts(opts.host, () => authority);
   // P5b autosave of layer edits into the project file (project-sync.mjs); null: edits stay live-only.
   const projectSync = opts.projectSync ?? null;
   // The user's stream assets folder (D241; base "media" of the alpha load); null: no image or video layers.
@@ -303,6 +325,11 @@ export function createStudioServer(opts) {
   const liveSession = (() => { const v = opts.liveSession ?? process.env[SESSION_ENV]; return typeof v === 'string' && SESSION_RE.test(v) ? v : null; })();
   const authority = opts.authority !== undefined ? opts.authority
     : liveSession && process.env.UJWALAM_PARENT_PIPE === '1' ? authorityClient() : null;
+  // LU5/LU7 (D343): the launcher's update queue. A waiting update is applied on one click (POST /ui/api/updates/apply);
+  // the state comes from the launcher's mirror file (versions per part, waiting items). opts.updates: test seam.
+  const updatesLink = opts.updates !== undefined ? opts.updates
+    : liveSession && process.env.UJWALAM_PARENT_PIPE === '1' ? updatesClient() : null;
+  const updatesState = () => (opts.updatesStatus ? opts.updatesStatus() : typeof opts.dataDir === 'string' ? readUpdatesStatus(opts.dataDir, liveSession) : null);
   const log = typeof opts.log === 'function' ? opts.log : (m) => console.log(m);
   // Test only (race tests): a pause right before a confirmed stream.start goes to the host. 0 = none.
   const startPauseMs = Math.min(10_000, Math.max(0, Number(opts.startPauseMs ?? process.env.UJWALAM_TEST_START_PAUSE_MS ?? 0) || 0));
@@ -756,6 +783,7 @@ export function createStudioServer(opts) {
         effectEditing: !!flags && flags.isOn('effect-editor') },
       clips: clipStatus(),
       recovery: typeof opts.dataDir === 'string' ? readRecoveryStatus(opts.dataDir, liveSession) : null,
+      updates: updatesState(),
       tasks: tasks.list(),
       core: { available: cs !== null, ...(cs ? { liveState: typeof cs.live?.liveState === 'string' ? cs.live.liveState : null, panic: cs.live?.panic === true } : {}) },
     };
@@ -1124,6 +1152,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/status') return json(res, 200, lastSnapshot ?? await snapshot());
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
+    if (req.method === 'GET' && route === '/ui/api/updates') return json(res, 200, { updates: updatesState() });
     if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
     if (req.method === 'GET' && route === '/ui/api/guide') return json(res, 200, guideData()); // guide (D294 proposed)
     if (req.method === 'GET' && route === '/ui/api/data') { // LU2: each live-reloaded data file (base names only)
@@ -1238,6 +1267,18 @@ export function createStudioServer(opts) {
     if (route === '/ui/api/settings') return settingsRoute(res, body);
     if (route === '/ui/api/clips/answer') return clipAnswer(res, body);
     if (route === '/ui/api/tasks/stop') return stopTasks(res);
+    if (route === '/ui/api/updates/apply') {
+      // LU7 (D343): one click applies a waiting update (D332: no typed phrase, no "are you sure"). Only a logged-in page
+      // or the studio window reaches this (session cookie, same origin, CSRF); the launcher decides (a host update is
+      // never applied while a stream or recording runs).
+      if (typeof body.id !== 'string' || !/^u\d{1,9}$/.test(body.id)) return json(res, 400, { error: 'bad-id' });
+      if (!updatesLink) return json(res, 503, { error: 'no-launcher' });
+      const r = await updatesLink.apply(body.id);
+      const ok = r.result === 'swapped';
+      try { lastSnapshot = await snapshot(); broadcast('status', lastSnapshot); } catch { /* the next poll sends it */ }
+      const why = r.reason ? String(r.reason).slice(0, 300) : null;
+      return json(res, ok ? 200 : 409, { result: r.result, ...(why ? { reason: why } : {}), ...(ok ? {} : { error: String(r.result ?? 'failed').slice(0, 24), ...(why ? { detail: why } : {}) }), updates: updatesState() });
+    }
     if (route === '/ui/api/quit/begin') return quitBegin(res);
     if (route === '/ui/api/quit/cancel') return quitCancel(res, body);
     if (route === '/ui/api/quit/commit') return quitCommit(res, body);

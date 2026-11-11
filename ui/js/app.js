@@ -350,6 +350,7 @@
       rp.hidden = !(rv && rv.text);
       if (rv && rv.text) { pill(rp, rv.text, rv.result === 'restarted' ? 'ok' : 'warn'); rp.title = rv.count > 1 ? rv.count + ' host crash(es) while live this session' : ''; }
     }
+    renderUpdates(s.updates);
     // Clip maker missing (the Alpha zip ships no Python): plain words on the pill, the reason and the fix on hover.
     // Shown only when the launcher says clips cannot be made; nothing else changes.
     var cl = s.clips, cp = $('st-clips');
@@ -493,6 +494,36 @@
   function loadImported() {
     var skip = !$('import-skip-row').hidden && $('import-skip').checked;
     guard(Api.projectLoad(skip).then(function (r) { $('import').hidden = true; showResult(r); }));
+  }
+
+  // ---- versions and waiting updates (LU5/LU7, D343): one click applies a waiting service update (D332) ----
+  function renderUpdates(u) {
+    var parts = $('upd-parts'), list = $('upd-list'), note = $('upd-note'), pillEl = $('st-updates');
+    if (!parts || !list) return;
+    clear(parts); clear(list);
+    var waiting = (u && Array.isArray(u.waiting)) ? u.waiting : [];
+    ((u && Array.isArray(u.parts)) ? u.parts : []).forEach(function (p) {
+      parts.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: p.label || p.part }), el('span', { class: 'muted', text: (p.version || '-') + (p.follows ? ' (follows the host)' : '') })]));
+    });
+    waiting.forEach(function (w) {
+      var kids = [el('span', { text: w.text || (w.part + ' ' + w.version) })];
+      if (w.click) {
+        kids.push(el('button', { class: 'btn', type: 'button', text: 'Apply now', 'aria-label': 'Apply the ' + w.part + ' update now', onclick: function () {
+          setText(note, 'Updating ' + w.part + '...');
+          guard(Api.updateApply(w.id).then(function (r) {
+            setText(note, r && r.result === 'swapped' ? 'Updated.' : 'Not applied: ' + ((r && (r.reason || r.result)) || 'unknown'));
+            if (r && r.updates) renderUpdates(r.updates);
+          }, function (e) { setText(note, 'Not applied: ' + ((e && (e.detail || e.message)) || 'error')); }));
+        } }));
+      } else kids.push(el('span', { class: 'muted', text: 'Waiting for stop' }));
+      list.appendChild(el('li', { class: 'row upd-row' }, kids));
+    });
+    if (pillEl) {
+      pillEl.hidden = waiting.length === 0;
+      if (waiting.length) { pill(pillEl, 'Updates waiting: ' + waiting.length, 'warn'); pillEl.title = waiting.map(function (w) { return w.text; }).join(' | '); }
+    }
+    if (!u) setText(note, 'Versions are shown when the studio is started by Ujwalam.');
+    else if (!waiting.length) setText(note, u.recent && u.recent.length ? u.recent[0].text : (u.accepting ? 'No update waiting.' : 'Live updates are off (feature flag service-swap).'));
   }
 
   // ---- feature flags: ON and OFF apply on the click (D332) ----

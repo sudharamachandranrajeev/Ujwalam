@@ -19,6 +19,7 @@ import { refuseReason, SERVICES } from '../services/supervisor/swap.mjs';
 import { createStudioSlot } from '../services/supervisor/slots.mjs';
 import { PassThrough } from 'node:stream';
 import { killChildTree } from '../services/common/kill-tree.mjs';
+import { folderFiles, releaseParts } from '../services/supervisor/parts.mjs';
 import { EXE, qtDir } from '../app/studio/tools/build.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -143,11 +144,14 @@ test('slot: a crash on probation (not exit 0) still restores the old version and
 
 // A staged studio build (a copy of the built exe) under <dir>/studio; crash: a build that crashes at start; closeMs: a
 // build whose window the user closes that many ms after "ready" (headless test markers beside the exe, main.cpp).
-function stageStudio(dir, { crash = false, closeMs = 0 } = {}) {
+// With the flag on, swaps go through the LU5/LU7 update queue (D343): the release needs release.json with its number n
+// (newer than the running window's) and the LU1 hash of the studio-window part; the window runs from a checked copy.
+function stageStudio(dir, { crash = false, closeMs = 0, n = 1 } = {}) {
   mkdirSync(path.join(dir, 'studio'), { recursive: true });
   copyFileSync(EXE, path.join(dir, 'studio', 'ujwalam-studio.exe'));
   if (crash) writeFileSync(path.join(dir, 'studio', 'ujwalam-studio.test-crash'), 'av');
   if (closeMs) writeFileSync(path.join(dir, 'studio', 'ujwalam-studio.test-close'), String(closeMs));
+  writeFileSync(path.join(dir, 'release.json'), JSON.stringify({ version: `0.1.0-alpha.${n}`, n, parts: releaseParts(folderFiles(dir).filter((f) => f.rel !== 'release.json')) }));
   return dir;
 }
 
@@ -184,23 +188,28 @@ const portOpen = (port) => new Promise((resolve) => {
 test('launcher: the studio window swaps over IPC (closed for the update, not stopped); a build that crashes at start is rolled back', { skip, timeout: 240_000 }, async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'lu4-launch-'));
   const st = startLauncher(root);
-  t.after(() => { killChildTree(st.child); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { killChildTree(st.child); rmSync(root, { recursive: true, force: true, maxRetries: 10 }); }); // retries: the last window (from a copy in root) may still be exiting
   assert.ok(await st.until(/window: studio attach: ready/, 60_000), st.out.slice(-3000));
   const uiPort = Number(/UI at http:\/\/127\.0\.0\.1:(\d+)\//.exec(st.out)?.[1]);
-  const stageA = stageStudio(path.join(root, 'stage-a'));
-  const stageB = stageStudio(path.join(root, 'stage-b'));
-  const crash = stageStudio(path.join(root, 'crash'), { crash: true });
+  const crash = stageStudio(path.join(root, 'crash'), { crash: true, n: 5 });
   const results = [];
-  for (let i = 0; i < 4; i++) results.push(await st.swap('studio', i % 2 ? stageA : stageB));
+  for (let i = 1; i <= 4; i++) results.push(await st.swap('studio', stageStudio(path.join(root, `stage-${i}`), { n: i })));
   const bad = await st.swap('studio', crash);
-  const after = await st.swap('studio', REPO); // the restored window swaps again
+  const after = await st.swap('studio', stageStudio(path.join(root, 'stage-6'), { n: 6 })); // the restored window swaps again
   const noExe = await st.swap('studio', path.join(root, 'feedback'));
+  const devBuild = await st.swap('studio', REPO); // this checkout's build has no release.json: not an update
+  const stale = await st.swap('studio', stageStudio(path.join(root, 'stage-3b'), { n: 3 }));
   assert.deepEqual(results.map((r) => r.result), Array(4).fill('swapped'), JSON.stringify(results) + st.out.slice(-3000));
   for (const r of results) assert.ok(Number.isFinite(r.studio?.readyMs), JSON.stringify(r));
   assert.equal(bad.result, 'restored-old', JSON.stringify(bad));
   assert.match(bad.failed.join(' '), /check-new: the studio exited \(3221225477\)/, 'an access violation (0xC0000005) at start');
   assert.equal(after.result, 'swapped', JSON.stringify(after));
   assert.equal(noExe.result, 'refused');
+  assert.equal(devBuild.result, 'refused');
+  assert.match(devBuild.reason, /entry file|release\.json/);
+  assert.match(stale.reason, /release 3 is not newer than the running Studio window \(6\)/);
+  const versions = JSON.parse(readFileSync(path.join(st.dataDir, 'live', 'updates.json'), 'utf8')).parts;
+  assert.equal(versions.find((p) => p.part === 'studio-window').version, '0.1.0-alpha.6', 'the control page shows the studio window version');
   assert.ok(await portOpen(uiPort), 'the UI server kept running');
   assert.doesNotMatch(st.out, /studio window closed: stopping Ujwalam|Qt shell ended unexpectedly/);
   const exits = st.exits();
@@ -217,12 +226,12 @@ test('launcher: the studio window swaps over IPC (closed for the update, not sto
 test('launcher: the user closing the new window on probation stops everything (D280); the old one is not restored', { skip, timeout: 120_000 }, async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'lu4-probe-close-'));
   const st = startLauncher(root);
-  t.after(() => { killChildTree(st.child); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { killChildTree(st.child); rmSync(root, { recursive: true, force: true, maxRetries: 10 }); }); // retries: the last window (from a copy in root) may still be exiting
   assert.ok(await st.until(/window: studio attach: ready/, 60_000), st.out.slice(-3000));
   const uiPort = Number(/UI at http:\/\/127\.0\.0\.1:(\d+)\//.exec(st.out)?.[1]);
   const corePort = Number(/event core is reached through port (\d+)/.exec(st.out)?.[1]);
   // Closed 200 ms after "ready": inside the 1 s health wait of the swap's check.
-  const closing = stageStudio(path.join(root, 'closing'), { closeMs: 200 });
+  const closing = stageStudio(path.join(root, 'closing'), { closeMs: 200, n: 2 });
   const exited = new Promise((r) => st.child.once('exit', r));
   void st.swap('studio', closing).catch(() => {}); // the launcher ends before it can answer
   const code = await Promise.race([exited, new Promise((r) => setTimeout(r, 90_000, 'timeout').unref())]);
@@ -238,7 +247,7 @@ test('launcher: the user closing the new window on probation stops everything (D
 test('launcher: a normal close of the studio window still stops everything (D280), with the swap flag on', { skip, timeout: 120_000 }, async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'lu4-close-'));
   const st = startLauncher(root, { UJWALAM_STUDIO_TEST_CLOSE_MS: '1500' });
-  t.after(() => { killChildTree(st.child); rmSync(root, { recursive: true, force: true }); });
+  t.after(() => { killChildTree(st.child); rmSync(root, { recursive: true, force: true, maxRetries: 10 }); }); // retries: the last window (from a copy in root) may still be exiting
   const code = await Promise.race([new Promise((r) => st.child.once('exit', r)), new Promise((r) => setTimeout(r, 90_000, 'timeout').unref())]);
   assert.equal(code, 0, st.out.slice(-3000));
   assert.match(st.out, /window: studio attach: ready/);
