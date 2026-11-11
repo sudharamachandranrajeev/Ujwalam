@@ -434,9 +434,10 @@ def _fmt_kinds(ks):
     return ", ".join(f"{k['kind']} y {k['y0']}-{k['y1']}" for k in ks)
 
 
-def changelog_draft(new_version, wins, now, evidence_file):
+def changelog_draft(new_version, wins, now, cid):
     lines = [f"## {new_version} — {now.strftime('%Y-%m-%d')} (LL4 tuning from the learning store, D342)", "",
-             f"Evidence: `{evidence_file}` and the candidate's held-out score.", ""]
+             f"Evidence: local candidate `{cid}` (gitignored, `local/candidates/`): the held-out score and counts below. "
+             "Method: `docs/evidence/2026-11-11-ll4-after-stream-train.md`.", ""]
     for w in wins:
         e = w["evidence"]
         if w["value"].endswith("banner.kinds"):
@@ -466,7 +467,7 @@ def write_candidate(out_dir, pack_dir, game_id, det, wins, now):
             "state": "proposed", "baseVersion": det.get("version"), "version": new_version,
             "baseHashes": {f: file_hash(os.path.join(pack_dir, f)) for f in ("game.json", "detectors.json")},
             "changes": changes, "values": wins,
-            "changelogDraft": changelog_draft(new_version, wins, now, "docs/evidence/2026-11-11-ll4-after-stream-train.md")}
+            "changelogDraft": changelog_draft(new_version, wins, now, cid)}
     write_json_atomic(os.path.join(out_dir, f"{cid}.json"), cand)
     return {"id": cid, "version": new_version, "file": os.path.join(CANDIDATES, f"{cid}.json").replace(os.sep, "/")}
 
