@@ -4,7 +4,7 @@
   "category": "scenes-packages",
   "family": "scenes",
   "name": "Theme to scene generator",
-  "description": "Layout slots with H/V rules and safe zones. Planned; behaviour not yet specified.",
+  "description": "Layout slots with H/V rules and safe zones. SB3 (D341): services/scene-builder/build.mjs turns a reference read (SB2) into a scene package: the reference canvas takes the slot boxes, the other canvas follows data/scene-builder/build-rules.json (V inside the safe zone of data/clip/targets.json, game never cropped; H left column beside the game). Sources link to the project by reference; low-confidence or unmatched slots become listed placeholders; graphics are token panels (ujwalam-panel overlay).",
   "params": {
     "schema": {},
     "defaults": {},
@@ -19,6 +19,7 @@
   "maxConcurrent": 0,
   "flashesPerSec": 0,
   "budgetCost": 0,
-  "status": "planned",
-  "planSection": "4.7"
+  "status": "in-progress",
+  "planSection": "4.7",
+  "format": "html"
 }

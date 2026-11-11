@@ -4,7 +4,7 @@
   "category": "scenes-packages",
   "family": "packages",
   "name": "Isolated import",
-  "description": "New namespaced scenes only; dry-run diff; one transaction with rollback. Planned; behaviour not yet specified.",
+  "description": "New namespaced scenes only; devices and layers linked by reference; dry-run diff; one atomic save with an after-save check and rollback; before/after hash of the existing state must match. SB3 (D341): services/project/scene-package.mjs (planScenePackage, applyScenePackageFile) applies a scene package through the scene-layout-preset loader.",
   "params": {
     "schema": {},
     "defaults": {},
@@ -19,6 +19,7 @@
   "maxConcurrent": 0,
   "flashesPerSec": 0,
   "budgetCost": 0,
-  "status": "planned",
-  "planSection": "4.7"
+  "status": "in-progress",
+  "planSection": "4.7",
+  "format": "html"
 }
