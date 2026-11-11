@@ -12,6 +12,8 @@
 // -listen 1, segmented .mkv), the alpha project, and the studio UI server (logged in with the one-time launch key).
 // root: where the Node services, the overlay child and data/ come from (default: this repo). The live soak passes a
 // staged copy (stage.mjs) so it can change data files while the stack runs without touching the repo.
+// swap: true (LU3, D337): the event core and the UI server run behind the launcher's stable-port fronts, as with the
+// service-swap flag; st.coreSlot / st.uiSlot swap them (swap-soak.mjs), st.corePort / st.uiPort are the front ports.
 // Every process is kept at BelowNormal priority. Nothing here can reach a real platform: the host refuses real
 // targets without --allow-live and every target is a loopback listener.
 
@@ -29,6 +31,8 @@ import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mj
 import { planFile } from '../../app/host/lib/outputs-plan.mjs';
 import { alphaHostConfig, alphaProject, alphaStatus, coreEnv, coreServeArgs, hostLaunchSpec, openHostLog, waitForDiscovery, writeHostConfig } from '../../services/studio-ui/launch.mjs';
 import { startMockStreamerbot } from '../mock/mock-streamerbot.mjs';
+import { createFront } from '../../services/supervisor/front.mjs';
+import { createEventCoreSlot, createUiSlot } from '../../services/supervisor/slots.mjs';
 import { killTree, track } from '../proc-registry.mjs';
 
 export const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -216,14 +220,32 @@ export async function startStack(opts) {
   const launchKey = hex(32);
   const coreArgs = coreServeArgs({ dataDir: coreDir, sbWs: { ws: mock.url } });
   st.coreLog = path.join(runDir, 'core.log');
-  core = track(spawn(process.execPath, [path.join(root, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: coreEnv({ coreTokens: st.coreTokens, hostMarkersToken }) }));
-  st.core = core;
-  st.coreExit = null; core.once('exit', (c) => { st.coreExit = c; });
-  core.stderr.on('data', (d) => appendFileSync(st.coreLog, d));
-  st.corePort = await portFromLines(core, /api on 127\.0\.0\.1:(\d+)/, st.coreLog);
-  if (!st.corePort) { log('event core did not start'); await teardown(); return null; }
-  await sleep(1000);
-  setBelow(core.pid); // the core raises itself to Normal (live default); these runs keep every process BelowNormal
+  st.coreExit = null;
+  if (opts.swap) {
+    // As the launcher with the service-swap flag: a front, a slot, the swap switches right after 'serve'.
+    st.coreFront = createFront({ backendPort: null, name: 'event-core', log: (l) => appendFileSync(st.coreLog, `${l}\n`) });
+    await st.coreFront.listen();
+    const spawnCore = (r, { standby = false } = {}) => {
+      const c = track(spawn(process.execPath, [path.join(r, 'services', 'event-core', 'cli.mjs'), coreArgs.argv[0], '--swap-control', '--public-port', String(st.coreFront.port()), ...(standby ? ['--standby'] : []), ...coreArgs.argv.slice(1)],
+        { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, env: { ...coreEnv({ coreTokens: st.coreTokens, hostMarkersToken }), UJWALAM_PARENT_PIPE: '1' } }));
+      c.stderr.on('data', (d) => appendFileSync(st.coreLog, d));
+      c.once('spawn', () => setTimeout(() => setBelow(c.pid), 1500)); // the core raises itself to Normal; keep it BelowNormal
+      return c;
+    };
+    st.coreSlot = createEventCoreSlot({ front: st.coreFront, root, spawn: spawnCore, systemToken: st.coreTokens.system, onLine: (l) => appendFileSync(st.coreLog, `${l}\n`), onUnexpectedExit: (c, code) => { st.coreExit = code; }, log: (l) => appendFileSync(st.coreLog, `${l}\n`) });
+    try { await st.coreSlot.start(); st.corePort = st.coreFront.port(); } catch (e) { log(`event core: ${e.message}`); }
+    if (!st.corePort) { log('event core did not start'); await teardown(); return null; }
+    await sleep(1000);
+  } else {
+    core = track(spawn(process.execPath, [path.join(root, 'services', 'event-core', 'cli.mjs'), ...coreArgs.argv], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: coreEnv({ coreTokens: st.coreTokens, hostMarkersToken }) }));
+    st.core = core;
+    core.once('exit', (c) => { st.coreExit = c; });
+    core.stderr.on('data', (d) => appendFileSync(st.coreLog, d));
+    st.corePort = await portFromLines(core, /api on 127\.0\.0\.1:(\d+)/, st.coreLog);
+    if (!st.corePort) { log('event core did not start'); await teardown(); return null; }
+    await sleep(1000);
+    setBelow(core.pid); // the core raises itself to Normal (live default); these runs keep every process BelowNormal
+  }
 
   // ---- host (alpha spec, headless, hotkeys off, loopback plan)
   process.env.UJWALAM_HOST_DATA = hostData;
@@ -257,11 +279,27 @@ export async function startStack(opts) {
 
   // ---- UI server
   st.uiLog = path.join(runDir, 'ui.log');
-  ui = track(spawn(process.execPath, [path.join(root, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--data-dir', coreDir, '--feedback-dir', feedbackDir, '--profile', profile, '--release', path.join(root, 'release.json')], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: { ...process.env, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_DISCOVERY: hostDiscovery, UJWALAM_EVENT_CORE_PORT: String(st.corePort), UJWALAM_EVENT_CORE_API_TOKEN: st.coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' } }));
-  st.ui = ui;
-  st.uiExit = null; ui.once('exit', (x) => { st.uiExit = x; });
-  ui.stderr.on('data', (d) => appendFileSync(st.uiLog, d));
-  st.uiPort = await portFromLines(ui, /listening on http:\/\/127\.0\.0\.1:(\d+)\//, st.uiLog);
+  const uiEnv = { ...process.env, UJWALAM_UI_LAUNCH_KEY: launchKey, UJWALAM_HOST_TOKEN: hostToken, UJWALAM_HOST_DISCOVERY: hostDiscovery, UJWALAM_EVENT_CORE_PORT: String(st.corePort), UJWALAM_EVENT_CORE_API_TOKEN: st.coreTokens.api, UJWALAM_EVENT_CORE_SYSTEM_TOKEN: '' };
+  const uiArgv = (r) => [path.join(r, 'services', 'studio-ui', 'cli.mjs'), 'serve', '--data-dir', coreDir, '--feedback-dir', feedbackDir, '--profile', profile, '--release', path.join(r, 'release.json')];
+  st.uiExit = null;
+  if (opts.swap) {
+    st.uiFront = createFront({ backendPort: null, name: 'studio-ui', log: (l) => appendFileSync(st.uiLog, `${l}\n`) });
+    await st.uiFront.listen();
+    const spawnUi = (r) => {
+      const c = track(spawn(process.execPath, uiArgv(r), { stdio: ['pipe', 'pipe', 'pipe', 'ipc'], windowsHide: true, env: { ...uiEnv, UJWALAM_PARENT_PIPE: '1' } }));
+      c.stderr.on('data', (d) => appendFileSync(st.uiLog, d));
+      c.once('spawn', () => setBelow(c.pid));
+      return c;
+    };
+    st.uiSlot = createUiSlot({ front: st.uiFront, root, spawn: spawnUi, onLine: (l) => appendFileSync(st.uiLog, `${l}\n`), onUnexpectedExit: (c, code) => { st.uiExit = code; }, log: (l) => appendFileSync(st.uiLog, `${l}\n`) });
+    try { await st.uiSlot.start(); st.uiPort = st.uiFront.port(); } catch (e) { log(`UI server: ${e.message}`); st.uiPort = null; }
+  } else {
+    ui = track(spawn(process.execPath, uiArgv(root), { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env: uiEnv }));
+    st.ui = ui;
+    ui.once('exit', (x) => { st.uiExit = x; });
+    ui.stderr.on('data', (d) => appendFileSync(st.uiLog, d));
+    st.uiPort = await portFromLines(ui, /listening on http:\/\/127\.0\.0\.1:(\d+)\//, st.uiLog);
+  }
   st.cookie = null;
   if (st.uiPort) {
     const l = await httpReq(st.uiPort, 'GET', `/login?k=${launchKey}`);
@@ -280,12 +318,15 @@ export async function startStack(opts) {
 
   async function teardown() {
     try { ui?.kill(); } catch { /* gone */ }
+    try { await st.uiSlot?.stop(); } catch { /* gone */ }
     if (host && st.c && st.hostExit === null) {
       try { await st.c.call('host.shutdown'); } catch { /* fall through */ }
       for (let i = 0; i < 240 && st.hostExit === null; i++) await sleep(250); // the wait ends at exit
       if (st.hostExit === null) killTree(host.pid);
     } else if (host && st.hostExit === null) killTree(host.pid);
     try { core?.kill(); } catch { /* gone */ }
+    try { await st.coreSlot?.stop(); } catch { /* gone */ }
+    st.coreFront?.close(); st.uiFront?.close();
     try { await mock?.close(); } catch { /* not started */ }
     for (const [, l] of st.listeners) { try { l.proc.stdin.write('q'); } catch { /* gone */ } }
     await Promise.race([Promise.all([...st.listeners.values()].map((l) => l.exited)), sleep(15000)]);
