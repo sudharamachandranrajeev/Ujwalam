@@ -959,3 +959,42 @@ Tolerances on drawn fixtures: every slot side within 0.03 of the frame side; pal
 shares within 2 points; corner radius within max(3 px, 15 %) on a 1080 px short side. Results on real references are
 UNVERIFIED until the user checks them.
 Evidence: `docs/evidence/2026-11-11-sb1-sb2-reference-read.md`.
+
+## D341 — Scene builder SB3: build new H and V scenes from a reference as a scene package, imported in isolation (2026-11-11, plan D324 section C)
+
+Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` row SB3 (approved, D324), build plan §4.7
+("Theme → scene generator", "Isolated import"). Input: the SB2 typed read (D339). Decided:
+- Output is a scene package (`data/schemas/scene-package.schema.json`): one scene-layout-preset per canvas plus
+  bindings. The existing preset loader (`services/project/scene-preset.mjs`) applies it, so the import path is the one
+  the built-in scenes already use. The importer (`services/project/scene-package.mjs`) adds ONE new scene holding the
+  H and V layers (the host shows one active scene on every canvas, as the alpha project does), named
+  "Built: <reference>" (rules `sceneNamePrefix`; "(2)" when taken), origin `scene-package/<package id>`.
+- Never changes existing state: the input is never mutated; the existing state (whole input project) must hash
+  (sha256 of canonical JSON) the same as the result minus the new scene and the overlay entries it added, or the
+  import is refused. Dry run by default; apply is one atomic save (store.mjs), re-checked after the save, the .bak
+  put back on a failed check. A project that loads only from its .bak or needs a migration is refused.
+- Sources by reference: game and camera link to the project's existing capture layer as a `duplicate` (new preset
+  layer type `link`; the device is opened once); with only a device, a capture layer on that device (the V one becomes
+  a duplicate of the H one). Chat and alerts reuse the project's overlay entry (chat-list, alert-box) and that layer's
+  settings, minus geometry; `canvas=`, size and `theme=` are set. No device is ever created. Matching order: the user's
+  `--bind`, a built-in preset layer, the device bound to the alpha role, the only capture card; anything else is
+  ambiguous and becomes a placeholder asking for `--bind`.
+- Placeholders: a slot below `minConfidence` (0.5) or without a matching source is a transparent colour layer that
+  keeps the geometry, listed in the diff with the reason. A binding lost between build and import is a placeholder too.
+- Geometry: the reference's canvas takes the slot boxes (fractions). The game is never cropped (contain, both
+  canvases); the camera covers its box with a centred crop of at most 40 % of a side, else contain. The other canvas
+  follows `data/scene-builder/build-rules.json`: V inside the V safe zone (YouTube Shorts margins from
+  `data/clip/targets.json`, the only V safe zone in the repo), game across the safe width, camera and alerts above,
+  chat below; H a left column (camera, alerts, chat) beside the contained game. On a V reference, important slots
+  outside the safe zone are warned and kept as drawn (warn only, like D231). Graphics are carried only on the
+  reference canvas (listed as not carried), at most 8.
+- Overlays use theme tokens: graphics are a new token panel page (`ujwalam-panel`: --glass, --steel, --radius-*,
+  --ember-glow; radius class from the read mapped to the tokens); `--theme ID` passes the brand theme. The read's
+  palette is not written as colours (SB4 makes a theme).
+- Entry point: `node services/scene-builder/cli.mjs build <reference> --project FILE [--bind ROLE=ID]... [--theme ID]
+  [--out PKG] [--apply] [--json]` and `import <PKG> --project FILE [--apply]`, behind the `scene-builder` flag (off
+  by default). No studio-ui RPC: the studio server never takes a path from the page.
+- `mergeCanvasScenes` moved from `services/studio-ui/alpha.mjs` to `scene-preset.mjs` unchanged (shared).
+Tolerance on the drawn fixtures: every side within 0.03 of the canvas side (the game: contained, centred, one axis
+within 0.03). Build rules, the V safe zone for live and the results on real references are UNVERIFIED.
+Evidence: `docs/evidence/2026-11-11-sb3-build-scenes.md`.
