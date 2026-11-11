@@ -16,6 +16,8 @@ weights, sumKinds, minScore, death detectors); the timing is live-only (data/cli
   length     a window shorter than minClipSec (live-clips.json, the user's minimum clip length) starts earlier, by the
              missing seconds, but never before the replay buffer's start (replaySec - forceMarginSec back from the save)
              and never inside the previous death's KILLCAM. A death can leave it short: the end is fixed then.
+  max        a window longer than the user's maximum live clip length (Settings > Clips, reel_length.py) is cut to it
+             around the strongest medal; the action says "trimmedFrom".
   save       only when the chain's score reaches minScore. The action carries the clip window in worker seconds;
              the worker turns it into a trim of the saved replay file (the file ends at the save moment).
 
@@ -28,7 +30,7 @@ import clip_rank as rank
 
 
 class LiveChain:
-    def __init__(self, ranking, live):
+    def __init__(self, ranking, live, max_clip=None):
         self.w = ranking.get("detectorWeights", {})
         self.approved = ranking.get("detectorWeightsStatus") == "approved"
         self.sum_kinds = set(ranking.get("sumKinds", []))
@@ -41,6 +43,7 @@ class LiveChain:
         self.pre = float(live["preSec"])
         self.post = float(live["postSec"])
         self.min_clip = float(live.get("minClipSec", 0.0))
+        self.max_clip = float(max_clip) if max_clip else None  # CL1 (D350): the user's longest live clip
         self.buffer = float(live["replaySec"]) - float(live["forceMarginSec"])
         if self.min_clip > self.buffer:
             raise ValueError("live-clips: minClipSec longer than the replay buffer allows (replaySec - forceMarginSec)")
@@ -70,6 +73,15 @@ class LiveChain:
             start = min(start, max(end - self.min_clip, floor))
         if score < self.min_score or end <= start:
             return None
+        if self.max_clip is not None and end - start > self.max_clip + 1e-6:
+            # a window longer than the user's maximum is cut to it around the strongest medal (CL1, D350)
+            peak = max(medals, key=lambda m: m[3])[0] if medals else c["last"]
+            was = (round(start, 2), round(end, 2))
+            start = min(max(peak - self.max_clip / 2.0, start), end - self.max_clip)
+            end = start + self.max_clip
+            return {"save": True, "reason": reason, "at": t, "start": round(start, 2), "end": round(end, 2),
+                    "anchor": round(peak, 2), "score": round(score, 3), "labels": [m[2] for m in c["medals"]],
+                    "trimmedFrom": list(was)}
         return {"save": True, "reason": reason, "at": t, "start": round(start, 2), "end": round(end, 2),
                 "anchor": round(max(medals, key=lambda m: m[3])[0] if medals else c["last"], 2),
                 "score": round(score, 3), "labels": [m[2] for m in c["medals"]]}

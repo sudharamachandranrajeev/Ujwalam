@@ -9,6 +9,9 @@
 //                    a match passes when any rule that is on holds; default { top3: true, minKills: null }
 //   clips.recordLive: true (default) | false: record H and V while a stream runs, started with the stream and stopped
 //                     when it ends, so the reels can be made after it (LC2, D334 proposed; services/studio-ui/server.mjs)
+//   clips.reelLengths: the longest and shortest reel of each type (CL1, D350; defaults and the upper bound in
+//                      data/clip/reel-length.json, read by services/clip/reel_length.py): { <type>: { minSec, maxSec } },
+//                      only the types the user changed; absent = the defaults. A reel longer than its maximum is split.
 //   folders.recordings: where recordings are saved (used from the next start); null = <host data>/recordings
 //   folders.clips: where finished clips are saved; null = <dataDir>/clips
 //   ui.motion (D290), ui.guide (D294 proposed): see the blocks below
@@ -18,6 +21,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const SETTINGS_FILE = 'settings.json';
 export const CLIP_MODES = Object.freeze(['ask', 'after', 'while', 'off']);
@@ -26,6 +30,70 @@ export const DEFAULTS = Object.freeze({
   clips: Object.freeze({ recording: 'ask', live: 'ask', recordLive: true, matchGate: Object.freeze({ top3: true, minKills: null }) }),
   folders: Object.freeze({ recordings: null, clips: null }),
 });
+
+// ---- reel length (CL1, D350) begin: clips.reelLengths checks and read; also marked "reel length" in readSettings,
+// settingsProblems and writeSettings. Same rules as services/clip/reel_length.py limits_problems().
+export const REEL_LENGTH_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'clip', 'reel-length.json');
+export const REEL_MIN_MAX_SEC = 5;
+let reelDefaultsCache = null;
+/** { limitMaxSec, types: [{ id, label, hint, minSec, maxSec }] } from data/clip/reel-length.json, or null when unreadable. */
+export function reelDefaults(file = REEL_LENGTH_FILE) {
+  if (file === REEL_LENGTH_FILE && reelDefaultsCache) return reelDefaultsCache;
+  try {
+    const j = JSON.parse(readFileSync(file, 'utf8'));
+    const d = { limitMaxSec: Number(j.limitMaxSec), types: j.types.map((t) => ({ id: String(t.id), label: String(t.label ?? t.id), hint: String(t.hint ?? ''), minSec: Number(t.minSec), maxSec: Number(t.maxSec) })) };
+    if (!(d.limitMaxSec > 0) || d.types.some((t) => !(t.minSec >= 0 && t.minSec <= t.maxSec && t.maxSec <= d.limitMaxSec))) return null;
+    if (file === REEL_LENGTH_FILE) reelDefaultsCache = d;
+    return d;
+  } catch { return null; }
+}
+const isNum = (v) => typeof v === 'number' && Number.isFinite(v);
+
+/** Problems with a clips.reelLengths value { <type>: { minSec, maxSec } } (both numbers for each type); [] when fine. */
+export function reelLengthProblems(v, d = reelDefaults()) {
+  if (!d) return ['reel lengths are not available (data/clip/reel-length.json is missing)'];
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return ['clips.reelLengths must be an object'];
+  const out = [];
+  for (const [k, x] of Object.entries(v)) {
+    if (!d.types.some((t) => t.id === k)) { out.push(`unknown reel type ${k}`); continue; }
+    if (!x || typeof x !== 'object' || Array.isArray(x) || Object.keys(x).sort().join() !== 'maxSec,minSec') out.push(`clips.reelLengths.${k} needs minSec and maxSec`);
+    else if (!isNum(x.minSec) || !isNum(x.maxSec)) out.push(`clips.reelLengths.${k} lengths must be numbers`);
+    else if (!Number.isInteger(x.minSec) || !Number.isInteger(x.maxSec)) out.push(`${k}: lengths are whole seconds`);
+    else if (x.minSec < 0) out.push(`${k}: the minimum cannot be below 0 s`);
+    else if (x.maxSec < REEL_MIN_MAX_SEC) out.push(`${k}: the maximum cannot be below ${REEL_MIN_MAX_SEC} s`);
+    else if (x.maxSec > d.limitMaxSec) out.push(`${k}: the maximum cannot be above ${d.limitMaxSec} s`);
+    else if (x.minSec > x.maxSec) out.push(`${k}: the minimum cannot be longer than the maximum`);
+  }
+  return out;
+}
+
+/** The valid per-type values of a settings file value (the rest is ignored). */
+function readReelLengths(v) {
+  const d = reelDefaults();
+  if (!d || !v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out = {};
+  for (const [k, x] of Object.entries(v)) if (reelLengthProblems({ [k]: x }, d).length === 0) out[k] = { minSec: x.minSec, maxSec: x.maxSec };
+  return out;
+}
+
+/** Defaults + the user's values per type, for the Settings page: { limitMaxSec, types: [{ id, label, hint, minSec, maxSec,
+ *  defaultMinSec, defaultMaxSec }] }, or null when the defaults file is unreadable. */
+export function reelLengthInfo(dataDir) {
+  const d = reelDefaults();
+  if (!d) return null;
+  const mine = readReelLengths(readSettings(dataDir).clips.reelLengths);
+  return { limitMaxSec: d.limitMaxSec, types: d.types.map((t) => ({ id: t.id, label: t.label, hint: t.hint, defaultMinSec: t.minSec, defaultMaxSec: t.maxSec,
+    minSec: mine[t.id]?.minSec ?? t.minSec, maxSec: mine[t.id]?.maxSec ?? t.maxSec })) };
+}
+
+/** The reelLengths to store after a patch: per type, a value equal to the default is dropped; null when none is left. */
+function mergeReelLengths(cur, patch) {
+  const d = reelDefaults();
+  const all = { ...(cur ?? {}), ...(patch ?? {}) };
+  for (const [k, x] of Object.entries(all)) { const t = d?.types.find((y) => y.id === k); if (!t || (x.minSec === t.minSec && x.maxSec === t.maxSec)) delete all[k]; }
+  return Object.keys(all).length ? all : null;
+}
+// ---- reel length end
 
 // ---- match gate (D286 proposed) begin: clips.matchGate checks and read; also one line each in DEFAULTS,
 // readSettings, settingsProblems and writeSettings, marked "match gate"
@@ -158,7 +226,8 @@ export function readSettings(dataDir) {
   return {
     exists: j !== null,
     clips: { recording: mode(c.recording, DEFAULTS.clips.recording), live: mode(c.live, DEFAULTS.clips.live),
-      recordLive: typeof c.recordLive === 'boolean' ? c.recordLive : DEFAULTS.clips.recordLive, matchGate: readMatchGate(c.matchGate) },
+      recordLive: typeof c.recordLive === 'boolean' ? c.recordLive : DEFAULTS.clips.recordLive, matchGate: readMatchGate(c.matchGate),
+      ...(Object.keys(readReelLengths(c.reelLengths)).length ? { reelLengths: readReelLengths(c.reelLengths) } : {}) }, // reel length
     folders: { recordings: dir(f.recordings), clips: dir(f.clips) },
     ...uiRead(j), // D290
   };
@@ -173,6 +242,7 @@ export function settingsProblems(patch, { forbidden = [] } = {}) {
   if (patch.ui !== undefined) out.push(...uiProblems(patch.ui)); // D290
   for (const [k, v] of Object.entries(patch.clips ?? {})) {
     if (k === 'matchGate') out.push(...matchGateProblems(v)); // match gate
+    else if (k === 'reelLengths') out.push(...reelLengthProblems(v)); // reel length
     else if (k === 'recordLive') { if (typeof v !== 'boolean') out.push('clips.recordLive must be true or false'); } // LC2
     else if (!['recording', 'live'].includes(k)) out.push(`unknown clip setting ${k}`);
     else if (!CLIP_MODES.includes(v)) out.push(`clips.${k} must be one of ${CLIP_MODES.join(', ')}`);
@@ -194,6 +264,9 @@ export function writeSettings(dataDir, patch) {
     folders: { ...cur.folders, ...(patch.folders ?? {}) },
     ...(cur.ui || patch.ui ? { ui: mergeUi(cur.ui, patch.ui) } : {}), // D290, guide
   };
+  // reel length: per type merge, so changing one type keeps the others; a value equal to its default is not stored
+  const rls = mergeReelLengths(cur.clips.reelLengths, patch.clips?.reelLengths);
+  if (rls) next.clips.reelLengths = rls; else delete next.clips.reelLengths;
   for (const k of ['recordings', 'clips']) if (typeof next.folders[k] === 'string') mkdirSync(next.folders[k], { recursive: true });
   mkdirSync(dataDir, { recursive: true });
   const f = path.join(dataDir, SETTINGS_FILE);

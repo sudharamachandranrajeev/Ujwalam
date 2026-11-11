@@ -74,7 +74,7 @@ def name_rows(rdoc, game, layouts_by_id, det_weights=None, rec_start_local=None)
     for c in rdoc.get("clips") or []:
         kind = kind_of(c.get("id"), tool)
         when = clip_time(c, rec_start_local, kind) or _stamp_time(c.get("source")) or datetime.now()
-        label = names.label_for(kind, c.get("labels"), _kills(c), det_weights)
+        label = names.label_for(kind, c.get("labels"), _kills(c), det_weights, part=c.get("part"), parts=c.get("parts"))
         for f in c.get("files") or []:
             lay = layouts_by_id.get(f.get("layout")) or ({"input": "v"} if str(f.get("layout", "")).endswith("-v") else
                                                           {"id": f.get("layout")})

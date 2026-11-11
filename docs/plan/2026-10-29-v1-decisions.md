@@ -1538,3 +1538,34 @@ Codex review fixes (same day, 2 P2):
   replacement is copied to `<file>.<pid>.new` in the same folder and swapped in with one File.Replace (a new file: one
   move); the temp file is removed on failure.
   Limit: an 8.3 short path on a command line (`C:UsersABCDEF~1...`) is not matched.
+
+## D350 — Reel length: every montage and concatenated reel is at most 60 s, longer ones split into parts (2026-11-11, CL1)
+
+User, 2026-11-11: "all montages and concatenated clips length cannot exceed 1 minute for now, if it gets more than 1 minute
+split it into after. add the settings to customise clip length for different type of reels in-app." Decided:
+- **Types and defaults (data).** `data/clip/reel-length.json`: kill montage (min 20, max 60), match reel (min 0, max 60),
+  impact-play reel (min 10, max 60), short clip (min 10, max 60), live clip (min 20, max 60). The minimums are the values
+  the code already used (`montage.json` minSec, `ranking.json` clip.minSec, the impact-play spec minSec, `live-clips.json`
+  minClipSec); the match reel had none. `limitMaxSec` = 60 is the upper bound of every maximum.
+- **Bound may be raised later.** 60 s is "for now" (the user's words). Raising it for long videos is one number
+  (`limitMaxSec`) in that file, plus the maximums the user then sets; the Shorts line in `data/posting/limits.json` is a
+  separate platform fact and not touched.
+- **Split.** Montages, match reels and impact-play reels (the concatenated outputs): `services/clip/reel_length.py`
+  `split_reel`. A part boundary is only between two pieces (a cut around one kill or a run of close kills, or the result
+  screen), never inside one. Parts: ids `M01p1`, `M01p2`, files `..._kills-12-part-1-of-2_...`, labels "part N of M". A
+  last part under the type's minimum takes pieces from the part before while that stays at or above the minimum;
+  otherwise it is kept (no content dropped) and marked `belowMin`.
+- **Trim.** A single piece longer than the maximum is cut to the maximum around its peak (the kill times for montages and
+  match reels, the impact play for impact-play reels; the piece's middle when no peak is known) and the trim (from, to,
+  peak, seconds dropped) is written in render.json and match-reels.json. This replaces the old "best window" cut of a
+  long streak group in the montage planner, which dropped kills: a long group is now kept and split.
+- **Posting.** Each part is a finished video with its own uploads.json row (kind unchanged, label with the part), so the
+  auto-post chain packages and posts every part as its own reel (a Short at 60 s or less). Nothing in posting changed.
+- **Settings.** Settings > Clips > REEL LENGTH (Qt studio): shortest and longest per type in whole seconds, Reset to
+  defaults, Save changes / Discard like every page; a shortest above its longest or a longest above the bound is refused
+  (page and server). Stored as `settings.json clips.reelLengths` (only types that differ from the default). Short clips
+  and live clips use their minimum and maximum too (live: a window over the maximum is cut around the strongest medal).
+  There is no Clips page on the control page, so no control-page equivalent.
+- **No feature flag** (user-ordered cap). The old behaviour is reachable by raising a maximum up to 60 s.
+- UNVERIFIED: a real recording rendered into parts (headless tests use synthetic pieces); the picture of the new group at
+  real DPI.

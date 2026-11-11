@@ -15,7 +15,8 @@ recording; the V recording of the same session has the same timeline).
    whose score (medal weights, sumKinds summed) reaches ranking.minScore is a streak ("Triple Kill and up");
    every other group is a run of single kills (no medal, or a medal below minScore).
 3. Pieces: [kill - preSec, kill + postSec] per kill, cut before a death (ranking.death); pieces closer than
-   joinGapSec merge. A group longer than maxSec is cut to its best maxSec window.
+   joinGapSec merge. A group longer than maxSec stays whole (CL1, D350: nothing is dropped); the montage that holds
+   it is split into parts by reel_length.split_reel.
 4. Order (selection and playback): streaks by score, best first; then the single-kill groups, most kills first,
    then by time. Each group goes into the first montage it fits in (<= targetMaxSec; an empty montage takes a group
    up to maxSec), so montage 1 holds the best streaks topped up with single kills, and more kills than fit make
@@ -99,25 +100,6 @@ def _length(pieces):
     return sum(p["end"] - p["start"] for p in pieces)
 
 
-def _cap(pieces, max_sec):
-    """Best (most kills) contiguous run of pieces that fits max_sec; the last piece is trimmed if needed."""
-    best, best_k = [], -1
-    for i in range(len(pieces)):
-        run, total = [], 0.0
-        for p in pieces[i:]:
-            d = p["end"] - p["start"]
-            if total + d > max_sec:
-                if max_sec - total >= 2.0:
-                    run.append(dict(p, end=round(p["start"] + max_sec - total, 3)))
-                break
-            run.append(p)
-            total += d
-        k = sum(p["kills"] for p in run)
-        if k > best_k:
-            best, best_k = run, k
-    return best
-
-
 def _unit_order(u):
     # streaks first, best score first; then single-kill groups, most kills first; ties by time
     return (0, -u["score"], u["start"]) if u["streak"] else (1, -u["kills"], u["start"])
@@ -129,14 +111,13 @@ def _new_montage():
 
 def plan_montages(hits, ranking, cfg, duration):
     gs, deaths = groups(hits, ranking, cfg)
-    cap, hi, lo, tmin = float(cfg["maxSec"]), float(cfg["targetMaxSec"]), float(cfg["minSec"]), float(cfg["targetMinSec"])
+    cap = float(cfg["maxSec"])  # CL1 (D350): the user's maximum for kill montages (reel_length.py); longer ones split
+    hi, lo, tmin = min(float(cfg["targetMaxSec"]), cap), min(float(cfg["minSec"]), cap), min(float(cfg["targetMinSec"]), cap)
     units = []
     for g in gs:
         ps = [p for p in _pieces(g["kills"], deaths, ranking, cfg) if p["end"] <= duration]
-        if _length(ps) > cap:
-            ps = _cap(ps, cap)
         if ps:
-            units.append({"pieces": ps, "score": g["score"] if g["streak"] else 0.0, "streak": g["streak"],
+            units.append({"pieces": ps, "peaks": [float(k) for k in g["kills"]], "score": g["score"] if g["streak"] else 0.0, "streak": g["streak"],
                           "kills": sum(p["kills"] for p in ps), "start": ps[0]["start"], "seconds": _length(ps),
                           "labels": [m["label"] for m in g["medals"]] if g["streak"] else []})
     units.sort(key=_unit_order)
@@ -173,6 +154,7 @@ def plan_montages(hits, ranking, cfg, duration):
         sk = sum(u["kills"] for u in m["units"] if u["streak"])
         nk = sum(u["kills"] for u in m["units"])
         out.append({"pieces": pieces, "seconds": round(_length(pieces), 3),
+                    "peaks": sorted(k for u in m["units"] for k in u["peaks"]),
                     "score": round(sum(u["score"] for u in m["units"]), 3),
                     "labels": [lb for u in m["units"] for lb in u["labels"]],
                     "kills": nk, "streakKills": sk, "singleKills": nk - sk,
@@ -180,7 +162,7 @@ def plan_montages(hits, ranking, cfg, duration):
     return sorted(out, key=lambda m: (-m["score"], -m["kills"]))
 
 
-def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1):
+def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1, max_sec=None):
     """One ffmpeg run: each piece is its own input (-ss/-t, exact because it is re-encoded), scaled into the frame,
     audio faded in and out by fade_ms (no pop at a hard cut), then concatenated. Every audio track of the source
     (audio_tracks) is kept as its own track, in source order (track 1 = the studio mix); none is dropped or remixed."""
@@ -201,7 +183,10 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     outs = "[vout]" + "".join(f"[aout{k}]" for k in range(audio_tracks))
     parts.append(ins + f"concat=n={len(pieces)}:v=1:a={audio_tracks}{outs}")
     maps = ["-map", "[vout]"] + [x for k in range(audio_tracks) for x in ("-map", f"[aout{k}]")]
-    argv += ["-filter_complex", ";".join(parts), *maps, *encoder_args, *audio_args,
+    # CL1 (D350): nothing here adds time (no transition, pad, crossfade or hold: a hard concat, fades inside the pieces);
+    # the fps filter can round a piece by up to one frame, so the output is also cut at the type's maximum.
+    cap = ["-t", f"{float(max_sec):.3f}"] if max_sec else []
+    argv += ["-filter_complex", ";".join(parts), *maps, *encoder_args, *audio_args, *cap,
              "-movflags", "+faststart", "-f", "mp4", out_name]
     return argv
 
@@ -294,12 +279,13 @@ def match_reels(hits, ranking, cfg, matches, duration=None):
         rules = [r["id"] for r in dec.get("rules", []) if r.get("outcome") == "pass"]
         out.append({"pieces": merged, "seconds": round(_length(merged), 3), "score": float(n),
                     "labels": [mt.get("result") or "MATCH", f"{n} kill(s)"], "matchStart": start, "result": t,
+                    "peaks": sorted(set(round(k, 3) for k in kills)),
                     "match": mt.get("index"), "rules": rules, "kills": n,
                     "pieceRounds": dec.get("pieceRounds")})
     return out
 
 
-def impact_play_reels(hits, matches, spec, duration=None, sample_sec=1.0):
+def impact_play_reels(hits, matches, spec, duration=None, sample_sec=1.0, min_sec=None):
     """Impact-play reels (D326, user feedback F4 2026-11-10: "if there was an impact play by the streamer, create it as
     a separate reel with MVP animation, Impact play cam and up to the results page"). spec: match-reels.json
     `impactPlay` (game pack data). For each match whose end was seen and whose end screens hold a signalled
@@ -311,14 +297,16 @@ def impact_play_reels(hits, matches, spec, duration=None, sample_sec=1.0):
     span ends one detector sample (sample_sec, 1/fps of the detector pass) after its last read frame: the frames
     sampled at the banner's last read still show it (2026-11-09 practice: read to 2770 s, on screen at 2771.5 s, MVP
     animation at 2772.5 s); the reel starts there, not at a fixed offset (coordinator, 2026-11-10). At most maxSec
-    long; a piece shorter than minSec is no reel. Pieces end at `duration` when it is given. m["impactPlay"] records
+    long; a piece shorter than minSec is no reel (min_sec overrides the spec's minSec: CL1 reel-length settings; the
+    maximum length is applied afterwards by reel_length.split_reel, which trims around the impact play). Pieces end at `duration` when it is given. m["impactPlay"] records
     the decision. -> [reel] shaped like match_reels (kills 0)."""
     if not spec:
         return []
     det, res = spec["detector"], spec.get("resultsDetector")
     after, max_lead = float(sample_sec), float(spec["maxBannerLeadSec"])
     fallback, hold = float(spec["fallbackLeadSec"]), float(spec["endHoldSec"])
-    res_after, max_sec, min_sec = float(spec["resultsAfterSec"]), float(spec["maxSec"]), float(spec["minSec"])
+    res_after, max_sec = float(spec["resultsAfterSec"]), float(spec["maxSec"])
+    min_sec = float(spec["minSec"] if min_sec is None else min_sec)
     out = []
     for mt in matches:
         if not mt.get("endSeen") or mt.get("endScreenAt") is None:
@@ -349,5 +337,5 @@ def impact_play_reels(hits, matches, spec, duration=None, sample_sec=1.0):
         out.append({"pieces": [{"start": round(s, 3), "end": round(e, 3), "kills": 0}], "seconds": round(e - s, 3),
                     "score": 0.0, "labels": [mt.get("result") or "MATCH", "IMPACT PLAY"],
                     "matchStart": float(mt["start"]), "result": ip, "match": mt.get("index"),
-                    "rules": [spec.get("id") or "impact-play"], "kills": 0})
+                    "rules": [spec.get("id") or "impact-play"], "kills": 0, "peaks": [round(ip, 3)]})
     return out
