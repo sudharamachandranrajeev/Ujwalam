@@ -75,7 +75,61 @@ What the preview time measures: the old window's exit (its previews go with it) 
 - `node tools/lint.mjs`: 0 findings. Pre-commit quick CI 9/9.
 - Builds: `npm run build:host`, `npm run build:studio`.
 
+## Codex review fixes (2026-11-11)
+
+Two P2 findings, both fixed and tested. One `npm run build:host` and one `npm run build:studio`, after all edits.
+
+P2 1, a user close during the swap's probation was swallowed and the old window restored:
+- `services/supervisor/slots.mjs`: a planned studio exit with code 0 during a swap is the user's close. The slot
+  calls `onUserClose`, and restoreOld starts nothing (result `failed`; `kept-old` if the old window exited 0 instead of 75).
+- `services/studio-ui/launch.mjs`: `onUserClose` logs "studio window closed during a swap: stopping Ujwalam", runs
+  stopAll and exits 0 (D280).
+- `app/studio/src/main.cpp`: `ujwalam-studio.test-close` beside a staged exe (text: ms after ready, hidden mode only)
+  closes only that build.
+- `node --test tests/studio-swap-launcher.test.mjs`: tests 9, pass 9 (21 s). New:
+  - slot with fake processes: exit 0 on probation gives `failed`, 2 spawns (no restore), onUserClose once;
+  - old window exiting 0 at swap-close gives `kept-old`, no new spawn;
+  - a crash (0xC0000005) on probation still gives `restored-old`, with no onUserClose call;
+  - real launcher: a staged build closed 200 ms after ready (inside the 1 s health wait). The launcher exits 0, the
+    UI server and event core ports are closed, and only 2 windows were ready (no restored third). Exits:
+    `[[75, true], [0, true]]`.
+
+P2 2, a headless embedded preview could become visible when its hidden parent was shown later:
+- `app/host/src/preview.cpp`: when headless, the embedded preview window is never shown, so it has no WS_VISIBLE and
+  cannot be seen whatever the parent does.
+  - WM_WINDOWPOSCHANGING drops SWP_SHOWWINDOW.
+  - WM_STYLECHANGING drops WS_VISIBLE.
+  - The 200 ms refresh timer hides the window if WS_VISIBLE got set any other way.
+  - `preview.list` and `preview.open` gain `shown` (its own WS_VISIBLE) and `visible`.
+- `preview.testParent` (--test-hooks only) creates a parent window that is never shown (WS_POPUP, no WS_VISIBLE, at
+  -32000,-32000) and attempts to show the child.
+- `node --test app/host/tests/host-preview-headless.test.mjs`: tests 2, pass 2.
+  - The stand-alone preview is refused. The embedded one opens with `shown: false`.
+  - Measured right after each attempt: ShowWindow = shown true (Windows sets the bit under a hidden parent without a
+    message the window can refuse), SetWindowPos = false, SetWindowLongPtr = false.
+  - After 600 ms, all three read `shown: false`.
+  - A host without --test-hooks refuses `preview.testParent`.
+
+After both fixes, the 20-swap stream test was run again:
+- Command: `UJWALAM_STUDIO_SWAP_STREAM=1 node --test --test-timeout=900000 tests/studio-swap-stream.test.mjs`.
+- Result: pass 2 (95 s), 21/21 checks, 20/20 swaps.
+- Previews were back within 988-1332 ms (mean 1092). `preview.list` gave `shown:false`, `visible:false`.
+- Frames: 0 dropped, 0 render-lagged, 0 encode-skipped. 0 dropped on every sink, live at all 162 samples.
+- Crash build: `restored-old`.
+
+Regression, each file run separately:
+- `host-api`: 16 pass.
+- `studio-qt-d327`: 5 pass.
+- `studio-ui-quit-lock`: 5 pass.
+- `service-swap-launcher`: 4 pass.
+- `studio-ui-alpha`: 37 pass, 1 skipped (pre-existing).
+- `node tools/lint.mjs`: 0 findings.
+
 ## UNVERIFIED and limits
+
+- Headless only: a ShowWindow on the embedded preview by another process sets WS_VISIBLE for up to 200 ms (the timer
+  removes it). This can be seen only if the parent is visible, and a visible parent is refused at open. Nothing in
+  Ujwalam calls it.
 
 - A swap with a visible window on the laptop's desktop, and on a real stream: not done (headless only; real streams
   need the user's go). The visible path differs only in `show()` without WA_DontShowOnScreen.

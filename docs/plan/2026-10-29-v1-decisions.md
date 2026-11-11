@@ -1267,3 +1267,17 @@ running host (previews re-embed, state from the host); a normal close still stop
 Limits: a window kept in the tray (D311) comes back as a normal window after a swap; open dialogs and unsaved field
 edits in the old window are lost (the swap is the user's update click). Evidence:
 `docs/evidence/2026-11-11-lu4-studio-swap.md`.
+Codex review fixes (2026-11-11):
+- **A user close during a swap stops the session (D280).** Exit 0 is the user's close, 75 a requested swap, anything
+  else a crash. When the new window on probation (before ready, previews and the 1 s health wait are done), or the old
+  one before it took `swap-close`, exits 0, the slot starts nothing more: no restore of the old version (result
+  `failed`, or `kept-old` when the old one was closed), and `onUserClose` tells the launcher, which logs "studio window
+  closed during a swap: stopping Ujwalam" and stops everything. A crash on probation still restores the old version.
+  Test hook: a `ujwalam-studio.test-close` file beside a staged exe (text: ms after ready) closes only that build.
+- **Headless embedded previews are never shown.** Checking the parent's top-level window only at `preview.open` let a
+  parent shown later make the preview visible. Now, when headless, the embedded preview window is created without
+  WS_VISIBLE and never shown (a child is visible only with its own WS_VISIBLE): WM_WINDOWPOSCHANGING drops
+  SWP_SHOWWINDOW, WM_STYLECHANGING drops WS_VISIBLE, and the 200 ms refresh timer hides it if WS_VISIBLE got set any
+  other way (ShowWindow under a hidden parent does that). The libobs display still renders into it. `preview.list`
+  gains `shown` (its own WS_VISIBLE) and `visible`. `preview.testParent` (--test-hooks only) makes a never-shown parent
+  window and tries ShowWindow, SetWindowPos and SetWindowLongPtr on the child for the test.

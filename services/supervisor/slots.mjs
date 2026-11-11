@@ -383,8 +383,11 @@ const STUDIO_PREVIEW_RE = /^studio attach: preview ([a-z]+) embedded/;
  * Stop-start slot for the Qt studio window (LU4, D346). opts: { spawn(root, key) -> ChildProcess (stdin and stdout
  * pipes, UJWALAM_STUDIO_CONTROL=1; exe, env and window are the caller's), rearm(key) -> bool (hands the UI server a new
  * one-time login key; false when it could not), newKey?(), blocked?() -> reason | null, waits?: { close, ready,
- * previews, healthMs }, onLine?(line, child), onSpawn?, onGone?, log? }.
+ * previews, healthMs }, onLine?(line, child), onUserClose?(child), onSpawn?, onGone?, log? }.
  * Exits nobody planned are the caller's: it listens on the child and asks isPlanned(child) (a swap's exits are planned).
+ * A user close during a swap (Codex review of D346): exit 0 is the user closing the window (75 is a requested swap,
+ * anything else a crash). When the window on probation, or the old one before it took "swap-close", exits 0, the swap
+ * starts nothing more (no restore) and onUserClose(child) tells the caller, which stops the session (D280).
  * start(root, key) -> child; swap(root) -> runSwap result, with the timings in the check step's value.
  */
 export function createStudioSlot(opts) {
@@ -393,13 +396,19 @@ export function createStudioSlot(opts) {
   const newKey = opts.newKey ?? (() => randomBytes(32).toString('hex'));
   let alive = 0;
   let maxAlive = 0;
+  let userClosed = null; // the child the user closed during the running swap
   function launch(root, key) {
     const child = opts.spawn(root, key);
     const p = { child, root, startedAt: Date.now(), readyAt: null, previews: new Map(), exitedAt: null, exitCode: undefined };
     alive++; maxAlive = Math.max(maxAlive, alive);
     let gone = false;
     const end = (code) => { if (gone) return; gone = true; alive--; p.exitedAt = Date.now(); p.exitCode = code; };
-    child.once('exit', (code) => end(code));
+    child.once('exit', (code) => {
+      end(code);
+      // A planned exit with code 0 during a swap: the user closed that window (swap-close exits 75). Unplanned exits
+      // are the caller's anyway.
+      if (code === 0 && st.busy && st.isPlanned(child) && !userClosed) { userClosed = child; opts.onUserClose?.(child); }
+    });
     child.once('error', () => { if (!child.pid) end(null); }); // never started: no exit event follows
     if (child.stdout) {
       lineReader(child, (l) => {
@@ -442,13 +451,17 @@ export function createStudioSlot(opts) {
       if (why) return { result: 'refused', reason: why };
       const want = [...old.previews.keys()]; // every preview the old window had must come back
       let neu = null;
+      userClosed = null;
+      const closed = (what) => new Error(`the user closed the ${what} window (exit 0): no restore, the session stops (D280)`);
       return st.run(root, 'stop-start', {
         stopOld: async () => {
           st.plan(old.child);
           const code = await stopChild(old.child, { line: 'swap-close', graceMs: w.close });
+          if (userClosed || code === 0) throw closed('old'); // kept-old: nothing new starts
           return { code, clean: code === STUDIO_SWAP_EXIT };
         },
         spawnNew: async () => {
+          if (userClosed) throw closed('old');
           const key = newKey();
           if (!opts.rearm(key)) throw new Error('the UI server did not take a new login key');
           neu = launch(root, key);
@@ -471,6 +484,7 @@ export function createStudioSlot(opts) {
         stopNew: async () => { if (!neu) return null; st.plan(neu.child); return stopChild(neu.child, { line: 'swap-close', graceMs: 2000 }); },
         restoreOld: async ({ signal } = {}) => {
           if (neu) st.plan(neu.child);
+          if (userClosed) throw closed(userClosed === old.child ? 'old' : 'new'); // failed: the caller ends the session
           const key = newKey();
           if (!opts.rearm(key)) throw new Error('the UI server did not take a new login key');
           const back = launch(old.root, key);

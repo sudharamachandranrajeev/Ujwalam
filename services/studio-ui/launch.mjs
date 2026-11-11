@@ -1312,7 +1312,8 @@ export async function main(argv = process.argv.slice(2)) {
     // everything. Any other exit is a crash: the studio keeps running (a stream is never cut by a UI crash) and the
     // window is opened again (at most SHELL_RELAUNCH_MAX times in SHELL_RELAUNCH_WINDOW_MS), with a new one-time key
     // the UI server gets on its stdin pipe. Without a console (ujwalam-start.exe) the window is the only way to stop.
-    // LU4: an exit a studio swap planned (swap-close, a new build on probation or rolled back) is only recorded.
+    // LU4: an exit a studio swap planned (swap-close, a new build on probation or rolled back) is only recorded; a user
+    // close (exit 0) during a swap reaches the slot's onUserClose below.
     const watchShell = (shell, shellStarted) => {
       shell.on('exit', (code, signal) => {
         const i = children.indexOf(shell);
@@ -1380,6 +1381,13 @@ export async function main(argv = process.argv.slice(2)) {
           return shell;
         },
         rearm,
+        // The user closed a window during a swap (exit 0 on probation, Codex review of D346): one close stops
+        // everything (D280), the swap restores nothing.
+        onUserClose: () => {
+          if (stopping) return;
+          console.log('[studio] studio window closed during a swap: stopping Ujwalam');
+          stopAll().then(() => process.exit(0));
+        },
         onLine: (l) => { if (/^studio (attach|swap):/.test(l)) console.log(`[studio] window: ${l}`); },
         ...track,
       });

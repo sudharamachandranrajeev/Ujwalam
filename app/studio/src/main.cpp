@@ -14,7 +14,8 @@
 //   UJWALAM_HEADLESS=1 + UJWALAM_STUDIO_HIDDEN=1 (tests): the full window on the native platform, laid out and "shown"
 //     with Qt::WA_DontShowOnScreen, so the host can embed its previews into real (hidden) window handles. Nothing ever
 //     reaches the screen; the host refuses a visible parent when headless. UJWALAM_STUDIO_TEST_CLOSE_MS=N there: the
-//     user's close (closeEvent, exit 0) N ms after "ready", so a test can check that a normal close still stops all.
+//     user's close (closeEvent, exit 0) N ms after "ready", so a test can check that a normal close still stops all;
+//     a file ujwalam-studio.test-close next to the exe (text: N) does the same for that build only.
 //   Headless only (tests): a file ujwalam-studio.test-crash next to the exe makes this build crash at start (its text
 //     is the UJWALAM_STUDIO_TEST_CRASH kind), for the swap rollback test with a build that crashes.
 #include "api_client.h"
@@ -80,8 +81,9 @@ static QString takeEnv(const char *name)
 }
 
 #ifdef Q_OS_WIN
-// Headless test builds only: the crash kind from ujwalam-studio.test-crash beside the exe, or empty (LU4 rollback test).
-static QString testCrashMarker()
+// Headless test builds only: the text of a marker file beside the exe, or empty (LU4 tests: ujwalam-studio.test-crash
+// holds a crash kind, ujwalam-studio.test-close the ms after "ready" for a user close).
+static QString testMarker(const wchar_t *name)
 {
 	wchar_t exe[MAX_PATH] = {};
 	const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -89,7 +91,7 @@ static QString testCrashMarker()
 		return QString();
 	std::wstring f(exe, n);
 	const size_t slash = f.find_last_of(L"\\/");
-	f = (slash == std::wstring::npos ? std::wstring() : f.substr(0, slash + 1)) + L"ujwalam-studio.test-crash";
+	f = (slash == std::wstring::npos ? std::wstring() : f.substr(0, slash + 1)) + name;
 	HANDLE h = CreateFileW(f.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
 	if (h == INVALID_HANDLE_VALUE)
 		return QString();
@@ -142,7 +144,7 @@ int main(int argc, char **argv)
 	}
 #ifdef Q_OS_WIN
 	if (headless) { // a test build that crashes at start (LU4 swap rollback test)
-		const QString kind = testCrashMarker();
+		const QString kind = testMarker(L"ujwalam-studio.test-crash");
 		if (!kind.isEmpty() && logs.crash) {
 			std::printf("studio: test build crashing at start (%s)\n", qUtf8Printable(kind));
 			std::fflush(stdout);
@@ -309,7 +311,14 @@ int main(int argc, char **argv)
 			std::printf("studio attach: ready (hidden)\n");
 			std::fflush(stdout);
 			// Tests: the user's close after this many ms (closeEvent, exit 0), to check that it still stops all (D280).
-			if (const int closeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_TEST_CLOSE_MS"); closeMs > 0)
+			// The env var reaches every window of a run; ujwalam-studio.test-close beside the exe (its text: the ms)
+			// only that build, so a swap test can close the window on probation (Codex review of D346).
+			int closeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_TEST_CLOSE_MS");
+#ifdef Q_OS_WIN
+			if (closeMs <= 0)
+				closeMs = testMarker(L"ujwalam-studio.test-close").toInt();
+#endif
+			if (closeMs > 0)
 				QTimer::singleShot(closeMs, &win, [&win]() { win.close(); });
 			return;
 		}

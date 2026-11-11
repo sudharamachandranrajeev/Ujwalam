@@ -16,6 +16,8 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { serveSwaps, SERVICE_SWAP_FLAG, studioRootPaths, swapEntryOk } from '../services/studio-ui/launch.mjs';
 import { refuseReason, SERVICES } from '../services/supervisor/swap.mjs';
+import { createStudioSlot } from '../services/supervisor/slots.mjs';
+import { PassThrough } from 'node:stream';
 import { killChildTree } from '../services/common/kill-tree.mjs';
 import { EXE, qtDir } from '../app/studio/tools/build.mjs';
 
@@ -65,12 +67,87 @@ test('serveSwaps: one swap at a time over all services; a studio result carries 
   assert.equal(p.sent.find((m) => m.id === 3).result, 'swapped', 'free again after the swap');
 });
 
-// A staged studio build (a copy of the built exe) under <dir>/studio; crash: a build that crashes at start (headless
-// test marker beside the exe, app/studio/src/main.cpp).
-function stageStudio(dir, { crash = false } = {}) {
+// Fake studio processes for the slot: each spawn takes the next script { exitOnClose = 75, exitAfterReadyMs, code }.
+// A script prints "ready" and its previews, answers "swap-close" with exitOnClose, and may exit by itself (code) after.
+function fakeStudios(scripts) {
+  const spawned = [];
+  const spawn = () => {
+    const s = scripts[spawned.length] ?? {};
+    const c = new EventEmitter();
+    c.pid = 1000 + spawned.length; c.exitCode = null; c.signalCode = null;
+    c.stdout = new PassThrough();
+    const exit = (code) => { if (c.exitCode !== null) return; c.exitCode = code; c.stdout.end(); setImmediate(() => c.emit('exit', code, null)); };
+    c.stdin = { writable: true, write: (l) => { if (l.startsWith('swap-close')) setTimeout(() => exit(s.exitOnClose ?? 75), 5); return true; } };
+    setTimeout(() => {
+      c.stdout.write('studio attach: ready (hidden)\n');
+      for (const p of s.previews ?? ['h']) c.stdout.write(`studio attach: preview ${p} embedded\n`);
+      if (s.exitAfterReadyMs !== undefined) setTimeout(() => exit(s.code), s.exitAfterReadyMs);
+    }, 10);
+    spawned.push(c);
+    return c;
+  };
+  return { spawned, spawn };
+}
+
+function fakeSlot(scripts) {
+  const f = fakeStudios(scripts);
+  const closes = [];
+  const unexpected = [];
+  const slot = createStudioSlot({
+    spawn: f.spawn, rearm: () => true, newKey: () => 'k',
+    waits: { close: 500, ready: 2000, previews: 2000, healthMs: 300 },
+    onUserClose: (c) => closes.push(c), onUnexpectedExit: (c, code) => unexpected.push(code),
+  });
+  return { slot, f, closes, unexpected };
+}
+
+test('slot: the user closing the new window on probation (exit 0) stops the swap; nothing is restored (Codex review of D346)', async () => {
+  const { slot, f, closes } = fakeSlot([{}, { exitAfterReadyMs: 50, code: 0 }]);
+  slot.start('A', 'k0');
+  await sleep(50);
+  const r = await slot.swap('B');
+  assert.equal(r.result, 'failed', JSON.stringify(r));
+  assert.match(r.history.find((h) => h.action === 'restore-old').error, /user closed the new window \(exit 0\)/);
+  assert.equal(f.spawned.length, 2, 'no third window: the old version is not started again');
+  assert.deepEqual(closes, [f.spawned[1]], 'the caller is told once, with the closed window');
+  assert.equal(slot.isPlanned(f.spawned[1]), true, 'the caller\'s exit handler still skips it; onUserClose is the signal');
+});
+
+test('slot: the user closing the old window as the swap starts (exit 0, not 75) keeps it closed; nothing new starts', async () => {
+  const { slot, f, closes } = fakeSlot([{ exitOnClose: 0 }]);
+  slot.start('A', 'k0');
+  await sleep(50);
+  const r = await slot.swap('B');
+  assert.equal(r.result, 'kept-old', JSON.stringify(r));
+  assert.match(r.history[0].error, /user closed the old window/);
+  assert.equal(f.spawned.length, 1, 'no new window');
+  assert.deepEqual(closes, [f.spawned[0]]);
+});
+
+test('slot: a crash on probation (not exit 0) still restores the old version and is not a user close', async () => {
+  const { slot, f, closes, unexpected } = fakeSlot([{}, { exitAfterReadyMs: 50, code: 3221225477 }, {}]);
+  slot.start('A', 'k0');
+  await sleep(50);
+  const r = await slot.swap('B');
+  assert.equal(r.result, 'restored-old', JSON.stringify(r));
+  assert.equal(f.spawned.length, 3);
+  assert.deepEqual(closes, []);
+  assert.deepEqual(unexpected, []);
+  assert.equal(slot.root(), 'A');
+  // After the swap a user close is the caller's again (unplanned, onUnexpectedExit), not onUserClose.
+  f.spawned[2].stdin.write('swap-close\n'); // stands in for any exit of the current window
+  await sleep(50);
+  assert.deepEqual(closes, []);
+  assert.deepEqual(unexpected, [75]);
+});
+
+// A staged studio build (a copy of the built exe) under <dir>/studio; crash: a build that crashes at start; closeMs: a
+// build whose window the user closes that many ms after "ready" (headless test markers beside the exe, main.cpp).
+function stageStudio(dir, { crash = false, closeMs = 0 } = {}) {
   mkdirSync(path.join(dir, 'studio'), { recursive: true });
   copyFileSync(EXE, path.join(dir, 'studio', 'ujwalam-studio.exe'));
   if (crash) writeFileSync(path.join(dir, 'studio', 'ujwalam-studio.test-crash'), 'av');
+  if (closeMs) writeFileSync(path.join(dir, 'studio', 'ujwalam-studio.test-close'), String(closeMs));
   return dir;
 }
 
@@ -135,6 +212,27 @@ test('launcher: the studio window swaps over IPC (closed for the update, not sto
   assert.ok(existsSync(path.join(st.dataDir, 'logs')) && exits.some((e) => e.code !== 75 && e.crash === true), 'the crashed build is recorded as a crash');
   st.child.stdin.end();
   assert.equal(await new Promise((r) => st.child.once('exit', r)), 0);
+});
+
+test('launcher: the user closing the new window on probation stops everything (D280); the old one is not restored', { skip, timeout: 120_000 }, async (t) => {
+  const root = mkdtempSync(path.join(os.tmpdir(), 'lu4-probe-close-'));
+  const st = startLauncher(root);
+  t.after(() => { killChildTree(st.child); rmSync(root, { recursive: true, force: true }); });
+  assert.ok(await st.until(/window: studio attach: ready/, 60_000), st.out.slice(-3000));
+  const uiPort = Number(/UI at http:\/\/127\.0\.0\.1:(\d+)\//.exec(st.out)?.[1]);
+  const corePort = Number(/event core is reached through port (\d+)/.exec(st.out)?.[1]);
+  // Closed 200 ms after "ready": inside the 1 s health wait of the swap's check.
+  const closing = stageStudio(path.join(root, 'closing'), { closeMs: 200 });
+  const exited = new Promise((r) => st.child.once('exit', r));
+  void st.swap('studio', closing).catch(() => {}); // the launcher ends before it can answer
+  const code = await Promise.race([exited, new Promise((r) => setTimeout(r, 90_000, 'timeout').unref())]);
+  assert.equal(code, 0, st.out.slice(-3000));
+  assert.match(st.out, /studio window closed during a swap: stopping Ujwalam/);
+  assert.equal(st.out.match(/window: studio attach: ready/g).length, 2, 'the first window and the new one; no restored third');
+  assert.equal(await portOpen(uiPort), false, 'the UI server stopped');
+  assert.equal(await portOpen(corePort), false, 'the event core stopped');
+  const exits = st.exits();
+  assert.deepEqual(exits.map((e) => [e.code, e.swap]), [[75, true], [0, true]], JSON.stringify(exits));
 });
 
 test('launcher: a normal close of the studio window still stops everything (D280), with the swap flag on', { skip, timeout: 120_000 }, async (t) => {

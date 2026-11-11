@@ -33,6 +33,10 @@ struct Previews::Win {
 	Previews *owner = nullptr;
 	std::string screen; // where it opened: "main display" or "embedded", plus the GDI device name
 	HWND parent = nullptr; // embedded: the studio shell window it is a child of
+	// Headless embedded (LU4 tests, Codex review of D346): the child window never gets WS_VISIBLE, so it stays unseen
+	// whatever later happens to the parent (a child is visible only with its own WS_VISIBLE). Show requests are
+	// stripped in WM_WINDOWPOSCHANGING and WM_STYLECHANGING; one that gets past both is undone by the refresh timer.
+	bool never_show = false;
 };
 
 namespace {
@@ -264,6 +268,10 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		return 0;
 	case WM_TIMER:
 		if (wp == kRefreshTimer && w && w->owner) {
+			if (w->never_show && (GetWindowLongPtrW(hwnd, GWL_STYLE) & WS_VISIBLE)) {
+				ShowWindow(hwnd, SW_HIDE);
+				hlog::warn("preview %s: headless, an embedded preview was made visible; hidden again", w->canvas.c_str());
+			}
 			w->owner->editor().refresh(w->canvas);
 			return 0;
 		}
@@ -287,6 +295,15 @@ LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 		return 0;
 	case WM_ERASEBKGND:
 		return 1;
+	case WM_WINDOWPOSCHANGING: // headless embedded: SetWindowPos(SWP_SHOWWINDOW) is dropped (ShowWindow under a hidden
+				   // parent sets WS_VISIBLE without it: the refresh timer takes that away, measured 2026-11-11)
+		if (w && w->never_show)
+			reinterpret_cast<WINDOWPOS *>(lp)->flags &= ~SWP_SHOWWINDOW;
+		break;
+	case WM_STYLECHANGING: // and WS_VISIBLE set through SetWindowLongPtr (the refresh timer is the last resort)
+		if (w && w->never_show && wp == (WPARAM)GWL_STYLE)
+			reinterpret_cast<STYLESTRUCT *>(lp)->styleNew &= ~WS_VISIBLE;
+		break;
 	case WM_MOUSEACTIVATE: // embedded child (studio slot): a click leaves activation to the studio window, as before
 		if (w && w->parent)
 			return MA_NOACTIVATE;
@@ -443,6 +460,8 @@ static json::Value win_json(const Previews::Win *w)
 		o.set("x", (int)wr.left);
 		o.set("y", (int)wr.top);
 		o.set("display", w->screen);
+		o.set("shown", (GetWindowLongPtrW(w->hwnd, GWL_STYLE) & WS_VISIBLE) != 0); // its own WS_VISIBLE
+		o.set("visible", IsWindowVisible(w->hwnd) != FALSE);                      // and every parent's
 	}
 	return o;
 }
@@ -557,7 +576,8 @@ json::Value Previews::open_embedded(const OpenArgs &a)
 	HWND parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(a.parent));
 	if (!IsWindow(parent))
 		throw rpc::Error(rpc::INVALID_PARAMS, "parent is not a window");
-	// Headless (tests, LU4): only into a parent whose top-level window is hidden, so the child can never be seen.
+	// Headless (tests, LU4): only into a parent whose top-level window is hidden, and the child itself is never shown
+	// (Win::never_show), so it stays unseen even when that parent is shown later (Codex review of D346).
 	if (headless_ && IsWindowVisible(GetAncestor(parent, GA_ROOT)))
 		throw rpc::Error(rpc::CONFLICT, "headless (--headless / UJWALAM_HEADLESS=1): an embedded preview needs a hidden parent window");
 	if (a.width <= 0 || a.height <= 0 || a.x < 0 || a.y < 0)
@@ -593,6 +613,7 @@ json::Value Previews::open_embedded(const OpenArgs &a)
 	SetWindowLongPtrW(hwnd, GWLP_USERDATA, (LONG_PTR)w);
 	w->hwnd = hwnd;
 	w->parent = parent;
+	w->never_show = headless_;
 	struct gs_init_data gid = {};
 	gid.cx = (uint32_t)a.width;
 	gid.cy = (uint32_t)a.height;
@@ -607,7 +628,8 @@ json::Value Previews::open_embedded(const OpenArgs &a)
 	obs_display_add_draw_callback(w->display, draw_cb, w);
 	SetTimer(hwnd, kRefreshTimer, 200, nullptr);
 	w->screen = "embedded " + narrow(mi.szDevice);
-	ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+	if (!w->never_show)
+		ShowWindow(hwnd, SW_SHOWNOACTIVATE);
 	hlog::info("preview embedded: %s %dx%d in the studio window on %s (no focus)", a.canvas.c_str(), a.width, a.height,
 		   narrow(mi.szDevice).c_str());
 	return win_json(w);
@@ -652,6 +674,41 @@ json::Value Previews::list()
 	});
 }
 
+json::Value Previews::test_parent(const std::string &action, const std::string &canvas)
+{
+	return run_on_ui([this, action, canvas]() -> json::Value {
+		if (action == "create") {
+			if (!test_parent_ || !IsWindow((HWND)test_parent_)) // WS_POPUP without WS_VISIBLE, off every display: never seen
+				test_parent_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC", L"", WS_POPUP, -32000, -32000,
+							       640, 400, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+			if (!test_parent_)
+				throw rpc::Error(rpc::INTERNAL, "CreateWindow (test parent) failed");
+			json::Value o = json::Value::object();
+			o.set("parent", std::to_string(reinterpret_cast<uintptr_t>(test_parent_)));
+			return o;
+		}
+		if (action == "destroy") {
+			if (test_parent_ && IsWindow((HWND)test_parent_))
+				DestroyWindow((HWND)test_parent_);
+			test_parent_ = nullptr;
+			return json::Value::object();
+		}
+		auto it = wins_.find(canvas);
+		if (it == wins_.end() || !it->second->hwnd || !IsWindow(it->second->hwnd))
+			throw rpc::Error(rpc::CONFLICT, "no open preview for canvas " + canvas);
+		HWND h = it->second->hwnd;
+		if (action == "show-child")
+			ShowWindow(h, SW_SHOWNOACTIVATE);
+		else if (action == "setpos-child")
+			SetWindowPos(h, nullptr, 0, 0, 0, 0, SWP_SHOWWINDOW | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+		else if (action == "style-child")
+			SetWindowLongPtrW(h, GWL_STYLE, GetWindowLongPtrW(h, GWL_STYLE) | WS_VISIBLE);
+		else
+			throw rpc::Error(rpc::INVALID_PARAMS, "action must be create, destroy, show-child, setpos-child or style-child");
+		return win_json(it->second);
+	});
+}
+
 void Previews::close_all()
 {
 	if (!ui_tid_)
@@ -661,6 +718,9 @@ void Previews::close_all()
 			for (auto &kv : wins_)
 				if (kv.second->hwnd && IsWindow(kv.second->hwnd))
 					SendMessageW(kv.second->hwnd, WM_CLOSE, 0, 0);
+			if (test_parent_ && IsWindow((HWND)test_parent_))
+				DestroyWindow((HWND)test_parent_);
+			test_parent_ = nullptr;
 			return json::Value();
 		});
 	} catch (...) {
