@@ -1653,24 +1653,27 @@ export function createStudioServer(opts) {
      *  IPC channel only (cli.mjs), never written or printed. Pending confirmations and undo history are not carried. */
     exportSessions() { return [...sessions].map(([sid, v]) => ({ sid, csrf: v.csrf })); },
     /** LU3 service swap (Codex review P2, security): the one-time login key's state for the next process: the key
-     *  (null once used), its age, the failure count and the lock. Sent with the sessions over the launcher's IPC
-     *  channel only, inside the front's switch (requests held), so a used key stays used and an unused one keeps its
-     *  time limit. */
+     *  (null once used), its absolute expiry, the failure count and the lock's absolute end. Sent with the sessions
+     *  over the launcher's IPC channel only, inside the front's switch (requests held), so a used key stays used and an
+     *  unused one keeps its deadline. Times are absolute wall-clock ms (both processes run on the same machine), so the
+     *  time between export and import counts and a swap never extends the key's life or shortens the lock
+     *  (Codex re-review P2). */
     exportLogin() {
-      const t = now();
-      return { key: launchKey, ageMs: Math.max(0, t - launchBorn), fails: loginFails, lockedForMs: Math.max(0, loginLockedUntil - t) };
+      return { key: launchKey, expiresAt: launchBorn + limits.launchKeyTtlMs, fails: loginFails, lockedUntil: loginLockedUntil };
     },
-    /** Takes exportLogin() of the previous process. Returns false (and keeps key login off) on anything malformed. */
+    /** Takes exportLogin() of the previous process. Returns false (and keeps key login off) on anything malformed.
+     *  The deadlines are kept as sent; they are only capped so that they never lie further ahead than a fresh key's
+     *  time limit or a fresh lock would. */
     importLogin(s) {
       if (!s || typeof s !== 'object') return false;
       const okKey = s.key === null || (typeof s.key === 'string' && /^[0-9a-f]{32,256}$/.test(s.key));
       const num = (v) => Number.isFinite(v) && v >= 0;
-      if (!okKey || !num(s.ageMs) || !Number.isInteger(s.fails) || s.fails < 0 || !num(s.lockedForMs)) { launchKey = null; return false; }
+      if (!okKey || !num(s.expiresAt) || !Number.isInteger(s.fails) || s.fails < 0 || !num(s.lockedUntil)) { launchKey = null; return false; }
       const t = now();
       launchKey = s.key;
-      launchBorn = t - s.ageMs;
+      launchBorn = Math.min(s.expiresAt, t + limits.launchKeyTtlMs) - limits.launchKeyTtlMs;
       loginFails = Math.min(s.fails, limits.loginFailMax);
-      loginLockedUntil = s.lockedForMs > 0 ? t + Math.min(s.lockedForMs, limits.loginLockMs) : 0;
+      loginLockedUntil = Math.min(s.lockedUntil, t + limits.loginLockMs);
       return true;
     },
     /** Takes the sessions of the previous process (exportSessions). Malformed entries are skipped; at most sessionMax.

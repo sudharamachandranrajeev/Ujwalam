@@ -142,20 +142,54 @@ test('studio-ui server: key login off until imported; exportLogin/importLogin ca
   assert.equal(a.s.exportLogin().key, null);
   assert.equal(c.s.importLogin(a.s.exportLogin()), true);
   assert.equal(await c.login(key), 401);
-  // The age moves too: a key past its time limit stays expired.
+  // The deadline moves too: a key past its time limit stays expired.
   const d = await mk(null);
-  assert.equal(d.s.importLogin({ key, ageMs: 10 * 60_000, fails: 0, lockedForMs: 0 }), true);
+  assert.equal(d.s.importLogin({ key, expiresAt: Date.now() - 1, fails: 0, lockedUntil: 0 }), true);
   assert.equal(await d.login(key), 401);
   // A lock moves: no login while it lasts, even with the right key.
   const e = await mk(null);
-  assert.equal(e.s.importLogin({ key, ageMs: 0, fails: 0, lockedForMs: 60_000 }), true);
+  assert.equal(e.s.importLogin({ key, expiresAt: Date.now() + 60_000, fails: 0, lockedUntil: Date.now() + 60_000 }), true);
   assert.equal(await e.login(key), 429);
   // Malformed state: refused, key login stays off.
-  for (const bad of [null, 'x', { key: 'not-hex', ageMs: 0, fails: 0, lockedForMs: 0 }, { key, ageMs: -1, fails: 0, lockedForMs: 0 }, { key, ageMs: 0, fails: 1.5, lockedForMs: 0 }, { key, ageMs: 0, fails: 0, lockedForMs: Infinity }]) {
+  const ok = { key, expiresAt: Date.now() + 60_000, fails: 0, lockedUntil: 0 };
+  for (const bad of [null, 'x', { ...ok, key: 'not-hex' }, { ...ok, expiresAt: -1 }, { ...ok, expiresAt: undefined }, { ...ok, fails: 1.5 }, { ...ok, lockedUntil: Infinity }]) {
     const f = await mk(null);
     assert.equal(f.s.importLogin(bad), false, JSON.stringify(bad));
     assert.equal(await f.login(key), 401);
   }
+});
+
+test('studio-ui server: the time between export and import counts; a swap never extends the key or shortens the lock (Codex re-review P2)', async (t) => {
+  let clock = 1_000_000;
+  const mk = async (launchKey) => {
+    const s = createStudioServer({ uiRoot: path.join(REPO, 'ui'), core: { describe: () => ({ available: false }), call: async () => null, confirm: async () => null }, host: createFakeHost({}), launchKey, dataDir: tmp(), now: () => clock, limits: { statusPollMs: 1000, launchKeyTtlMs: 120_000, loginLockMs: 60_000 }, log: () => {} });
+    const { port } = await s.listen();
+    t.after(() => s.close());
+    return { s, login: async (k) => (await get(port, `/login?k=${k}`)).status };
+  };
+  const key = randomBytes(32).toString('hex');
+  // Key 100 s old at export (20 s left); the import happens 30 s later, past the original deadline.
+  const a = await mk(key);
+  clock += 100_000;
+  const ex = a.s.exportLogin();
+  clock += 30_000;
+  const b = await mk(null);
+  assert.equal(b.s.importLogin(ex), true);
+  assert.equal(await b.login(key), 401, 'the key expired at its original deadline');
+  // Within the deadline it still works once.
+  const c = await mk(key);
+  const ex2 = c.s.exportLogin();
+  clock += 119_000;
+  const d = await mk(null);
+  assert.equal(d.s.importLogin(ex2), true);
+  assert.equal(await d.login(key), 302);
+  // A deadline further ahead than a fresh key's limit is capped; a lock ends when it was set to end.
+  const e = await mk(null);
+  assert.equal(e.s.importLogin({ key, expiresAt: clock + 10 * 120_000, fails: 0, lockedUntil: clock + 5_000 }), true);
+  assert.equal(await e.login(key), 429);
+  clock += 5_000;
+  assert.equal(e.s.exportLogin().expiresAt, clock - 5_000 + 120_000, 'capped at a fresh key\'s limit');
+  assert.equal(await e.login(key), 302);
 });
 
 test('studio-ui: a rearm sent during a swap waits for it and arms the process that serves after it (Codex review P2)', async (t) => {

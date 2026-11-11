@@ -107,7 +107,11 @@ Codex reviewed the branch and found 1 P1 and 6 P2 problems. Each fix has a regre
 - P2 (security), `studio-ui/launch.mjs`: each new UI process got the original one-time login key, so a login URL
   already used worked again after a swap. Now only the first process gets the key. A replacement starts with key
   login off (`UJWALAM_UI_KEY_LOGIN=off`). Inside the front's switch it imports the key's state from the old process
-  over IPC (`exportLogin`/`importLogin`: the key or null once used, its age, failures and lock). Malformed state keeps
+  over IPC (`exportLogin`/`importLogin`: the key or null once used, its absolute expiry, failures and the lock's
+  absolute end, wall-clock ms on the same machine). Codex re-review P2: the first version sent the key's age, so the
+  time between export and import was not counted and every swap extended the key's life. Absolute deadlines are now
+  kept as sent (capped at a fresh key's limit and a fresh lock). Test: export, advance the clock past the original
+  deadline, import: 401 (302 before the fix). Malformed state keeps
   key login off. A studio-window rearm sent during a swap waits for the swap and goes to the process that serves after
   it (`uiSlot.control`). Tests: `service-swap-launcher` (the real launcher: unused key logs in once after a swap; a
   used key gets 401 after two more swaps; before the fix it got 302), `service-swap-ui-worker` (export/import cases;
