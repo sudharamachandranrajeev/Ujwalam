@@ -381,7 +381,9 @@ export function createConnect(opts = {}) {
     // constant time, before it is overwritten; the same key pasted again keeps its state (a used key stays used).
     let sameKey = false;
     await updateOutput(o, async () => {
-      if (o.perBroadcast && key !== undefined) sameKey = sameSecret(await store(o.keyRef).get().catch(() => null), key.trim());
+      // A read failure throws and aborts the paste (get() returns null only when no key is stored): treating it as "a
+      // different key" would mark a used key fresh again.
+      if (o.perBroadcast && key !== undefined) sameKey = sameSecret(await store(o.keyRef).get(), key.trim());
       if (server !== undefined) await store(o.serverRef).set(server.trim());
       if (key !== undefined) await store(o.keyRef).set(key.trim());
     });

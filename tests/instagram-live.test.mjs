@@ -6,7 +6,7 @@
 // In-memory credential stores only: no test touches Credential Manager, a key file or a real platform. The values here
 // are throwaway test strings, never a real key or URL.
 import assert from 'node:assert/strict';
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -207,6 +207,26 @@ describe('key per broadcast (no secrets on disk)', () => {
     t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 0 }] }, { startInFlight: true }), null, 'a start on its way is not an end');
     t += 1000; assert.equal(createUseWatcher({ dataDir: d, now }).observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 0 }] }), 'used');
   });
+  test('the next broadcast\'s key pasted while the current one is live: the running broadcast does not consume it', () => {
+    const d = mk();
+    let t = Date.parse('2026-11-11T12:30:00Z');
+    const now = () => t;
+    noteKeySaved(d, { now });
+    const w = createUseWatcher({ dataDir: d, now });
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'live', attempts: 1 }] }), 'started');
+    t += 1000; noteKeySaved(d, { now }); // the new key, pasted mid-broadcast
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'live', attempts: 1 }] }), null);
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped', attempts: 1 }] }), null);
+    assert.equal(keyFreshness(d).state, 'fresh', 'the new key stays fresh after the earlier broadcast ends');
+    t += 1000; assert.equal(w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'live', attempts: 2 }] }), 'started', 'a start after the paste uses it');
+  });
+  test('a version 1 state file: liveAt is read as startedAt', () => {
+    const d = mk();
+    mkdirSync(path.join(d, 'outputs'), { recursive: true });
+    writeFileSync(path.join(d, 'outputs', ADDON.keyStateName), JSON.stringify({ savedAt: '2026-11-11T09:00:00.000Z', liveAt: '2026-11-11T09:05:00.000Z', usedAt: null }));
+    assert.equal(keyFreshness(d).state, 'started');
+    assert.equal(createUseWatcher({ dataDir: d }).observe({ sinks: [] }), 'used');
+  });
   test('a sink that never went live does not use the key', () => {
     const d = mk();
     noteKeySaved(d);
@@ -263,6 +283,25 @@ describe('Settings > Connections: the Instagram entry', () => {
       const text = readFileSync(f, 'utf8');
       assert.ok(!text.includes(TEST_KEY) && !text.includes(TEST_KEY.slice(-4) + '"') && !text.includes('ingest.test.example'), `${path.basename(f)} holds no key, key part or URL`);
     }
+  });
+  test('a key read failure aborts the paste: a used key is not made fresh', async () => {
+    const mem = createMemoryStores();
+    const dataDir = mk();
+    let failRead = false;
+    const storeFor = (ref) => {
+      const s = mem.storeFor(ref);
+      return { ...s, get: () => (failRead && ref === 'Ujwalam/stream/instagram' ? Promise.reject(new Error('credential-read-failed: win32 5')) : s.get()) };
+    };
+    const outputs = outputsFromPlan([...planTargets(), connectRow()]);
+    const c = createConnect({ dataDir, outputs, storeFor, outputLive: async () => 'idle', sleep: async () => {} });
+    await c.paste('instagram', { key: TEST_KEY, server: TEST_URL });
+    const w = createUseWatcher({ dataDir });
+    w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'live' }] });
+    w.observe({ sinks: [{ id: 'instagram', kind: 'stream', state: 'stopped' }] });
+    assert.equal(keyFreshness(dataDir).state, 'used');
+    failRead = true;
+    await assert.rejects(c.paste('instagram', { key: TEST_KEY, server: TEST_URL }));
+    assert.equal(keyFreshness(dataDir).state, 'used', 'still used after the failed paste');
   });
   test('sameSecret: equal only for the same string; no secret, no match', () => {
     assert.equal(sameSecret(TEST_KEY, TEST_KEY), true);

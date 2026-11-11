@@ -133,7 +133,8 @@ export function readKeyState(dataDir, { addon = loadAddon() } = {}) {
   try {
     const j = JSON.parse(readFileSync(stateFile(dataDir, addon), 'utf8'));
     const t = (v) => (Number.isFinite(ms(v)) ? v : null);
-    return { savedAt: t(j.savedAt), startedAt: t(j.startedAt), usedAt: t(j.usedAt) };
+    // Version 1 files called the start liveAt: kept as startedAt, so an upgrade mid-broadcast still sees the key consumed.
+    return { savedAt: t(j.savedAt), startedAt: t(j.startedAt) ?? t(j.liveAt), usedAt: t(j.usedAt) };
   } catch { return { savedAt: null, startedAt: null, usedAt: null }; }
 }
 function writeKeyState(dataDir, st, addon) {
@@ -191,6 +192,7 @@ export function createUseWatcher({ dataDir, now = Date.now, addon = loadAddon() 
   if (typeof dataDir !== 'string' || !dataDir) throw new Error('instagram watcher: dataDir required');
   let lastAttempts = null; // the sink's start count at the last observation (null: none yet)
   let lastAt = -Infinity; // the time of the last observation
+  let runningSince = null; // when this watcher first saw the current run of the sink (null: not running)
   return {
     observe(status, { startInFlight = false } = {}) {
       const sinks = Array.isArray(status?.sinks) ? status.sinks : null;
@@ -199,13 +201,18 @@ export function createUseWatcher({ dataDir, now = Date.now, addon = loadAddon() 
       const attempts = s && Number.isInteger(s.attempts) && s.attempts >= 0 ? s.attempts : 0;
       const grew = lastAttempts !== null && attempts > lastAttempts;
       const since = lastAt;
+      const running = !!s && (s.state === 'live' || ACTIVE.has(s.state) || s.active === true);
       lastAttempts = attempts; // a lower count: a new configure or a new host, counted from there
       lastAt = now();
+      // A run that began again (count grew) or was first seen now starts at this observation.
+      runningSince = running ? (runningSince === null || grew ? lastAt : runningSince) : null;
       let st = readKeyState(dataDir, { addon });
       const saved = ms(st.savedAt);
       if (!Number.isFinite(saved)) return null; // never pasted through Ujwalam: already not fresh
-      const running = !!s && (s.state === 'live' || ACTIVE.has(s.state) || s.active === true);
-      const reached = running || (grew && saved < since);
+      // A run already seen before the key was pasted belongs to the earlier key (the next broadcast's key pasted while
+      // the current one is live): it neither starts nor uses the new key.
+      const ownRun = running && !(runningSince < saved);
+      const reached = ownRun || (grew && saved < since);
       const iso = new Date(now()).toISOString();
       let wrote = null;
       if (reached && !(ms(st.startedAt) >= saved)) { st = writeKeyState(dataDir, { ...st, startedAt: iso }, addon); wrote = 'started'; }
