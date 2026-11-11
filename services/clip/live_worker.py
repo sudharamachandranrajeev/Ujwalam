@@ -12,7 +12,12 @@ the hits to the kill-chain rules (live_chain.LiveChain). On a save it calls repl
 Live path: this process holds only the host 'clips' token (frames.grab, replay.save, replay.status, marker.add,
 host.status), from UJWALAM_HOST_CLIPS_TOKEN; the host discovery file from UJWALAM_HOST_DISCOVERY. It can never touch
 outputs, scenes or layers. Every failure is logged and retried with back-off; nothing here can stop the stream. No OCR
-text is written: saves.jsonl holds times, detector labels (medal names) and file paths only.
+text is written to saves.jsonl: it holds times, detector labels (medal names) and file paths only.
+
+LL1 + LL3 (D340, learning_capture.py): the hits and OCR texts of each OCR'd frame with hits, and low-confidence reads
+(with their frame) for the review in My clips, go to the local learning store <data>/learning-store/live-<session>/
+(gitignored, scan-blocked, 5 GB cap). A writer thread behind a small queue does the writing; a full queue or a
+failed write drops the item and logs it. No model and no GPU work is added.
 
   live_worker.py --layer <game layer id> [--data-dir DIR] [--game codm] [--once FILE.bmp]
 """
@@ -36,6 +41,7 @@ import clip_common as cc  # noqa: E402
 import detector_pass as dp  # noqa: E402
 import g1_scan  # noqa: E402
 import game_pack  # noqa: E402
+import learning_capture as lcap  # noqa: E402
 from live_chain import LiveChain  # noqa: E402
 
 FLAG = "live-clips"
@@ -122,6 +128,17 @@ class Worker:
         self.session = datetime.now().strftime("%Y%m%d-%H%M%S")
         self.out = os.path.join(a.data_dir, "live-clips", self.session)
         self.stats = {"frames": 0, "saves": 0, "errors": 0}
+        self.capture = None  # LL1 + LL3 (D340): start_capture(); None in --once checks and in tests
+
+    def start_capture(self):
+        """Evidence and review items of this session into the local learning store (<data>/learning-store/
+        live-<session>/). A store that cannot be opened only turns capture off; clipping goes on."""
+        try:
+            self.capture = lcap.LiveCapture(self.a.data_dir, f"live-{self.session}", self.pack, self.log)
+        except (OSError, ValueError) as e:
+            self.capture = None
+            self.log(f"live-clips: learning capture off ({type(e).__name__})")
+        return self.capture
 
     def _scanner_for(self, img):
         h, w = img.shape[:2]
@@ -139,8 +156,11 @@ class Worker:
         if img is None:
             r = self.host.call("frames.grab", {"layer": self.a.layer})
             img = read_bmp(r["path"])
-        rows = self._scanner_for(img).scan(t, img)
+        scanner = self._scanner_for(img)
+        rows = scanner.scan(t, img)
         self.stats["frames"] += 1
+        if self.capture is not None:  # queued for the writer thread; never waits, never raises
+            self.capture.frame(t, img, rows, scanner.boxes, scanner.mode, scanner.fresh)
         act = self.chain.step(t, rows)
         return self._save(act) if act else None
 
@@ -212,6 +232,7 @@ def main(argv=None):
         cc.eprint(f"live-clips: {CLIPS_ENV} and {DISCOVERY_ENV} are required")
         return 64
     w = Worker(a, HostLink(disc, token))
+    w.start_capture()
     gone = watch_parent()
     period = 1.0 / float(w.live["fps"])
     backoff, next_flag, on = 1.0, 0.0, False
@@ -235,6 +256,8 @@ def main(argv=None):
             backoff = min(MAX_BACKOFF_SEC, backoff * 2)
             continue
         gone.wait(max(0.0, period - (time.monotonic() - start)))
+    if w.capture is not None:
+        w.capture.close()
     cc.eprint("live-clips: launcher gone; stopped")
     return 0
 

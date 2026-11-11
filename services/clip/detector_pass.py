@@ -482,6 +482,8 @@ class FrameScanner:
         g1_scan.set_ocr_params(params)
         self.unthrottled = no_power_throttling()
         self.mode, self.last, self.prev, self.n = None, None, [], 0
+        # the last scan: fresh (OCR ran on this frame) and its OCR boxes (text, score, g); LL1 learning capture
+        self.fresh, self.boxes = False, []
         # match gate (match_gate.py): S1 readings with t, own kill-feed lines deduplicated into kills
         mcfg = match_gate.stats_config(pack)
         self.kills = match_gate.KillCounter(mcfg["killLineHoldSec"], mcfg["victimMatchMin"])
@@ -561,6 +563,7 @@ class FrameScanner:
             self.stats["ocrSeconds"] += time.perf_counter() - t0
             recboxes = rec["boxes"]
         self.stats["ocrFrames"] += 1
+        self.fresh, self.boxes = True, recboxes
         self.mode = g1_scan.classify_frame(recboxes) or self.mode  # keep the last known mode through cue-less frames
         keys, feeds = [], []
         self.prev = frame_hits(recboxes, self.pack, self.names, self.settings, self.mode, kill_keys=keys,
@@ -577,6 +580,7 @@ class FrameScanner:
         # unchanged frame: whatever was on screen at the last OCR'd frame still is, so its hits continue (and its
         # own kill-feed lines stay the same kills)
         self.stats["diffGateSkips"] += 1
+        self.fresh = False
         self.kills.feed(t, self.prev_keys, self.prev_feeds)
         return [dict(h, t=t) for h in self.prev]
 
