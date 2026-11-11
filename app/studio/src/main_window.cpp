@@ -4649,6 +4649,20 @@ QJsonObject MainWindow::probe() const
 			s.insert(QStringLiteral("recordLive"), QJsonObject{{QStringLiteral("on"), rl->isChecked()}, {QStringLiteral("text"), words}, {QStringLiteral("hint"), hint},
 								 {QStringLiteral("visible"), rl->isVisibleTo(settingsDlg_.data())}});
 		}
+		{ // CL1 (D350): the reel length rows, id -> {min, max}; the red line when a shortest length is over its longest
+			QJsonObject reel;
+			for (auto *sp : settingsDlg_->findChildren<QSpinBox *>())
+				if (sp->objectName().startsWith(QStringLiteral("reelMin_"))) {
+					const QString id = sp->objectName().mid(8);
+					auto *hi = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("reelMax_") + id);
+					reel.insert(id, QJsonObject{{QStringLiteral("min"), sp->value()}, {QStringLiteral("max"), hi ? hi->value() : -1},
+								    {QStringLiteral("maxLimit"), hi ? hi->maximum() : -1}});
+				}
+			if (!reel.isEmpty()) {
+				auto *err = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsReelError"));
+				s.insert(QStringLiteral("reelLengths"), QJsonObject{{QStringLiteral("rows"), reel}, {QStringLiteral("error"), err && !err->isHidden() ? err->text() : QString()}});
+			}
+		}
 		if (auto *sn = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsSnap"))) { // D335 F10
 			auto *snText = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsSnapText"));
 			s.insert(QStringLiteral("snap"), sn->isChecked());
@@ -4964,6 +4978,15 @@ bool MainWindow::probeAction(const QString &action)
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-performance")) { // High performance (2026-11-10)
 			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsPerformance"))) {
 				cb->setChecked(p[1] == QStringLiteral("on"));
+				return true;
+			}
+		}
+		if (p.size() == 4 && p[0] == QStringLiteral("settings-reel")) { // CL1: settings-reel:<type>:<min>:<max>
+			auto *lo = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("reelMin_") + p[1]);
+			auto *hi = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("reelMax_") + p[1]);
+			if (lo && hi) {
+				hi->setValue(p[3].toInt());
+				lo->setValue(p[2].toInt());
 				return true;
 			}
 		}

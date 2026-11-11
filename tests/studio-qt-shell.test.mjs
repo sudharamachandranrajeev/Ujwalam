@@ -425,6 +425,19 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.motion, false, 'no animation while the choice is Off');
     assert.equal(p.flagsInSettings, false, 'the rows went with the closed Settings window');
   });
+  test('Settings > Clips (CL1, D350): reel length rows show the defaults, Save sends the changed type, a shortest over the longest blocks Save', async () => {
+    const p = await probe([], 9000, 'settings-open,settings-page:0,settings-reel:montage:10:30,settings-save');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:0', true], ['settings-reel:montage:10:30', true], ['settings-save', true]]);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).clips.reelLengths, { montage: { minSec: 10, maxSec: 30 } });
+    const q = await probe([], 8000, 'settings-open,settings-page:0');
+    assert.deepEqual(Object.keys(q.settings.reelLengths.rows), ['montage', 'match-reel', 'impact-play', 'short', 'live-clip']);
+    assert.deepEqual(q.settings.reelLengths.rows.montage, { min: 20, max: 60, maxLimit: 60 });
+    assert.equal(q.settings.reelLengths.error, '');
+    const r = await probe([], 9000, 'settings-open,settings-page:0,settings-reel:montage:50:40,settings-save');
+    assert.match(r.settings.reelLengths.error, /montage: the shortest \(50 s\) is longer than the longest \(40 s\)/);
+    assert.equal(r.settings.dirty, true, 'Settings stayed open with the edit');
+    assert.equal(existsSync(path.join(r.dataDir, 'settings.json')), false, 'nothing saved');
+  });
   test('Settings > Clips (LC2, D334 proposed): Record while live is a switch row with its explanation, on by default; off is saved at Save', async () => {
     const p = await probe([], 7000, 'settings-open,settings-page:0');
     assert.deepEqual(p.settings.recordLive, { on: true, text: 'Record while live', visible: true,
