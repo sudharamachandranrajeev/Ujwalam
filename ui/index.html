@@ -135,6 +135,17 @@
       <p id="ready-summary" class="muted" role="status"></p>
       <ul id="ready-list" class="list ready-list" aria-label="Readiness checks"></ul>
     </section>
+    <section id="instagram" class="panel" hidden>
+      <h2>Instagram Live</h2>
+      <p id="ig-state" class="muted" role="status"></p>
+      <p class="muted">Instagram gives a new stream URL and key for every broadcast (instagram.com: Create, Live). Paste both here before each one. They go to Windows Credential Manager only; this page shows the last 4 characters of the key.</p>
+      <label class="muted" for="ig-server">Stream URL</label>
+      <input id="ig-server" type="text" maxlength="256" autocomplete="off" spellcheck="false" placeholder="rtmps://...">
+      <label class="muted" for="ig-key">Stream key</label>
+      <input id="ig-key" type="password" maxlength="1023" autocomplete="off" spellcheck="false">
+      <button id="btn-ig-save" class="btn" type="button">Save for this broadcast</button>
+      <p id="ig-note" class="muted" role="status"></p>
+    </section>
     <section id="bots" class="panel" hidden>
       <h2>Bots</h2>
       <ul id="bot-list" class="list" aria-label="Bots"></ul>

@@ -30,10 +30,11 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { systemTool } from '../event-core/config.mjs';
 import { createYoutubeAuth, CLIENT_ID_TARGET, CLIENT_SECRET_TARGET } from '../posting/oauth.mjs';
+import { keyFreshness, noteKeySaved } from '../outputs/instagram.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const CONNECT_FLAG = 'platform-connect';
@@ -59,7 +60,7 @@ export const DEFAULT_ENDPOINTS = Object.freeze({
 });
 // Where a Twitch device-flow verification page may be (the URL comes from Twitch's answer, so it is checked first).
 const TWITCH_VERIFY_ORIGINS = ['https://www.twitch.tv', 'https://id.twitch.tv'];
-const PLATFORM_LABEL = { youtube: 'YouTube', twitch: 'Twitch', kick: 'Kick', custom: 'Custom RTMP' };
+const PLATFORM_LABEL = { youtube: 'YouTube', twitch: 'Twitch', kick: 'Kick', instagram: 'Instagram', custom: 'Custom RTMP' };
 const HTTP_TIMEOUT_MS = 15_000;
 const JOB_TTL_MS = 10 * 60_000;
 const STATUS_CACHE_MS = 10_000;
@@ -111,11 +112,12 @@ export const PROBLEM_TEXT = Object.freeze({
   'server-bad-port': 'The port in the server address is not valid.',
   'server-wrong-scheme': 'This output takes another scheme (rtmp:// or rtmps://); see the hint.',
   'server-not-used': 'This output uses a fixed server; only the key is stored.',
+  'per-broadcast-both': 'This output gets a new server URL and stream key for every broadcast: paste both together (Instagram: from Live Producer).',
 });
 
 const lastFour = (v) => (typeof v === 'string' && v.length >= 12 ? v.slice(-4) : null);
 const schemeOf = (v) => { const m = typeof v === 'string' ? /^\s*([A-Za-z][A-Za-z0-9+.-]{0,15}):\/\//.exec(v) : null; return m ? m[1].toLowerCase() : null; };
-const platformOf = (id) => (/^youtube(-|$)/.test(id) ? 'youtube' : /^twitch(-|$)/.test(id) ? 'twitch' : /^kick(-|$)/.test(id) ? 'kick' : 'custom');
+const platformOf = (id) => (/^youtube(-|$)/.test(id) ? 'youtube' : /^twitch(-|$)/.test(id) ? 'twitch' : /^kick(-|$)/.test(id) ? 'kick' : /^instagram(-|$)/.test(id) ? 'instagram' : 'custom');
 const httpsOnly = (u) => { try { return new URL(u).protocol === 'https:'; } catch { return false; } };
 
 /** Outputs from planTargets() rows ({ id, transport, keyRef, serverRef?, schemes? }); ids and refs checked. */
@@ -133,6 +135,8 @@ export function outputsFromPlan(targets) {
       id: t.id, platform, label: `${PLATFORM_LABEL[platform]}${platform === 'youtube' ? ` ${canvas}` : ''}`,
       keyRef: t.keyRef, ...(t.serverRef ? { serverRef: t.serverRef } : {}), schemes,
       signIn: platform === 'youtube' || platform === 'twitch' ? platform : null,
+      // IG1 (D351): a new server URL and key for every broadcast (Instagram Live Producer). Needs a server address.
+      ...(t.perBroadcast === true && t.serverRef ? { perBroadcast: true } : {}),
     });
   }
   return out;
@@ -337,9 +341,15 @@ export function createConnect(opts = {}) {
       else if ((source === 'youtube' || source === 'twitch') && (!accounts[source].signedIn || accounts[source].tokenState === 'expired')) {
         state = 'token-expired';
         detail = `The ${PLATFORM_LABEL[source]} sign-in has expired. The stored key still works; sign in again to fetch a new key.`;
+      } else if (o.perBroadcast) {
+        // IG1: stored is not enough; the pair must be this broadcast's (pasted through Ujwalam, not used by an ended one).
+        const f = keyFreshness(opts.dataDir);
+        if (f.state === 'used') { state = 'used'; detail = 'Used for a broadcast that ended. Paste the new server URL and stream key from Live Producer before the next one.'; }
+        else if (f.state === 'not-pasted') { state = 'missing'; detail = 'Paste the server URL and stream key for this broadcast (Live Producer gives new ones every time).'; }
+        else detail = f.state === 'live' ? 'Key in use by the broadcast now on air.' : 'Fresh key stored for the next broadcast.';
       } else detail = source === 'pasted' || !source ? 'Key stored.' : `Key from ${PLATFORM_LABEL[source]} sign-in.`;
       rows.push({
-        id: o.id, platform: o.platform, label: o.label, signIn: o.signIn, source, state, detail,
+        id: o.id, platform: o.platform, label: o.label, signIn: o.signIn, source, state, detail, ...(o.perBroadcast ? { perBroadcast: true } : {}),
         key: { present: key.present, ...(key.last4 ? { last4: key.last4 } : {}) },
         ...(o.serverRef ? { server: { present: !!server?.present, scheme: server?.scheme ?? null, schemes: o.schemes } } : {}),
       });
@@ -354,6 +364,7 @@ export function createConnect(opts = {}) {
   function checkPaste(id, { key, server } = {}) {
     const o = outputOf(id);
     if (key === undefined && server === undefined) return 'key-missing';
+    if (o.perBroadcast && (key === undefined || server === undefined)) return 'per-broadcast-both';
     if (key !== undefined) { const p = keyProblem(key, o.platform); if (p) return p; }
     if (server !== undefined) {
       if (!o.serverRef) return 'server-not-used';
@@ -366,11 +377,18 @@ export function createConnect(opts = {}) {
     const bad = checkPaste(id, { key, server });
     if (bad) throw new ConnectError(bad, PROBLEM_TEXT[bad]);
     // Key and server address change together (updateOutput): a start in between is refused, or the old pair returns.
+    // IG1 (Codex review of D351): a per-broadcast output compares the pasted key with the stored one, in memory and in
+    // constant time, before it is overwritten; the same key pasted again keeps its state (a used key stays used).
+    let sameKey = false;
     await updateOutput(o, async () => {
+      // A read failure throws and aborts the paste (get() returns null only when no key is stored): treating it as "a
+      // different key" would mark a used key fresh again.
+      if (o.perBroadcast && key !== undefined) sameKey = sameSecret(await store(o.keyRef).get(), key.trim());
       if (server !== undefined) await store(o.serverRef).set(server.trim());
       if (key !== undefined) await store(o.keyRef).set(key.trim());
     });
     noteOutput(o.id, key !== undefined ? 'pasted' : (readMeta(metaFile).outputs[o.id]?.source ?? 'pasted'));
+    if (o.perBroadcast) noteKeySaved(opts.dataDir, { now, sameKey }); // times only: never the key, the URL, a hash or a part of them
     invalidate();
     return { ok: true, output: o.id };
   }
@@ -757,4 +775,15 @@ export function createMemoryStores(initial = {}) {
     async delete() { calls.push(['delete', target]); return m.delete(target); },
   });
   return { storeFor, map: m, calls };
+}
+
+/**
+ * Two secrets equal? Constant time, also in length: both are HMAC-ed with a one-time random key and the digests compared
+ * with timingSafeEqual. Memory only: the digests and the HMAC key are dropped on return and never written anywhere.
+ */
+export function sameSecret(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const k = randomBytes(32);
+  const d = (s) => createHmac('sha256', k).update(s, 'utf8').digest();
+  return timingSafeEqual(d(a), d(b));
 }

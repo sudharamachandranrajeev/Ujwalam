@@ -60,6 +60,7 @@ import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
 import { CONNECT_FLAG, ERROR_TEXT as CONNECT_ERROR_TEXT, PROBLEM_TEXT as CONNECT_PROBLEM_TEXT, createConnect, outputsFromPlan } from '../platform-connect/index.mjs';
+import { connectRow as instagramRow, createUseWatcher as createInstagramWatcher, freshnessText as instagramText, INSTAGRAM_FLAG, keyFreshness as instagramFreshness, loadAddon as instagramAddon, noteKeyStarted as instagramStarted } from '../outputs/instagram.mjs';
 import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG, createSettingsRoutes } from './settings-routes.mjs';
 import { connectTargets, readSetup } from './stream-setup.mjs';
 import { integrationsInEffect } from './integrations.mjs';
@@ -384,7 +385,7 @@ export function createStudioServer(opts) {
     try {
       if (typeof opts.dataDir === 'string') crashes = readFileSync(path.join(opts.dataDir, 'logs', 'host-crashes.jsonl'), 'utf8').split(/\r?\n/).filter(Boolean).length;
     } catch { crashes = 0; }
-    return { title: q.get('title') ?? '', note: q.get('note') ?? '', flags: flags ? flags.list() : [], host: h.host, outputs, crashes };
+    return { title: q.get('title') ?? '', note: q.get('note') ?? '', flags: flagList(), host: h.host, outputs, crashes };
   }
   // Pre-stream readiness (D299 proposed, flag `readiness`): readiness.mjs. Built on first use (the config file is read
   // then). opts.readiness = { run({ maxAgeMs }), config } is a test seam; opts.readinessDeps overrides single probes.
@@ -420,6 +421,12 @@ export function createStudioServer(opts) {
       },
       // Platform sign-in (flag platform-connect): the fix points at Settings > Connections; expired sign-ins are warnings.
       connect: () => (connectOn() ? { fix: 'Studio: Settings > Connections (sign in, or paste the key)', warnings: () => connect().readinessWarnings() } : null),
+      // IG1 (D351): with instagram-live on, a key that is not this broadcast's fails the check (null = flag off).
+      instagram: () => {
+        if (!instagramOn()) return null;
+        const f = instagramFreshness(opts.dataDir);
+        return f.fresh ? { fresh: true, state: f.state } : { fresh: false, state: f.state, ...instagramText(f, { connectOn: connectOn() }) };
+      },
       ...(opts.readinessDeps ?? {}),
     });
     return readinessRunner;
@@ -453,8 +460,24 @@ export function createStudioServer(opts) {
   // The outputs the sign-in service knows, read on every call: the live plan's targets, plus (flag stream-settings on and a
   // saved Settings > Stream setup) every output of that setup, so an output added there can be connected before the next
   // start. A setup output replaces a plan row with the same id. Platform ids come from the setup, not from the id's text.
+  // IG1 (D351, Codex review): the flag is read at start. opts.instagramLive (cli --instagram-live, from the launcher)
+  // says the launched plan has the instagram sink: readiness and key tracking follow that, not the flag's current value.
+  const instagramOn = () => opts.instagramLive === true && typeof opts.dataDir === 'string';
+  const instagramFlag = () => !!flags && flags.isOn(INSTAGRAM_FLAG);
+  // The flag list, with the Instagram flag marked when its value differs from the running plan (applies at next start).
+  const flagList = () => (flags ? flags.list().map((f) => (f.id === INSTAGRAM_FLAG && !!f.on !== instagramOn()
+    ? { ...f, effective: instagramOn(), note: 'applies at next start (this start runs ' + (instagramOn() ? 'with' : 'without') + ' Instagram)' } : f)) : []);
+  // Reads outputs.status and brings the Instagram key state up to date (a start on its way is not judged as ended).
+  async function instagramReconcile() {
+    if (!instagramOn()) return;
+    igWatcher ??= createInstagramWatcher({ dataDir: opts.dataDir, now });
+    igWatcher.observe(await host.call('outputs.status', {}), { startInFlight: startsInFlight > 0 || now() - lastStartAt < RECENT_START_MS });
+  }
   function connectOutputs() {
-    const rows = planTargets(opts.livePlanFile);
+    // IG1 (D351): with instagram-live on (or in the running plan), the Instagram output is listed even before a --live
+    // start (the URL and key are pasted before each broadcast); a plan row with that id is replaced by it.
+    const ig = instagramOn() || instagramFlag() ? (() => { try { return instagramRow(); } catch { return null; } })() : null;
+    const rows = planTargets(opts.livePlanFile).filter((r) => !ig || r.id !== ig.id).concat(ig ? [ig] : []);
     if (flags && flags.isOn(STREAM_SETTINGS_FLAG) && typeof opts.dataDir === 'string') {
       try {
         const { exists, setup } = readSetup(opts.dataDir);
@@ -910,7 +933,10 @@ export function createStudioServer(opts) {
     // The owner is taken before the status is read, so an older status never judges a newer recording (Codex review).
     const owner = recordLive.owner();
     if (owner) { try { await recordLive.observe(await host.call('outputs.status', {}), owner); } catch { /* next poll */ } }
+    // IG1 (D351): the Instagram key counts as used once the broadcast it started has ended (ids, states, start counts).
+    try { await instagramReconcile(); } catch { /* next poll */ }
   }
+  let igWatcher = null;
 
   // Host call with a retry on CONFLICT (-32009) for project.load.
   // Undo history (D238): the layer's value before an edit, read from the host just before the call. A failed read
@@ -1135,7 +1161,8 @@ export function createStudioServer(opts) {
   }
 
   function applyFlag(id, on) {
-    const out = flags.set(id, on);
+    flags.set(id, on);
+    const out = flagList();
     // Preview mouse editing switches at once (off is instant safety); previewSync re-checks on every poll anyway.
     if (id === PREVIEW_EDIT_FLAG && host.describe().kind === 'host') host.call('preview.setEditing', { enabled: on && !live }).catch(() => {});
     broadcast('flags', { flags: out });
@@ -1153,7 +1180,7 @@ export function createStudioServer(opts) {
     if (req.method === 'GET' && route === '/ui/api/events') return sse(req, res);
     if (req.method === 'GET' && route === '/ui/api/tasks') return json(res, 200, { tasks: tasks.list() });
     if (req.method === 'GET' && route === '/ui/api/updates') return json(res, 200, { updates: updatesState() });
-    if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flags ? flags.list() : [] });
+    if (req.method === 'GET' && route === '/ui/api/flags') return json(res, 200, { flags: flagList() });
     if (req.method === 'GET' && route === '/ui/api/guide') return json(res, 200, guideData()); // guide (D294 proposed)
     if (req.method === 'GET' && route === '/ui/api/data') { // LU2: each live-reloaded data file (base names only)
       try { rulesSrc.get(); } catch { /* the status says why */ }
@@ -1320,6 +1347,7 @@ export function createStudioServer(opts) {
         // Go-live readiness (flag readiness): run first. A failed item does not start the stream: the answer lists the
         // problems with a pending id for one "Go live anyway" click (logged as an override). Warnings never block.
         if (body.method === 'stream.start' && readinessOn()) {
+          try { await instagramReconcile(); } catch { /* readiness reads the last known key state */ }
           try { ready = await readiness().run({ maxAgeMs: readiness().config?.goLiveMaxAgeMs ?? 0 }); } catch { ready = null; }
           if (!ready) return json(res, 503, { error: 'readiness-failed', detail: 'The readiness check could not run; switch the readiness flag off to go live without it.' });
           summary = `${spec.summary}.\n\n${readinessSummary(ready)}`;
@@ -1377,7 +1405,7 @@ export function createStudioServer(opts) {
       if (bad) return json(res, 400, { error: bad });
       if (!flags.ids().includes(body.id)) return json(res, 404, { error: 'unknown-flag' });
       if (!body.on) return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, false) }); // OFF is instant safety
-      if (flags.isOn(body.id)) return json(res, 200, { verdict: 'allow', flags: flags.list() });
+      if (flags.isOn(body.id)) return json(res, 200, { verdict: 'allow', flags: flagList() });
       return json(res, 200, { verdict: 'allow', flags: applyFlag(body.id, true) }); // ON: the click is the decision (D332)
     }
     if (route.startsWith('/ui/api/connect/')) return connectRoute(res, route, body);
@@ -1539,6 +1567,10 @@ export function createStudioServer(opts) {
         // re-review of LC2). Handed off again after the answer (below) in case a start read the status meanwhile.
         if (p.method === 'record.start' || p.method === 'record.stop') recordLive.handOff();
         const ht = p.method === 'project.load' ? tasks.start({ title: 'Loading your scenes into the studio', kind: 'project' }) : null;
+        // IG1 (D351, Codex review): a start that includes the instagram sink consumes its key: marked before it is sent.
+        if (p.method === 'stream.start' && instagramOn() && (!Array.isArray(callParams?.sinks) || callParams.sinks.includes(instagramAddon().sink.id))) {
+          try { instagramStarted(opts.dataDir, { now }); } catch (e) { log('[studio-ui] WARNING: the Instagram key state could not be written (' + String(e?.code ?? 'error').slice(0, 40) + ')'); }
+        }
         let out;
         try { out = await callHost(p.method, callParams); } catch (e) { ht?.fail('Did not finish'); throw e; }
         ht?.done();
@@ -1620,7 +1652,7 @@ export function createStudioServer(opts) {
     // the whole state it listens to (status, flags, edits), so a change made during the gap is never missed.
     res.write('retry: 500\n: open\n\n');
     if (lastSnapshot) res.write(`event: status\ndata: ${JSON.stringify(lastSnapshot)}\n\n`);
-    if (flags) res.write(`event: flags\ndata: ${JSON.stringify({ flags: flags.list() })}\n\n`);
+    if (flags) res.write(`event: flags\ndata: ${JSON.stringify({ flags: flagList() })}\n\n`);
     res.write(`event: edits\ndata: ${JSON.stringify(history.state())}\n\n`);
     const hb = setInterval(() => res.write(': hb\n\n'), limits.sseHeartbeatMs);
     hb.unref();

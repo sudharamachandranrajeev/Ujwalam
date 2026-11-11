@@ -110,6 +110,7 @@ import { acceptHost, createStartGate, createUpdates, hostArgsFor, hostEntryProbl
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
 import { readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
+import { INSTAGRAM_FLAG, loadAddon as instagramAddon, writeInstagramPlan } from '../outputs/instagram.mjs';
 import { botUrl, integrationsInEffect } from './integrations.mjs';
 import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG } from './settings-routes.mjs';
 import { GUARD_ABORT_EXIT, LIVE_TEST_BUDGET, loadBudget, MAX_TEST_MINUTES, parseMinutes, parseSinkMinutes, runGuard } from './live-guard.mjs';
@@ -125,7 +126,14 @@ export const ALPHA_LIVE_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-live.js
 /** The --live plan file (D327 OS1/OS2). With the `stream-settings` flag on and a saved Settings > Stream setup, the plan
  *  generated from it (<dataDir>/outputs/stream-setup-plan.json, recording "alpha.mkv" on the main H rung like
  *  alpha-live.json); otherwise alpha-live.json. A setup with problems throws (the start stops; the user fixes Settings). */
-export function livePlanFile({ dataDir, streamSettingsOn }) {
+export function livePlanFile({ dataDir, streamSettingsOn, instagramOn = false }) {
+  const base = baseLivePlanFile({ dataDir, streamSettingsOn });
+  // IG1 (D351, flag instagram-live): the plan in effect plus the instagram sink on the V canvas, written to
+  // <dataDir>/outputs/live-plan-instagram.json (target names only). A plan that cannot take it stops the start.
+  if (!instagramOn) return base;
+  try { return writeInstagramPlan(dataDir, base).file; } catch (e) { throw new Error(`Instagram Live (flag ${INSTAGRAM_FLAG}) cannot be added to the live plan: ${e.message}`); }
+}
+function baseLivePlanFile({ dataDir, streamSettingsOn }) {
   if (!streamSettingsOn) return ALPHA_LIVE_PLAN;
   const { exists, setup } = readSetup(dataDir);
   if (!exists) return ALPHA_LIVE_PLAN;
@@ -1025,6 +1033,7 @@ export async function main(argv = process.argv.slice(2)) {
   let hostChild = null;
   let hostDiscoveryFile = null;
   let livePlan = null; // the --live plan file, for the UI server's readiness check (D327)
+  let instagramLive = false; // IG1 (D351): the configured --live plan has the instagram sink (flag latched at start)
   let alphaClient = null;
   let stopping = false;
   let recordClips = null;
@@ -1185,7 +1194,7 @@ export async function main(argv = process.argv.slice(2)) {
     const hostArgs = spec.argv;
     let planPath;
     try {
-      planPath = args.live === true ? livePlanFile({ dataDir, streamSettingsOn: createFlags({ dataDir }).isOn(STREAM_SETTINGS_FLAG) })
+      planPath = args.live === true ? livePlanFile({ dataDir, streamSettingsOn: createFlags({ dataDir }).isOn(STREAM_SETTINGS_FLAG), instagramOn: createFlags({ dataDir }).isOn(INSTAGRAM_FLAG) })
         : typeof args.outputs === 'string' ? path.resolve(args.outputs) : alpha ? ALPHA_RECORD_PLAN : null;
     } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
     livePlan = args.live === true ? planPath : null;
@@ -1206,6 +1215,7 @@ export async function main(argv = process.argv.slice(2)) {
         planned = planFile(planPath, { allowLive: args.live === true, ...(lt.select ? { select: lt.select } : {}), ...(schemes ? { schemes } : {}) });
       } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
       const { params, report } = planned;
+      instagramLive = args.live === true && params.sinks.some((s) => s.id === instagramAddon().sink.id);
       if (planned.dropped?.length) console.log(`[studio] outputs: ${planned.dropped.join(', ')} left out (optional recording; its stream is not in this start, so it would add an encoder)`);
       if (planned.unresolved?.length) console.log(`[studio] outputs: ${planned.unresolved.join(', ')} transport "auto" not chosen (stand-in host: no server address read)`);
       else if (args.live === true) for (const s of params.sinks) if (s.target?.urlRef) console.log(`[studio] sink ${s.id}: transport ${s.target.transport} (the scheme of the server address in ${s.target.urlRef})`);
@@ -1473,6 +1483,7 @@ export async function main(argv = process.argv.slice(2)) {
   uiArgs.push('--profile', typeof args.profile === 'string' ? path.resolve(args.profile) : path.join(REPO, 'data', 'profile.local.json'), '--release', path.join(REPO, 'release.json'));
   if (typeof args['ui-port'] === 'string') uiArgs.push('--port', args['ui-port']);
   if (livePlan) uiArgs.push('--live-plan', livePlan);
+  if (instagramLive) uiArgs.push('--instagram-live');
   if (args['fake-host'] === true) uiArgs.push('--fake-host');
   // P5b autosave: layer edits accepted by the host are written into the alpha project file (project-sync.mjs).
   else if (alpha) uiArgs.push('--project', alphaFile(dataDir));

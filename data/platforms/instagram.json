@@ -1,0 +1,150 @@
+{
+  "id": "instagram",
+  "name": "Instagram Live",
+  "maxWidth": {
+    "value": 1280,
+    "severity": "warning",
+    "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+    "checked": "2026-11-11",
+    "note": "Recommended 720x1280 (9:16), written here in landscape terms like the other platforms (the validator compares long side with long side). Warning, not error: it is a recommendation. 480p and 360p are supported but not advised. Vendors say 1080x1920 works; Instagram does not say so (UNVERIFIED), so Ujwalam stays at 720x1280."
+  },
+  "maxHeight": {
+    "value": 720,
+    "severity": "warning",
+    "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+    "checked": "2026-11-11",
+    "note": "Short side of the recommended 720x1280. See maxWidth."
+  },
+  "portrait": {
+    "value": true,
+    "severity": "warning",
+    "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+    "checked": "2026-11-11",
+    "note": "9:16 is recommended, not required. A landscape stream is cropped and zoomed to vertical for viewers, so the instagram sink is fed from the V canvas."
+  },
+  "maxFps": {
+    "value": 30,
+    "severity": "warning",
+    "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+    "checked": "2026-11-11",
+    "note": "Page: 30 fps recommended; 60 fps is also supported but the preview still shows 30, so Ujwalam treats 30 as the maximum (warning)."
+  },
+  "videoCodecs": {
+    "value": [
+      "h264"
+    ],
+    "severity": "warning",
+    "unverified": true,
+    "note": "The Live Producer page (re-read 2026-11-11) names no codec. H.264 is what RTMP ingest takes in practice; HEVC or AV1 are not assumed."
+  },
+  "videoBitrateKbps": {
+    "min": {
+      "value": 2250,
+      "severity": "warning",
+      "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+      "checked": "2026-11-11",
+      "note": "Page (published 2022-11-02, re-read 2026-11-11): video bitrate 2,250-6,000 Kbps. Warning like every recommendation here (the page does not say a stream outside it is refused). The instagram rung stays inside it, and a V rung outside it is never reused for Instagram (services/outputs/instagram.mjs treats any warning other than UNVERIFIED_LIMIT / NOT_RECOMMENDED as a misfit)."
+    },
+    "max": {
+      "value": 6000,
+      "severity": "warning",
+      "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+      "checked": "2026-11-11",
+      "note": "Page: video bitrate 2,250-6,000 Kbps. Warning, see min. The existing V rung (7,500 kbps) is therefore not reused for Instagram."
+    }
+  },
+  "keyframeIntervalSec": {
+    "max": {
+      "value": 2,
+      "severity": "warning",
+      "unverified": true,
+      "note": "Not stated on the Live Producer page (re-read 2026-11-11). 2 s is the value every other platform here takes and the one Ujwalam's rungs use."
+    },
+    "recommended": {
+      "value": 2,
+      "severity": "warning",
+      "unverified": true,
+      "note": "Same as max: not stated by Instagram."
+    }
+  },
+  "protocols": {
+    "value": [
+      "rtmp",
+      "rtmps"
+    ],
+    "severity": "warning",
+    "unverified": true,
+    "note": "Live Producer shows a stream URL with the key; the page (re-read 2026-11-11) says only \"Custom RTMP\" and does not name RTMPS. Both are listed so the instagram target can use transport \"auto\": the scheme follows the pasted URL."
+  },
+  "multitrackVideo": {
+    "value": false,
+    "severity": "warning",
+    "unverified": true,
+    "note": "No multitrack (Enhanced RTMP) support is documented for Instagram Live."
+  },
+  "audioCodecs": {
+    "value": [
+      "aac"
+    ],
+    "severity": "warning",
+    "unverified": true,
+    "note": "The page gives the audio sample rate and bitrate, not the codec. AAC is assumed (RTMP ingest)."
+  },
+  "audioBitrateKbps": {
+    "max": {
+      "value": 256,
+      "severity": "warning",
+      "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+      "checked": "2026-11-11",
+      "note": "Audio 44.1 kHz stereo, up to 256 kbps."
+    }
+  },
+  "audioSampleRateHz": {
+    "recommended": {
+      "value": 44100,
+      "severity": "warning",
+      "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+      "checked": "2026-11-11",
+      "note": "44.1 kHz recommended. Ujwalam encodes audio once (48 kHz AAC) for every sink, so the validator warns (NOT_RECOMMENDED) and the instagram sink still gets the shared 48 kHz track. Whether Instagram resamples 48 kHz without trouble is UNVERIFIED until the first real test."
+    }
+  },
+  "audioTracksMax": {
+    "value": 1,
+    "severity": "warning",
+    "unverified": true,
+    "note": "One stereo track is all the page describes."
+  },
+  "rateControl": {
+    "value": [
+      "cbr"
+    ],
+    "severity": "warning",
+    "unverified": true,
+    "note": "Not stated by Instagram. CBR is what Ujwalam's stream rungs use."
+  },
+  "maxDurationSec": {
+    "value": 14400,
+    "severity": "warning",
+    "unverified": true,
+    "source": "TechCrunch 2020-10-27 (Instagram Live raised from 1 h to 4 h)",
+    "checked": "2026-11-11",
+    "note": "4 hours, from a 2020 news report; Instagram's own Live Producer page does not state it. Not enforced by Ujwalam."
+  },
+  "replyMaxChars": {
+    "value": null,
+    "severity": "warning",
+    "unverified": true,
+    "note": "Ujwalam does not post chat replies on Instagram (no live-comment API is used). Not checked."
+  },
+  "ingest": {
+    "value": {
+      "serverFrom": "keychain",
+      "perBroadcast": true,
+      "servers": []
+    },
+    "severity": "warning",
+    "source": "https://about.instagram.com/blog/tips-and-tricks/instagram-live-producer/",
+    "checked": "2026-11-11",
+    "note": "Page: \"The stream key is not static, and will refresh each time you use Live Producer\"; Instagram Live is added as a Custom RTMP endpoint with the URL and key (instagram.com only, limited access per the page). The Streamlabs support page says the same (R1). So the URL and the key are pasted before every broadcast (Ujwalam/stream/instagram-server and Ujwalam/stream/instagram in Credential Manager), and a key that was used for a broadcast that ended counts as used (perBroadcast). No official API starts an Instagram live; the Graph API live_media edge is read-only."
+  }
+}

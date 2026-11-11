@@ -1573,3 +1573,46 @@ split it into after. add the settings to customise clip length for different typ
 ## D354 — The default shortcut is the LIVE start (user, 2026-11-11)
 
 The user could not stream from "Ujwalam (alpha)", which was the practice start (D281), and asked: "make the live shortcut the default". The installer now makes "Ujwalam (alpha)" with `--live --allow-devices` (stream targets set up; going live still needs a Start stream click and the readiness check) and "Ujwalam (alpha, practice)" with `--allow-devices` only. It removes the old "Ujwalam (alpha, LIVE)" shortcut. The studio's disabled-button tooltip names the new shortcut. The installed shortcuts were switched by hand on 2026-11-11, so this applies before the next build. Tests: package-alpha 18/18 (shortcut arguments read back through the shell).
+## D351 — Instagram Live output: a V-canvas sink with a URL and key pasted per broadcast (2026-11-11, IG1)
+
+Plan row IG1 (`docs/plan/` growth and Instagram plan, 2026-11-11). Flag `instagram-live`, off by default. Decided:
+- **Limits as data.** `data/platforms/instagram.json`, from Instagram's own Live Producer page (published 2022-11-02,
+  re-read 2026-11-11): 720x1280 9:16 recommended, 30 fps, video 2,250-6,000 Kbps, audio 44.1 kHz stereo up to 256 Kbps,
+  key refreshed on each use. All recommendations, so warnings. Codec (H.264), AAC, keyframe interval (2 s), RTMP vs
+  RTMPS, one audio track, CBR and the 4 h limit are not on the page: UNVERIFIED warnings. The schema gains optional
+  `maxDurationSec`; `about.instagram.com` and `help.instagram.com` count as official sources.
+- **Sink from V, never its own encoder.** The add-on (`data/outputs/addons/instagram-live.json`, outside the presets
+  folder) adds sink `instagram` (priority 7, lowest). `services/outputs/instagram.mjs` reuses a V rung only if the
+  validator reports nothing but UNVERIFIED_LIMIT / NOT_RECOMMENDED for it; the preset V rung (1080x1920, 7,500 kbps)
+  does not fit, so one rung `ig-v` 720x1280@30 4,000 kbps CBR, 2 s GOP is added, GPU-scaled from V (fps lowered to a
+  divisor of the canvas fps if needed; encoder and options copied from the plan's V rung). NVENC sessions stay probed
+  by the host at configure. Audio is the plan's one shared track (48 kHz AAC 160 kbps, encoded once): the 44.1 kHz
+  recommendation gives a NOT_RECOMMENDED warning, not a second encode.
+- **Plan file.** With the flag on, the launcher writes `<data>/outputs/live-plan-instagram.json` (the plan in effect
+  plus the sink and its target) and starts from it. Target: transport `auto`, `serverRef Ujwalam/stream/instagram-server`,
+  `keyRef Ujwalam/stream/instagram`; the scheme follows the pasted URL.
+- **Flag is start-only.** The flag is read at start and latched with the launched plan: switching it applies from the
+  next start, never mid-stream. Switching Instagram on while live would add an encoder to the running graph, which the
+  live-path rule does not allow; so this flag is an exception to "switchable from the control page while live". The
+  user is being asked to confirm this exception (UNCONFIRMED until they answer). The launcher passes `--instagram-live`
+  to the UI server when the configured plan has the instagram sink; readiness and key tracking follow that, not the
+  flag's current value. The flag list marks a flag that differs from the running plan as "applies at next start"
+  (Codex review).
+- **Key per broadcast.** Pasted in Settings > Connections or the new Instagram box on the control page (needs
+  `platform-connect`); both URL and key are required together; only Credential Manager holds them; only the last 4
+  characters are shown. `<data>/outputs/instagram-key.json` keeps times only (`savedAt`, `startedAt`, `usedAt`), never
+  a key, URL, hash or other derivative. Any start attempt counts as consuming the key: the UI server writes
+  `startedAt` before it sends a Start that includes the instagram sink, and the status reconciliation (each poll,
+  right before the readiness check, and at studio start) also sets it when the sink runs or its host start count
+  (`attempts`) has grown, so a broadcast shorter than a poll or a start by another path is seen. Started and then seen
+  not running (stop, failure, or the next studio start after a crash) sets `usedAt`; a start on its way is not judged.
+  Pasting the key already stored keeps the state (a used key stays used): the stored key is read from Credential
+  Manager and compared in memory in constant time (HMAC with a one-time random key, `timingSafeEqual`) before it is
+  overwritten (Codex review). A key with `usedAt >= savedAt`, or never pasted through Ujwalam, fails readiness with
+  the plain fix text (open Live Producer, copy the new URL and key, paste both). A `?` in the Instagram key is allowed
+  (other platforms still warn).
+- **Loopback first.** `app/host/tests/host-instagram-loopback.test.mjs` streams the instagram sink to a local ffmpeg
+  RTMP listener and checks it with ffprobe against the platform file. No real Instagram test until the user says
+  "start stream test".
+- Left out: the Qt Settings > Connections page is unchanged (its generic rows show Instagram; a used key shows as not
+  connected with the reason). No Instagram API is used (none starts a live).

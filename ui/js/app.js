@@ -540,6 +540,12 @@
     renderTransitionCard((list || []).some(function (f) { return f.id === 'transitions' && f.on; }));
     var reportOn = (list || []).some(function (f) { return f.id === 'report-button' && f.on; });
     $('report').hidden = !reportOn;
+    // IG1, D351: the card shows while the flag is on or the running plan has Instagram (the flag applies at next start).
+    var ig = (list || []).filter(function (f) { return f.id === 'instagram-live'; })[0];
+    var igOn = !!ig && (ig.on || ig.effective === true);
+    $('instagram').hidden = !igOn;
+    if (igOn) loadInstagram(); else setText($('ig-state'), '');
+    setText($('ig-note'), ig && ig.note ? 'Instagram Live flag: ' + ig.note + '.' : '');
     var readyOn = (list || []).some(function (f) { return f.id === 'readiness' && f.on; }); // D299
     $('readiness').hidden = !readyOn;
     if (!readyOn) { clear($('ready-list')); setText($('ready-summary'), ''); }
@@ -553,12 +559,46 @@
           if (r.flags) renderFlags(r.flags);
         }));
       });
-      ul.appendChild(el('li', { class: 'row flag-row', title: f.description }, [el('span', { class: 'name', text: f.id }), el('label', null, [cb])]));
+      var name = [el('span', { class: 'name', text: f.id })];
+      if (f.note) name.push(el('span', { class: 'muted', text: ' (' + f.note + ')' })); // e.g. instagram-live: applies at next start
+      ul.appendChild(el('li', { class: 'row flag-row', title: f.description }, name.concat([el('label', null, [cb])])));
     });
     if (!list || !list.length) setText($('flag-note'), 'No feature flags defined.');
     else setText($('flag-note'), 'A flag switches on or off when you tick it.');
   }
   function loadFlags() { return Api.flags().then(function (r) { renderFlags(r.flags); }); }
+
+  // ---- Instagram Live card (IG1, D351, flag `instagram-live`): a new URL and key for every broadcast ----
+  // The key field is a password field, emptied on the click; the server never sends a key back (last 4 characters only).
+  function instagramText(o) {
+    var head = o.state === 'connected' ? 'Ready' : o.state === 'used' ? 'Key used' : 'Not ready';
+    var key = o.key && o.key.present && o.key.last4 ? ' (key ....' + o.key.last4 + ')' : '';
+    return head + key + (o.detail ? ': ' + o.detail : '');
+  }
+  function loadInstagram() {
+    return Api.connect().then(function (r) {
+      var o = (r.outputs || []).filter(function (x) { return x.id === 'instagram'; })[0];
+      setText($('ig-state'), o ? instagramText(o) : 'Instagram is not in the outputs list yet.');
+    }).catch(function (e) {
+      setText($('ig-state'), e.message === 'platform-connect-off' ? 'Switch on the feature flag platform-connect to paste the Instagram URL and key.' : 'Instagram state: ' + (e.message || 'error'));
+    });
+  }
+  function saveInstagram() {
+    var server = $('ig-server').value.trim(); var keyEl = $('ig-key'); var key = keyEl.value.trim();
+    keyEl.value = '';
+    if (!server || !key) { setText($('ig-note'), 'Paste both the stream URL and the stream key from Live Producer.'); return; }
+    setText($('ig-note'), 'Saving...');
+    // The click is the decision (D332): a held change is confirmed at once, as in Settings > Connections.
+    guard(Api.connectPaste('instagram', key, server).then(function (r) {
+      key = null;
+      if (r && r.verdict === 'confirm' && r.pending) return Api.confirm(r.pending.pendingId);
+      return r;
+    }).then(function (r) {
+      $('ig-server').value = '';
+      setText($('ig-note'), r && (r.verdict === 'allow' || r.ok) ? 'Saved for this broadcast.' : 'Result: ' + (r && r.verdict ? r.verdict : 'unknown'));
+      return loadInstagram();
+    }).catch(function (e) { setText($('ig-note'), 'Not saved: ' + (e.message || 'error')); }));
+  }
 
   // ---- Bots card (BM2, flag `bot-manager`): Streamer.bot and Speaker.bot; Start and Stop act on the click (D332) ----
   function yesNo(v) { return v ? 'yes' : 'no'; }
@@ -819,6 +859,7 @@
     $('tr-canvas').addEventListener('change', showTransition);
     $('tr-type').addEventListener('change', trFields);
     $('btn-tr-save').addEventListener('click', saveTransition);
+    $('btn-ig-save').addEventListener('click', saveInstagram);
     document.addEventListener('keydown', nudgeKey);
     document.addEventListener('keydown', function (e) {
       var t = e.target && e.target.tagName;
@@ -832,6 +873,7 @@
   function start() {
     wire();
     setInterval(function () { if (!$('bots').hidden) loadBots(); }, 15000); // each check lists processes: slow on purpose
+    setInterval(function () { if (!$('instagram').hidden) loadInstagram(); }, 15000); // reads Credential Manager: slow on purpose
     setInterval(pollMeters, 250); // the live-marker audio producer samples mixer.list at the same rate
     Api.session()
       .then(function () { return Promise.all([loadScenes(), loadMixer(), loadFlags(), Api.status().then(applyStatus), Api.edits().then(renderEdits)]); })

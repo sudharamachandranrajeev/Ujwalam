@@ -38,6 +38,8 @@
     setFlag: function (id, on) { return request('POST', '/ui/api/flags/set', { id: id, on: on }); },
     feedback: function () { return request('GET', '/ui/api/feedback'); },
     saveNote: function (id, text, tag, severity) { return request('POST', '/ui/api/feedback/note', { id: id, text: text, tag: tag, severity: severity }); },
+    connect: function () { return request('GET', '/ui/api/connect'); },
+    connectPaste: function (output, key, server) { return request('POST', '/ui/api/connect/paste', { output: output, key: key, server: server }); }, // one click (D332)
     bots: function () { return request('GET', '/ui/api/bots'); },
     botStart: function (bot) { return request('POST', '/ui/api/bots/start', { bot: bot }); },
     botStop: function (bot) { return request('POST', '/ui/api/bots/stop', { bot: bot }); },
