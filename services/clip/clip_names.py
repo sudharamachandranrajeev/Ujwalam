@@ -8,7 +8,8 @@ Clips folder (Settings > Clips folder):
     game             game id of the detector pass (e.g. codm); "game" when unknown
     kind             short | montage | won-reel | impact-play (D326: the streamer's impact play, MVP animation to results page)
     YYYYMMDD-HHMMSS  local wall time of the clip's first moment (short: its start; montage, won-reel, impact-play: its earliest piece)
-    label            short: the best medal, e.g. triple-kill; montage: kills-12; won-reel: victory-kills-7 / defeat-kills-11 (match-kills-N if no result); impact-play: victory / defeat (match if no result)
+    label            (CL1, D350: a reel split by the length setting ends in -part-N-of-M, e.g. kills-12-part-2-of-3)
+                     short: the best medal, e.g. triple-kill; montage: kills-12; won-reel: victory-kills-7 / defeat-kills-11 (match-kills-N if no result); impact-play: victory / defeat (match if no result)
     nn               01, 02, ... per kind within one recording
     canvas           v = cut of the V canvas recording (the vertical stream design); v-<layout> = a vertical layout
                      made from the H recording (full-crop, game-facecam, blurred-fill); h = horizontal
@@ -59,7 +60,16 @@ def best_label(labels, det_weights=None):
     return max(labels, key=lambda lb: (weight(lb), -labels.index(lb)))
 
 
-def label_for(kind, labels=None, kills=None, det_weights=None):
+def label_for(kind, labels=None, kills=None, det_weights=None, part=None, parts=None):
+    """The label part of the name. part/parts (CL1, D350): a reel split by the length setting ends in
+    -part-N-of-M (the reel 'kills-12 part 2 of 3')."""
+    base = _label_for(kind, labels, kills, det_weights)
+    if part and parts and int(parts) > 1:
+        return f"{base}-part-{int(part)}-of-{int(parts)}"
+    return base
+
+
+def _label_for(kind, labels=None, kills=None, det_weights=None):
     if kind == "montage":
         return f"kills-{int(kills or 0)}"
     if kind == "won-reel":  # match reel (D315: wins and qualifying defeats); the result is in the clip's labels
@@ -81,7 +91,7 @@ def day_folder(when):
 def clip_name(game, kind, when, label, nn, canvas):
     if kind not in KINDS:
         raise ValueError(f"unknown clip kind {kind}")
-    return f"{slug(game or 'game', 16)}_{kind}_{stamp(when)}_{slug(label)}_{int(nn):02d}_{canvas}.mp4"
+    return f"{slug(game or 'game', 16)}_{kind}_{stamp(when)}_{slug(label, 40)}_{int(nn):02d}_{canvas}.mp4"
 
 
 def free_name(exists, make, nn):

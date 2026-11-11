@@ -80,6 +80,7 @@ import clip_captions as caps  # noqa: E402
 import clip_publish as pub  # noqa: E402
 import clip_rank as rank  # noqa: E402
 import clip_render as rnd  # noqa: E402
+import reel_length as rl  # noqa: E402
 import clip_signals as sig  # noqa: E402
 import clip_validate as val  # noqa: E402
 import game_pack  # noqa: E402
@@ -112,6 +113,8 @@ def cmd_candidates(a):
     progress_line("candidates", 0, 1, "reading markers, chat, audio and detector hits")
     ffmpeg, ffprobe = _tools(a)
     cfg = load_config("ranking", a.ranking)
+    sl = rl.effective_limits(resolve_data_dir(a.data_dir))["short"]  # CL1 (D350): the user's short-clip length
+    cfg = dict(cfg, clip=dict(cfg["clip"], minSec=sl["minSec"], maxSec=sl["maxSec"]))
     if not os.path.isfile(a.recording):
         raise ClipError("recording not found")
     info = media_info(ffprobe, a.recording)
@@ -734,6 +737,8 @@ def cmd_montage(a):
     ranking = load_config("ranking", a.ranking)
     cfg = load_config("montage", a.montage_config)
     frame = load_config("layouts", a.layouts_file)["output"]
+    lim = rl.effective_limits(resolve_data_dir(a.data_dir))  # CL1 (D350): the user's length per reel type
+    cfg = dict(cfg, minSec=lim["montage"]["minSec"], maxSec=lim["montage"]["maxSec"])
     plans = mont.plan_montages(hits, ranking, cfg, min(info["duration"], vinfo["duration"]))
     encoder = rnd.pick_encoder(a.encoder)
     out = os.path.join(a.out, "montage")
@@ -750,9 +755,15 @@ def cmd_montage(a):
         verdict = "REEL" if d["qualifies"] and not d.get("noReel") else "no reel"
         extra = f"; {d['noReel']}" if d.get("noReel") else ""
         print(f"montage: match {m['index']} {m['start']:.0f}-{m['end']:.0f} s: {verdict} ({d['reason']}{extra})")
-    reel_doc["reels"] = [{"id": f"W{i:02d}", "match": r["match"], "rules": r["rules"], "kills": int(r["score"]),
-                          "pieces": r["pieces"], "pieceRounds": r.get("pieceRounds")}
-                         for i, r in enumerate(reels, 1)]
+    montage_jobs = rl.cap_reels(plans, lim["montage"], "M")
+    reel_jobs = rl.cap_reels(reels, lim["match-reel"], "W")
+    for _, r in reel_jobs:
+        r["score"] = float(r["kills"])  # a match reel's score is its kill count
+    reel_doc["reelLength"] = {"matchReel": lim["match-reel"], "montage": lim["montage"], "impactPlay": lim["impact-play"]}
+    reel_doc["reels"] = [{"id": cid, "match": r["match"], "rules": r["rules"], "kills": int(r["score"]),
+                          "pieces": r["pieces"], "pieceRounds": r.get("pieceRounds"), "part": r.get("part"),
+                          "parts": r.get("parts"), "trimmed": r.get("trimmed")}
+                         for cid, r in reel_jobs]
     # D326: impact-play reels (match-reels.json impactPlay), only while their flag is on (off by default)
     ip_spec = ((_gate_pack(a) or {}).get("matchReels") or {}).get("impactPlay")
     ip_on = bool(ip_spec) and flag_on(resolve_data_dir(a.data_dir), ip_spec.get("flag") or "impact-play-reels")
@@ -761,16 +772,18 @@ def cmd_montage(a):
     except (OSError, ClipError, KeyError, TypeError, ValueError):
         fps = 1.0
     impacts = (mont.impact_play_reels(hits, matches, ip_spec, min(info["duration"], vinfo["duration"]),
-                                      sample_sec=1.0 / fps if fps > 0 else 1.0) if ip_on else [])
+                                      sample_sec=1.0 / fps if fps > 0 else 1.0,
+                                      min_sec=lim["impact-play"]["minSec"]) if ip_on else [])
+    impact_jobs = rl.cap_reels(impacts, lim["impact-play"], "I")
     reel_doc["impactPlay"] = {"flag": (ip_spec or {}).get("flag"), "on": ip_on,
-                              "reels": [{"id": f"I{i:02d}", "match": r["match"], "pieces": r["pieces"]}
-                                        for i, r in enumerate(impacts, 1)]}
+                              "reels": [{"id": cid, "match": r["match"], "pieces": r["pieces"], "part": r.get("part"),
+                                         "parts": r.get("parts"), "trimmed": r.get("trimmed")}
+                                        for cid, r in impact_jobs]}
     write_json_atomic(os.path.join(out, MATCH_REELS), reel_doc)
     print(f"montage: {len(reels)} won-match reel(s) (rules: {MATCH_REELS})")
     if ip_on:
         print(f"montage: {len(impacts)} impact-play reel(s)")
-    jobs = ([(f"M{i:02d}", m) for i, m in enumerate(plans, 1)] + [(f"W{i:02d}", m) for i, m in enumerate(reels, 1)]
-            + [(f"I{i:02d}", m) for i, m in enumerate(impacts, 1)])
+    jobs = montage_jobs + reel_jobs + impact_jobs
     rows, failed = [], 0
     for cid, m in jobs:
         wd = os.path.join(out, "clips", cid)
@@ -784,6 +797,11 @@ def cmd_montage(a):
             files.append({"layout": "montage-v", "file": "montage-v.mp4", "geometry": "canvas",
                           "sourceAudioTracks": vinfo["audio_tracks"]})
             kills = m.get("kills", sum(p["kills"] for p in m["pieces"]))
+            if m.get("part"):
+                print(f"montage {cid}: part {m['part']} of {m['parts']}")
+            for t in m.get("trimmed") or []:
+                print(f"montage {cid}: one piece of {t['from'][1] - t['from'][0]:.1f} s trimmed to "
+                      f"{t['to'][1] - t['to'][0]:.1f} s around its peak (length setting)")
             print(f"montage {cid}: {m['seconds']:.1f} s, {len(m['pieces'])} piece(s), {kills} kill(s) "
                   f"({m.get('streakKills', '-')} in {m.get('streaks', '-')} streak(s), {m.get('singleKills', '-')} single), "
                   f"score {m['score']:g}")
@@ -792,14 +810,15 @@ def cmd_montage(a):
             failed += 1
             eprint(f"montage {cid}: FAILED")
         rows.append({"id": cid, "start": 0.0, "end": m["seconds"], "score": m["score"], "labels": m["labels"],
-                     "pieces": m["pieces"], "kills": m.get("kills"), "streakKills": m.get("streakKills"),
+                     "pieces": m["pieces"], "part": m.get("part"), "parts": m.get("parts"),
+                     "trimmed": m.get("trimmed"), "belowMin": m.get("belowMin"), "kills": m.get("kills"), "streakKills": m.get("streakKills"),
                      "singleKills": m.get("singleKills"), "captions": {"backend": "none", "status": "off"},
                      "files": files, "errors": errors})
     write_json_atomic(os.path.join(out, RENDER), {
         "tool": "clipper.montage", "toolVersion": TOOL_VERSION, "createdAt": _now(),
         "recording": os.path.basename(a.recording), "vRecording": os.path.basename(vrec), "encoder": encoder,
         "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
-        "game": _game(a), "failed": failed, "clips": rows,
+        "game": _game(a), "failed": failed, "reelLength": lim, "clips": rows,
         "matchReels": {"file": MATCH_REELS, "matches": len(matches),
                        "qualified": sum(1 for m in matches if m["reel"]["qualifies"]), "reels": len(reels),
                        "impactPlayReels": len(impacts)},
@@ -814,10 +833,11 @@ def cmd_montage(a):
         "recordStartUtc": sig.recording_start(a.recording, a.record_start).isoformat().replace("+00:00", "Z"),
         "candidates": [{"id": r["id"], "rank": i, "kind": {"W": "won-match", "I": "impact-play"}.get(r["id"][:1], "montage"),
                         "start": 0.0, "end": r["end"], "anchor": min(pre, r["end"]), "score": r["score"],
-                        "labels": r["labels"], "pieces": r["pieces"]}
+                        "labels": r["labels"], "pieces": r["pieces"],
+                         "part": r.get("part"), "parts": r.get("parts")}
                        for i, r in enumerate((r for r in rows if r["files"]), 1)],
     })
-    print(f"montage: {len(plans)} montage(s), {len(reels)} won-match reel(s), {failed} failed")
+    print(f"montage: {len(montage_jobs)} montage video(s), {len(reel_jobs)} won-match reel video(s), {failed} failed")
     sub = argparse.Namespace(**{**vars(a), "out": out})
     rc = cmd_validate(sub)
     if getattr(a, "publish", None):

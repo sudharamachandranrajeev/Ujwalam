@@ -1,0 +1,51 @@
+{
+  "$comment": "CL1 reel length (D350): the longest and shortest a reel of each type may be. A reel (montage, match reel, impact-play reel) that would be longer is split at piece boundaries into parts 'part N of M', each at most the maximum; a single piece longer than the maximum is trimmed to the maximum around its peak and the trim is recorded. The user changes these in Settings > Clips (stored in settings.json clips.reelLengths); this file holds the defaults and the upper bound. Read by services/clip/reel_length.py and services/studio-ui/user-settings.mjs.",
+  "version": "1.0.0",
+  "status": "user-approved",
+  "approved": "user 2026-11-11: 'all montages and concatenated clips length cannot exceed 1 minute for now, if it gets more than 1 minute split it into after. add the settings to customise clip length for different type of reels in-app.'",
+  "checked": "2026-11-11",
+  "limitMaxSec": 60,
+  "limitNote": "Upper bound of every maximum for now (user 2026-11-11). It may be raised later for long videos: change this one number.",
+  "types": [
+    {
+      "id": "montage",
+      "label": "Kill montage",
+      "hint": "Own kills joined, best streaks first",
+      "minSec": 20,
+      "maxSec": 60,
+      "minSource": "data/clip/montage.json minSec (user 2026-11-07, 20-60 s)"
+    },
+    {
+      "id": "match-reel",
+      "label": "Match reel",
+      "hint": "A whole match: every own kill and the result screen",
+      "minSec": 0,
+      "maxSec": 60,
+      "minSource": "none before CL1 (D237, D315 had no cap and no minimum)"
+    },
+    {
+      "id": "impact-play",
+      "label": "Impact-play reel",
+      "hint": "MVP animation to the results page",
+      "minSec": 10,
+      "maxSec": 60,
+      "minSource": "data/games/codm/match-reels.json impactPlay.minSec"
+    },
+    {
+      "id": "short",
+      "label": "Short clip",
+      "hint": "One moment cut from a recording",
+      "minSec": 10,
+      "maxSec": 60,
+      "minSource": "data/clip/ranking.json clip.minSec"
+    },
+    {
+      "id": "live-clip",
+      "label": "Live clip",
+      "hint": "A moment saved while streaming",
+      "minSec": 20,
+      "maxSec": 60,
+      "minSource": "data/clip/live-clips.json minClipSec (D236)"
+    }
+  ]
+}

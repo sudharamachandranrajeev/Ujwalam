@@ -42,6 +42,7 @@ import detector_pass as dp  # noqa: E402
 import g1_scan  # noqa: E402
 import game_pack  # noqa: E402
 import learning_capture as lcap  # noqa: E402
+import reel_length as rl  # noqa: E402
 from live_chain import LiveChain  # noqa: E402
 
 FLAG = "live-clips"
@@ -121,7 +122,10 @@ class Worker:
         self.st, self.pack, self.names = st, pack, names
         self.ranking = cc.load_config("ranking", a.ranking)
         self.live = cc.load_config("live-clips", a.live_config)
-        self.chain = LiveChain(self.ranking, self.live)
+        lim = rl.effective_limits(a.data_dir)["live-clip"]  # CL1 (D350): the user's live clip length (Settings > Clips)
+        buffer = float(self.live["replaySec"]) - float(self.live["forceMarginSec"])
+        self.live = dict(self.live, minClipSec=min(lim["minSec"], buffer))  # never more than the replay buffer holds
+        self.chain = LiveChain(self.ranking, self.live, max_clip=lim["maxSec"])
         self.scanner = None
         self.layout = None
         self.gpu = use_gpu()
