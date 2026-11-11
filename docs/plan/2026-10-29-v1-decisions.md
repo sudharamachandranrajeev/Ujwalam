@@ -1525,3 +1525,16 @@ part of it). A top-level file that was kept is replaced only by an install while
 uses the fake host (a recording as the "live" output), not a real loopback stream: the real host's encoders are not
 touched by any service swap (LU3, LU4 evidence), and the host part is only staged. Evidence:
 `docs/evidence/2026-11-11-lu6-live-install.md`.
+Codex review fixes (same day, 2 P2):
+- **Path forms.** A command line may name the install with forward slashes (`C:/.../Ujwalam/<ver>/...`) or repeated
+  separators; such a launcher was missed, and `-Force` could then rename its active folder. Paths and command lines are
+  normalised (`/` read as ``, repeated separators as one) before the case-insensitive match, in both the running check
+  and the in-use check.
+- **Kept only when certain; current.txt last.** Every copy failure counted as "in use", so disk full, access denied or
+  a missing launcher ended with exit 0 after current.txt had changed. Now a top-level file is kept only when a running
+  program is or names it, or Windows reports a sharing or lock violation (32, 33; also when reading it for the hash).
+  Any other failure, and a build without `Ujwalam.cmd` or `ujwalam-start.exe`, stops with exit 10. The top-level files
+  are written before current.txt and previous.txt, so a failed install leaves them on the version that worked. A
+  replacement is copied to `<file>.<pid>.new` in the same folder and swapped in with one File.Replace (a new file: one
+  move); the temp file is removed on failure.
+  Limit: an 8.3 short path on a command line (`C:UsersABCDEF~1...`) is not matched.

@@ -93,8 +93,14 @@ function Write-Pointer([string]$f, [string]$v) {
 # Processes whose program or command line lies under $dir (the install guard by path: never by process name, which
 # would also catch test or development copies elsewhere). System.Management, not Get-CimInstance: the CIM module can
 # fail to load in Windows PowerShell 5.1 started from pwsh 7 (inherited PSModulePath).
+# Paths are compared after Norm-Path: '/' read as '\', repeated separators as one (a command line may name the install
+# as C:/Users/.../Ujwalam/... or with escaped backslashes); always case-insensitive (Codex review of D349).
+function Norm-Path([string]$s) {
+  if (-not $s) { return '' }
+  return [regex]::Replace($s.Replace('/', '\'), '(?<=.)\\{2,}', '\')
+}
 function Get-RunningUnder([string]$dir) {
-  $d = [System.IO.Path]::GetFullPath($dir).TrimEnd('\') + '\'
+  $d = Norm-Path ([System.IO.Path]::GetFullPath($dir).TrimEnd('\') + '\')
   $found = @()
   try {
     Add-Type -AssemblyName System.Management
@@ -102,7 +108,7 @@ function Get-RunningUnder([string]$dir) {
     foreach ($p in $q.Get()) {
       $id = [int]$p['ProcessId']
       if ($id -eq $PID) { continue }
-      $exe = [string]$p['ExecutablePath']; $cmd = [string]$p['CommandLine']
+      $exe = Norm-Path ([string]$p['ExecutablePath']); $cmd = Norm-Path ([string]$p['CommandLine'])
       if ($exe.StartsWith($d, [StringComparison]::OrdinalIgnoreCase) -or $cmd.IndexOf($d, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
         $found += [pscustomobject]@{ Id = $id; Name = [string]$p['Name']; Exe = $exe; Cmd = $cmd }
       }
@@ -114,6 +120,7 @@ function Get-RunningUnder([string]$dir) {
 # A top-level file is in use when a running program is that file or names it on its command line; a folder (ending in
 # '\') when a running program lies under it or names a path under it.
 function Test-InUse($procs, [string]$file) {
+  $file = Norm-Path $file
   foreach ($p in $procs) {
     if ($p.Exe -and ($p.Exe -ieq $file)) { return $true }
     if ($file.EndsWith('\') -and $p.Exe -and $p.Exe.StartsWith($file, [StringComparison]::OrdinalIgnoreCase)) { return $true }
@@ -294,7 +301,7 @@ $target = Join-Path $InstallRoot $version
 $pkgFull = [System.IO.Path]::GetFullPath($pkg).TrimEnd('\')
 if ($pkgFull -ieq $target.TrimEnd('\')) { Fail 'run this from the unzipped build, not from the installed folder' 2 }
 # LU6 (D349): is Ujwalam running from this install? Then nothing it uses is replaced (live install).
-$running = @(Get-RunningUnder $InstallRoot | Where-Object { -not ($_.Cmd -and $_.Cmd.IndexOf($pkgFull + '\', [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.Cmd -match 'Install-Ujwalam\.ps1') })
+$running = @(Get-RunningUnder $InstallRoot | Where-Object { -not ($_.Cmd -and $_.Cmd.IndexOf((Norm-Path ($pkgFull + '\')), [StringComparison]::OrdinalIgnoreCase) -ge 0 -and $_.Cmd -match 'Install-Ujwalam\.ps1') })
 $live = $running.Count -gt 0
 if ($live) { Say "Ujwalam is running from $InstallRoot ($($running.Count) program(s)): live install. Nothing the running copy uses is replaced; $version goes next to it." }
 if (Test-Path -LiteralPath $target) {
@@ -310,26 +317,45 @@ $bad = @(Test-Sums $staging)
 if ($bad.Count) { Fail "the copy in $staging failed verification ($($bad[0])); it was left there for inspection" 7 }
 Move-Item -LiteralPath $staging -Destination $target
 
+# Top-level launcher files, BEFORE current.txt changes (Codex review of D349): a failure stops the install with
+# current.txt still naming the version that worked. Live install: a file the running copy uses (ujwalam-start.exe it
+# runs from, Ujwalam.cmd a console runs; cmd.exe reads a running batch file again after each call) is never replaced.
+# It is kept only when that is certain: a running program is or names it, or Windows refuses it with a sharing
+# violation. Any other failure (disk full, access denied, a missing file) stops with an error. A replacement goes
+# through a temp file in the same folder and one rename, so a half-written launcher never takes the old one's place.
+$keptTop = @()
+function Copy-Top([string]$name, [bool]$required) {
+  $src = Join-Path $pkg $name
+  $dst = Join-Path $InstallRoot $name
+  if (-not (Test-Path -LiteralPath $src -PathType Leaf)) {
+    if ($required) { Fail "$name is missing from the unzipped build; current.txt was not changed" 10 }
+    return
+  }
+  $tmp = "$dst.$PID.new"
+  try {
+    # Inside the try: reading a file another program holds open is a sharing violation too.
+    if ((Test-Path -LiteralPath $dst -PathType Leaf) -and ((Get-Sha256 $src) -eq (Get-Sha256 $dst))) { return }
+    if ($live -and (Test-Path -LiteralPath $dst) -and (Test-InUse $running $dst)) { $script:keptTop += $name; return }
+    [System.IO.File]::Copy($src, $tmp, $true)
+    if (Test-Path -LiteralPath $dst -PathType Leaf) { [System.IO.File]::Replace($tmp, $dst, $null) } else { [System.IO.File]::Move($tmp, $dst) }
+  } catch {
+    try { if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force } } catch { }
+    $e = $_.Exception
+    while ($e.InnerException -and -not ($e -is [System.IO.IOException])) { $e = $e.InnerException }
+    $code = $e.HResult -band 0xFFFF
+    # ERROR_SHARING_VIOLATION (32) or ERROR_LOCK_VIOLATION (33): another program has it open; certain to be in use.
+    if ($live -and ($e -is [System.IO.IOException]) -and ($code -eq 32 -or $code -eq 33)) { $script:keptTop += $name; return }
+    Fail "could not replace $dst ($($e.Message.Trim())); current.txt was not changed, the new version folder $version stays for a retry" 10
+  }
+}
+Copy-Top 'Ujwalam.cmd' $true
+# The shortcuts' target: a windowless exe that runs the version in current.txt (no console window, D191; 2026-11-08).
+Copy-Top 'ujwalam-start.exe' $true
+# The shortcuts' icon (app/studio/res/ujwalam.ico), kept in the install root so it survives version switches.
+Copy-Top 'ujwalam.ico' $false
 $cur = Read-Pointer $currentFile
 if ($cur -and $cur -ne $version) { Write-Pointer $previousFile $cur }
 Write-Pointer $currentFile $version
-# Top-level launcher files. Live install: a file the running copy uses (ujwalam-start.exe it runs from, Ujwalam.cmd a
-# console runs; cmd.exe reads a running batch file again after each call) is never replaced; an unchanged one is left.
-$keptTop = @()
-function Copy-Top([string]$name) {
-  $src = Join-Path $pkg $name
-  $dst = Join-Path $InstallRoot $name
-  if (-not (Test-Path -LiteralPath $src -PathType Leaf)) { return }
-  if ((Test-Path -LiteralPath $dst -PathType Leaf) -and ((Get-Sha256 $src) -eq (Get-Sha256 $dst))) { return }
-  if ($live -and (Test-Path -LiteralPath $dst) -and (Test-InUse $running $dst)) { $script:keptTop += $name; return }
-  try { Copy-Item -LiteralPath $src -Destination $dst -Force }
-  catch { if ($live) { $script:keptTop += $name } else { throw } }
-}
-Copy-Top 'Ujwalam.cmd'
-# The shortcuts' target: a windowless exe that runs the version in current.txt (no console window, D191; 2026-11-08).
-Copy-Top 'ujwalam-start.exe'
-# The shortcuts' icon (app/studio/res/ujwalam.ico), kept in the install root so it survives version switches.
-Copy-Top 'ujwalam.ico'
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'data') | Out-Null
 Say "installed: current $version$(if ($cur -and $cur -ne $version) { ", previous $cur (Install-Ujwalam.ps1 -Rollback switches back)" })"
 foreach ($k in $keptTop) { Say "kept $k in $InstallRoot`: the running Ujwalam uses it (it still starts the version in current.txt); run this installer again after Ujwalam has closed to replace it" }

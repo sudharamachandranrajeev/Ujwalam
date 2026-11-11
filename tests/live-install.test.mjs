@@ -183,10 +183,10 @@ function fakePackage(root, version, { start = 'stand-in\n' } = {}) {
   mkdirSync(path.join(pkg, 'tools', 'package'), { recursive: true });
   copyFileSync(path.join(REPO, 'tools', 'package', 'Install-Ujwalam.ps1'), path.join(pkg, 'Install-Ujwalam.ps1'));
   copyFileSync(path.join(REPO, 'tools', 'package', 'Ujwalam.cmd'), path.join(pkg, 'Ujwalam.cmd'));
-  writeFileSync(path.join(pkg, 'ujwalam-start.exe'), start);
+  if (start !== null) writeFileSync(path.join(pkg, 'ujwalam-start.exe'), start); // null: a broken build without it
   writeFileSync(path.join(pkg, 'release.json'), JSON.stringify({ version, nodeMin: '22.13.0' }));
   writeFileSync(path.join(pkg, 'tools', 'package', 'run-installed.mjs'), `// ${version}\nconsole.log('fake ${version}');\n`);
-  const rels = ['Install-Ujwalam.ps1', 'Ujwalam.cmd', 'ujwalam-start.exe', 'release.json', 'tools/package/run-installed.mjs'];
+  const rels = ['Install-Ujwalam.ps1', 'Ujwalam.cmd', ...(start !== null ? ['ujwalam-start.exe'] : []), 'release.json', 'tools/package/run-installed.mjs'];
   writeFileSync(path.join(pkg, 'SHA256SUMS.txt'), rels.map((r) => `${sha(readFileSync(path.join(pkg, r)))}  ${r}\n`).join(''));
   return pkg;
 }
@@ -197,7 +197,7 @@ function install(pkg, root, ...extra) {
 }
 /** A stand-in "running Ujwalam": a Node process that idles and names paths under the install on its command line. */
 function runningUnder(t, ...paths) {
-  const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', ...paths], { stdio: 'ignore', windowsHide: true });
+  const c = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)', '--', ...paths], { stdio: 'ignore', windowsHide: true });
   t.after(() => killChildTree(c));
   return c;
 }
@@ -249,4 +249,83 @@ test('Install-Ujwalam.ps1: a program under another folder with a similar name do
   if (r.code === 6) { t.skip('prerequisites missing'); return; }
   assert.equal(r.code, 0, r.out);
   assert.doesNotMatch(r.out, /live install/);
+});
+
+// ---- Codex review of D349 ----
+
+test('Codex review: a launcher named with forward slashes and other letter case still counts as running; its folder is never renamed by -Force', { skip: process.platform !== 'win32' && 'Windows only', timeout: 120_000 }, async (t) => {
+  const root = tmp('slash');
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
+  const ir = path.join(root, 'Ujwalam');
+  let r = install(fakePackage(root, '0.1.0-alpha.1'), root);
+  if (r.code === 6) { t.skip(`prerequisites missing on this machine: ${r.out}`); return; }
+  assert.equal(r.code, 0, r.out);
+  const v1 = path.join(ir, '0.1.0-alpha.1');
+  // C:/USERS/.../UJWALAM/0.1.0-ALPHA.1/services/studio-ui/launch.mjs: no backslash, other case.
+  runningUnder(t, path.join(v1, 'services', 'studio-ui', 'launch.mjs').split(path.sep).join('/').toUpperCase());
+  await sleep(300);
+  const before = treeHash(v1);
+  r = install(fakePackage(root, '0.1.0-alpha.1'), root, '-Force');
+  assert.equal(r.code, 4, r.out);
+  assert.match(r.out, /live install/);
+  assert.match(r.out, /is the version that is running now/);
+  assert.equal(treeHash(v1), before);
+  assert.deepEqual(readdirSync(ir).filter((n) => n.includes('replaced')), [], 'no rename of the running folder');
+});
+
+test('Codex review: a top-level file another program holds open (sharing violation, not named on any command line) is kept; the install goes on', { skip: process.platform !== 'win32' && 'Windows only', timeout: 120_000 }, async (t) => {
+  const root = tmp('share');
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
+  const ir = path.join(root, 'Ujwalam');
+  let r = install(fakePackage(root, '0.1.0-alpha.1', { start: 'start v1\n' }), root);
+  if (r.code === 6) { t.skip(`prerequisites missing on this machine: ${r.out}`); return; }
+  assert.equal(r.code, 0, r.out);
+  runningUnder(t, '--data-dir', path.join(ir, 'data', 'core'));
+  // The holder gets the path from the environment, so only Windows' sharing check can tell that the file is in use.
+  const holder = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
+    "$f = [System.IO.File]::Open($env:UJW_HOLD, 'Open', 'Read', 'None'); [Console]::Out.WriteLine('held'); [Console]::Out.Flush(); Start-Sleep -Seconds 60; $f.Dispose()"],
+  { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: { ...process.env, UJW_HOLD: path.join(ir, 'ujwalam-start.exe') } });
+  t.after(() => killChildTree(holder));
+  let held = '';
+  holder.stdout.on('data', (d) => { held += d; });
+  for (let i = 0; i < 200 && !held.includes('held'); i++) await sleep(50);
+  assert.ok(held.includes('held'));
+  r = install(fakePackage(root, '0.1.0-alpha.2', { start: 'start v2\n' }), root);
+  assert.equal(r.code, 0, r.out);
+  assert.match(r.out, /live install/);
+  assert.match(r.out, /kept ujwalam-start\.exe/);
+  killChildTree(holder);
+  await sleep(300);
+  assert.equal(readFileSync(path.join(ir, 'ujwalam-start.exe'), 'utf8'), 'start v1\n');
+  assert.equal(readFileSync(path.join(ir, 'current.txt'), 'utf8').trim(), '0.1.0-alpha.2');
+  assert.deepEqual(readdirSync(ir).filter((n) => n.endsWith('.new')), [], 'no temp file left');
+});
+
+test('Codex review: any other failure to replace a top-level file, or a build without its start exe, stops with an error and leaves current.txt on the version that worked', { skip: process.platform !== 'win32' && 'Windows only', timeout: 120_000 }, async (t) => {
+  const root = tmp('fail');
+  t.after(() => rmSync(root, { recursive: true, force: true, maxRetries: 5 }));
+  const ir = path.join(root, 'Ujwalam');
+  let r = install(fakePackage(root, '0.1.0-alpha.1', { start: 'start v1\n' }), root);
+  if (r.code === 6) { t.skip(`prerequisites missing on this machine: ${r.out}`); return; }
+  assert.equal(r.code, 0, r.out);
+  runningUnder(t, '--data-dir', path.join(ir, 'data', 'core')); // live: such a failure used to be taken for "in use"
+  await sleep(300);
+  // Not a sharing violation: a folder where the start exe should be.
+  rmSync(path.join(ir, 'ujwalam-start.exe'));
+  mkdirSync(path.join(ir, 'ujwalam-start.exe'));
+  r = install(fakePackage(root, '0.1.0-alpha.2', { start: 'start v2\n' }), root);
+  assert.equal(r.code, 10, r.out);
+  assert.match(r.out, /live install/);
+  assert.match(r.out, /could not replace .*ujwalam-start\.exe.*current\.txt was not changed/);
+  assert.doesNotMatch(r.out, /kept ujwalam-start\.exe/);
+  assert.equal(readFileSync(path.join(ir, 'current.txt'), 'utf8').trim(), '0.1.0-alpha.1');
+  assert.ok(!existsSync(path.join(ir, 'previous.txt')));
+  assert.deepEqual(readdirSync(ir).filter((n) => n.endsWith('.new')), [], 'no temp file left');
+  rmSync(path.join(ir, 'ujwalam-start.exe'), { recursive: true });
+  writeFileSync(path.join(ir, 'ujwalam-start.exe'), 'start v1\n');
+  // A build without its start exe.
+  r = install(fakePackage(root, '0.1.0-alpha.3', { start: null }), root);
+  assert.equal(r.code, 10, r.out);
+  assert.match(r.out, /ujwalam-start\.exe is missing from the unzipped build; current\.txt was not changed/);
+  assert.equal(readFileSync(path.join(ir, 'current.txt'), 'utf8').trim(), '0.1.0-alpha.1');
 });

@@ -42,11 +42,23 @@ stand-in host, release.json with `n`, `hostExeSha256` and LU1 part hashes, SHA25
   answered first (202 started) and then swapped. Before, it always ended `kept-old` after 10 s (the hand-over waits for
   the click's own request).
 
+## Codex review fixes (2 P2)
+
+- **Forward slashes and other letter case** in a command line now count (`Norm-Path` in both `Get-RunningUnder` and
+  `Test-InUse`). Test: a stand-in naming `C:/.../UJWALAM/0.1.0-ALPHA.1/services/studio-ui/launch.mjs`; reinstalling
+  alpha.1 with -Force is refused (exit 4), the folder is byte- and time-identical and not renamed.
+- **Kept only when certain, current.txt last.** Test: a file held open by a program that does not name it (sharing
+  violation) is kept and the install goes on; a folder in place of `ujwalam-start.exe` while live stops with exit 10
+  and current.txt stays on alpha.1 (no previous.txt, no temp file left); a build without `ujwalam-start.exe` stops
+  with exit 10 and current.txt unchanged.
+- Test helper fix: the stand-in running program now passes its arguments after `--` (Node took `--data-dir` as its
+  own option and exited at once).
+
 ## Commands and results (2026-11-11, one file at a time, UJWALAM_HEADLESS=1)
 
 | Command | Result |
 |---|---|
-| `node --test tests/live-install.test.mjs` | 9 pass, 0 fail |
+| `node --test tests/live-install.test.mjs` | 12 pass, 0 fail (after the Codex fixes) |
 | `node --test tests/live-install-launcher.test.mjs` | 1 pass, 0 fail (about 12 s) |
 | `node --test tests/live-updates.test.mjs` | 27 pass, 0 fail |
 | `node --test tests/live-updates-launcher.test.mjs` | 6 pass, 0 fail |
