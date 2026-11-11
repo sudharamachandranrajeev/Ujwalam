@@ -10,6 +10,8 @@
 #include <QEvent>
 #include <QGraphicsEffect>
 #include <QImage>
+#include <QLinearGradient>
+#include <QPen>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -70,6 +72,8 @@ public:
 		qreal m = 0;
 		if (spec_.shadow.enabled)
 			m = std::max<qreal>(m, spec_.shadow.blur + std::max(std::abs(spec_.shadow.offsetX), std::abs(spec_.shadow.offsetY)));
+		if (spec_.highlight.enabled)
+			m = std::max<qreal>(m, spec_.highlight.blur + std::max(std::abs(spec_.highlight.offsetX), std::abs(spec_.highlight.offsetY)));
 		if (spec_.glow.enabled)
 			m = std::max<qreal>(m, spec_.glow.blur);
 		if (spec_.extrusion.enabled)
@@ -99,6 +103,9 @@ protected:
 			face.addRoundedRect(r.translated(0, std::round(dy)), rad, rad);
 			p->setClipPath(all.subtracted(face));
 		}
+		if (spec_.highlight.enabled) // v2 (D336): the light side of a neumorphic plate, under the dark shadow
+			soft(p, r.translated(spec_.highlight.offsetX, spec_.highlight.offsetY), rad, spec_.highlight.blur,
+			     theme::resolve(spec_.highlight.color, active), spec_.highlight.opacity * (1.0 - 0.6 * press_));
 		if (spec_.shadow.enabled) {
 			const qreal grow = std::max<qreal>(0, -dy) * 0.6;
 			soft(p, r.translated(spec_.shadow.offsetX, spec_.shadow.offsetY + grow + std::max<qreal>(0, exd - 1) * 0.5), rad, spec_.shadow.blur,
@@ -120,6 +127,62 @@ protected:
 		}
 		p->restore();
 		p->drawPixmap(QPointF(off) + QPointF(0, std::round(dy)), pm);
+		front(p, r.translated(0, std::round(dy)), rad, active);
+	}
+
+	// v2 (D336): what lies on the face, over the widget's own picture: the inner shadow (sunken well, or only while
+	// pressed) and the gradient rim with its inner glow edge.
+	void front(QPainter *p, const QRectF &face, int rad, bool active)
+	{
+		const theme::Inset &in = spec_.inset;
+		const qreal inAmount = in.enabled ? (in.pressedOnly ? press_ : 1.0) : 0.0;
+		if (inAmount < 0.002 && !spec_.rim.enabled)
+			return;
+		p->save();
+		p->setRenderHint(QPainter::Antialiasing, true);
+		QPainterPath facePath;
+		facePath.addRoundedRect(face, rad, rad);
+		if (inAmount >= 0.002 && in.blur > 0) {
+			p->setClipPath(facePath);
+			// k rings, each the face minus a smaller face moved by the offset: dense at the edge, fading inward
+			const int k = std::clamp(in.blur / 2, 3, 8);
+			const qreal q = 1.0 - std::pow(1.0 - std::clamp(in.opacity * inAmount, 0.0, 0.95), 1.0 / k);
+			QColor c = theme::resolve(in.color, active);
+			c.setAlphaF(q);
+			p->setPen(Qt::NoPen);
+			p->setBrush(c);
+			for (int i = 0; i < k; i++) {
+				const qreal shrink = in.blur * qreal(i + 1) / k;
+				QPainterPath inner;
+				const QRectF ir = face.translated(in.offsetX, in.offsetY).adjusted(shrink * 0.5, shrink * 0.5, -shrink * 0.5, -shrink * 0.5);
+				const qreal ri = std::max<qreal>(0, rad - shrink * 0.5);
+				inner.addRoundedRect(ir, ri, ri);
+				p->drawPath(facePath.subtracted(inner));
+			}
+			p->setClipping(false);
+		}
+		const theme::Rim &rim = spec_.rim;
+		if (rim.enabled) {
+			const qreal w = rim.width;
+			const QRectF rr = face.adjusted(w / 2, w / 2, -w / 2, -w / 2);
+			QLinearGradient g(rr.topLeft(), rr.bottomLeft());
+			g.setColorAt(0, theme::resolve(rim.from, active));
+			g.setColorAt(1, theme::resolve(rim.to, active));
+			p->setBrush(Qt::NoBrush);
+			p->setPen(QPen(QBrush(g), w));
+			const qreal rr1 = std::max<qreal>(0, rad - w / 2);
+			p->drawRoundedRect(rr, rr1, rr1);
+			if (rim.glow) {
+				const qreal gw = rim.glowWidth;
+				QColor gc = theme::resolve(rim.glowColor, active);
+				gc.setAlphaF(std::clamp(rim.glowOpacity * (0.75 + 0.25 * std::max(hover_, glow_)), 0.0, 1.0));
+				const QRectF gr = face.adjusted(w + gw / 2, w + gw / 2, -w - gw / 2, -w - gw / 2);
+				const qreal rg = std::max<qreal>(0, rad - w - gw / 2);
+				p->setPen(QPen(gc, gw));
+				p->drawRoundedRect(gr, rg, rg);
+			}
+		}
+		p->restore();
 	}
 
 	bool eventFilter(QObject *o, QEvent *e) override

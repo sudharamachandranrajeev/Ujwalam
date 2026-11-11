@@ -21,7 +21,10 @@
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <QLayout>
+#include <QMargins>
 #include <QPalette>
+#include <QRect>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStyleFactory>
@@ -60,11 +63,17 @@ struct Data {
 	qreal lift = 1, sink = 1;
 	Background bg;
 	qreal stroke = 2.0;
+	// Schema v2 (D336): read only while the flag theme-components is on; never inherited from the default pack.
+	QHash<QString, QString> comp; // "button.shape" -> "pill"; booleans as "true" / "false"
+	bool buttonCaps = false, tabCaps = false, headingCaps = false;
+	QHash<QString, qreal> scale; // h1 h2 subtitle body caption button (pt)
 	bool valid = false;
 };
 
 Data g_cur;
 QString g_effects = QStringLiteral("full");
+bool g_components = false; // the flag theme-components (D336)
+qreal g_appliedDensity = 1.0;
 Notifier *g_notifier = nullptr;
 
 QStringList searchDirs()
@@ -161,17 +170,46 @@ Grad grad(const QJsonValue &v, const Grad &fallback)
 	return g;
 }
 
+Shadow shadowPart(const QJsonObject &s, const QString &color)
+{
+	return {true,
+		inum(s.value(QStringLiteral("blur")), 12, 0, 40),
+		inum(s.value(QStringLiteral("offsetX")), 0, -12, 12),
+		inum(s.value(QStringLiteral("offsetY")), 3, -12, 12),
+		str(s.value(QStringLiteral("color")), color),
+		num(s.value(QStringLiteral("opacity")), 0.3, 0, 1)};
+}
+
 DepthSpec depthSpec(const QJsonValue &v, const DepthSpec &fallback)
 {
 	if (!v.isObject())
 		return fallback;
 	const QJsonObject o = v.toObject();
 	DepthSpec d;
-	if (o.value(QStringLiteral("shadow")).isObject()) {
-		const QJsonObject s = o.value(QStringLiteral("shadow")).toObject();
-		d.shadow = {true, inum(s.value(QStringLiteral("blur")), 12, 0, 40), inum(s.value(QStringLiteral("offsetX")), 0, -12, 12),
-			    inum(s.value(QStringLiteral("offsetY")), 3, -12, 12), str(s.value(QStringLiteral("color")), QStringLiteral("#000000")),
-			    num(s.value(QStringLiteral("opacity")), 0.3, 0, 1)};
+	if (o.value(QStringLiteral("shadow")).isObject())
+		d.shadow = shadowPart(o.value(QStringLiteral("shadow")).toObject(), QStringLiteral("#000000"));
+	if (g_components) { // schema v2 (D336): only with the flag theme-components
+		if (o.value(QStringLiteral("highlight")).isObject())
+			d.highlight = shadowPart(o.value(QStringLiteral("highlight")).toObject(), QStringLiteral("#ffffff"));
+		if (o.value(QStringLiteral("inset")).isObject()) {
+			const QJsonObject s = o.value(QStringLiteral("inset")).toObject();
+			const Shadow sh = shadowPart(s, QStringLiteral("#000000"));
+			d.inset = {true, sh.blur, sh.offsetX, sh.offsetY, sh.color, sh.opacity, s.value(QStringLiteral("when")).toString() == QStringLiteral("pressed")};
+		}
+		if (o.value(QStringLiteral("rim")).isObject()) {
+			const QJsonObject s = o.value(QStringLiteral("rim")).toObject();
+			d.rim.enabled = true;
+			d.rim.from = str(s.value(QStringLiteral("from")), QStringLiteral("border"));
+			d.rim.to = str(s.value(QStringLiteral("to")), d.rim.from);
+			d.rim.width = inum(s.value(QStringLiteral("width")), 1, 1, 4);
+			if (s.value(QStringLiteral("innerGlow")).isObject()) {
+				const QJsonObject g = s.value(QStringLiteral("innerGlow")).toObject();
+				d.rim.glow = true;
+				d.rim.glowColor = str(g.value(QStringLiteral("color")), QStringLiteral("accent"));
+				d.rim.glowOpacity = num(g.value(QStringLiteral("opacity")), 0.4, 0, 0.8);
+				d.rim.glowWidth = inum(g.value(QStringLiteral("width")), 1, 1, 3);
+			}
+		}
 	}
 	if (o.value(QStringLiteral("glow")).isObject()) {
 		const QJsonObject s = o.value(QStringLiteral("glow")).toObject();
@@ -191,6 +229,73 @@ const QStringList kColorKeys = {QStringLiteral("bg"),     QStringLiteral("panel"
 				QStringLiteral("danger"), QStringLiteral("ok"),       QStringLiteral("onAccent"), QStringLiteral("disabled")};
 const QStringList kDepthClasses = {QStringLiteral("card"),         QStringLiteral("button"), QStringLiteral("primaryButton"), QStringLiteral("roundControl"),
 				   QStringLiteral("toast"),        QStringLiteral("menu"),   QStringLiteral("taskPanel")};
+
+// ---- Components block (schema v2, D336) ----
+const QStringList kBool = {QStringLiteral("true"), QStringLiteral("false")};
+
+// Empty when the pack's components block is usable (or absent); else why not. Unknown keys and variants are refused,
+// so a typo never silently falls back to the base look.
+QString componentsProblem(const QJsonObject &pack)
+{
+	if (!pack.contains(QStringLiteral("components")))
+		return {};
+	const QJsonValue cv = pack.value(QStringLiteral("components"));
+	if (!cv.isObject())
+		return QStringLiteral("components must be an object");
+	const QJsonObject c = cv.toObject();
+	auto variants = [](const QString &key) -> const QStringList * {
+		for (const auto &kv : componentVariants())
+			if (kv.first == key)
+				return &kv.second;
+		return nullptr;
+	};
+	auto check = [&](const QString &key, const QJsonValue &v) -> QString {
+		const QStringList *allowed = variants(key);
+		if (!allowed)
+			return QStringLiteral("components.%1 is not a known component").arg(key);
+		if (*allowed == kBool)
+			return v.isBool() ? QString() : QStringLiteral("components.%1 must be true or false").arg(key);
+		if (!v.isString() || !allowed->contains(v.toString()))
+			return QStringLiteral("components.%1 must be one of %2").arg(key, allowed->join(QStringLiteral(", ")));
+		return {};
+	};
+	for (auto it = c.begin(); it != c.end(); ++it) {
+		const QString k = it.key();
+		if (k == QStringLiteral("button") || k == QStringLiteral("slider")) {
+			if (!it.value().isObject())
+				return QStringLiteral("components.%1 must be an object").arg(k);
+			const QJsonObject sub = it.value().toObject();
+			for (auto s = sub.begin(); s != sub.end(); ++s)
+				if (const QString why = check(k + QLatin1Char('.') + s.key(), s.value()); !why.isEmpty())
+					return why;
+			continue;
+		}
+		if (const QString why = check(k, it.value()); !why.isEmpty())
+			return why;
+	}
+	return {};
+}
+
+QHash<QString, QString> readComponents(const QJsonObject &pack)
+{
+	QHash<QString, QString> out;
+	const QJsonObject c = pack.value(QStringLiteral("components")).toObject();
+	auto put = [&](const QString &key, const QJsonValue &v) {
+		if (v.isBool())
+			out.insert(key, v.toBool() ? QStringLiteral("true") : QStringLiteral("false"));
+		else if (v.isString())
+			out.insert(key, v.toString());
+	};
+	for (auto it = c.begin(); it != c.end(); ++it) {
+		if (it.value().isObject()) {
+			const QJsonObject sub = it.value().toObject();
+			for (auto s = sub.begin(); s != sub.end(); ++s)
+				put(it.key() + QLatin1Char('.') + s.key(), s.value());
+		} else
+			put(it.key(), it.value());
+	}
+	return out;
+}
 
 // Merge a pack over a base (the default pack); with no base the values only have to parse.
 Data parse(const QJsonObject &o, const Data *base)
@@ -255,6 +360,36 @@ Data parse(const QJsonObject &o, const Data *base)
 	d.bg.patternOpacity = num(b.value(QStringLiteral("patternOpacity")), d.bg.patternOpacity, 0, 0.15);
 	d.bg.patternSpacing = inum(b.value(QStringLiteral("patternSpacing")), d.bg.patternSpacing, 3, 80);
 	d.stroke = num(o.value(QStringLiteral("icons")).toObject().value(QStringLiteral("stroke")), d.stroke, 1.2, 3);
+	// Schema v2 (D336): the pack's own parts only (never the default pack's), and only with the flag on. Flag off: the
+	// v2 patterns draw as the nearest v1 look (blueprint as grid, columns as none).
+	d.comp.clear();
+	d.scale.clear();
+	d.buttonCaps = d.tabCaps = d.headingCaps = false;
+	d.bg.frame = d.bg.frameTicks = false;
+	d.bg.frameOpacity = 0;
+	if (g_components) {
+		d.comp = readComponents(o);
+		d.buttonCaps = boolean(t.value(QStringLiteral("buttonCaps")), false);
+		d.tabCaps = boolean(t.value(QStringLiteral("tabCaps")), false);
+		d.headingCaps = boolean(t.value(QStringLiteral("headingCaps")), false);
+		const QJsonObject sc = t.value(QStringLiteral("scale")).toObject();
+		for (auto it = sc.begin(); it != sc.end(); ++it)
+			if (it.value().isDouble())
+				d.scale.insert(it.key(), std::clamp(it.value().toDouble(), 6.0, 28.0));
+		if (d.scale.contains(QStringLiteral("body")))
+			d.base = std::clamp(d.scale.value(QStringLiteral("body")), 8.0, 14.0);
+		if (d.scale.contains(QStringLiteral("caption")))
+			d.captionSize = std::clamp(d.scale.value(QStringLiteral("caption")), 6.0, 12.0);
+		const QJsonObject fr = b.value(QStringLiteral("frame")).toObject();
+		if (!fr.isEmpty()) {
+			d.bg.frame = true;
+			d.bg.frameTicks = boolean(fr.value(QStringLiteral("ticks")), false);
+			d.bg.frameOpacity = num(fr.value(QStringLiteral("opacity")), 0.3, 0, 0.6);
+		}
+	} else if (d.bg.pattern == QStringLiteral("blueprint"))
+		d.bg.pattern = QStringLiteral("grid");
+	else if (d.bg.pattern == QStringLiteral("columns"))
+		d.bg.pattern = QStringLiteral("none");
 	d.valid = d.colors.value(QStringLiteral("bg")).isValid() && !d.family.isEmpty();
 	return d;
 }
@@ -312,6 +447,10 @@ Data load(const QString &id)
 	const QJsonObject o = packJson(id, &custom);
 	if (o.isEmpty())
 		return Data();
+	if (const QString why = componentsProblem(o); !why.isEmpty()) { // D336: an unknown variant makes the pack unusable
+		qWarning("theme: %s not usable: %s", qPrintable(id), qPrintable(why));
+		return Data();
+	}
 	Data d = parse(o, &defaultData());
 	d.custom = custom;
 	d.bg.from = d.gradWindow.from;
@@ -446,6 +585,205 @@ QLabel#sectionTitle { font-size: @ts; font-weight: @hw; background: transparent;
 QFrame#themeCard { background: @field; border: @bw solid @border; border-radius: @rinner; }
 )";
 
+// a + (b - a) * t per channel, rounded: the same formula as tests/studio-theme-contrast.test.mjs (mix()).
+QColor mixc(const QColor &a, const QColor &b, qreal t)
+{
+	auto ch = [t](int x, int y) { return int(std::lround(x + (y - x) * t)); };
+	return QColor(ch(a.red(), b.red()), ch(a.green(), b.green()), ch(a.blue(), b.blue()));
+}
+
+// Derived colours the variant fragments use (D336). Mirrored in tests/studio-theme-contrast.test.mjs (derived()):
+// change both together.
+QHash<QString, QColor> derived(const Data &d)
+{
+	const auto c = [&](const char *k) { return d.colors.value(QLatin1String(k)); };
+	const QColor black(0, 0, 0), white(255, 255, 255);
+	QHash<QString, QColor> x;
+	x[QStringLiteral("tint")] = mixc(c("field"), c("accent"), 0.18);       // soft and tinted fills, selected boxed tab
+	x[QStringLiteral("focusTint")] = mixc(c("field"), c("accent"), 0.10);  // glow focus fill
+	x[QStringLiteral("well")] = mixc(c("field"), black, d.dark ? 0.28 : 0.06); // inset inputs and tracks
+	x[QStringLiteral("wellShade")] = mixc(x.value(QStringLiteral("well")), black, 0.35);
+	x[QStringLiteral("accentDim")] = mixc(c("border"), c("accent"), 0.45); // framed cards, bracket frames
+	x[QStringLiteral("metalHi")] = mixc(c("field"), c("text"), 0.10);      // metal fills: top
+	x[QStringLiteral("metalLo")] = mixc(c("field"), black, 0.25);          // metal fills: bottom
+	x[QStringLiteral("accentTop")] = mixc(c("accent"), white, 0.12);       // metal primary: top
+	x[QStringLiteral("accentBot")] = mixc(c("accent"), black, 0.12);       // metal primary: bottom
+	x[QStringLiteral("sphereHi")] = mixc(c("accent"), white, 0.5);         // sphere slider handle light
+	return x;
+}
+
+// The variant stylesheet fragments (D336): appended after the base stylesheet, so a fragment rule wins over the base
+// rule of the same weight. A component the pack leaves out adds nothing (the base look). Tokens as in kQss plus the
+// derived colours above and the sizes set here.
+QString componentQss(const Data &d, QHash<QString, QString> &t, bool flat)
+{
+	if (!g_components)
+		return {};
+	// Rules every pack gets with the flag on, for things that exist only with it: the error state of fields (the
+	// specimen shows it; no studio field sets the property yet) and the slider's value bubble.
+	const QString errorRule =
+		QStringLiteral("QLineEdit[error=\"true\"], QSpinBox[error=\"true\"], QComboBox[error=\"true\"] { border-color: @danger; }\n"
+			       "QLabel#valueBubble { background: @text; color: @bg; border-radius: @rs; padding: 2px 6px; font-weight: @hw; }\n");
+	if (d.comp.isEmpty() && d.scale.isEmpty())
+		return errorRule;
+	auto px = [](int v) { return QStringLiteral("%1px").arg(v); };
+	const QHash<QString, QColor> x = derived(d);
+	for (auto it = x.cbegin(); it != x.cend(); ++it)
+		t[it.key()] = it.value().name();
+	const int btnH = d.ctl + 2 * d.padY + 2 * d.bw;
+	t[QStringLiteral("rbtnPill")] = px(btnH / 2);
+	t[QStringLiteral("rsharp")] = px(std::min(d.rs, 2));
+	t[QStringLiteral("padYm1")] = px(std::max(0, d.padY - 1));
+	t[QStringLiteral("padXm1")] = px(std::max(0, d.padX - 1));
+	const auto v = [&](const char *key) { return d.comp.value(QLatin1String(key)); };
+	QString q = errorRule;
+
+	// Buttons: shape
+	const QString shape = v("button.shape");
+	if (shape == QStringLiteral("rounded"))
+		q += QStringLiteral("QPushButton { border-radius: @rm; }\n");
+	else if (shape == QStringLiteral("pill"))
+		q += QStringLiteral("QPushButton { border-radius: @rbtnPill; }\n");
+	else if (shape == QStringLiteral("sharp"))
+		q += QStringLiteral("QPushButton { border-radius: @rsharp; } QPushButton#round { border-radius: @rsharp; }\n");
+	// Buttons: style (primary, plain and round controls)
+	const QString style = v("button.style");
+	const QString metal = flat ? QStringLiteral("@field")
+				   : QStringLiteral("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @metalHi, stop:0.55 @field, stop:1 @metalLo)");
+	const QString metalAccent = flat ? QStringLiteral("@accent") : QStringLiteral("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 @accentTop, stop:1 @accentBot)");
+	if (style == QStringLiteral("solid"))
+		q += QStringLiteral("QPushButton { background: @field; } QPushButton[role=\"primary\"] { background: @accent; }\n"
+				    "QPushButton#round[role=\"primary\"] { background: @accent; }\n");
+	else if (style == QStringLiteral("soft"))
+		q += QStringLiteral("QPushButton { background: @tint; border-color: @tint; } QPushButton[role=\"primary\"] { background: @accent; border-color: @accent; }\n"
+				    "QPushButton#round { background: @tint; border-color: @tint; }\n");
+	else if (style == QStringLiteral("metal"))
+		q += QStringLiteral("QPushButton { background: %1; border-color: @metalLo; } QPushButton[role=\"primary\"] { background: %2; border-color: @accentBot; }\n"
+				    "QPushButton#round { background: %1; border-color: @metalLo; } QPushButton#round[role=\"primary\"] { background: %2; border-color: @accentBot; }\n")
+			     .arg(metal, metalAccent);
+	else if (style == QStringLiteral("bezel"))
+		q += QStringLiteral("QPushButton { border: 2px solid @border; padding: @padYm1 @padXm1; } QPushButton[role=\"primary\"] { border: 2px solid @accentHi; }\n"
+				    "QPushButton#round { border: 3px solid @border; } QPushButton#round[role=\"primary\"] { border: 3px solid @accentHi; }\n");
+	else if (style == QStringLiteral("neumorph"))
+		q += QStringLiteral("QPushButton { background: @bg; border-color: @bg; } QPushButton[role=\"primary\"] { background: @accent; border-color: @accent; }\n"
+				    "QPushButton#round { background: @bg; border-color: @bg; }\n");
+	// Plain buttons: secondary
+	const QString sec = v("button.secondary");
+	if (sec == QStringLiteral("outline"))
+		q += QStringLiteral("QPushButton { background: transparent; border-color: @accent; color: @accentHi; } QPushButton:hover { background: @tint; }\n");
+	else if (sec == QStringLiteral("tinted"))
+		q += QStringLiteral("QPushButton { background: @tint; border-color: @tint; color: @accentHi; } QPushButton:hover { border-color: @accentHi; }\n");
+	else if (sec == QStringLiteral("ghost"))
+		q += QStringLiteral("QPushButton { background: transparent; border-color: transparent; color: @accentHi; } QPushButton:hover { background: @tint; }\n");
+
+	// Tabs
+	const QString tabs = v("tabs");
+	if (tabs == QStringLiteral("pill"))
+		q += QStringLiteral("QTabBar::tab { border-radius: @rbtnPill; }\n");
+	else if (tabs == QStringLiteral("underline"))
+		q += QStringLiteral("QTabBar::tab { background: transparent; border: none; border-bottom: 2px solid transparent; border-radius: 0; color: @muted; padding: 6px 12px; margin-right: 8px; }\n"
+				    "QTabBar::tab:hover:!selected { color: @text; border-bottom-color: @border; }\n"
+				    "QTabBar::tab:selected { background: transparent; color: @accentHi; border-bottom: 2px solid @accent; }\n");
+	else if (tabs == QStringLiteral("segmented"))
+		q += QStringLiteral("QTabBar::tab { margin-right: 0; border-radius: 0; background: @field; }\n"
+				    "QTabBar::tab:first { border-top-left-radius: @rm; border-bottom-left-radius: @rm; }\n"
+				    "QTabBar::tab:last { border-top-right-radius: @rm; border-bottom-right-radius: @rm; }\n"
+				    "QTabBar::tab:only-one { border-radius: @rm; }\n");
+	else if (tabs == QStringLiteral("boxed"))
+		q += QStringLiteral("QTabBar::tab { background: transparent; border: @bw solid @border; border-radius: @rs; }\n"
+				    "QTabBar::tab:selected { background: @tint; color: @accentHi; border: @bw solid @accent; }\n");
+
+	// Inputs
+	const QString input = v("input");
+	const QString fields = QStringLiteral("QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox");
+	if (input == QStringLiteral("filled"))
+		q += fields + QStringLiteral(" { background: @field; border: @bw solid transparent; border-bottom: @bw solid @muted; }\n");
+	else if (input == QStringLiteral("inset"))
+		q += fields + QStringLiteral(" { background: @well; border: @bw solid @border; border-top: 2px solid @wellShade; }\n");
+	else if (input == QStringLiteral("underline"))
+		q += fields + QStringLiteral(" { background: transparent; border: none; border-bottom: @bw solid @muted; border-radius: 0; padding: 4px 2px; }\n");
+	// Focus (inputs and buttons); an underline input keeps its focus on the line
+	const QString focus = v("focus");
+	const QString focused = QStringLiteral("QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus");
+	if (input == QStringLiteral("underline") && !focus.isEmpty())
+		q += focused + QStringLiteral(" { border-bottom: 2px solid @accent; }\n");
+	else if (focus == QStringLiteral("border"))
+		q += focused + QStringLiteral(" { border-color: @accent; }\n");
+	else if (focus == QStringLiteral("ring"))
+		q += focused + QStringLiteral(" { border: 2px solid @accent; padding: 3px 7px; }\n");
+	else if (focus == QStringLiteral("glow"))
+		q += focused + QStringLiteral(" { border-color: @accentHi; background: @focusTint; }\n");
+	if (focus == QStringLiteral("ring"))
+		q += QStringLiteral("QPushButton:focus { border: 2px solid @accent; padding: @padYm1 @padXm1; }\n");
+	else if (focus == QStringLiteral("glow"))
+		q += QStringLiteral("QPushButton:focus { border-color: @accentHi; }\n");
+
+	// Slider: track and handle (the handle is centred on the track)
+	const QString track = v("slider.track"), handle = v("slider.handle");
+	if (!track.isEmpty() || !handle.isEmpty()) {
+		const int g = (track == QStringLiteral("thick") || track == QStringLiteral("inset")) ? 8 : 4;
+		const int hw = handle == QStringLiteral("bar") ? 6 : handle == QStringLiteral("sphere") ? 16 : 14;
+		const int hh = handle == QStringLiteral("bar") ? 18 : hw;
+		const QString grooveFill = track == QStringLiteral("inset") ? QStringLiteral("@well; border: 1px solid @wellShade") : QStringLiteral("@border");
+		q += QStringLiteral("QSlider::groove:horizontal { height: %1px; background: %2; border-radius: %3px; }\n"
+				    "QSlider::sub-page:horizontal { background: @accent; border-radius: %3px; }\n")
+			     .arg(g)
+			     .arg(grooveFill)
+			     .arg(g / 2);
+		const QString hfill = handle == QStringLiteral("sphere")
+					      ? (flat ? QStringLiteral("@accent")
+						      : QStringLiteral("qradialgradient(cx:0.35, cy:0.35, radius:0.8, fx:0.35, fy:0.35, stop:0 @sphereHi, stop:1 @accent)"))
+					      : QStringLiteral("@text");
+		q += QStringLiteral("QSlider::handle:horizontal { background: %1; width: %2px; height: %3px; margin: -%4px 0; border-radius: %5px; }\n")
+			     .arg(hfill)
+			     .arg(hw)
+			     .arg(hh)
+			     .arg((hh - g) / 2)
+			     .arg(handle == QStringLiteral("bar") ? 2 : hw / 2);
+	}
+
+	// Section headers (group titles, headings)
+	const QString head = v("sectionHeader");
+	if (head == QStringLiteral("rule"))
+		q += QStringLiteral("QGroupBox::title { color: @text; border-bottom: 1px solid @accent; padding: 0 4px 2px 4px; }\n"
+				    "QLabel#heading { border-bottom: 1px solid @border; padding-bottom: 2px; }\n");
+	else if (head == QStringLiteral("caps"))
+		q += QStringLiteral("QGroupBox::title { color: @text; } QLabel#heading { color: @text; }\n");
+	else if (head == QStringLiteral("bracket"))
+		q += QStringLiteral("QGroupBox { border-color: @accentDim; border-radius: @rs; }\n"
+				    "QGroupBox::title { left: 10px; border: @bw solid @accent; background: @bg; color: @accentHi; padding: 1px 6px; }\n"
+				    "QLabel#heading { color: @accentHi; }\n");
+
+	// Cards (cards, stat cards, group boxes)
+	const QString card = v("card");
+	const QString cards = QStringLiteral("QFrame#card, QFrame#statCard, QGroupBox");
+	if (card == QStringLiteral("flat"))
+		q += cards + QStringLiteral(" { background: @panel; border-color: @panel; }\n");
+	else if (card == QStringLiteral("neumorph"))
+		q += cards + QStringLiteral(" { background: @bg; border-color: @bg; }\n");
+	else if (card == QStringLiteral("framed"))
+		q += cards + QStringLiteral(" { background: transparent; border: @bw solid @accentDim; border-radius: @rs; }\n");
+
+	// Lists
+	if (v("list") == QStringLiteral("plates"))
+		q += QStringLiteral("QListWidget::item { background: @field; border: @bw solid @border; border-radius: @rm; margin: 2px 0; padding: 6px 8px; }\n");
+	// Chips
+	if (v("chip") == QStringLiteral("bracket"))
+		q += QStringLiteral("QWidget#taskChip { background: transparent; border-radius: 0; } QLabel#pill { background: transparent; border-radius: 0; }\n");
+
+	// Type scale
+	auto pt = [&](const char *k) { return QStringLiteral("%1pt").arg(d.scale.value(QLatin1String(k))); };
+	if (d.scale.contains(QStringLiteral("h1")))
+		q += QStringLiteral("QLabel#sectionTitle { font-size: %1; }\n").arg(pt("h1"));
+	if (d.scale.contains(QStringLiteral("h2")))
+		q += QStringLiteral("QLabel#toastTitle, QLabel#lookName { font-size: %1; }\n").arg(pt("h2"));
+	if (d.scale.contains(QStringLiteral("subtitle")))
+		q += QStringLiteral("QGroupBox::title { font-size: %1; }\n").arg(pt("subtitle"));
+	if (d.scale.contains(QStringLiteral("button")))
+		q += QStringLiteral("QPushButton { font-size: %1; }\n").arg(pt("button"));
+	return q;
+}
+
 QString buildQss(const Data &d)
 {
 	QHash<QString, QString> t;
@@ -477,7 +815,7 @@ QString buildQss(const Data &d)
 	t[QStringLiteral("padY")] = px(d.padY);
 	t[QStringLiteral("padX")] = px(d.padX);
 	static const QRegularExpression re(QStringLiteral("@([A-Za-z0-9]+)"));
-	QString qss = QString::fromUtf8(kQss);
+	QString qss = QString::fromUtf8(kQss) + componentQss(d, t, flat); // D336: variant fragments after the base
 	QString out;
 	qsizetype last = 0;
 	auto it = re.globalMatch(qss);
@@ -608,11 +946,47 @@ void startWatch()
 			g_watch->addPath(dir);
 }
 
+// Density (D336): every layout and widget that took its spacing through theme::space / theme::margins gets it again
+// from the built-in value it kept, when the factor changed.
+void relayoutDensity()
+{
+	const qreal f = densityFactor();
+	if (std::abs(f - g_appliedDensity) < 0.001)
+		return;
+	g_appliedDensity = f;
+	for (QWidget *top : QApplication::topLevelWidgets()) {
+		QList<QObject *> objs;
+		for (QLayout *l : top->findChildren<QLayout *>())
+			objs << l;
+		for (QWidget *w : top->findChildren<QWidget *>())
+			objs << w;
+		objs << top;
+		if (top->layout())
+			objs << top->layout();
+		for (QObject *o : objs) {
+			const QVariant sp = o->property("ujwSpace");
+			if (sp.isValid())
+				if (auto *l = qobject_cast<QLayout *>(o))
+					l->setSpacing(spacing(sp.toInt()));
+			const QVariant m = o->property("ujwMargins");
+			if (m.isValid()) {
+				const QRect r = m.toRect(); // left, top, right, bottom as x, y, width, height
+				const QMargins mm(spacing(r.x()), spacing(r.y()), spacing(r.width()), spacing(r.height()));
+				if (auto *l = qobject_cast<QLayout *>(o))
+					l->setContentsMargins(mm);
+				else if (auto *w = qobject_cast<QWidget *>(o))
+					w->setContentsMargins(mm);
+			}
+		}
+	}
+}
+
 void applyAll(QApplication &app)
 {
 	applyPalette(app, g_cur);
 	applyFont(app, g_cur);
 	app.setStyleSheet(buildQss(g_cur));
+	relayoutDensity();
 	interaction::refresh(); // captions, backgrounds
 	depth::refreshAll();
 	refreshIcons();
@@ -673,7 +1047,108 @@ QString packProblem(const QByteArray &bytes, const QString &id)
 	for (const QString &k : kColorKeys)
 		if (!hex.match(c.value(k).toString()).hasMatch())
 			return QStringLiteral("colors.%1 must be a colour like #1a2b3c").arg(k);
-	return {};
+	return componentsProblem(o); // D336: unknown components or variants are refused
+}
+
+const QList<QPair<QString, QStringList>> &componentVariants()
+{
+	static const QList<QPair<QString, QStringList>> v = {
+		{QStringLiteral("button.shape"), {QStringLiteral("rounded"), QStringLiteral("pill"), QStringLiteral("sharp")}},
+		{QStringLiteral("button.style"),
+		 {QStringLiteral("solid"), QStringLiteral("soft"), QStringLiteral("metal"), QStringLiteral("bezel"), QStringLiteral("neumorph")}},
+		{QStringLiteral("button.secondary"), {QStringLiteral("outline"), QStringLiteral("tinted"), QStringLiteral("ghost")}},
+		{QStringLiteral("button.caps"), kBool},
+		{QStringLiteral("tabs"), {QStringLiteral("pill"), QStringLiteral("underline"), QStringLiteral("segmented"), QStringLiteral("boxed")}},
+		{QStringLiteral("input"), {QStringLiteral("outline"), QStringLiteral("filled"), QStringLiteral("inset"), QStringLiteral("underline")}},
+		{QStringLiteral("focus"), {QStringLiteral("border"), QStringLiteral("ring"), QStringLiteral("glow")}},
+		{QStringLiteral("switch"), {QStringLiteral("plain"), QStringLiteral("labelled"), QStringLiteral("bezel")}},
+		{QStringLiteral("slider.track"), {QStringLiteral("thin"), QStringLiteral("thick"), QStringLiteral("inset")}},
+		{QStringLiteral("slider.handle"), {QStringLiteral("round"), QStringLiteral("sphere"), QStringLiteral("bar")}},
+		{QStringLiteral("slider.valueBubble"), kBool},
+		{QStringLiteral("sectionHeader"), {QStringLiteral("plain"), QStringLiteral("rule"), QStringLiteral("caps"), QStringLiteral("bracket")}},
+		{QStringLiteral("card"), {QStringLiteral("flat"), QStringLiteral("raised"), QStringLiteral("neumorph"), QStringLiteral("framed")}},
+		{QStringLiteral("list"), {QStringLiteral("plain"), QStringLiteral("plates")}},
+		{QStringLiteral("chip"), {QStringLiteral("pill"), QStringLiteral("bracket")}},
+		{QStringLiteral("density"), {QStringLiteral("compact"), QStringLiteral("normal"), QStringLiteral("airy")}},
+	};
+	return v;
+}
+
+void setComponents(bool on)
+{
+	if (on == g_components)
+		return;
+	g_components = on;
+	if (!g_cur.valid)
+		return;
+	const Data d = load(g_cur.id); // the same pack read again with or without its v2 parts
+	if (!d.valid)
+		return;
+	g_cur = d;
+	qInfo("theme: components %s", on ? "on" : "off");
+	applyAll(*qobject_cast<QApplication *>(QCoreApplication::instance()));
+}
+
+bool componentsOn()
+{
+	return g_components;
+}
+
+QString component(const QString &key)
+{
+	return g_components ? g_cur.comp.value(key) : QString();
+}
+
+bool componentFlag(const QString &key)
+{
+	return component(key) == QStringLiteral("true");
+}
+
+Caps caps()
+{
+	Caps c;
+	if (!g_components)
+		return c;
+	c.button = g_cur.buttonCaps || componentFlag(QStringLiteral("button.caps"));
+	c.tab = g_cur.tabCaps;
+	c.heading = g_cur.headingCaps || component(QStringLiteral("sectionHeader")) == QStringLiteral("caps");
+	return c;
+}
+
+qreal densityFactor()
+{
+	const QString d = component(QStringLiteral("density"));
+	return d == QStringLiteral("compact") ? 0.75 : d == QStringLiteral("airy") ? 1.25 : 1.0;
+}
+
+int spacing(int basePx)
+{
+	const qreal f = densityFactor();
+	return f == 1.0 ? basePx : int(std::lround(basePx * f));
+}
+
+void space(QLayout *l, int basePx)
+{
+	if (!l)
+		return;
+	l->setProperty("ujwSpace", basePx);
+	l->setSpacing(spacing(basePx));
+}
+
+void margins(QLayout *l, int left, int top, int right, int bottom)
+{
+	if (!l)
+		return;
+	l->setProperty("ujwMargins", QRect(left, top, right, bottom));
+	l->setContentsMargins(spacing(left), spacing(top), spacing(right), spacing(bottom));
+}
+
+void margins(QWidget *w, int left, int top, int right, int bottom)
+{
+	if (!w)
+		return;
+	w->setProperty("ujwMargins", QRect(left, top, right, bottom));
+	w->setContentsMargins(spacing(left), spacing(top), spacing(right), spacing(bottom));
 }
 
 bool setCurrent(const QString &id)
@@ -901,6 +1376,19 @@ QJsonObject probe()
 	o.insert(QStringLiteral("reloads"), g_reloads); // LU2: applied changes of the pack file
 	o.insert(QStringLiteral("rejects"), g_rejects); // LU2: invalid versions kept out
 	o.insert(QStringLiteral("lastReject"), g_lastReject);
+	// D336: the components flag, the variants the current pack gives (empty = base look), density and caps.
+	o.insert(QStringLiteral("componentsOn"), g_components);
+	QJsonObject comp;
+	for (const auto &kv : componentVariants())
+		if (!component(kv.first).isEmpty())
+			comp.insert(kv.first, component(kv.first));
+	o.insert(QStringLiteral("components"), comp);
+	o.insert(QStringLiteral("density"), densityFactor());
+	const Caps c = caps();
+	o.insert(QStringLiteral("caps"), QJsonObject{{QStringLiteral("button"), c.button}, {QStringLiteral("tab"), c.tab}, {QStringLiteral("heading"), c.heading}});
+	o.insert(QStringLiteral("pattern"), g_cur.bg.pattern);
+	o.insert(QStringLiteral("frame"), g_cur.bg.frame);
+	o.insert(QStringLiteral("styleSheetLength"), qApp->styleSheet().size());
 	return o;
 }
 
@@ -908,6 +1396,10 @@ bool probeAction(const QString &action)
 {
 	if (action.startsWith(QStringLiteral("theme:")))
 		return setCurrent(action.mid(6));
+	if (action == QStringLiteral("components:on") || action == QStringLiteral("components:off")) { // D336 (tests)
+		setComponents(action.endsWith(QStringLiteral("on")));
+		return true;
+	}
 	if (action.startsWith(QStringLiteral("effects:"))) {
 		// "effects:a+b" applies a then b in the same event-loop turn (a quick toggle, before deferred deletes run)
 		const QStringList modes = action.mid(8).split(QLatin1Char('+'));
