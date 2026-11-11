@@ -716,6 +716,9 @@ def _live_montage(a):
             "reason": f"{videos} montage/reel video(s)" if videos else "no montage or reel in this recording"}
 
 
+KIND_TYPE = {"M": "montage", "W": "match-reel", "I": "impact-play"}  # clip id prefix -> reel type (CL1)
+
+
 def cmd_montage(a):
     """Kill montages (clip_montage.py, data/clip/montage.json) from the detector hits of the H recording, cut from the
     V recording of the same session -> DIR/montage/clips/<id>/montage-v.mp4 + DIR/montage/render.json +
@@ -789,7 +792,8 @@ def cmd_montage(a):
         wd = os.path.join(out, "clips", cid)
         os.makedirs(wd, exist_ok=True)
         argv = mont.render_argv(ffmpeg, vrec, m["pieces"], frame, rnd.ENCODERS[encoder], rnd.AUDIO,
-                                int(cfg["audioFadeMs"]), "montage-v.mp4.part", audio_tracks=max(1, vinfo["audio_tracks"]))
+                                int(cfg["audioFadeMs"]), "montage-v.mp4.part", audio_tracks=max(1, vinfo["audio_tracks"]),
+                                max_sec=lim[KIND_TYPE[cid[:1]]]["maxSec"])
         r = rnd.run_tool(argv, cwd=wd, timeout=1800)
         files, errors = [], []
         if r.returncode == 0:

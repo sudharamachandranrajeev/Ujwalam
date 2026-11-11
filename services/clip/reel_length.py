@@ -60,6 +60,8 @@ def limits_problems(patch, defaults=None):
             out.append(f"clips.reelLengths.{k} needs minSec and maxSec")
         elif not _num(v["minSec"]) or not _num(v["maxSec"]):
             out.append(f"clips.reelLengths.{k} lengths must be numbers")
+        elif int(v["minSec"]) != v["minSec"] or int(v["maxSec"]) != v["maxSec"]:
+            out.append(f"{k}: lengths are whole seconds")
         elif v["minSec"] < 0:
             out.append(f"{k}: the minimum cannot be below 0 s")
         elif v["maxSec"] < MIN_MAX_SEC:
@@ -108,6 +110,23 @@ def _trim(piece, max_sec, peak=None):
     return round(s, 3), round(s + max_sec, 3)
 
 
+def _kills_kept(piece, s, e, peaks, rec):
+    """Kills left in a trimmed piece: the peaks (kill times) inside the kept interval. Without any peak in the piece the
+    count is scaled by the kept share (at least 1 while some remain) and the record says it is an estimate."""
+    n = int(piece.get("kills") or 0)
+    if n <= 0:
+        return 0
+    inside = [x for x in peaks if piece["start"] <= x <= piece["end"]]
+    if inside:
+        kept = sum(1 for x in inside if s <= x <= e)
+        rec["killsDropped"] = len(inside) - kept
+        return kept
+    kept = max(1, round(n * (e - s) / (piece["end"] - piece["start"])))
+    rec["killsEstimated"] = True
+    rec["killsDropped"] = n - kept
+    return kept
+
+
 def _part(reel, items, n, m, trimmed, below_min):
     pieces = [p for _, p in items]
     idx = {i for i, _ in items}
@@ -136,7 +155,7 @@ def split_reel(reel, max_sec, min_sec=0.0):
             trimmed.append({"piece": i, "from": [round(p["start"], 3), round(p["end"], 3)], "to": [s, e],
                             "peak": round(inside[0], 3) if inside else None,
                             "droppedSec": round(_len(p) - max_sec, 3)})
-            p = dict(p, start=s, end=e)
+            p = dict(p, start=s, end=e, kills=_kills_kept(p, s, e, peaks, trimmed[-1]))
         items.append((i, dict(p)))
     groups, cur = [], []
     for it in items:
@@ -155,8 +174,9 @@ def split_reel(reel, max_sec, min_sec=0.0):
     if len(groups) <= 1:
         if not trimmed:
             return [reel]
-        out = {k: v for k, v in reel.items() if k != "peaks"}
-        out.update({"pieces": [p for _, p in items], "seconds": round(_total(items), 3), "trimmed": trimmed})
+        out = {k: v for k, v in reel.items() if k not in ("peaks", "streakKills", "singleKills")}
+        out.update({"pieces": [p for _, p in items], "seconds": round(_total(items), 3), "trimmed": trimmed,
+                    "kills": sum(int(p.get("kills") or 0) for _, p in items)})
         return [out]
     m = len(groups)
     return [_part(reel, g, n, m, trimmed, n == m and _total(g) < min_sec - EPS) for n, g in enumerate(groups, 1)]

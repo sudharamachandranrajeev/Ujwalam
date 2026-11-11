@@ -162,7 +162,7 @@ def plan_montages(hits, ranking, cfg, duration):
     return sorted(out, key=lambda m: (-m["score"], -m["kills"]))
 
 
-def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1):
+def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1, max_sec=None):
     """One ffmpeg run: each piece is its own input (-ss/-t, exact because it is re-encoded), scaled into the frame,
     audio faded in and out by fade_ms (no pop at a hard cut), then concatenated. Every audio track of the source
     (audio_tracks) is kept as its own track, in source order (track 1 = the studio mix); none is dropped or remixed."""
@@ -183,7 +183,10 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     outs = "[vout]" + "".join(f"[aout{k}]" for k in range(audio_tracks))
     parts.append(ins + f"concat=n={len(pieces)}:v=1:a={audio_tracks}{outs}")
     maps = ["-map", "[vout]"] + [x for k in range(audio_tracks) for x in ("-map", f"[aout{k}]")]
-    argv += ["-filter_complex", ";".join(parts), *maps, *encoder_args, *audio_args,
+    # CL1 (D350): nothing here adds time (no transition, pad, crossfade or hold: a hard concat, fades inside the pieces);
+    # the fps filter can round a piece by up to one frame, so the output is also cut at the type's maximum.
+    cap = ["-t", f"{float(max_sec):.3f}"] if max_sec else []
+    argv += ["-filter_complex", ";".join(parts), *maps, *encoder_args, *audio_args, *cap,
              "-movflags", "+faststart", "-f", "mp4", out_name]
     return argv
 

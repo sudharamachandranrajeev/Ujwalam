@@ -25,6 +25,8 @@ test('checks: both numbers, minimum <= maximum, maximum 5 to 60 s, known types o
   assert.deepEqual(reelLengthProblems({ montage: { minSec: 50, maxSec: 40 } }), ['montage: the minimum cannot be longer than the maximum']);
   assert.deepEqual(reelLengthProblems({ montage: { minSec: 0, maxSec: 61 } }), ['montage: the maximum cannot be above 60 s']);
   assert.deepEqual(reelLengthProblems({ montage: { minSec: 0, maxSec: 4 } }), ['montage: the maximum cannot be below 5 s']);
+  assert.deepEqual(reelLengthProblems({ montage: { minSec: 10, maxSec: 30.4 } }), ['montage: lengths are whole seconds']);
+  assert.deepEqual(reelLengthProblems({ montage: { minSec: 10.5, maxSec: 30 } }), ['montage: lengths are whole seconds']);
   assert.deepEqual(reelLengthProblems({ montage: { minSec: -1, maxSec: 30 } }), ['montage: the minimum cannot be below 0 s']);
   assert.deepEqual(reelLengthProblems({ reel: { minSec: 1, maxSec: 30 } }), ['unknown reel type reel']);
   assert.deepEqual(reelLengthProblems({ montage: { minSec: 1 } }), ['clips.reelLengths.montage needs minSec and maxSec']);

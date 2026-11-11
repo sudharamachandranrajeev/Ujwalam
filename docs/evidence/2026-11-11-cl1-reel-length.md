@@ -41,9 +41,10 @@ Unchanged and still passing: `test_clip_montage` (20), `test_reel_own_kills_impa
 
 ## Placeholders, mocks, risks
 
-- Peaks: montages and match reels use the kill times; if a trim is ever needed the window is centred on the first kill
-  inside the piece. A trimmed piece keeps its `kills` count (some of those kills may lie in the dropped part); the trim
-  record says how many seconds were dropped.
+- Peaks: montages and match reels use the kill times; a trim is centred on the first kill
+  inside the piece. After a trim the kills of the piece are recounted from the kill times inside the kept interval (part counts, file names and match-reel scores follow); `trimmed` records `killsDropped`, and `killsEstimated` when no kill time was known (count scaled by the kept share).
+- Whole seconds only: the server (user-settings.mjs) and reel_length.py refuse fractional lengths; Qt shows integers.
+- The renderer adds no time (hard concat, fades inside pieces; no xfade, pad, hold). The fps filter may round a piece by up to a frame, so `render_argv(max_sec=)` also cuts the output at the type's maximum. Tested on the planned durations and ffmpeg arguments (`RendererAddsNothingTests`); no ffprobe run.
 - Parts of one reel are cut from the reel's own order (montages: best streak first), so part 2 of a montage is not later in
   time than part 1.
 - No control-page Clips settings exist, so no control-page equivalent was built.

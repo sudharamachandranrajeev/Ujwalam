@@ -57,6 +57,8 @@ class DefaultsTests(unittest.TestCase):
         self.assertTrue(rl.limits_problems({"nope": {"minSec": 1, "maxSec": 30}}))
         self.assertTrue(rl.limits_problems({"montage": {"minSec": 1}}))
         self.assertTrue(rl.limits_problems({"montage": {"minSec": "1", "maxSec": 30}}))
+        self.assertTrue(rl.limits_problems({"montage": {"minSec": 10, "maxSec": 30.4}}))  # whole seconds only
+        self.assertEqual(rl.limits_problems({"montage": {"minSec": 10.0, "maxSec": 30.0}}), [])
 
     def test_settings_are_read_and_bad_ones_ignored(self):
         with tempfile.TemporaryDirectory() as d:
@@ -129,6 +131,58 @@ class SplitTests(unittest.TestCase):
     def test_ids_of_parts(self):
         out = rl.cap_reels([reel(piece(0, 30), piece(50, 40)), reel(piece(0, 10))], {"minSec": 0, "maxSec": 60}, "M")
         self.assertEqual([i for i, _ in out], ["M01p1", "M01p2", "M02"])
+
+
+class KillCountTests(unittest.TestCase):
+    def test_a_trim_recounts_the_kills_left_in_the_kept_part(self):
+        # 90 s piece, kills at 10 s and 80 s, trimmed around the first: only that kill is left
+        (out,) = rl.split_reel(reel(piece(0, 90, 2), peaks=[10.0, 80.0]), 60, 0)
+        self.assertEqual((out["pieces"][0]["start"], out["pieces"][0]["end"]), (0.0, 60.0))
+        self.assertEqual(out["pieces"][0]["kills"], 1)
+        self.assertEqual(out["kills"], 1)
+        self.assertEqual(out["trimmed"][0]["killsDropped"], 1)
+
+    def test_part_counts_and_names_follow_the_kept_kills(self):
+        r = reel(piece(0, 30, 1), piece(100, 90, 2), peaks=[10.0, 110.0, 180.0])
+        parts = rl.split_reel(r, 60, 0)
+        self.assertEqual(sum(p["kills"] for p in parts), 2)
+        rdoc = {"tool": "clipper.montage", "recording": "practice-h-20261111-200000.mkv", "clips": [
+            dict(p, id=f"M01p{p['part']}", start=0.0, end=p["seconds"], files=[{"layout": "montage-v", "file": "x.mp4"}])
+            for p in parts]}
+        labels = [row[4] for row in pub.name_rows(rdoc, "codm", {}, None, None)]
+        self.assertEqual(labels, [f"kills-{p['kills']}-part-{p['part']}-of-{p['parts']}" for p in parts])
+
+    def test_no_peaks_scales_and_says_so(self):
+        (out,) = rl.split_reel(reel(piece(0, 120, 4)), 60, 0)
+        self.assertEqual(out["kills"], 2)
+        self.assertTrue(out["trimmed"][0]["killsEstimated"])
+
+    def test_a_trimmed_match_reel_score_is_the_kept_kills(self):
+        out = rl.split_reel(reel(piece(0, 90, 2), piece(100, 5, 0), peaks=[10.0, 80.0]), 60, 0)
+        self.assertEqual([p["kills"] for p in out], [1, 0])  # clipper sets score = kills of each part after the cap
+
+
+class RendererAddsNothingTests(unittest.TestCase):
+    def test_planned_durations_and_ffmpeg_arguments(self):
+        pieces = [piece(10, 20), piece(100, 25.5), piece(300, 14.5), {"start": 500.0, "end": 503.0, "kills": 0}]
+        argv = mont.render_argv("ffmpeg", "src.mkv", pieces, {"width": 1080, "height": 1920}, ["-c:v", "libx264"],
+                                ["-c:a", "aac"], 80, "out.mp4.part", audio_tracks=2, max_sec=60)
+        ts = [float(argv[i + 1]) for i, a in enumerate(argv) if a == "-t"]
+        self.assertEqual(ts[:-1], [20.0, 25.5, 14.5, 3.0])  # one input duration per piece, the pieces' own length
+        self.assertEqual(sum(ts[:-1]), 63.0)
+        self.assertEqual(ts[-1], 60.0)  # the output is cut at the type's maximum (fps rounding cannot pass it)
+        graph = argv[argv.index("-filter_complex") + 1]
+        for adds_time in ("xfade", "acrossfade", "tpad", "apad", "loop", "trim=", "setpts=PTS+", "adelay"):
+            self.assertNotIn(adds_time, graph)
+        self.assertEqual(graph.count("concat="), 1)
+
+    def test_a_split_reel_stays_inside_the_maximum_in_every_part(self):
+        # the planned seconds of a part is the sum of its pieces: the match-reel result piece is a piece, nothing is appended
+        r = reel(*[piece(100 * i, 14.5, 1) for i in range(9)], piece(2000, 3.5, 0))
+        for mx in (30, 45, 60):
+            for p in rl.split_reel(r, mx, 0):
+                self.assertLessEqual(sum(q["end"] - q["start"] for q in p["pieces"]), mx + 1e-6)
+                self.assertAlmostEqual(p["seconds"], sum(q["end"] - q["start"] for q in p["pieces"]), places=3)
 
 
 class PlannerTests(unittest.TestCase):

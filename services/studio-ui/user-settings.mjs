@@ -58,6 +58,7 @@ export function reelLengthProblems(v, d = reelDefaults()) {
     if (!d.types.some((t) => t.id === k)) { out.push(`unknown reel type ${k}`); continue; }
     if (!x || typeof x !== 'object' || Array.isArray(x) || Object.keys(x).sort().join() !== 'maxSec,minSec') out.push(`clips.reelLengths.${k} needs minSec and maxSec`);
     else if (!isNum(x.minSec) || !isNum(x.maxSec)) out.push(`clips.reelLengths.${k} lengths must be numbers`);
+    else if (!Number.isInteger(x.minSec) || !Number.isInteger(x.maxSec)) out.push(`${k}: lengths are whole seconds`);
     else if (x.minSec < 0) out.push(`${k}: the minimum cannot be below 0 s`);
     else if (x.maxSec < REEL_MIN_MAX_SEC) out.push(`${k}: the maximum cannot be below ${REEL_MIN_MAX_SEC} s`);
     else if (x.maxSec > d.limitMaxSec) out.push(`${k}: the maximum cannot be above ${d.limitMaxSec} s`);
