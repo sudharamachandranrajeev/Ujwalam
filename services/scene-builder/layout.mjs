@@ -21,6 +21,7 @@ export const RULES_VERSION = '0.1.0';
 export const ROLES = ['game', 'camera', 'chat', 'alerts', 'graphics'];
 export const GAME_MIN_AREA = 0.08;
 const MIN_BOX_AREA = 0.0015;
+export const CONTENT_EDGE = 0.05; // a lower edge bar than EDGE_T for content boxes, so subtle card outlines count
 const W_BUSY = 1, W_UI = -0.4, W_SOFT = -1.2;
 
 const r2 = (v) => Math.round(Math.max(0, Math.min(1, v)) * 100) / 100;
@@ -205,7 +206,7 @@ export function detectSlots(m, canvas) {
       const x0 = c * fc, y0 = r * fc, x1 = Math.min(m.width, x0 + fc), y1 = Math.min(m.height, y0 + fc);
       if (gamePx && x1 > gamePx.x0 - margin && x0 < gamePx.x1 + margin && y1 > gamePx.y0 - margin && y0 < gamePx.y1 + margin) continue;
       let e = 0;
-      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (m.grad.mag[y * m.width + x] >= 0.08) e++;
+      for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (m.grad.mag[y * m.width + x] >= CONTENT_EDGE) e++;
       if (e / ((x1 - x0) * (y1 - y0)) >= 0.04) mask[r * fcols + c] = 1;
     }
   }
