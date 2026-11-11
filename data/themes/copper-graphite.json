@@ -106,28 +106,7 @@
         "width": 1
       }
     },
-    "button": {
-      "shadow": {
-        "blur": 6,
-        "offsetX": 0,
-        "offsetY": 2,
-        "color": "#000000",
-        "opacity": 0.45
-      },
-      "rim": {
-        "from": "#9c6e55",
-        "to": "#3a2a24",
-        "width": 1
-      },
-      "inset": {
-        "blur": 8,
-        "offsetX": 0,
-        "offsetY": 2,
-        "color": "#000000",
-        "opacity": 0.55,
-        "when": "pressed"
-      }
-    },
+    "button": {},
     "primaryButton": {
       "shadow": {
         "blur": 8,
