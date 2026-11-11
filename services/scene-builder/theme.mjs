@@ -10,7 +10,7 @@
 // Output is data: themeFromRead() returns the pack and its report; writeThemePack() saves it to a user themes folder
 // the studio loads custom packs from, never over a file and never with the id of a built-in pack.
 
-import { existsSync, linkSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pairs } from '../studio-ui/theme-contrast.mjs';
@@ -313,12 +313,28 @@ export function userThemesDir(env = process.env) {
   return path.join(env.APPDATA, 'Ujwalam Studio', 'themes');
 }
 
+/** The canonical path of dir, following junctions and links: realpath of the nearest existing ancestor plus the
+ *  part that does not exist yet (a fresh install has no themes folder). Case-folded for comparison (Windows). */
+export function canonicalDir(dir) {
+  let head = path.resolve(dir);
+  const rest = [];
+  while (!existsSync(head)) {
+    const up = path.dirname(head);
+    if (up === head) break;
+    rest.unshift(path.basename(head));
+    head = up;
+  }
+  let real = head;
+  try { real = realpathSync.native(head); } catch { /* keep the lexical path */ }
+  return path.join(real, ...rest).toLowerCase();
+}
+
 /** Problems with writing this pack to dir ([] when it can be written). */
 export function writeProblems(pack, dir, { builtins = builtinIds() } = {}) {
   const p = [];
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(pack.id) || pack.id.length > 40) p.push(`theme id "${pack.id}" is not lower-case words joined by '-' (40 characters at most)`);
   if (builtins.includes(pack.id)) p.push(`"${pack.id}" is a built-in theme; choose another --name`);
-  if (path.resolve(dir).toLowerCase() === BUILTIN_DIR.toLowerCase()) p.push('that is the built-in themes folder; custom packs go in the user themes folder');
+  if (canonicalDir(dir) === canonicalDir(BUILTIN_DIR)) p.push('that is the built-in themes folder; custom packs go in the user themes folder');
   if (existsSync(path.join(dir, `${pack.id}.json`))) p.push(`${pack.id}.json already exists there; choose another --name (an existing theme is never overwritten)`);
   return p;
 }
@@ -328,6 +344,7 @@ export function writeProblems(pack, dir, { builtins = builtinIds() } = {}) {
 export function writeThemePack(pack, dir) {
   const bad = writeProblems(pack, dir);
   if (bad.length) throw new Error(bad.join('; '));
+  mkdirSync(dir, { recursive: true }); // a fresh install has no themes folder yet
   const file = path.join(dir, `${pack.id}.json`);
   const tmp = path.join(dir, `.${pack.id}.${process.pid}.tmp`);
   writeFileSync(tmp, `${JSON.stringify(pack, null, 2)}\n`, { flag: 'wx' });

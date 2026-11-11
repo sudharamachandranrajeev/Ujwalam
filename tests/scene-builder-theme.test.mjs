@@ -8,7 +8,7 @@
 // the flag theme-components on (no stylesheet errors) and falling back to the base look with it off.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -17,7 +17,7 @@ import Ajv2020 from 'ajv/dist/2020.js';
 import { deltaE, hexLab, hueGap } from '../services/scene-builder/colour.mjs';
 import { main as cli } from '../services/scene-builder/cli.mjs';
 import { readReference } from '../services/scene-builder/read.mjs';
-import { builtinIds, slug, themeFromRead, userThemesDir, writeProblems, writeThemePack } from '../services/scene-builder/theme.mjs';
+import { builtinIds, canonicalDir, slug, themeFromRead, userThemesDir, writeProblems, writeThemePack } from '../services/scene-builder/theme.mjs';
 import { contrast, failures } from '../services/studio-ui/theme-contrast.mjs';
 import { createFakeBots, createFakeHost } from '../services/studio-ui/backends.mjs';
 import { createFlags } from '../services/flags/index.mjs';
@@ -195,6 +195,32 @@ describe('SB4 writing: user themes folder only, never over a file or a built-in 
     const before = readFileSync(file, 'utf8');
     assert.throws(() => writeThemePack({ ...pack, name: 'Other' }, out), /already exists/);
     assert.equal(readFileSync(file, 'utf8'), before, 'never overwritten');
+  });
+  test('a fresh install: the themes folder (and its parents) is created on write', async () => {
+    const { pack } = themeFromRead(await readOf('glow', FIXTURES.glow()), { name: 'Fresh' });
+    const fresh = path.join(dir, 'fresh-appdata', 'Ujwalam Studio', 'themes');
+    assert.equal(existsSync(fresh), false);
+    assert.deepEqual(writeProblems(pack, fresh), []);
+    const file = writeThemePack(pack, fresh);
+    assert.deepEqual(readdirSync(fresh), ['fresh.json'], 'no temp file left');
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), pack);
+  });
+  test('a junction to the built-in folder (or to its parent) is refused before anything is created or written', async () => {
+    const { pack } = themeFromRead(await readOf('glow', FIXTURES.glow()), { name: 'Via Junction' });
+    const builtin = path.join(REPO, 'data', 'themes');
+    const before = readdirSync(builtin).sort();
+    const j1 = path.join(dir, 'junction-themes'), j2 = path.join(dir, 'junction-data');
+    symlinkSync(builtin, j1, 'junction');
+    symlinkSync(path.join(REPO, 'data'), j2, 'junction');
+    try {
+      for (const target of [j1, path.join(j2, 'themes'), path.join(j1, '.', ''), j1.toUpperCase()]) {
+        assert.match(writeProblems(pack, target).join(), /built-in themes folder/, target);
+        assert.throws(() => writeThemePack(pack, target), /built-in themes folder/, target);
+      }
+      assert.deepEqual(readdirSync(builtin).sort(), before, 'nothing written into data/themes');
+      // a new folder under the junction that does not exist yet: canonical ancestor + the rest, still checked
+      assert.equal(canonicalDir(path.join(j2, 'themes', 'x', 'y')), canonicalDir(path.join(builtin, 'x', 'y')));
+    } finally { rmSync(j1); rmSync(j2); }
   });
 });
 
