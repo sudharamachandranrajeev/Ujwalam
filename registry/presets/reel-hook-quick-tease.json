@@ -1,0 +1,29 @@
+{
+  "id": "reel-hook-quick-tease",
+  "version": "1.0.0",
+  "function": "reel-hook",
+  "functionVersion": "^1.0.0",
+  "name": "Quick tease (1 s teaser)",
+  "params": {
+    "teaserSec": 1,
+    "leadSec": 0.3,
+    "windowSec": 3
+  },
+  "themeOverrides": {},
+  "family": "clipping",
+  "tags": {
+    "motion": "slam",
+    "intensity": "medium",
+    "mood": "electric",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "V"
+  ],
+  "parity": "none",
+  "status": "in-progress",
+  "similar": [
+    "reel-hook-payoff-first"
+  ]
+}

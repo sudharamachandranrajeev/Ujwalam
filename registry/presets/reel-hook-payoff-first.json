@@ -1,0 +1,29 @@
+{
+  "id": "reel-hook-payoff-first",
+  "version": "1.0.0",
+  "function": "reel-hook",
+  "functionVersion": "^1.0.0",
+  "name": "Payoff first (2 s teaser)",
+  "params": {
+    "teaserSec": 2,
+    "leadSec": 0.5,
+    "windowSec": 3
+  },
+  "themeOverrides": {},
+  "family": "clipping",
+  "tags": {
+    "motion": "slam",
+    "intensity": "medium",
+    "mood": "electric",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "V"
+  ],
+  "parity": "none",
+  "status": "in-progress",
+  "similar": [
+    "reel-hook-quick-tease"
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "id": "reel-captions-barlow",
+  "version": "1.0.0",
+  "function": "reel-captions",
+  "functionVersion": "^1.0.0",
+  "name": "Condensed bold (Barlow)",
+  "params": {
+    "fontFamily": "Barlow",
+    "fontFile": "Barlow-Bold.ttf",
+    "bold": true,
+    "sizePx": 80,
+    "textColour": "#FFFFFF",
+    "outlineColour": "#000000",
+    "outlinePx": 6,
+    "shadowPx": 2,
+    "maxWordsPerCard": 3,
+    "maxCharsPerLine": 16,
+    "maxLines": 2,
+    "liftPx": 0
+  },
+  "themeOverrides": {},
+  "family": "clipping",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "informational",
+    "colourUse": "none",
+    "flashes": "none"
+  },
+  "canvases": [
+    "V"
+  ],
+  "parity": "none",
+  "status": "in-progress",
+  "similar": [
+    "reel-captions-bold"
+  ]
+}

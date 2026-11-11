@@ -1,0 +1,57 @@
+{
+  "$comment": "ED1 payoff-first hook (D352, user 2026-11-11): every montage, match reel, impact-play reel and live clip opens on its strongest moment within the first windowSec seconds, then plays in order. Read by services/clip/reel_hook.py (and services/studio-ui/user-settings.mjs for the Settings > Clips rows). Behind the flag reel-hook (off by default). The user changes 'on' and the teaser length per type in Settings > Clips (settings.json clips.reelHooks); this file holds the defaults, the strategy per type and the hook-score weights.",
+  "version": "1.0.0",
+  "status": "proposed",
+  "approved": "user 2026-11-11 chose the feature (ED1 from the R1 ranked list): 'opens on its strongest moment in the first 1-3 s ... then continues in order'; strategies, lead and score weights are the agent's proposal (D352)",
+  "checked": "2026-11-11",
+  "flag": "reel-hook",
+  "windowSec": 3,
+  "teaserSec": { "min": 1, "max": 3, "default": 2 },
+  "leadSec": 0.5,
+  "leadNote": "A teaser starts this long before the peak, so the kill itself lands in the teaser's first second.",
+  "types": [
+    {
+      "id": "montage",
+      "label": "Kill montage",
+      "strategy": "reorder",
+      "on": true,
+      "teaserSec": 2,
+      "why": "A montage has no time story (pieces of different matches, already ordered best streak first), so moving the piece with the strongest moment to the front repeats no footage and adds no length. When that moment sits deeper than windowSec inside its piece (a long multi-kill piece), a teaser is added if the part still fits its maximum."
+    },
+    {
+      "id": "match-reel",
+      "label": "Match reel",
+      "strategy": "teaser",
+      "on": true,
+      "teaserSec": 2,
+      "why": "A match reel tells the match in order from its first kill to the result screen; reordering would break that story, so a short teaser of the peak plays first and the reel then runs from its start."
+    },
+    {
+      "id": "impact-play",
+      "label": "Impact-play reel",
+      "strategy": "teaser",
+      "on": true,
+      "teaserSec": 2,
+      "why": "One continuous piece from the MVP animation to the results page; only a teaser of the impact-play moment can put it first without cutting the piece."
+    },
+    {
+      "id": "live-clip",
+      "label": "Live clip",
+      "strategy": "teaser",
+      "on": true,
+      "teaserSec": 2,
+      "why": "One window with its build-up before the medal; a teaser of the medal moment opens the clip and the build-up still plays in order."
+    }
+  ],
+  "score": {
+    "status": "proposed",
+    "statusNote": "Weights are a first guess for AN2 to learn from (retention and skip rate per reel); never approved as event weights.",
+    "weights": { "kill": 0.35, "multiKill": 0.25, "medal": 0.2, "motion": 0.2 },
+    "multiKillMin": 2,
+    "motion": {
+      "measure": "mean ffmpeg signalstats YDIF (average luma change between frames) over the first windowSec of the rendered reel",
+      "minYdif": 3.0,
+      "minYdifStatus": "unverified: set from synthetic test pictures only, not from real reels"
+    }
+  }
+}

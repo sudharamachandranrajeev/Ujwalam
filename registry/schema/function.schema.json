@@ -32,7 +32,7 @@
     "flashesPerSec": { "type": "number", "minimum": 0, "maximum": 3 },
     "budgetCost": { "type": "number", "minimum": 0 },
     "status": { "enum": ["planned", "in-progress", "done"] },
-    "format": { "enum": ["html", "native-shader", "plugin"] },
+    "format": { "enum": ["html", "native-shader", "plugin", "post-render"], "description": "post-render: applied by the clip maker (ffmpeg) to a finished clip or reel, never on the live canvas" },
     "planSection": { "type": "string" }
   },
   "if": { "properties": { "status": { "not": { "const": "planned" } } }, "required": ["status"] },

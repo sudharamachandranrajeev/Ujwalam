@@ -80,6 +80,8 @@ import clip_captions as caps  # noqa: E402
 import clip_publish as pub  # noqa: E402
 import clip_rank as rank  # noqa: E402
 import clip_render as rnd  # noqa: E402
+import reel_captions as rcap  # noqa: E402
+import reel_hook as rh  # noqa: E402
 import reel_length as rl  # noqa: E402
 import clip_signals as sig  # noqa: E402
 import clip_validate as val  # noqa: E402
@@ -487,13 +489,17 @@ def merge_saves(rows, durations):
         if not at or not v or v not in durations:
             continue
         t = at.timestamp()
+        ab = r.get("anchorBack")
         items.append({"s": t - float(r["startBack"]), "e": t - float(r["endBack"]), "at": t, "file": v,
-                      "score": r.get("score", 0), "labels": list(r.get("labels", [])), "reasons": [r.get("reason")]})
+                      "score": r.get("score", 0), "labels": list(r.get("labels", [])), "reasons": [r.get("reason")],
+                      "anchor": t - float(ab) if isinstance(ab, (int, float)) else None, "best": r.get("score", 0)})
     items.sort(key=lambda x: x["s"])
     out = []
     for it in items:
         prev = out[-1] if out else None
         if prev and it["s"] <= prev["e"] and it["at"] - prev["s"] <= durations[it["file"]]:
+            if it["anchor"] is not None and (prev["anchor"] is None or it["best"] > prev["best"]):
+                prev.update(anchor=it["anchor"], best=it["best"])  # ED1: the stronger save's medal
             prev.update(e=max(prev["e"], it["e"]), at=it["at"], file=it["file"], score=prev["score"] + it["score"],
                         labels=prev["labels"] + it["labels"], reasons=prev["reasons"] + it["reasons"])
         else:
@@ -504,8 +510,11 @@ def merge_saves(rows, durations):
         start, end = max(0.0, dur - (c["at"] - c["s"])), max(0.0, dur - (c["at"] - c["e"]))
         if end - start < 1.0:
             continue
-        clips.append({"id": f"L{i:02d}", "file": c["file"], "start": round(start, 3), "end": round(end, 3),
-                      "wallStart": round(c["s"], 3), "score": c["score"], "labels": c["labels"], "reasons": c["reasons"]})
+        row = {"id": f"L{i:02d}", "file": c["file"], "start": round(start, 3), "end": round(end, 3),
+               "wallStart": round(c["s"], 3), "score": c["score"], "labels": c["labels"], "reasons": c["reasons"]}
+        if c.get("anchor") is not None:  # ED1 (D352): the strongest medal in the file's time, inside the clip
+            row["anchor"] = round(min(max(dur - (c["at"] - c["anchor"]), start), end), 3)
+        clips.append(row)
     return clips
 
 
@@ -636,26 +645,51 @@ def cmd_live_review(a):
     if bad:
         raise ClipError(f"live-review renders V-canvas layouts only: {', '.join(bad)}")
     encoder = rnd.pick_encoder(a.encoder)
+    data_dir = resolve_data_dir(a.data_dir)
+    ex = _reel_extras(a, data_dir)  # ED1 hook, ED2 captions (D352, D353)
+    lim_live = rl.effective_limits(data_dir)["live-clip"]
+    fade_ms = int(load_config("montage", getattr(a, "montage_config", None))["audioFadeMs"])
     out_rows, failed = [], 0
     progress_line("review", 0, len(clips), "making clip videos from live saves")
     for n, c in enumerate(clips, 1):
         wd = os.path.join(a.out, "clips", c["id"])
         os.makedirs(wd, exist_ok=True)
         files, errors = [], []
+        m = _live_hook(c, ex, lim_live)
+        sinfo = infos[c["file"]]
+        # the canvas layout renders through the pieces path when a teaser opens the clip or captions are on; a save
+        # without audio renders picture only there, so a planned teaser is always what is rendered (and recorded)
+        pieces_path = bool(m["hook"].get("teaser")) or (ex["cap_on"] and bool(sinfo.get("has_audio")))
+        if pieces_path and sinfo.get("has_audio"):
+            ass, fdir, cinfo = _caption_reel(ffmpeg, c["file"], m["pieces"], frame, wd, ex, m["seconds"])
+        else:
+            ass, fdir = None, None
+            cinfo = ({"backend": "none", "status": "unavailable", "reason": "no audio"} if ex["cap_on"]
+                     else {"backend": "none", "status": "off"})
+        hook = m["hook"]
         for lid in wanted:
             try:
-                name = rnd.render_variant(ffmpeg, c["file"], infos[c["file"]], c, by_id[lid], frame, encoder, wd)
+                if pieces_path and by_id[lid].get("kind") == "canvas":
+                    name = _render_pieces(ffmpeg, c["file"], m["pieces"], frame, encoder, wd, lid, sinfo, fade_ms,
+                                          lim_live["maxSec"], ass, fdir)
+                else:
+                    name = rnd.render_variant(ffmpeg, c["file"], sinfo, c, by_id[lid], frame, encoder, wd)
                 files.append({"layout": lid, "file": name, "geometry": by_id[lid].get("geometry", "unverified"),
-                              "sourceAudioTracks": infos[c["file"]].get("audio_tracks")})
-                print(f"live-review {c['id']}/{lid}: rendered ({c['end'] - c['start']:.1f} s)")
+                              "sourceAudioTracks": sinfo.get("audio_tracks")})
+                if by_id[lid].get("kind") == "canvas" and hook.get("score") is None:
+                    hook = _hook_score(ffmpeg, wd, name, m if pieces_path else dict(m, pieces=[
+                        {"start": c["start"], "end": c["end"], "kills": 0}]), "live-clip", ex)
+                print(f"live-review {c['id']}/{lid}: rendered ({m['seconds'] if pieces_path else c['end'] - c['start']:.1f} s)")
             except ClipError as e:
                 errors.append({"layout": lid, "error": str(e)[-300:]})
                 failed += 1
                 eprint(f"live-review {c['id']}/{lid}: FAILED")
+        _drop_fonts(wd)
         out_rows.append({"id": c["id"], "start": c["start"], "end": c["end"], "wallStart": c["wallStart"],
-                         "source": os.path.basename(c["file"]),
+                         "source": os.path.basename(c["file"]), "sourcePath": c["file"],
                          "score": c["score"], "labels": c["labels"], "reasons": c["reasons"],
-                         "captions": {"backend": "none", "status": "off"}, "files": files, "errors": errors})
+                         **({"pieces": m["pieces"]} if pieces_path else {}),
+                         "captions": cinfo, "hook": hook, "files": files, "errors": errors})
         progress_line("review", n, len(clips), f"clip {c['id']} {'failed' if errors else 'done'}")
     write_json_atomic(os.path.join(a.out, RENDER), {
         "tool": "clipper", "toolVersion": TOOL_VERSION, "createdAt": _now(), "recording": "live-saves",
@@ -683,6 +717,41 @@ def cmd_live_review(a):
             print(f"montage: NOT MADE ({status['reason']}); the short clips are kept"
                   f"{' and published' if a.publish else ''}")
     return 0  # a montage outcome never changes the exit code (D322 proposed): see render.json `montage`
+
+
+def _live_hook(c, ex, lim):
+    """ED1 (D352) for one live clip: {pieces, seconds, peaks, medals, hook}. The clip's strongest medal (anchor) is
+    the moment; with a teaser the clip is first cut to the maximum minus the teaser around it (D350)."""
+    anchor = c.get("anchor")
+    reel = {"pieces": [{"start": float(c["start"]), "end": float(c["end"]), "kills": 0}],
+            "seconds": round(float(c["end"]) - float(c["start"]), 3),
+            "peaks": [float(anchor)] if anchor is not None else [],
+            "medals": [{"t": float(anchor), "w": 1.0, "label": (c.get("labels") or [None])[0]}] if anchor is not None else []}
+    h = ex["hooks"].get("live-clip") or {"on": False, "teaserSec": 0}
+    if not h["on"]:
+        return dict(reel, hook={"on": False})
+    strat = ex["hcfg"]["byType"]["live-clip"]["strategy"]
+    (r,) = rl.split_reel(reel, lim["maxSec"] - rh.room_for(strat, h["teaserSec"]), 0)
+    r, rec = rh.plan_hook(r, strat, h["teaserSec"], ex["hcfg"], max_sec=lim["maxSec"])
+    return dict(r, seconds=round(sum(p["end"] - p["start"] for p in r["pieces"]), 3), hook=rec)
+
+
+def _render_pieces(ffmpeg, src, pieces, frame, encoder, wd, lid, sinfo, fade_ms, max_sec, ass=None, fdir=None):
+    """A canvas layout rendered from pieces (teaser + clip) with optional captions -> '<layout>.mp4'."""
+    import clip_montage as mont  # noqa: PLC0415
+    name = f"{lid}.mp4"
+    argv = mont.render_argv(ffmpeg, src, pieces, frame, rnd.ENCODERS[encoder], rnd.AUDIO, fade_ms, name + ".part",
+                            audio_tracks=max(1, int(sinfo.get("audio_tracks") or 1)) if sinfo.get("has_audio") else 0,
+                            max_sec=max_sec, captions=ass, fontsdir=fdir)
+    r = rnd.run_tool(argv, cwd=wd, timeout=1800)
+    if r.returncode != 0:
+        try:
+            os.remove(os.path.join(wd, name + ".part"))
+        except OSError:
+            pass
+        raise ClipError(f"render {lid} failed: {r.stderr.strip()[-300:]}")
+    os.replace(os.path.join(wd, name + ".part"), os.path.join(wd, name))
+    return name
 
 
 def _live_montage(a):
@@ -716,7 +785,65 @@ def _live_montage(a):
             "reason": f"{videos} montage/reel video(s)" if videos else "no montage or reel in this recording"}
 
 
-KIND_TYPE = {"M": "montage", "W": "match-reel", "I": "impact-play"}  # clip id prefix -> reel type (CL1)
+KIND_TYPE = {"M": "montage", "W": "match-reel", "I": "impact-play", "L": "live-clip"}  # clip id prefix -> reel type (CL1)
+
+
+# ---------------------------------------------------------------- ED1 hook and ED2 captions (D352, D353)
+
+def _reel_extras(a, data_dir):
+    """The payoff-first hook settings (flag reel-hook + Settings > Clips) and the burned-in caption settings (flag
+    reel-captions) for one run."""
+    hcfg = rh.load_defaults()
+    ccfg = rcap.load_config()
+    cap_on = rcap.on(data_dir, ccfg)
+    return {"hooks": rh.active(data_dir, hcfg), "hcfg": hcfg, "cap_on": cap_on, "ccfg": ccfg,
+            "style": rcap.load_style(ccfg) if cap_on else None,
+            "safe": caps.safe_area(load_config("targets", getattr(a, "targets", None))),
+            "opts": {"whisper_bin": getattr(a, "whisper_bin", None),
+                     "whisper_model": rcap.model_path(data_dir, ccfg, getattr(a, "whisper_model", None))}}
+
+
+def _hook_jobs(reels, typ, prefix, lim, ex, deaths=None):
+    """CL1 split, then the hook of every part from its own pieces. With a teaser the split keeps room for it, so a part
+    and its teaser stay within the type's maximum (D350)."""
+    h = ex["hooks"].get(typ) or {"on": False, "teaserSec": 0}
+    strat = (ex["hcfg"]["byType"].get(typ) or {}).get("strategy")
+    room = rh.room_for(strat, h["teaserSec"]) if h["on"] else 0.0
+    cap = {"maxSec": lim["maxSec"] - room, "minSec": min(lim["minSec"], lim["maxSec"] - room)}
+    out = []
+    for cid, r in rl.cap_reels(reels, cap, prefix):
+        if h["on"]:
+            r, rec = rh.plan_hook(r, strat, h["teaserSec"], ex["hcfg"], max_sec=lim["maxSec"], deaths=deaths)
+        else:
+            rec = {"on": False}
+        out.append((cid, dict(r, hook=rec)))
+    return out
+
+
+def _caption_reel(ffmpeg, src, pieces, frame, wd, ex, duration):
+    """-> (ass name, fonts dir, captions info). Captions off, or no card to burn: (None, None, info)."""
+    if not ex["cap_on"]:
+        return None, None, {"backend": "none", "status": "off"}
+    try:
+        tr, info = rcap.make_transcript(ffmpeg, src, pieces, ex["ccfg"], ex["style"], ex["opts"], wd, duration)
+    except ClipError as e:  # a caption failure never stops the reel: it renders without captions
+        return None, None, {"backend": ex["ccfg"]["backend"], "status": "failed", "reason": str(e)[-200:]}
+    if not tr:
+        return None, None, info
+    ass, fd, n = rcap.write_ass(tr, frame, ex["safe"], ex["style"], wd, duration)
+    return ass, fd, dict(info, **rcap.summary(tr, n), transcript=rcap.TRANSCRIPT, burned=bool(n))
+
+
+def _drop_fonts(wd):
+    import shutil  # noqa: PLC0415
+    shutil.rmtree(os.path.join(wd, rcap.FONT_SUBDIR), ignore_errors=True)
+
+
+def _hook_score(ffmpeg, wd, fname, m, typ, ex):
+    """The hook record of a rendered reel with its hook-quality score (always computed, hook on or off, for AN2)."""
+    motion = rh.motion_ydif(ffmpeg, fname, ex["hcfg"]["windowSec"], cwd=wd)
+    kills = [] if typ in ("impact-play", "live-clip") else m.get("peaks")
+    return dict(m.get("hook") or {"on": False}, score=rh.hook_score(m["pieces"], kills, m.get("medals"), ex["hcfg"], motion))
 
 
 def cmd_montage(a):
@@ -741,6 +868,7 @@ def cmd_montage(a):
     cfg = load_config("montage", a.montage_config)
     frame = load_config("layouts", a.layouts_file)["output"]
     lim = rl.effective_limits(resolve_data_dir(a.data_dir))  # CL1 (D350): the user's length per reel type
+    ex = _reel_extras(a, resolve_data_dir(a.data_dir))  # ED1 hook, ED2 captions (D352, D353)
     cfg = dict(cfg, minSec=lim["montage"]["minSec"], maxSec=lim["montage"]["maxSec"])
     plans = mont.plan_montages(hits, ranking, cfg, min(info["duration"], vinfo["duration"]))
     encoder = rnd.pick_encoder(a.encoder)
@@ -758,14 +886,15 @@ def cmd_montage(a):
         verdict = "REEL" if d["qualifies"] and not d.get("noReel") else "no reel"
         extra = f"; {d['noReel']}" if d.get("noReel") else ""
         print(f"montage: match {m['index']} {m['start']:.0f}-{m['end']:.0f} s: {verdict} ({d['reason']}{extra})")
-    montage_jobs = rl.cap_reels(plans, lim["montage"], "M")
-    reel_jobs = rl.cap_reels(reels, lim["match-reel"], "W")
+    deaths = rank.death_spans(hits, ranking)  # ED1: a reel never opens on a death
+    montage_jobs = _hook_jobs(plans, "montage", "M", lim["montage"], ex, deaths)
+    reel_jobs = _hook_jobs(reels, "match-reel", "W", lim["match-reel"], ex, deaths)
     for _, r in reel_jobs:
         r["score"] = float(r["kills"])  # a match reel's score is its kill count
     reel_doc["reelLength"] = {"matchReel": lim["match-reel"], "montage": lim["montage"], "impactPlay": lim["impact-play"]}
     reel_doc["reels"] = [{"id": cid, "match": r["match"], "rules": r["rules"], "kills": int(r["score"]),
                           "pieces": r["pieces"], "pieceRounds": r.get("pieceRounds"), "part": r.get("part"),
-                          "parts": r.get("parts"), "trimmed": r.get("trimmed")}
+                          "parts": r.get("parts"), "trimmed": r.get("trimmed"), "hook": r.get("hook")}
                          for cid, r in reel_jobs]
     # D326: impact-play reels (match-reels.json impactPlay), only while their flag is on (off by default)
     ip_spec = ((_gate_pack(a) or {}).get("matchReels") or {}).get("impactPlay")
@@ -777,10 +906,10 @@ def cmd_montage(a):
     impacts = (mont.impact_play_reels(hits, matches, ip_spec, min(info["duration"], vinfo["duration"]),
                                       sample_sec=1.0 / fps if fps > 0 else 1.0,
                                       min_sec=lim["impact-play"]["minSec"]) if ip_on else [])
-    impact_jobs = rl.cap_reels(impacts, lim["impact-play"], "I")
+    impact_jobs = _hook_jobs(impacts, "impact-play", "I", lim["impact-play"], ex, deaths)
     reel_doc["impactPlay"] = {"flag": (ip_spec or {}).get("flag"), "on": ip_on,
                               "reels": [{"id": cid, "match": r["match"], "pieces": r["pieces"], "part": r.get("part"),
-                                         "parts": r.get("parts"), "trimmed": r.get("trimmed")}
+                                         "parts": r.get("parts"), "trimmed": r.get("trimmed"), "hook": r.get("hook")}
                                         for cid, r in impact_jobs]}
     write_json_atomic(os.path.join(out, MATCH_REELS), reel_doc)
     print(f"montage: {len(reels)} won-match reel(s) (rules: {MATCH_REELS})")
@@ -791,13 +920,20 @@ def cmd_montage(a):
     for cid, m in jobs:
         wd = os.path.join(out, "clips", cid)
         os.makedirs(wd, exist_ok=True)
+        typ = KIND_TYPE[cid[:1]]
+        ass, fdir, cinfo = _caption_reel(ffmpeg, vrec, m["pieces"], frame, wd, ex, m["seconds"])
         argv = mont.render_argv(ffmpeg, vrec, m["pieces"], frame, rnd.ENCODERS[encoder], rnd.AUDIO,
                                 int(cfg["audioFadeMs"]), "montage-v.mp4.part", audio_tracks=max(1, vinfo["audio_tracks"]),
-                                max_sec=lim[KIND_TYPE[cid[:1]]]["maxSec"])
+                                max_sec=lim[typ]["maxSec"], captions=ass, fontsdir=fdir)
         r = rnd.run_tool(argv, cwd=wd, timeout=1800)
+        _drop_fonts(wd)
         files, errors = [], []
+        hook = m.get("hook") or {"on": False}
         if r.returncode == 0:
             os.replace(os.path.join(wd, "montage-v.mp4.part"), os.path.join(wd, "montage-v.mp4"))
+            hook = _hook_score(ffmpeg, wd, "montage-v.mp4", m, typ, ex)
+            if hook.get("used") not in (None, "already", "none"):
+                print(f"montage {cid}: opens on its strongest moment ({hook['used']}, at {hook['peakOut']:.1f} s)")
             files.append({"layout": "montage-v", "file": "montage-v.mp4", "geometry": "canvas",
                           "sourceAudioTracks": vinfo["audio_tracks"]})
             kills = m.get("kills", sum(p["kills"] for p in m["pieces"]))
@@ -816,11 +952,14 @@ def cmd_montage(a):
         rows.append({"id": cid, "start": 0.0, "end": m["seconds"], "score": m["score"], "labels": m["labels"],
                      "pieces": m["pieces"], "part": m.get("part"), "parts": m.get("parts"),
                      "trimmed": m.get("trimmed"), "belowMin": m.get("belowMin"), "kills": m.get("kills"), "streakKills": m.get("streakKills"),
-                     "singleKills": m.get("singleKills"), "captions": {"backend": "none", "status": "off"},
+                     "singleKills": m.get("singleKills"), "captions": cinfo, "hook": hook,
                      "files": files, "errors": errors})
     write_json_atomic(os.path.join(out, RENDER), {
         "tool": "clipper.montage", "toolVersion": TOOL_VERSION, "createdAt": _now(),
         "recording": os.path.basename(a.recording), "vRecording": os.path.basename(vrec), "encoder": encoder,
+        "vRecordingPath": vrec, "audioFadeMs": int(cfg["audioFadeMs"]),  # ED2: clipper.py recaption renders from these
+        "reelHook": {"version": ex["hcfg"]["version"], "flag": rh.FLAG, "types": ex["hooks"]},
+        "reelCaptions": {"version": ex["ccfg"]["version"], "flag": rcap.FLAG, "on": ex["cap_on"]},
         "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
         "game": _game(a), "failed": failed, "reelLength": lim, "clips": rows,
         "matchReels": {"file": MATCH_REELS, "matches": len(matches),
@@ -838,7 +977,7 @@ def cmd_montage(a):
         "candidates": [{"id": r["id"], "rank": i, "kind": {"W": "won-match", "I": "impact-play"}.get(r["id"][:1], "montage"),
                         "start": 0.0, "end": r["end"], "anchor": min(pre, r["end"]), "score": r["score"],
                         "labels": r["labels"], "pieces": r["pieces"],
-                         "part": r.get("part"), "parts": r.get("parts")}
+                         "part": r.get("part"), "parts": r.get("parts"), "hook": r.get("hook")}
                        for i, r in enumerate((r for r in rows if r["files"]), 1)],
     })
     print(f"montage: {len(montage_jobs)} montage video(s), {len(reel_jobs)} won-match reel video(s), {failed} failed")
@@ -847,6 +986,77 @@ def cmd_montage(a):
     if getattr(a, "publish", None):
         _publish(sub, out, run_name=os.path.basename(a.out), rec_start=a.recording)
     return rc
+
+
+# ---------------------------------------------------------------- recaption (ED2, D353)
+
+def cmd_recaption(a):
+    """Renders one reel again with its (edited) transcript: DIR/clips/<id>/transcript.json -> captions.ass -> the
+    reel's canvas file, cut from the source recording again (render.json vRecordingPath, or the live clip's
+    sourcePath, or --source). The threshold is not applied again: the transcript's show values are used as they are.
+    A published copy of the reel (published.json) is replaced too. Needs the reel-captions flag."""
+    import clip_montage as mont  # noqa: PLC0415
+    data_dir = resolve_data_dir(a.data_dir)
+    ccfg = rcap.load_config()
+    if not rcap.on(data_dir, ccfg):
+        raise ClipError(f"captions are off (the '{rcap.FLAG}' flag)")
+    ffmpeg, ffprobe = _tools(a)
+    rpath = os.path.join(a.out, RENDER)
+    rdoc = load_json(rpath)
+    row = next((c for c in rdoc.get("clips") or [] if c.get("id") == a.id), None)
+    if row is None:
+        raise ClipError(f"no reel {a.id} in {RENDER}")
+    wd = os.path.join(a.out, "clips", a.id)
+    tpath = os.path.join(wd, rcap.TRANSCRIPT)
+    if not os.path.isfile(tpath):
+        raise ClipError(f"no {rcap.TRANSCRIPT} for {a.id} (it is made when the reel renders with captions on)")
+    tr = load_json(tpath)
+    src = a.source or rdoc.get("vRecordingPath") or row.get("sourcePath")
+    if not src or not os.path.isfile(src):
+        raise ClipError("the source recording of this reel is gone: give --source")
+    canvas = next((f for f in row.get("files") or [] if f.get("geometry") == "canvas" or f.get("layout") in
+                   ("montage-v", "stream-v")), None)
+    if canvas is None:
+        raise ClipError(f"reel {a.id} has no canvas file to render again")
+    pieces = row.get("pieces") or [{"start": float(row["start"]), "end": float(row["end"]), "kills": 0}]
+    seconds = round(sum(float(p["end"]) - float(p["start"]) for p in pieces), 3)
+    style = rcap.load_style(ccfg)
+    safe = caps.safe_area(load_config("targets", a.targets))
+    ass, fdir, n = rcap.write_ass(tr, rdoc["frame"], safe, style, wd, seconds)
+    fade = int(rdoc.get("audioFadeMs") or load_config("montage", None)["audioFadeMs"])
+    name = canvas["file"]
+    # the reel keeps its own timeline and length: the cut is the existing file's length (or none), never the current
+    # maximum setting, which may have been lowered since the reel was made
+    old = os.path.join(wd, name)
+    max_sec = (media_info(ffprobe, old).get("duration") or None) if os.path.isfile(old) else None
+    sinfo = media_info(ffprobe, src)
+    argv = mont.render_argv(ffmpeg, src, pieces, rdoc["frame"], rnd.ENCODERS[rnd.pick_encoder(a.encoder)], rnd.AUDIO,
+                            fade, name + ".part",
+                            audio_tracks=max(1, int(sinfo.get("audio_tracks") or 1)) if sinfo.get("has_audio") else 0,
+                            max_sec=max_sec, captions=ass, fontsdir=fdir)
+    r = rnd.run_tool(argv, cwd=wd, timeout=1800)
+    _drop_fonts(wd)
+    if r.returncode != 0:
+        try:
+            os.remove(os.path.join(wd, name + ".part"))
+        except OSError:
+            pass
+        raise ClipError(f"recaption {a.id} failed: {r.stderr.strip()[-300:]}")
+    os.replace(os.path.join(wd, name + ".part"), os.path.join(wd, name))
+    row["captions"] = dict(row.get("captions") or {}, **rcap.summary(tr, n), status="ok", burned=bool(n),
+                           transcript=rcap.TRANSCRIPT, recaptionedAt=_now())
+    write_json_atomic(rpath, rdoc)
+    replaced = 0
+    ppath = os.path.join(a.out, pub.PUBLISHED)
+    if os.path.isfile(ppath):
+        for f in load_json(ppath).get("files") or []:
+            if f.get("id") == a.id and f.get("layout") == canvas.get("layout") and os.path.isfile(f.get("file", "")):
+                tmp = f["file"] + ".part"
+                pub._link_or_copy(os.path.join(wd, name), tmp)
+                os.replace(tmp, f["file"])
+                replaced += 1
+    print(f"recaption {a.id}: {n} caption card(s) burned, {replaced} published copy(ies) replaced")
+    return 0
 
 
 # ---------------------------------------------------------------- publish / tidy
@@ -1007,9 +1217,14 @@ def build_parser():
     s.set_defaults(fn=cmd_run)
     s = sub.add_parser("montage"); common(s)
     s.add_argument("--hits"); s.add_argument("--montage-config")
+    s.add_argument("--whisper-bin"); s.add_argument("--whisper-model")  # ED2 captions (flag reel-captions)
     s.add_argument("--v-recording", type=os.path.abspath); s.add_argument("--encoder", default="auto")
     s.add_argument("--record-start"); s.add_argument("--no-decode", action="store_true"); publish_arg(s)
     s.set_defaults(fn=cmd_montage)
+    s = sub.add_parser("recaption", help="render one reel again with its edited transcript (ED2, flag reel-captions)")
+    common(s, recording=False)
+    s.add_argument("--id", required=True); s.add_argument("--source", type=os.path.abspath)
+    s.add_argument("--encoder", default="auto"); s.set_defaults(fn=cmd_recaption)
     s = sub.add_parser("publish"); common(s, recording=False)
     s.add_argument("--to", required=True, help="the clips folder"); s.set_defaults(fn=cmd_publish)
     s = sub.add_parser("tidy")
@@ -1036,6 +1251,7 @@ def build_parser():
     s.add_argument("--v-recording", type=os.path.abspath,
                    help="V canvas recording for --montage (default: the '-v-' sibling of --recording)")
     s.add_argument("--montage-config")
+    s.add_argument("--whisper-bin"); s.add_argument("--whisper-model")  # ED2 captions (flag reel-captions)
     s.set_defaults(fn=cmd_live_review)
     return p
 

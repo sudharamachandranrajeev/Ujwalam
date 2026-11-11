@@ -175,6 +175,8 @@ class Worker:
                "reason": act["reason"], "score": act["score"], "labels": act["labels"],
                # seconds before the moment the replay files end (the save call): the clip inside each file
                "startBack": round(now - act["start"], 2), "endBack": round(max(0.0, now - act["end"]), 2),
+               # ED1 (D352): the strongest medal, for the payoff-first hook of the live clip
+               "anchorBack": round(max(0.0, now - act["anchor"]), 2) if act.get("anchor") is not None else None,
                "files": [{"canvas": s.get("canvas"), "path": s.get("path")} for s in (saved or {}).get("saved", [])],
                "errors": [e.get("canvas") for e in (saved or {}).get("errors", [])]}
         try:
