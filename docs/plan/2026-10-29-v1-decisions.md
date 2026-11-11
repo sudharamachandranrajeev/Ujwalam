@@ -873,3 +873,43 @@ could turn on in settings as well." Decided:
 Not done: a snap-distance setting (the triage row mentions one; the distance stays 8 px, D272). Real-mouse feel on the
 user's screen is UNVERIFIED until the user tries it.
 Evidence: `docs/evidence/2026-11-10-f8-preview-select-snap.md`.
+
+## D339 — Scene builder SB1–SB2: read a reference into typed data, rules first, behind `scene-builder` (2026-11-11, plan D324 section C)
+
+Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` section C (approved, D324), with the build
+plan's §4.6 "Theme from media" and §4.7 "Theme → scene generator". Decided:
+- SB1 input: a local image (.png .jpg .jpeg .webp .bmp .gif) or video (.mp4 .mov .mkv .webm .avi .m4v) only. URLs,
+  `file:` and network shares are refused; ffprobe/ffmpeg run hidden (D191) with `-protocol_whitelist file`. Frames
+  are scaled (area filter) to a 960 px long side. A video is sampled at N evenly spaced times
+  t_i = (i + 0.5) · duration / N (default 8, at most 64; one seek per sample; a time past the last frame's start
+  moves back to it). `services/scene-builder/frames.mjs`.
+- SB2 output is data only, typed by `data/schemas/reference-read.schema.json` (schemaVersion 1): base name of the
+  file (never a folder), palette, style (type feel, corner radius, glow, shadow) and slots (game, camera, chat,
+  alerts, graphics) with box fractions 0..1, a confidence 0..1 and the rule hits as evidence. It never changes a
+  project or scene; SB3 builds scenes from it later.
+- Palette: the §4.6 method ported from the legacy reference tool (OKLab, seeded k-means++ k = 8, WCAG contrast,
+  lightness push), plus a merge of clusters closer than OKLab 0.03. Generic roles (background, surface, text,
+  accent, accentAlt) with provenance extracted/derived; text prefers neutral clusters and is pushed to 4.5:1; no
+  invented colours (a missing second accent is null). SB4 maps the roles onto the theme schema.
+- Slots by rules: cells of about 1/48 of the long side classed busy / ui / soft; the game is the maximum-sum
+  rectangle of busy cells, split at near-empty seams; other content is boxed on a half-cell grid, text-like boxes
+  stacked under each other merge into one rail; camera (skin tones + texture + camera shape), chat (text lines,
+  stacked cards, a tall rail at a side or a wide portrait rail), alerts (wide, centred, upper half, vivid fill; never
+  a full-width band) and graphics (the rest). Motion in a video is evidence for the game, not a cell class (chat and
+  camera move too).
+- Style by rules: type weight from stroke/height of glyph-like marks (light < 0.08 ≤ regular < 0.12 ≤ bold < 0.17 ≤
+  black), size on a 1080 px short side, polarity; font family is left null for the model. Corner radius sub-pixel
+  (half-way crossings on the sides and the diagonal, 0.2 px corner bias measured on drawn corners), only on boxes
+  with a whole outline. Glow = vivid marks (OKLab L ≥ 0.5, C ≥ 0.08) whose same-hue colour fades out on two sides or
+  more; shadow = a darker band under a box that lightens outward.
+- Local vision model: a typed hook only (`readReference(file, { model })`, adapter `{ id, local: true, analyze }`).
+  Non-local adapters are refused; answers are shape-checked; a model slot replaces a rules slot of the same role
+  only with a higher confidence; a failing model leaves the rules result with a note. Nothing is installed; no paid
+  API. Choosing and installing a model needs the user's yes ("if the hardware allows it").
+- Entry point for SB3/SB4: `readReference()` / `readFrames()` in `services/scene-builder/read.mjs`, and
+  `node services/scene-builder/cli.mjs read <file> [--frames N] [--long-side PX] [--data-dir DIR]` (JSON on stdout,
+  exit 2 while the flag is off). New flag `scene-builder`, off by default; no studio UI yet.
+Tolerances on drawn fixtures: every slot side within 0.03 of the frame side; palette colours within OKLab 0.02 and
+shares within 2 points; corner radius within max(3 px, 15 %) on a 1080 px short side. Results on real references are
+UNVERIFIED until the user checks them.
+Evidence: `docs/evidence/2026-11-11-sb1-sb2-reference-read.md`.
