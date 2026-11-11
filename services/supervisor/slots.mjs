@@ -290,6 +290,7 @@ export function createUiSlot(opts) {
         restoreOld: async () => { front.setBackend(old.port); return { port: old.port }; },
       }, opts.timeouts);
     },
+    async stop() { const c = st.current?.child; if (c) { st.plan(c); await stopChild(c, { graceMs: 3000 }); } },
   };
 }
 
@@ -333,5 +334,6 @@ export function createWorkerSlot(opts) {
         },
       }, { check: healthMs + 5000 });
     },
+    async stop() { const c = st.current?.child; if (c) { st.plan(c); await stopChild(c, { graceMs: 3000 }); } },
   };
 }

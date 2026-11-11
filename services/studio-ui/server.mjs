@@ -1536,8 +1536,12 @@ export function createStudioServer(opts) {
     res.writeHead(200, { 'Content-Type': 'text/event-stream; charset=utf-8', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
     const client = { write: (f) => res.write(f) };
     sseClients.add(client);
-    res.write(': open\n\n');
+    // LU3 service swap (D337): a swap cuts this stream; the page reconnects after `retry` ms and every stream starts with
+    // the whole state it listens to (status, flags, edits), so a change made during the gap is never missed.
+    res.write('retry: 500\n: open\n\n');
     if (lastSnapshot) res.write(`event: status\ndata: ${JSON.stringify(lastSnapshot)}\n\n`);
+    if (flags) res.write(`event: flags\ndata: ${JSON.stringify({ flags: flags.list() })}\n\n`);
+    res.write(`event: edits\ndata: ${JSON.stringify(history.state())}\n\n`);
     const hb = setInterval(() => res.write(': hb\n\n'), limits.sseHeartbeatMs);
     hb.unref();
     const done = () => { clearInterval(hb); sseClients.delete(client); };
