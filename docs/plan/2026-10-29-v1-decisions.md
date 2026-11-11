@@ -913,3 +913,40 @@ parts of LL1 (store, cap) and LL5 (privacy scan) it needs. Decided:
   LL2 brief allows. `services/learning` is added to the alpha package manifest.
 Not done: LL1 evidence capture, LL3 review queue, LL4 training. Real use on a stream and on the user's clips folder is
 UNVERIFIED. Evidence: `docs/evidence/2026-11-11-ll2-learning-signals.md`.
+
+## D340 — Live evidence and low-confidence reads go to the learning store; an optional review in My clips (2026-11-11, LL1 and LL3 of D324)
+
+Spec: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` section B (approved, D324). Builds on D338's
+store (same folders, same 5 GB cap; no second store). Decided:
+- **LL1 capture (live worker):** `services/clip/learning_capture.py` writes into
+  `<dataDir>/learning-store/live-<live session stamp>/`: `evidence.jsonl` (one row per OCR'd frame that produced
+  detector hits: hit rows in the detector pass format, the frame's mode and its OCR texts with score and box),
+  `review.jsonl` (LL3 items) and `frames/<id>.jpg` (only for review items; no other frame is kept), plus
+  `session.json` written once (the cap's age order, as store.mjs). Unchanged frames (diff gate) add nothing. The live
+  loop only builds small dicts and puts them on an 8-item queue with `put_nowait`; a daemon thread writes (JPEG
+  encoding with OpenCV on the CPU, appends). A full queue, a failed write or a session at the cap drops the item and
+  logs a line (the first drop and every 100th); `frame()` never raises, and a store that cannot open only turns
+  capture off. No model, no GPU work and no extra OCR are added (VRAM rule). No flag: background writing with no
+  visible effect, as D338. `FrameScanner` now keeps its last OCR boxes and a `fresh` mark (no extra work).
+- **LL3 queue, thresholds from data only:** unclassified-banner = a signalled W1 VICTORY/DEFEAT word whose height fits
+  none of the pack's W1 `banner.kinds` (answers: the pack's kinds plus "not a banner"); ocr-low = a signalled hit read
+  below `game.json` `ocr.minConfidence` (answers: the read or "wrong read", or a typed correction). That value is
+  null in the CODM pack today, so **no ocr-low item is queued until the user sets it**; no threshold is invented.
+  unknown-mode = a match of the stream's recording with an end screen whose game mode the match gate could not tell
+  (`gameMode` null), queued by `clipper.py live-review --recording` after the stream, with one frame of the recording
+  at its end screen (ffmpeg, post-stream); answers: the modes the pack names (S1 modeNames, C1/C2 cues, banner
+  subtitles). "Match mode" is read as the game mode of a match (match_gate), not the HUD family mp/br. One item per
+  appearance (a banner still on screen on the next frame is not queued again). Only signalled rows are looked at.
+- **LL3 review:** `services/learning/review.mjs` lists unanswered items (newest 20 sessions, 200 items), serves an
+  item's own `frames/<id>.jpg` only, and writes the answer as a D338 label row: action `confirmed` (new), source
+  `review` (new), `ref { item, kind, detector, label, value, corrected }`. UI server routes
+  `/ui/api/learning/review|frame|confirm`, 404 while the flag is off. The Qt studio owns My clips (its top-bar
+  button), so the review is a **Review reads (N)** button beside it, shown only with the flag on and items queued,
+  opening a non-modal window (list, frame, answer, Confirm, Close; Posts window patterns). The click is the decision
+  (D332). New flag **`learning-review`**, off by default. Nothing waits for an answer; unanswered items stay until
+  the cap removes their session.
+- **Privacy (LL5):** frames and OCR texts (they can hold player names) live only in the local store, which is
+  gitignored and refused by the private scan (D338). The review list does not carry OCR texts. Committed test
+  fixtures are synthetic with placeholder texts.
+Not done: LL4 training. Real use on a live stream and a real recording is UNVERIFIED. Evidence:
+`docs/evidence/2026-11-11-ll1-ll3-capture-review.md`.

@@ -136,7 +136,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const ids = JSON.parse(readFileSync(path.join(UI, '..', 'data', 'flags.json'), 'utf8')).flags.map((f) => f.id);
     assert.deepEqual(p.flags.map((f) => f.id), ids);
     assert.ok(p.flags.every((f) => f.on === (f.id === 'preview-edit')), 'all off but preview-edit (on by default, D330)');
-    assert.deepEqual(p.shown, { structure: false, transitions: false, bots: false, report: false, posts: false });
+    assert.deepEqual(p.shown, { structure: false, transitions: false, bots: false, report: false, posts: false, review: false });
     assert.equal(p.scenes, 3);
     assert.ok(p.layers > 0, 'the active scene\'s layers are listed');
     assert.equal(p.undoEnabled, false, 'empty history');
@@ -152,7 +152,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('flags on: structure, transitions, bots, report and posts appear; bots listed with their buttons; mixer track buttons', async () => {
     const p = await probe(['scene-edit', 'transitions', 'bot-manager', 'report-button', 'posting', 'mixer-routing']);
     for (const id of ['scene-edit', 'transitions', 'bot-manager', 'report-button', 'posting']) assert.equal(p.flags.find((f) => f.id === id)?.on, true, id);
-    assert.deepEqual(p.shown, { structure: true, transitions: true, bots: true, report: true, posts: true });
+    assert.deepEqual(p.shown, { structure: true, transitions: true, bots: true, report: true, posts: true, review: false });
     assert.equal(p.botButtons, 4, 'Start and Stop for Streamer.bot and Speaker.bot');
     assert.equal(p.trackButtons, 6, 'mixer-routing: a button per project track (2) on each of the 3 fake mixer strips (D273)');
   });
