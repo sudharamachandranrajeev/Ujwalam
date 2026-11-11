@@ -1356,3 +1356,33 @@ Codex review fixes (2026-11-11):
   other way (ShowWindow under a hidden parent does that). The libobs display still renders into it. `preview.list`
   gains `shown` (its own WS_VISIBLE) and `visible`. `preview.testParent` (--test-hooks only) makes a never-shown parent
   window and tries ShowWindow, SetWindowPos and SetWindowLongPtr on the child for the test.
+
+## D348 — Remaining five themes as full designs, T6 (2026-11-11, plan `docs/plan/2026-11-10-theme-framework.md` §4, §5 row T6)
+
+Same pattern as D344. No framework code, no new variant, no new font file. Branch `theme/t6-remaining`. Packs changed:
+studio-light, violet-night, neon-arcade, retro-wave, tactical.
+
+- **Fonts: only the three bundled OFL families** (Inter, Barlow, Exo 2). The Windows-only families the packs named
+  (Segoe UI, Bahnschrift, Trebuchet MS) are replaced; Segoe UI stays only as a fallback name, never as the face.
+  studio-light and violet-night: Inter. neon-arcade: Exo 2. retro-wave and tactical: Barlow. Base sizes follow D344 (Barlow
+  10.5 pt, Inter and Exo 2 10 pt).
+- **Component language** (the plan's §4 table, as data):
+  - studio-light: rounded solid buttons, outline secondary, underline tabs, outline inputs, ring focus, plain switch,
+    thin slider, rule headers, raised cards, normal density, no glow (soft shadows only, as before).
+  - violet-night: soft buttons, ghost secondary, segmented tabs, filled inputs, glow focus, plain switch, thin slider
+    with value bubble, plain headers, raised cards, normal.
+  - neon-arcade: sharp bezel buttons (caps) with a cyan rim and inner glow on the primary button, tinted secondary, boxed
+    tabs, underline inputs, glow focus, bezel switch, bar handle, bracket headers, framed cards, compact.
+  - retro-wave: pill metal buttons (caps), pill tabs, inset inputs, glow focus, labelled switch, thick inset slider with
+    sphere handle and bubble, caps headers, raised cards with a chrome rim, plate rows, normal.
+  - tactical: sharp solid buttons (caps), outline secondary, segmented tabs, filled inputs, border focus, plain switch,
+    thick slider with bar handle, rule headers in caps, raised cards, bracket chips, compact, no glow on plain controls.
+- **Plain buttons carry no depth effect** (the 2026-11-10 many-widgets rule): `depth.button` is `{}` in all five. This
+  removes neon-arcade's hover glow, tactical's extrusion, retro-wave's hover glow and studio-light's soft shadow;
+  `tests/studio-themes.test.mjs` now lists all eight packs under the rule (sand-teal remains the one stated exception).
+- **Contrast.** The shared check passes for all nine packs in every state. Tactical's warning text `#ee6a50` on the
+  field colour was 4.28:1; danger is now `#f47a5e` (4.89:1). `KNOWN_BASE_GAPS` in the contrast test is empty.
+- **Tests.** The reference-theme probe suite covers the five packs (load, components block equals the file, density,
+  font resolved by Qt, no stylesheet errors, specimen at 100, 125, 150 %). The two v1-fallback tests in the components
+  suite, which used violet-night and retro-wave because they had no block, now strip the block from a copy.
+Evidence: `docs/evidence/2026-11-11-t6-remaining-themes.md`.
