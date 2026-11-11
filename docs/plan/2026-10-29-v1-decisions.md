@@ -1048,3 +1048,48 @@ After the Codex review (same day):
 - **Overflow.** A standby core whose buffer overflowed is never used: it fails its check, is refused before the
   hand-off and cannot activate.
 Evidence: `docs/evidence/2026-11-11-lu3-service-swap.md`.
+
+## D343 — Host updates wait for the stop; a live update is one click; versions on the control page (2026-11-11, LU5 and LU7, LU1 hashes)
+
+Plan rows LU5 and LU7 (D324), built on LU3 (D337). Decided:
+- **Flag.** No new flag: the existing `service-swap` (off by default, read at start) now covers the whole live-update
+  queue. Reason: with one flag there is no setting in which an update while live skips the click, and the queue needs
+  the same IPC channel LU3 opened. Its description in data/flags.json says what it now does.
+- **Queue.** `services/supervisor/updates.mjs`, owned by the launcher. Updates still arrive only from the process that
+  started the launcher (`{ t: 'ujwalam-swap', id, service, root }`, LU6 will use it). A click arrives only from a UI
+  server process over its IPC channel (`ujwalam-update`), which only a logged-in page or the studio window can reach
+  (session cookie, same origin, CSRF). The event core (chat, rules, the LAN remote) has no channel to the launcher, so
+  chat, rules and agents can never trigger an update.
+- **Live (busy).** The D334 rule widened to recordings: a fresh `outputs.status` shows a stream or record sink starting,
+  live, reconnecting, retrying or stopping. A status that cannot be read counts as live. No host: not live.
+- **Host (LU5).** While live, a host update is staged and never applied, not even on a click. The queue polls a fresh
+  status (2 s) and applies it once everything has stopped: the old host is asked to exit, the new one starts from the
+  release folder (`bin/ujwalam-host.exe`, `obs/`, the overlay server child `app/host/overlay/child.mjs`), must write its
+  discovery file and load the project (alpha), else the previous host is started again (`restored-old`). A planned
+  restart is not a crash (the crash supervisor ignores it). The overlay server is a child of the host: an update named
+  `overlay-server` is a host update. Release folders are checked: `release.json` readable, the host exe present and,
+  when release.json names `hostExeSha256`, matching it; a stand-in script host (tests) is replaced only by
+  `bin/ujwalam-host.mjs`. With LU1 hashes in both releases, a host part that did not change is answered `unchanged`.
+- **Close with a staged host update.** `<dataDir>/live/host-update.json` holds the staged (or applied) release folder.
+  The next start uses it while its release `n` is newer than the running one (a checkout without release.json counts as
+  0), so a close does not lose it and a later start does not go back to the older host. It is removed once the
+  installed release has caught up, or when the folder is no longer usable (the reason is logged). Waiting service
+  updates are dropped at a close (logged).
+- **Services (LU7).** Not live: applied at once (the request is the user's own install action). Live: the update waits
+  for one click, "Apply now" on the control page (D332: no typed phrase, no "are you sure"); the click runs the LU3
+  swap while live. Without a click it is applied at the stop. A newer update of the same part replaces a waiting one.
+  One update runs at a time.
+- **Visible.** `<dataDir>/live/updates.json` (versions per part, waiting items in plain words, last 8 results; no paths)
+  goes into the UI server's status snapshot (`updates`) and `GET /ui/api/updates`. The control page shows a "Versions
+  and updates" card (host, overlay server, event core, control page server, studio window, data) and an "Updates
+  waiting: N" pill. The studio window (Qt) does not show it yet: that needs a C++ change and a studio build.
+- **Flags.** A test checks that every flag in data/flags.json has a `since` date and that every flag since 2026-11-10 is
+  off by default.
+- **LU1 (part).** The packager writes `parts` into release.json: per part (host, studio-window, services, overlay, data)
+  the file count and a hash over the files' paths and hashes (`tools/package/parts.mjs`). Not yet in a built alpha.
+- Also fixed: `services/supervisor` was missing from the package (LU3's imports failed the import-closure check).
+- `updates.json` writes retry a rename that Windows refuses while the UI server reads the file; the launcher's swap reply
+  keeps the asker's `id` (the queue item id is sent as `item`).
+Limits: a Start stream clicked while the host restarts for an update fails (host not ready) and must be clicked again;
+the live clipper and face worker are not updated by the queue (not wired, D337).
+Evidence: `docs/evidence/2026-11-11-lu5-lu7-host-staging.md`.
