@@ -1538,3 +1538,34 @@ Codex review fixes (same day, 2 P2):
   replacement is copied to `<file>.<pid>.new` in the same folder and swapped in with one File.Replace (a new file: one
   move); the temp file is removed on failure.
   Limit: an 8.3 short path on a command line (`C:UsersABCDEF~1...`) is not matched.
+
+## D351 — Instagram Live output: a V-canvas sink with a URL and key pasted per broadcast (2026-11-11, IG1)
+
+Plan row IG1 (`docs/plan/` growth and Instagram plan, 2026-11-11). Flag `instagram-live`, off by default. Decided:
+- **Limits as data.** `data/platforms/instagram.json`, from Instagram's own Live Producer page (published 2022-11-02,
+  re-read 2026-11-11): 720x1280 9:16 recommended, 30 fps, video 2,250-6,000 Kbps, audio 44.1 kHz stereo up to 256 Kbps,
+  key refreshed on each use. All recommendations, so warnings. Codec (H.264), AAC, keyframe interval (2 s), RTMP vs
+  RTMPS, one audio track, CBR and the 4 h limit are not on the page: UNVERIFIED warnings. The schema gains optional
+  `maxDurationSec`; `about.instagram.com` and `help.instagram.com` count as official sources.
+- **Sink from V, never its own encoder.** The add-on (`data/outputs/addons/instagram-live.json`, outside the presets
+  folder) adds sink `instagram` (priority 7, lowest). `services/outputs/instagram.mjs` reuses a V rung only if the
+  validator reports nothing but UNVERIFIED_LIMIT / NOT_RECOMMENDED for it; the preset V rung (1080x1920, 7,500 kbps)
+  does not fit, so one rung `ig-v` 720x1280@30 4,000 kbps CBR, 2 s GOP is added, GPU-scaled from V (fps lowered to a
+  divisor of the canvas fps if needed; encoder and options copied from the plan's V rung). NVENC sessions stay probed
+  by the host at configure. Audio is the plan's one shared track (48 kHz AAC 160 kbps, encoded once): the 44.1 kHz
+  recommendation gives a NOT_RECOMMENDED warning, not a second encode.
+- **Plan file.** With the flag on, the launcher writes `<data>/outputs/live-plan-instagram.json` (the plan in effect
+  plus the sink and its target) and starts from it. Target: transport `auto`, `serverRef Ujwalam/stream/instagram-server`,
+  `keyRef Ujwalam/stream/instagram`; the scheme follows the pasted URL. The flag is read at start: switching it applies
+  from the next start, not mid-stream (adding an encoder while live is not done here).
+- **Key per broadcast.** Pasted in Settings > Connections or the new Instagram box on the control page (needs
+  `platform-connect`); both URL and key are required together; only Credential Manager holds them; only the last 4
+  characters are shown. `<data>/outputs/instagram-key.json` keeps times only (`savedAt`, `liveAt`, `usedAt`). The sink
+  seen live sets `liveAt`; seen not running afterwards (stop, failure, or the next start after a crash) sets `usedAt`.
+  A key with `usedAt >= savedAt`, or never pasted through Ujwalam, fails readiness with the plain fix text (open Live
+  Producer, copy the new URL and key, paste both). A `?` in the Instagram key is allowed (other platforms still warn).
+- **Loopback first.** `app/host/tests/host-instagram-loopback.test.mjs` streams the instagram sink to a local ffmpeg
+  RTMP listener and checks it with ffprobe against the platform file. No real Instagram test until the user says
+  "start stream test".
+- Left out: the Qt Settings > Connections page is unchanged (its generic rows show Instagram; a used key shows as not
+  connected with the reason). No Instagram API is used (none starts a live).
