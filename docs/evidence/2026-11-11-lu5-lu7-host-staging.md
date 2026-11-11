@@ -1,7 +1,7 @@
 # 2026-11-11 LU5 and LU7 host staging, one-click live updates, versions on the control page
 
 Branch `lu/host-staging` (on LU3). Plan rows LU5 and LU7 (D324), LU1 part hashes; decision D343, updated after the
-Codex review (3 P1, 3 P2, all fixed below). Status: **queue, maintenance lock, release integrity, startup trial, click
+Codex review (3 P1, 3 P2, all fixed below) and the Codex re-review (finding 2 completed; new A, B and C fixed). Status: **queue, maintenance lock, release integrity, startup trial, click
 gate, flag-defaults test and control-page view done and tested with the fake host, staged fixture releases and real
 service swaps, all in temp folders; the Qt studio status line, a loopback-stream run and a built alpha with part
 hashes are UNVERIFIED** (see below). Behind the flag `service-swap` (reused, off by default; D343 says why).
@@ -21,14 +21,22 @@ hashes are UNVERIFIED** (see below). Behind the flag `service-swap` (reused, off
   `release` on the authority channel in `services/studio-ui/stream-recovery.mjs`). The launcher holds the gate BEFORE
   the last status check: new starts are refused at once (`HOST_UPDATING`), starts on their way are awaited (15 s, else
   the update goes back to waiting). Held until the replacement or the rollback is done. No launcher answer: refused.
+  Re-review A: a grant that arrives after its request timed out is given back at once (request ids); a release with no
+  answer is retried while the link is up. Active leases never expire on their own.
 - **Integrity (P1-2)**: release.json must give version, `n` >= 1 and the LU1 hash of each part used (the host also
   `hostExeSha256`). The whole part is hashed (host: exe, OBS runtime, overlay child, projects; services: services, data,
   overlay), copied to `<dataDir>/live/releases/<kind>-<n>-<hash>` and hashed again; it runs only from the copy. The
   host copy is checked again right before it starts and at every start that uses it. `parts.mjs` moved to
-  `services/supervisor/` (it ships; tools/package does not).
+  `services/supervisor/` (it ships; tools/package does not). Re-review 2: the copied files are read-only, and the host
+  copy is hashed again after the old host has exited, right before the spawn (and right before each startup
+  candidate's spawn). Re-review C: release.json is read once; the copy carries that snapshot, and the unchanged and
+  freshness checks use the prepared entry. Full immutability against a writer with the user's rights is out of scope
+  (D343).
 - **Start trial (P1-3)**: `host-update.json` v2 keeps `pending`, `good` (last host that got ready and loaded the
   project) and `rejected`. The next start tries pending, then good, then the installed host. A try that does not get
   ready or does not load the project is stopped (exit confirmed), rejected for good, and the next one starts.
+  Re-review B: only the candidate's own failure rejects it; an aborted replacement (the old host did not exit) keeps it
+  pending and retries it at the next poll.
 - **Order (P2-4)**: an update not newer than the running or a waiting release of its part is refused; a same-part
   waiting item is dropped before a newer one applies or queues.
 - **Services while live (LU7, P2-5)**: a service update while busy waits for **one click** (control page "Apply now"
@@ -49,7 +57,38 @@ hashes are UNVERIFIED** (see below). Behind the flag `service-swap` (reused, off
   LU3 build failed its import check; `updates.json` writes retry a refused rename on Windows (the UI server may hold the
   file open for a read); the swap reply kept the request's `id` (the queue item id is now `item`).
 
-## Tests (run 2026-11-11, one file at a time, `--test-timeout=60000`, after the Codex review fixes)
+## Tests (run 2026-11-11, one file at a time, `--test-timeout=60000`)
+
+After the Codex re-review fixes (commit `ec07ca2`):
+
+| Suite | Result |
+|---|---|
+| `tests/live-updates.test.mjs` | tests 24, pass 24, fail 0 |
+| `tests/live-updates-launcher.test.mjs` | tests 5, pass 5, fail 0 |
+| `tests/stream-recovery.test.mjs` | tests 17, pass 17, fail 0 |
+| `tests/service-swap-launcher.test.mjs` | tests 4, pass 4, fail 0 |
+| `tests/service-swap-ui-worker.test.mjs` | tests 5, pass 5, fail 0 |
+| `tests/studio-ui-crash-recovery.test.mjs` | tests 5, pass 5, fail 0 |
+| `tests/studio-ui-server.test.mjs` | tests 40, pass 40, fail 0 |
+| `tests/record-live.test.mjs` | tests 12, pass 12, fail 0 |
+| `tests/studio-ui-quit-lock.test.mjs` | tests 5, pass 5, fail 0 |
+
+Commit hook quick checks: `ci: 9/9 passed`. Lint: `lint: 0 finding(s)`.
+
+Re-review tests:
+
+- 2: `Codex re-review 2: the copy is read-only, and a copy changed after the queue check (while the old host shuts
+  down) is hashed again before the spawn: not started, rejected, the previous host comes back`
+  (`tests/live-updates-launcher.test.mjs`; the fake host changes the copy inside its `host.shutdown`, hook
+  `UJWALAM_FAKE_HOST_TAMPER_ON_SHUTDOWN`), and the P1-2 test now asserts a write to the copy fails (EPERM).
+- A: `Codex re-review A: a lease grant that arrives after its request timed out is given back; a lost release is sent
+  again; hold() then succeeds`.
+- B: `Codex re-review B: an aborted replacement (the old host did not exit) keeps the candidate pending and retries it;
+  only its own failure rejects it`.
+- C: `Codex re-review C: one release.json snapshot: the copy carries it, and the freshness and unchanged checks use the
+  prepared entry`.
+
+After the first Codex review fixes:
 
 | Suite | Result |
 |---|---|
@@ -102,8 +141,12 @@ rolled back and recorded as rejected.
 
 - The Qt studio window does not show the update status yet (needs C++; not built in this task). The control page does.
 - No loopback-stream run of a host update at the stop (only the fake host).
-- The restart-abort path when an old host does not exit is tested on `stopHostChild` alone, not end to end through
-  `restartPlanned` (a real unkillable host was not simulated).
+- The restart-abort path when an old host does not exit is tested on `stopHostChild` alone and on the queue (keep and
+  retry, re-review B), not end to end through `restartPlanned` (a real unkillable host was not simulated).
+- The startup re-hash right before each candidate's spawn has no own launcher test (the startup records check the
+  same hash a moment earlier; the planned-replacement re-hash is tested end to end).
+- Read-only copies stop accidents only: a process with the user's rights can clear the flag and change a file in the
+  milliseconds between the last hash and the spawn (out of scope, D343).
 - The maintenance lock is tested on the gate, the IPC lease and the UI server wrapper; no end-to-end race (a Start
   click landing inside a real host restart) was run.
 - LU1 part hashes are not yet in a built alpha zip (`build-alpha` not run; unit-tested only), so a real host release

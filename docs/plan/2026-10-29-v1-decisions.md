@@ -1078,19 +1078,32 @@ Plan rows LU5 and LU7 (D324), built on LU3 (D337). Decided:
   revokes the go-live authority (no stream recovery), then reads the last status. The gate stays held until the new
   host runs or the old one is back. A launcher that does not answer a lease refuses the start (fail closed). The
   launcher's own crash restarts are not gated: they cannot run during a planned restart (one host supervisor, busy).
+  Codex re-review: a grant is tied to its request id; a grant that arrives after its request timed out is given back
+  at once, and a release without an answer is sent again (growing wait, up to 30 s) while the link is up, so a lost
+  message cannot block host updates for good. Active leases never expire on their own; a UI server that goes away
+  gives back all its leases.
 - **Integrity (Codex review, P1).** An update needs `release.json` with version, `n` >= 1 and the LU1 hash (file count
   and sha256) of each part it runs from; the host also `hostExeSha256`. No metadata: refused. The whole part is hashed
   (host: exe, OBS runtime, overlay child, projects; a service: services, data and overlay parts), copied into
   `<dataDir>/live/releases/<kind>-<n>-<hash>`, and the copy is hashed again; the update runs only from the copy, so the
-  offered folder can change after the check without effect. Right before a host copy is started (and at every start
-  that uses it) its exe and part hash are checked once more; a failure rejects it. Copies that no record names are
-  deleted at the next start.
+  offered folder can change after the check without effect. Codex re-review: release.json is read once; that snapshot
+  is checked, written into the copy and used for every later check (the copy's entry, its `n` against the running and
+  the waiting release, the unchanged check), so a release.json that changes during the request cannot mix two
+  releases. The copied files are made read-only. The host copy is hashed when the queue picks it, and again after the
+  old host has exited, right before the new one is spawned (the same right before each startup candidate's spawn); a
+  failure rejects it and the previous host (or the next candidate) starts. Out of scope: full immutability against a
+  local writer. The data folder belongs to the same Windows user, who can clear read-only and change a file between
+  the last hash and the spawn (milliseconds); that user can change the installed app as well. Copies that no record
+  names are deleted at the next start.
 - **Close with a staged host update; start trial (Codex review, P1).** `<dataDir>/live/host-update.json` (v2) keeps
   `pending` (the host release to try next: staged, or being applied), `good` (the last host release that got ready and
   loaded the project) and `rejected` (releases that failed: never tried again). The next start tries pending, then
   good, then the installed host; each try is a trial: it must write its discovery file and (alpha) load the project, or
   it is stopped (exit confirmed), recorded as rejected, and the next one starts. A candidate is used only while its `n`
   is newer than the installed release (a checkout counts as 0). Waiting service updates are dropped at a close (logged).
+  Codex re-review: only the candidate's own failure rejects it (its hash right before the start, readiness, project
+  load). A replacement aborted before the candidate ran (the old host did not exit, Ujwalam closing) keeps it pending
+  in host-update.json and back in the queue; it is tried again at the next poll once nothing is live.
 - **Services (LU7).** Not live: applied at once (the request is the user's own install action). Live: the update waits
   for one click, "Apply now" on the control page (D332: no typed phrase, no "are you sure"); the click runs the LU3
   swap while live. **Reversed after the Codex review (P2):** a waiting service is NOT applied at the stop; nothing
