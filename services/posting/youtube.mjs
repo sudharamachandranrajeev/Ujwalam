@@ -22,6 +22,7 @@
 import { createReadStream, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { checkLimits, composeField, loadLimits } from './index.mjs';
+import { createLearningStore } from '../learning/store.mjs';
 
 const UPLOAD_INIT_URL = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
 const THUMBNAIL_URL = (videoId) => `https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=${encodeURIComponent(videoId)}`;
@@ -278,6 +279,13 @@ export async function uploadPost(opts) {
     ledger: store.ledger, limits: opts.limits ?? loadLimits(), outputsStatus: opts.outputsStatus, fetchImpl: opts.fetchImpl, now: opts.now, sessions: opts.sessions, publishAt: opts.publishAt ?? null, minLeadMs: opts.minLeadMs, marginMs: opts.marginMs, chunkDeadlineMs: opts.chunkDeadlineMs, fallbackBps: opts.fallbackBps, nowMs: opts.nowMs, beforeChunk: opts.beforeChunk, chunkSize: opts.chunkSize,
     recordUploaded: async ({ videoId }) => { store.ledger.annotate(sha256, post.target, { videoId }); },
   });
+  // LL2 (D338): a "posted" label row in the local learning store when the store knows the data folder. Never fails the upload.
+  if (typeof store.dataDir === 'string') {
+    try {
+      createLearningStore({ dataDir: store.dataDir }).add({ action: 'posted', source: 'posting', session: post.source?.run ?? 'unknown-run',
+        ref: { post: id, target: post.target, clipId: post.source?.clipId ?? null, kind: post.source?.kind ?? null, platform: 'youtube' } });
+    } catch { /* label rows are best effort */ }
+  }
   return { ...r, hasCover: !!cover };
 }
 

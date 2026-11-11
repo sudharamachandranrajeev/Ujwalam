@@ -405,7 +405,7 @@ export function createPostChain(opts) {
     try { rules = rulesSrc.get(); } catch (e) { return { skipped: 'bad-rules', detail: e?.code ?? 'error' }; }
     if (!rules.rules.length) return { skipped: 'no-rules' };
     if (!recovered) { recovered = true; queue.recover(); }
-    const store = createPostStore({ ledgerFile });
+    const store = createPostStore({ ledgerFile, dataDir });
     // Approvals are local file work, but they share the fail-closed live check (unreadable state -> nothing happens).
     const r = await runAuto({ store, rules, outputsStatus, logFile: autoLogFile, now: () => new Date(nowMs()) });
     if (rules.autoUpload) {

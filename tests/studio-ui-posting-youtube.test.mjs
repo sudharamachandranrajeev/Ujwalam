@@ -149,6 +149,9 @@ describe('youtube upload route', () => {
       const v = c.store.get(c.id);
       assert.equal(v.status, 'uploaded'); assert.equal(v.videoId, 'VID123');
       assert.ok(!(await c.get('/ui/api/posts')).text.includes(TOKEN));
+      // LL2 (D338): one "posted" label row in the local learning store of this data folder (session = the post's run)
+      const rows = readFileSync(path.join(path.dirname(path.dirname(c.ledgerFile)), 'learning-store', 'run', 'labels.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+      assert.deepEqual(rows.map((x) => [x.action, x.source, x.session, x.ref.post, x.ref.clipId]), [['posted', 'posting', 'run', c.id, 'c01']]);
       const again = await c.post(UP, { id: c.id });
       assert.equal(again.status, 409); assert.equal(again.json().error, 'already-uploaded');
       assert.equal(c.calls.filter((x) => x.url.includes('uploadType=resumable')).length, 1);

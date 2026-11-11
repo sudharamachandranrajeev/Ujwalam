@@ -14,7 +14,7 @@
 //     the same target, even after reject. Later upload steps reuse this ledger (not built here).
 //   packageUploads({ dataDir, ledgerFile, ... }) (D301): packages every finished video in <dataDir>/clips/uploads.json
 //     (kinds short | montage | won-reel) that is not posted or packaged yet; target by length/aspect from limits.json.
-//   createPostStore({ ledgerFile }) -> list/get/edit/setStatus/media for the studio UI server.
+//   createPostStore({ ledgerFile, dataDir? }) -> list/get/edit/setStatus/media for the studio UI server.
 //
 // Why Node (not Python next to the clipper): the studio-ui server edits and approves packages and owns the ledger
 // semantics, the profile placeholder resolver (services/project/scene-preset.mjs) is Node, and one implementation
@@ -433,7 +433,7 @@ export async function packageUploads(opts) {
 
 export const postId = (entry) => `${entry.sha256.slice(0, 16)}.${entry.target}`;
 
-/** opts: { ledgerFile, limits?, now? }. Reads and edits packages known to the ledger. */
+/** opts: { ledgerFile, limits?, now?, dataDir? (LL2 label rows on upload, D338) }. Reads and edits packages known to the ledger. */
 export function createPostStore(opts) {
   const ledger = createLedger(opts.ledgerFile);
   const limitsFile = opts.limits ?? null;
@@ -463,6 +463,7 @@ export function createPostStore(opts) {
 
   return {
     ledger,
+    dataDir: typeof opts.dataDir === 'string' ? opts.dataDir : null,
     list() {
       const out = [];
       for (const e of entries()) { const p = load(e); if (p) out.push(view(e, { ...p, status: e.status })); }
