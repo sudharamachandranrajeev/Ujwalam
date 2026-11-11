@@ -15,7 +15,8 @@ split_reel(reel, max_sec, min_sec) -> [reel]
     pieces of the part before it move over while that part stays at least min_sec; if it is still short it is kept
     (no content is dropped) and says so in "belowMin";
   * a reel that fits comes back as it was (no "part"), apart from a recorded trim.
-Parts carry part (1-based), parts, kills (of their pieces) and labels + "part N of M".
+Parts carry part (1-based), parts, kills (of their pieces), labels + "part N of M", and the peaks and medals that fall
+inside their own pieces (ED1, D352: each part's hook comes from its own content).
 """
 
 from __future__ import annotations
@@ -127,10 +128,20 @@ def _kills_kept(piece, s, e, peaks, rec):
     return kept
 
 
+def _inside(pieces, reel):
+    """The reel's peaks (kill times) and medals that fall inside the given pieces (ED1: each part's hook is planned on
+    its own content)."""
+    def ok(t):
+        return any(p["start"] <= t <= p["end"] for p in pieces)
+    return {"peaks": [x for x in reel.get("peaks") or [] if _num(x) and ok(float(x))],
+            "medals": [m for m in reel.get("medals") or [] if isinstance(m, dict) and _num(m.get("t")) and ok(float(m["t"]))]}
+
+
 def _part(reel, items, n, m, trimmed, below_min):
     pieces = [p for _, p in items]
     idx = {i for i, _ in items}
-    out = {k: v for k, v in reel.items() if k not in ("streakKills", "singleKills", "streaks", "peaks")}
+    out = {k: v for k, v in reel.items() if k not in ("streakKills", "singleKills", "streaks", "peaks", "medals")}
+    out.update(_inside(pieces, reel))
     out.update({"pieces": pieces, "seconds": round(_total(items), 3),
                 "kills": sum(int(p.get("kills") or 0) for p in pieces), "part": n, "parts": m,
                 "labels": list(reel.get("labels") or []) + [f"part {n} of {m}"]})
@@ -174,7 +185,8 @@ def split_reel(reel, max_sec, min_sec=0.0):
     if len(groups) <= 1:
         if not trimmed:
             return [reel]
-        out = {k: v for k, v in reel.items() if k not in ("peaks", "streakKills", "singleKills")}
+        out = {k: v for k, v in reel.items() if k not in ("peaks", "medals", "streakKills", "singleKills")}
+        out.update(_inside([p for _, p in items], reel))
         out.update({"pieces": [p for _, p in items], "seconds": round(_total(items), 3), "trimmed": trimmed,
                     "kills": sum(int(p.get("kills") or 0) for _, p in items)})
         return [out]

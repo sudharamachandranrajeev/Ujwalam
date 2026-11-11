@@ -40,6 +40,20 @@ def extract_wav(ffmpeg, src, start, dur, out_wav):
         raise ClipError(f"audio extract failed: {r.stderr.strip()[-200:]}")
 
 
+def _token_confidence(seg):
+    """Mean probability of a whisper.cpp segment's text tokens (full JSON, -ojf), or None without token data.
+    Special tokens ([_BEG_], [_TT_123], ...) are left out."""
+    ps = []
+    for t in seg.get("tokens") or []:
+        if not isinstance(t, dict) or str(t.get("text", "")).startswith("[_"):
+            continue
+        try:
+            ps.append(float(t["p"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+    return round(sum(ps) / len(ps), 4) if ps else None
+
+
 def parse_whisper_cpp_json(j):
     out = []
     for seg in j.get("transcription", []) if isinstance(j, dict) else []:
@@ -50,8 +64,22 @@ def parse_whisper_cpp_json(j):
         except (KeyError, TypeError, ValueError):
             continue
         if text and b > a:
-            out.append({"start": a, "end": b, "text": text})
+            row = {"start": a, "end": b, "text": text}
+            conf = _token_confidence(seg)
+            if conf is not None:  # ED2 (D353): only with the full JSON (-ojf); short clips ignore it
+                row["confidence"] = conf
+            out.append(row)
     return out
+
+
+def segment_confidence(avg_logprob, no_speech_prob):
+    """ED2 (D353): one 0..1 confidence for a faster-whisper segment: the mean token probability (exp of the average
+    log probability) times the chance that the segment is speech at all."""
+    import math  # noqa: PLC0415
+    try:
+        return round(max(0.0, min(1.0, math.exp(float(avg_logprob)) * (1.0 - float(no_speech_prob)))), 4)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def transcribe(backend, wav, opts):
@@ -63,7 +91,7 @@ def transcribe(backend, wav, opts):
         if not binp or not os.path.isfile(binp) or not model or not os.path.isfile(model):
             return [], {"backend": backend, "status": "unavailable", "reason": "whisper-cli binary or model missing"}
         base = os.path.splitext(wav)[0]
-        argv = [binp, "-m", model, "-f", wav, "-oj", "-of", base, "-t", "4"]
+        argv = [binp, "-m", model, "-f", wav, "-ojf" if opts.get("full_json") else "-oj", "-of", base, "-t", "4"]
         if opts.get("language"):
             argv += ["-l", opts["language"]]
         r = run_tool(argv, timeout=1800)
@@ -85,9 +113,14 @@ def transcribe(backend, wav, opts):
         # vad_filter: without it a segment after leading silence is stamped from 0.0, so the caption showed seconds
         # before the speech (caption seam, tests/py/test_caption_seam.py). Silero VAD ships inside faster-whisper and
         # runs on the CPU through onnxruntime; segment times stay on the clip timeline.
-        segs, _ = m.transcribe(wav, language=opts.get("language"), vad_filter=True)
-        out = [{"start": float(s.start), "end": float(s.end), "text": s.text.strip()} for s in segs if s.text.strip()]
-        return out, {"backend": backend, "status": "ok", "segments": len(out)}
+        # ED2 (D353): task is always "transcribe" (never translate); multilingual (opts, reel captions) detects the
+        # language per segment for the mixed Malayalam and English speech. Text is kept in the script the model wrote.
+        kw = {"multilingual": True} if opts.get("multilingual") else {}
+        segs, info = m.transcribe(wav, language=opts.get("language"), vad_filter=True, task="transcribe", **kw)
+        out = [{"start": float(s.start), "end": float(s.end), "text": s.text.strip(),
+                "confidence": segment_confidence(s.avg_logprob, s.no_speech_prob)} for s in segs if s.text.strip()]
+        return out, {"backend": backend, "status": "ok", "segments": len(out),
+                     "language": getattr(info, "language", None)}
     raise ClipError(f"unknown captions backend {backend}")
 
 

@@ -1,0 +1,19 @@
+{
+  "$comment": "ED2 burned-in captions (D353, user 2026-11-11): what was said live, transcribed by the local speech to text, burned into montages, match reels, impact-play reels and live clips. Behind the flag reel-captions (off by default). Read by services/clip/reel_captions.py. The look is the registry preset named here (registry/presets/<preset>.json, function reel-captions). The transcript is stored next to each reel (clips/<id>/transcript.json); after an edit, `clipper.py recaption` renders the reel again with it.",
+  "version": "1.0.0",
+  "status": "proposed",
+  "approved": "user 2026-11-11 chose the feature (ED2): captions from what was said live; confidence threshold as data; original script, never transliterated; a font that renders Malayalam or report; inside the V safe zone; editable before posting; flag reel-captions off by default",
+  "checked": "2026-11-11",
+  "flag": "reel-captions",
+  "preset": "reel-captions-bold",
+  "backend": "faster-whisper",
+  "model": "faster-whisper-small",
+  "modelNote": "Looked up as <models>/<model>, where <models> is the folder next to the event-core data folder (paths.event_core_data/../models), unless --whisper-model is given. Never downloaded.",
+  "language": null,
+  "languageNote": "null = detected per segment (faster-whisper multilingual): the speech is mixed Malayalam and English. The task is always transcribe, never translate; no transliteration step exists.",
+  "multilingual": true,
+  "minConfidence": 0.55,
+  "minConfidenceStatus": "unverified: a first guess; STT-ML will measure the model on real stream speech and set it from that",
+  "confidenceNote": "faster-whisper: exp(avg_logprob) x (1 - no_speech_prob) per segment; whisper-cli: mean token probability from its full JSON (-ojf). A segment without a confidence is not shown.",
+  "minSegmentSec": 0.3
+}

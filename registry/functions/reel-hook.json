@@ -1,0 +1,61 @@
+{
+  "id": "reel-hook",
+  "version": "1.0.0",
+  "category": "ai-clipping",
+  "family": "clipping",
+  "name": "Payoff-first reel hook (ED1)",
+  "description": "Opens every montage, match reel, impact-play reel and live clip on its strongest moment within the first windowSec seconds: a reorder (montage) or a short teaser of the peak (match reel, impact-play reel, live clip), then the reel in order. Stays within the D350 maximum, teaser included; never opens on a death; each CL1 part gets its own hook. Writes a hook-quality score (kill, multi-kill, medal, motion in the first 3 s) into render.json for AN2. Strategies and score weights: data/clip/reel-hook.json; per type on/off and teaser length: Settings > Clips. Flag reel-hook (D352).",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "teaserSec": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3
+        },
+        "leadSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.5
+        },
+        "windowSec": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 3
+        }
+      }
+    },
+    "defaults": {
+      "teaserSec": 2,
+      "leadSec": 0.5,
+      "windowSec": 3
+    },
+    "safeRanges": {
+      "teaserSec": [
+        1,
+        3
+      ],
+      "leadSec": [
+        0,
+        1.5
+      ],
+      "windowSec": [
+        1,
+        3
+      ]
+    }
+  },
+  "canvases": [
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 3000,
+  "maxConcurrent": 1,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "post-render",
+  "planSection": "4.10"
+}

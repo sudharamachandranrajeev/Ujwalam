@@ -1,0 +1,127 @@
+{
+  "id": "reel-captions",
+  "version": "1.0.0",
+  "category": "ai-clipping",
+  "family": "clipping",
+  "name": "Burned-in reel captions (ED2)",
+  "description": "Captions from what was said live (local speech to text, segments under the confidence threshold hidden), burned into montages, match reels, impact-play reels and live clips inside the V safe zone with a bundled OFL font. The text stays in the script the model wrote (never transliterated); characters the font cannot draw are not burned. The transcript is stored next to the reel and can be edited; clipper.py recaption renders the reel again with it. Flag reel-captions (D353).",
+  "params": {
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "fontFamily",
+        "fontFile",
+        "bold",
+        "sizePx",
+        "textColour",
+        "outlineColour",
+        "outlinePx",
+        "shadowPx",
+        "maxWordsPerCard",
+        "maxCharsPerLine",
+        "maxLines"
+      ],
+      "properties": {
+        "fontFamily": {
+          "type": "string",
+          "minLength": 1
+        },
+        "fontFile": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+\\.ttf$",
+          "description": "a file in data/fonts (bundled OFL fonts only, D344)"
+        },
+        "bold": {
+          "type": "boolean"
+        },
+        "sizePx": {
+          "type": "integer",
+          "minimum": 40,
+          "maximum": 110
+        },
+        "textColour": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "outlineColour": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "outlinePx": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "shadowPx": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 6
+        },
+        "maxWordsPerCard": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 6
+        },
+        "maxCharsPerLine": {
+          "type": "integer",
+          "minimum": 8,
+          "maximum": 26
+        },
+        "maxLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 2
+        },
+        "liftPx": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 200
+        }
+      }
+    },
+    "defaults": {
+      "fontFamily": "Inter",
+      "fontFile": "Inter-Bold.ttf",
+      "bold": true,
+      "sizePx": 72,
+      "textColour": "#FFFFFF",
+      "outlineColour": "#000000",
+      "outlinePx": 6,
+      "shadowPx": 2,
+      "maxWordsPerCard": 3,
+      "maxCharsPerLine": 16,
+      "maxLines": 2,
+      "liftPx": 0
+    },
+    "safeRanges": {
+      "sizePx": [
+        56,
+        96
+      ],
+      "outlinePx": [
+        3,
+        8
+      ],
+      "maxWordsPerCard": [
+        1,
+        4
+      ],
+      "maxCharsPerLine": [
+        10,
+        18
+      ]
+    }
+  },
+  "canvases": [
+    "V"
+  ],
+  "themeTokens": [],
+  "durationMs": 0,
+  "maxConcurrent": 1,
+  "flashesPerSec": 0,
+  "budgetCost": 0,
+  "status": "in-progress",
+  "format": "post-render",
+  "planSection": "4.10"
+}

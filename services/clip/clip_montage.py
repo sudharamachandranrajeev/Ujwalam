@@ -117,7 +117,9 @@ def plan_montages(hits, ranking, cfg, duration):
     for g in gs:
         ps = [p for p in _pieces(g["kills"], deaths, ranking, cfg) if p["end"] <= duration]
         if ps:
-            units.append({"pieces": ps, "peaks": [float(k) for k in g["kills"]], "score": g["score"] if g["streak"] else 0.0, "streak": g["streak"],
+            units.append({"pieces": ps, "peaks": [float(k) for k in g["kills"]],
+                          "medals": [{"t": float(md["t"]), "w": float(md["w"]), "label": md.get("label")} for md in g["medals"]],
+                          "score": g["score"] if g["streak"] else 0.0, "streak": g["streak"],
                           "kills": sum(p["kills"] for p in ps), "start": ps[0]["start"], "seconds": _length(ps),
                           "labels": [m["label"] for m in g["medals"]] if g["streak"] else []})
     units.sort(key=_unit_order)
@@ -155,6 +157,7 @@ def plan_montages(hits, ranking, cfg, duration):
         nk = sum(u["kills"] for u in m["units"])
         out.append({"pieces": pieces, "seconds": round(_length(pieces), 3),
                     "peaks": sorted(k for u in m["units"] for k in u["peaks"]),
+                    "medals": sorted((md for u in m["units"] for md in u["medals"]), key=lambda x: x["t"]),
                     "score": round(sum(u["score"] for u in m["units"]), 3),
                     "labels": [lb for u in m["units"] for lb in u["labels"]],
                     "kills": nk, "streakKills": sk, "singleKills": nk - sk,
@@ -162,10 +165,13 @@ def plan_montages(hits, ranking, cfg, duration):
     return sorted(out, key=lambda m: (-m["score"], -m["kills"]))
 
 
-def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1, max_sec=None):
+def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1, max_sec=None,
+                captions=None, fontsdir=None):
     """One ffmpeg run: each piece is its own input (-ss/-t, exact because it is re-encoded), scaled into the frame,
     audio faded in and out by fade_ms (no pop at a hard cut), then concatenated. Every audio track of the source
-    (audio_tracks) is kept as its own track, in source order (track 1 = the studio mix); none is dropped or remixed."""
+    (audio_tracks) is kept as its own track, in source order (track 1 = the studio mix); none is dropped or remixed.
+    captions (ED2, D353): a bare ASS file name in the working folder, burned over the joined picture with libass;
+    fontsdir: a bare folder name next to it holding the caption font (no system font, no path escaping)."""
     ow, oh = int(frame["width"]), int(frame["height"])
     fd = fade_ms / 1000.0
     argv = [ffmpeg, "-v", "error", "-nostdin", "-y", "-threads", str(threads), "-filter_threads", "2"]
@@ -180,8 +186,10 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
             parts.append(f"[{i}:a:{k}]aresample=48000,asetpts=PTS-STARTPTS,afade=t=in:d={fd:.3f},"
                          f"afade=t=out:st={max(0.0, d - fd):.3f}:d={fd:.3f}[a{i}_{k}]")
     ins = "".join(f"[v{i}]" + "".join(f"[a{i}_{k}]" for k in range(audio_tracks)) for i in range(len(pieces)))
-    outs = "[vout]" + "".join(f"[aout{k}]" for k in range(audio_tracks))
+    outs = ("[vcat]" if captions else "[vout]") + "".join(f"[aout{k}]" for k in range(audio_tracks))
     parts.append(ins + f"concat=n={len(pieces)}:v=1:a={audio_tracks}{outs}")
+    if captions:
+        parts.append(f"[vcat]subtitles={captions}" + (f":fontsdir={fontsdir}" if fontsdir else "") + "[vout]")
     maps = ["-map", "[vout]"] + [x for k in range(audio_tracks) for x in ("-map", f"[aout{k}]")]
     # CL1 (D350): nothing here adds time (no transition, pad, crossfade or hold: a hard concat, fades inside the pieces);
     # the fps filter can round a piece by up to one frame, so the output is also cut at the type's maximum.
@@ -280,6 +288,7 @@ def match_reels(hits, ranking, cfg, matches, duration=None):
         out.append({"pieces": merged, "seconds": round(_length(merged), 3), "score": float(n),
                     "labels": [mt.get("result") or "MATCH", f"{n} kill(s)"], "matchStart": start, "result": t,
                     "peaks": sorted(set(round(k, 3) for k in kills)),
+                    "medals": [{"t": m["t"], "w": m["w"], "label": m.get("label")} for m in medals if start < m["t"] <= end],
                     "match": mt.get("index"), "rules": rules, "kills": n,
                     "pieceRounds": dec.get("pieceRounds")})
     return out
@@ -337,5 +346,6 @@ def impact_play_reels(hits, matches, spec, duration=None, sample_sec=1.0, min_se
         out.append({"pieces": [{"start": round(s, 3), "end": round(e, 3), "kills": 0}], "seconds": round(e - s, 3),
                     "score": 0.0, "labels": [mt.get("result") or "MATCH", "IMPACT PLAY"],
                     "matchStart": float(mt["start"]), "result": ip, "match": mt.get("index"),
-                    "rules": [spec.get("id") or "impact-play"], "kills": 0, "peaks": [round(ip, 3)]})
+                    "rules": [spec.get("id") or "impact-play"], "kills": 0, "peaks": [round(ip, 3)],
+                    "medals": [{"t": round(ip, 3), "w": 1.0, "label": "IMPACT PLAY", "kill": False}]})
     return out
