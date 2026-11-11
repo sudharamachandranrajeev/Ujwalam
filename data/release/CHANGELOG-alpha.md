@@ -2,6 +2,13 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.24 — 2026-11-11
+
+- Nine full studio themes (four reference designs and five reworked ones) using bundled open-licence fonts (Inter, Exo 2, Barlow). Switch "theme-components" (off) turns on their buttons, tabs, cards and edges; Settings > Appearance > Preview all components shows them. Every theme passes the contrast check.
+- Live updates (switch "service-swap", off; read at start): the event core, the control page server and the studio window can be replaced with a new version while you stream, after one Apply now click on the control page. A video engine (host) update waits until every stream and recording has stopped, gets a trial start, and falls back to the previous version if it fails. Every update is checked against its release fingerprints and runs from a checked, read-only copy.
+- Installing a new build while Ujwalam runs no longer touches the running files: the new version goes beside the old one and, with "service-swap" on, is handed to the running app's update queue. Otherwise it runs from the next start.
+- Learning from your own streams (switches "learning-review" and "learning-train", off): after a stream, unsure reads can be confirmed with one click, and a game pack tune is proposed only when it reads held-out streams better; it never applies itself.
+- Scene builder (switch "scene-builder", off, command line for now): build H and V scenes from a reference picture, make a theme from it, save a studio scene as a package, edit it, and make similar variants. Importing never changes existing scenes, layers or devices.
 ## 0.1.0-alpha.23 — 2026-11-10
 
 - Live streams now record both the main (H) and vertical (V) picture, so kill montages and match reels are made in the background after a stream. The V recording uses the vertical stream's encoder; if YouTube V is off, only H is recorded.

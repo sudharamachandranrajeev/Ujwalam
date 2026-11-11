@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 23,
+  "current": 24,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -34,6 +34,7 @@
     { "n": 20, "date": "2026-11-10", "title": "Matches split by match end, match type read from the screen" },
     { "n": 21, "date": "2026-11-10", "title": "Own-kill reels, device hot-plug, layer editing, stream settings and sign-in" },
     { "n": 22, "date": "2026-11-10", "title": "Blurred game backdrop behind every layer" },
-    { "n": 23, "date": "2026-11-10", "title": "Live streams record H and V and make reels; preview edits the selected layer" }
+    { "n": 23, "date": "2026-11-10", "title": "Live streams record H and V and make reels; preview edits the selected layer" },
+    { "n": 24, "date": "2026-11-11", "title": "Nine full themes, live updates without stopping the stream, scene builder" }
   ]
 }
