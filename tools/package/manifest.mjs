@@ -45,7 +45,12 @@ export const OFL_FONTS = Object.freeze({
   'data/fonts/Inter-Regular.ttf': '40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82',
   'data/fonts/Inter-SemiBold.ttf': '78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3',
 });
-export const OFL_FONT_LICENCES = Object.freeze(['data/fonts/Barlow-OFL.txt', 'data/fonts/Exo2-OFL.txt', 'data/fonts/Inter-OFL.txt']);
+export const OFL_FONT_LICENCE_SHA = Object.freeze({
+  'data/fonts/Barlow-OFL.txt': '186d750eb496a4c17a76385f82be6aea2ac1cf2de074a811d63786cf374ea73f',
+  'data/fonts/Exo2-OFL.txt': 'cecc43de8bf5449d88fb03a6d33b0b569df304545d3b57760863e833a6434d45',
+  'data/fonts/Inter-OFL.txt': '262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a',
+});
+export const OFL_FONT_LICENCES = Object.freeze(Object.keys(OFL_FONT_LICENCE_SHA));
 export const REPO_FILES = Object.freeze([
   'LICENSE',
   'app/host/projects/test-card.project.json',

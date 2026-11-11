@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXE as STUDIO_EXE, START_EXE } from '../app/studio/tools/build.mjs';
 import { changelogExcerpt, releaseInfo } from '../tools/package/build-alpha.mjs';
-import { OFL_FONTS, OFL_FONT_LICENCES, allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
+import { OFL_FONTS, OFL_FONT_LICENCES, OFL_FONT_LICENCE_SHA, allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
 import { peInfo } from '../tools/package/pe.mjs';
 import { clipMakerNote, installedSpec, nodeOk, pruneLaunchLogs } from '../tools/package/run-installed.mjs';
 import { CLIP_MAKER_FIX, clipTools } from '../services/studio-ui/record-clips.mjs';
@@ -482,6 +482,10 @@ test('bundled OFL fonts (D344): the repo files are the pinned bytes, each family
   for (const [rel, sha] of Object.entries(OFL_FONTS)) {
     assert.equal(createHash('sha256').update(readFileSync(path.join(REPO, rel))).digest('hex'), sha, rel);
     assert.ok(notices.includes(sha), `docs/third-party-notices.md lists ${rel}`);
+  }
+  for (const [rel, sha] of Object.entries(OFL_FONT_LICENCE_SHA)) {
+    assert.equal(createHash('sha256').update(readFileSync(path.join(REPO, rel))).digest('hex'), sha, `${rel} is the pinned licence text`);
+    assert.ok(notices.includes(sha), `docs/third-party-notices.md lists the hash of ${rel}`);
   }
   for (const rel of OFL_FONT_LICENCES) assert.match(readFileSync(path.join(REPO, rel), 'utf8'), /SIL OPEN FONT LICENSE Version 1\.1/, rel);
   const all = repoFiles(REPO);

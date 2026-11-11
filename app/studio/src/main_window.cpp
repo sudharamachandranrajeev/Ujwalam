@@ -4590,7 +4590,7 @@ bool MainWindow::probeAction(const QString &action)
 	if (action.startsWith(QStringLiteral("guide-")))
 		return guide_->probeAction(action); // tips, tour and help (D294 proposed)
 	// Look panel and Settings (D290): the real widgets are clicked, so their own handlers run.
-	if (p.size() == 2 && (p[0] == QStringLiteral("theme") || p[0] == QStringLiteral("effects") || p[0] == QStringLiteral("components"))) // D293, D336
+	if (p.size() == 2 && (p[0] == QStringLiteral("theme") || p[0] == QStringLiteral("effects") || p[0] == QStringLiteral("components") || p[0] == QStringLiteral("fonts"))) // D293, D336, D344
 		return theme::probeAction(action);
 	if (p.size() == 2 && p[0] == QStringLiteral("select-layer")) {
 		for (int i = 0; i < layerList_->count(); i++)
