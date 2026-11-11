@@ -7,6 +7,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
@@ -16,6 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { startSwappableService } from '../services/event-core/api/swappable.mjs';
 import { parseArgs, swapCommand } from '../services/event-core/cli.mjs';
 import { createIdGenerator } from '../services/event-core/model.mjs';
+import { createSseClient } from '../services/event-core/api/sse.mjs';
+import { createBus } from '../services/event-core/bus.mjs';
 import { createFront, splitFrames } from '../services/supervisor/front.mjs';
 import { coreRpc, createEventCoreSlot } from '../services/supervisor/slots.mjs';
 import { killChildTree } from '../services/common/kill-tree.mjs';
@@ -235,4 +238,59 @@ test('processes: a crashing new build is rolled back; the old core keeps serving
   const { missing, dup } = checkSeqs(client.st.seqs, sent);
   assert.deepEqual({ missing: missing.length, dup: dup.length, connections: client.st.connections }, { missing: 0, dup: 0, connections: 1 });
   assert.deepEqual(unexpected, []);
+});
+
+// ---- Codex review fixes
+
+const sseStatus = (port, token) => new Promise((resolve) => {
+  const req = http.get({ host: '127.0.0.1', port, path: '/events', agent: false, headers: { authorization: `Bearer ${token}` } }, (res) => { resolve(res.statusCode); req.destroy(); });
+  req.on('error', () => resolve(0));
+});
+
+test('P2: a core activated again after its hand-off (restore path) admits event streams again', async () => {
+  const dataDir = tmp();
+  const tokens = { UJWALAM_EVENT_CORE_API_TOKEN: hex(), UJWALAM_EVENT_CORE_SYSTEM_TOKEN: hex() };
+  const common = { dataDir, env: tokens, noStreamerbot: true, stallTracer: false, systemPipe: false, liveMarkers: false };
+  const a = await startSwappableService({ ...common });
+  try {
+    const h = await a.handoff();
+    assert.equal(await sseStatus(a.port, tokens.UJWALAM_EVENT_CORE_API_TOKEN), 503, 'refused while handed off');
+    await a.activate({ idFloor: h.lastId, live: h.live });
+    assert.equal(await sseStatus(a.port, tokens.UJWALAM_EVENT_CORE_API_TOKEN), 200);
+  } finally { await a.stop(); }
+});
+
+test('P2: a standby core whose buffer overflowed is never activated', async () => {
+  const dataDir = tmp();
+  const tokens = { UJWALAM_EVENT_CORE_API_TOKEN: hex(), UJWALAM_EVENT_CORE_SYSTEM_TOKEN: hex() };
+  const b = await startSwappableService({ dataDir, env: tokens, noStreamerbot: true, stallTracer: false, systemPipe: false, liveMarkers: false, standby: true, standbyBufferMax: 3 });
+  try {
+    for (let i = 0; i < 5; i++) b.facade.ingest({ kind: 'chat.message', platform: 'twitch', source: 'mock', platformMessageId: `o${i}`, user: { displayName: 'A' }, text: 'x' });
+    assert.equal((await coreRpc(b.port, tokens.UJWALAM_EVENT_CORE_SYSTEM_TOKEN, 'core.status')).swap.overflow, 2);
+    await assert.rejects(b.activate(), /overflowed/);
+    assert.equal(b.state(), 'standby');
+  } finally { await b.stop(); }
+});
+
+test('P2: an SSE hand-off whose end never completes settles at its deadline; a closed connection settles at once', async () => {
+  const bus = createBus();
+  const timers = { setInterval, clearInterval, setTimeout, clearTimeout };
+  const fakeRes = ({ endCompletes }) => {
+    const r = new EventEmitter();
+    r.write = () => true;
+    r.end = () => { if (endCompletes === 'close') setImmediate(() => r.emit('close')); };
+    r.destroy = () => { r.destroyed = true; };
+    return r;
+  };
+  const stuck = fakeRes({ endCompletes: false });
+  const c1 = createSseClient({ res: stuck, bus, name: 's1', prefixes: [], queueMax: 10, heartbeatMs: 60_000, stallMs: 60_000, timers });
+  const r1 = await Promise.race([c1.finish(100), sleep(1000).then(() => 'hung')]);
+  assert.equal(r1, false);
+  assert.equal(stuck.destroyed, true);
+  const gone = fakeRes({ endCompletes: 'close' });
+  const c2 = createSseClient({ res: gone, bus, name: 's2', prefixes: [], queueMax: 10, heartbeatMs: 60_000, stallMs: 60_000, timers });
+  const t0 = Date.now();
+  const r2 = await Promise.race([c2.finish(2000), sleep(3000).then(() => 'hung')]);
+  assert.equal(r2, false, 'closed before the end finished: not clean');
+  assert.ok(Date.now() - t0 < 1000);
 });

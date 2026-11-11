@@ -73,7 +73,7 @@ test('runner side-by-side: a refused hand-over rolls back; a failed one restores
 
 test('runner: a step that hangs times out and counts as its failure', async () => {
   const log = [];
-  const r = await runSwap({ mode: 'side-by-side', steps: steps(log, { check: () => new Promise(() => {}) }), timeouts: { check: 30 } });
+  const r = await runSwap({ mode: 'side-by-side', steps: steps(log, { check: () => new Promise(() => {}) }), timeouts: { check: 30, graceMs: 20 } });
   assert.equal(r.result, 'kept-old');
   assert.match(r.history.find((h) => h.action === 'check-new').error, /timed out after 30 ms/);
 });
@@ -117,4 +117,38 @@ test('refuse rules: host and overlay server never swapped; one swap at a time; u
   assert.equal(refuseReason('live-clipper'), null);
   assert.match(refuseReason('event-core', { busy: true }), /one at a time/);
   assert.match(refuseReason('nope'), /unknown service/);
+});
+
+// Codex review P1: a hand-over that times out must be cancelled and finished before the restore runs.
+test('runner: a timed-out hand-over is cancelled and awaited before the restore; it sees the abort and changes nothing', async () => {
+  const log = [];
+  const r = await runSwap({
+    mode: 'side-by-side',
+    timeouts: { handover: 30, graceMs: 2000 },
+    steps: steps(log, {
+      handover: async ({ signal } = {}) => {
+        log.push('handover:start');
+        await new Promise((res) => setTimeout(res, 120)); // e.g. waiting for the old core's answer
+        if (signal?.aborted) { log.push('handover:saw-abort'); throw new Error('cancelled'); }
+        log.push('handover:activated-new');
+      },
+      restoreOld: async () => { log.push('restoreOld'); },
+    }),
+  });
+  assert.equal(r.result, 'restored-old');
+  assert.deepEqual(log.filter((x) => x.startsWith('handover') || x === 'restoreOld'), ['handover:start', 'handover:saw-abort', 'restoreOld']);
+});
+
+test('runner: a step that ignores the abort past the grace ends the swap as failed with nothing restored', async () => {
+  const log = [];
+  let release;
+  const r = await runSwap({
+    mode: 'side-by-side',
+    timeouts: { handover: 20, graceMs: 50 },
+    steps: steps(log, { handover: () => new Promise((res) => { release = res; }), restoreOld: async () => { log.push('restoreOld'); } }),
+  });
+  release();
+  assert.equal(r.result, 'failed');
+  assert.ok(!log.includes('restoreOld'));
+  assert.match(r.history.at(-1).error, /did not stop/);
 });

@@ -23,7 +23,7 @@
 import http from 'node:http';
 import readline from 'node:readline';
 import { killChildTree } from '../common/kill-tree.mjs';
-import { HandoverRefused, runSwap } from './swap.mjs';
+import { HandoverRefused, runSwap, throwIfAborted } from './swap.mjs';
 
 const sleep = (ms) => new Promise((r) => { const t = setTimeout(r, ms); t.unref?.(); });
 
@@ -168,21 +168,33 @@ export function createEventCoreSlot(opts) {
           neu.port = Number((await neu.lines.waitFor(PORT_RE, 20_000, 'api on'))[1]);
           return { port: neu.port };
         },
-        check: async () => {
+        check: async ({ signal } = {}) => {
           // Healthy = the API answers in standby and, when the old core is connected to Streamer.bot, so is the new one
-          // (it must already be receiving before the old one stops).
+          // (it must already be receiving before the old one stops). A candidate whose buffer overflowed is never healthy.
           const want = await sbState(old.port);
           for (;;) {
+            throwIfAborted(signal);
             if (neu.child.exitCode !== null) throw new Error(`the new core exited (${neu.child.exitCode})`);
             let s = null;
             try { s = await coreRpc(neu.port, systemToken, 'core.status'); } catch { /* not yet */ }
+            if (s?.swap?.overflow > 0) throw new Error(`the new core's standby buffer overflowed (${s.swap.overflow})`);
             if (s?.swap?.state === 'standby' && (want !== 'connected' || s.streamerbot?.state === 'connected')) return { streamerbot: s.streamerbot?.state ?? null };
             await sleep(100);
           }
         },
-        handover: async () => front.switchTo(neu.port, {
+        // Cancellation (Codex review P1): checked before each change; a cancelled hand-over leaves the front on the old
+        // port and the runner restores only after this step has settled.
+        handover: async ({ signal } = {}) => front.switchTo(neu.port, {
+          signal,
           handover: async () => {
+            throwIfAborted(signal);
+            // Last look before the old core changes (Codex review P2): an overflowed candidate is refused (kept-old).
+            let cand = null;
+            try { cand = await coreRpc(neu.port, systemToken, 'core.status'); } catch (e) { throw new HandoverRefused(`the new core does not answer (${e?.message ?? e})`); }
+            if (cand?.swap?.state !== 'standby' || cand.swap.overflow > 0) throw new HandoverRefused(`the new core is not a usable standby (${cand?.swap?.state ?? 'unknown'}, overflow ${cand?.swap?.overflow ?? '?'})`);
+            throwIfAborted(signal);
             handed = await control(old, 'swap:handoff', 'handed-off');
+            throwIfAborted(signal);
             const act = await control(neu, `swap:activate ${JSON.stringify({ idFloor: handed.lastId ?? undefined, live: handed.live ?? undefined, remotePort: handed.remotePort ?? undefined })}`, 'active');
             return act;
           },
@@ -191,8 +203,11 @@ export function createEventCoreSlot(opts) {
         stopNew: async () => { st.plan(neu?.child); return neu ? stopChild(neu.child, { line: 'swap:exit', graceMs: 2000 }) : null; },
         restoreOld: async () => {
           if (neu) { st.plan(neu.child); await stopChild(neu.child, { line: 'swap:exit', graceMs: 2000 }); }
-          let again = old.child.exitCode === null && handed !== null;
-          if (again) {
+          // The old core may never have handed off (the hand-over was cancelled before it, or its answer was lost): ask it.
+          let oldState = null;
+          if (old.child.exitCode === null) { try { oldState = (await coreRpc(old.port, systemToken, 'core.status')).swap?.state ?? null; } catch { oldState = null; } }
+          let again = oldState === 'active' || (old.child.exitCode === null && handed !== null && oldState === 'handed-off');
+          if (again && oldState !== 'active') {
             try { await control(old, `swap:activate ${JSON.stringify({ idFloor: handed.lastId ?? undefined, live: handed.live ?? undefined, remotePort: handed.remotePort ?? undefined })}`, 'active'); } catch { again = false; }
           }
           if (!again) {
@@ -262,16 +277,18 @@ export function createUiSlot(opts) {
           neu.port = Number((await neu.lines.waitFor(UI_PORT_RE, 20_000, 'listening on'))[1]);
           return { port: neu.port };
         },
-        check: async () => {
+        check: async ({ signal } = {}) => {
           for (;;) {
+            throwIfAborted(signal);
             if (neu.child.exitCode !== null) throw new Error(`the new UI server exited (${neu.child.exitCode})`);
             try { const s = await httpStatus(neu.port, '/'); if (s < 500) return { http: s }; } catch { /* not yet */ }
             await sleep(100);
           }
         },
-        handover: async () => {
+        handover: async ({ signal } = {}) => {
           try {
             return await front.switchTo(neu.port, {
+              signal,
               endOld: 'cut',
               // Requests are held while this runs, so no login can happen between the copy and the switch.
               prepare: async () => {

@@ -11,15 +11,17 @@ import { HandoverRefused } from '../services/supervisor/swap.mjs';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const idOf = (n) => String(n).padStart(8, '0');
 
-async function backend(name, { delayMs = 0, refuseStreams = false } = {}) {
+async function backend(name, { delayMs = 0, refuseStreams = false, streamDelayMs = 0 } = {}) {
   const clients = new Set();
   const srv = http.createServer((req, res) => {
     if (req.url.startsWith('/events')) {
       if (refuseStreams) { res.writeHead(503); res.end(); return; }
-      res.writeHead(200, { 'content-type': 'text/event-stream' });
-      res.write(': connected\n\n');
-      clients.add(res);
-      res.on('close', () => clients.delete(res));
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.write(': connected\n\n');
+        clients.add(res);
+        res.on('close', () => clients.delete(res));
+      }, streamDelayMs);
       return;
     }
     let b = '';
@@ -195,6 +197,53 @@ test('an old stream that does not end in time is cut and counted', async (t) => 
   assert.equal(r.forcedCuts, 1);
   b.emit(1);
   await sleep(50);
+  assert.deepEqual(s.st.ns, [1]);
+  assert.equal(s.st.connections, 1);
+});
+
+// ---- Codex review fixes
+
+test('P1: a hand-over cancelled while it runs never moves the front; the old port stays (the swap restores it)', async (t) => {
+  const a = await backend('a'); const b = await backend('b');
+  const f = createFront({ backendPort: a.port });
+  const port = await f.listen();
+  t.after(async () => { s.close(); await f.close(); await a.close(); await b.close(); });
+  const s = stream(port);
+  await sleep(50);
+  const ac = new AbortController();
+  await assert.rejects(f.switchTo(b.port, { signal: ac.signal, handover: async () => { await sleep(20); ac.abort(new Error('timed out')); } }), /cancelled/);
+  assert.equal(f.backendPort(), a.port);
+  assert.equal((await request(port, 'GET', '/x')).body.name, 'a');
+  // Already cancelled before it starts: refused, nothing touched.
+  await assert.rejects(f.switchTo(b.port, { signal: ac.signal, handover: async () => { throw new Error('must not run'); } }), (e) => e instanceof HandoverRefused);
+});
+
+test('P2: a moved stream that stays quiet longer than the connect timeout is kept open', async (t) => {
+  const a = await backend('a'); const b = await backend('b');
+  const f = createFront({ backendPort: a.port });
+  const port = await f.listen();
+  t.after(async () => { s.close(); await f.close(); await a.close(); await b.close(); });
+  const s = stream(port);
+  await sleep(50);
+  await f.switchTo(b.port, { handover: async () => { a.endAll(); } });
+  await sleep(5600); // openNext's connect timeout is 5000 ms
+  b.emit(7);
+  await sleep(100);
+  assert.equal(s.st.ended, false, 'the quiet stream is still open');
+  assert.deepEqual(s.st.ns, [7]);
+});
+
+test('P2: a request that becomes an event stream while the switch drains in-flight requests is moved too', async (t) => {
+  const a = await backend('a', { streamDelayMs: 150 }); const b = await backend('b');
+  const f = createFront({ backendPort: a.port });
+  const port = await f.listen();
+  t.after(async () => { s.close(); await f.close(); await a.close(); await b.close(); });
+  const s = stream(port); // a answers its headers only after 150 ms: in flight when the switch starts
+  await sleep(20);
+  const r = await f.switchTo(b.port, { handover: async () => { a.endAll(); } });
+  assert.equal(r.streams, 1);
+  b.emit(1);
+  await sleep(100);
   assert.deepEqual(s.st.ns, [1]);
   assert.equal(s.st.connections, 1);
 });

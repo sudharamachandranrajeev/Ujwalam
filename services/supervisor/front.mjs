@@ -172,6 +172,7 @@ export function createFront(opts) {
       const headers = backendHeaders(s.clientHeaders, frontPort, port);
       const up = http.request({ host: '127.0.0.1', port, method: 'GET', path: s.path, headers, agent: false }, (ur) => {
         if (ur.statusCode !== 200 || !isSse(ur)) { ur.resume(); up.destroy(); reject(new Error(`stream refused (HTTP ${ur.statusCode})`)); return; }
+        up.setTimeout(0); // the timeout guards the connect only; a quiet stream must live on (Codex review P2)
         const n = { ur, up, port, rest: '', queue: [], ended: false };
         ur.setEncoding('utf8');
         n.onData = (d) => { const { frames, rest } = splitFrames(n.rest + d); n.rest = rest; n.queue.push(...frames); };
@@ -217,20 +218,25 @@ export function createFront(opts) {
    * oldEndTimeoutMs? }. Resolves { streams, forcedCuts, held }. Throws HandoverRefused when nothing changed (the old
    * backend keeps serving); any other error comes from handover() (the old one may be half handed over).
    */
-  async function switchTo(newPort, { prepare, handover, endOld = 'wait', inflightTimeoutMs = 10_000, oldEndTimeoutMs = 5000 } = {}) {
+  async function switchTo(newPort, { prepare, handover, signal, endOld = 'wait', inflightTimeoutMs = 10_000, oldEndTimeoutMs = 5000 } = {}) {
     if (switching) throw new HandoverRefused('a switch is already running');
     if (!Number.isInteger(newPort) || newPort <= 0) throw new HandoverRefused('bad backend port');
     switching = true;
     paused = true;
     const heldAt = stats.held;
-    const moving = [...streams];
+    let moving = [];
     try {
       const t0 = Date.now();
       while (inflight > 0) {
         if (Date.now() - t0 > inflightTimeoutMs) throw new HandoverRefused(`${inflight} request(s) still running`);
         await sleep(5);
       }
+      // Collected after the drain (Codex review P2): a request in flight can turn into an event stream while draining.
+      moving = [...streams];
+      // signal (Codex review P1): the swap gave up on this hand-over; before handover() nothing has changed: refuse.
+      if (signal?.aborted) throw new HandoverRefused('cancelled');
       try { await prepare?.(); } catch (e) { throw new HandoverRefused(`prepare: ${e?.message ?? e}`); }
+      if (signal?.aborted) throw new HandoverRefused('cancelled');
       for (const s of moving) s.moving = true;
       try {
         await Promise.all(moving.filter((s) => !s.closed).map(async (s) => { s.next = await openNext(s, newPort); }));
@@ -239,7 +245,10 @@ export function createFront(opts) {
         throw new HandoverRefused(`the new service refused an event stream: ${e?.message ?? e}`);
       }
       try {
+        if (signal?.aborted) throw new HandoverRefused('cancelled');
         await handover?.();
+        // Cancelled while the hand-over ran: never point the front at the new backend (the caller restores the old one).
+        if (signal?.aborted) throw new Error('cancelled during the hand-over');
       } catch (e) {
         for (const s of moving) {
           try { s.next?.up.destroy(); } catch { /* gone */ }

@@ -57,6 +57,7 @@ export async function startSwappableService(opts = {}) {
   const executor = createServiceExecutor({ getCore: () => core, mock: opts.mock === true });
   const bus = createBus({ queueLimit: opts.core?.queueLimit });
   const buffer = [];
+  const bufferMax = Number.isInteger(opts.standbyBufferMax) && opts.standbyBufferMax > 0 ? opts.standbyBufferMax : STANDBY_BUFFER_MAX; // test seam
   const counts = { buffered: 0, overflow: 0, replayed: 0, replayDeduped: 0, activations: 0, handoffs: 0 };
   // What the API and the connector hold. Standby: buffering ingest, no gate, no audit. activate() copies the real
   // core's members onto it, so every holder sees the real core from then on.
@@ -64,7 +65,7 @@ export async function startSwappableService(opts = {}) {
     standby: true, handedOff: false, bus, audit: null, actions: null, moderation: null, ready: Promise.resolve(0),
     pseudoId: () => null,
     ingest(input) {
-      if (buffer.length >= STANDBY_BUFFER_MAX) { counts.overflow++; return { status: 'invalid', errors: [{ path: '', message: 'standby buffer full' }] }; }
+      if (buffer.length >= bufferMax) { counts.overflow++; return { status: 'invalid', errors: [{ path: '', message: 'standby buffer full' }] }; }
       buffer.push(input);
       counts.buffered++;
       return { status: 'buffered' };
@@ -120,11 +121,15 @@ export async function startSwappableService(opts = {}) {
 
   async function activate({ idFloor = null, live = null, remotePort = null } = {}) {
     if (state !== 'standby' && state !== 'handed-off') throw new Error(`activate: not in standby (${state})`);
+    // A candidate whose standby buffer overflowed has lost events: it never becomes the core (Codex review P2). The
+    // supervisor checks this before the hand-off too (kept-old); here it is the last guard (the old core is restored).
+    if (state === 'standby' && counts.overflow > 0) throw new Error(`activate: the standby buffer overflowed (${counts.overflow} events not kept); this core is not used`);
     // Throws DB_LOCKED while the previous core still owns the audit database; nothing below has run then.
     const c = createEventCore({ dataDir, audit: { dataDir }, actions: { executor }, bus, idFloor, ...(opts.out ? { log: opts.out } : {}), ...(opts.core ?? {}) });
     try { await c.ready; } catch (e) { try { await c.audit?.close(); } catch { /* ignore */ } throw e; }
     core = c;
     Object.assign(facade, c, { standby: false, handedOff: false });
+    api.reopenStreams(); // a core activated again after its hand-off admits event streams again (Codex review P2)
     // The old core's live state and panic carry over: a swap never takes the live lock off.
     const sys = c.actions?.forSource('system');
     if (sys && live && ['offline', 'live', 'unknown'].includes(live.liveState)) sys.setLiveState(live.liveState, { reason: 'service-swap' });

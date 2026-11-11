@@ -12,6 +12,11 @@
 //
 // transition(state, event) is pure (the table below); runSwap() drives it with the caller's step functions and a
 // timeout per step, and returns { result, history }. A step that throws or times out is the failure event of that step.
+// Cancellation (Codex review P1): each step gets { signal }. A step that times out is aborted and the runner WAITS until
+// it has settled before the next step (a rollback or restore) runs, so a late hand-over can never activate a core or
+// move the front after the old one was restored. Steps check signal.aborted before each change they make. A hand-over
+// that has not settled graceMs after the abort ends the swap as 'failed' with nothing rolled back (the caller treats it
+// like a crash of that service): restoring next to a hand-over that may still act would be worse.
 //
 // Results: swapped | kept-old (the old one never stopped serving) | restored-old (the old version was started again
 // after the new one failed past the point of no return) | failed (nothing could be restored; the caller treats it
@@ -64,7 +69,7 @@ const OUTCOME = {
 };
 const STEP = { 'spawn-new': 'spawnNew', 'check-new': 'check', 'hand-over': 'handover', 'stop-old': 'stopOld', 'stop-new': 'stopNew', 'restore-old': 'restoreOld' };
 
-export const DEFAULT_TIMEOUTS = Object.freeze({ spawnNew: 20_000, check: 15_000, handover: 15_000, stopOld: 10_000, stopNew: 10_000, restoreOld: 20_000 });
+export const DEFAULT_TIMEOUTS = Object.freeze({ spawnNew: 20_000, check: 15_000, handover: 15_000, stopOld: 10_000, stopNew: 10_000, restoreOld: 20_000, graceMs: 30_000 });
 
 /** A failure the step marks as "nothing changed on the old one yet" (the hand-over was refused before it touched the
  *  old service): the swap then rolls back instead of restoring. */
@@ -72,17 +77,35 @@ export class HandoverRefused extends Error {
   constructor(message) { super(message); this.name = 'HandoverRefused'; }
 }
 
-function withTimeout(p, ms, what) {
+/** Throws when the swap cancelled this step (for steps: call before each change they make). */
+export function throwIfAborted(signal) {
+  if (signal?.aborted) throw new Error(`cancelled: ${signal.reason?.message ?? signal.reason ?? 'the swap gave up on this step'}`);
+}
+
+class StepStillRunning extends Error {}
+
+// Runs one step with a deadline. On a timeout (or any failure) the step's signal is aborted and the step is awaited
+// until it settles (at most graceMs), so nothing it does can overlap the next step.
+async function runStep(fn, ms, graceMs, what) {
+  const ac = new AbortController();
+  const p = Promise.resolve().then(() => fn({ signal: ac.signal }));
   let t;
-  return Promise.race([
-    Promise.resolve(p).finally(() => clearTimeout(t)),
-    new Promise((_, reject) => { t = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms); t.unref?.(); }),
-  ]);
+  const deadline = new Promise((_, reject) => { t = setTimeout(() => reject(new Error(`${what} timed out after ${ms} ms`)), ms); t.unref?.(); });
+  try {
+    return await Promise.race([p, deadline]);
+  } catch (e) {
+    if (!ac.signal.aborted) ac.abort(e);
+    let g;
+    const settled = await Promise.race([p.then(() => true, () => true), new Promise((r) => { g = setTimeout(() => r(false), graceMs); g.unref?.(); })]);
+    clearTimeout(g);
+    if (!settled) throw new StepStillRunning(`${what} did not stop ${graceMs} ms after it was cancelled (${e?.message ?? e})`);
+    throw e;
+  } finally { clearTimeout(t); }
 }
 
 /**
  * Runs one swap. opts: { mode, steps: { spawnNew, check, handover?, stopOld, stopNew, restoreOld }, timeouts?, now?,
- * onState?(state, action) }. Steps are async functions with no arguments; their resolved value is kept in history.
+ * onState?(state, action) }. Steps are async functions of ({ signal }); their resolved value is kept in history.
  * Returns { result, history: [{ state, action, ok, ms, error? }], ms }. Never throws for a step failure.
  */
 export async function runSwap({ mode, steps, timeouts = {}, now = Date.now, onState = () => {} }) {
@@ -101,11 +124,14 @@ export async function runSwap({ mode, steps, timeouts = {}, now = Date.now, onSt
     const started = now();
     let ev;
     try {
-      const value = await withTimeout(steps[name](), tm[name], name);
+      const value = await runStep(steps[name], tm[name], tm.graceMs, name);
       history.push({ state: s.state, action: s.action, ok: true, ms: now() - started, ...(value !== undefined ? { value } : {}) });
       ev = OUTCOME[s.action][0];
     } catch (e) {
       history.push({ state: s.state, action: s.action, ok: false, ms: now() - started, error: String(e?.message ?? e).slice(0, 200) });
+      // Only a hand-over that may still act blocks the rollback; a hung start or check only touches the new process,
+      // which the rollback stops.
+      if (e instanceof StepStillRunning && s.action === 'hand-over') { onState('idle', null); return { result: 'failed', history, ms: now() - t0 }; }
       ev = s.action === 'hand-over' && e instanceof HandoverRefused ? 'handover-refused' : OUTCOME[s.action][1];
     }
     s = transition(s.state, ev);

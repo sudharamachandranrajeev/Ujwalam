@@ -327,6 +327,8 @@ export function createApiServer(opts) {
       const r = await Promise.all(all.map((c) => c.finish(timeoutMs)));
       return { streams: all.length, clean: r.filter(Boolean).length };
     },
+    /** LU3: this core is active again (a swap restored it, Codex review P2): event streams are admitted again. */
+    reopenStreams() { ending = false; },
     address: () => { const a = server.address(); return a && typeof a === 'object' ? { host: a.address, port: a.port } : null; },
     async close() {
       for (const c of [...sse]) c.close();
