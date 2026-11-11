@@ -60,6 +60,7 @@ import { TEST_KIT_FLAG, createFeedbackAutoCollect, liveAlerts, loadTestKitConfig
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { loadBotConfig, tcpAnswers } from '../bots/index.mjs';
 import { CONNECT_FLAG, ERROR_TEXT as CONNECT_ERROR_TEXT, PROBLEM_TEXT as CONNECT_PROBLEM_TEXT, createConnect, outputsFromPlan } from '../platform-connect/index.mjs';
+import { connectRow as instagramRow, createUseWatcher as createInstagramWatcher, freshnessText as instagramText, INSTAGRAM_FLAG, keyFreshness as instagramFreshness } from '../outputs/instagram.mjs';
 import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG, createSettingsRoutes } from './settings-routes.mjs';
 import { connectTargets, readSetup } from './stream-setup.mjs';
 import { integrationsInEffect } from './integrations.mjs';
@@ -420,6 +421,12 @@ export function createStudioServer(opts) {
       },
       // Platform sign-in (flag platform-connect): the fix points at Settings > Connections; expired sign-ins are warnings.
       connect: () => (connectOn() ? { fix: 'Studio: Settings > Connections (sign in, or paste the key)', warnings: () => connect().readinessWarnings() } : null),
+      // IG1 (D351): with instagram-live on, a key that is not this broadcast's fails the check (null = flag off).
+      instagram: () => {
+        if (!instagramOn()) return null;
+        const f = instagramFreshness(opts.dataDir);
+        return f.fresh ? { fresh: true, state: f.state } : { fresh: false, state: f.state, ...instagramText(f, { connectOn: connectOn() }) };
+      },
       ...(opts.readinessDeps ?? {}),
     });
     return readinessRunner;
@@ -453,8 +460,12 @@ export function createStudioServer(opts) {
   // The outputs the sign-in service knows, read on every call: the live plan's targets, plus (flag stream-settings on and a
   // saved Settings > Stream setup) every output of that setup, so an output added there can be connected before the next
   // start. A setup output replaces a plan row with the same id. Platform ids come from the setup, not from the id's text.
+  const instagramOn = () => !!flags && flags.isOn(INSTAGRAM_FLAG) && typeof opts.dataDir === 'string';
   function connectOutputs() {
-    const rows = planTargets(opts.livePlanFile);
+    // IG1 (D351): with instagram-live on, the Instagram output is listed even before a --live start (the URL and key
+    // are pasted before each broadcast); a plan row with that id is replaced by it (per-broadcast form).
+    const ig = instagramOn() ? (() => { try { return instagramRow(); } catch { return null; } })() : null;
+    const rows = planTargets(opts.livePlanFile).filter((r) => !ig || r.id !== ig.id).concat(ig ? [ig] : []);
     if (flags && flags.isOn(STREAM_SETTINGS_FLAG) && typeof opts.dataDir === 'string') {
       try {
         const { exists, setup } = readSetup(opts.dataDir);
@@ -910,7 +921,12 @@ export function createStudioServer(opts) {
     // The owner is taken before the status is read, so an older status never judges a newer recording (Codex review).
     const owner = recordLive.owner();
     if (owner) { try { await recordLive.observe(await host.call('outputs.status', {}), owner); } catch { /* next poll */ } }
+    // IG1 (D351): the Instagram key counts as used once the broadcast it went live with has ended (ids and states only).
+    if (instagramOn()) {
+      try { igWatcher ??= createInstagramWatcher({ dataDir: opts.dataDir, now }); igWatcher.observe(await host.call('outputs.status', {})); } catch { /* next poll */ }
+    }
   }
+  let igWatcher = null;
 
   // Host call with a retry on CONFLICT (-32009) for project.load.
   // Undo history (D238): the layer's value before an edit, read from the host just before the call. A failed read

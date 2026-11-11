@@ -34,6 +34,7 @@ import { randomBytes } from 'node:crypto';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { systemTool } from '../event-core/config.mjs';
 import { createYoutubeAuth, CLIENT_ID_TARGET, CLIENT_SECRET_TARGET } from '../posting/oauth.mjs';
+import { keyFreshness, noteKeySaved } from '../outputs/instagram.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const CONNECT_FLAG = 'platform-connect';
@@ -59,7 +60,7 @@ export const DEFAULT_ENDPOINTS = Object.freeze({
 });
 // Where a Twitch device-flow verification page may be (the URL comes from Twitch's answer, so it is checked first).
 const TWITCH_VERIFY_ORIGINS = ['https://www.twitch.tv', 'https://id.twitch.tv'];
-const PLATFORM_LABEL = { youtube: 'YouTube', twitch: 'Twitch', kick: 'Kick', custom: 'Custom RTMP' };
+const PLATFORM_LABEL = { youtube: 'YouTube', twitch: 'Twitch', kick: 'Kick', instagram: 'Instagram', custom: 'Custom RTMP' };
 const HTTP_TIMEOUT_MS = 15_000;
 const JOB_TTL_MS = 10 * 60_000;
 const STATUS_CACHE_MS = 10_000;
@@ -111,11 +112,12 @@ export const PROBLEM_TEXT = Object.freeze({
   'server-bad-port': 'The port in the server address is not valid.',
   'server-wrong-scheme': 'This output takes another scheme (rtmp:// or rtmps://); see the hint.',
   'server-not-used': 'This output uses a fixed server; only the key is stored.',
+  'per-broadcast-both': 'This output gets a new server URL and stream key for every broadcast: paste both together (Instagram: from Live Producer).',
 });
 
 const lastFour = (v) => (typeof v === 'string' && v.length >= 12 ? v.slice(-4) : null);
 const schemeOf = (v) => { const m = typeof v === 'string' ? /^\s*([A-Za-z][A-Za-z0-9+.-]{0,15}):\/\//.exec(v) : null; return m ? m[1].toLowerCase() : null; };
-const platformOf = (id) => (/^youtube(-|$)/.test(id) ? 'youtube' : /^twitch(-|$)/.test(id) ? 'twitch' : /^kick(-|$)/.test(id) ? 'kick' : 'custom');
+const platformOf = (id) => (/^youtube(-|$)/.test(id) ? 'youtube' : /^twitch(-|$)/.test(id) ? 'twitch' : /^kick(-|$)/.test(id) ? 'kick' : /^instagram(-|$)/.test(id) ? 'instagram' : 'custom');
 const httpsOnly = (u) => { try { return new URL(u).protocol === 'https:'; } catch { return false; } };
 
 /** Outputs from planTargets() rows ({ id, transport, keyRef, serverRef?, schemes? }); ids and refs checked. */
@@ -133,6 +135,8 @@ export function outputsFromPlan(targets) {
       id: t.id, platform, label: `${PLATFORM_LABEL[platform]}${platform === 'youtube' ? ` ${canvas}` : ''}`,
       keyRef: t.keyRef, ...(t.serverRef ? { serverRef: t.serverRef } : {}), schemes,
       signIn: platform === 'youtube' || platform === 'twitch' ? platform : null,
+      // IG1 (D351): a new server URL and key for every broadcast (Instagram Live Producer). Needs a server address.
+      ...(t.perBroadcast === true && t.serverRef ? { perBroadcast: true } : {}),
     });
   }
   return out;
@@ -337,9 +341,15 @@ export function createConnect(opts = {}) {
       else if ((source === 'youtube' || source === 'twitch') && (!accounts[source].signedIn || accounts[source].tokenState === 'expired')) {
         state = 'token-expired';
         detail = `The ${PLATFORM_LABEL[source]} sign-in has expired. The stored key still works; sign in again to fetch a new key.`;
+      } else if (o.perBroadcast) {
+        // IG1: stored is not enough; the pair must be this broadcast's (pasted through Ujwalam, not used by an ended one).
+        const f = keyFreshness(opts.dataDir);
+        if (f.state === 'used') { state = 'used'; detail = 'Used for a broadcast that ended. Paste the new server URL and stream key from Live Producer before the next one.'; }
+        else if (f.state === 'not-pasted') { state = 'missing'; detail = 'Paste the server URL and stream key for this broadcast (Live Producer gives new ones every time).'; }
+        else detail = f.state === 'live' ? 'Key in use by the broadcast now on air.' : 'Fresh key stored for the next broadcast.';
       } else detail = source === 'pasted' || !source ? 'Key stored.' : `Key from ${PLATFORM_LABEL[source]} sign-in.`;
       rows.push({
-        id: o.id, platform: o.platform, label: o.label, signIn: o.signIn, source, state, detail,
+        id: o.id, platform: o.platform, label: o.label, signIn: o.signIn, source, state, detail, ...(o.perBroadcast ? { perBroadcast: true } : {}),
         key: { present: key.present, ...(key.last4 ? { last4: key.last4 } : {}) },
         ...(o.serverRef ? { server: { present: !!server?.present, scheme: server?.scheme ?? null, schemes: o.schemes } } : {}),
       });
@@ -354,6 +364,7 @@ export function createConnect(opts = {}) {
   function checkPaste(id, { key, server } = {}) {
     const o = outputOf(id);
     if (key === undefined && server === undefined) return 'key-missing';
+    if (o.perBroadcast && (key === undefined || server === undefined)) return 'per-broadcast-both';
     if (key !== undefined) { const p = keyProblem(key, o.platform); if (p) return p; }
     if (server !== undefined) {
       if (!o.serverRef) return 'server-not-used';
@@ -371,6 +382,7 @@ export function createConnect(opts = {}) {
       if (key !== undefined) await store(o.keyRef).set(key.trim());
     });
     noteOutput(o.id, key !== undefined ? 'pasted' : (readMeta(metaFile).outputs[o.id]?.source ?? 'pasted'));
+    if (o.perBroadcast) noteKeySaved(opts.dataDir, { now }); // times only: never the key, the URL or a part of them
     invalidate();
     return { ok: true, output: o.id };
   }

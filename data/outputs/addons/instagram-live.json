@@ -1,0 +1,9 @@
+{
+  "$comment": "IG1 (D351, flag instagram-live, off by default): Instagram Live as an output, added to the live plan in effect (alpha-live.json, or the Settings > Stream plan) when the flag is on at the --live start (services/outputs/instagram.mjs). The sink is fed from the V canvas. An existing V rung is reused only if it passes every Instagram limit in data/platforms/instagram.json (the validator decides, nothing is hardcoded); otherwise this rung is added: GPU-scaled from the V canvas like every other rung, deduplicated by the validator, with the encoder and encoder options of the plan's own V rung (the user's encoder choice). Its fps is lowered to a divisor of the V canvas fps when 30 is not one. bitrate 4000 kbps: inside Instagram's 2,250-6,000 kbps range, a judgement call (the page recommends no single value). Audio is the plan's one shared track (encoded once). The target names Credential Manager targets only, never a key or a URL: the URL and the key change for every broadcast and are pasted in Settings > Connections or on the control page. transport auto: rtmp or rtmps, following the pasted URL (Instagram's scheme is UNVERIFIED). priority 7: after every other stream and the recordings, so the bandwidth governor sheds it first.",
+  "flag": "instagram-live",
+  "sink": { "id": "instagram", "platform": "instagram", "proto": "rtmps", "priority": 7 },
+  "rung": { "id": "ig-v", "canvas": "V", "w": 720, "h": 1280, "fps": 30, "codec": "h264", "bitrate": 4000, "rc": "cbr", "gop_sec": 2, "encoder": "nvenc" },
+  "target": { "transport": "auto", "serverRef": "Ujwalam/stream/instagram-server", "keyRef": "Ujwalam/stream/instagram" },
+  "planName": "live-plan-instagram.json",
+  "keyStateName": "instagram-key.json"
+}

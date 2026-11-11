@@ -49,7 +49,7 @@ export const TITLES = Object.freeze({
 });
 const GB = 1024 ** 3;
 const ACTIVE = new Set(['starting', 'live', 'retrying']);
-const PLATFORM = { youtube: 'YouTube', twitch: 'Twitch', kick: 'Kick' };
+const PLATFORM = { youtube: 'YouTube', twitch: 'Twitch', kick: 'Kick', instagram: 'Instagram' };
 
 const num = (v, name, min, max) => {
   if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) throw new Error(`readiness config: bad ${name}`);
@@ -195,6 +195,15 @@ async function checkCredentials(ctx) {
   const conn = typeof ctx.connect === 'function' ? ctx.connect() : null;
   const fix = conn?.fix ?? 'node services/event-core/cli.mjs credential set --target <the output\'s target>';
   if (conn) { try { warns.push(...(await conn.warnings()).map((w) => String(w).slice(0, 200))); } catch { /* status unreadable: the key checks below still run */ } }
+  // IG1 (D351, flag instagram-live): Instagram gives a new URL and key for every broadcast, so a key that is not this
+  // broadcast's (never pasted through Ujwalam, or used by one that ended) fails, live-configured or not.
+  let ig = null;
+  try { ig = typeof ctx.instagram === 'function' ? ctx.instagram() : null; } catch { ig = { fresh: false, message: 'Instagram: the stream key state could not be read.', fix: 'Paste the new Instagram URL and key in Settings > Connections.' }; }
+  const withIg = (r) => {
+    if (!ig || ig.fresh !== false) return r;
+    const fix = r.status === 'fail' && r.fix ? `${ig.fix} ${r.fix}` : ig.fix;
+    return item('credentials', 'fail', `${ig.message} ${r.message}`, { fix });
+  };
   const live = ctx.streamSinks.filter((s) => s.target === 'live');
   if (live.length) {
     for (const s of live) {
@@ -217,20 +226,20 @@ async function checkCredentials(ctx) {
       }
       okNames.push(label);
     }
-    if (problems.length) return item('credentials', 'fail', problems.concat(warns).join('. ') + '.', { fix });
-    if (warns.length) return item('credentials', 'warn', warns.join('. ') + '.', conn ? { fix } : undefined);
-    return item('credentials', 'pass', `Keys present for ${okNames.join(', ')}${live.some((s) => s.urlRef) ? '; server addresses use the right scheme' : ''}.`);
+    if (problems.length) return withIg(item('credentials', 'fail', problems.concat(warns).join('. ') + '.', { fix }));
+    if (warns.length) return withIg(item('credentials', 'warn', warns.join('. ') + '.', conn ? { fix } : undefined));
+    return withIg(item('credentials', 'pass', `Keys present for ${okNames.join(', ')}${live.some((s) => s.urlRef) ? '; server addresses use the right scheme' : ''}.`));
   }
   // Not live-configured: check the live plan's targets directly (presence only), so keys can be fixed before a --live start.
   const targets = ctx.planTargets;
-  if (!targets.length) return item('credentials', 'warn', 'No live plan to check stream keys against.');
+  if (!targets.length) return withIg(item('credentials', 'warn', 'No live plan to check stream keys against.'));
   for (const t of targets) {
     const label = PLATFORM[t.id.split('-')[0]] ? `${PLATFORM[t.id.split('-')[0]]} (${t.id})` : t.id;
     try {
       if (t.keyRef) {
         const k = await credentialFacts(ctx.store(t.keyRef), { query: true });
         if (!k.present) { problems.push(`${label}: stream key not set`); continue; }
-        if (k.query) warns.push(`${label}: stream key has a "?" ending (set it again without it for a public stream)`);
+        if (k.query && t.id !== 'instagram') warns.push(`${label}: stream key has a "?" ending (set it again without it for a public stream)`);
       }
       if (t.serverRef) {
         const u = await credentialFacts(ctx.store(t.serverRef), { scheme: true });
@@ -243,8 +252,8 @@ async function checkCredentials(ctx) {
     } catch { warns.push(`${label}: could not be read from Windows Credential Manager`); }
   }
   const pre = 'Not started with --live, so these are the live plan\'s keys: ';
-  if (problems.length || warns.length) return item('credentials', 'warn', pre + problems.concat(warns).join('. ') + '.', { fix });
-  return item('credentials', 'pass', `${pre}all present (${okNames.join(', ')}).`);
+  if (problems.length || warns.length) return withIg(item('credentials', 'warn', pre + problems.concat(warns).join('. ') + '.', { fix }));
+  return withIg(item('credentials', 'pass', `${pre}all present (${okNames.join(', ')}).`));
 }
 
 async function checkDisk(ctx) {
