@@ -1275,3 +1275,36 @@ Decided:
   passes an overlay brand theme id, a different theme system, so the link is not trivial.
 Real references: every pack passes the check and loads in the headless studio with no stylesheet errors; the looks
 themselves are UNVERIFIED (no human check yet). Evidence: `docs/evidence/2026-11-11-sb4-theme-from-reference.md`.
+
+## D347 — Scene builder SB5: iterate. Save a studio scene as a package, edit a package, make similar variants (2026-11-11, plan D324 section C)
+
+Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` row SB5: "the user adjusts in the studio (move,
+resize, swap slot); 'similar' variants; save as a scene package. Done when: round trip build -> edit -> package ->
+import." Decided:
+- **The studio edit is the project's own placement.** The user moves and resizes in the studio as for any scene; SB5 adds
+  no editor. `services/scene-builder/export.mjs` `packageFromScene(project, scene)` reads that scene back into a scene
+  package (same format as SB3, D341): duplicate -> link (game or camera, by the layer's origin key), capture -> capture,
+  overlay page -> browser (file and query), colour -> colour. Anything else (images, media, hidden layers, a link whose role
+  is unknown, a second target for one role) is not carried and is listed with the reason; rotation, opacity and effects are
+  dropped and named in the warnings. Slots are `confidence 1, from "edit"` (schema enum extended); the package carries a
+  `lineage` note (parent, changes). Read only: the project is not touched.
+- **Edit a package.** `iterate.mjs` `editPackage`: move, resize, place, swap (two layers trade boxes). Fractions of the
+  canvas, all or nothing, the input package is never changed, the result has a new id and `(edited)` in its name. Capture
+  and link layers re-fit on resize and swap with the build's fit (game contained, shape kept, never cropped further;
+  camera cover with a centre crop of at most `camera.maxCrop`); a chat layer's width/height query follows its box. A box
+  off the canvas or under 0.02 is refused; a V layer outside the safe zone is a warning, never moved silently.
+- **Similar variants.** `similarVariants` (1..8, seeded: same package + same seed = same variants). Kinds: nudge-small,
+  nudge-large (a few percent of the canvas), mirror (left to right) and mirror+nudge. A variant is kept only if every box
+  stays on the canvas, a V layer inside the safe zone stays inside, no overlap grows, the game gets no more crop than it had,
+  and it differs from the original and the other variants. They are data for the user to look at and import; nothing picks one.
+- **Round trip.** build -> import (new scene) -> studio edit -> export -> import again: each import adds one new scene and
+  the existing-state hash is unchanged (the earlier built scene is byte-for-byte untouched). Links bind by id, so a package
+  imported into a different project falls back to placeholders (listed) unless the ids exist there.
+- **Entry point and safety.** `node services/scene-builder/cli.mjs export|edit|variants` behind the `scene-builder` flag
+  (off by default; exit 2 when off). These commands never write the project and never apply; they write only the
+  package files named by `--out` / `--out-dir` (never over an existing file). Using a result is `import`, whose apply rules
+  (studio closed, compare-and-swap, dry run first) are unchanged from D341. No studio write without the user's click.
+- **Not done.** No studio UI for these (the studio server takes no file path from the page); the re-fit assumes a 1920x1080
+  camera source when the package has none (UNVERIFIED against a real device format); a crop the user set in the studio on a
+  camera is replaced by the centre crop after a resize or swap (a move keeps it); no check on a real stream.
+Evidence: `docs/evidence/2026-11-11-sb5-iterate.md`.
