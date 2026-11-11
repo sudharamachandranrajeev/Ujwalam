@@ -428,6 +428,38 @@ test('F9: handle sizes follow the window DPI (100 / 125 / 150 %)', async () => {
   await assert.rejects(c.call('preview.editSim', { ...VIEW, dpi: 20, steps: [] }));
 });
 
+// Host crash 2026-11-10 and 2026-11-11: with a layer selected in an open preview, an effect switched on (a shadow on a
+// capture card) crashed the host in d3d11 device_draw. The selection box was drawn with gs_render_start(true), whose
+// vertex buffer libobs destroys right after the draw while d3d11 keeps it loaded; the next draw without a buffer of its
+// own read freed memory (logged first as "This vertex shader requires a point buffer"). The preview here is embedded in
+// a hidden test window: libobs draws it and the selection box, nothing is shown.
+test('crash 2026-11-11: effects switched on and off while the selection box is drawn: no stale vertex buffer, host stays up', async () => {
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  await c.call('preview.setEditing', { enabled: true });
+  await putBox({ x: 300, y: 200 });
+  const { parent } = await c.call('preview.testParent', { action: 'create' });
+  try {
+    await c.call('preview.open', { canvas: 'H', parent, x: 0, y: 0, width: 640, height: 360 });
+    await c.call('preview.select', { canvas: 'H', layer: 'box' });
+    const draws = async () => (await c.call('preview.list')).previews.find((p) => p.canvas === 'H').selectionDraws;
+    const first = await draws();
+    const shadow = { type: 'shadow', color: '#000000', opacity: 0.8, size: 12, distance: 10, angle: 135 };
+    const blur = { type: 'blur', strength: 8 };
+    for (const effects of [[shadow], [], [blur, shadow], [shadow], []]) {
+      await c.call('layers.setEffects', { scene: 'main', layer: 'box', effects });
+      await sleep(400);
+    }
+    await sleep(500);
+    assert.ok((await draws()) > first + 10, 'the selection box was drawn while the effects changed');
+    assert.equal(h.child.exitCode, null, 'the host is still running');
+    assert.ok(await c.call('host.status'));
+    assert.doesNotMatch(h.log.join(''), /requires a point buffer/, 'no draw ran with a destroyed vertex buffer');
+  } finally {
+    await c.call('preview.close', { canvas: 'H' }).catch(() => {});
+    await c.call('preview.testParent', { action: 'destroy' }).catch(() => {});
+  }
+});
+
 test('bad input is refused', async () => {
   await assert.rejects(c.call('preview.editSim', { ...VIEW, steps: [{ event: 'jump' }] }));
   await assert.rejects(c.call('preview.editSim', { canvas: 'X', width: 640, height: 400, steps: [] }));

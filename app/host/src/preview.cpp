@@ -37,6 +37,8 @@ struct Previews::Win {
 	// whatever later happens to the parent (a child is visible only with its own WS_VISIBLE). Show requests are
 	// stripped in WM_WINDOWPOSCHANGING and WM_STYLECHANGING; one that gets past both is undone by the refresh timer.
 	bool never_show = false;
+	// Selection boxes drawn (graphics thread); preview.list shows it so a test knows the box was really drawn.
+	std::atomic<uint64_t> selection_draws{0};
 };
 
 namespace {
@@ -58,9 +60,17 @@ void canvas_base(const std::string &canvas, uint32_t &w, uint32_t &h, obs_canvas
 	h = ovi.base_height;
 }
 
+// libobs's immediate vertex buffer holds IMMEDIATE_COUNT (512) vertices; gs_vertex2f past it would grow the array that
+// buffer owns. Each solid_pass resets the count; a quad that does not fit is left out (a selection box needs 60).
+constexpr int kImmediateMax = 512;
+thread_local int g_verts = 0;
+
 // Immediate-mode triangles (two per quad) in canvas coordinates; the caller has the solid effect's pass open.
 void quad(float ax, float ay, float bx, float by, float cx, float cy, float dx, float dy) // a b c d around
 {
+	if (g_verts + 6 > kImmediateMax)
+		return;
+	g_verts += 6;
 	gs_vertex2f(ax, ay);
 	gs_vertex2f(bx, by);
 	gs_vertex2f(cx, cy);
@@ -93,9 +103,15 @@ void solid_pass(const vec4 &col, const std::function<void()> &emit)
 	gs_technique_t *tech = gs_effect_get_technique(solid, "Solid");
 	gs_technique_begin(tech);
 	gs_technique_begin_pass(tech, 0);
-	gs_render_start(true);
+	// Immediate mode (false): libobs's own persistent vertex buffer. gs_render_start(true) + gs_render_stop makes a
+	// buffer, draws it and destroys it while the d3d11 device still has it loaded as the current vertex buffer; the next
+	// draw that does not load its own buffer then reads freed memory ("This vertex shader requires a point buffer", then
+	// an access violation in d3d11: host crash 2026-11-11, a shadow switched on while a selection box was drawn).
+	g_verts = 0;
+	gs_render_start(false);
 	emit();
 	gs_render_stop(GS_TRIS);
+	gs_load_vertexbuffer(nullptr); // leave no buffer of ours loaded for the draws that follow in this frame
 	gs_technique_end_pass(tech);
 	gs_technique_end(tech);
 }
@@ -171,8 +187,10 @@ void draw_cb(void *param, uint32_t cx, uint32_t cy)
 		obs_render_canvas_texture(c);
 	pedit::Rect sel; // copied under the editor's lock; drawn with no lock held
 	const double k = vw > 0 ? (double)bw / vw * w->dpi.load() : 1; // canvas px per logical px (D335: DPI-scaled handles)
-	if (w->owner && vw > 0 && w->owner->editor().selection(w->canvas, sel))
+	if (w->owner && vw > 0 && w->owner->editor().selection(w->canvas, sel)) {
 		draw_selection(sel, k);
+		w->selection_draws++;
+	}
 	double gx, gy;
 	if (w->owner && vw > 0 && w->owner->editor().snap_lines(w->canvas, gx, gy))
 		draw_guides(gx, gy, bw, bh, k);
@@ -462,6 +480,7 @@ static json::Value win_json(const Previews::Win *w)
 		o.set("display", w->screen);
 		o.set("shown", (GetWindowLongPtrW(w->hwnd, GWL_STYLE) & WS_VISIBLE) != 0); // its own WS_VISIBLE
 		o.set("visible", IsWindowVisible(w->hwnd) != FALSE);                      // and every parent's
+		o.set("selectionDraws", (double)w->selection_draws.load());
 	}
 	return o;
 }

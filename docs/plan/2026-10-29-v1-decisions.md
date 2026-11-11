@@ -1686,3 +1686,20 @@ Growth plan ED2. Decided:
   libass from the system). Reported, not changed here.
 - UNVERIFIED: caption quality and confidence on real stream audio, Malayalam/Manglish speech to text, whisper.cpp `-ojf`
   with a real binary, recaption of a live clip after its replay save was dropped (`--drop-used-saves` deletes the source).
+
+## D357 — Preview overlays draw through libobs's persistent immediate buffer, never a throw-away one (2026-11-11, host crash)
+
+- **Crash.** The host crashed (0xC0000005 in d3d11 `device_draw`, under `blur_render` / `wrap_render` in effects.cpp)
+  when a shadow was switched on for a layer while that layer was selected in a preview. Same address and stack as the
+  2026-11-10 crash; both logs show "This vertex shader requires a point buffer" in the seconds before.
+- **Cause.** `preview.cpp` `solid_pass` (selection box, snap guides) used `gs_render_start(true)` + `gs_render_stop`.
+  In libobs 32.1.2 that makes a vertex buffer, draws it and destroys it; the d3d11 `gs_vertexbuffer_destroy` clears
+  only `lastVertexBuffer`, so `curVertexBuffer` still points at freed memory. A later draw that changes the vertex
+  shader without loading its own buffer builds its input from that freed buffer.
+- **Fix.** `gs_render_start(false)` (the persistent immediate buffer, 512 vertices; a quad that would pass the limit is
+  left out, a selection box uses 60), and `gs_load_vertexbuffer(nullptr)` after each pass so nothing of ours stays
+  loaded. Rule: host drawing code never uses `gs_render_start(true)`.
+- **Test.** `host-preview-edit.test.mjs` "crash 2026-11-11": an embedded headless preview with the box selected, the
+  effects switched five times (shadow, none, blur + shadow, shadow, none); the selection box is drawn (counter in
+  `preview.list` `selectionDraws`), the host stays up, no "point buffer" line. The old build did not crash in the same
+  test (freed memory is not always reused), so the test guards the draw path; the cause rests on the libobs source.
