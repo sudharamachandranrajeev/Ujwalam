@@ -6,7 +6,7 @@
 // CLI behind the scene-builder flag, the package schema and the token panel page. Fixtures are drawn in memory
 // (tests/helpers/sb-fixtures.mjs); no picture is committed.
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, before, describe, test } from 'node:test';
@@ -294,6 +294,72 @@ describe('SB3 existing state never changes', () => {
       writeFileSync(file, '{ broken');
       assert.throws(() => applyScenePackageFile(file, buildPackage(reads.H, project()), { dryRun: false }), /loaded only from its backup/);
     } finally { rmSync(dir, { recursive: true, force: true }); }
+  });
+});
+
+describe('SB3 apply is a guarded transaction (Codex review of D341)', () => {
+  let dir, file, original;
+  const setup = () => {
+    dir = mkdtempSync(path.join(os.tmpdir(), 'ujw-sb3t-'));
+    file = path.join(dir, 'projects', 't.project.json');
+    const p = project();
+    saveProject(file, p);
+    original = readFileSync(file);
+    return p;
+  };
+  const studioBytes = (p) => { const q = structuredClone(p); q.scenes[0].name = 'Edited in the studio'; return `${JSON.stringify(q, null, 2)}
+`; };
+  const temps = () => readdirSync(path.dirname(file)).filter((n) => n.includes('.tmp-'));
+  after(() => { if (dir) rmSync(dir, { recursive: true, force: true }); });
+
+  test('a studio save between load and save is never overwritten (compare-and-swap)', () => {
+    const p = setup();
+    const pkg = buildPackage(reads.H, p);
+    const edited = studioBytes(p);
+    let wrote = false;
+    const idFn = (prefix) => { if (!wrote) { wrote = true; writeFileSync(file, edited); } return `${prefix}-${Math.random().toString(16).slice(2, 10)}`; };
+    assert.throws(() => applyScenePackageFile(file, pkg, { dryRun: false, idFn, isRunning: () => false }), /changed on disk/);
+    assert.equal(readFileSync(file, 'utf8'), edited);
+    assert.deepEqual(temps(), []);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('refused while the host or event core of that data folder runs (host.json / api.json pid); a stale marker does not block', () => {
+    const p = setup();
+    const pkg = buildPackage(reads.H, p);
+    for (const marker of ['host.json', 'api.json']) {
+      const m = path.join(dir, marker);
+      writeFileSync(m, JSON.stringify({ port: 1, pid: 4242 }));
+      assert.throws(() => applyScenePackageFile(file, pkg, { dryRun: false, isRunning: (pid) => pid === 4242 }), /close the studio/);
+      assert.deepEqual(readFileSync(file), original);
+      assert.ok(applyScenePackageFile(file, pkg, { isRunning: (pid) => pid === 4242 }).diff, 'a dry run is still allowed');
+      rmSync(m);
+    }
+    writeFileSync(path.join(dir, 'host.json'), JSON.stringify({ port: 1, pid: 4242 }));
+    assert.equal(applyScenePackageFile(file, pkg, { dryRun: false, isRunning: () => false }).saved, true);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a throw in the after-save check restores the exact loaded bytes through temp + rename, never the shared .bak', () => {
+    const p = setup();
+    writeFileSync(`${file}.bak`, '{ not the loaded bytes');
+    const pkg = buildPackage(reads.H, p);
+    assert.throws(() => applyScenePackageFile(file, pkg, { dryRun: false, isRunning: () => false, hooks: { afterWrite: () => { throw new Error('disk hiccup'); } } }), /after-save check.*put back/);
+    assert.deepEqual(readFileSync(file), original);
+    assert.deepEqual(readFileSync(`${file}.bak`), original, '.bak holds the loaded bytes (store.mjs behaviour), not the stale one');
+    assert.deepEqual(temps(), []);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a failed check never restores over a file someone else wrote after the import', () => {
+    const p = setup();
+    writeFileSync(`${file}.bak`, '{ not the loaded bytes');
+    const pkg = buildPackage(reads.H, p);
+    const edited = studioBytes(p);
+    assert.throws(() => applyScenePackageFile(file, pkg, { dryRun: false, isRunning: () => false, hooks: { afterWrite: () => writeFileSync(file, edited) } }), /changed by another writer; it was left as it is/);
+    assert.equal(readFileSync(file, 'utf8'), edited);
+    assert.deepEqual(temps(), []);
+    rmSync(dir, { recursive: true, force: true });
   });
 });
 

@@ -971,8 +971,11 @@ Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` row SB3 
   "Built: <reference>" (rules `sceneNamePrefix`; "(2)" when taken), origin `scene-package/<package id>`.
 - Never changes existing state: the input is never mutated; the existing state (whole input project) must hash
   (sha256 of canonical JSON) the same as the result minus the new scene and the overlay entries it added, or the
-  import is refused. Dry run by default; apply is one atomic save (store.mjs), re-checked after the save, the .bak
-  put back on a failed check. A project that loads only from its .bak or needs a migration is refused.
+  import is refused. Dry run by default. Apply (after the Codex review) is a guarded transaction: refused while the
+  studio has the data folder open (host.json / api.json with a live pid; the store has no lock), compare-and-swap
+  against the exact bytes loaded right before a temp-file rename, an after-save check where a throw counts as a
+  failure, and a restore of the loaded bytes (temp + rename) only while the file still holds what the import wrote;
+  the shared .bak is never copied back. A project that loads only from its .bak or needs a migration is refused.
 - Sources by reference: game and camera link to the project's existing capture layer as a `duplicate` (new preset
   layer type `link`; the device is opened once); with only a device, a capture layer on that device (the V one becomes
   a duplicate of the H one). Chat and alerts reuse the project's overlay entry (chat-list, alert-box) and that layer's

@@ -14,8 +14,10 @@
 // package (it never overwrites a file). import applies (or dry-runs) a saved package the same way.
 // --bind ROLE=ID picks the project layer or device for game, camera, chat or alerts when the rules cannot tell.
 // --theme ID passes ?theme=ID to the overlays (brand theme tokens); without it the brand's current theme is used.
-// --apply adds the scene to the project file (atomic save, .bak kept); existing scenes, layers, devices and settings
-// are never changed. A running studio shows the new scene after the project is loaded again.
+// --apply adds the scene to the project file; existing scenes, layers, devices and settings are never changed. It needs
+// the studio closed: it is refused while the host or event core of the project's data folder runs (host.json /
+// api.json with a live pid), and it never overwrites a file that changed since it was read (compare-and-swap; see
+// services/project/scene-package.mjs applyScenePackageFile). The studio shows the new scene at its next start.
 // Behind the feature flag `scene-builder` (off by default): with the flag off it says so and exits 2. --data-dir
 // picks the folder whose flags.local.json is read (the usual CLI order otherwise).
 // Exit codes: 0 done, 1 bad arguments or the work failed, 2 the flag is off.

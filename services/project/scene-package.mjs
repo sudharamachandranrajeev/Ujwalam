@@ -8,15 +8,17 @@
 //   - a binding whose id is not in the project becomes a transparent placeholder and is listed, never re-guessed;
 //   - before/after hash: the existing state (the whole input project) must hash the same as the result with the new
 //     scene and the overlay entries it added taken out; the input object itself must be unchanged too;
-//   - dry run by default; applying is one atomic save (store.mjs), checked again after the save, and the previous
-//     file is put back if that check fails.
+//   - dry run by default; applying is a guarded transaction (applyScenePackageFile below): refused while the host or
+//     event core of the project's data folder runs, compare-and-swap against the exact bytes loaded, temp file +
+//     rename, an after-save check, and a restore of those loaded bytes only while the file is still ours.
 //
 //   planScenePackage(project, pkg, opts) -> { project, diff }        pure, the dry run
 //   applyScenePackageFile(file, pkg, { dryRun = true }) -> { diff, saved }
 
-import { createHash } from 'node:crypto';
-import { copyFileSync, existsSync } from 'node:fs';
-import { loadProject, newId, saveProject, validateProject } from './index.mjs';
+import { createHash, randomBytes } from 'node:crypto';
+import { closeSync, copyFileSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeSync } from 'node:fs';
+import path from 'node:path';
+import { loadProject, newId, parseProject, validateProject } from './index.mjs';
 import { loadScenePreset, mergeCanvasScenes } from './scene-preset.mjs';
 
 export const PACKAGE_FORMAT = 'ujwalam-scene-package';
@@ -170,22 +172,92 @@ export function diffText(diff, { dryRun = true } = {}) {
   return lines.join('\n');
 }
 
-/** Dry run (default) or apply to a project file: one atomic save, re-checked after; the old file is restored on a
- *  failed check. Refuses a project that loaded only from its .bak. */
-export function applyScenePackageFile(file, pkg, { dryRun = true, idFn = newId, flags = {} } = {}) {
-  const loaded = loadProject(file);
-  if (loaded.recoveredFrom) throw new ScenePackageError('the project loaded only from its backup; fix it before importing');
+const sha = (buf) => createHash('sha256').update(buf).digest('hex');
+
+// Markers of a running studio: the launcher's host discovery file and the event core's api.json, both
+// <dataDir>/<name> with { pid }, where the project is <dataDir>/projects/<id>.project.json (studio-ui/launch.mjs,
+// event-core/api/discovery.mjs). The project store has no lock of its own. A marker whose pid is gone is stale.
+export const OPEN_MARKERS = ['host.json', 'api.json'];
+const pidRuns = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+export function openBy(file, isRunning = pidRuns) {
+  const dataDir = path.dirname(path.dirname(path.resolve(file)));
+  for (const name of OPEN_MARKERS) {
+    let pid;
+    try { pid = JSON.parse(readFileSync(path.join(dataDir, name), 'utf8')).pid; } catch { continue; }
+    if (Number.isInteger(pid) && pid > 0 && isRunning(pid)) return { marker: name, pid };
+  }
+  return null;
+}
+
+// Temp file in the same folder (fsynced), then rename over the target. The temp name starts with
+// "<file>.tmp-" so store.mjs cleanTemps() removes a leftover.
+function writeAtomic(file, bytes, beforeRename) {
+  const tmp = `${file}.tmp-sb-${process.pid}-${randomBytes(4).toString('hex')}`;
+  const fd = openSync(tmp, 'wx');
+  try { writeSync(fd, bytes); fsyncSync(fd); } finally { closeSync(fd); }
+  try {
+    beforeRename?.();
+    renameSync(tmp, file);
+  } catch (e) { rmSync(tmp, { force: true }); throw e; }
+}
+
+/** Dry run (default) or apply to a project file, as one guarded transaction:
+ *   1. refused while the studio has the project's data folder open (openBy: a live pid in host.json or api.json);
+ *      apply needs the studio closed, a dry run does not;
+ *   2. the exact bytes are read once; the plan is made from them (a file that loads only from its .bak, or needs a
+ *      migration, is refused);
+ *   3. compare-and-swap: right before the rename the file on disk must still hash as those bytes, so a studio save
+ *      in between is never overwritten (the import is refused instead); the previous bytes go to <file>.bak first,
+ *      as store.mjs does;
+ *   4. after-save check (reload, existing-state hash, the new scene there); a throw counts as a failure;
+ *   5. on a failure the loaded bytes are put back through temp + rename, but only while the file still holds the
+ *      bytes this import wrote; a file someone else wrote since is left as it is.
+ *  opts.isRunning(pid) and opts.hooks.afterWrite(file) exist for tests. */
+export function applyScenePackageFile(file, pkg, { dryRun = true, idFn = newId, flags = {}, isRunning = pidRuns, hooks = {} } = {}) {
+  let loadedBytes;
+  try { loadedBytes = readFileSync(file); } catch (e) { throw new ScenePackageError(`cannot read the project file: ${e.code || e.message}`); }
+  let loaded;
+  try { loaded = parseProject(loadedBytes.toString('utf8')); } catch (e) {
+    let bak = false;
+    try { bak = Boolean(loadProject(file).recoveredFrom); } catch { /* neither loads */ }
+    if (bak) throw new ScenePackageError('the project loaded only from its backup; fix it before importing');
+    throw new ScenePackageError(`the project file does not load: ${e.message}`);
+  }
   if (loaded.migrated.length) throw new ScenePackageError('the project file needs a migration first (open it in the studio once); nothing was imported');
+  if (!dryRun) {
+    const open = openBy(file, isRunning);
+    if (open) throw new ScenePackageError(`the studio has this project open (${open.marker}, pid ${open.pid}); close the studio, then apply again (a dry run works while it runs)`);
+  }
   const { project, diff } = planScenePackage(loaded.project, pkg, { idFn, flags });
   if (dryRun) return { diff, saved: false };
-  saveProject(file, project);
-  const check = loadProject(file).project;
+  const v = validateProject(project);
+  if (!v.ok) throw new ScenePackageError('refusing to save an invalid project', v.errors.slice(0, 10));
+  const loadedHash = sha(loadedBytes);
+  const written = Buffer.from(`${JSON.stringify(project, null, 2)}
+`, 'utf8');
+  writeAtomic(file, written, () => {
+    let now;
+    try { now = readFileSync(file); } catch (e) { throw new ScenePackageError(`cannot re-read the project file: ${e.code || e.message}`); }
+    if (sha(now) !== loadedHash) throw new ScenePackageError('the project file changed on disk since it was loaded (a studio save?); nothing was imported, run the import again');
+    copyFileSync(file, `${file}.bak`);
+  });
+
   const sceneId = diff.adds.scenes[0].id;
-  const ok = stateHash(withoutAdded(check, { scenes: [sceneId], overlays: diff.adds.overlays.map((o) => o.id) })) === diff.existingState.before
-    && check.scenes.some((s) => s.id === sceneId);
-  if (!ok) {
-    if (existsSync(`${file}.bak`)) copyFileSync(`${file}.bak`, file);
-    throw new ScenePackageError('the saved project did not pass the after-save check; the previous file was put back');
-  }
-  return { diff, saved: true };
+  let ok = false;
+  try {
+    hooks.afterWrite?.(file);
+    const check = parseProject(readFileSync(file, 'utf8')).project;
+    ok = stateHash(withoutAdded(check, { scenes: [sceneId], overlays: diff.adds.overlays.map((o) => o.id) })) === diff.existingState.before
+      && check.scenes.some((s) => s.id === sceneId);
+  } catch { ok = false; }
+  if (ok) return { diff, saved: true };
+  let restored = false;
+  try {
+    if (sha(readFileSync(file)) === sha(written)) {
+      writeAtomic(file, loadedBytes, () => { if (sha(readFileSync(file)) !== sha(written)) throw new Error('changed'); });
+      restored = true;
+    }
+  } catch { restored = false; }
+  if (restored) throw new ScenePackageError('the saved project did not pass the after-save check; the previous file was put back');
+  throw new ScenePackageError('the saved project did not pass the after-save check, and the file was changed by another writer; it was left as it is');
 }

@@ -81,6 +81,28 @@ Tolerance (D339, D341): every side within 0.03 of the canvas side. Fixtures: the
     arguments exit 1.
 13. Panel page: no colour of its own in the CSS, no innerHTML or remote script, every duration under 600 ms.
 
+## Hardening after the Codex review (2026-11-11)
+
+Three findings in `applyScenePackageFile` fixed; each has a test in the group "SB3 apply is a guarded transaction"
+that failed on the old code ("Missing expected exception", 4 of 4) and passes now:
+
+1. (P1) A studio save between load and save was overwritten by the stale snapshot. Now: the exact bytes are read
+   once and planned from; right before the rename the file must still hash as those bytes (compare-and-swap), else
+   the import is refused. Apply is also refused while the studio has the data folder open: the project store has no
+   lock, so the markers are the launcher's `<dataDir>/host.json` and the event core's `<dataDir>/api.json` with a
+   live pid (a stale pid does not block; a dry run is always allowed). Tests: a write during planning is kept and
+   the import refused; host.json and api.json with a running pid refuse apply, a stale one does not.
+2. (P1) Rollback copied the shared .bak over the project, unconditionally and non-atomically. Now the restore writes
+   the exact loaded bytes through temp file + rename, and only while the file still holds the bytes this import
+   wrote. Test: with a different .bak on disk, the file comes back byte-identical to the loaded one; a file another
+   writer changed after the import is left as it is.
+3. (P2) A throw in the after-save check skipped the rollback. Now a throw and a mismatch both take the guarded
+   restore. Test: a throwing check restores the loaded bytes, no temp file left.
+
+```
+node --test --test-timeout=60000 tests/scene-builder-build.test.mjs      tests 20  pass 20  fail 0
+```
+
 ## Real references (dry run only) — UNVERIFIED
 
 The three references in the gitignored stream assets layout folder (two images, one video sampled at 4 frames) were
