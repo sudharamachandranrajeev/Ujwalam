@@ -4139,6 +4139,75 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			});
 			pc->addWidget(reelBox);
 		}
+		// Reel opening (ED1, D352): per reel type, open with the best moment (a reorder or a teaser) and the teaser
+		// length 1-3 s. Used while the reel-hook flag is on (data/clip/reel-hook.json holds the defaults).
+		struct HookRow {
+			QString id;
+			QAbstractButton *on;
+			QSpinBox *sec;
+			bool onStart;
+			int secStart;
+			bool onDefault;
+			int secDefault;
+		};
+		auto hookRows = std::make_shared<std::vector<HookRow>>();
+		const QJsonObject hookInfo = b.value(QStringLiteral("reelHooks")).toObject();
+		if (!hookInfo.value(QStringLiteral("types")).toArray().isEmpty()) {
+			const int tMin = hookInfo.value(QStringLiteral("teaserMin")).toInt(1), tMax = hookInfo.value(QStringLiteral("teaserMax")).toInt(3);
+			auto *hookBox = new QGroupBox(QStringLiteral("REEL OPENING"), dlg);
+			auto *hv = new QVBoxLayout(hookBox);
+			theme::space(hv, 8);
+			auto *hookNote = new QLabel(QStringLiteral("Opens each reel on its best moment (the best kill or the multi-kill) in the first seconds, then plays it in order. A short teaser of that moment plays first where the reel tells a story. The teaser counts toward the longest length. Works while the Payoff-first hook switch (reel-hook) is on."), hookBox);
+			hookNote->setObjectName(QStringLiteral("muted"));
+			hookNote->setWordWrap(true);
+			hv->addWidget(hookNote);
+			auto *hf = new QFormLayout();
+			hf->setVerticalSpacing(10);
+			for (const QJsonValue &tv : hookInfo.value(QStringLiteral("types")).toArray()) {
+				const QJsonObject t = tv.toObject();
+				const QString id = t.value(QStringLiteral("id")).toString();
+				auto *row = new QWidget(hookBox);
+				auto *rh = new QHBoxLayout(row);
+				rh->setContentsMargins(0, 0, 0, 0);
+				theme::space(rh, 8);
+				const auto parts = switchRow(QStringLiteral("Open with the best moment"), row);
+				Switch *on = std::get<1>(parts);
+				on->setObjectName(QStringLiteral("hookOn_") + id);
+				on->setAccessibleName(t.value(QStringLiteral("label")).toString() + QStringLiteral(" open with the best moment"));
+				auto *sec = new QSpinBox(row);
+				sec->setRange(tMin, tMax);
+				sec->setSuffix(QStringLiteral(" s"));
+				sec->setObjectName(QStringLiteral("hookSec_") + id);
+				sec->setAccessibleName(t.value(QStringLiteral("label")).toString() + QStringLiteral(" teaser length"));
+				const bool on0 = t.value(QStringLiteral("on")).toBool(true);
+				const int s0 = t.value(QStringLiteral("teaserSec")).toInt(2);
+				on->setChecked(on0);
+				sec->setValue(s0);
+				sec->setEnabled(on0);
+				connect(on, &QAbstractButton::toggled, sec, &QWidget::setEnabled);
+				rh->addWidget(std::get<0>(parts));
+				rh->addWidget(new QLabel(QStringLiteral("Teaser"), row));
+				rh->addWidget(sec);
+				rh->addStretch(1);
+				auto *name = new QLabel(t.value(QStringLiteral("label")).toString(), hookBox);
+				name->setToolTip(t.value(QStringLiteral("strategy")).toString() == QStringLiteral("reorder")
+							 ? QStringLiteral("The clip with the best moment moves to the front; a teaser only when that moment is deep inside it.")
+							 : QStringLiteral("A teaser of the best moment plays first, then the reel from its start."));
+				hf->addRow(name, row);
+				hookRows->push_back({id, on, sec, on0, s0, t.value(QStringLiteral("defaultOn")).toBool(true), t.value(QStringLiteral("defaultTeaserSec")).toInt(2)});
+			}
+			hv->addLayout(hf);
+			auto *hookReset = new QPushButton(QStringLiteral("Reset to defaults"), hookBox);
+			hookReset->setObjectName(QStringLiteral("settingsHookReset"));
+			hv->addWidget(hookReset, 0, Qt::AlignLeft);
+			connect(hookReset, &QPushButton::clicked, dlg, [hookRows]() {
+				for (const HookRow &r : *hookRows) {
+					r.on->setChecked(r.onDefault);
+					r.sec->setValue(r.secDefault);
+				}
+			});
+			pc->addWidget(hookBox);
+		}
 		pc->addStretch(1);
 
 		// Folders
@@ -4326,7 +4395,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			if (const auto found = nav->findItems(startPage, Qt::MatchExactly); !found.isEmpty())
 				nav->setCurrentItem(found.first());
 		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
-		dlg->save = [this, dlg, nav, reelRows]() {
+		dlg->save = [this, dlg, nav, reelRows, hookRows]() {
 			for (const ReelRow &r : *reelRows)
 				if (r.lo->value() > r.hi->value()) {
 					if (const auto found = nav->findItems(QStringLiteral("Clips"), Qt::MatchExactly); !found.isEmpty())
@@ -4358,6 +4427,9 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				return true;
 			for (const ReelRow &r : *reelRows)
 				if (r.lo->value() != r.loStart || r.hi->value() != r.hiStart)
+					return true;
+			for (const HookRow &r : *hookRows)
+				if (r.on->isChecked() != r.onStart || r.sec->value() != r.secStart)
 					return true;
 			if (recRow.second->text().trimmed() != recDirStart.trimmed() || clipRow.second->text().trimmed() != clipDirStart.trimmed())
 				return true;
@@ -4412,6 +4484,12 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 					reelBody.insert(r.id, QJsonObject{{QStringLiteral("minSec"), r.lo->value()}, {QStringLiteral("maxSec"), r.hi->value()}});
 			if (!reelBody.isEmpty())
 				clipsBody.insert(QStringLiteral("reelLengths"), reelBody);
+			QJsonObject hookBody; // ED1: only the changed types (an older server refuses the key)
+			for (const HookRow &r : *hookRows)
+				if (r.on->isChecked() != r.onStart || r.sec->value() != r.secStart)
+					hookBody.insert(r.id, QJsonObject{{QStringLiteral("on"), r.on->isChecked()}, {QStringLiteral("teaserSec"), r.sec->value()}});
+			if (!hookBody.isEmpty())
+				clipsBody.insert(QStringLiteral("reelHooks"), hookBody);
 			body.insert(QStringLiteral("clips"), clipsBody);
 			body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
 			const QString motionNew = appear->motion();
@@ -4662,6 +4740,19 @@ QJsonObject MainWindow::probe() const
 				auto *err = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsReelError"));
 				s.insert(QStringLiteral("reelLengths"), QJsonObject{{QStringLiteral("rows"), reel}, {QStringLiteral("error"), err && !err->isHidden() ? err->text() : QString()}});
 			}
+		}
+		{ // ED1 (D352): the reel opening rows, id -> {on, teaserSec, teaserEnabled, text}
+			QJsonObject hooks;
+			for (auto *sw : settingsDlg_->findChildren<QAbstractButton *>())
+				if (sw->objectName().startsWith(QStringLiteral("hookOn_"))) {
+					const QString id = sw->objectName().mid(7);
+					auto *sec = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("hookSec_") + id);
+					hooks.insert(id, QJsonObject{{QStringLiteral("on"), sw->isChecked()}, {QStringLiteral("teaserSec"), sec ? sec->value() : -1},
+								     {QStringLiteral("teaserEnabled"), sec && sec->isEnabled()}, {QStringLiteral("min"), sec ? sec->minimum() : -1},
+								     {QStringLiteral("max"), sec ? sec->maximum() : -1}});
+				}
+			if (!hooks.isEmpty())
+				s.insert(QStringLiteral("reelHooks"), hooks);
 		}
 		if (auto *sn = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsSnap"))) { // D335 F10
 			auto *snText = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsSnapText"));
@@ -4978,6 +5069,15 @@ bool MainWindow::probeAction(const QString &action)
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-performance")) { // High performance (2026-11-10)
 			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsPerformance"))) {
 				cb->setChecked(p[1] == QStringLiteral("on"));
+				return true;
+			}
+		}
+		if (p.size() == 4 && p[0] == QStringLiteral("settings-hook")) { // ED1: settings-hook:<type>:<on 0|1>:<teaser s>
+			auto *on = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("hookOn_") + p[1]);
+			auto *sec = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("hookSec_") + p[1]);
+			if (on && sec) {
+				on->setChecked(p[2] == QStringLiteral("1"));
+				sec->setValue(p[3].toInt());
 				return true;
 			}
 		}

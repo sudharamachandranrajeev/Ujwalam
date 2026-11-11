@@ -12,6 +12,9 @@
 //   clips.reelLengths: the longest and shortest reel of each type (CL1, D350; defaults and the upper bound in
 //                      data/clip/reel-length.json, read by services/clip/reel_length.py): { <type>: { minSec, maxSec } },
 //                      only the types the user changed; absent = the defaults. A reel longer than its maximum is split.
+//   clips.reelHooks: open each reel type with its best moment, and the teaser length (ED1, D352; defaults, strategies
+//                    and the 1-3 s range in data/clip/reel-hook.json, read by services/clip/reel_hook.py):
+//                    { <type>: { on, teaserSec } }, only the types the user changed. Used while the reel-hook flag is on.
 //   folders.recordings: where recordings are saved (used from the next start); null = <host data>/recordings
 //   folders.clips: where finished clips are saved; null = <dataDir>/clips
 //   ui.motion (D290), ui.guide (D294 proposed): see the blocks below
@@ -94,6 +97,64 @@ function mergeReelLengths(cur, patch) {
   return Object.keys(all).length ? all : null;
 }
 // ---- reel length end
+
+// ---- reel hook (ED1, D352) begin: clips.reelHooks checks and read; also marked "reel hook" in readSettings,
+// settingsProblems and writeSettings. Same rules as services/clip/reel_hook.py hooks_problems().
+export const REEL_HOOK_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'clip', 'reel-hook.json');
+let hookDefaultsCache = null;
+/** { flag, teaserMin, teaserMax, types: [{ id, label, strategy, on, teaserSec }] } from data/clip/reel-hook.json, or null. */
+export function hookDefaults(file = REEL_HOOK_FILE) {
+  if (file === REEL_HOOK_FILE && hookDefaultsCache) return hookDefaultsCache;
+  try {
+    const j = JSON.parse(readFileSync(file, 'utf8'));
+    const d = { flag: String(j.flag), teaserMin: Number(j.teaserSec.min), teaserMax: Number(j.teaserSec.max),
+      types: j.types.map((t) => ({ id: String(t.id), label: String(t.label ?? t.id), strategy: String(t.strategy), on: t.on === true, teaserSec: Number(t.teaserSec) })) };
+    if (!(d.teaserMin >= 1 && d.teaserMin <= d.teaserMax) || d.types.some((t) => !(t.teaserSec >= d.teaserMin && t.teaserSec <= d.teaserMax))) return null;
+    if (file === REEL_HOOK_FILE) hookDefaultsCache = d;
+    return d;
+  } catch { return null; }
+}
+
+/** Problems with a clips.reelHooks value { <type>: { on, teaserSec } }; [] when fine. */
+export function reelHookProblems(v, d = hookDefaults()) {
+  if (!d) return ['reel openings are not available (data/clip/reel-hook.json is missing)'];
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return ['clips.reelHooks must be an object'];
+  const out = [];
+  for (const [k, x] of Object.entries(v)) {
+    if (!d.types.some((t) => t.id === k)) { out.push(`unknown reel type ${k}`); continue; }
+    if (!x || typeof x !== 'object' || Array.isArray(x) || Object.keys(x).sort().join() !== 'on,teaserSec') out.push(`clips.reelHooks.${k} needs on and teaserSec`);
+    else if (typeof x.on !== 'boolean') out.push(`clips.reelHooks.${k}.on must be true or false`);
+    else if (!Number.isInteger(x.teaserSec)) out.push(`${k}: the teaser length is whole seconds`);
+    else if (x.teaserSec < d.teaserMin || x.teaserSec > d.teaserMax) out.push(`${k}: the teaser length must be ${d.teaserMin} to ${d.teaserMax} s`);
+  }
+  return out;
+}
+
+function readReelHooks(v) {
+  const d = hookDefaults();
+  if (!d || !v || typeof v !== 'object' || Array.isArray(v)) return {};
+  const out = {};
+  for (const [k, x] of Object.entries(v)) if (reelHookProblems({ [k]: x }, d).length === 0) out[k] = { on: x.on, teaserSec: x.teaserSec };
+  return out;
+}
+
+/** Defaults + the user's values per type, for the Settings page: { flag, teaserMin, teaserMax, types: [{ id, label,
+ *  strategy, on, teaserSec, defaultOn, defaultTeaserSec }] }, or null when the defaults file is unreadable. */
+export function reelHookInfo(dataDir) {
+  const d = hookDefaults();
+  if (!d) return null;
+  const mine = readReelHooks(readSettings(dataDir).clips.reelHooks);
+  return { flag: d.flag, teaserMin: d.teaserMin, teaserMax: d.teaserMax, types: d.types.map((t) => ({ id: t.id, label: t.label, strategy: t.strategy,
+    defaultOn: t.on, defaultTeaserSec: t.teaserSec, on: mine[t.id]?.on ?? t.on, teaserSec: mine[t.id]?.teaserSec ?? t.teaserSec })) };
+}
+
+function mergeReelHooks(cur, patch) {
+  const d = hookDefaults();
+  const all = { ...(cur ?? {}), ...(patch ?? {}) };
+  for (const [k, x] of Object.entries(all)) { const t = d?.types.find((y) => y.id === k); if (!t || (x.on === t.on && x.teaserSec === t.teaserSec)) delete all[k]; }
+  return Object.keys(all).length ? all : null;
+}
+// ---- reel hook end
 
 // ---- match gate (D286 proposed) begin: clips.matchGate checks and read; also one line each in DEFAULTS,
 // readSettings, settingsProblems and writeSettings, marked "match gate"
@@ -227,7 +288,8 @@ export function readSettings(dataDir) {
     exists: j !== null,
     clips: { recording: mode(c.recording, DEFAULTS.clips.recording), live: mode(c.live, DEFAULTS.clips.live),
       recordLive: typeof c.recordLive === 'boolean' ? c.recordLive : DEFAULTS.clips.recordLive, matchGate: readMatchGate(c.matchGate),
-      ...(Object.keys(readReelLengths(c.reelLengths)).length ? { reelLengths: readReelLengths(c.reelLengths) } : {}) }, // reel length
+      ...(Object.keys(readReelLengths(c.reelLengths)).length ? { reelLengths: readReelLengths(c.reelLengths) } : {}), // reel length
+      ...(Object.keys(readReelHooks(c.reelHooks)).length ? { reelHooks: readReelHooks(c.reelHooks) } : {}) }, // reel hook
     folders: { recordings: dir(f.recordings), clips: dir(f.clips) },
     ...uiRead(j), // D290
   };
@@ -243,6 +305,7 @@ export function settingsProblems(patch, { forbidden = [] } = {}) {
   for (const [k, v] of Object.entries(patch.clips ?? {})) {
     if (k === 'matchGate') out.push(...matchGateProblems(v)); // match gate
     else if (k === 'reelLengths') out.push(...reelLengthProblems(v)); // reel length
+    else if (k === 'reelHooks') out.push(...reelHookProblems(v)); // reel hook
     else if (k === 'recordLive') { if (typeof v !== 'boolean') out.push('clips.recordLive must be true or false'); } // LC2
     else if (!['recording', 'live'].includes(k)) out.push(`unknown clip setting ${k}`);
     else if (!CLIP_MODES.includes(v)) out.push(`clips.${k} must be one of ${CLIP_MODES.join(', ')}`);
@@ -267,6 +330,8 @@ export function writeSettings(dataDir, patch) {
   // reel length: per type merge, so changing one type keeps the others; a value equal to its default is not stored
   const rls = mergeReelLengths(cur.clips.reelLengths, patch.clips?.reelLengths);
   if (rls) next.clips.reelLengths = rls; else delete next.clips.reelLengths;
+  const rhs = mergeReelHooks(cur.clips.reelHooks, patch.clips?.reelHooks); // reel hook: per type, defaults not stored
+  if (rhs) next.clips.reelHooks = rhs; else delete next.clips.reelHooks;
   for (const k of ['recordings', 'clips']) if (typeof next.folders[k] === 'string') mkdirSync(next.folders[k], { recursive: true });
   mkdirSync(dataDir, { recursive: true });
   const f = path.join(dataDir, SETTINGS_FILE);

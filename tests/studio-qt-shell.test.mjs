@@ -438,6 +438,14 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(r.settings.dirty, true, 'Settings stayed open with the edit');
     assert.equal(existsSync(path.join(r.dataDir, 'settings.json')), false, 'nothing saved');
   });
+  test('Settings > Clips (ED1, D352): reel opening rows show on and 2 s per type, Save sends only the changed type', async () => {
+    const q = await probe([], 8000, 'settings-open,settings-page:0');
+    assert.deepEqual(Object.keys(q.settings.reelHooks).sort(), ['impact-play', 'live-clip', 'match-reel', 'montage']);
+    assert.deepEqual(q.settings.reelHooks.montage, { on: true, teaserSec: 2, teaserEnabled: true, min: 1, max: 3 });
+    const p = await probe([], 9000, 'settings-open,settings-page:0,settings-hook:match-reel:0:3,settings-save');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:0', true], ['settings-hook:match-reel:0:3', true], ['settings-save', true]]);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).clips.reelHooks, { 'match-reel': { on: false, teaserSec: 3 } });
+  });
   test('Settings > Clips (LC2, D334 proposed): Record while live is a switch row with its explanation, on by default; off is saved at Save', async () => {
     const p = await probe([], 7000, 'settings-open,settings-page:0');
     assert.deepEqual(p.settings.recordLive, { on: true, text: 'Record while live', visible: true,
