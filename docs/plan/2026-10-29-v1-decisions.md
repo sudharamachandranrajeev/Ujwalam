@@ -1569,3 +1569,7 @@ split it into after. add the settings to customise clip length for different typ
 - **No feature flag** (user-ordered cap). The old behaviour is reachable by raising a maximum up to 60 s.
 - UNVERIFIED: a real recording rendered into parts (headless tests use synthetic pieces); the picture of the new group at
   real DPI.
+
+## D354 — The default shortcut is the LIVE start (user, 2026-11-11)
+
+The user could not stream from "Ujwalam (alpha)", which was the practice start (D281), and asked: "make the live shortcut the default". The installer now makes "Ujwalam (alpha)" with `--live --allow-devices` (stream targets set up; going live still needs a Start stream click and the readiness check) and "Ujwalam (alpha, practice)" with `--allow-devices` only. It removes the old "Ujwalam (alpha, LIVE)" shortcut. The studio's disabled-button tooltip names the new shortcut. The installed shortcuts were switched by hand on 2026-11-11, so this applies before the next build. Tests: package-alpha 18/18 (shortcut arguments read back through the shell).

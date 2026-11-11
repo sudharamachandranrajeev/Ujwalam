@@ -58,10 +58,13 @@ param(
 
 Set-StrictMode -Version 2
 $ErrorActionPreference = 'Stop'
+# The default shortcut is the LIVE start (user, 2026-11-11, D354; was D281's separate LIVE shortcut): it configures
+# the stream targets (keys from Windows Credential Manager); nothing goes live until the user clicks Start stream.
 $ShortcutName = 'Ujwalam (alpha).lnk'
-# LIVE start (D281): configures the stream targets (keys from Windows Credential Manager); nothing goes live until
-# the user clicks Start stream.
-$LiveShortcutName = 'Ujwalam (alpha, LIVE).lnk'
+# Practice start: no stream targets, Start stream refused (the old default).
+$PracticeShortcutName = 'Ujwalam (alpha, practice).lnk'
+# Shortcut from earlier installs, replaced by the default one.
+$OldLiveShortcutName = 'Ujwalam (alpha, LIVE).lnk'
 
 function Say([string]$m) { Write-Host "[install] $m" }
 function Fail([string]$m, [int]$code) { Write-Host "[install] STOP: $m"; exit $code }
@@ -386,20 +389,22 @@ if (-not $NoShortcuts) {
     New-Item -ItemType Directory -Force -Path $dir | Out-Null
     $lnk = $shell.CreateShortcut((Join-Path $dir $ShortcutName))
     $lnk.TargetPath = Join-Path $InstallRoot 'ujwalam-start.exe'
-    $lnk.Arguments = '--allow-devices' # capture card, facecam, mic (user, 2026-11-08, D282)
-    $lnk.WorkingDirectory = $InstallRoot
-    $lnk.IconLocation = $iconLoc
-    $lnk.Description = 'Ujwalam alpha with devices (runs the version in current.txt)'
-    $lnk.Save()
-    Say "shortcut: $(Join-Path $dir $ShortcutName)"
-    $lnk = $shell.CreateShortcut((Join-Path $dir $LiveShortcutName))
-    $lnk.TargetPath = Join-Path $InstallRoot 'ujwalam-start.exe'
-    $lnk.Arguments = '--live --allow-devices'
+    $lnk.Arguments = '--live --allow-devices' # capture card, facecam, mic (D282); stream targets set up (D354)
     $lnk.WorkingDirectory = $InstallRoot
     $lnk.IconLocation = $iconLoc
     $lnk.Description = 'Ujwalam alpha, stream targets set up (going live still needs a Start stream click)'
     $lnk.Save()
-    Say "shortcut: $(Join-Path $dir $LiveShortcutName)"
+    Say "shortcut: $(Join-Path $dir $ShortcutName)"
+    $lnk = $shell.CreateShortcut((Join-Path $dir $PracticeShortcutName))
+    $lnk.TargetPath = Join-Path $InstallRoot 'ujwalam-start.exe'
+    $lnk.Arguments = '--allow-devices'
+    $lnk.WorkingDirectory = $InstallRoot
+    $lnk.IconLocation = $iconLoc
+    $lnk.Description = 'Ujwalam alpha, practice: devices, no streaming (runs the version in current.txt)'
+    $lnk.Save()
+    Say "shortcut: $(Join-Path $dir $PracticeShortcutName)"
+    $old = Join-Path $dir $OldLiveShortcutName
+    if (Test-Path -LiteralPath $old) { Remove-Item -LiteralPath $old -Force; Say "removed old shortcut: $old" }
   }
 }
 

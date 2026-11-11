@@ -257,13 +257,15 @@ test('Install-Ujwalam.ps1 on a fake package: install, shortcuts, tamper refused,
     assert.ok(!existsSync(path.join(ir, 'previous.txt')));
     for (const f of ['0.1.0-alpha.1/release.json', 'Ujwalam.cmd', 'ujwalam-start.exe', 'ujwalam.ico', 'data']) assert.ok(existsSync(path.join(ir, f)), f);
     for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha).lnk')), d);
-    for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha, LIVE).lnk')), `${d} LIVE (D281)`);
-    // Arguments: devices on both (D282), stream targets only on LIVE (read back through the shell COM object).
+    for (const d of ['start', 'desk']) assert.ok(existsSync(path.join(root, d, 'Ujwalam (alpha, practice).lnk')), `${d} practice (D354)`);
+    for (const d of ['start', 'desk']) assert.ok(!existsSync(path.join(root, d, 'Ujwalam (alpha, LIVE).lnk')), `${d} no old LIVE shortcut (D354)`);
+    // Arguments: devices on both (D282); the default shortcut is the LIVE start, practice has no stream targets (D354;
+    // read back through the shell COM object).
     // Target: the windowless ujwalam-start.exe, not Ujwalam.cmd, so no console window opens (D191; 2026-11-08).
     const lnks = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command',
-      `$s = New-Object -ComObject WScript.Shell; foreach ($n in 'Ujwalam (alpha).lnk','Ujwalam (alpha, LIVE).lnk') { $l = $s.CreateShortcut((Join-Path '${path.join(root, 'start')}' $n)); $l.Arguments; $l.TargetPath; $l.IconLocation }`],
+      `$s = New-Object -ComObject WScript.Shell; foreach ($n in 'Ujwalam (alpha).lnk','Ujwalam (alpha, practice).lnk') { $l = $s.CreateShortcut((Join-Path '${path.join(root, 'start')}' $n)); $l.Arguments; $l.TargetPath; $l.IconLocation }`],
     { encoding: 'utf8', windowsHide: true }).trim().split(/\r?\n/);
-    assert.deepEqual([lnks[0], lnks[3]], ['--allow-devices', '--live --allow-devices']);
+    assert.deepEqual([lnks[0], lnks[3]], ['--live --allow-devices', '--allow-devices']);
     for (const target of [lnks[1], lnks[4]]) assert.equal(target.toLowerCase(), path.join(ir, 'ujwalam-start.exe').toLowerCase());
     // Both shortcuts carry the app icon (the .ico copied into the install root).
     for (const loc of [lnks[2], lnks[5]]) assert.equal(loc.toLowerCase(), `${path.join(ir, 'ujwalam.ico')},0`.toLowerCase());

@@ -2248,7 +2248,7 @@ void MainWindow::pollStatus()
 		recordBtn_->setEnabled(ready.value(QStringLiteral("record")).toBool());
 		// Say why a button is off (D281): no stream target unless Ujwalam was started for live.
 		streamBtn_->setToolTip(streamBtn_->isEnabled() ? (live_ ? QStringLiteral("Stop the stream.") : QStringLiteral("Go live."))
-							       : QStringLiteral("Streaming needs the LIVE start: the \"Ujwalam (alpha, LIVE)\" shortcut, or Ujwalam.cmd --live."));
+							       : QStringLiteral("Streaming needs the LIVE start: the \"Ujwalam (alpha)\" shortcut (not the practice one), or Ujwalam.cmd --live."));
 		recordBtn_->setToolTip(recordBtn_->isEnabled() ? (recording_ ? QStringLiteral("Stop recording.") : QStringLiteral("Start recording to a file."))
 								    : QStringLiteral("No recording output is set up in this start."));
 		// The round controls change icon and caption with the state (D290); a red fill says "on".
