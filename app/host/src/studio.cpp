@@ -2621,7 +2621,13 @@ json::Value Studio::mixer_set_volume(const std::string &id, const double *mul, c
 	dirty_ = true;
 	json::Value r = json::Value::object();
 	r.set("id", id);
-	r.set("volume", (double)obs_source_get_volume(s->src));
+	const float now = obs_source_get_volume(s->src);
+	r.set("volume", (double)now);
+	// The project file is the record (like mixer_set_tracks): the UI server saves volumeDb into audio.sources[] keyed
+	// by audioSource. A source with no project audio entry has no audioSource and stays live-only.
+	r.set("volumeDb", now > 0 ? std::max(-100.0, (double)obs_mul_to_db(now)) : -100.0);
+	if (!s->audio_id.empty())
+		r.set("audioSource", s->audio_id);
 	return r;
 }
 
@@ -2634,6 +2640,8 @@ json::Value Studio::mixer_set_mute(const std::string &id, bool muted)
 	json::Value r = json::Value::object();
 	r.set("id", id);
 	r.set("muted", obs_source_muted(s->src));
+	if (!s->audio_id.empty())
+		r.set("audioSource", s->audio_id); // saved into audio.sources[].muted by the UI server
 	return r;
 }
 
@@ -2656,6 +2664,12 @@ json::Value Studio::mixer_set_cue(const std::string &id, bool cue)
 	r.set("id", id);
 	r.set("cue", obs_source_get_monitoring_type(s->src) != OBS_MONITORING_TYPE_NONE);
 	r.set("cueDelayed", cue && (obs_source_get_output_flags(s->src) & OBS_SOURCE_VIDEO) != 0);
+	const enum obs_monitoring_type mt = obs_source_get_monitoring_type(s->src);
+	r.set("monitoring", mt == OBS_MONITORING_TYPE_MONITOR_ONLY		 ? "monitor-only"
+			    : mt == OBS_MONITORING_TYPE_MONITOR_AND_OUTPUT ? "monitor-and-output"
+									     : "off");
+	if (!s->audio_id.empty())
+		r.set("audioSource", s->audio_id); // saved into audio.sources[].monitoring by the UI server
 	return r;
 }
 

@@ -2,6 +2,10 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.26 — 2026-11-11
+
+- Mixer volume, mute and CUE (headphones) are now saved in your project and kept after a restart. Before, a lowered Game volume came back at full on the next start. Set it once again after installing.
+
 ## 0.1.0-alpha.25 — 2026-11-11
 
 - Fixed a crash: switching an effect (for example a shadow) on or off for a layer that was selected in the preview could close the video engine. The same fault caused the crash on 10 November. The engine was also checked for related faults, and four were fixed: changing a layer's effects could flash the new copy for one frame; a scene could be deleted while a fade was still showing it; a stuck overlay helper could hang the engine; a shadow on a very small, large-source layer could make the layer disappear.

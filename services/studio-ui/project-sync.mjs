@@ -6,6 +6,10 @@
 //   layers.setVisible   -> placements[canvas].visible (and layer.visible, see below)
 //   layers.setEffects   -> scenes[].layers[].effects (the whole list; empty removes it; D260)
 //   mixer.setTracks     -> audio.sources[audioSource].tracks and .monitoring (D273; params = the host's answer)
+//   mixer.setVolume     -> audio.sources[audioSource].volumeDb   (D358; params = the host's answer)
+//   mixer.setMute       -> audio.sources[audioSource].muted      (D358)
+//   mixer.setCue        -> audio.sources[audioSource].monitoring (D358)
+//   A mixer channel with no project audio entry (no audioSource in the answer) stays live-only.
 // layers.move is NOT saved here: the host orders layers per canvas, the project has one order shared by H and V.
 // The order is saved by the structure route instead (op layer.move, D243), which reorders the host from the project.
 // Saves are debounced (one write per burst of edits) and go through saveProject (validate, temp file, .bak, rename).
@@ -19,6 +23,21 @@ const CROP_KEYS = ['left', 'top', 'right', 'bottom'];
 
 // Pure: apply one accepted host edit to a project document (mutates doc). Returns the number of placements changed.
 export function applyEdit(doc, method, params) {
+  if (method === 'mixer.setVolume' || method === 'mixer.setMute' || method === 'mixer.setCue') {
+    const src = doc.audio?.sources?.find((a) => a.id === params?.audioSource);
+    if (!src) return 0;
+    if (method === 'mixer.setVolume') {
+      if (typeof params.volumeDb !== 'number' || !Number.isFinite(params.volumeDb)) return 0;
+      src.volumeDb = Math.min(12, Math.max(-100, Math.round(params.volumeDb * 100) / 100));
+    } else if (method === 'mixer.setMute') {
+      if (typeof params.muted !== 'boolean') return 0;
+      src.muted = params.muted;
+    } else {
+      if (!['off', 'monitor-only', 'monitor-and-output'].includes(params.monitoring)) return 0;
+      src.monitoring = params.monitoring;
+    }
+    return 1;
+  }
   if (method === 'mixer.setTracks') {
     const src = doc.audio?.sources?.find((a) => a.id === params.audioSource);
     const known = new Set((doc.audio?.tracks ?? []).map((t) => t.id));
@@ -67,7 +86,8 @@ export function applyEdit(doc, method, params) {
   return changed;
 }
 
-export const SYNCED_METHODS = new Set(['layers.setPlacement', 'layers.setVisible', 'layers.setEffects', 'mixer.setTracks']);
+export const SYNCED_METHODS = new Set(['layers.setPlacement', 'layers.setVisible', 'layers.setEffects', 'mixer.setTracks', 'mixer.setVolume',
+  'mixer.setMute', 'mixer.setCue']);
 
 /** createProjectSync({ file, delayMs?, setTimer?, clearTimer?, log? })
  *  record(method, params): call after the host accepted the edit. flush(): write now. reload(): flush, then re-read the

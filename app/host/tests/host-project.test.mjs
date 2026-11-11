@@ -275,6 +275,14 @@ test('project v1 render: H and V placements, duplicate item, shared source, laye
   assert.equal((await c.call('mixer.list')).sources.find((s) => s.audioSource === 'aud-clip').mixers, 0, 'a refused list changes nothing');
   rt = await c.call('mixer.setTracks', { id: clips[0].id, tracks: ['t2'] });
   assert.equal((await c.call('mixer.list')).sources.find((s) => s.audioSource === 'aud-clip').mixers, 2, 'back as loaded');
+  // D358: volume and mute answer with the project audio source and the applied value, for the UI server to save
+  const sv = await c.call('mixer.setVolume', { id: clips[0].id, db: -18 });
+  assert.equal(sv.audioSource, 'aud-clip');
+  assert.ok(Math.abs(sv.volumeDb + 18) < 0.01, `volumeDb ${sv.volumeDb}`);
+  assert.equal((await c.call('mixer.setVolume', { id: clips[0].id, volume: 0 })).volumeDb, -100, 'silence saved as -100 dB');
+  const sm = await c.call('mixer.setMute', { id: clips[0].id, muted: false });
+  assert.deepEqual([sm.audioSource, sm.muted], ['aud-clip', false]);
+  await c.call('mixer.setVolume', { id: clips[0].id, db: -6 }); // back as loaded
 
   // inspector (P5a): partial placement patch merges into the project placement; bad patches change nothing
   const box0 = lh.layers.find((l) => l.id === 'box').placement;

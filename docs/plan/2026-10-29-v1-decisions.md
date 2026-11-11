@@ -1703,3 +1703,15 @@ Growth plan ED2. Decided:
   effects switched five times (shadow, none, blur + shadow, shadow, none); the selection box is drawn (counter in
   `preview.list` `selectionDraws`), the host stays up, no "point buffer" line. The old build did not crash in the same
   test (freed memory is not always reused), so the test guards the draw path; the cause rests on the libobs source.
+
+## D358 — Mixer volume, mute and CUE are saved in the project (user report, 2026-11-11)
+
+- **Report.** The Game channel's volume, lowered in the mixer, was back at full after a restart.
+- **Cause.** Only track routing (D273) was written back to the project file. `mixer.setVolume`, `mixer.setMute` and
+  `mixer.setCue` changed the host only; the next start loaded `audio.sources[].volumeDb` 0, `muted` and `monitoring`
+  from the file again. D222 had left CUE live-only on purpose; volume and mute were simply never saved.
+- **Change.** The host answers these three calls with the project audio source (`audioSource`) and the value it
+  applied (`volumeDb`, -100 for silence; `muted`; `monitoring`). The UI server's project sync saves them into that
+  audio source (debounced, the same path as the layer edits). Supersedes D222's "CUE state is live-only".
+- **Limit.** A mixer channel with no `audio.sources` entry (layer sound without a project audio source) stays
+  live-only, as for track routing. Game and Mic in the alpha project have entries.

@@ -3,7 +3,7 @@
   "product": "ujwalam",
   "base": "0.1.0",
   "channel": "alpha",
-  "current": 25,
+  "current": 26,
   "nodeMin": "22.13.0",
   "obsRuntime": {
     "version": "32.1.2",
@@ -36,6 +36,7 @@
     { "n": 22, "date": "2026-11-10", "title": "Blurred game backdrop behind every layer" },
     { "n": 23, "date": "2026-11-10", "title": "Live streams record H and V and make reels; preview edits the selected layer" },
     { "n": 24, "date": "2026-11-11", "title": "Nine full themes, live updates without stopping the stream, scene builder" },
-    { "n": 25, "date": "2026-11-11", "title": "Crash fix: effects on a selected layer; reel length, hook and captions; Instagram Live" }
+    { "n": 25, "date": "2026-11-11", "title": "Crash fix: effects on a selected layer; reel length, hook and captions; Instagram Live" },
+    { "n": 26, "date": "2026-11-11", "title": "Mixer volume, mute and CUE kept after a restart" }
   ]
 }

@@ -56,6 +56,10 @@ function stubHost() {
         // aud-game has CUE on (sample: monitor-only): the host flips it with the routing.
         return { id: p.id, audioSource: 'aud-game', mixers: p.tracks.length, tracks: p.tracks, monitoring: p.tracks.length ? 'monitor-and-output' : 'monitor-only' };
       }
+      // Volume, mute and CUE (D358): the host answers with the value it applied and the project audio source.
+      if (m === 'mixer.setVolume') return { id: p.id, volume: 10 ** (p.db / 20), volumeDb: p.db, ...(p.id === 'scene-main/layer-game' ? { audioSource: 'aud-game' } : {}) };
+      if (m === 'mixer.setMute') return { id: p.id, muted: p.muted, ...(p.id === 'scene-main/layer-game' ? { audioSource: 'aud-game' } : {}) };
+      if (m === 'mixer.setCue') return { id: p.id, cue: p.cue, cueDelayed: false, monitoring: p.cue ? 'monitor-and-output' : 'off', ...(p.id === 'scene-main/layer-game' ? { audioSource: 'aud-game' } : {}) };
       return {};
     },
   };
@@ -136,5 +140,25 @@ test('mixer routing: bad lists refused before the host; while live it acts on th
     assert.equal(ok.body.pending, undefined);
     assert.deepEqual(c.host.st.tracks['aud-game'], ['track2']);
     await until(() => JSON.stringify(tracksOf(c.file, 'aud-game')) === '["track2"]', 'saved after the live click');
+  } finally { await c.srv.close(); }
+});
+
+// D358: the fader, mute and CUE were live-only, so a restart put a lowered game volume back to 0 dB. They are saved
+// into the project audio source the host names; a channel with no project audio entry stays live-only.
+test('mixer volume, mute and CUE are saved into the project audio source and survive a restart (D358)', async () => {
+  const c = await setup();
+  try {
+    const game = 'scene-main/layer-game';
+    assert.equal((await c.post('/ui/api/host', { method: 'mixer.setVolume', params: { id: game, db: -18.5 } })).body.saved, 'pending');
+    await until(() => sourceOf(c.file, 'aud-game').volumeDb === -18.5, 'volume saved');
+    await c.post('/ui/api/host', { method: 'mixer.setMute', params: { id: game, muted: true } });
+    await until(() => sourceOf(c.file, 'aud-game').muted === true, 'mute saved');
+    await c.post('/ui/api/host', { method: 'mixer.setCue', params: { id: game, cue: false } });
+    await until(() => sourceOf(c.file, 'aud-game').monitoring === 'off', 'CUE saved');
+    const mic = sourceOf(c.file, 'aud-mic');
+    const other = await c.post('/ui/api/host', { method: 'mixer.setVolume', params: { id: 'audio:mic-src', db: -40 } });
+    assert.equal(other.status, 200);
+    await sleep(30);
+    assert.deepEqual(sourceOf(c.file, 'aud-mic'), mic, 'no audioSource in the answer: nothing written');
   } finally { await c.srv.close(); }
 });

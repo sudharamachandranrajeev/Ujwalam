@@ -68,3 +68,21 @@ test('mixer.setTracks saves the routing into audio.sources by audioSource; unkno
   assert.equal(applyEdit(d, 'mixer.setTracks', { audioSource: undefined, tracks: undefined }), 0);
   assert.deepEqual(d.audio.sources[0].tracks, []);
 });
+
+test('mixer.setVolume / setMute / setCue save volumeDb, muted and monitoring by audioSource; bad values change nothing (D358)', () => {
+  const d = { ...doc(), audio: { tracks: [], sources: [{ id: 'game', volumeDb: 0, muted: false, monitoring: 'monitor-and-output', tracks: [] }] } };
+  assert.equal(applyEdit(d, 'mixer.setVolume', { audioSource: 'game', volumeDb: -12.344 }), 1);
+  assert.equal(d.audio.sources[0].volumeDb, -12.34);
+  assert.equal(applyEdit(d, 'mixer.setVolume', { audioSource: 'game', volumeDb: -500 }), 1);
+  assert.equal(d.audio.sources[0].volumeDb, -100, 'clamped to the schema range');
+  assert.equal(applyEdit(d, 'mixer.setVolume', { audioSource: 'game', volumeDb: NaN }), 0);
+  assert.equal(applyEdit(d, 'mixer.setMute', { audioSource: 'game', muted: true }), 1);
+  assert.equal(d.audio.sources[0].muted, true);
+  assert.equal(applyEdit(d, 'mixer.setMute', { audioSource: 'game', muted: 'yes' }), 0);
+  assert.equal(applyEdit(d, 'mixer.setCue', { audioSource: 'game', monitoring: 'off' }), 1);
+  assert.equal(d.audio.sources[0].monitoring, 'off');
+  assert.equal(applyEdit(d, 'mixer.setCue', { audioSource: 'game', monitoring: 'loud' }), 0);
+  assert.equal(applyEdit(d, 'mixer.setVolume', { volumeDb: -3 }), 0, 'no audioSource: live-only');
+  assert.equal(applyEdit(d, 'mixer.setVolume', { audioSource: 'nope', volumeDb: -3 }), 0);
+  assert.deepEqual(d.audio.sources[0], { id: 'game', volumeDb: -100, muted: true, monitoring: 'off', tracks: [] });
+});
