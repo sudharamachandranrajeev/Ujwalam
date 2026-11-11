@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
 
@@ -174,6 +175,7 @@ class LiveCaptureTests(unittest.TestCase):
         wait_idle(c)
         self.assertGreaterEqual(c.stats["dropped"], 1)
 
+    @mock.patch.object(lc, "LABEL_MARGIN", 0)
     def test_the_session_never_passes_the_cap(self):
         budget = 2000
         c = self.cap(budget=budget, encode=lambda img: b"j" * 600)
@@ -197,6 +199,67 @@ class LiveCaptureTests(unittest.TestCase):
         wait_idle(c2)
         ids = [i["id"] for i in read_jsonl(os.path.join(self.sdir(), lc.REVIEW))]
         self.assertEqual(ids, ["live-00001", "live-00002"])
+
+
+class CodexReviewFixTests(unittest.TestCase):
+    """Codex review of D340: each test failed on the code before its fix."""
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)  # runs after each capture's close (cleanups run last-in first-out)
+
+    def cap(self, log, **kw):
+        c = lc.LiveCapture(self.td.name, "live-20261111-120000", PACK, log, **kw)
+        self.addCleanup(c.close, 1.0)
+        return c
+
+    def burst(self, c, n=20):
+        for i in range(n):  # a new banner appearance every other frame: more items than the queue holds
+            c.frame(float(2 * i), "IMG", [hit("W1", "VICTORY", banner=None, subtitle=None)], BOXES, "mp", True)
+            c.frame(float(2 * i + 1), "IMG", [], [], "mp", True)
+
+    def test_p1_a_raising_logger_never_escapes_frame(self):
+        gate = threading.Event()
+        self.addCleanup(gate.set)
+
+        def boom(_):
+            raise OSError("stderr gone")
+        c = self.cap(boom, max_queue=1, encode=lambda img: gate.wait(5) and b"x")
+        c.frame(1.0, "IMG", [hit("M3", "X")], [{"score": "not a number"}], "mp", True)  # a frame error: must not raise
+        self.burst(c, 150)  # nor a busy writer
+        gate.set()
+        wait_idle(c)
+        self.assertGreater(c.stats["dropped"], 0)
+
+    def test_p1_a_blocked_logger_never_stalls_frame(self):
+        stuck, gate = threading.Event(), threading.Event()
+        self.addCleanup(stuck.set)
+        self.addCleanup(gate.set)
+        threading.Timer(3.0, stuck.set).start()  # frees a stalled test either way
+        c = self.cap(lambda _: stuck.wait(10), max_queue=1, encode=lambda img: gate.wait(5) and b"x")
+        t0 = time.monotonic()
+        self.burst(c)
+        self.assertLess(time.monotonic() - t0, 1.0, "a stalled log pipe never reaches the live loop")
+        stuck.set()
+        gate.set()
+
+    def test_p2_the_store_total_stays_under_the_cap(self):
+        other = os.path.join(self.td.name, lc.STORE_DIR, "live-20261101-100000")
+        os.makedirs(other)
+        with open(os.path.join(other, "evidence.jsonl"), "wb") as f:
+            f.write(b"x" * 2000)
+        logs = []
+        with mock.patch.object(lc, "LABEL_MARGIN", 0):
+            c = self.cap(logs.append, budget=3000, encode=lambda img: b"j" * 100)
+            for i in range(40):
+                c.frame(float(2 * i), "IMG", [hit("W1", "VICTORY", banner=None, subtitle=None)], BOXES, "mp", True)
+                c.frame(float(2 * i + 1), "IMG", [], [], "mp", True)
+                wait_idle(c)
+        total = sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(os.path.join(self.td.name, lc.STORE_DIR))
+                    for f in fs)
+        meta = os.path.getsize(os.path.join(self.td.name, lc.STORE_DIR, "live-20261111-120000", lc.SESSION_META))
+        self.assertLessEqual(total - meta, 3000, "existing sessions count against the cap")
+        self.assertGreater(c.stats["dropped"], 0)
 
 
 class FakeScanner:

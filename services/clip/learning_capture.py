@@ -21,8 +21,9 @@ oldest first by the launcher's cap pass). This module adds three files to a sess
 Thresholds come from the data files only (game.json ocr.minConfidence, the W1 banner kinds, the pack's mode names);
 none is invented here. Nothing here loads a model or touches the GPU: JPEG encoding (OpenCV, CPU) of a review frame
 and appends to files, on a background thread behind a small bounded queue. The live clipper never waits for it: a
-full queue, a failed write or the session's share of the cap drops the item and logs one line. LiveCapture.frame()
-never raises.
+full queue, a failed write or a full store drops the item (the writer keeps the whole store under the cap: what the
+cap leaves after the other sessions, measured on the writer thread at start). frame() only counts drops; the writer
+thread logs them (the first, then one line per 100) and ignores a failing log. LiveCapture.frame() never raises.
 """
 
 from __future__ import annotations
@@ -46,6 +47,8 @@ WRONG_READ = "wrong read"
 SESSION_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$")
 ITEM_RE = re.compile(r"^[a-z][a-z0-9-]{0,63}$")
 QUEUE_MAX = 8  # items waiting for the writer thread; more are dropped (never a wait in the live loop)
+# Kept free under the cap for LL2 label rows (launcher, UI server, collector) appended while this session writes.
+LABEL_MARGIN = 16 * 1024 ** 2
 JPEG_QUALITY = 85
 
 
@@ -119,15 +122,40 @@ def _dir_bytes(d):
 
 class SessionWriter:
     """Appends to one session folder of the store. Synchronous; raises OSError / ValueError on failure.
-    budget: the most bytes this session may hold (the store's cap); a write that would pass it is refused."""
+    budget: the store's cap. This session may hold what the cap leaves after every other file of the store and
+    LABEL_MARGIN (size_up(); Codex review: the launcher's cap pass runs only now and then and never removes the newest
+    session, so the writer itself keeps the store's total under the cap). A write that would pass it is refused."""
 
     def __init__(self, data_dir, session, budget=CAP_BYTES):
         s = session_id(session)
         if not s or not data_dir:
             raise ValueError("learning store: no data folder or bad session name")
-        self.dir = os.path.join(os.path.abspath(data_dir), STORE_DIR, s)
-        self.session, self.budget = s, budget
-        self.used = _dir_bytes(self.dir) if os.path.isdir(self.dir) else 0
+        self.root = os.path.join(os.path.abspath(data_dir), STORE_DIR)
+        self.dir = os.path.join(self.root, s)
+        self.session, self.cap = s, budget
+        self.budget, self.used = None, 0  # set by size_up(), a walk of the store (never on the live loop)
+
+    def size_up(self):
+        """Measures the store: this session's bytes (used) and what the cap leaves for it (budget)."""
+        own = others = 0
+        try:
+            names = os.listdir(self.root)
+        except OSError:
+            names = []
+        for n in names:
+            p = os.path.join(self.root, n)
+            if os.path.normcase(p) == os.path.normcase(self.dir):
+                own = _dir_bytes(p)
+            elif os.path.isdir(p) and not os.path.islink(p):
+                others += _dir_bytes(p)
+            else:
+                try:
+                    others += os.lstat(p).st_size
+                except OSError:
+                    pass
+        self.used = own
+        self.budget = max(0, self.cap - others - LABEL_MARGIN)
+        return self.budget
 
     def _ensure(self):
         os.makedirs(os.path.join(self.dir, FRAMES), exist_ok=True)
@@ -138,6 +166,8 @@ class SessionWriter:
             pass
 
     def _room(self, n):
+        if self.budget is None:
+            self.size_up()
         if self.used + n > self.budget:
             raise ValueError("learning store: session over the store's cap")
 
@@ -197,7 +227,7 @@ class LiveCapture:
     small dicts and puts them on a bounded queue (put_nowait); a daemon thread writes. Never raises."""
 
     def __init__(self, data_dir, session, pack, log, budget=CAP_BYTES, max_queue=QUEUE_MAX, encode=encode_jpeg):
-        self.log, self.encode = log, encode
+        self.log, self.encode = log, encode  # log: called on the writer thread only, never from frame()
         self.writer = SessionWriter(data_dir, session, budget)
         self.ocr_min = ocr_threshold(pack)
         self.kinds = banner_kinds(pack)
@@ -205,15 +235,33 @@ class LiveCapture:
         self.active = set()  # review keys on the last OCR'd frame: one item per appearance, not one per frame
         self.taken = self.writer.item_ids()  # a session folder written before (same name) keeps its items
         self.n = 0
-        self.stats = {"evidence": 0, "items": 0, "dropped": 0}
+        # The live loop adds only to _live_drops/_live_why; the writer thread owns the other counters.
+        self._evidence = self._items = self._writer_drops = self._live_drops = self._reported = 0
+        self._live_why = self._writer_why = ""
         self._stop = threading.Event()
         self.thread = threading.Thread(target=self._run, name="learning-capture", daemon=True)
         self.thread.start()
 
-    def _drop(self, why):
-        self.stats["dropped"] += 1
-        if self.stats["dropped"] == 1 or self.stats["dropped"] % 100 == 0:
-            self.log(f"learning: dropped {self.stats['dropped']} item(s) ({why})")
+    @property
+    def stats(self):
+        return {"evidence": self._evidence, "items": self._items, "dropped": self._writer_drops + self._live_drops}
+
+    def _drop_live(self, why):
+        """Live loop side: counts only. No logging here (Codex review: a stalled or failing log pipe must never reach
+        the live loop); the writer thread reports the drops."""
+        self._live_drops += 1
+        self._live_why = why
+
+    def _report(self):
+        """Writer thread: one log line at the first drop, then one per 100 more; a failing log is ignored."""
+        total = self._writer_drops + self._live_drops
+        if total == self._reported or (self._reported and total // 100 == self._reported // 100):
+            return
+        self._reported = total
+        try:
+            self.log(f"learning: dropped {total} item(s) ({self._writer_why or self._live_why})")
+        except Exception:  # noqa: BLE001  (a closed or broken stderr never stops the writer)
+            pass
 
     def frame(self, t, img, rows, boxes, mode, fresh):
         """One sampled frame: rows = its hit rows; boxes = its OCR boxes; fresh = OCR ran on it (an unchanged frame
@@ -240,31 +288,39 @@ class LiveCapture:
                         **{k: v for k, v in r.items() if k != "key"}, "texts": texts}
                 self._put(("item", item, img))
         except Exception as e:  # noqa: BLE001  (the live clipper never fails because of learning)
-            self._drop(type(e).__name__)
+            self._drop_live(type(e).__name__)
 
     def _put(self, job):
         try:
             self.q.put_nowait(job)
         except queue.Full:
-            self._drop("writer busy")
+            self._drop_live("writer busy")
 
     def _run(self):
+        try:  # the store's size, once, here (off the live loop); writes then count against what the cap leaves
+            self.writer.size_up()
+        except Exception:  # noqa: BLE001  (budget stays unset: the first write measures again)
+            pass
         while not (self._stop.is_set() and self.q.empty()):
             try:
                 kind, row, img = self.q.get(timeout=0.5)
             except queue.Empty:
+                self._report()
                 continue
             try:
                 if kind == "evidence":
                     self.writer.append(EVIDENCE, row)
-                    self.stats["evidence"] += 1
+                    self._evidence += 1
                 else:
                     self.writer.add_item(row, self.encode(img) if img is not None else None)
-                    self.stats["items"] += 1
+                    self._items += 1
             except Exception as e:  # noqa: BLE001
-                self._drop(f"{type(e).__name__}: {str(e)[:80]}")
+                self._writer_drops += 1
+                self._writer_why = f"{type(e).__name__}: {str(e)[:80]}"
             finally:
+                self._report()  # before task_done: a q.join() caller sees the log line too
                 self.q.task_done()
+        self._report()
 
     def close(self, timeout=5.0):
         """Writes what is queued (up to timeout) and stops the thread."""
