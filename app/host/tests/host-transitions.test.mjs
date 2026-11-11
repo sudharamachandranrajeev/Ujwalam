@@ -68,6 +68,17 @@ test('D327 TR1: easing per canvas; unknown or non-fade easing refused; force com
   await c.call('transitions.set', { canvas: 'H', type: 'cut', durationMs: 0 });
 });
 
+// Codex audit 2026-11-11: removing the scene a fade is leaving emptied it mid-fade. Refused until the fade ends.
+test('the scene a running fade is leaving cannot be removed until the fade ends', async () => {
+  await c.call('transitions.set', { canvas: 'H', type: 'fade', durationMs: 5000 });
+  await c.call('scenes.activate', { scene: 'fc-b' }); // active fc-a -> fc-b, 5 s
+  await sleep(300);
+  assert.equal(await code('scenes.remove', { scene: 'fc-a' }), -32009, 'fc-a is still drawn by the fade');
+  assert.equal((await c.call('transitions.forceComplete', { canvas: 'H' })).completed, true);
+  assert.deepEqual((await c.call('scenes.remove', { scene: 'fc-a' })).removed, 'fc-a', 'the fade ended: removed');
+  await c.call('transitions.set', { canvas: 'H', type: 'cut', durationMs: 0 });
+});
+
 function yavg(file) {
   const r = spawnSync(process.env.FFMPEG || 'ffmpeg', ['-v', 'error', '-nostdin', '-i', file, '-vf', 'signalstats,metadata=mode=print:key=lavfi.signalstats.YAVG:file=-',
     '-f', 'null', '-'], { encoding: 'utf8', windowsHide: true, maxBuffer: 16 << 20 });

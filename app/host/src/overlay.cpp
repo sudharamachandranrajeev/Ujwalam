@@ -337,8 +337,12 @@ json::Value Overlay::call(const std::string &op, const json::Value &extra)
 	std::string line = msg.dump() + "\n";
 	{
 		std::lock_guard<std::mutex> wl(write_m_);
+		// Only a write that fits the pipe's free space: a child that stopped reading would otherwise block WriteFile
+		// with m_ held, and stop() (and the supervisor) could never take it (Codex audit 2026-11-11).
+		if (!in_w_ || !pipe_room((HANDLE)in_w_, line.size()))
+			throw rpc::Error(rpc::UNAVAILABLE, "overlay server is not reading its input");
 		DWORD w = 0;
-		if (!in_w_ || !WriteFile((HANDLE)in_w_, line.data(), (DWORD)line.size(), &w, nullptr) || w != line.size())
+		if (!WriteFile((HANDLE)in_w_, line.data(), (DWORD)line.size(), &w, nullptr) || w != line.size())
 			throw rpc::Error(rpc::UNAVAILABLE, "overlay server is not reachable");
 	}
 	bool got = cv_.wait_for(lk, std::chrono::milliseconds(kReplyMs),

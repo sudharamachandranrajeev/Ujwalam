@@ -1729,6 +1729,18 @@ json::Value Studio::scene_remove(const std::string &id, const std::string &cv)
 		Canvas *c = canvas(s->canvas);
 		if (c && c->active == id)
 			throw Error(rpc::CONFLICT, "scene is active on canvas " + s->canvas + ": activate another scene first");
+		// A fade or stinger still drawing this scene (the one it leaves): destroy_scene would empty it mid-transition
+		// (Codex audit 2026-11-11). Refused until the transition ends.
+		obs_source_t *ss = obs_scene_get_source(s->scene);
+		if (c && c->routed) {
+			for (auto which : {OBS_TRANSITION_SOURCE_A, OBS_TRANSITION_SOURCE_B}) {
+				obs_source_t *in = obs_transition_get_source(c->routed, which);
+				const bool held = in && in == ss;
+				obs_source_release(in);
+				if (held)
+					throw Error(rpc::CONFLICT, "a transition on canvas " + s->canvas + " is still showing this scene: try again when it ends");
+			}
+		}
 	}
 	json::Value cvs = json::Value::array();
 	for (Scene *s : list) {
@@ -1942,8 +1954,24 @@ json::Value Studio::layer_set_effects(const std::string &sid, const std::string 
 			t.staged.effects = fxs;
 			if (!fxs.empty())
 				t.staged.fx = fx::create_chain(t.l->src->src, "ujw:fx:" + t.s->canvas + ":" + lid, fxs, {});
-			add_item(*t.s, t.staged);
-			obs_sceneitem_set_visible(t.staged.item, false);
+			// Added and hidden in one scene update: obs_scene_add makes a visible item, and a frame drawn between the add
+			// and the hide would show the replacement at its default size over the old layer (Codex audit 2026-11-11).
+			struct Add {
+				obs_source_t *src;
+				obs_sceneitem_t *item;
+			} add{t.staged.fx ? t.staged.fx : t.staged.src->src, nullptr};
+			obs_scene_atomic_update(
+				t.s->scene,
+				[](void *p, obs_scene_t *scene) {
+					auto *a = static_cast<Add *>(p);
+					a->item = obs_scene_add(scene, a->src);
+					if (a->item)
+						obs_sceneitem_set_visible(a->item, false);
+				},
+				&add);
+			t.staged.item = add.item;
+			if (!t.staged.item)
+				throw Error(rpc::INTERNAL, "scene add failed");
 			apply_placement(t.staged);
 		}
 	} catch (...) {

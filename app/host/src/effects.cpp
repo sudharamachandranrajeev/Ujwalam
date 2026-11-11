@@ -491,8 +491,16 @@ ShadowGeom shadow_geom(Shadow *sh)
 	const double bw = sh->box_w, bh = sh->box_h;
 	g.kx = bw > 0 && g.tw ? (double)g.tw / bw : 1;
 	g.ky = bh > 0 && g.th ? (double)g.th / bh : 1;
-	g.padx = (uint32_t)std::ceil(sh->pad * g.kx);
-	g.pady = (uint32_t)std::ceil(sh->pad * g.ky);
+	// The padded textures stay within 8192 px a side: a large source shown very small (input px per canvas px in the
+	// hundreds) would otherwise ask for textures past the d3d11 limit, every texrender would fail and the layer would
+	// vanish (Codex audit 2026-11-11). Past the cap the shadow is cut at the padded edge.
+	auto pad = [](double want, uint32_t size) {
+		constexpr double kMaxSide = 8192;
+		const double room = size < kMaxSide ? (kMaxSide - size) / 2 : 0;
+		return (uint32_t)std::min(std::ceil(want), std::floor(room));
+	};
+	g.padx = pad(sh->pad * g.kx, g.tw);
+	g.pady = pad(sh->pad * g.ky, g.th);
 	return g;
 }
 
@@ -564,6 +572,8 @@ void shadow_render(void *data, gs_effect_t *)
 	}
 	if (sh->result)
 		draw_copy(sh->g, sh->result, W, H); // like the blur filter: one sprite, in the caller's blend state
+	else
+		obs_source_skip_video_filter(sh->ctx); // no texture this frame: the layer without its shadow, never nothing
 }
 
 const char *shadow_name(void *)
