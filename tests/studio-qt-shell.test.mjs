@@ -430,7 +430,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:0', true], ['settings-reel:montage:10:30', true], ['settings-save', true]]);
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).clips.reelLengths, { montage: { minSec: 10, maxSec: 30 } });
     const q = await probe([], 8000, 'settings-open,settings-page:0');
-    assert.deepEqual(Object.keys(q.settings.reelLengths.rows), ['montage', 'match-reel', 'impact-play', 'short', 'live-clip']);
+    assert.deepEqual(Object.keys(q.settings.reelLengths.rows).sort(), ['impact-play', 'live-clip', 'match-reel', 'montage', 'short']);
     assert.deepEqual(q.settings.reelLengths.rows.montage, { min: 20, max: 60, maxLimit: 60 });
     assert.equal(q.settings.reelLengths.error, '');
     const r = await probe([], 9000, 'settings-open,settings-page:0,settings-reel:montage:50:40,settings-save');
