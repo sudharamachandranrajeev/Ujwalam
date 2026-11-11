@@ -1032,5 +1032,13 @@ the D338 store and the D340 review answers. Decided:
   writes the values, the version and the changelog entry, keeps the kind status `unverified` with a note, and refuses a
   candidate made from other pack files (hash or version changed) or one already approved. Approval is a command, not a
   studio window, in this step; the task panel note says when a candidate waits.
+- **Codex review fixes:** `approve` refuses while the live clipper is asked to watch, the same check as `propose`.
+  `propose` checks again after reading the pack, after each store session and before any write, and stops with
+  nothing written when a stream starts. The base hashes are of the exact bytes parsed at the start (and approve's stale
+  check uses the bytes it parses). `approve` is a recoverable transaction: every new file (both JSONs, the changelog,
+  the candidate marked approved) is written as `<name>.ll4-new`, then a journal
+  (`local/candidates/approve.journal.json`) lists the renames, then they run (the candidate last) and the journal is
+  removed. A leftover journal is finished at the next start of any command, so a retry after a crash succeeds; stray
+  `.ll4-new` files without a journal are removed. The changelog is replaced by rename, never truncated in place.
 Not done: an approval button in the studio. Real use on a stream is UNVERIFIED (no real labels exist yet). Evidence:
 `docs/evidence/2026-11-11-ll4-after-stream-train.md`.

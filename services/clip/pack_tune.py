@@ -33,6 +33,15 @@ score, the evidence (counts, dates) and status "unverified", plus a changelog en
 itself: `approve --candidate <id>` (flag learning-train) writes it into the pack, bumps the pack version (patch) and
 adds the changelog entry, only while the pack files are the ones it was made from. The run report is
 <pack>/local/candidates/last-run.json (and --report, when given).
+
+Codex review of D342: propose and approve refuse while the live clipper is asked to watch (a stream or recording),
+and propose checks again between its steps and before it writes anything, so a stream that starts meanwhile stops it
+with nothing written. The base hashes are of the exact bytes parsed at the start. approve is a recoverable
+transaction (a redo journal): every new file (game.json, detectors.json, CHANGELOG.md, the candidate marked approved)
+is written next to its target as <name>.ll4-new first, then the journal <pack>/local/candidates/approve.journal.json
+lists the renames, then each is renamed into place and the journal removed. A leftover journal is finished at the next
+start of any command (every .ll4-new it lists is renamed); .ll4-new files without a journal are removed (the crash came
+before the journal, so nothing was renamed). The changelog is never truncated in place.
 """
 
 from __future__ import annotations
@@ -337,16 +346,31 @@ def pack_paths(game=None, pack_dir=None):
     return gid, os.path.normpath(os.path.join(REPO_ROOT, p))
 
 
-def file_hash(path):
-    with open(path, "rb") as f:
-        return hashlib.sha256(f.read()).hexdigest()
-
-
 def read_pack(pack_dir):
-    game = load_json(os.path.join(pack_dir, "game.json"))
-    det = load_json(os.path.join(pack_dir, "detectors.json"))
+    """(game, detectors, W1, hashes): each file is read once; the hashes are of the bytes parsed."""
+    docs, hashes = {}, {}
+    for name in ("game.json", "detectors.json"):
+        try:
+            with open(os.path.join(pack_dir, name), "rb") as f:
+                raw = f.read()
+            docs[name] = json.loads(raw)
+        except FileNotFoundError:
+            raise ClipError(f"missing file: {name}") from None
+        except ValueError:
+            raise ClipError(f"not valid JSON: {name}") from None
+        hashes[name] = hashlib.sha256(raw).hexdigest()
+    game, det = docs["game.json"], docs["detectors.json"]
     w1 = next((d for d in det.get("detectors", []) if d.get("id") == "W1"), None) or {}
-    return game, det, w1
+    return game, det, w1, hashes
+
+
+class StreamStarted(ClipError):
+    """A stream or recording started while the job ran; it stopped with nothing written."""
+
+
+def _check(live, step):
+    if live and live():
+        raise StreamStarted(f"a stream or recording is being watched ({step}); the tuning runs after it, nothing written")
 
 
 def bump(version):
@@ -362,11 +386,13 @@ def candidates_dir(pack_dir):
 
 # ---------------------------------------------------------------- propose
 
-def propose(data_dir, pack_dir, game_id, now=None):
+def propose(data_dir, pack_dir, game_id, now=None, live=None):
     """Reads the store, tunes and scores each value, writes a candidate when one beats the current pack. Returns the
-    run report (also written to <pack>/local/candidates/last-run.json)."""
+    run report (also written to <pack>/local/candidates/last-run.json). live() -> True when a stream or recording is
+    watched: checked between the steps and before any write (StreamStarted, nothing written)."""
     now = now or datetime.now(timezone.utc)
-    game, det, w1 = read_pack(pack_dir)
+    _check(live, "before reading the pack")
+    game, det, w1, hashes = read_pack(pack_dir)
     kinds = [k for k in ((w1.get("banner") or {}).get("kinds") or [])
              if isinstance(k.get("kind"), str) and isinstance(k.get("y0"), (int, float))
              and isinstance(k.get("y1"), (int, float))]
@@ -377,6 +403,7 @@ def propose(data_dir, pack_dir, game_id, now=None):
         s = read_session(name, folder, root, names)
         s["start"] = start
         per.append(s)
+        _check(live, "reading the learning store")
     totals = {}
     for s in per:
         for k, v in s["counts"].items():
@@ -423,9 +450,10 @@ def propose(data_dir, pack_dir, game_id, now=None):
 
     wins = [v for v in report["values"] if v["status"] == "beats"]
     out_dir = candidates_dir(pack_dir)
+    _check(live, "before writing")
     os.makedirs(out_dir, exist_ok=True)
     if wins:
-        report["candidate"] = write_candidate(out_dir, pack_dir, game_id, det, wins, now)
+        report["candidate"] = write_candidate(out_dir, hashes, game_id, det, wins, now)
     write_json_atomic(os.path.join(out_dir, LAST_RUN), report)
     return report
 
@@ -452,7 +480,7 @@ def changelog_draft(new_version, wins, now, cid):
     return "\n".join(lines)
 
 
-def write_candidate(out_dir, pack_dir, game_id, det, wins, now):
+def write_candidate(out_dir, hashes, game_id, det, wins, now):
     new_version = bump(det.get("version"))
     cid = f"{now.strftime('%Y%m%d-%H%M%S')}-{new_version}"
     changes = []
@@ -465,7 +493,7 @@ def write_candidate(out_dir, pack_dir, game_id, det, wins, now):
             changes.append({"file": "game.json", "path": "ocr.minConfidence", "from": w["current"], "to": w["proposed"]})
     cand = {"v": TOOL_VERSION, "id": cid, "createdAt": now_iso(now), "game": game_id, "status": "unverified",
             "state": "proposed", "baseVersion": det.get("version"), "version": new_version,
-            "baseHashes": {f: file_hash(os.path.join(pack_dir, f)) for f in ("game.json", "detectors.json")},
+            "baseHashes": dict(hashes),  # of the bytes parsed at the start of propose (Codex review)
             "changes": changes, "values": wins,
             "changelogDraft": changelog_draft(new_version, wins, now, cid)}
     write_json_atomic(os.path.join(out_dir, f"{cid}.json"), cand)
@@ -496,21 +524,77 @@ def _apply_note(note, text):
     return f"{note} {text}".strip() if isinstance(note, str) else text
 
 
-def approve(pack_dir, cid, now=None):
-    """Writes an approved candidate into the pack. Refuses a stale candidate (pack files changed since)."""
+JOURNAL = "approve.journal.json"
+NEW = ".ll4-new"
+TX_FILES = ("game.json", "detectors.json", "CHANGELOG.md")
+
+
+def _write_new(path, data):
+    """Writes bytes to a new file and flushes it to disk."""
+    with open(path, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+
+
+def _json_bytes(obj):
+    return (json.dumps(obj, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+
+
+def recover(pack_dir):
+    """Finishes a leftover approve journal (renames every .ll4-new it lists that is still there, then removes it) and
+    removes .ll4-new files a crash before the journal left. Returns the finished candidate id, or None."""
+    cdir = candidates_dir(pack_dir)
+    jpath = os.path.join(cdir, JOURNAL)
+    done = None
+    if os.path.isfile(jpath):
+        try:
+            with open(jpath, encoding="utf-8") as f:
+                j = json.load(f)
+        except (OSError, ValueError):
+            j = None  # torn journal: it was being written, so no rename had started
+        if isinstance(j, dict) and isinstance(j.get("renames"), list):
+            allowed = {os.path.normcase(os.path.join(pack_dir, n)) for n in TX_FILES}
+            for name in j["renames"]:
+                dst = os.path.join(pack_dir, name) if name in TX_FILES else os.path.join(cdir, os.path.basename(str(name)))
+                if os.path.normcase(dst) not in allowed and not CANDIDATE_RE.match(os.path.basename(dst)[:-5]):
+                    continue
+                if os.path.isfile(dst + NEW):
+                    os.replace(dst + NEW, dst)
+            done = j.get("candidate")
+        os.remove(jpath)
+    for d in (pack_dir, cdir):
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for n in names:
+            if n.endswith(NEW):
+                os.remove(os.path.join(d, n))
+    return done
+
+
+def approve(pack_dir, cid, now=None, live=None):
+    """Writes an approved candidate into the pack as one recoverable transaction. Refuses a stale candidate (pack
+    files changed since) and refuses while a stream or recording is watched (live())."""
     now = now or datetime.now(timezone.utc)
     if not isinstance(cid, str) or not CANDIDATE_RE.match(cid):
         raise ClipError("bad candidate id")
+    _check(live, "before approving")
+    finished = recover(pack_dir)
     path = os.path.join(candidates_dir(pack_dir), f"{cid}.json")
     if not os.path.isfile(path):
         raise ClipError(f"no candidate {cid}")
     cand = load_json(path)
+    if finished == cid and cand.get("state") == "approved":
+        return cand  # a retry after a crash: the journal finished it
     if cand.get("state") != "proposed":
         raise ClipError(f"candidate {cid} is {cand.get('state')}, not proposed")
-    for f, h in (cand.get("baseHashes") or {}).items():
-        if f not in ("game.json", "detectors.json") or file_hash(os.path.join(pack_dir, f)) != h:
+    game, det, w1, hashes = read_pack(pack_dir)  # the stale check is on the bytes parsed here
+    base = cand.get("baseHashes") or {}
+    for f in ("game.json", "detectors.json"):
+        if base.get(f) != hashes[f]:
             raise ClipError(f"the pack changed since candidate {cid} was made ({f}); run the tuning again")
-    game, det, w1 = read_pack(pack_dir)
     if det.get("version") != cand.get("baseVersion"):
         raise ClipError("the pack version changed since the candidate was made")
     day = now.strftime("%Y-%m-%d")
@@ -535,21 +619,31 @@ def approve(pack_dir, cid, now=None):
         else:
             raise ClipError(f"unknown change {ch.get('path')!r} in the candidate")
     det["version"] = cand["version"]
-    write_json_atomic(os.path.join(pack_dir, "game.json"), game)
-    write_json_atomic(os.path.join(pack_dir, "detectors.json"), det)
     cl = os.path.join(pack_dir, "CHANGELOG.md")
     try:
-        with open(cl, encoding="utf-8") as f:
+        with open(cl, encoding="utf-8", newline="") as f:
             text = f.read()
     except OSError:
         text = "# Pack changelog\n\n"
     i = text.find("\n## ")
     entry = cand.get("changelogDraft") or ""
     text = text[:i + 1] + entry + "\n" + text[i + 1:] if i >= 0 else text.rstrip("\n") + "\n\n" + entry
-    with open(cl, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
     cand.update(state="approved", approvedAt=now_iso(now))
-    write_json_atomic(path, cand)
+    # 1. every new file next to its target; 2. the journal; 3. the renames (the candidate last); 4. no journal.
+    new = [(os.path.join(pack_dir, "game.json"), _json_bytes(game)),
+           (os.path.join(pack_dir, "detectors.json"), _json_bytes(det)),
+           (cl, text.encode("utf-8")),
+           (path, _json_bytes(cand))]
+    for dst, data in new:
+        _write_new(dst + NEW, data)
+    _check(live, "before renaming")
+    jpath = os.path.join(candidates_dir(pack_dir), JOURNAL)
+    _write_new(jpath + NEW, _json_bytes({"v": 1, "candidate": cid, "at": now_iso(now),
+                                         "renames": [*TX_FILES, os.path.basename(path)]}))
+    os.replace(jpath + NEW, jpath)
+    for dst, _ in new:
+        os.replace(dst + NEW, dst)
+    os.remove(jpath)
     return cand
 
 
@@ -581,10 +675,16 @@ def main(argv=None):
         lower_own_priority()
         end_tree_when_parent_gone()  # started by Ujwalam: ends with it
         gid, pack_dir = pack_paths(a.game, a.pack_dir)
+
+        def live():
+            return worker_wanted(data_dir)
+
+        if live():
+            raise ClipError("a stream or recording is being watched; the tuning runs after it")
+        if a.cmd != "approve" and os.path.isdir(candidates_dir(pack_dir)):
+            recover(pack_dir)  # a leftover approve is finished first (approve does this itself)
         if a.cmd == "propose":
-            if worker_wanted(data_dir):
-                raise ClipError("a stream or recording is being watched; the tuning runs after it")
-            rep = propose(data_dir, pack_dir, gid)
+            rep = propose(data_dir, pack_dir, gid, live=live)
             if a.report:
                 os.makedirs(os.path.dirname(os.path.abspath(a.report)), exist_ok=True)
                 write_json_atomic(a.report, rep)
@@ -593,7 +693,7 @@ def main(argv=None):
         elif a.cmd == "list":
             print(json.dumps(list_candidates(pack_dir), indent=2))
         else:
-            c = approve(pack_dir, a.candidate)
+            c = approve(pack_dir, a.candidate, live=live)
             print(json.dumps({"approved": c["id"], "version": c["version"]}))
         return 0
     except ClipError as e:

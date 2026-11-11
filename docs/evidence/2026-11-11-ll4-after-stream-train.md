@@ -17,7 +17,7 @@ no network, no devices, no windows). No real labels exist yet, so it has not pro
   start like the other jobs.
 - `services/studio-ui/launch.mjs`: passes `trainFlag` (the `learning-train` flag) to the clip queue.
 - `data/flags.json`: `learning-train`, off by default.
-- `tests/py/test_pack_tune.py` (new, 14 tests), `tests/record-clips.test.mjs` (+2 tests).
+- `tests/py/test_pack_tune.py` (new, 19 tests), `tests/record-clips.test.mjs` (+2 tests).
 - No pack file changed in this branch (the pack stays 0.8.0).
 
 ## How it decides
@@ -56,11 +56,22 @@ refuses a candidate whose base files or version changed, or one already approved
 | A proposal never applies itself; approval behind the flag | PASS | the beats test checks game.json, detectors.json and CHANGELOG.md are byte-identical to the repo pack after `propose`; `test_approve_writes_...` (0.8.1, round y0 0.3, note, changelog entry above 0.8.0, weights/windows/patterns and events.json unchanged; a second approve refused); `test_stale_candidate_is_refused` |
 | No new event names or weights | PASS | approve test compares every detector's id, weight, window and patterns and events.json with the repo pack |
 
+## Codex review fixes (each test failed before its fix)
+
+| Finding | Fix | Test (`CodexReview` in `tests/py/test_pack_tune.py`) |
+|---|---|---|
+| P1 approve had no live guard | approve refuses while `clips/live-worker.json` asks the clipper to watch | `test_approve_refuses_while_a_stream_is_watched` (exit 1, pack bytes unchanged; approves once the stream ends) |
+| P1 approve was not atomic as a whole; the changelog was truncated in place | redo journal: all `.ll4-new` files, then `approve.journal.json`, then renames (candidate last), then no journal; a leftover journal is finished at the next start; stray `.ll4-new` without a journal removed | `test_crash_between_renames_is_finished_by_the_retry` (crash on the candidate rename; the retry succeeds, one 0.8.1 entry, no leftovers); `test_crash_before_the_journal_changes_nothing` (failure writing the changelog temp: pack bytes unchanged; retry succeeds) |
+| P2 base hashes taken after training | hashes of the bytes parsed at the start; the stale check also uses the parsed bytes | `test_base_hashes_are_of_the_bytes_read_at_the_start` (game.json edited while the store is read: candidate holds the original hash, approve refuses as stale) |
+| P2 the CLI checked live state once | `propose(live=...)` checks after reading the pack, after each session and before writing | `test_propose_stops_without_writing_when_a_stream_starts` (no candidate, no last-run.json) |
+
+Before the fixes: 4 failures and 1 error in `CodexReview` (5 tests); after: 19/19 OK.
+
 ## Commands and output
 
 ```
 python -I -m unittest discover -s tests/py -t tests/py -p "test_pack_tune.py" -v
-Ran 14 tests in 0.694s
+Ran 19 tests in 1.113s
 OK
 
 node --test --test-timeout=60000 tests/record-clips.test.mjs

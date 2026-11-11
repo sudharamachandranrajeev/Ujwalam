@@ -319,3 +319,113 @@ class Ocr(Base):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CodexReview(Base):
+    """Codex review of D342: live guard on approve, a recoverable approve, base hashes of the parsed bytes, live checks
+    between the steps of propose."""
+
+    def live(self, on=True):
+        os.makedirs(os.path.join(self.data, "clips"), exist_ok=True)
+        with open(os.path.join(self.data, "clips", "live-worker.json"), "w", encoding="utf-8") as f:
+            json.dump({"on": on, "atMs": time.time() * 1000}, f)
+
+    def pack_bytes(self):
+        return {f: read(os.path.join(self.pack, f), "rb") for f in ("game.json", "detectors.json", "CHANGELOG.md")}
+
+    def test_approve_refuses_while_a_stream_is_watched(self):
+        self.flag()
+        self.banner_sessions()
+        cid = pt.propose(self.data, self.pack, "codm")["candidate"]["id"]
+        before = self.pack_bytes()
+        self.live()
+        code, _, err = self.cli("approve", "--candidate", cid)
+        self.assertEqual(code, 1)
+        self.assertIn("runs after it", err)
+        self.assertEqual(self.pack_bytes(), before)
+        self.live(False)
+        self.assertEqual(self.cli("approve", "--candidate", cid)[0], 0)
+
+    def test_crash_between_renames_is_finished_by_the_retry(self):
+        self.flag()
+        self.banner_sessions()
+        cid = pt.propose(self.data, self.pack, "codm")["candidate"]["id"]
+        real = os.replace
+        calls = []
+
+        def crash(src, dst):
+            calls.append(dst)
+            if os.path.basename(dst) == f"{cid}.json":  # the pack is written, the candidate not yet marked
+                raise OSError("power cut")
+            return real(src, dst)
+
+        with mock.patch.object(pt.os, "replace", side_effect=crash):
+            with self.assertRaises(OSError):
+                pt.approve(self.pack, cid)
+        code, out, err = self.cli("approve", "--candidate", cid)
+        self.assertEqual(code, 0, err)
+        det = load(os.path.join(self.pack, "detectors.json"))
+        self.assertEqual(det["version"], "0.8.1")
+        self.assertEqual(det["detectors"][[d["id"] for d in det["detectors"]].index("W1")]["banner"]["kinds"][0]["y0"], 0.3)
+        cl = read(os.path.join(self.pack, "CHANGELOG.md"))
+        self.assertEqual(cl.count("## 0.8.1"), 1)
+        self.assertIn("## 0.8.0", cl)
+        c = load(os.path.join(self.pack, "local", "candidates", f"{cid}.json"))
+        self.assertEqual(c["state"], "approved")
+        leftovers = [n for r, _, fs in os.walk(self.pack) for n in fs if n.endswith((".ll4-new", ".journal.json"))]
+        self.assertEqual(leftovers, [])
+
+    def test_crash_before_the_journal_changes_nothing(self):
+        self.flag()
+        self.banner_sessions()
+        cid = pt.propose(self.data, self.pack, "codm")["candidate"]["id"]
+        before = self.pack_bytes()
+        real = pt._write_new
+        n = []
+
+        def fail(path, data):
+            n.append(path)
+            if len(n) == 3:  # the changelog's temp file
+                raise OSError("disk full")
+            return real(path, data)
+
+        with mock.patch.object(pt, "_write_new", side_effect=fail):
+            with self.assertRaises(OSError):
+                pt.approve(self.pack, cid)
+        self.assertEqual(self.pack_bytes(), before, "nothing renamed, the changelog never truncated")
+        self.assertEqual(self.cli("approve", "--candidate", cid)[0], 0)
+        self.assertEqual(read(os.path.join(self.pack, "CHANGELOG.md")).count("## 0.8.1"), 1)
+        self.assertEqual([n for r, _, fs in os.walk(self.pack) for n in fs if n.endswith(".ll4-new")], [])
+
+    def test_base_hashes_are_of_the_bytes_read_at_the_start(self):
+        self.flag()
+        self.banner_sessions()
+        orig = read(os.path.join(self.pack, "game.json"), "rb")
+        real = pt.read_session
+        changed = []
+
+        def edit_then_read(*a, **k):
+            if not changed:
+                changed.append(1)
+                self.set_min_conf(0.5)  # the pack changes while the store is read
+            return real(*a, **k)
+
+        with mock.patch.object(pt, "read_session", side_effect=edit_then_read):
+            cid = pt.propose(self.data, self.pack, "codm")["candidate"]["id"]
+        c = load(os.path.join(self.pack, "local", "candidates", f"{cid}.json"))
+        import hashlib
+        self.assertEqual(c["baseHashes"]["game.json"], hashlib.sha256(orig).hexdigest())
+        code, _, err = self.cli("approve", "--candidate", cid)
+        self.assertEqual(code, 1)
+        self.assertIn("pack changed", err)
+
+    def test_propose_stops_without_writing_when_a_stream_starts(self):
+        self.flag()
+        self.banner_sessions()
+        states = iter([False, True])
+        with mock.patch.object(pt, "worker_wanted", side_effect=lambda *_: next(states, True)):
+            code, _, err = self.cli("propose")
+        self.assertEqual(code, 1)
+        self.assertIn("stream", err)
+        self.assertEqual(self.candidates(), [])
+        self.assertFalse(os.path.exists(os.path.join(self.pack, "local", "candidates", pt.LAST_RUN)))
