@@ -874,6 +874,55 @@ Not done: a snap-distance setting (the triage row mentions one; the distance sta
 user's screen is UNVERIFIED until the user tries it.
 Evidence: `docs/evidence/2026-11-10-f8-preview-select-snap.md`.
 
+## D344 — Reference themes T2–T5, bundled OFL fonts, font allowlist (2026-11-11, request R10, user answers 2026-11-10)
+
+Plan: `docs/plan/2026-11-10-theme-framework.md` §2 A–D, §3.1, §5 rows T2–T5, §6. Built on the T1 framework (D336); no
+framework code was added. Branch `theme/t2-t5-reference-themes`.
+
+- **Fonts bundled (user answer §6.2).** Inter (daylight-blue, sand-teal), Barlow (copper-graphite) and Exo 2
+  (teal-grid), all SIL Open Font Licence 1.1, licence texts checked and shipped beside the fonts (`data/fonts/`). The
+  files are downloaded unmodified from the upstream repositories (file download only, nothing installed, nothing
+  installed into Windows); sources, versions and SHA-256 are in `docs/third-party-notices.md`. Regular, semibold and bold
+  only (the weights the packs use: 400, 600, 700). Inter and Exo 2 come from their own upstream releases as static
+  files, because Google Fonts ships them only as variable fonts and Qt's weight selection on those is UNVERIFIED.
+- **Loading.** `theme.cpp` `loadBundledFonts()` runs at studio start (before the first theme) and calls
+  `QFontDatabase::addApplicationFont` for each `*.ttf` in `UJWALAM_FONTS_DIR`, `<app>/fonts` or the repo/install
+  `data/fonts`. This process only. The probe reports `bundledFamilies`.
+- **Allowlist rule change.** The packager's blanket font-file ban (D133 era, "none ship") becomes an allowlist: only the
+  12 pinned files in `OFL_FONTS` / `OFL_FONT_LICENCE_SHA` (`tools/package/manifest.mjs`) ship, each pinned by SHA-256, and
+  `build-alpha.mjs` fails if a staged font differs from its pin or a licence text is missing. Every other font file is
+  still forbidden, and Microsoft fonts (Corbel, Consolas) stay forbidden by name as before.
+- **Lint rule change (a check that flagged a verbatim third-party file).** The `trailing-ws` rule skips exactly the three
+  licence paths in `OFL_FONT_LICENCES` (not a pattern), the same way it already skips vendored `.diff`/`.patch` files: they are
+  byte-identical copies of upstream; their SHA-256 is pinned in `OFL_FONT_LICENCE_SHA` and checked by `build-alpha.mjs` and `tests/package-alpha.test.mjs`. Fonts register once per process (`loadBundledFonts` guard; Codex review). Any other file there is still checked
+  (`tests/lint.test.mjs`).
+- **Theme designs** (measurement to value per theme: `docs/evidence/2026-11-11-t2-t5-reference-themes.md`):
+  - daylight-blue: rounded solid buttons with outline secondary, underline tabs, outline inputs, ring focus, plain
+    switch, thin slider, rule section headers, raised cards with accent-tinted soft shadows (3 levels), airy density,
+    faint layout columns.
+  - copper-graphite: Barlow, caps on buttons, tabs and headings; pill metal buttons, pill tabs, inset wells, glow
+    focus, bezel switch, thick inset slider with sphere handle and value bubble, raised metal cards and plate rows with
+    copper gradient rims, inner-glow rim on the primary button.
+  - sand-teal: neumorphic plates (light shadow up-left, dark shadow down-right), pill buttons, sunken fields, ring
+    focus, labelled ON/OFF switch, thin slider with value bubble, caps headers, segmented tabs, plate rows, airy.
+  - teal-grid: Exo 2, brass-bezel primary button (gradient rim plus inner glow), boxed tabs, filled inputs, glow focus,
+    bezel switch, bracket headers and chips, framed cards, compact, blueprint grid with outer frame and ticks.
+- **Judgement calls.** (1) Plain-button depth: the existing rule (2026-11-10) that plain buttons carry no depth effect
+  stays for daylight-blue, copper-graphite and teal-grid. Sand Teal is the one exception: its neumorphic buttons are
+  drawn only by a light and a dark shadow, so without the effect they would be invisible; measured cost 89 depth
+  widgets against 27 in the headless probe, and High performance drops every depth effect. `tests/studio-themes.test.mjs`
+  states the exception. (2) Approximations inside the T1 variants, no new variant: sand-teal tabs use `segmented` (the
+  reference's raised container with an underlined selected tab would need an underline-in-container variant);
+  teal-grid secondary buttons are teal-tinted, not coral (the tint colour is the accent); `filled` inputs for teal-grid
+  follow the §3.1 table although the reference draws a full edge. (3) Pack fonts apply with the flag off too (the
+  family is a v1 field); the components block and every v2 part still need the flag.
+- **Switch contrast.** The base Switch gap T1 listed is fixed inside each pack by its switch variant (plain, labelled or
+  bezel paint onAccent on the "on" side); the contrast test passes for all four in every state.
+- Not done: the other five themes (T6); illustration from reference B stays dropped (§6.3). The package does not ship
+  `data/themes` today (UNVERIFIED whether the installed studio finds packs another way), so the packaged fonts are
+  loaded but only used when the packs ship.
+Evidence: `docs/evidence/2026-11-11-t2-t5-reference-themes.md`.
+
 ## D338 — Learning signals become label rows in a local learning store (2026-11-11, LL2 of D324)
 
 Spec: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` section B (approved, D324). LL2 plus the
@@ -1108,6 +1157,14 @@ Plan rows LU5 and LU7 (D324), built on LU3 (D337). Decided:
   for one click, "Apply now" on the control page (D332: no typed phrase, no "are you sure"); the click runs the LU3
   swap while live. **Reversed after the Codex review (P2):** a waiting service is NOT applied at the stop; nothing
   applies it but its click (AGENTS: a system request waits for one click). Only the host is applied by the poll.
+- **Studio window (merge with LU4, D346).** With the flag on, a `studio` swap request goes through this queue as the
+  part `studio-window`: release.json with `n` and the LU1 `studio-window` hash is required (this checkout's dev build is
+  not an update), the part is copied to `<dataDir>/live/releases/studio-<n>-<hash>` and checked, and LU4's studio
+  slot swaps to the copy after the same entry check (`swapEntryOk`). Not live: at once. Live: one click, like the
+  other services. The queue runs one update at a time (host replacement, service swaps and clicks), so a studio swap
+  never overlaps a host replacement or another swap, and the maintenance lock is held only around a host replacement
+  (a studio swap does not touch the host's outputs). A second swap request while one is being handled is refused,
+  as in LU4. The control page's "Studio window" version follows the swapped release.
 - **Order (Codex review, P2).** An update whose `n` is not newer than the running release of its part, or than a
   waiting update of the same part, is refused. A same-part waiting update is dropped before a newer one is applied at
   once or queued, so an older waiting item never runs after a newer one. One update runs at a time.
@@ -1131,3 +1188,262 @@ must be clicked again; the live clipper and face worker are not updated by the q
 holds only the services, data and overlay parts of its release (enough for the event core and the UI server, checked
 with real swaps in tests/service-swap-launcher.test.mjs).
 Evidence: `docs/evidence/2026-11-11-lu5-lu7-host-staging.md`.
+
+## D336 — Theme framework T1: components block (schema v2), variant fragments, flag theme-components (2026-11-11, user request R10)
+
+Spec `docs/plan/2026-11-10-theme-framework.md` §3 and §5 row T1; the user's answers in §6. The user asked that each
+theme be a full design (layout, shapes, type, components, effects), not a colour swap. T1 builds the framework only;
+no theme is designed and no font is added here. Decided:
+- **Schema v2** (`data/themes/theme.schema.json`): an optional top-level `components` block with enumerated variants
+  only (button shape, style, secondary and caps; tabs; input; focus; switch; slider track, handle and value bubble;
+  section header; card; list; chip; density). `additionalProperties: false` everywhere, so an unknown key or variant
+  fails the schema, and the studio's `packProblem` refuses the same pack (it is not listed and cannot be applied).
+  Typography gains `buttonCaps`, `tabCaps`, `headingCaps` and a type scale (h1, h2, subtitle, body, caption, button,
+  6..28 pt). Background gains the `blueprint` and `columns` patterns and a `frame` (thin outer frame, optional corner
+  and mid-edge ticks). Depth classes gain `highlight` (a light shadow), `inset` (inner shadow, always or pressed) and
+  `rim` (gradient edge with an optional inner glow).
+- **Flag `theme-components`**, off by default, switchable on the control page while live. Off: every v2 part is
+  ignored (a v2 pack looks like its v1 parts; blueprint shows as grid, columns as no pattern) and the stylesheet is
+  exactly the v1 one. On: the pack's variants apply; a pack without a `components` block keeps the same base
+  stylesheet (the probe reports its hash; the test compares on and off) and only gets two rules for things that exist
+  only with the flag: the error state of fields (no studio field sets it yet; the specimen shows it) and the slider's
+  value bubble.
+- **An empty variant is the base look.** Fragments are appended after the base stylesheet in `theme.cpp`
+  (`componentQss`), so they override it rule for rule; derived colours (tint, well, metal ends and others) are mixed
+  from the pack's tokens, never hardcoded, and mirrored in `tests/studio-theme-contrast.test.mjs`.
+- **High performance stays flat**: no gradients (metal and sphere fall back to plain fills), no depth effects
+  (highlight, inset and rim included), no switch halo.
+- Painted widgets read their variant through `theme::component()` / `theme::componentFlag()`: Switch (plain,
+  labelled, bezel), the ValueSlider value bubble, task chips (bracket chips show "[ text ]"). Round transport buttons
+  and section headers are stylesheet-drawn, so their variants come from the fragments (`QPushButton#round`,
+  `QGroupBox::title`, `QLabel#heading`) plus heading caps; no painted code was needed for them.
+- **Density** goes through `theme::space()` / `theme::margins()` at the fixed spacing call sites (73 sites): compact
+  0.75, normal 1, airy 1.25; the base values are kept on the layouts, so a switch re-applies them.
+- **Caps are applied by font capitalisation** (the label text never changes, so tests and screen readers see the
+  real words).
+- **Specimen page**: Settings > Appearance > "Preview all components" (shown only with the flag on) opens one window
+  with every component in every state; it follows a theme switch at once.
+- **Contrast test scope**: every pack, every state (normal, hover, pressed, checked or selected, focus, error): text
+  4.5:1, control parts and focus indicators 3:1. Disabled text is exempt (WCAG 1.4.3); borders that only decorate a
+  filled control are not checked. Every variant in the schema must have a contrast table. Known base gaps, kept
+  because T1 must not change existing looks: Tactical's warning text on the field colour (4.28:1), and the base
+  Switch (knob and ON in the text colour on the accent track, below 3:1 in most packs). Every switch variant paints
+  onAccent on the "on" side and passes on every pack; the base switch is fixed when the packs are redesigned (T2-T6).
+- **v2 needs a components block** (Codex review of T1): every v2 rendering change (variants, caps, type scale, frame,
+  blueprint and columns, depth highlight, inset and rim) applies only with the flag on AND a `components` block in the
+  same pack. A pack with other v2 fields but no block keeps its v1 look with the flag on. Reason: the block is what
+  marks a pack as designed for v2; the parity promise for packs without it then holds whatever they carry.
+- **A flag switch re-parses the accepted pack** (Codex review of T1): the look keeps the JSON it was parsed from, and
+  switching the flag parses that again instead of reading the file, so a newer file that live reload refused can
+  never stop the switch (before, switching off after a refused edit left the component look on).
+- Not in T1: elevation levels 1-5 (spec §3) and the per-theme designs and fonts (T2-T6).
+Evidence: `docs/evidence/2026-11-11-t1-theme-framework.md`.
+
+## D341 — Scene builder SB3: build new H and V scenes from a reference as a scene package, imported in isolation (2026-11-11, plan D324 section C)
+
+Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` row SB3 (approved, D324), build plan §4.7
+("Theme → scene generator", "Isolated import"). Input: the SB2 typed read (D339). Decided:
+- Output is a scene package (`data/schemas/scene-package.schema.json`): one scene-layout-preset per canvas plus
+  bindings. The existing preset loader (`services/project/scene-preset.mjs`) applies it, so the import path is the one
+  the built-in scenes already use. The importer (`services/project/scene-package.mjs`) adds ONE new scene holding the
+  H and V layers (the host shows one active scene on every canvas, as the alpha project does), named
+  "Built: <reference>" (rules `sceneNamePrefix`; "(2)" when taken), origin `scene-package/<package id>`.
+- Never changes existing state: the input is never mutated; the existing state (whole input project) must hash
+  (sha256 of canonical JSON) the same as the result minus the new scene and the overlay entries it added, or the
+  import is refused. Dry run by default. Apply (after the Codex review) is a guarded transaction: refused while the
+  studio has the data folder open (host.json / api.json with a live pid; the store has no lock), compare-and-swap
+  against the exact bytes loaded right before a temp-file rename, an after-save check where a throw counts as a
+  failure, and a restore of the loaded bytes (temp + rename) only while the file still holds what the import wrote;
+  the shared .bak is never copied back. A project that loads only from its .bak or needs a migration is refused.
+- Sources by reference: game and camera link to the project's existing capture layer as a `duplicate` (new preset
+  layer type `link`; the device is opened once); with only a device, a capture layer on that device (the V one becomes
+  a duplicate of the H one). Chat and alerts reuse the project's overlay entry (chat-list, alert-box) and that layer's
+  settings, minus geometry; `canvas=`, size and `theme=` are set. No device is ever created. Matching order: the user's
+  `--bind`, a built-in preset layer, the device bound to the alpha role, the only capture card; anything else is
+  ambiguous and becomes a placeholder asking for `--bind`.
+- Placeholders: a slot below `minConfidence` (0.5) or without a matching source is a transparent colour layer that
+  keeps the geometry, listed in the diff with the reason. A binding lost between build and import is a placeholder too.
+- Geometry: the reference's canvas takes the slot boxes (fractions). The game is never cropped (contain, both
+  canvases); the camera covers its box with a centred crop of at most 40 % of a side, else contain. The other canvas
+  follows `data/scene-builder/build-rules.json`: V inside the V safe zone (YouTube Shorts margins from
+  `data/clip/targets.json`, the only V safe zone in the repo), game across the safe width, camera and alerts above,
+  chat below; H a left column (camera, alerts, chat) beside the contained game. On a V reference, important slots
+  outside the safe zone are warned and kept as drawn (warn only, like D231). Graphics are carried only on the
+  reference canvas (listed as not carried), at most 8.
+- Overlays use theme tokens: graphics are a new token panel page (`ujwalam-panel`: --glass, --steel, --radius-*,
+  --ember-glow; radius class from the read mapped to the tokens); `--theme ID` passes the brand theme. The read's
+  palette is not written as colours (SB4 makes a theme).
+- Entry point: `node services/scene-builder/cli.mjs build <reference> --project FILE [--bind ROLE=ID]... [--theme ID]
+  [--out PKG] [--apply] [--json]` and `import <PKG> --project FILE [--apply]`, behind the `scene-builder` flag (off
+  by default). No studio-ui RPC: the studio server never takes a path from the page.
+- `mergeCanvasScenes` moved from `services/studio-ui/alpha.mjs` to `scene-preset.mjs` unchanged (shared).
+Tolerance on the drawn fixtures: every side within 0.03 of the canvas side (the game: contained, centred, one axis
+within 0.03). Build rules, the V safe zone for live and the results on real references are UNVERIFIED.
+Evidence: `docs/evidence/2026-11-11-sb3-build-scenes.md`.
+
+## D342 — After a stream, a game pack check proposes a new pack version only when it beats the current one on held-out streams (2026-11-11, LL4 of D324)
+
+Spec: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` section B, row LL4 (approved, D324). Builds on
+the D338 store and the D340 review answers. Decided:
+- **Job and trigger:** `services/clip/pack_tune.py propose` runs as the last job of the launcher's clip queue
+  (`services/studio-ui/record-clips.mjs`, job type `train`), queued when a stream's clip job ends (done or failed),
+  only with the new flag **`learning-train`** on (off by default). Same queue as every clip job: one at a time, hidden
+  (`windowsHide`), below normal, never started while a stream is live, stopped when a stream starts and run again
+  after, kept across a restart. pack_tune.py also refuses while the live clipper is asked to watch
+  (`clips/live-worker.json`) and when the flag is off (exit 3). Stdlib only: no model, no GPU, no OCR (VRAM rule).
+- **Values tuned, and only these:** W1 `banner.kinds` `y0`/`y1` (from `unclassified-banner` answers: the item's OCR box
+  whose text is the read word gives the centre y) and `game.json` `ocr.minConfidence` (from `ocr-low` answers: the
+  read kept is right, `wrong read` or a typed correction is wrong; lowered only, since the review holds reads below the
+  current value only). A banner range is widened only as far as the training answers need, never over a read answered
+  as another kind or "not a banner", never into the other range. No detector, pattern, event name, weight or window is
+  added or changed. `ocr.minConfidence` is null in the CODM pack, so no `ocr-low` read exists and that value is reported
+  as "not set", never invented. Kept / deleted / posted / renamed clips, feedback rows and `unknown-mode` answers are
+  counted in the run report but give no pack value: no row links a clip or a feedback moment to the read that made it.
+- **Held-out test (existing rule):** split by session. Per value, the newest 2 sessions (by `session.json` start) that
+  hold labels for it are held out and the older ones train. Metric: held-out accuracy (banner: the kind each confirmed
+  read gets, "not a banner" = none; OCR: read taken as right iff score >= threshold, null = all taken as right).
+  Offered only when the proposal's held-out accuracy is strictly higher than the current pack's and, for the banner
+  ranges, no held-out evidence banner the current pack placed changes kind. Agent settings (proposed, not tuned, not
+  pack values): at least 3 sessions with labels for the value (2 held out, 1 or more to train), at least 10 training
+  and 6 held-out labels. Below that it proposes nothing and says why.
+- **Candidate, never applied by itself:** `data/games/<id>/local/candidates/<stamp>-<version>.json` (gitignored by
+  `data/games/*/local/`): changes, held-out score, evidence (label counts, session counts, dates), status
+  `unverified`, the base file hashes and a changelog entry draft; `last-run.json` holds every run's report. The pack
+  version is bumped by one patch step (a value change). `pack_tune.py approve --candidate <id>` (flag `learning-train`)
+  writes the values, the version and the changelog entry, keeps the kind status `unverified` with a note, and refuses a
+  candidate made from other pack files (hash or version changed) or one already approved. Approval is a command, not a
+  studio window, in this step; the task panel note says when a candidate waits.
+- **Codex review fixes:** `approve` refuses while the live clipper is asked to watch, the same check as `propose`.
+  `propose` checks again after reading the pack, after each store session and before any write, and stops with
+  nothing written when a stream starts. The base hashes are of the exact bytes parsed at the start (and approve's stale
+  check uses the bytes it parses). `approve` is a recoverable transaction: every new file (both JSONs, the changelog,
+  the candidate marked approved) is written as `<name>.ll4-new`, then a journal
+  (`local/candidates/approve.journal.json`) lists the renames, then they run (the candidate last) and the journal is
+  removed. A leftover journal is finished at the next start of any command, so a retry after a crash succeeds; stray
+  `.ll4-new` files without a journal are removed. The changelog is replaced by rename, never truncated in place.
+Not done: an approval button in the studio. Real use on a stream is UNVERIFIED (no real labels exist yet). Evidence:
+`docs/evidence/2026-11-11-ll4-after-stream-train.md`.
+
+## D345 — Scene builder SB4: a studio theme pack from a reference, contrast-checked, saved as a new custom theme only on --apply (2026-11-11, plan D324 section C)
+
+Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` row SB4 (approved, D324). Input: the SB2
+typed read (D339). Output: a theme pack in the `data/themes` format, schema v2 with a components block (T1, D336).
+Decided:
+- **One check, shared.** The T1 contrast pairs, `derived()` and the check moved from
+  `tests/studio-theme-contrast.test.mjs` to `services/studio-ui/theme-contrast.mjs` unchanged; the test imports it.
+  A generated pack is checked by exactly the rules the shipped packs are (text 4.5:1, controls and focus 3:1, every
+  state, the base look plus the variants it picks).
+- **Colours (`services/scene-builder/theme.mjs` mapColours).** background -> bg, surface -> panel, text -> text,
+  accent -> accent, as read. Every other token is derived from read colours and says how: field (surface, 0.035
+  lightness toward the middle), border (surface mixed toward the text, at most 14 %, text keeps 4.5:1 on it), muted
+  (text 35 % toward the background), accentHi (accent lightness +-0.10), onAccent (the background or the text colour,
+  whichever gives the accent less to move), disabled (muted 45 % toward the background; exempt). No accent read: the
+  most chromatic cluster, else the text colour (a neutral accent). danger and ok: a red or green cluster of the read
+  (never the accent itself), else the semantic hue (OKLab 29 / 142 degrees) at the accent's lightness and chroma: the
+  one place a hue is not from the picture, because a warning must read as a warning; it is labelled "convention".
+  Dark or light follows the read's text polarity (a mid-tone ground goes by its text). Then each colour is pushed with
+  the §4.6 maths (new `forceContrastAll` in `colour.mjs`: the same 0.01 lightness steps against several grounds, hue
+  and chroma kept), and a settle loop pushes whatever still fails (the ink first, a face only when the ink cannot move
+  or would oscillate); every push is reported with the pair that needed it. A pack that still fails is never written.
+- **Variants (chooseVariants).** Corner radius class: none -> button sharp, tabs boxed, input filled, chip and section
+  header bracket, slider handle bar, card framed (when no shadow); pill -> pill buttons and tabs; otherwise rounded,
+  underline tabs, outline inputs. Studio radius = read radius at 1080 / 2 (2..16), small and large around it. Glow ->
+  focus glow, bezel primary, outline plain buttons, bezel switch, glow on the primary button in the read glow colour,
+  round controls when active, toasts. Shadow -> raised cards, solid buttons, focus ring, thick slider track, a black
+  drop shadow on cards, primary and round controls, toasts, menus and the task panel (opacity from the read depth).
+  Neither -> soft buttons, tinted plain buttons, focus border, flat cards, no depth. Type size -> density (small
+  compact, large airy) and base size; weight -> heading weight and icon stroke. metal and neumorph are never picked
+  (the rules read no surface texture). A style answer below confidence 0.5 keeps the base look for the keys it decides
+  (left out of the pack). Motion, control sizes and padding are the studio defaults.
+- **Where it goes.** The studio's user themes folder (`theme.cpp` searchDirs `<app data>/themes` =
+  `%APPDATA%\Ujwalam Studio\themes`; `UJWALAM_THEMES_DIR` first, as in the studio; `--themes-dir` overrides). Never
+  the built-in `data/themes` folder, never a built-in id, never over an existing file: a temp file is hard-linked into
+  place (fails if the name appeared) and removed. The studio lists it as a custom theme; with `theme-components` off
+  it draws the base look (no components, no fragments).
+- **Entry point.** `node services/scene-builder/cli.mjs theme <reference> [--name N] [--themes-dir DIR] [--apply]
+  [--json]`, behind the `scene-builder` flag. Dry run by default: prints every colour with where it came from, every
+  push, the variants with why and the contrast result. `build --theme-from-reference` was skipped: `build --theme`
+  passes an overlay brand theme id, a different theme system, so the link is not trivial.
+Real references: every pack passes the check and loads in the headless studio with no stylesheet errors; the looks
+themselves are UNVERIFIED (no human check yet). Evidence: `docs/evidence/2026-11-11-sb4-theme-from-reference.md`.
+
+## D347 — Scene builder SB5: iterate. Save a studio scene as a package, edit a package, make similar variants (2026-11-11, plan D324 section C)
+
+Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` row SB5: "the user adjusts in the studio (move,
+resize, swap slot); 'similar' variants; save as a scene package. Done when: round trip build -> edit -> package ->
+import." Decided:
+- **The studio edit is the project's own placement.** The user moves and resizes in the studio as for any scene; SB5 adds
+  no editor. `services/scene-builder/export.mjs` `packageFromScene(project, scene)` reads that scene back into a scene
+  package (same format as SB3, D341): duplicate -> link (game or camera, by the layer's origin key), capture -> capture,
+  overlay page -> browser (file and query), colour -> colour. Anything else (images, media, hidden layers, a link whose role
+  is unknown, a second target for one role) is not carried and is listed with the reason; rotation, opacity and effects are
+  dropped and named in the warnings. Slots are `confidence 1, from "edit"` (schema enum extended); the package carries a
+  `lineage` note (parent, changes). Read only: the project is not touched.
+- **Edit a package.** `iterate.mjs` `editPackage`: move, resize, place, swap (two layers trade boxes). Fractions of the
+  canvas, all or nothing, the input package is never changed, the result has a new id and `(edited)` in its name. Capture
+  and link layers re-fit on resize and swap with the build's fit (game contained, shape kept, never cropped further;
+  camera cover with a centre crop of at most `camera.maxCrop`); a chat layer's width/height query follows its box. A box
+  off the canvas or under 0.02 is refused; a V layer outside the safe zone is a warning, never moved silently.
+- **Similar variants.** `similarVariants` (1..8, seeded: same package + same seed = same variants). Kinds: nudge-small,
+  nudge-large (a few percent of the canvas), mirror (left to right) and mirror+nudge. A variant is kept only if every box
+  stays on the canvas, a V layer inside the safe zone stays inside, no overlap grows, the game gets no more crop than it had,
+  and it differs from the original and the other variants. They are data for the user to look at and import; nothing picks one.
+- **Round trip.** build -> import (new scene) -> studio edit -> export -> import again: each import adds one new scene and
+  the existing-state hash is unchanged (the earlier built scene is byte-for-byte untouched). Links bind by id, so a package
+  imported into a different project falls back to placeholders (listed) unless the ids exist there.
+- **Entry point and safety.** `node services/scene-builder/cli.mjs export|edit|variants` behind the `scene-builder` flag
+  (off by default; exit 2 when off). These commands never write the project and never apply; they write only the
+  package files named by `--out` / `--out-dir` (never over an existing file). Using a result is `import`, whose apply rules
+  (studio closed, compare-and-swap, dry run first) are unchanged from D341. No studio write without the user's click.
+- **Not done.** No studio UI for these (the studio server takes no file path from the page); the re-fit assumes a 1920x1080
+  camera source when the package has none (UNVERIFIED against a real device format); a crop the user set in the studio on a
+  camera is replaced by the centre crop after a resize or swap (a move keeps it); no check on a real stream.
+Evidence: `docs/evidence/2026-11-11-sb5-iterate.md`.
+## D346 — Studio window swap while live: the window is closed for the update, the new one reattaches to the running host (2026-11-11, LU4)
+
+Plan row LU4 (D324): closing the studio for an update no longer stops the host; the new studio reattaches to the
+running host (previews re-embed, state from the host); a normal close still stops everything (D280 kept). Decided:
+- **A stop-start service.** `studio` joins the swappable services (`services/supervisor/swap.mjs`) with mode
+  stop-start, slot `createStudioSlot` (`services/supervisor/slots.mjs`). Two windows never run at once, so there is
+  never a second tray icon or a second set of previews; global hotkeys belong to the host and are not touched. Same
+  flag (`service-swap`, off by default) and the same trigger as D337: `{ t: 'ujwalam-swap', service: 'studio', root }`
+  from the launcher's parent only. root holds `studio/ujwalam-studio.exe` (staged or installed version), or is this
+  checkout (its development build).
+- **Swap close, not a user close.** With the flag on, the launcher starts the studio with a control pipe
+  (`UJWALAM_STUDIO_CONTROL=1`, stdin). `swap-close` ends the window through `MainWindow::swapClose`: tray icon removed,
+  exit code 75; no closeEvent, no task dialog, no quit lock. The launcher marks that exit as planned: it is written
+  to studio-exits.jsonl with `swap: true` and nothing is stopped. Exit 0 (the user's close) still stops everything;
+  any other unplanned exit is still a crash with the reopen rules of D280.
+- **Reattach.** The launcher gives the UI server a new one-time key (`rearm`, as for a crash reopen), starts the new
+  exe, which logs in, reads its state from the UI server and host.status as at any start, and embeds the H and V
+  previews into its own slots (`preview.open` with the slot's window handle). The host drops the old embedded
+  previews when the old slot windows are destroyed (WM_DESTROY) and keeps rendering, encoding and sending.
+- **Health check and rollback.** The new window must print `studio attach: ready` and `studio attach: preview <c>
+  embedded` for every preview the old one had, then stay up 1 s. A new build that exits or misses that (20 s ready,
+  10 s previews) is stopped and the old version is started again (restored-old).
+- **One swap at a time** over all services: a studio swap needs the UI server for its login key, so a UI swap and a
+  studio swap never overlap.
+- **Headless tests.** `UJWALAM_HEADLESS=1` + `UJWALAM_STUDIO_HIDDEN=1`: the launcher starts the studio, whose window
+  is laid out and "shown" with `Qt::WA_DontShowOnScreen` (never on screen). The headless host now accepts an embedded
+  preview only into a parent whose top-level window is hidden; a stand-alone preview and a visible parent stay
+  refused. `UJWALAM_STUDIO_TEST_CLOSE_MS` (hidden only) makes the window take the user's close, and a
+  `ujwalam-studio.test-crash` file beside the exe makes a build crash at start (headless only), for the tests.
+- **The 20-swap stream test is opt-in** (`npm run test:studio-swap`, also `npm run soak:studio-swap`): it streams
+  NVENC to four loopback listeners for a few minutes, too heavy for the hourly CI.
+Limits: a window kept in the tray (D311) comes back as a normal window after a swap; open dialogs and unsaved field
+edits in the old window are lost (the swap is the user's update click). Evidence:
+`docs/evidence/2026-11-11-lu4-studio-swap.md`.
+Codex review fixes (2026-11-11):
+- **A user close during a swap stops the session (D280).** Exit 0 is the user's close, 75 a requested swap, anything
+  else a crash. When the new window on probation (before ready, previews and the 1 s health wait are done), or the old
+  one before it took `swap-close`, exits 0, the slot starts nothing more: no restore of the old version (result
+  `failed`, or `kept-old` when the old one was closed), and `onUserClose` tells the launcher, which logs "studio window
+  closed during a swap: stopping Ujwalam" and stops everything. A crash on probation still restores the old version.
+  Test hook: a `ujwalam-studio.test-close` file beside a staged exe (text: ms after ready) closes only that build.
+- **Headless embedded previews are never shown.** Checking the parent's top-level window only at `preview.open` let a
+  parent shown later make the preview visible. Now, when headless, the embedded preview window is created without
+  WS_VISIBLE and never shown (a child is visible only with its own WS_VISIBLE): WM_WINDOWPOSCHANGING drops
+  SWP_SHOWWINDOW, WM_STYLECHANGING drops WS_VISIBLE, and the 200 ms refresh timer hides it if WS_VISIBLE got set any
+  other way (ShowWindow under a hidden parent does that). The libobs display still renders into it. `preview.list`
+  gains `shown` (its own WS_VISIBLE) and `visible`. `preview.testParent` (--test-hooks only) makes a never-shown parent
+  window and tries ShowWindow, SetWindowPos and SetWindowLongPtr on the child for the test.

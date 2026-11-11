@@ -16,10 +16,16 @@
 //   createWorkerSlot: stop-start (two clip workers would save every clip twice; the face link is one per host; VRAM).
 //     The old worker stops (its exit is planned, not a crash), the new one starts and must stay up healthMs; if not,
 //     the old version starts again.
+//   createStudioSlot (LU4, D346): stop-start for the Qt studio window. Two windows never run at once (no second tray
+//     icon, no second set of previews). The old window gets "swap-close" on its control pipe (exit 75, no quit lock:
+//     the launcher keeps the host and every output), a new one-time login key goes to the UI server (rearm), the new
+//     exe starts, logs in and must print "studio attach: ready" and re-embed every preview the old one had; if not,
+//     the old version is started again.
 //
 // Every slot reports an exit nobody asked for through onUnexpectedExit(child, code), so the launcher can treat it like
 // before (end the session, or its own restart rules).
 
+import { randomBytes } from 'node:crypto';
 import http from 'node:http';
 import readline from 'node:readline';
 import { killChildTree } from '../common/kill-tree.mjs';
@@ -100,6 +106,7 @@ function slotBase({ name, onUnexpectedExit, onSpawn, onGone, log }) {
     });
   };
   st.plan = (child) => { if (child) planned.add(child); };
+  st.isPlanned = (child) => planned.has(child);
   st.unplan = (child) => { if (child) planned.delete(child); };
   st.run = async (root, mode, steps, timeouts) => {
     if (st.busy) return { result: 'refused', reason: 'another swap is running; one at a time' };
@@ -365,5 +372,130 @@ export function createWorkerSlot(opts) {
       }, { check: healthMs + 5000 });
     },
     async stop() { const c = st.current?.child; if (c) { st.plan(c); await stopChild(c, { graceMs: 3000 }); } },
+  };
+}
+
+export const STUDIO_SWAP_EXIT = 75; // MainWindow::kSwapExitCode (app/studio/src/main_window.h)
+const STUDIO_READY_RE = /^studio attach: ready/;
+const STUDIO_PREVIEW_RE = /^studio attach: preview ([a-z]+) embedded/;
+
+/**
+ * Stop-start slot for the Qt studio window (LU4, D346). opts: { spawn(root, key) -> ChildProcess (stdin and stdout
+ * pipes, UJWALAM_STUDIO_CONTROL=1; exe, env and window are the caller's), rearm(key) -> bool (hands the UI server a new
+ * one-time login key; false when it could not), newKey?(), blocked?() -> reason | null, waits?: { close, ready,
+ * previews, healthMs }, onLine?(line, child), onUserClose?(child), onSpawn?, onGone?, log? }.
+ * Exits nobody planned are the caller's: it listens on the child and asks isPlanned(child) (a swap's exits are planned).
+ * A user close during a swap (Codex review of D346): exit 0 is the user closing the window (75 is a requested swap,
+ * anything else a crash). When the window on probation, or the old one before it took "swap-close", exits 0, the swap
+ * starts nothing more (no restore) and onUserClose(child) tells the caller, which stops the session (D280).
+ * start(root, key) -> child; swap(root) -> runSwap result, with the timings in the check step's value.
+ */
+export function createStudioSlot(opts) {
+  const st = slotBase({ ...opts, name: 'studio' });
+  const w = { close: 5000, ready: 20_000, previews: 10_000, healthMs: 1000, ...opts.waits };
+  const newKey = opts.newKey ?? (() => randomBytes(32).toString('hex'));
+  let alive = 0;
+  let maxAlive = 0;
+  let userClosed = null; // the child the user closed during the running swap
+  function launch(root, key) {
+    const child = opts.spawn(root, key);
+    const p = { child, root, startedAt: Date.now(), readyAt: null, previews: new Map(), exitedAt: null, exitCode: undefined };
+    alive++; maxAlive = Math.max(maxAlive, alive);
+    let gone = false;
+    const end = (code) => { if (gone) return; gone = true; alive--; p.exitedAt = Date.now(); p.exitCode = code; };
+    child.once('exit', (code) => {
+      end(code);
+      // A planned exit with code 0 during a swap: the user closed that window (swap-close exits 75). Unplanned exits
+      // are the caller's anyway.
+      if (code === 0 && st.busy && st.isPlanned(child) && !userClosed) { userClosed = child; opts.onUserClose?.(child); }
+    });
+    child.once('error', () => { if (!child.pid) end(null); }); // never started: no exit event follows
+    if (child.stdout) {
+      lineReader(child, (l) => {
+        if (STUDIO_READY_RE.test(l) && p.readyAt === null) p.readyAt = Date.now();
+        const m = STUDIO_PREVIEW_RE.exec(l);
+        if (m && !p.previews.has(m[1])) p.previews.set(m[1], Date.now());
+        opts.onLine?.(l, child);
+      });
+    }
+    st.track(child);
+    return p;
+  }
+  // Polls p until done(p); fails when it exits, the time runs out or the swap gives up on this step.
+  async function until(p, done, ms, what, signal) {
+    const t0 = Date.now();
+    for (;;) {
+      throwIfAborted(signal);
+      if (done(p)) return Date.now() - t0;
+      if (p.exitedAt !== null) throw new Error(`the studio exited (${p.exitCode}) before ${what}`);
+      if (Date.now() - t0 > ms) throw new Error(`no ${what} within ${ms} ms`);
+      await sleep(20);
+    }
+  }
+  return {
+    start(root, key) { st.root = root; st.current = launch(root, key); return st.current.child; },
+    child: () => st.current?.child ?? null,
+    root: () => st.root,
+    busy: () => st.busy,
+    history: () => [...st.swaps],
+    /** A swap's exits (swap-close, a new build on probation, a rolled-back build): the caller's exit handler skips them. */
+    isPlanned: (child) => st.isPlanned(child),
+    /** Most studio processes alive at the same time since start (1: the windows never overlapped). */
+    maxConcurrent: () => maxAlive,
+    /** Canvases whose preview the current window has embedded. */
+    previews: () => [...(st.current?.previews.keys() ?? [])],
+    async swap(root) {
+      const old = st.current;
+      if (!old) return { result: 'refused', reason: 'not started' };
+      const why = opts.blocked?.();
+      if (why) return { result: 'refused', reason: why };
+      const want = [...old.previews.keys()]; // every preview the old window had must come back
+      let neu = null;
+      userClosed = null;
+      const closed = (what) => new Error(`the user closed the ${what} window (exit 0): no restore, the session stops (D280)`);
+      return st.run(root, 'stop-start', {
+        stopOld: async () => {
+          st.plan(old.child);
+          const code = await stopChild(old.child, { line: 'swap-close', graceMs: w.close });
+          if (userClosed || code === 0) throw closed('old'); // kept-old: nothing new starts
+          return { code, clean: code === STUDIO_SWAP_EXIT };
+        },
+        spawnNew: async () => {
+          if (userClosed) throw closed('old');
+          const key = newKey();
+          if (!opts.rearm(key)) throw new Error('the UI server did not take a new login key');
+          neu = launch(root, key);
+          st.plan(neu.child); // on probation until healthy: an exit now is the swap's failure, not a crash
+          st.current = neu;
+          if (!neu.child.pid) throw new Error('the studio did not start');
+          return { pid: neu.child.pid };
+        },
+        check: async ({ signal } = {}) => {
+          const readyMs = await until(neu, (p) => p.readyAt !== null, w.ready, '"studio attach: ready"', signal);
+          await until(neu, (p) => want.every((c) => p.previews.has(c)), w.previews, `previews ${want.join(', ')} embedded`, signal);
+          await sleep(w.healthMs);
+          if (neu.exitedAt !== null) throw new Error(`the studio exited (${neu.exitCode}) after it attached`);
+          st.unplan(neu.child);
+          st.root = root;
+          const gapFrom = old.exitedAt ?? neu.startedAt; // the old previews went with the old window
+          const previewGapMs = Object.fromEntries(want.map((c) => [c, neu.previews.get(c) - gapFrom]));
+          return { readyMs, startMs: neu.readyAt - neu.startedAt, previewGapMs, previews: want };
+        },
+        stopNew: async () => { if (!neu) return null; st.plan(neu.child); return stopChild(neu.child, { line: 'swap-close', graceMs: 2000 }); },
+        restoreOld: async ({ signal } = {}) => {
+          if (neu) st.plan(neu.child);
+          if (userClosed) throw closed(userClosed === old.child ? 'old' : 'new'); // failed: the caller ends the session
+          const key = newKey();
+          if (!opts.rearm(key)) throw new Error('the UI server did not take a new login key');
+          const back = launch(old.root, key);
+          st.current = back;
+          st.root = old.root;
+          // The old version is known to work: its exit fails the restore, a slow start does not.
+          try { await until(back, (p) => p.readyAt !== null, w.ready, '"studio attach: ready"', signal); } catch (e) { if (back.exitedAt !== null) throw e; }
+          return { pid: back.child.pid, ready: back.readyAt !== null };
+        },
+      }, { stopOld: w.close + 7000, check: w.ready + w.previews + w.healthMs + 5000, restoreOld: w.ready + 5000 });
+    },
+    async stop() { const c = st.current?.child; if (c) { st.plan(c); await stopChild(c, { line: 'swap-close', graceMs: 3000 }); } },
   };
 }

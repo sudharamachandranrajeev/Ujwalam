@@ -22,6 +22,8 @@
     "bench": "node tools/bench/run.mjs",
     "soak": "node tools/soak/live-soak.mjs",
     "soak:swap": "node tools/soak/swap-soak.mjs",
+    "soak:studio-swap": "node tools/soak/studio-swap-soak.mjs",
+    "test:studio-swap": "set UJWALAM_STUDIO_SWAP_STREAM=1&& node --test --test-timeout=900000 tests/studio-swap-stream.test.mjs",
     "fx:test": "node tools/fx-test.mjs",
     "validate:registry": "node tools/registry-validate.mjs registry",
     "legacy:verify": "node tools/legacy-verify.mjs",

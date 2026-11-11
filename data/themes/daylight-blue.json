@@ -32,17 +32,28 @@
     }
   },
   "typography": {
-    "family": "Segoe UI",
+    "family": "Inter",
     "fallbacks": [
-      "Segoe UI Variable Text"
+      "Segoe UI"
     ],
     "baseSize": 10,
     "captionSize": 8,
-    "titleSize": 16,
+    "titleSize": 18,
     "headingWeight": 600,
     "letterSpacing": 0,
     "captionLetterSpacing": 0.4,
-    "captionCaps": false
+    "captionCaps": false,
+    "buttonCaps": false,
+    "tabCaps": false,
+    "headingCaps": false,
+    "scale": {
+      "h1": 18,
+      "h2": 12,
+      "subtitle": 11,
+      "body": 10,
+      "caption": 8,
+      "button": 10
+    }
   },
   "geometry": {
     "radius": {
@@ -66,11 +77,17 @@
   "depth": {
     "card": {
       "shadow": {
-        "blur": 14,
+        "blur": 10,
         "offsetX": 0,
-        "offsetY": 3,
-        "color": "#0f1f3d",
+        "offsetY": 2,
+        "color": "#1d3f9e",
         "opacity": 0.1
+      },
+      "glow": {
+        "blur": 12,
+        "color": "accent",
+        "opacity": 0.3,
+        "when": "active"
       }
     },
     "button": {},
@@ -94,29 +111,29 @@
     },
     "toast": {
       "shadow": {
-        "blur": 22,
+        "blur": 24,
         "offsetX": 0,
-        "offsetY": 6,
-        "color": "#0f1f3d",
-        "opacity": 0.2
+        "offsetY": 8,
+        "color": "#1d3f9e",
+        "opacity": 0.22
       }
     },
     "menu": {
       "shadow": {
-        "blur": 18,
+        "blur": 14,
         "offsetX": 0,
-        "offsetY": 5,
-        "color": "#0f1f3d",
-        "opacity": 0.18
+        "offsetY": 4,
+        "color": "#1d3f9e",
+        "opacity": 0.16
       }
     },
     "taskPanel": {
       "shadow": {
-        "blur": 22,
+        "blur": 24,
         "offsetX": 0,
-        "offsetY": 6,
-        "color": "#0f1f3d",
-        "opacity": 0.18
+        "offsetY": 8,
+        "color": "#1d3f9e",
+        "opacity": 0.2
       }
     }
   },
@@ -130,12 +147,34 @@
   },
   "background": {
     "kind": "solid",
-    "pattern": "none",
-    "patternColor": "#000000",
-    "patternOpacity": 0,
-    "patternSpacing": 24
+    "pattern": "columns",
+    "patternColor": "#0b4fd6",
+    "patternOpacity": 0.05,
+    "patternSpacing": 64
   },
   "icons": {
     "stroke": 1.6
+  },
+  "components": {
+    "button": {
+      "shape": "rounded",
+      "style": "solid",
+      "secondary": "outline",
+      "caps": false
+    },
+    "tabs": "underline",
+    "input": "outline",
+    "focus": "ring",
+    "switch": "plain",
+    "slider": {
+      "track": "thin",
+      "handle": "round",
+      "valueBubble": false
+    },
+    "sectionHeader": "rule",
+    "card": "raised",
+    "list": "plain",
+    "chip": "pill",
+    "density": "airy"
   }
 }

@@ -1,0 +1,40 @@
+{
+  "$comment": "Scene builder SB3 build rules (D341): how slots of a reference read (SB2) become layers of a NEW scene. Data, not code: the builder (services/scene-builder/build.mjs) reads every number from here. status unverified: the values are the agent's first proposal from the drawn fixtures and the existing presets, not checked on a real stream.",
+  "version": "0.1.0",
+  "status": "unverified",
+  "checked": "2026-11-11",
+  "minConfidence": 0.5,
+  "minConfidenceSource": "SB2 rules give 0.55 to 1 on clean drawn slots (docs/evidence/2026-11-11-sb1-sb2-reference-read.md); below 0.5 a slot is a placeholder, never a guessed layer",
+  "maxGraphics": 8,
+  "sceneNamePrefix": "Built",
+  "sourceSize": { "width": 1920, "height": 1080, "source": "assumed capture size when the device has no format (the same default as services/project/hud-zones.mjs)" },
+  "game": { "fit": "contain", "source": "AGENTS.md live-test rule: frame the V scene so nothing important is cut off; the game is never cropped, on both canvases" },
+  "camera": { "fit": "cover", "maxCrop": 0.4, "source": "cover the slot with a centre crop of at most 40 % of a side, else contain; registry/presets/scene-default-v.json crops the facecam 328 px a side of 1920 (34 %)" },
+  "overlays": {
+    "chat": ["chat-list/"],
+    "alerts": ["alert-box/"],
+    "source": "overlay folders the existing project's chat and alert layers use (legacy layer map; registry/presets/scene-default-h.json events layer)"
+  },
+  "dropQuery": ["x", "y", "width", "height", "canvas", "theme", "demo", "debug", "bg"],
+  "panel": {
+    "overlay": "ujwalam-panel/index.html",
+    "radius": { "none": "none", "small": "sm", "medium": "md", "large": "md", "pill": "pill" },
+    "source": "radius classes of the read mapped onto the brand radius tokens (--radius-none, -sm, -md, -pill); no token is larger than md except pill"
+  },
+  "z": { "graphics": 1, "game": 10, "camera": 20, "chat": 30, "alerts": 40 },
+  "v": {
+    "safe": { "file": "data/clip/targets.json", "target": "youtube-shorts" },
+    "safeSource": "the V output goes to YouTube; the Shorts safe zone is the only V safe zone in the repo (unverified there too)",
+    "gap": 0.01,
+    "cameraMaxWidth": 0.6,
+    "alertsMaxHeight": 0.1
+  },
+  "h": {
+    "margin": 0.01,
+    "gap": 0.01,
+    "column": 0.24,
+    "cameraMaxHeight": 0.35,
+    "alertsHeight": 0.1,
+    "source": "a left column for camera, alerts and chat with the game beside it, as in registry/presets/scene-default-h.json"
+  }
+}

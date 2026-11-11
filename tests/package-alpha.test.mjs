@@ -13,7 +13,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXE as STUDIO_EXE, START_EXE } from '../app/studio/tools/build.mjs';
 import { changelogExcerpt, releaseInfo } from '../tools/package/build-alpha.mjs';
-import { allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
+import { OFL_FONTS, OFL_FONT_LICENCES, OFL_FONT_LICENCE_SHA, allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
 import { peInfo } from '../tools/package/pe.mjs';
 import { clipMakerNote, installedSpec, nodeOk, pruneLaunchLogs } from '../tools/package/run-installed.mjs';
 import { CLIP_MAKER_FIX, clipTools } from '../services/studio-ui/record-clips.mjs';
@@ -94,6 +94,9 @@ test('forbidden paths: legacy, local files, Microsoft fonts, any font, private e
     'docs/evidence/private/a.png', 'docs/x.md', 'feedback/2026/moment.json', 'out/host/build/ujwalam-host.exe', 'recordings/a.mkv', 'markers/s.jsonl',
     '.env', 'node_modules/ajv/x.js', 'host.local.json', 'data/labels/a.json', 'data/games/codm/x.json', 'logs/host.log', 'bin/ujwalam-host.pdb'];
   for (const p of bad) assert.ok(forbiddenProblems([p], { fontNames }).length > 0, p);
+  // D344: the pinned OFL fonts are the only font files that may ship; a same-named file with other bytes is caught at build time, any other font stays forbidden
+  for (const p of Object.keys(OFL_FONTS)) assert.deepEqual(forbiddenProblems([p], { fontNames }), [], p);
+  for (const p of ['data/fonts/Corbel.ttf', 'data/fonts/Consolas-Regular.ttf', 'data/fonts/Inter-Italic.ttf', 'data/fonts/Other.otf', 'studio/fonts/Inter-Regular.ttf', 'data/fonts/inter-regular.ttf']) assert.ok(forbiddenProblems([p], { fontNames }).length > 0, p);
   for (const p of ['ui/corbel-colours.css']) assert.deepEqual(forbiddenProblems([p], { fontNames }), [], 'a css file that merely starts with the name is not a font');
   assert.deepEqual(allowProblems(['bin/ujwalam-host.exe', 'studio/ujwalam-studio.exe', 'studio/Qt6Core.dll', 'studio/Qt6Network.dll', 'studio/platforms/qwindows.dll', 'studio/platforms/qoffscreen.dll', 'obs/bin/64bit/obs.dll', 'obs/obs-plugins/64bit/locales/en-US.pak', 'notices/GPL-2.0.txt', 'Install-Ujwalam.ps1']), []);
   assert.equal(allowProblems(['tests/x.test.mjs', 'random.txt', 'bin/other.exe', 'obs/cef/x.dll', 'obs/bin/64bit/platforms/qminimal.dll', 'obs/bin/64bit/imageformats/qjpeg.dll', 'obs/bin/64bit/platforms/qwindows.dll', 'bin/ujwalam-studio.exe', 'studio/Qt6Svg.dll', 'studio/platforms/qminimal.dll']).length, 10);
@@ -471,4 +474,21 @@ test('app icon: the built studio and start exes carry an icon resource', (t) => 
     const ids = peResourceTypes(f);
     assert.ok(ids.includes(14) && ids.includes(3), `${path.basename(f)} has RT_GROUP_ICON and RT_ICON (types: ${ids})`);
   }
+});
+
+test('bundled OFL fonts (D344): the repo files are the pinned bytes, each family has its licence text, notices record every hash', async () => {
+  const { createHash } = await import('node:crypto');
+  const notices = readFileSync(path.join(REPO, 'docs', 'third-party-notices.md'), 'utf8');
+  for (const [rel, sha] of Object.entries(OFL_FONTS)) {
+    assert.equal(createHash('sha256').update(readFileSync(path.join(REPO, rel))).digest('hex'), sha, rel);
+    assert.ok(notices.includes(sha), `docs/third-party-notices.md lists ${rel}`);
+  }
+  for (const [rel, sha] of Object.entries(OFL_FONT_LICENCE_SHA)) {
+    assert.equal(createHash('sha256').update(readFileSync(path.join(REPO, rel))).digest('hex'), sha, `${rel} is the pinned licence text`);
+    assert.ok(notices.includes(sha), `docs/third-party-notices.md lists the hash of ${rel}`);
+  }
+  for (const rel of OFL_FONT_LICENCES) assert.match(readFileSync(path.join(REPO, rel), 'utf8'), /SIL OPEN FONT LICENSE Version 1\.1/, rel);
+  const all = repoFiles(REPO);
+  for (const rel of [...Object.keys(OFL_FONTS), ...OFL_FONT_LICENCES]) assert.ok(all.includes(rel), `${rel} is packaged`);
+  assert.deepEqual(allowProblems([...Object.keys(OFL_FONTS), ...OFL_FONT_LICENCES]), []);
 });

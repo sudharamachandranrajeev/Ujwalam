@@ -1,8 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ujwalam.local/schemas/theme.schema.json",
-  "title": "Ujwalam studio theme pack (D293)",
-  "description": "A whole-UI theme as data: colours, type, geometry, depth (shadow, glow, extrusion per element class), motion, background and icon weight. Fonts are Windows family names only (nothing is bundled). Add your own file beside the built-in ones; the id must match the file name.",
+  "title": "Ujwalam studio theme pack (D293; schema v2 with components, D336)",
+  "description": "A whole-UI theme as data: colours, type, geometry, depth (shadow, glow, extrusion per element class), motion, background and icon weight. Fonts are family names: Windows fonts, or the bundled open-licence families in data/fonts (Inter, Barlow, Exo 2; SIL OFL 1.1, D344). Microsoft font files are never bundled. Add your own file beside the built-in ones; the id must match the file name. Schema v2 (D336) adds optional parts: the components block (enumerated variants only), depth highlight / inset / rim, caps flags and a type scale, the blueprint and columns patterns and a backdrop frame. They are read only while the feature flag theme-components is on; a pack without them looks exactly as before.",
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "name", "topic", "version", "dark", "colors", "typography", "geometry", "depth", "motion", "background", "icons"],
@@ -55,7 +55,18 @@
         "headingWeight": { "type": "integer", "minimum": 300, "maximum": 900 },
         "letterSpacing": { "type": "number", "minimum": -0.5, "maximum": 2, "description": "pixels added between letters (QFont absolute spacing)" },
         "captionLetterSpacing": { "type": "number", "minimum": 0, "maximum": 4 },
-        "captionCaps": { "type": "boolean" }
+        "captionCaps": { "type": "boolean" },
+        "buttonCaps": { "type": "boolean", "description": "optional (v2): button labels in capitals" },
+        "tabCaps": { "type": "boolean", "description": "optional (v2): tab labels in capitals" },
+        "headingCaps": { "type": "boolean", "description": "optional (v2): section titles and headings in capitals" },
+        "scale": {
+          "type": "object", "additionalProperties": false,
+          "description": "optional (v2): type scale in points. h1 section titles, h2 toast titles and look names, subtitle group titles, body window text, caption captions, button button labels",
+          "properties": {
+            "h1": { "$ref": "#/$defs/pt" }, "h2": { "$ref": "#/$defs/pt" }, "subtitle": { "$ref": "#/$defs/pt" },
+            "body": { "$ref": "#/$defs/pt" }, "caption": { "$ref": "#/$defs/pt" }, "button": { "$ref": "#/$defs/pt" }
+          }
+        }
       }
     },
     "geometry": {
@@ -115,10 +126,48 @@
       "required": ["kind", "pattern", "patternColor", "patternOpacity", "patternSpacing"],
       "properties": {
         "kind": { "enum": ["solid", "gradient", "pattern"], "description": "gradient uses gradients.window; pattern draws on top of it. Drawn by Qt: no image files." },
-        "pattern": { "enum": ["none", "grid", "dots", "scanlines", "diagonal"] },
+        "pattern": { "enum": ["none", "grid", "dots", "scanlines", "diagonal", "blueprint", "columns"], "description": "blueprint (v2): a fine grid with a stronger line every 5 cells; columns (v2): faint layout columns. With the flag theme-components off, blueprint draws as grid and columns as none." },
         "patternColor": { "$ref": "#/$defs/hex" },
         "patternOpacity": { "type": "number", "minimum": 0, "maximum": 0.15 },
-        "patternSpacing": { "type": "integer", "minimum": 3, "maximum": 80 }
+        "patternSpacing": { "type": "integer", "minimum": 3, "maximum": 80 },
+        "frame": {
+          "type": "object", "additionalProperties": false, "required": ["ticks", "opacity"],
+          "description": "optional (v2): a thin frame just inside each window in the pattern colour; ticks adds registration marks at the corners and edge middles",
+          "properties": { "ticks": { "type": "boolean" }, "opacity": { "type": "number", "minimum": 0, "maximum": 0.6 } }
+        }
+      }
+    },
+    "components": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional (v2, D336): the component language as enumerated variants, data only. Read only while the feature flag theme-components is on. A key left out keeps the base look of that component.",
+      "properties": {
+        "button": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "shape": { "enum": ["rounded", "pill", "sharp"] },
+            "style": { "enum": ["solid", "soft", "metal", "bezel", "neumorph"], "description": "fill and edge of buttons and round controls" },
+            "secondary": { "enum": ["outline", "tinted", "ghost"], "description": "plain (not primary) buttons; left out: they follow style" },
+            "caps": { "type": "boolean", "description": "button labels in capitals" }
+          }
+        },
+        "tabs": { "enum": ["pill", "underline", "segmented", "boxed"] },
+        "input": { "enum": ["outline", "filled", "inset", "underline"] },
+        "focus": { "enum": ["border", "ring", "glow"] },
+        "switch": { "enum": ["plain", "labelled", "bezel"], "description": "the painted on/off switch; labelled (ON / OFF in the track) is the base look" },
+        "slider": {
+          "type": "object", "additionalProperties": false,
+          "properties": {
+            "track": { "enum": ["thin", "thick", "inset"] },
+            "handle": { "enum": ["round", "sphere", "bar"] },
+            "valueBubble": { "type": "boolean", "description": "the value in a bubble above the handle while it is dragged" }
+          }
+        },
+        "sectionHeader": { "enum": ["plain", "rule", "caps", "bracket"] },
+        "card": { "enum": ["flat", "raised", "neumorph", "framed"] },
+        "list": { "enum": ["plain", "plates"] },
+        "chip": { "enum": ["pill", "bracket"] },
+        "density": { "enum": ["compact", "normal", "airy"], "description": "layout spacing: compact x0.75, normal x1, airy x1.25 of the built-in spacing" }
       }
     },
     "icons": {
@@ -131,6 +180,18 @@
   "$defs": {
     "hex": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
     "px": { "type": "integer", "minimum": 0, "maximum": 40 },
+    "pt": { "type": "number", "minimum": 6, "maximum": 28 },
+    "shadowPart": {
+      "type": "object", "additionalProperties": false, "required": ["blur", "offsetX", "offsetY", "color", "opacity"],
+      "properties": {
+        "blur": { "type": "integer", "minimum": 0, "maximum": 40 },
+        "offsetX": { "type": "integer", "minimum": -12, "maximum": 12 },
+        "offsetY": { "type": "integer", "minimum": -12, "maximum": 12 },
+        "color": { "$ref": "#/$defs/colorRef" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "when": { "enum": ["always", "pressed"], "description": "inset only: always (a sunken well) or only while pressed" }
+      }
+    },
     "colorRef": { "type": "string", "pattern": "^(#[0-9a-fA-F]{6}|accent|accentHi|danger|ok|text|muted|border|auto)$", "description": "hex, a colour token, or auto (accent, danger while the control is active)" },
     "gradient": {
       "type": "object", "additionalProperties": false, "required": ["from", "to", "angle"],
@@ -165,6 +226,21 @@
             "depth": { "type": "integer", "minimum": 1, "maximum": 6, "description": "pixels of 3D edge under the element" },
             "color": { "$ref": "#/$defs/colorRef" },
             "color2": { "$ref": "#/$defs/colorRef", "description": "far end of the edge: a bevel or chrome gradient" }
+          }
+        },
+        "highlight": { "$ref": "#/$defs/shadowPart", "description": "optional (v2): a second, light shadow with its own offset (neumorphic plates: light up-left, shadow down-right)" },
+        "inset": { "$ref": "#/$defs/shadowPart", "description": "optional (v2): an inner shadow inside the face: a sunken well, or with when = pressed only while pressed" },
+        "rim": {
+          "type": "object", "additionalProperties": false, "required": ["from", "to", "width"],
+          "description": "optional (v2): a gradient edge on the face, top colour to bottom colour (metal rims, brass bezels); innerGlow adds a glowing edge just inside it",
+          "properties": {
+            "from": { "$ref": "#/$defs/colorRef" },
+            "to": { "$ref": "#/$defs/colorRef" },
+            "width": { "type": "integer", "minimum": 1, "maximum": 4 },
+            "innerGlow": {
+              "type": "object", "additionalProperties": false, "required": ["color", "opacity", "width"],
+              "properties": { "color": { "$ref": "#/$defs/colorRef" }, "opacity": { "type": "number", "minimum": 0, "maximum": 0.8 }, "width": { "type": "integer", "minimum": 1, "maximum": 3 } }
+            }
           }
         }
       }

@@ -16,6 +16,7 @@
 //     The Qt studio shell does not use the runtime's Qt (OBS's own Qt build, no offscreen plugin): it ships
 //     self-contained in studio/ with the Qt 6.8.3 kit it was built with (STUDIO_FILES, D277).
 //   allowProblems(paths) / forbiddenProblems(paths, { fontNames }) -> [msg]   (package-relative paths, '/' separators)
+//   OFL_FONTS / OFL_FONT_LICENCES  the only font files that ship (D344), pinned by SHA-256
 //   fontNamesFromLicenceDoc(text)   -> ['Corbel', 'Consolas', ...]   bold names on "fonts" lines of docs/licence-headers.md
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
@@ -26,9 +27,30 @@ export const HELPER_EXES = Object.freeze(['obs-ffmpeg-mux.exe', 'obs-nvenc-test.
 // Repo -> package (same relative paths, so the code's own REPO-relative lookups keep working in the install dir).
 export const REPO_DIRS = Object.freeze([
   'app/host/lib', 'app/host/overlay',
-  'services/bots', 'services/common', 'services/event-core', 'services/flags', 'services/learning', 'services/outputs', 'services/overlay-server', 'services/platform-connect', 'services/posting', 'services/project', 'services/studio-ui', 'services/supervisor',
+  'services/bots', 'services/common', 'services/event-core', 'services/flags', 'services/learning', 'services/outputs', 'services/overlay-server', 'services/platform-connect', 'services/posting', 'services/project', 'services/studio-ui',
+  'services/supervisor', // launch.mjs imports the LU3 swap fronts and slots (D337)
   'ui', 'registry', 'tools/diag',
 ]);
+// Bundled open-licence fonts (D344, 2026-11-11; replaces the blanket font ban). Only these exact files ship, each pinned by
+// SHA-256 (sources and licence: docs/third-party-notices.md); every one is SIL Open Font Licence 1.1 with its licence text
+// beside it. Any other font file is forbidden, and Microsoft fonts (docs/licence-headers.md) stay forbidden by name.
+export const OFL_FONTS = Object.freeze({
+  'data/fonts/Barlow-Bold.ttf': '84e6a4d61e7c3e21f3c50ea6a4f7e5303a3467864c038be6ea3759bab8d547f9',
+  'data/fonts/Barlow-Regular.ttf': '95aa02c7c43096e0dd44d787ba6216864a67157e402adab59b35572e0c1577ea',
+  'data/fonts/Barlow-SemiBold.ttf': '86577cb32f8abe3673db53ca0f4221e6856751a4f6730c867e00f720f8bb1fc5',
+  'data/fonts/Exo2-Bold.ttf': '0bae8c900d1c84abfb5264c6867ec2113fd0507680861f79b206093ebe0ce374',
+  'data/fonts/Exo2-Regular.ttf': 'b00c1abe9cccdaef971fb79d2445220ae53ab11643558d48063cb002e7e60293',
+  'data/fonts/Exo2-SemiBold.ttf': '20a233e8c4b109c1203d9de6b126afff8b383eff0ccbc2bcfd7f5fde48b917f7',
+  'data/fonts/Inter-Bold.ttf': '288316099b1e0a47a4716d159098005eef7c0066921f34e3200393dbdb01947f',
+  'data/fonts/Inter-Regular.ttf': '40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82',
+  'data/fonts/Inter-SemiBold.ttf': '78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3',
+});
+export const OFL_FONT_LICENCE_SHA = Object.freeze({
+  'data/fonts/Barlow-OFL.txt': '186d750eb496a4c17a76385f82be6aea2ac1cf2de074a811d63786cf374ea73f',
+  'data/fonts/Exo2-OFL.txt': 'cecc43de8bf5449d88fb03a6d33b0b569df304545d3b57760863e833a6434d45',
+  'data/fonts/Inter-OFL.txt': '262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a',
+});
+export const OFL_FONT_LICENCES = Object.freeze(Object.keys(OFL_FONT_LICENCE_SHA));
 export const REPO_FILES = Object.freeze([
   'LICENSE',
   'app/host/projects/test-card.project.json',
@@ -48,6 +70,7 @@ export const REPO_FILES = Object.freeze([
   'data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json',
   'data/schemas/project.schema.json',
   'data/profile.example.json', 'data/profile.schema.json',
+  ...Object.keys(OFL_FONTS), ...OFL_FONT_LICENCES, // bundled theme fonts, the studio loads them from data/fonts (D344)
   'data/release/alpha.json',
   'tools/package/run-installed.mjs', 'tools/package/zip.mjs',
   // Qt shell exe path (services/studio-ui/launch.mjs imports EXE and qtDir)
@@ -288,7 +311,6 @@ const FORBIDDEN = [
   [/(^|\/)(\.env[^/]*|\.agent-lock|host\.local\.json|flags\.local\.json|host-config\.json|outputs-params\.json|system\.json|host\.json)$/i, 'local state or secret file'],
   [/\.(mkv|mp4|mov|flv|ts|webm|wav|m4a|mp3|log|pdb|pem|key|pfx|p12|sqlite|db)$/i, 'media, log, symbols, key or database file'],
   [/(^|\/)data\/(labels|datasets|games)(\/|$)/i, 'labels, datasets or game packs'],
-  [FONT_EXT, 'font file (none ship; Microsoft fonts are never redistributable)'],
 ];
 
 export function forbiddenProblems(paths, { fontNames = [] } = {}) {
@@ -296,6 +318,7 @@ export function forbiddenProblems(paths, { fontNames = [] } = {}) {
   const fontRes = fontNames.map((n) => new RegExp(`(^|/)${n.toLowerCase().slice(0, 6)}[^/]*$`, 'i'));
   for (const p of paths) {
     for (const [re, why] of FORBIDDEN) if (re.test(p)) out.push(`forbidden (${why}): ${p}`);
+    if (FONT_EXT.test(p) && !Object.hasOwn(OFL_FONTS, p)) out.push(`forbidden (font file not on the OFL allowlist OFL_FONTS; Microsoft fonts are never redistributable): ${p}`);
     if (fontRes.some((re) => re.test(p)) && (FONT_EXT.test(p) || !/\.(m?js|json|css|html|txt)$/i.test(p))) out.push(`forbidden (Microsoft font named in docs/licence-headers.md): ${p}`);
   }
   return out;

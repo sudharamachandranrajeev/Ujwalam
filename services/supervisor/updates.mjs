@@ -16,7 +16,7 @@
 //                click; applied by the queue's poll as soon as a fresh status shows everything stopped. The stage is
 //                written to <dataDir>/live/host-update.json, so closing the app with a staged host update still tries
 //                it at the next start (takeStartupHost, a trial with fallback).
-//                services (event core, studio UI server): WAITING for one click (D332: one click, no typed phrase, no
+//                services (event core, studio UI server, studio window): WAITING for one click (D332: one click, no typed phrase, no
 //                "are you sure"). The click swaps it at once (LU3 swaps keep the stream). Nothing applies a service on
 //                its own: not the poll, not the stop (AGENTS: a system request waits for one click). Closing drops it.
 // A newer update of the same part replaces the waiting one; an update not newer than the running or waiting release
@@ -50,18 +50,27 @@ const BUSY = new Set(['starting', 'live', 'reconnecting', 'retrying', 'stopping'
 const SESSION_RE = /^[0-9a-f]{16,64}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
 
-// What the control page lists, in this order. overlay-server follows the host; the studio window and data follow the
-// running release until LU4 / LU2 report their own.
+// What the control page lists, in this order. overlay-server follows the host; data follows the running release until
+// LU2 reports its own. The studio window is updated through the queue since LU4 (D346); a swap request names it
+// 'studio' (serveSwaps), the queue's part is 'studio-window' (the LU1 part of its files).
 export const PARTS = Object.freeze(['host', 'overlay-server', 'event-core', 'studio-ui', 'studio-window', 'data']);
 export const PART_LABELS = Object.freeze({
   host: 'Video engine (host)', 'overlay-server': 'Overlay server', 'event-core': 'Event core', 'studio-ui': 'Control page server',
   'studio-window': 'Studio window', data: 'Data (presets, themes, rules)',
 });
-const SERVICE_ENTRY = Object.freeze({ 'event-core': ['services', 'event-core', 'cli.mjs'], 'studio-ui': ['services', 'studio-ui', 'cli.mjs'] });
+const SERVICE_ENTRY = Object.freeze({
+  'event-core': ['services', 'event-core', 'cli.mjs'], 'studio-ui': ['services', 'studio-ui', 'cli.mjs'],
+  'studio-window': ['studio', 'ujwalam-studio.exe'], // LU4 (D346): a staged studio build
+});
 // The release parts an update runs from (copied and checked): the host part for the host; a service also reads the
 // data and the overlay pages of its release.
 const HOST_PARTS = Object.freeze(['host']);
 const SERVICE_PARTS = Object.freeze(['services', 'data', 'overlay']);
+// The studio window runs from its own part only (the Qt shell, its start stub and icon); Qt comes from the release's
+// kit as before (studioRootPaths in launch.mjs).
+const PARTS_OF = Object.freeze({ 'event-core': SERVICE_PARTS, 'studio-ui': SERVICE_PARTS, 'studio-window': Object.freeze(['studio-window']) });
+/** The queue's part for a swap request's service name: the overlay server follows the host; 'studio' is the window. */
+export const partFor = (service) => (service === 'overlay-server' ? 'host' : service === 'studio' ? 'studio-window' : service);
 
 /** Pure: true when any stream or record sink is starting, live, reconnecting, retrying or stopping, or the answer is
  *  not a usable outputs.status (fail safe: an unreadable status never lets the host restart). */
@@ -197,20 +206,23 @@ export function serviceRootProblem(service, root) {
   return null;
 }
 
-/** A service update: entry file, strict release.json (services, data and overlay hashes), a checked private copy. */
+/** A service update: entry file, strict release.json (the hashes of the parts it runs from: services, data and overlay
+ *  for the event core and the UI server; studio-window for the studio window), a checked private copy. */
 export function prepareService(service, root, { dataDir } = {}) {
   const why = serviceRootProblem(service, root);
   if (why) return { problem: why };
+  const parts = PARTS_OF[service];
+  if (!parts) return { problem: 'unknown or not wired service' };
   const rel = readRelease(root);
-  const bad = releaseProblem(rel, SERVICE_PARTS);
+  const bad = releaseProblem(rel, parts);
   if (bad) return { problem: bad };
-  const c = copyRelease(dataDir, root, rel, SERVICE_PARTS, 'services');
+  const c = copyRelease(dataDir, root, rel, parts, service === 'studio-window' ? 'studio' : 'services');
   if (c.problem) return c;
   return { root: c.dir, version: rel.version, n: rel.n, parts: rel.parts };
 }
 
 function servicePrepProblem(w) {
-  return serviceRootProblem(w.part, w.root) ?? partsProblem(w.root, SERVICE_PARTS, w.parts);
+  return serviceRootProblem(w.part, w.root) ?? partsProblem(w.root, PARTS_OF[w.part] ?? SERVICE_PARTS, w.parts);
 }
 
 function writeAtomic(file, obj) {
@@ -492,7 +504,7 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
       return serial(async () => {
         if (closed) return { result: 'refused', reason: 'Ujwalam is closing' };
         if (!accepting) return { result: 'refused', reason: 'live updates are off (feature flag service-swap)' };
-        const part = service === 'overlay-server' ? 'host' : service;
+        const part = partFor(service);
         let w;
         if (part === 'host') {
           if (!applyHost) return { result: 'refused', reason: 'no host is running' };

@@ -9,6 +9,10 @@
 // Device roles (game-capture, facecam) are bound with opts.roles = { role: deviceId }. An unbound role becomes a
 // transparent colour layer that keeps the geometry and is listed in `unbound`; no device is created or guessed.
 // Rule targets (cam-pop) are returned as layer ids in `rules`; the project model has no rule storage.
+// A `link` layer (scene packages, D341) shows a layer that already exists in the project: opts.links = { role: layerId }
+// makes it a `duplicate` of that layer (of its real target when it is itself a duplicate), so the device behind it is
+// opened once and nothing about the existing layer changes. An unbound or unknown link becomes a transparent
+// placeholder, listed in `unbound` like an unbound capture role.
 
 import path from 'node:path';
 import { IMAGE_EXT, newId, validateProject } from './index.mjs';
@@ -65,12 +69,52 @@ function fitContain(px, info, cropBars, trimKey) {
   if (c.left || c.top || c.right || c.bottom) px.crop = { left: c.left, top: c.top, right: c.right, bottom: c.bottom };
 }
 
+/** The id of the real (non-duplicate) layer that layer `id` shows, or null when there is none in the project. */
+export function realLayer(project, id) {
+  if (typeof id !== 'string') return null;
+  const all = new Map();
+  for (const s of project.scenes) for (const l of s.layers) all.set(l.id, l);
+  const seen = new Set();
+  let cur = all.get(id);
+  while (cur && cur.type === 'duplicate' && !seen.has(cur.id)) { seen.add(cur.id); cur = all.get(cur.source?.layer); }
+  return cur && cur.type !== 'duplicate' ? cur.id : null;
+}
+
+/** One scene for both canvases (the host shows one active scene on every canvas; H layers carry only H placements,
+ *  V layers only V): the V scene's layers move into the H scene and the V scene is dropped. A V capture layer whose
+ *  device already has an H capture layer becomes a `duplicate` of it (D60), so one device is opened once.
+ *  Returns { project, duplicated } on a copy; the input is not touched. */
+export function mergeCanvasScenes(project, hSceneId, vSceneId) {
+  const out = structuredClone(project);
+  const h = out.scenes.find((s) => s.id === hSceneId);
+  const v = out.scenes.find((s) => s.id === vSceneId);
+  const hCapture = new Map(h.layers.filter((l) => l.type === 'capture').map((l) => [l.source.device, l.id]));
+  const duplicated = [];
+  const movedTo = new Map(); // V capture layer id -> the H layer it now duplicates
+  for (const l of v.layers) {
+    if (l.type === 'capture' && hCapture.has(l.source.device)) {
+      l.type = 'duplicate';
+      l.source = { layer: hCapture.get(l.source.device) };
+      duplicated.push(l.id);
+      movedTo.set(l.id, l.source.layer);
+    }
+  }
+  for (const l of v.layers) {
+    // a V duplicate of a V capture layer (e.g. the blurred game backdrop) points at the real H layer: the host
+    // refuses a duplicate of a duplicate
+    if (l.type === 'duplicate' && movedTo.has(l.source.layer)) l.source = { layer: movedTo.get(l.source.layer) };
+    h.layers.push(l);
+  }
+  out.scenes = out.scenes.filter((s) => s.id !== vSceneId);
+  return { project: out, duplicated };
+}
+
 export function loadScenePreset(project, preset, opts = {}) {
   // flags: feature flag states ({ id: bool }); a preset layer with `flag` starts hidden while that flag is off, and
   // its `effects` apply only while `effectsFlag` (if set) is on.
   // mediaInfo(pathRef) -> { width, height, crop } | null (services/project/media-info.mjs): needed only by layers with
   // `fit: "contain"`; without it (or when it returns null) such a layer keeps its box as it is.
-  const { profile = {}, roles = {}, sceneName, idFn = newId, flags = {}, mediaInfo = null } = opts;
+  const { profile = {}, roles = {}, links = {}, sceneName, idFn = newId, flags = {}, mediaInfo = null } = opts;
   if (!preset || preset.function !== 'scene-layout-preset') throw new ScenePresetError('not a scene-layout-preset preset');
   const P = preset.params;
   const canvasId = P.canvas;
@@ -147,6 +191,14 @@ export function loadScenePreset(project, preset, opts = {}) {
         type = 'color'; source = { color: '#00000000' }; delete px.crop;
         placeholder.add(l.key);
       }
+    } else if (l.type === 'link') {
+      const target = realLayer(project, links[l.role]);
+      if (target) { type = 'duplicate'; source = { layer: target }; }
+      else {
+        unbound.push(l.role);
+        type = 'color'; source = { color: '#00000000' }; delete px.crop;
+        placeholder.add(l.key);
+      }
     } else if (l.type === 'browser') {
       type = 'browser';
       source = { overlay: overlayFor(l.overlay), width: Math.max(1, Math.round(px.width)), height: Math.max(1, Math.round(px.height)) };
@@ -166,6 +218,7 @@ export function loadScenePreset(project, preset, opts = {}) {
       const target = P.layers.find((x) => x.key === l.of);
       if (!target || target.type === 'duplicate') throw new ScenePresetError(`layer "${l.key}": duplicate of unknown or duplicate layer "${l.of}"`);
       if (placeholder.has(l.of)) { type = 'color'; source = { color: '#00000000' }; delete px.crop; placeholder.add(l.key); }
+      else if (target.type === 'link') { type = 'duplicate'; source = { layer: realLayer(project, links[target.role]) }; } // never a duplicate of a duplicate
       else { type = 'duplicate'; source = { layer: layerIds[l.of] }; }
     } else throw new ScenePresetError(`layer "${l.key}": unknown type "${l.type}"`);
     if (l.fit === 'contain' && (type === 'image' || type === 'media')) {

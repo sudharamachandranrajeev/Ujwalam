@@ -207,8 +207,8 @@ HelpPanel::HelpPanel(QWidget *host, AnchorResolver resolve) : QFrame(host), host
 	restyle();
 	connect(theme::notifier(), &theme::Notifier::changed, this, restyle);
 	auto *outer = new QVBoxLayout(this);
-	outer->setContentsMargins(16, 12, 10, 14);
-	outer->setSpacing(8);
+	theme::margins(outer, 16, 12, 10, 14);
+	theme::space(outer, 8);
 	auto *head = new QHBoxLayout();
 	auto *t = new QLabel(QStringLiteral("Help"), this);
 	t->setObjectName(QStringLiteral("guideTitle"));
@@ -231,8 +231,8 @@ HelpPanel::HelpPanel(QWidget *host, AnchorResolver resolve) : QFrame(host), host
 	scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
 	auto *body = new QWidget();
 	auto *v = new QVBoxLayout(body);
-	v->setContentsMargins(0, 0, 6, 0);
-	v->setSpacing(8);
+	theme::margins(v, 0, 0, 6, 0);
+	theme::space(v, 8);
 
 	// How clips are made
 	auto *s1 = new QLabel(QStringLiteral("How clips are made"), body);

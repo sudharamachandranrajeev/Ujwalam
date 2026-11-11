@@ -1,0 +1,48 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-or-later -->
+<!-- Ujwalam token panel (scene builder SB3, D341). Authored here, not part of the legacy overlays. A plain surface that
+     stands in for a graphics area of a reference layout: the browser layer is sized to the area and the panel fills it.
+     Theme tokens only, no colour of its own.
+     Query: radius= none|sm|md|pill  (the --radius-* token; anything else = none)
+            glow=   1 = the --ember-glow token around the panel (anything else = no glow)
+            theme=  brand theme id (data-theme, as the legacy pages' ?theme=); without it the brand's current theme
+     Static: one fade in (300 ms), no flashes. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Panel</title>
+<link rel="stylesheet" href="../../brand/tokens.css">
+<link rel="stylesheet" href="../../kit/overlay-base.css">
+<style>
+  .panel {
+    position: absolute; inset: 0; box-sizing: border-box;
+    background: var(--glass);
+    border: var(--stroke-frame, 3px) solid var(--steel);
+    border-radius: var(--radius-none);
+    opacity: 0;
+    transition: opacity 300ms ease-out;
+  }
+  .panel.r-sm { border-radius: var(--radius-sm); }
+  .panel.r-md { border-radius: var(--radius-md); }
+  .panel.r-pill { border-radius: var(--radius-pill); }
+  .panel.is-glow { border-color: var(--ember); box-shadow: var(--ember-glow); inset: 18px; }
+  .panel.is-on { opacity: 1; }
+</style>
+</head>
+<body>
+<div class="panel" id="panel"></div>
+<script>
+  (function () {
+    'use strict';
+    var q = new URLSearchParams(location.search);
+    var theme = q.get('theme') || '';
+    if (/^[a-z0-9][a-z0-9-]{0,39}$/.test(theme)) document.documentElement.setAttribute('data-theme', theme);
+    var panel = document.getElementById('panel');
+    var radius = q.get('radius');
+    if (radius === 'sm' || radius === 'md' || radius === 'pill') panel.classList.add('r-' + radius);
+    if (q.get('glow') === '1') panel.classList.add('is-glow');
+    requestAnimationFrame(function () { panel.classList.add('is-on'); });
+  })();
+</script>
+</body>
+</html>

@@ -17,7 +17,7 @@
 // --test-crash <kind> (needs --test-hooks; tests only): crash on purpose right after the crash reporter is installed and
 // before libobs starts (no GPU), to test the report (crash.h).
 // --headless (or UJWALAM_HEADLESS=1; every test run sets it): no preview window is ever created; preview.open fails
-// with CONFLICT. Otherwise previews are normal windows on the main display (D316).
+// with CONFLICT, except an embedded one into a hidden parent window (LU4 studio-swap tests, D346). Otherwise previews are normal windows on the main display (D316).
 // --twitch-bandwidth-test: keyed twitch sinks connect with "?bandwidthtest=true" appended to the stored key at connect
 // time (outputs.h); the credential is never changed.
 // Environment (the launcher's channel; values are never logged):

@@ -42,9 +42,9 @@
     }
   },
   "typography": {
-    "family": "Segoe UI",
+    "family": "Inter",
     "fallbacks": [
-      "Segoe UI Variable Text"
+      "Segoe UI"
     ],
     "baseSize": 10,
     "captionSize": 8,
@@ -52,13 +52,24 @@
     "headingWeight": 700,
     "letterSpacing": 0,
     "captionLetterSpacing": 0.8,
-    "captionCaps": true
+    "captionCaps": true,
+    "buttonCaps": false,
+    "tabCaps": false,
+    "headingCaps": true,
+    "scale": {
+      "h1": 16,
+      "h2": 12,
+      "subtitle": 10,
+      "body": 10,
+      "caption": 8,
+      "button": 10
+    }
   },
   "geometry": {
     "radius": {
-      "small": 8,
+      "small": 6,
       "medium": 12,
-      "large": 20
+      "large": 16
     },
     "spacing": {
       "small": 4,
@@ -77,19 +88,43 @@
     "card": {
       "shadow": {
         "blur": 18,
-        "offsetX": 4,
+        "offsetX": 6,
         "offsetY": 6,
         "color": "#9c8a70",
-        "opacity": 0.38
+        "opacity": 0.45
       },
-      "glow": {
-        "blur": 12,
+      "highlight": {
+        "blur": 16,
+        "offsetX": -6,
+        "offsetY": -6,
         "color": "#ffffff",
-        "opacity": 0.5,
-        "when": "always"
+        "opacity": 0.85
       }
     },
-    "button": {},
+    "button": {
+      "shadow": {
+        "blur": 10,
+        "offsetX": 3,
+        "offsetY": 3,
+        "color": "#9c8a70",
+        "opacity": 0.45
+      },
+      "highlight": {
+        "blur": 10,
+        "offsetX": -3,
+        "offsetY": -3,
+        "color": "#ffffff",
+        "opacity": 0.8
+      },
+      "inset": {
+        "blur": 8,
+        "offsetX": 2,
+        "offsetY": 2,
+        "color": "#8a7658",
+        "opacity": 0.5,
+        "when": "pressed"
+      }
+    },
     "primaryButton": {
       "shadow": {
         "blur": 12,
@@ -97,6 +132,21 @@
         "offsetY": 4,
         "color": "#0b3c40",
         "opacity": 0.35
+      },
+      "highlight": {
+        "blur": 8,
+        "offsetX": -2,
+        "offsetY": -2,
+        "color": "#ffffff",
+        "opacity": 0.6
+      },
+      "inset": {
+        "blur": 8,
+        "offsetX": 2,
+        "offsetY": 2,
+        "color": "#06282b",
+        "opacity": 0.5,
+        "when": "pressed"
       }
     },
     "roundControl": {
@@ -107,6 +157,13 @@
         "color": "#9c8a70",
         "opacity": 0.45
       },
+      "highlight": {
+        "blur": 10,
+        "offsetX": -3,
+        "offsetY": -3,
+        "color": "#ffffff",
+        "opacity": 0.8
+      },
       "extrusion": {
         "depth": 2,
         "color": "#c3b49e",
@@ -115,29 +172,50 @@
     },
     "toast": {
       "shadow": {
-        "blur": 22,
-        "offsetX": 4,
-        "offsetY": 7,
-        "color": "#7d6c55",
-        "opacity": 0.35
+        "blur": 20,
+        "offsetX": 5,
+        "offsetY": 6,
+        "color": "#9c8a70",
+        "opacity": 0.4
+      },
+      "highlight": {
+        "blur": 14,
+        "offsetX": -5,
+        "offsetY": -5,
+        "color": "#ffffff",
+        "opacity": 0.8
       }
     },
     "menu": {
       "shadow": {
-        "blur": 18,
-        "offsetX": 3,
+        "blur": 16,
+        "offsetX": 4,
         "offsetY": 5,
-        "color": "#7d6c55",
-        "opacity": 0.32
+        "color": "#9c8a70",
+        "opacity": 0.4
+      },
+      "highlight": {
+        "blur": 12,
+        "offsetX": -4,
+        "offsetY": -4,
+        "color": "#ffffff",
+        "opacity": 0.7
       }
     },
     "taskPanel": {
       "shadow": {
-        "blur": 22,
-        "offsetX": 4,
-        "offsetY": 7,
-        "color": "#7d6c55",
-        "opacity": 0.32
+        "blur": 20,
+        "offsetX": 5,
+        "offsetY": 6,
+        "color": "#9c8a70",
+        "opacity": 0.38
+      },
+      "highlight": {
+        "blur": 14,
+        "offsetX": -5,
+        "offsetY": -5,
+        "color": "#ffffff",
+        "opacity": 0.8
       }
     }
   },
@@ -158,5 +236,26 @@
   },
   "icons": {
     "stroke": 2
+  },
+  "components": {
+    "button": {
+      "shape": "pill",
+      "style": "neumorph",
+      "caps": false
+    },
+    "tabs": "segmented",
+    "input": "inset",
+    "focus": "ring",
+    "switch": "labelled",
+    "slider": {
+      "track": "thin",
+      "handle": "round",
+      "valueBubble": true
+    },
+    "sectionHeader": "caps",
+    "card": "neumorph",
+    "list": "plates",
+    "chip": "pill",
+    "density": "airy"
   }
 }

@@ -608,6 +608,15 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		(void)Params(p, {});
 		return a.previews->list();
 	});
+	// preview.testParent {action, canvas?}: a hidden window to embed into, and attempts to show the embedded preview
+	// (Previews::test_parent; headless guard, Codex review of D346). --test-hooks only.
+	add("preview.testParent", [&a](const json::Value &p) {
+		Params q(p, {"action", "canvas"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "preview.testParent needs a host started with --test-hooks");
+		const std::string action = q.str("action", 16);
+		return a.previews->test_parent(action, q.has("canvas") ? canvas_param(q) : std::string());
+	});
 	// Mouse editing on the preview (P5, D230; preview_edit.h). preview.setEditing follows flag preview-edit (the UI
 	// server calls it when the flag and host.status previewEditing differ; off is instant). preview.edits lists the
 	// placements committed by mouse releases after `since` (they went through layer_set_placement already; the UI

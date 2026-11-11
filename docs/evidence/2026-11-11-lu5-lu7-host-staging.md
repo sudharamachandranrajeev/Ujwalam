@@ -137,6 +137,23 @@ after the `stopped-by-user` record; host and overlay server show the new version
 value in the log. Close with a staged update -> tried and accepted at the next start. A broken update while running is
 rolled back and recorded as rejected.
 
+## Merge with LU4 (studio window swap, D346)
+
+`git merge claude/alpha0-d1` (LU4 merged as 937175c). A `studio` swap request now goes through the update queue as
+the part `studio-window` (checked copy, LU4's studio slot and entry check, one at a time; D343). The worktree's studio
+was rebuilt (`node app/studio/tools/build.mjs`, the merge brought LU4's C++ changes). Runs after the merge, one file at
+a time, `--test-timeout=60000`:
+
+| Suite | Result |
+|---|---|
+| `tests/live-updates.test.mjs` | tests 26, pass 26, fail 0 (2 new: studio update waits for one click, runs from its copy, never during a host replacement; serveSwaps routes studio through the queue, one at a time, timings kept) |
+| `tests/live-updates-launcher.test.mjs` | tests 5, pass 5, fail 0 |
+| `tests/studio-swap-launcher.test.mjs` | tests 9, pass 9, fail 0 (staged builds now carry release.json; a dev build and a stale n are refused; the control page shows the studio version) |
+| `tests/service-swap-launcher.test.mjs` | tests 4, pass 4, fail 0 |
+| `tests/studio-ui-quit-lock.test.mjs` | tests 5, pass 5, fail 0 |
+
+Lint: `lint: 0 finding(s)`. Not run: `tests/studio-swap-stream.test.mjs` (heavy, real host and loopback stream).
+
 ## UNVERIFIED
 
 - The Qt studio window does not show the update status yet (needs C++; not built in this task). The control page does.

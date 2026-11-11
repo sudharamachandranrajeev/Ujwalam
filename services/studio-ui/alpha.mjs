@@ -20,7 +20,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createProject, loadProject, newId, projectFile, saveProject, validateProject } from '../project/index.mjs';
-import { loadScenePreset, ScenePresetError } from '../project/scene-preset.mjs';
+import { loadScenePreset, mergeCanvasScenes as mergeInto, ScenePresetError } from '../project/scene-preset.mjs';
 
 export const ALPHA_ID = 'alpha';
 export const H_PRESET = 'scene-default-h.json';
@@ -56,31 +56,6 @@ export function streamAssetsDir(profile, fallback = STREAM_ASSETS_DEFAULT) {
     try { if (d && statSync(d).isDirectory()) return path.resolve(d); } catch { /* try the next */ }
   }
   return null;
-}
-
-function mergeInto(project, hSceneId, vSceneId) {
-  const out = structuredClone(project);
-  const h = out.scenes.find((s) => s.id === hSceneId);
-  const v = out.scenes.find((s) => s.id === vSceneId);
-  const hCapture = new Map(h.layers.filter((l) => l.type === 'capture').map((l) => [l.source.device, l.id]));
-  const duplicated = [];
-  const movedTo = new Map(); // V capture layer id -> the H layer it now duplicates
-  for (const l of v.layers) {
-    if (l.type === 'capture' && hCapture.has(l.source.device)) {
-      l.type = 'duplicate';
-      l.source = { layer: hCapture.get(l.source.device) };
-      duplicated.push(l.id);
-      movedTo.set(l.id, l.source.layer);
-    }
-  }
-  for (const l of v.layers) {
-    // a V duplicate of a V capture layer (e.g. the blurred game backdrop) points at the real H layer: the host
-    // refuses a duplicate of a duplicate
-    if (l.type === 'duplicate' && movedTo.has(l.source.layer)) l.source = { layer: movedTo.get(l.source.layer) };
-    h.layers.push(l);
-  }
-  out.scenes = out.scenes.filter((s) => s.id !== vSceneId);
-  return { project: out, duplicated };
 }
 
 export function buildAlphaProject({ presetsDir, profile = {}, bindings = { bound: {}, unavailable: [] }, devicesListed = false, idFn = newId, flags = {}, mediaInfo = null } = {}) {

@@ -145,6 +145,9 @@ export const SERVICES = Object.freeze({
   'studio-ui': { mode: 'side-by-side' },
   'live-clipper': { mode: 'stop-start' },
   'face-worker': { mode: 'stop-start' },
+  // LU4 (D346): the Qt studio window. Closed for the update ("swap-close", not a user close); the new exe reattaches
+  // to the running host. The host, its encoders and outputs never stop. Stop-start: two windows never overlap.
+  studio: { mode: 'stop-start' },
   host: { mode: null, why: 'the host owns the encoders and is never swapped while live; its update is applied at the next stop (LU5)' },
   'overlay-server': { mode: null, why: 'the overlay server is a child of the host (the host starts it, pins its ports and restarts it); it is updated with the host at the next stop' },
 });

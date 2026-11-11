@@ -23,7 +23,7 @@ import { changedParts, folderFiles, partOf, releaseParts } from '../services/sup
 import { createStudioServer, gateStarts } from '../services/studio-ui/server.mjs';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import { authorityClient, createLiveAuthority, serveAuthority } from '../services/studio-ui/stream-recovery.mjs';
-import { stopHostChild } from '../services/studio-ui/launch.mjs';
+import { serveSwaps, stopHostChild } from '../services/studio-ui/launch.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const FAKE_HOST = path.join(REPO, 'tests', 'fixtures', 'studio-ui', 'fake-host.mjs');
@@ -646,4 +646,65 @@ test('Codex re-review A: a lease grant that arrives after its request timed out 
   assert.equal(gate.state().inFlight, 1);
   await client.release(held.lease);
   assert.equal(gate.state().inFlight, 0);
+});
+
+/** A staged studio window release (LU4, D346): studio/ujwalam-studio.exe (a stand-in file) and release.json. */
+function studioRelease(root, { n = 99, version = `0.1.0-alpha.${n}` } = {}) {
+  mkdirSync(path.join(root, 'studio'), { recursive: true });
+  writeFileSync(path.join(root, 'studio', 'ujwalam-studio.exe'), `stand-in studio ${n}\n`);
+  writeFileSync(path.join(root, 'release.json'), JSON.stringify({ version, n, parts: partsOf(root) }));
+  return root;
+}
+
+test('LU4 + LU7: a studio window update while live waits for one click and runs from a checked copy; never during a host replacement', async () => {
+  let hostDone;
+  const order = [];
+  const q = queue({
+    applyHost: async (entry) => { order.push(`host ${entry.n} start`); await new Promise((r) => { hostDone = r; }); order.push(`host ${entry.n} end`); return { result: 'swapped' }; },
+    swapService: async (service, root) => { order.push(`${service} ${path.basename(root)}`); return { result: 'swapped', history: [] }; },
+  });
+  const w = await q.u.request({ service: 'studio', root: studioRelease(path.join(tmp(), 'st'), { n: 10 }) });
+  assert.equal(w.result, 'waiting');
+  assert.deepEqual(q.mirror().waiting.map((x) => [x.part, x.click]), [['studio-window', true]]);
+  assert.match((await q.u.request({ service: 'studio', root: serviceRelease(path.join(tmp(), 'nost')) })).reason, /entry file/);
+  // A host update is staged; at the stop the host replacement runs; the studio click waits for it to finish.
+  assert.equal((await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'h'), { n: 20 }) })).result, 'staged');
+  q.st.busy = false;
+  assert.ok(await until(() => order.includes('host 20 start')));
+  const click = q.u.apply(w.id);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(order, ['host 20 start'], 'the studio swap does not start during the host replacement');
+  hostDone();
+  const r = await click;
+  assert.equal(r.result, 'swapped');
+  assert.deepEqual(order.slice(0, 2), ['host 20 start', 'host 20 end']);
+  assert.match(order[2], /^studio-window studio-10-[0-9a-f]{16}$/, 'the studio window runs from its checked copy');
+  assert.equal(q.mirror().parts.find((p) => p.part === 'studio-window').version, '0.1.0-alpha.10');
+  assert.match((await q.u.request({ service: 'studio', root: studioRelease(path.join(tmp(), 'old'), { n: 9 }) })).reason, /not newer than the running Studio window/);
+  q.u.close();
+});
+
+test('LU4 + LU5: serveSwaps sends a studio request through the queue with the entry check; one request at a time; timings in the answer', async () => {
+  const p = new EventEmitter(); p.sent = []; p.connected = true; p.send = (m) => p.sent.push(m);
+  let release;
+  const asked = [];
+  const updates = { request: ({ service, root }) => { asked.push([service, root]); return new Promise((r) => { release = () => r({ result: 'swapped', ms: 3, history: [{ action: 'check-new', ok: true, value: { readyMs: 7 } }] }); }); } };
+  const stage = studioRelease(path.join(tmp(), 'sw'), { n: 4 });
+  serveSwaps({ slots: { studio: {}, 'event-core': {} }, log: () => {}, proc: p, updates, entryOk: (s, root) => root === stage });
+  p.emit('message', { t: 'ujwalam-swap', id: 1, service: 'studio', root: stage });
+  await settle();
+  p.emit('message', { t: 'ujwalam-swap', id: 2, service: 'event-core', root: stage });
+  p.emit('message', { t: 'ujwalam-swap', id: 3, service: 'studio', root: tmp() });
+  await settle();
+  assert.deepEqual(p.sent.map((m) => [m.id, m.result]), [[2, 'refused'], [3, 'refused']]);
+  assert.match(p.sent[0].reason, /one at a time/);
+  release();
+  await settle();
+  assert.deepEqual(asked, [['studio', stage]]);
+  assert.deepEqual([p.sent[2].id, p.sent[2].result, p.sent[2].studio], [1, 'swapped', { readyMs: 7 }]);
+  // Not the entry the studio slot can start: refused before the queue.
+  p.emit('message', { t: 'ujwalam-swap', id: 4, service: 'studio', root: tmp() });
+  await settle();
+  assert.match(p.sent.at(-1).reason, /entry file/);
+  assert.equal(asked.length, 1);
 });
