@@ -158,6 +158,8 @@ private:
 	void updateAddButtons();
 	void openImport();   // Meld session import -> host check -> project.load on the click (the page's flow)
 	void openPosts();    // flag posting (P16a): review clip packages; YouTube private upload on the click
+	void openReview();   // flag learning-review (LL3, D340): confirm or correct the reads the clip maker queued
+	void loadReviewCount();
 	void report();       // flag report-button (D199): prefilled GitHub issue link opened in the user's browser
 	void openFeedback(); // post-stream notes on feedback moments (D150), the browser page's form
 	void botAction(const QString &bot, bool start);
@@ -250,6 +252,10 @@ private:
 	QString alertLevel_;         // worst level shown: info, warn, error; empty when hidden
 	QList<PreviewSlot *> slots_;
 	QPushButton *settingsBtn_ = nullptr, *clipsFolderBtn_ = nullptr;
+	QPushButton *reviewBtn_ = nullptr; // My clips > Review reads (LL3, D340): flag on and items queued
+	bool learningReviewOn_ = false;
+	int reviewPoll_ = 0, reviewCount_ = 0;
+	QPointer<QDialog> reviewDlg_;
 	Guide *guide_ = nullptr;       // tips, tour and help (D294 proposed)
 	QPushButton *helpBtn_ = nullptr;
 	QWidget *moreBtn_ = nullptr;
