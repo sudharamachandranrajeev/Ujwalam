@@ -873,3 +873,46 @@ could turn on in settings as well." Decided:
 Not done: a snap-distance setting (the triage row mentions one; the distance stays 8 px, D272). Real-mouse feel on the
 user's screen is UNVERIFIED until the user tries it.
 Evidence: `docs/evidence/2026-11-10-f8-preview-select-snap.md`.
+
+## D336 — Theme framework T1: components block (schema v2), variant fragments, flag theme-components (2026-11-11, user request R10)
+
+Spec `docs/plan/2026-11-10-theme-framework.md` §3 and §5 row T1; the user's answers in §6. The user asked that each
+theme be a full design (layout, shapes, type, components, effects), not a colour swap. T1 builds the framework only;
+no theme is designed and no font is added here. Decided:
+- **Schema v2** (`data/themes/theme.schema.json`): an optional top-level `components` block with enumerated variants
+  only (button shape, style, secondary and caps; tabs; input; focus; switch; slider track, handle and value bubble;
+  section header; card; list; chip; density). `additionalProperties: false` everywhere, so an unknown key or variant
+  fails the schema, and the studio's `packProblem` refuses the same pack (it is not listed and cannot be applied).
+  Typography gains `buttonCaps`, `tabCaps`, `headingCaps` and a type scale (h1, h2, subtitle, body, caption, button,
+  6..28 pt). Background gains the `blueprint` and `columns` patterns and a `frame` (thin outer frame, optional corner
+  and mid-edge ticks). Depth classes gain `highlight` (a light shadow), `inset` (inner shadow, always or pressed) and
+  `rim` (gradient edge with an optional inner glow).
+- **Flag `theme-components`**, off by default, switchable on the control page while live. Off: every v2 part is
+  ignored (a v2 pack looks like its v1 parts; blueprint shows as grid, columns as no pattern) and the stylesheet is
+  exactly the v1 one. On: the pack's variants apply; a pack without a `components` block keeps the same base
+  stylesheet (the probe reports its hash; the test compares on and off) and only gets two rules for things that exist
+  only with the flag: the error state of fields (no studio field sets it yet; the specimen shows it) and the slider's
+  value bubble.
+- **An empty variant is the base look.** Fragments are appended after the base stylesheet in `theme.cpp`
+  (`componentQss`), so they override it rule for rule; derived colours (tint, well, metal ends and others) are mixed
+  from the pack's tokens, never hardcoded, and mirrored in `tests/studio-theme-contrast.test.mjs`.
+- **High performance stays flat**: no gradients (metal and sphere fall back to plain fills), no depth effects
+  (highlight, inset and rim included), no switch halo.
+- Painted widgets read their variant through `theme::component()` / `theme::componentFlag()`: Switch (plain,
+  labelled, bezel), the ValueSlider value bubble, task chips (bracket chips show "[ text ]"). Round transport buttons
+  and section headers are stylesheet-drawn, so their variants come from the fragments (`QPushButton#round`,
+  `QGroupBox::title`, `QLabel#heading`) plus heading caps; no painted code was needed for them.
+- **Density** goes through `theme::space()` / `theme::margins()` at the fixed spacing call sites (73 sites): compact
+  0.75, normal 1, airy 1.25; the base values are kept on the layouts, so a switch re-applies them.
+- **Caps are applied by font capitalisation** (the label text never changes, so tests and screen readers see the
+  real words).
+- **Specimen page**: Settings > Appearance > "Preview all components" (shown only with the flag on) opens one window
+  with every component in every state; it follows a theme switch at once.
+- **Contrast test scope**: every pack, every state (normal, hover, pressed, checked or selected, focus, error): text
+  4.5:1, control parts and focus indicators 3:1. Disabled text is exempt (WCAG 1.4.3); borders that only decorate a
+  filled control are not checked. Every variant in the schema must have a contrast table. Known base gaps, kept
+  because T1 must not change existing looks: Tactical's warning text on the field colour (4.28:1), and the base
+  Switch (knob and ON in the text colour on the accent track, below 3:1 in most packs). Every switch variant paints
+  onAccent on the "on" side and passes on every pack; the base switch is fixed when the packs are redesigned (T2-T6).
+- Not in T1: elevation levels 1-5 (spec §3) and the per-theme designs and fonts (T2-T6).
+Evidence: `docs/evidence/2026-11-11-t1-theme-framework.md`.
