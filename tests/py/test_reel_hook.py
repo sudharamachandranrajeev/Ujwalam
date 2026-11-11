@@ -170,6 +170,23 @@ class ScoreTests(unittest.TestCase):
         sc = rh.hook_score(ps, [], [{"t": 11.0, "w": 1.0, "kill": False}], CFG)
         self.assertEqual((sc["kill"], sc["medal"]), (False, True))
 
+    def test_the_whole_opening_is_checked_for_a_death_not_only_the_teaser(self):
+        # a clear 2 s teaser, but the reel body starts inside a death: its first second would land in the first 3 s
+        out, rec = rh.plan_hook(match_reel(), "teaser", 2, CFG, max_sec=60, deaths=[(99.0, 100.5)])
+        self.assertEqual(rec["used"], "none")
+        self.assertIn("clear of a death", rec["reason"])
+        self.assertEqual(out, match_reel(), "the reel is left as it was")
+        # a death later than the window's end in the body does not block the teaser
+        out, rec = rh.plan_hook(match_reel(), "teaser", 2, CFG, max_sec=60, deaths=[(101.5, 102.0)])
+        self.assertEqual(rec["used"], "teaser")
+        self.assertFalse(rh._opens_on_death(out["pieces"], CFG["windowSec"], [(101.5, 102.0)]))
+        # reorder: the best piece opens on a death, the next candidate whose opening is clear is used
+        reel = {"pieces": [piece(100, 104.5), piece(200, 203.5, 2), piece(300, 303, 1)],
+                "peaks": [103.0, 201.0, 203.0, 302.0], "medals": []}
+        out, rec = rh.plan_hook(reel, "reorder", 2, CFG, max_sec=60, deaths=[(199.0, 200.4)])
+        self.assertNotEqual(rec.get("peak"), 203.0)
+        self.assertFalse(rh._opens_on_death(out["pieces"], CFG["windowSec"], [(199.0, 200.4)]))
+
     def test_live_clip_hook(self):
         ex = {"hooks": {"live-clip": {"on": True, "teaserSec": 2.0}}, "hcfg": CFG}
         c = {"start": 10.0, "end": 70.0, "anchor": 55.0, "labels": ["Triple Kill"]}
@@ -227,6 +244,24 @@ class RenderTests(unittest.TestCase):
         still = rh.motion_ydif("ffmpeg", "plain.mp4", 2, cwd=self.tmp)
         self.assertGreater(moving, CFG["score"]["motion"]["minYdif"], "the teaser opens on the moving part")
         self.assertLess(still, CFG["score"]["motion"]["minYdif"], "the plain reel opens on the still part")
+
+    def test_a_save_without_audio_renders_its_teaser_picture_only(self):
+        mute = os.path.join(self.tmp, "mute.mp4")
+        r = cc.run_tool(["ffmpeg", "-v", "error", "-nostdin", "-y", "-i", self.src, "-an", "-c:v", "copy", mute], timeout=300)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        sinfo = cc.media_info("ffprobe", mute)
+        self.assertFalse(sinfo["has_audio"])
+        ex = {"hooks": {"live-clip": {"on": True, "teaserSec": 2.0}}, "hcfg": CFG}
+        m = clipper._live_hook({"start": 4.0, "end": 18.0, "anchor": 15.0, "labels": ["Triple Kill"]}, ex,
+                               {"minSec": 5, "maxSec": 60})
+        self.assertEqual(m["hook"]["used"], "teaser")
+        wd = os.path.join(self.tmp, "mute-wd")
+        os.makedirs(wd, exist_ok=True)
+        name = clipper._render_pieces("ffmpeg", mute, m["pieces"], {"width": 360, "height": 640}, "libopenh264", wd,
+                                      "stream-v", sinfo, 80, 60)
+        info = cc.media_info("ffprobe", os.path.join(wd, name))
+        self.assertFalse(info["has_audio"], "picture only")
+        self.assertAlmostEqual(info["duration"], m["seconds"], delta=0.15, msg="the teaser is in the rendered file")
 
 
 if __name__ == "__main__":

@@ -18,6 +18,7 @@ import clip_common as cc  # noqa: E402
 import clip_montage as mont  # noqa: E402
 import clipper  # noqa: E402
 import reel_captions as rcap  # noqa: E402
+import reel_length as rl  # noqa: E402
 
 CFG = rcap.load_config()
 STYLE = rcap.load_style(CFG)
@@ -218,6 +219,36 @@ class RenderTests(unittest.TestCase):
         with open(os.path.join(data, cc.LOCAL_FLAGS), "w", encoding="utf-8") as f:
             json.dump({"flags": {"clip-pipeline": True, "reel-captions": False}}, f)
         self.assertEqual(clipper.main(["--data-dir", data, "recaption", "--out", out, "--id", "M01"]), 1)
+
+    def test_recaption_keeps_the_reel_length_after_the_maximum_is_lowered(self):
+        out = os.path.join(self.tmp, "run-long")
+        wd = os.path.join(out, "clips", "M01")
+        os.makedirs(wd, exist_ok=True)
+        data = os.path.join(self.tmp, "data-long")
+        os.makedirs(data, exist_ok=True)
+        with open(os.path.join(data, cc.LOCAL_FLAGS), "w", encoding="utf-8") as f:
+            json.dump({"flags": {"clip-pipeline": True, "reel-captions": True}}, f)
+        pieces = [{"start": 1.0, "end": 11.0, "kills": 1} for _ in range(3)]  # a 30 s reel
+        r = cc.run_tool(mont.render_argv("ffmpeg", self.src, pieces, {"width": 540, "height": 960},
+                                         ["-c:v", "libopenh264"], ["-c:a", "aac"], 80, "montage-v.mp4"), cwd=wd, timeout=600)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        before = cc.media_info("ffprobe", os.path.join(wd, "montage-v.mp4"))["duration"]
+        self.assertAlmostEqual(before, 30.0, delta=0.15)
+        # the user lowers the montage maximum to 20 s after the reel was made
+        with open(os.path.join(data, "settings.json"), "w", encoding="utf-8") as f:
+            json.dump({"clips": {"reelLengths": {"montage": {"minSec": 20, "maxSec": 20}}}}, f)
+        self.assertEqual(rl.effective_limits(data)["montage"]["maxSec"], 20)
+        cc.write_json_atomic(os.path.join(out, "render.json"), {
+            "tool": "clipper.montage", "frame": {"width": 540, "height": 960}, "vRecordingPath": self.src,
+            "audioFadeMs": 80, "clips": [{"id": "M01", "start": 0.0, "end": 30.0, "pieces": pieces,
+                                          "captions": {"status": "ok"},
+                                          "files": [{"layout": "montage-v", "file": "montage-v.mp4", "geometry": "canvas"}]}]})
+        cc.write_json_atomic(os.path.join(wd, rcap.TRANSCRIPT), {"version": 1, "edited": True, "segments": [
+            {"start": 25.0, "end": 28.0, "text": "LATE LINE", "confidence": 0.9, "show": True, "hidden": None}]})
+        rc = clipper.main(["--data-dir", data, "recaption", "--out", out, "--id", "M01", "--encoder", "libopenh264"])
+        self.assertEqual(rc, 0)
+        after = cc.media_info("ffprobe", os.path.join(wd, "montage-v.mp4"))["duration"]
+        self.assertAlmostEqual(after, before, delta=0.15, msg="no cut from the current maximum setting")
 
 
 if __name__ == "__main__":

@@ -154,24 +154,29 @@ def _teaser(piece, t, teaser_sec, lead):
 
 def plan_hook(reel, strategy, teaser_sec, cfg, max_sec=None, deaths=None):
     """-> (reel with its hook applied, hook record). cfg: reel-hook.json. max_sec: the reel type's maximum (D350); a
-    teaser is never added past it. deaths: [(start, end)] source spans (KILLCAM, spectating) to keep out of the open."""
+    teaser is never added past it. deaths: [(start, end)] source spans (KILLCAM, spectating) to keep out of the open.
+    The whole proposed opening (teaser plus the start of the body, up to the window) must be clear of deaths; a candidate
+    whose opening is not is skipped and the next one is tried."""
     window, lead = float(cfg["windowSec"]), float(cfg["leadSec"])
     pieces = [dict(p) for p in reel["pieces"]]
     total = sum(_len(p) for p in pieces)
-    rec = {"on": True, "strategy": strategy, "windowSec": window}
     moments = sorted(_moments(reel, window), key=lambda m: (-m[0], m[1], m[2]))
-    best = None
     for strength, i, t in moments:
         s, e = _teaser(pieces[i], t, teaser_sec, lead)
         if _overlaps(s, e, deaths) or _overlaps(t - EPS, t + EPS, deaths):
             continue
-        best = (strength, i, t)
-        break
-    if best is None:
-        rec.update(used="none", reason="no own kill or medal moment outside a death span")
-        return reel, rec
-    strength, i, t = best
-    rec.update(peak=round(t, 3), strength=round(strength, 3))
+        got = _plan_at(reel, pieces, total, strategy, teaser_sec, window, lead, max_sec, deaths, strength, i, t)
+        if got is not None:
+            return got
+    rec = {"on": True, "strategy": strategy, "windowSec": window, "used": "none",
+           "reason": "no own kill or medal moment outside a death span" if not moments
+           else "no own kill or medal moment whose opening is clear of a death span"}
+    return reel, rec
+
+
+def _plan_at(reel, pieces, total, strategy, teaser_sec, window, lead, max_sec, deaths, strength, i, t):
+    """The hook around the moment at pieces[i], t; None when the proposed opening would show a death."""
+    rec = {"on": True, "strategy": strategy, "windowSec": window, "peak": round(t, 3), "strength": round(strength, 3)}
     at = _out_time(pieces, i, t)
     if at <= window + EPS and not _opens_on_death(pieces, window, deaths):
         rec.update(used="already", peakOut=round(at, 3))
@@ -189,13 +194,17 @@ def plan_hook(reel, strategy, teaser_sec, cfg, max_sec=None, deaths=None):
     s, e = _teaser(pieces[i], t, teaser_sec, lead)
     if max_sec is not None and total + (e - s) > float(max_sec) + EPS:
         if strategy == "reorder":
+            if _opens_on_death(pieces, window, deaths):
+                return None
             out.update(pieces=pieces)
             rec.update(used="reorder", peakOut=round(at, 3), reason="no room for a teaser within the maximum")
             return out, rec
         rec.update(used="none", reason="no room for a teaser within the maximum")
         return reel, rec
-    out.update(pieces=[{"start": s, "end": e, "kills": 0, "teaser": True}] + pieces,
-               seconds=round(total + (e - s), 3))
+    opening = [{"start": s, "end": e, "kills": 0, "teaser": True}] + pieces
+    if _opens_on_death(opening, window, deaths):
+        return None
+    out.update(pieces=opening, seconds=round(total + (e - s), 3))
     rec.update(used="teaser" if strategy == "teaser" else "reorder+teaser", teaser=[s, e],
                teaserSec=round(e - s, 3), peakOut=round(t - s, 3))
     return out, rec

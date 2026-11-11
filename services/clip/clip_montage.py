@@ -171,7 +171,8 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     audio faded in and out by fade_ms (no pop at a hard cut), then concatenated. Every audio track of the source
     (audio_tracks) is kept as its own track, in source order (track 1 = the studio mix); none is dropped or remixed.
     captions (ED2, D353): a bare ASS file name in the working folder, burned over the joined picture with libass;
-    fontsdir: a bare folder name next to it holding the caption font (no system font, no path escaping)."""
+    fontsdir: a bare folder name next to it holding the caption font (no system font, no path escaping).
+    audio_tracks=0: a source without audio renders picture only (no audio filters, maps or audio encoder)."""
     ow, oh = int(frame["width"]), int(frame["height"])
     fd = fade_ms / 1000.0
     argv = [ffmpeg, "-v", "error", "-nostdin", "-y", "-threads", str(threads), "-filter_threads", "2"]
@@ -194,7 +195,7 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     # CL1 (D350): nothing here adds time (no transition, pad, crossfade or hold: a hard concat, fades inside the pieces);
     # the fps filter can round a piece by up to one frame, so the output is also cut at the type's maximum.
     cap = ["-t", f"{float(max_sec):.3f}"] if max_sec else []
-    argv += ["-filter_complex", ";".join(parts), *maps, *encoder_args, *audio_args, *cap,
+    argv += ["-filter_complex", ";".join(parts), *maps, *encoder_args, *(audio_args if audio_tracks else ["-an"]), *cap,
              "-movflags", "+faststart", "-f", "mp4", out_name]
     return argv
 

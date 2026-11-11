@@ -657,10 +657,15 @@ def cmd_live_review(a):
         files, errors = [], []
         m = _live_hook(c, ex, lim_live)
         sinfo = infos[c["file"]]
-        # the canvas layout renders through the pieces path when a teaser opens the clip or captions are on
-        pieces_path = sinfo.get("has_audio") and (bool(m["hook"].get("teaser")) or ex["cap_on"])
-        ass, fdir, cinfo = (_caption_reel(ffmpeg, c["file"], m["pieces"], frame, wd, ex, m["seconds"]) if pieces_path
-                            else (None, None, {"backend": "none", "status": "off"}))
+        # the canvas layout renders through the pieces path when a teaser opens the clip or captions are on; a save
+        # without audio renders picture only there, so a planned teaser is always what is rendered (and recorded)
+        pieces_path = bool(m["hook"].get("teaser")) or (ex["cap_on"] and bool(sinfo.get("has_audio")))
+        if pieces_path and sinfo.get("has_audio"):
+            ass, fdir, cinfo = _caption_reel(ffmpeg, c["file"], m["pieces"], frame, wd, ex, m["seconds"])
+        else:
+            ass, fdir = None, None
+            cinfo = ({"backend": "none", "status": "unavailable", "reason": "no audio"} if ex["cap_on"]
+                     else {"backend": "none", "status": "off"})
         hook = m["hook"]
         for lid in wanted:
             try:
@@ -736,8 +741,8 @@ def _render_pieces(ffmpeg, src, pieces, frame, encoder, wd, lid, sinfo, fade_ms,
     import clip_montage as mont  # noqa: PLC0415
     name = f"{lid}.mp4"
     argv = mont.render_argv(ffmpeg, src, pieces, frame, rnd.ENCODERS[encoder], rnd.AUDIO, fade_ms, name + ".part",
-                            audio_tracks=max(1, int(sinfo.get("audio_tracks") or 1)), max_sec=max_sec,
-                            captions=ass, fontsdir=fdir)
+                            audio_tracks=max(1, int(sinfo.get("audio_tracks") or 1)) if sinfo.get("has_audio") else 0,
+                            max_sec=max_sec, captions=ass, fontsdir=fdir)
     r = rnd.run_tool(argv, cwd=wd, timeout=1800)
     if r.returncode != 0:
         try:
@@ -1018,12 +1023,16 @@ def cmd_recaption(a):
     style = rcap.load_style(ccfg)
     safe = caps.safe_area(load_config("targets", a.targets))
     ass, fdir, n = rcap.write_ass(tr, rdoc["frame"], safe, style, wd, seconds)
-    typ = KIND_TYPE.get(a.id[:1], "live-clip")
-    max_sec = rl.effective_limits(data_dir)[typ]["maxSec"]
     fade = int(rdoc.get("audioFadeMs") or load_config("montage", None)["audioFadeMs"])
     name = canvas["file"]
+    # the reel keeps its own timeline and length: the cut is the existing file's length (or none), never the current
+    # maximum setting, which may have been lowered since the reel was made
+    old = os.path.join(wd, name)
+    max_sec = (media_info(ffprobe, old).get("duration") or None) if os.path.isfile(old) else None
+    sinfo = media_info(ffprobe, src)
     argv = mont.render_argv(ffmpeg, src, pieces, rdoc["frame"], rnd.ENCODERS[rnd.pick_encoder(a.encoder)], rnd.AUDIO,
-                            fade, name + ".part", audio_tracks=max(1, int(media_info(ffprobe, src).get("audio_tracks") or 1)),
+                            fade, name + ".part",
+                            audio_tracks=max(1, int(sinfo.get("audio_tracks") or 1)) if sinfo.get("has_audio") else 0,
                             max_sec=max_sec, captions=ass, fontsdir=fdir)
     r = rnd.run_tool(argv, cwd=wd, timeout=1800)
     _drop_fonts(wd)
