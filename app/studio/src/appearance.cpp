@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "appearance.h"
 
+#include "specimen.h"
 #include "theme.h"
 
 #include <QAbstractButton>
@@ -13,7 +14,9 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
+#include <QHBoxLayout>
 #include <QLinearGradient>
+#include <QPushButton>
 #include <QPainter>
 #include <QPolygonF>
 #include <QScrollArea>
@@ -193,6 +196,24 @@ Page::Page(const QString &themeNow, const QString &effectsNow, const QString &mo
 	}
 	grid->setColumnStretch(4, 1);
 	bv->addLayout(grid);
+	// D336 (flag theme-components): every component in the current theme, in every state, in one window.
+	auto *specimen = new QPushButton(QStringLiteral("Preview all components"), box);
+	specimen->setObjectName(QStringLiteral("appearanceSpecimen"));
+	specimen->setToolTip(QStringLiteral("Open a sheet with every button, field, tab, switch, slider, card and message in the current theme"));
+	specimen->setVisible(theme::componentsOn());
+	connect(theme::notifier(), &theme::Notifier::changed, specimen, [specimen]() { specimen->setVisible(theme::componentsOn()); });
+	connect(specimen, &QPushButton::clicked, this, [this]() {
+		if (!specimen_) {
+			specimen_ = new Specimen(window());
+			specimen_->setAttribute(Qt::WA_DeleteOnClose);
+		}
+		specimen_->show();
+		specimen_->raise();
+	});
+	auto *srow = new QHBoxLayout();
+	srow->addWidget(specimen);
+	srow->addStretch(1);
+	bv->addLayout(srow);
 	v->addWidget(box);
 
 	auto *fxBox = new QGroupBox(QStringLiteral("EFFECTS"), body);

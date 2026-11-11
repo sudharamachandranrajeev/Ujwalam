@@ -72,6 +72,7 @@ public:
 	// dragged. Pinned (the theme specimen page): shown whenever the slider is visible and the pack asks for it.
 	void setBubblePinned(bool on);
 	bool bubbleShown() const;
+	void updateBubble(); // show, move or hide the value bubble (after a layout change: call again)
 
 signals:
 	void valueChanged(double v);
@@ -81,7 +82,6 @@ private:
 	double fromPos(int pos) const;
 	int toPos(double v) const;
 	void commit();
-	void updateBubble(); // show, move or hide the value bubble
 
 	JumpSlider *slider_;
 	NumberBox *box_;

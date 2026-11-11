@@ -6,6 +6,7 @@
 #include "add_dialogs.h"
 #include "look_panel.h"
 #include "appearance.h"
+#include "specimen.h"
 #include "motion.h"
 #include "stats_cards.h"
 #include "stream_pages.h"
@@ -2245,6 +2246,11 @@ void MainWindow::loadFlags()
 			return;
 		const QJsonArray fl = b.value(QStringLiteral("flags")).toArray();
 		flags_ = fl; // Settings > Advanced reads it when it opens
+		bool tc = false; // D336: theme components (the pack's component language); switches live
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("theme-components"))
+				tc = x.toObject().value(QStringLiteral("on")).toBool();
+		theme::setComponents(tc);
 		bool se = false, tr = false;
 		for (const auto &x : fl) {
 			const QJsonObject f = x.toObject();
@@ -4234,6 +4240,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("motion"), motion::systemAnimations());
 	o.insert(QStringLiteral("motionMode"), motion::mode());
 	o.insert(QStringLiteral("theme"), theme::probe()); // D293
+	o.insert(QStringLiteral("specimen"), appearance::specimenProbe()); // D336
 	QJsonObject look = look_->probe();
 	look.insert(QStringLiteral("shown"), !look_->isHidden());
 	look.insert(QStringLiteral("advancedShown"), !effBox_->isHidden());
@@ -4371,7 +4378,7 @@ bool MainWindow::probeAction(const QString &action)
 	if (action.startsWith(QStringLiteral("guide-")))
 		return guide_->probeAction(action); // tips, tour and help (D294 proposed)
 	// Look panel and Settings (D290): the real widgets are clicked, so their own handlers run.
-	if (p.size() == 2 && (p[0] == QStringLiteral("theme") || p[0] == QStringLiteral("effects"))) // D293
+	if (p.size() == 2 && (p[0] == QStringLiteral("theme") || p[0] == QStringLiteral("effects") || p[0] == QStringLiteral("components"))) // D293, D336
 		return theme::probeAction(action);
 	if (p.size() == 2 && p[0] == QStringLiteral("select-layer")) {
 		for (int i = 0; i < layerList_->count(); i++)
@@ -4603,6 +4610,13 @@ bool MainWindow::probeAction(const QString &action)
 				sa->verticalScrollBar()->setValue(p[1] == QStringLiteral("end") ? sa->verticalScrollBar()->maximum() : p[1].toInt());
 				return true;
 			}
+		}
+		if (p.size() == 1 && p[0] == QStringLiteral("settings-specimen")) { // D336: a click on "Preview all components"
+			if (auto *b = settingsDlg_->findChild<QPushButton *>(QStringLiteral("appearanceSpecimen")); b && !b->isHidden()) {
+				b->click();
+				return true;
+			}
+			return false;
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-performance")) { // High performance (2026-11-10)
 			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsPerformance"))) {

@@ -74,6 +74,8 @@ Data g_cur;
 QString g_effects = QStringLiteral("full");
 bool g_components = false; // the flag theme-components (D336)
 qreal g_appliedDensity = 1.0;
+QString g_baseStyleHash; // probe: the base stylesheet as applied (parity of packs without a components block, D336)
+int g_fragmentLength = 0; // probe: characters of variant fragments in the applied stylesheet
 Notifier *g_notifier = nullptr;
 
 QStringList searchDirs()
@@ -815,17 +817,23 @@ QString buildQss(const Data &d)
 	t[QStringLiteral("padY")] = px(d.padY);
 	t[QStringLiteral("padX")] = px(d.padX);
 	static const QRegularExpression re(QStringLiteral("@([A-Za-z0-9]+)"));
-	QString qss = QString::fromUtf8(kQss) + componentQss(d, t, flat); // D336: variant fragments after the base
-	QString out;
-	qsizetype last = 0;
-	auto it = re.globalMatch(qss);
-	while (it.hasNext()) {
-		const auto m = it.next();
-		out += qss.mid(last, m.capturedStart() - last);
-		out += t.value(m.captured(1), m.captured(0));
-		last = m.capturedEnd();
-	}
-	return out + qss.mid(last);
+	const QString fragment = componentQss(d, t, flat); // D336: variant fragments after the base (fills more tokens)
+	auto subst = [&t](const QString &qss) {
+		QString out;
+		qsizetype last = 0;
+		auto it = re.globalMatch(qss);
+		while (it.hasNext()) {
+			const auto m = it.next();
+			out += qss.mid(last, m.capturedStart() - last);
+			out += t.value(m.captured(1), m.captured(0));
+			last = m.capturedEnd();
+		}
+		return out + qss.mid(last);
+	};
+	const QString base = subst(QString::fromUtf8(kQss)), frag = subst(fragment);
+	g_baseStyleHash = QCryptographicHash::hash(base.toUtf8(), QCryptographicHash::Sha256).toHex().left(16);
+	g_fragmentLength = int(frag.size());
+	return base + frag;
 }
 
 void applyPalette(QApplication &app, const Data &d)
@@ -1388,7 +1396,8 @@ QJsonObject probe()
 	o.insert(QStringLiteral("caps"), QJsonObject{{QStringLiteral("button"), c.button}, {QStringLiteral("tab"), c.tab}, {QStringLiteral("heading"), c.heading}});
 	o.insert(QStringLiteral("pattern"), g_cur.bg.pattern);
 	o.insert(QStringLiteral("frame"), g_cur.bg.frame);
-	o.insert(QStringLiteral("styleSheetLength"), qApp->styleSheet().size());
+	o.insert(QStringLiteral("baseStyleHash"), g_baseStyleHash);
+	o.insert(QStringLiteral("fragmentLength"), g_fragmentLength);
 	return o;
 }
 

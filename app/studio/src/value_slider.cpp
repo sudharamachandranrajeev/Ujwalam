@@ -190,7 +190,12 @@ void ValueSlider::updateBubble()
 			bubble_->hide();
 		return;
 	}
-	QWidget *win = window();
+	QWidget *win = window(); // or the nearest ancestor that hosts bubbles (the theme specimen's sheet, pictured uncut)
+	for (QWidget *p = parentWidget(); p; p = p->parentWidget())
+		if (p->property("bubbleHost").toBool()) {
+			win = p;
+			break;
+		}
 	if (!bubble_ || bubble_->parentWidget() != win) {
 		delete bubble_.data();
 		bubble_ = new QLabel(win);

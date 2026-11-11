@@ -62,6 +62,8 @@ add_executable(ujwalam-studio WIN32
 	src/tray.h
 	src/theme.cpp
 	src/theme.h
+	src/specimen.cpp
+	src/specimen.h
 	src/value_slider.cpp
 	src/value_slider.h)
 # Built-in theme packs (D293): data/themes/*.json embedded as :/themes/<id>.json. A file with the same id next to the

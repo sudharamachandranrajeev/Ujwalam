@@ -10,6 +10,7 @@
 #include "interaction.h"
 #include "main_window.h"
 #include "motion.h"
+#include "specimen.h"
 #include "studio_log.h"
 #include "theme.h"
 
@@ -169,9 +170,29 @@ int main(int argc, char **argv)
 						sw->layout()->activate();
 						o.insert(QStringLiteral("settingsShot"), sw->grab().save(shot.left(shot.size() - 4) + QStringLiteral("-settings.png"), "PNG"));
 					}
+					// D336: the theme specimen sheet, uncut (its scroll area shows only part of it on a small screen)
+					for (QWidget *tl : QApplication::topLevelWidgets())
+						if (auto *sp = qobject_cast<appearance::Specimen *>(tl); sp && sp->isVisible()) {
+							for (QWidget *w : sp->findChildren<QWidget *>())
+								if (w->layout())
+									w->layout()->activate();
+							sp->layout()->activate();
+							sp->grab();
+							appearance::specimenRefresh();
+							// On the theme's window colour: the sheet itself is transparent over the window's backdrop.
+							QWidget *body = sp->body();
+							const qreal dpr = body->devicePixelRatioF();
+							QPixmap pm(body->size() * dpr);
+							pm.setDevicePixelRatio(dpr);
+							pm.fill(theme::color(QStringLiteral("bg")));
+							body->render(&pm, QPoint(), QRegion(), QWidget::DrawChildren);
+							o.insert(QStringLiteral("specimenShot"), pm.save(shot.left(shot.size() - 4) + QStringLiteral("-specimen.png"), "PNG"));
+							o.insert(QStringLiteral("specimenShotPixels"), QJsonArray{pm.width(), pm.height()});
+							o.insert(QStringLiteral("specimenShotSize"), QJsonArray{sp->body()->width(), sp->body()->height()});
+						}
 					int k = 0; // any other open dialog (Posts, add windows): its own picture each (2026-11-10 theme check)
 					for (QWidget *tl : QApplication::topLevelWidgets())
-						if (qobject_cast<QDialog *>(tl) && tl != win.settingsWindow() && tl->isVisible()) {
+						if (qobject_cast<QDialog *>(tl) && tl != win.settingsWindow() && tl->isVisible() && !qobject_cast<appearance::Specimen *>(tl)) {
 							for (QWidget *w : tl->findChildren<QWidget *>())
 								if (w->layout())
 									w->layout()->activate();
