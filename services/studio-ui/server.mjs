@@ -1162,10 +1162,10 @@ export function createStudioServer(opts) {
       if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
       const review = createReview({ dataDir: opts.dataDir });
       if (req.method === 'GET' && route === '/ui/api/learning/review') {
-        try { return json(res, 200, review.list()); } catch { return json(res, 500, { error: 'review-failed' }); }
+        try { return json(res, 200, await review.list()); } catch { return json(res, 500, { error: 'review-failed' }); }
       }
       if (req.method === 'GET' && route === '/ui/api/learning/frame') {
-        const buf = review.frame(url.searchParams.get('session') ?? '', url.searchParams.get('id') ?? '');
+        const buf = await review.frame(url.searchParams.get('session') ?? '', url.searchParams.get('id') ?? '');
         return buf ? json(res, 200, { jpeg: buf.toString('base64') }) : json(res, 404, { error: 'no-frame' });
       }
     }
@@ -1329,7 +1329,7 @@ export function createStudioServer(opts) {
     if (route.startsWith('/ui/api/connect/')) return connectRoute(res, route, body);
     if (route === '/ui/api/learning/confirm') {
       if (Object.keys(body).some((k) => !['session', 'id', 'value'].includes(k)) || typeof body.session !== 'string' || typeof body.id !== 'string' || typeof body.value !== 'string') return json(res, 400, { error: 'bad-params' });
-      const r = createReview({ dataDir: opts.dataDir }).confirm(body);
+      const r = await createReview({ dataDir: opts.dataDir }).confirm(body);
       if (typeof r === 'string') return json(res, r === 'unknown-item' ? 404 : (r === 'write-failed' ? 500 : 400), { error: r });
       return json(res, 200, { ok: true, label: r });
     }

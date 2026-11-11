@@ -5,18 +5,19 @@
 // Synthetic items and placeholder texts only; temp folders; no OCR, no GPU, no network, no windows.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { createReview } from '../services/learning/review.mjs';
+import * as reviewMod from '../services/learning/review.mjs';
 import { createLearningStore } from '../services/learning/store.mjs';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
 import { createStudioServer } from '../services/studio-ui/server.mjs';
 import { createFlags } from '../services/flags/index.mjs';
 
+const { createReview } = reviewMod;
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const UI = path.join(REPO, 'ui');
 const KEY = 'k'.repeat(48);
@@ -40,51 +41,100 @@ function seed(dataDir, session = S, items = null) {
   return dir;
 }
 
-describe('LL3 review (services/learning/review.mjs)', () => {
-  test('lists queued items, a confirm writes a "confirmed" label row and the item leaves the list', () => {
+describe('LL3 review (services/learning/review.mjs)', async () => {
+  test('lists queued items, a confirm writes a "confirmed" label row and the item leaves the list', async () => {
     const dataDir = mk(); seed(dataDir);
     const r = createReview({ dataDir, now: () => new Date('2026-11-11T15:00:00Z') });
-    const l = r.list();
+    const l = await r.list();
     assert.equal(l.total, 3);
     assert.deepEqual(l.items.map((i) => [i.id, i.kind, i.hasFrame]), [['live-00001', 'unclassified-banner', true], ['live-00002', 'ocr-low', true], ['mode-002', 'unknown-mode', false]]);
     assert.equal(l.items[0].texts, undefined, 'OCR texts stay in the store; the list does not carry them');
-    const row = r.confirm({ session: S, id: 'live-00001', value: 'round' });
+    const row = await r.confirm({ session: S, id: 'live-00001', value: 'round' });
     assert.equal(typeof row, 'object');
     assert.deepEqual({ action: row.action, source: row.source, session: row.session }, { action: 'confirmed', source: 'review', session: S });
     assert.deepEqual(row.ref, { item: 'live-00001', kind: 'unclassified-banner', detector: 'W1', label: 'VICTORY', value: 'round', corrected: true });
     const stored = readFileSync(path.join(dataDir, 'learning-store', S, 'labels.jsonl'), 'utf8').trim().split('\n').map((x) => JSON.parse(x));
     assert.equal(stored.length, 1);
     assert.equal(stored[0].at, '2026-11-11T15:00:00.000Z');
-    assert.deepEqual(r.list().items.map((i) => i.id), ['live-00002', 'mode-002']);
+    assert.deepEqual((await r.list()).items.map((i) => i.id), ['live-00002', 'mode-002']);
   });
 
-  test('ocr-low: confirming the read is not a correction; a typed correction is; other kinds take only their choices', () => {
+  test('ocr-low: confirming the read is not a correction; a typed correction is; other kinds take only their choices', async () => {
     const dataDir = mk(); seed(dataDir);
     const r = createReview({ dataDir });
-    assert.equal(r.confirm({ session: S, id: 'live-00002', value: 'PLACEHOLDER MEDAL' }).ref.corrected, false);
-    assert.equal(r.confirm({ session: S, id: 'live-00002', value: 'OTHER MEDAL' }).ref.value, 'OTHER MEDAL');
-    assert.equal(r.confirm({ session: S, id: 'mode-002', value: 'free text' }), 'bad-value');
-    assert.equal(r.confirm({ session: S, id: 'mode-002', value: '' }), 'bad-value');
-    assert.equal(r.confirm({ session: S, id: 'live-00002', value: 'x'.repeat(81) }), 'bad-value');
-    assert.equal(r.confirm({ session: S, id: 'live-00002', value: 'a\u0001b' }), 'bad-value');
-    assert.equal(r.confirm({ session: S, id: 'live-99999', value: 'round' }), 'unknown-item');
-    assert.equal(r.confirm({ session: '../x', id: 'live-00001', value: 'round' }), 'unknown-item');
-    assert.equal(r.confirm({ session: S, id: 'mode-002', value: 'hardpoint' }).ref.kind, 'unknown-mode');
+    assert.equal((await r.confirm({ session: S, id: 'live-00002', value: 'PLACEHOLDER MEDAL' })).ref.corrected, false);
+    assert.equal((await r.confirm({ session: S, id: 'live-00002', value: 'OTHER MEDAL' })).ref.value, 'OTHER MEDAL');
+    assert.equal(await r.confirm({ session: S, id: 'mode-002', value: 'free text' }), 'bad-value');
+    assert.equal(await r.confirm({ session: S, id: 'mode-002', value: '' }), 'bad-value');
+    assert.equal(await r.confirm({ session: S, id: 'live-00002', value: 'x'.repeat(81) }), 'bad-value');
+    assert.equal(await r.confirm({ session: S, id: 'live-00002', value: 'a\u0001b' }), 'bad-value');
+    assert.equal(await r.confirm({ session: S, id: 'live-99999', value: 'round' }), 'unknown-item');
+    assert.equal(await r.confirm({ session: '../x', id: 'live-00001', value: 'round' }), 'unknown-item');
+    assert.equal((await r.confirm({ session: S, id: 'mode-002', value: 'hardpoint' })).ref.kind, 'unknown-mode');
   });
 
-  test('frames: only frames/<id>.jpg of a listed item is read', () => {
+  test('frames: only frames/<id>.jpg of a listed item is read', async () => {
     const dataDir = mk(); const dir = seed(dataDir);
     writeFileSync(path.join(dir, 'secret.jpg'), 'x');
     const r = createReview({ dataDir });
-    assert.deepEqual(r.frame(S, 'live-00001'), JPEG);
-    assert.equal(r.frame(S, 'mode-002'), null, 'no frame');
-    assert.equal(r.frame(S, '../secret'), null);
-    assert.equal(r.frame('..', 'live-00001'), null);
-    assert.equal(r.frame(S, 'secret'), null);
+    assert.deepEqual(await r.frame(S, 'live-00001'), JPEG);
+    assert.equal(await r.frame(S, 'mode-002'), null, 'no frame');
+    assert.equal(await r.frame(S, '../secret'), null);
+    assert.equal(await r.frame('..', 'live-00001'), null);
+    assert.equal(await r.frame(S, 'secret'), null);
   });
 
-  test('no store, no items: an empty list', () => {
-    assert.deepEqual(createReview({ dataDir: mk() }).list(), { items: [], total: 0 });
+  test('no store, no items: an empty list', async () => {
+    assert.deepEqual(await createReview({ dataDir: mk() }).list(), { items: [], total: 0 });
+  });
+});
+
+// Codex review of D340: each test failed on the code before its fix.
+describe('LL3 review: Codex review fixes', () => {
+  const BOUND = reviewMod.MAX_READ_BYTES ?? 2 * 1024 * 1024;
+
+  test('P2: a frames/ junction that leads out of the store is refused (realpath inside the store root)', async () => {
+    const dataDir = mk(); const dir = seed(dataDir);
+    const outside = mk();
+    writeFileSync(path.join(outside, 'live-00001.jpg'), JPEG);
+    rmSync(path.join(dir, 'frames'), { recursive: true, force: true });
+    symlinkSync(outside, path.join(dir, 'frames'), 'junction');
+    assert.equal(await createReview({ dataDir }).frame(S, 'live-00001'), null);
+  });
+
+  test('P2: list, frame and confirm are async (no blocking read on the server\'s event loop)', async () => {
+    const dataDir = mk(); seed(dataDir);
+    const r = createReview({ dataDir });
+    for (const p of [r.list(), r.frame(S, 'live-00001'), r.confirm({ session: S, id: 'mode-002', value: 'hardpoint' })]) {
+      assert.ok(p instanceof Promise);
+      await p;
+    }
+  });
+
+  test('P2: an unchanged review.jsonl (same mtime and size) is not read again; a changed one is', async () => {
+    const dataDir = mk(); const dir = seed(dataDir);
+    const f = path.join(dir, 'review.jsonl');
+    const T = 1_800_000_000; // a whole second: restored exactly after the rewrite
+    utimesSync(f, T, T);
+    const r = createReview({ dataDir });
+    assert.deepEqual((await r.list()).items.map((i) => i.id), ['live-00001', 'live-00002', 'mode-002']);
+    writeFileSync(f, readFileSync(f, 'utf8').replace('"mode-002"', '"mode-009"'));
+    utimesSync(f, T, T);
+    assert.deepEqual((await r.list()).items.map((i) => i.id), ['live-00001', 'live-00002', 'mode-002'], 'cached');
+    appendFileSync(f, '\n');
+    assert.deepEqual((await r.list()).items.map((i) => i.id), ['live-00001', 'live-00002', 'mode-009'], 'read again');
+  });
+
+  test('P2: reads are bounded: review items past the bound are not listed; answers are read from the end', async () => {
+    const dataDir = mk();
+    const it = (id) => ({ v: 1, id, kind: 'unknown-mode', choices: ['domination', 'hardpoint'], frame: null });
+    const dir = seed(dataDir, S, [it('mode-001'), it('mode-002')]);
+    const f = path.join(dir, 'review.jsonl');
+    writeFileSync(f, `${JSON.stringify(it('mode-001'))}\n${'x'.repeat(BOUND)}\n${JSON.stringify(it('mode-002'))}\n`);
+    const r = createReview({ dataDir });
+    assert.deepEqual((await r.list()).items.map((i) => i.id), ['mode-001']);
+    writeFileSync(path.join(dir, 'labels.jsonl'), `${'y'.repeat(BOUND)}\n${JSON.stringify({ action: 'confirmed', source: 'review', ref: { item: 'mode-001' } })}\n`);
+    assert.deepEqual((await r.list()).items, [], 'the newest answers (end of labels.jsonl) are within the bound');
   });
 });
 
@@ -93,7 +143,7 @@ describe('LL3 review (services/learning/review.mjs)', () => {
 const PY = process.env.UJWALAM_TEST_PYTHON || 'python';
 const havePy = spawnSync(PY, ['-I', '-c', 'import sys; print(sys.version_info[0])'], { encoding: 'utf8', windowsHide: true }).stdout?.trim() === '3';
 describe('LL1 fixture run: Python writer -> store -> review -> cap', { skip: havePy ? false : 'python not found' }, () => {
-  test('store written, items listed, confirm writes a label, the cap still holds', () => {
+  test('store written, items listed, confirm writes a label, the cap still holds', async () => {
     const dataDir = mk();
     const script = `
 import sys, json
@@ -120,11 +170,11 @@ print(json.dumps(c.stats))`;
     const dir = path.join(dataDir, 'learning-store', S);
     assert.equal(readFileSync(path.join(dir, 'evidence.jsonl'), 'utf8').trim().split('\n').length, 30);
     const r = createReview({ dataDir });
-    const l = r.list();
+    const l = await r.list();
     assert.deepEqual(l.items.map((i) => [i.kind, i.hasFrame]), [['unclassified-banner', true], ['ocr-low', true]]);
-    assert.deepEqual(r.frame(S, l.items[0].id), Buffer.from([0xff, 0xd8, 0x46, 0x41, 0x4b, 0x45, 0xff, 0xd9]));
-    assert.equal(r.confirm({ session: S, id: l.items[0].id, value: 'match' }).action, 'confirmed');
-    assert.equal(r.list().total, 1);
+    assert.deepEqual(await r.frame(S, l.items[0].id), Buffer.from([0xff, 0xd8, 0x46, 0x41, 0x4b, 0x45, 0xff, 0xd9]));
+    assert.equal((await r.confirm({ session: S, id: l.items[0].id, value: 'match' })).action, 'confirmed');
+    assert.equal((await r.list()).total, 1);
     // Cap: two older sessions (by session.json createdAt) of 4 KB each; a cap that fits only the live one plus one.
     for (const [name, at] of [['live-20261101-100000', '2026-11-01T10:00:00Z'], ['live-20261105-100000', '2026-11-05T10:00:00Z']]) {
       const d = path.join(dataDir, 'learning-store', name);

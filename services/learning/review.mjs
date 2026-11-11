@@ -9,18 +9,26 @@
 // default). An answer is one LL2 label row: action "confirmed", source "review", ref { item, kind, detector, label,
 // value, corrected }. Nothing waits for an answer; unanswered items simply stay until the cap removes their session.
 // Items answered once are not listed again (the newest answer is the one that counts).
+//
+// The studio server calls this while live (Codex review of D340), so every read is async (never a blocking read on the
+// event loop), bounded (MAX_READ_BYTES per file: the start of review.jsonl, the end of labels.jsonl, where the newest
+// answers are) and cached by path, mtime and size (an unchanged file is not read again). Every file read must resolve
+// (realpath) inside the store's own realpath: a junction or symlink anywhere on the way (a session's frames/ folder,
+// say) that leads out of the store is refused.
 
-import { lstatSync, readFileSync } from 'node:fs';
+import { open, readdir, realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { createLearningStore, sessionId } from './store.mjs';
+import { createLearningStore, LABELS_FILE, SESSION_RE, sessionId } from './store.mjs';
 
 export const REVIEW_FILE = 'review.jsonl';
 export const KINDS = Object.freeze(['unclassified-banner', 'ocr-low', 'unknown-mode']);
 export const ITEM_RE = /^[a-z][a-z0-9-]{0,63}$/;
 export const MAX_VALUE = 80;
+export const MAX_READ_BYTES = 2 * 1024 * 1024;
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
 const MAX_SESSIONS = 20;
 const MAX_ITEMS = 200;
+const CACHE_MAX = 64;
 
 const str = (v, n = 120) => (typeof v === 'string' ? v.slice(0, n) : null);
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -39,67 +47,128 @@ function shape(raw, session) {
   };
 }
 
+// Parsed files by real path + read mode: { mtimeMs, size, value }. Shared by every createReview (the server makes one
+// per request). Oldest entry out first past CACHE_MAX.
+const cache = new Map();
+const caseKey = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
+
 /** opts: { dataDir, now?() -> Date }. */
 export function createReview(opts) {
   const store = createLearningStore({ dataDir: opts.dataDir, now: opts.now });
 
-  function items(session) {
-    let text = '';
-    try { text = readFileSync(path.join(store.root, session, REVIEW_FILE), 'utf8'); } catch { return []; }
-    const out = []; const seen = new Set();
-    for (const l of text.split('\n')) {
-      if (!l) continue;
-      let it = null;
-      try { it = shape(JSON.parse(l), session); } catch { /* torn line */ }
-      if (it && !seen.has(it.id)) { seen.add(it.id); out.push(it); }
-    }
-    return out;
+  // The real path of a file inside the store, or null (missing, or it resolves outside the store's real path).
+  async function inStore(file) {
+    try {
+      const [root, real] = await Promise.all([realpath(store.root), realpath(file)]);
+      return caseKey(real).startsWith(caseKey(root) + path.sep) ? real : null;
+    } catch { return null; }
   }
 
-  const answered = (session) => new Set(store.rows(session).filter((r) => r.action === 'confirmed' && r.source === 'review').map((r) => r.ref?.item));
+  // Opens a regular file inside the store and hands (handle, stat, real path) to fn; null when that fails.
+  async function withFile(file, fn) {
+    const real = await inStore(file);
+    if (!real) return null;
+    let fh;
+    try {
+      fh = await open(real, 'r');
+      const st = await fh.stat();
+      return st.isFile() ? await fn(fh, st, real) : null;
+    } catch { return null; } finally { await fh?.close().catch(() => {}); }
+  }
 
-  /** Unanswered items, newest session first (at most 20 sessions, 200 items). { items, total }. */
-  function list() {
+  // At most n bytes from the start, or from the end when tail.
+  async function bytes(fh, st, n, tail) {
+    const buf = Buffer.alloc(Math.min(st.size, n));
+    const { bytesRead } = await fh.read(buf, 0, buf.length, tail ? st.size - buf.length : 0);
+    return buf.subarray(0, bytesRead);
+  }
+
+  // JSON lines of a bounded read, parsed once per (path, mtime, size). A cut read drops its partial edge line.
+  function lines(file, tail, parse) {
+    return withFile(file, async (fh, st, real) => {
+      const key = `${tail ? 'tail' : 'head'}:${caseKey(real)}`;
+      const hit = cache.get(key);
+      if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.value;
+      let ls = (await bytes(fh, st, MAX_READ_BYTES, tail)).toString('utf8').split('\n');
+      if (st.size > MAX_READ_BYTES) ls = tail ? ls.slice(1) : ls.slice(0, -1);
+      const value = parse(ls.filter(Boolean));
+      cache.delete(key);
+      cache.set(key, { mtimeMs: st.mtimeMs, size: st.size, value });
+      while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+      return value;
+    });
+  }
+
+  async function items(session) {
+    const out = await lines(path.join(store.root, session, REVIEW_FILE), false, (ls) => {
+      const got = []; const seen = new Set();
+      for (const l of ls) {
+        let it = null;
+        try { it = shape(JSON.parse(l), session); } catch { /* torn line */ }
+        if (it && !seen.has(it.id)) { seen.add(it.id); got.push(it); }
+      }
+      return got;
+    });
+    return out ?? [];
+  }
+
+  async function answered(session) {
+    const done = await lines(path.join(store.root, session, LABELS_FILE), true, (ls) => {
+      const ids = new Set();
+      for (const l of ls) {
+        try { const r = JSON.parse(l); if (r?.action === 'confirmed' && r.source === 'review') ids.add(r.ref?.item); } catch { /* torn line */ }
+      }
+      return ids;
+    });
+    return done ?? new Set();
+  }
+
+  async function sessions() {
+    try {
+      return (await readdir(store.root, { withFileTypes: true })).filter((e) => e.isDirectory() && SESSION_RE.test(e.name)).map((e) => e.name).sort();
+    } catch { return []; }
+  }
+
+  /** Unanswered items, newest session first (at most 20 sessions with a review file, 200 items). { items, total }. */
+  async function list() {
     const all = [];
-    const sessions = store.sessions().filter((s) => { try { return lstatSync(path.join(store.root, s, REVIEW_FILE)).isFile(); } catch { return false; } });
-    for (const s of sessions.reverse().slice(0, MAX_SESSIONS)) {
-      const done = answered(s);
-      for (const it of items(s)) if (!done.has(it.id)) all.push(it);
+    let n = 0;
+    for (const s of (await sessions()).reverse()) {
+      if (n >= MAX_SESSIONS) break;
+      const its = await items(s);
+      if (!its.length) continue;
+      n += 1;
+      const done = await answered(s);
+      for (const it of its) if (!done.has(it.id)) all.push(it);
     }
     return { items: all.slice(0, MAX_ITEMS), total: all.length };
   }
 
-  function find(session, id) {
+  async function find(session, id) {
     const s = sessionId(session);
     if (!s || s !== session || typeof id !== 'string' || !ITEM_RE.test(id)) return null;
-    return items(s).find((it) => it.id === id) ?? null;
+    return (await items(s)).find((it) => it.id === id) ?? null;
   }
 
-  /** The item's JPEG (Buffer) or null. Only frames/<id>.jpg of a listed item is ever read. */
-  function frame(session, id) {
-    const it = find(session, id);
+  /** The item's JPEG (Buffer) or null. Only frames/<id>.jpg of a listed item is ever read, and only inside the store. */
+  async function frame(session, id) {
+    const it = await find(session, id);
     if (!it?.hasFrame) return null;
-    const f = path.join(store.root, it.session, 'frames', `${it.id}.jpg`);
-    try {
-      const st = lstatSync(f);
-      if (!st.isFile() || st.size > MAX_FRAME_BYTES) return null;
-      return readFileSync(f);
-    } catch { return null; }
+    return withFile(path.join(store.root, it.session, 'frames', `${it.id}.jpg`), (fh, st) => (st.size > MAX_FRAME_BYTES ? null : bytes(fh, st, MAX_FRAME_BYTES, false)));
   }
 
   /**
    * The user's answer: value is one of the item's choices; for ocr-low also a typed correction (1-80 characters).
-   * Returns the label row written or an error string: unknown-item | bad-value | write-failed.
+   * Resolves to the label row written or an error string: unknown-item | bad-value | write-failed.
    */
-  function confirm({ session, id, value }) {
-    const it = find(session, id);
+  async function confirm({ session, id, value }) {
+    const it = await find(session, id);
     if (!it) return 'unknown-item';
     const v = typeof value === 'string' ? value.trim() : '';
     if (!v || v.length > MAX_VALUE || /[\u0000-\u001f]/.test(v)) return 'bad-value';
     if (!it.choices.includes(v) && it.kind !== 'ocr-low') return 'bad-value';
-    const row = store.add({ action: 'confirmed', source: 'review', session: it.session,
+    return store.add({ action: 'confirmed', source: 'review', session: it.session,
       ref: { item: it.id, kind: it.kind, detector: it.detector, label: it.label, value: v, corrected: v !== it.value } });
-    return row;
   }
 
   return { store, list, frame, confirm };
