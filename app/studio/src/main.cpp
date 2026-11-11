@@ -5,6 +5,19 @@
 // Window rule (D316, replaces D219): a normal app window. It opens where Windows places it (the main display) and is
 // activated when the user starts it. UJWALAM_HEADLESS=1: no window at all; the shell
 // logs in, lists the scenes, prints one line ("studio smoke: ok, <n> scene(s)") and exits (tests).
+// LU4 studio swap (D346):
+//   UJWALAM_STUDIO_CONTROL=1 (set by the launcher, which then gives a stdin pipe): one command per line on stdin.
+//     "swap-close": close for an update (MainWindow::swapClose, exit 75; no quit lock, the launcher keeps the host).
+//     End of input is ignored (the launcher gone: the window stays, as before).
+//   stdout lines the launcher waits for: "studio attach: ready" (logged in, window started) and
+//     "studio attach: preview <h|v> embedded" (the host's preview sits in its slot again).
+//   UJWALAM_HEADLESS=1 + UJWALAM_STUDIO_HIDDEN=1 (tests): the full window on the native platform, laid out and "shown"
+//     with Qt::WA_DontShowOnScreen, so the host can embed its previews into real (hidden) window handles. Nothing ever
+//     reaches the screen; the host refuses a visible parent when headless. UJWALAM_STUDIO_TEST_CLOSE_MS=N there: the
+//     user's close (closeEvent, exit 0) N ms after "ready", so a test can check that a normal close still stops all;
+//     a file ujwalam-studio.test-close next to the exe (text: N) does the same for that build only.
+//   Headless only (tests): a file ujwalam-studio.test-crash next to the exe makes this build crash at start (its text
+//     is the UJWALAM_STUDIO_TEST_CRASH kind), for the swap rollback test with a build that crashes.
 #include "api_client.h"
 #include "depth.h"
 #include "interaction.h"
@@ -28,6 +41,8 @@
 #include <algorithm>
 #include <memory>
 #include <cstdio>
+#include <string>
+#include <thread>
 #ifdef Q_OS_WIN
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
@@ -65,9 +80,56 @@ static QString takeEnv(const char *name)
 	return v;
 }
 
+#ifdef Q_OS_WIN
+// Headless test builds only: the text of a marker file beside the exe, or empty (LU4 tests: ujwalam-studio.test-crash
+// holds a crash kind, ujwalam-studio.test-close the ms after "ready" for a user close).
+static QString testMarker(const wchar_t *name)
+{
+	wchar_t exe[MAX_PATH] = {};
+	const DWORD n = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+	if (!n || n >= MAX_PATH)
+		return QString();
+	std::wstring f(exe, n);
+	const size_t slash = f.find_last_of(L"\\/");
+	f = (slash == std::wstring::npos ? std::wstring() : f.substr(0, slash + 1)) + name;
+	HANDLE h = CreateFileW(f.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (h == INVALID_HANDLE_VALUE)
+		return QString();
+	char buf[64] = {};
+	DWORD got = 0;
+	ReadFile(h, buf, sizeof(buf) - 1, &got, nullptr);
+	CloseHandle(h);
+	return QString::fromLatin1(buf, (int)got).trimmed();
+}
+
+// Reads the launcher's control lines from stdin on its own thread and hands each one to the Qt thread (LU4, D346).
+static void startControlReader(QApplication *app, std::function<void(const QString &)> onLine)
+{
+	HANDLE in = GetStdHandle(STD_INPUT_HANDLE);
+	if (in == nullptr || in == INVALID_HANDLE_VALUE || GetFileType(in) != FILE_TYPE_PIPE)
+		return;
+	std::thread([in, app, onLine]() {
+		std::string line;
+		char buf[256];
+		DWORD got = 0;
+		while (ReadFile(in, buf, sizeof(buf), &got, nullptr) && got > 0) {
+			for (DWORD i = 0; i < got; i++) {
+				if (buf[i] == '\n') {
+					const QString l = QString::fromLatin1(line.data(), (int)line.size()).trimmed();
+					line.clear();
+					QMetaObject::invokeMethod(app, [onLine, l]() { onLine(l); }, Qt::QueuedConnection);
+				} else if (line.size() < 200)
+					line.push_back(buf[i]);
+			}
+		}
+	}).detach(); // end of input (the launcher gone) ends only this thread
+}
+#endif
+
 int main(int argc, char **argv)
 {
 	const bool headless = qEnvironmentVariable("UJWALAM_HEADLESS") == QStringLiteral("1");
+	const bool hidden = headless && qEnvironmentVariable("UJWALAM_STUDIO_HIDDEN") == QStringLiteral("1");
 	// Log file and crash report in <data dir>/logs when the launcher names it (studio_log.h, 2026-11-08 crash).
 	const studiolog::Status logs = studiolog::install(qEnvironmentVariable("UJWALAM_STUDIO_VERSION", QStringLiteral("dev")));
 	// Tests only: crash on purpose to prove the report is written. Never outside a headless run.
@@ -80,7 +142,17 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "studio: unknown UJWALAM_STUDIO_TEST_CRASH kind\n");
 		return 65;
 	}
-	if (headless)
+#ifdef Q_OS_WIN
+	if (headless) { // a test build that crashes at start (LU4 swap rollback test)
+		const QString kind = testMarker(L"ujwalam-studio.test-crash");
+		if (!kind.isEmpty() && logs.crash) {
+			std::printf("studio: test build crashing at start (%s)\n", qUtf8Printable(kind));
+			std::fflush(stdout);
+			studiolog::testCrash(kind);
+		}
+	}
+#endif
+	if (headless && !hidden)
 		qputenv("QT_QPA_PLATFORM", "offscreen");
 	QApplication app(argc, argv);
 	if (logs.crash && !studiolog::reassert())
@@ -105,6 +177,13 @@ int main(int argc, char **argv)
 	}
 	MainWindow win(&api);
 	int code = 0;
+#ifdef Q_OS_WIN
+	if (qEnvironmentVariable("UJWALAM_STUDIO_CONTROL") == QStringLiteral("1"))
+		startControlReader(&app, [&win](const QString &cmd) {
+			if (cmd == QStringLiteral("swap-close"))
+				win.swapClose();
+		});
+#endif
 	api.login(key, [&](bool ok, const QJsonObject &, const QString &err) {
 		if (!ok) {
 			std::fprintf(stderr, "studio: login failed: %s\n", qPrintable(err));
@@ -223,6 +302,26 @@ int main(int argc, char **argv)
 			});
 			return;
 		}
+		if (hidden) { // LU4 tests: the real window, never on screen, previews embedded into its hidden handles
+			win.setAttribute(Qt::WA_DontShowOnScreen, true);
+			win.setAttribute(Qt::WA_ShowWithoutActivating, true);
+			win.resize(1600, 900);
+			win.show();
+			win.start();
+			std::printf("studio attach: ready (hidden)\n");
+			std::fflush(stdout);
+			// Tests: the user's close after this many ms (closeEvent, exit 0), to check that it still stops all (D280).
+			// The env var reaches every window of a run; ujwalam-studio.test-close beside the exe (its text: the ms)
+			// only that build, so a swap test can close the window on probation (Codex review of D346).
+			int closeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_TEST_CLOSE_MS");
+#ifdef Q_OS_WIN
+			if (closeMs <= 0)
+				closeMs = testMarker(L"ujwalam-studio.test-close").toInt();
+#endif
+			if (closeMs > 0)
+				QTimer::singleShot(closeMs, &win, [&win]() { win.close(); });
+			return;
+		}
 		if (headless) {
 			api.host(QStringLiteral("scenes.list"), {}, [&](bool ok2, const QJsonObject &b, const QString &e2) {
 				const QJsonValue r = b.value(QStringLiteral("result"));
@@ -240,6 +339,8 @@ int main(int argc, char **argv)
 		win.raise();
 		win.activateWindow();
 		win.start();
+		std::printf("studio attach: ready\n");
+		std::fflush(stdout);
 		});
 	});
 	const int r = app.exec();

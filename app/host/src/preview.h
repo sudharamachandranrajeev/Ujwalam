@@ -8,7 +8,9 @@
 // on a display picks that display (else the main one); the whole window is then kept inside that display's work area
 // (shrunk if larger, pplace::fit_in), so it never hangs off an edge or under the taskbar. Embedded previews (parent set)
 // stay WS_CHILD windows of the studio's preview slot and leave activation to the studio window. Headless
-// (--headless / UJWALAM_HEADLESS=1, used by every test run): open() refuses with CONFLICT and no window exists.
+// (--headless / UJWALAM_HEADLESS=1, used by every test run): open() refuses with CONFLICT and no window exists, except
+// an embedded preview whose parent's top-level window is hidden (LU4 studio-swap tests, D346); that child window is
+// never shown itself, so it stays unseen even if the parent is shown later (Codex review of D346).
 //
 // Mouse editing (P5, D230, flag preview-edit): clicks in a preview select, move and resize layers (preview_edit.h).
 // The window takes mouse capture while a drag runs.
@@ -78,6 +80,11 @@ public:
 	json::Value close(const std::string &canvas);
 	json::Value list();
 	void close_all();
+	// --test-hooks only (preview.testParent, Codex review of D346): "create" makes a hidden top-level window (never
+	// shown) to embed into and returns {parent}; "show-child", "setpos-child" and "style-child" try to make the
+	// canvas's embedded preview visible by ShowWindow, SetWindowPos(SWP_SHOWWINDOW) and SetWindowLongPtr(WS_VISIBLE)
+	// and return the preview as list() does; "destroy" removes the hidden window.
+	json::Value test_parent(const std::string &action, const std::string &canvas);
 
 	struct Win; // internal (public for the window procedure)
 
@@ -90,6 +97,7 @@ private:
 	std::condition_variable cv_;
 	bool ready_ = false;
 	std::map<std::string, Win *> wins_;
+	void *test_parent_ = nullptr; // HWND from test_parent("create"), used on the UI thread only
 	void ui_loop();
 	json::Value run_on_ui(std::function<json::Value()> fn);
 	json::Value open_embedded(const OpenArgs &a);

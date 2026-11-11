@@ -1308,3 +1308,51 @@ import." Decided:
   camera source when the package has none (UNVERIFIED against a real device format); a crop the user set in the studio on a
   camera is replaced by the centre crop after a resize or swap (a move keeps it); no check on a real stream.
 Evidence: `docs/evidence/2026-11-11-sb5-iterate.md`.
+## D346 — Studio window swap while live: the window is closed for the update, the new one reattaches to the running host (2026-11-11, LU4)
+
+Plan row LU4 (D324): closing the studio for an update no longer stops the host; the new studio reattaches to the
+running host (previews re-embed, state from the host); a normal close still stops everything (D280 kept). Decided:
+- **A stop-start service.** `studio` joins the swappable services (`services/supervisor/swap.mjs`) with mode
+  stop-start, slot `createStudioSlot` (`services/supervisor/slots.mjs`). Two windows never run at once, so there is
+  never a second tray icon or a second set of previews; global hotkeys belong to the host and are not touched. Same
+  flag (`service-swap`, off by default) and the same trigger as D337: `{ t: 'ujwalam-swap', service: 'studio', root }`
+  from the launcher's parent only. root holds `studio/ujwalam-studio.exe` (staged or installed version), or is this
+  checkout (its development build).
+- **Swap close, not a user close.** With the flag on, the launcher starts the studio with a control pipe
+  (`UJWALAM_STUDIO_CONTROL=1`, stdin). `swap-close` ends the window through `MainWindow::swapClose`: tray icon removed,
+  exit code 75; no closeEvent, no task dialog, no quit lock. The launcher marks that exit as planned: it is written
+  to studio-exits.jsonl with `swap: true` and nothing is stopped. Exit 0 (the user's close) still stops everything;
+  any other unplanned exit is still a crash with the reopen rules of D280.
+- **Reattach.** The launcher gives the UI server a new one-time key (`rearm`, as for a crash reopen), starts the new
+  exe, which logs in, reads its state from the UI server and host.status as at any start, and embeds the H and V
+  previews into its own slots (`preview.open` with the slot's window handle). The host drops the old embedded
+  previews when the old slot windows are destroyed (WM_DESTROY) and keeps rendering, encoding and sending.
+- **Health check and rollback.** The new window must print `studio attach: ready` and `studio attach: preview <c>
+  embedded` for every preview the old one had, then stay up 1 s. A new build that exits or misses that (20 s ready,
+  10 s previews) is stopped and the old version is started again (restored-old).
+- **One swap at a time** over all services: a studio swap needs the UI server for its login key, so a UI swap and a
+  studio swap never overlap.
+- **Headless tests.** `UJWALAM_HEADLESS=1` + `UJWALAM_STUDIO_HIDDEN=1`: the launcher starts the studio, whose window
+  is laid out and "shown" with `Qt::WA_DontShowOnScreen` (never on screen). The headless host now accepts an embedded
+  preview only into a parent whose top-level window is hidden; a stand-alone preview and a visible parent stay
+  refused. `UJWALAM_STUDIO_TEST_CLOSE_MS` (hidden only) makes the window take the user's close, and a
+  `ujwalam-studio.test-crash` file beside the exe makes a build crash at start (headless only), for the tests.
+- **The 20-swap stream test is opt-in** (`npm run test:studio-swap`, also `npm run soak:studio-swap`): it streams
+  NVENC to four loopback listeners for a few minutes, too heavy for the hourly CI.
+Limits: a window kept in the tray (D311) comes back as a normal window after a swap; open dialogs and unsaved field
+edits in the old window are lost (the swap is the user's update click). Evidence:
+`docs/evidence/2026-11-11-lu4-studio-swap.md`.
+Codex review fixes (2026-11-11):
+- **A user close during a swap stops the session (D280).** Exit 0 is the user's close, 75 a requested swap, anything
+  else a crash. When the new window on probation (before ready, previews and the 1 s health wait are done), or the old
+  one before it took `swap-close`, exits 0, the slot starts nothing more: no restore of the old version (result
+  `failed`, or `kept-old` when the old one was closed), and `onUserClose` tells the launcher, which logs "studio window
+  closed during a swap: stopping Ujwalam" and stops everything. A crash on probation still restores the old version.
+  Test hook: a `ujwalam-studio.test-close` file beside a staged exe (text: ms after ready) closes only that build.
+- **Headless embedded previews are never shown.** Checking the parent's top-level window only at `preview.open` let a
+  parent shown later make the preview visible. Now, when headless, the embedded preview window is created without
+  WS_VISIBLE and never shown (a child is visible only with its own WS_VISIBLE): WM_WINDOWPOSCHANGING drops
+  SWP_SHOWWINDOW, WM_STYLECHANGING drops WS_VISIBLE, and the 200 ms refresh timer hides it if WS_VISIBLE got set any
+  other way (ShowWindow under a hidden parent does that). The libobs display still renders into it. `preview.list`
+  gains `shown` (its own WS_VISIBLE) and `visible`. `preview.testParent` (--test-hooks only) makes a never-shown parent
+  window and tries ShowWindow, SetWindowPos and SetWindowLongPtr on the child for the test.
