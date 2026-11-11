@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Scene builder command line (SB1 + SB2, D339; SB3, D341). Besides readReference() in read.mjs and buildPackage() in
+// Scene builder command line (SB1 + SB2, D339; SB3, D341; SB4, D345). Besides readReference() in read.mjs and buildPackage() in
 // build.mjs, the entry point for the studio's later scene builder UI and SB4 (restyle the studio).
 //
 //   node services/scene-builder/cli.mjs read <image-or-video> [--frames N] [--long-side PX] [--data-dir DIR]
 //   node services/scene-builder/cli.mjs build <image-or-video> --project FILE [--bind ROLE=ID]... [--theme ID]
 //        [--out PACKAGE.json] [--apply] [--json] [--frames N] [--long-side PX] [--data-dir DIR]
 //   node services/scene-builder/cli.mjs import <PACKAGE.json> --project FILE [--apply] [--json] [--data-dir DIR]
+//   node services/scene-builder/cli.mjs theme <image-or-video> [--name N] [--themes-dir DIR] [--apply] [--json]
+//        [--frames N] [--long-side PX] [--data-dir DIR]
 //
 // read prints the typed read (data/schemas/reference-read.schema.json) as JSON on stdout. It writes nothing.
 // build reads the reference, builds a scene package (data/schemas/scene-package.schema.json) for that project and
@@ -18,6 +20,12 @@
 // the studio closed: it is refused while the host or event core of the project's data folder runs (host.json /
 // api.json with a live pid), and it never overwrites a file that changed since it was read (compare-and-swap; see
 // services/project/scene-package.mjs applyScenePackageFile). The studio shows the new scene at its next start.
+// theme (SB4, D345) reads the reference and makes a studio theme pack (data/themes format, schema v2 with components)
+// from it: palette roles to colour tokens, the style read to component variants, colours pushed until the pack passes
+// the T1 contrast check. It prints where every colour came from, every push and the variants with why. Dry run by
+// default; --apply saves <id>.json in the user themes folder (UJWALAM_THEMES_DIR, else %APPDATA%Ujwalam Studio	hemes;
+// --themes-dir picks another), never over an existing file and never with a built-in theme's id. --name sets the
+// theme's name (the id follows it). A pack that cannot pass the contrast check is never written (exit 1).
 // Behind the feature flag `scene-builder` (off by default): with the flag off it says so and exits 2. --data-dir
 // picks the folder whose flags.local.json is read (the usual CLI order otherwise).
 // Exit codes: 0 done, 1 bad arguments or the work failed, 2 the flag is off.
@@ -31,14 +39,16 @@ import { applyScenePackageFile, diffText, packageProblems } from '../project/sce
 import { loadProject } from '../project/index.mjs';
 import { buildPackage } from './build.mjs';
 import { readReference } from './read.mjs';
+import { reportText, themeFromRead, userThemesDir, writeProblems, writeThemePack } from './theme.mjs';
 
 export const FLAG = 'scene-builder';
 const USAGE = [
   'usage: cli.mjs read <image-or-video> [--frames N] [--long-side PX] [--data-dir DIR]',
   '       cli.mjs build <image-or-video> --project FILE [--bind ROLE=ID]... [--theme ID] [--out PACKAGE.json] [--apply] [--json]',
   '       cli.mjs import <PACKAGE.json> --project FILE [--apply] [--json]',
+  '       cli.mjs theme <image-or-video> [--name N] [--themes-dir DIR] [--apply] [--json]',
 ].join('\n');
-const VALUE = new Set(['--frames', '--long-side', '--data-dir', '--project', '--theme', '--out']);
+const VALUE = new Set(['--frames', '--long-side', '--data-dir', '--project', '--theme', '--out', '--name', '--themes-dir']);
 const SWITCH = new Set(['--apply', '--json']);
 const BIND_ROLES = new Set(['game', 'camera', 'chat', 'alerts']);
 
@@ -66,8 +76,12 @@ export async function main(argv, out = (s) => process.stdout.write(`${s}\n`), er
   let args;
   try { args = parseArgs(argv); } catch (e) { err(`scene-builder: ${e.message}\n${USAGE}`); return 1; }
   const cmd = args._[0];
-  if (!['read', 'build', 'import'].includes(cmd) || args._.length !== 2) { err(USAGE); return 1; }
-  if (cmd !== 'read' && !args.project) { err(`scene-builder: ${cmd} needs --project FILE\n${USAGE}`); return 1; }
+  if (!['read', 'build', 'import', 'theme'].includes(cmd) || args._.length !== 2) { err(USAGE); return 1; }
+  if (cmd !== 'theme' && (args.name !== undefined || args['themes-dir'] !== undefined)) { err(`scene-builder: --name and --themes-dir are for theme
+${USAGE}`); return 1; }
+  if (cmd === 'theme' && (args.project || args.out || args.theme || Object.keys(args.bind).length)) { err(`scene-builder: theme takes no project options
+${USAGE}`); return 1; }
+  if (cmd !== 'read' && cmd !== 'theme' && !args.project) { err(`scene-builder: ${cmd} needs --project FILE\n${USAGE}`); return 1; }
   if (cmd === 'read' && (args.project || args.apply || args.out || args.theme || args.json || Object.keys(args.bind).length)) { err(`scene-builder: read takes no project options\n${USAGE}`); return 1; }
   if (cmd === 'import' && (args.out || args.theme || args.frames || args['long-side'] || Object.keys(args.bind).length)) { err(`scene-builder: import takes the package as it is\n${USAGE}`); return 1; }
   const num = (k, d) => (args[k] === undefined ? d : Number(args[k]));
@@ -85,6 +99,7 @@ export async function main(argv, out = (s) => process.stdout.write(`${s}\n`), er
       out(JSON.stringify(await readReference(args._[1], { frames, longSide }), null, 2));
       return 0;
     }
+    if (cmd === 'theme') return await themeCommand(args, { frames, longSide }, out, err, deps);
     let pkg;
     if (cmd === 'build') {
       const read = await readReference(args._[1], { frames, longSide });
@@ -101,6 +116,24 @@ export async function main(argv, out = (s) => process.stdout.write(`${s}\n`), er
     out(args.json ? JSON.stringify({ dryRun, diff }, null, 2) : diffText(diff, { dryRun }));
     return 0;
   } catch (e) { err(`scene-builder: ${e.message}`); return 1; }
+}
+
+async function themeCommand(args, { frames, longSide }, out, err, deps) {
+  const read = await readReference(args._[1], { frames, longSide });
+  const { pack, report } = themeFromRead(read, { name: args.name ?? null });
+  const dir = args['themes-dir'] ? path.resolve(args['themes-dir']) : userThemesDir(deps.env ?? process.env);
+  const dryRun = !args.apply;
+  const blocked = report.contrast.failures.length ? ['the pack does not pass the contrast check'] : [];
+  const problems = [...blocked, ...writeProblems(pack, dir)];
+  let file = null;
+  if (!dryRun) {
+    if (problems.length) { err(`scene-builder: not written: ${problems.join('; ')}`); out(args.json ? JSON.stringify({ dryRun, file, problems, pack, report }, null, 2) : reportText(pack, report, { file, dryRun: true })); return 1; }
+    file = writeThemePack(pack, dir);
+  }
+  const target = file ?? path.join(dir, `${pack.id}.json`);
+  out(args.json ? JSON.stringify({ dryRun, file: target, problems, pack, report }, null, 2) : `${reportText(pack, report, { file: target, dryRun })}${problems.length ? `
+Would not be written: ${problems.join('; ')}` : ''}`);
+  return blocked.length ? 1 : 0;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) process.exit(await main(process.argv.slice(2)));

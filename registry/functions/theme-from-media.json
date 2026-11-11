@@ -4,7 +4,7 @@
   "category": "theme-brand",
   "family": "themes",
   "name": "Theme from media",
-  "description": "OKLab k-means, WCAG-pushed text roles, provenance flags. Planned; behaviour not yet specified.",
+  "description": "OKLab k-means, WCAG-pushed text roles, provenance flags. The palette read exists (SB2, D339: services/scene-builder/palette.mjs). SB4 (D345): services/scene-builder/theme.mjs turns a reference read into a studio theme pack (data/themes format, schema v2) that passes the T1 contrast check, every colour with its provenance. Overlay brand themes from media are not built yet, so this stays planned.",
   "params": {
     "schema": {},
     "defaults": {},

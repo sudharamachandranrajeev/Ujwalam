@@ -75,6 +75,26 @@ export function forceContrast(lab, groundRgb, target, preferLighter) {
   return best;
 }
 
+/** forceContrast against several grounds at once (SB4, D345): the same 0.01 lightness steps, preferred direction
+ *  first, until the colour clears `target` on every ground. Returns the best reachable colour (highest worst-case
+ *  contrast) when the target cannot be met. */
+export function forceContrastAll(lab, groundsRgb, target, preferLighter) {
+  const worst = (l) => Math.min(...groundsRgb.map((g) => contrast(oklabToRgb(...l), g)));
+  let best = lab, bestC = worst(lab);
+  if (bestC >= target) return lab;
+  for (const dir of preferLighter ? [1, -1] : [-1, 1]) {
+    for (let step = 1; step <= 100; step++) {
+      const L = Math.min(1, Math.max(0, lab[0] + dir * step * 0.01));
+      const cand = [L, lab[1], lab[2]];
+      const c = worst(cand);
+      if (c > bestC) { bestC = c; best = cand; }
+      if (c >= target) return cand;
+      if (L === 0 || L === 1) break;
+    }
+  }
+  return best;
+}
+
 /** Seeded k-means++ in OKLab. labs: array of [L, a, b]. Returns [{ lab, share }] sorted by share, empty ones dropped.
  *  k-means++ seeding: plain random seeding loses small but important regions (a rim light, an accent), which are
  *  exactly the colours a theme needs. Same input and seed -> same result. */
