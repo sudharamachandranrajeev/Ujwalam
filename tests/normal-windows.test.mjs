@@ -41,9 +41,12 @@ test('host preview: a stand-alone window is a normal window (no NOACTIVATE / TOO
 test('host preview: headless still refuses every preview; embedded previews stay child windows', () => {
   const p = src('app/host/src/preview.cpp');
   const open = body(p, 'json::Value Previews::open(const OpenArgs &a)');
-  assert.match(open, /if \(headless_\)\s*throw rpc::Error\(rpc::CONFLICT, "headless/);
-  assert.ok(open.indexOf('headless_') < open.indexOf('open_embedded'), 'headless is checked before the embedded path');
+  // Headless refuses every preview window of its own; only an embedded preview into a hidden parent is allowed
+  // (LU4, D346), and open_embedded refuses a visible parent while headless.
+  assert.match(open, /if \(headless_ && !a\.parent\)\s*throw rpc::Error\(rpc::CONFLICT, "headless/);
+  assert.ok(open.indexOf('headless_') < open.indexOf('return open_embedded'), 'headless is checked before the embedded path');
   const emb = body(p, 'json::Value Previews::open_embedded(const OpenArgs &a)');
+  assert.match(emb, /if \(headless_ && IsWindowVisible\(GetAncestor\(parent, GA_ROOT\)\)\)/, 'the embedded path checks headless (visible parent refused)');
   assert.match(emb, /WS_CHILD \| WS_CLIPSIBLINGS/);
   assert.match(p, /case WM_MOUSEACTIVATE:[^\n]*\n\s*if \(w && w->parent\)\s*return MA_NOACTIVATE;/);
 });
@@ -58,11 +61,15 @@ test('host log line and launcher message name the main display, not a second dis
 test('studio window: shown and activated normally, no second-display move (D316 replaces D219)', () => {
   const m = src('app/studio/src/main.cpp');
   assert.doesNotMatch(m, /screens\.at\(1\)/);
-  // The only WA_ShowWithoutActivating left is the headless offscreen probe (UJWALAM_STUDIO_PROBE_SHOW, tests).
-  const uses = m.split('\n').filter((l) => l.includes('WA_ShowWithoutActivating'));
-  assert.equal(uses.length, 1);
+  // WA_ShowWithoutActivating is kept only in the two headless test modes: the offscreen probe
+  // (UJWALAM_STUDIO_PROBE_SHOW) and the hidden native window of the studio swap tests (UJWALAM_STUDIO_HIDDEN,
+  // laid out with WA_DontShowOnScreen, LU4/D346). Neither reaches the screen.
+  const lines = m.split('\n');
+  const uses = lines.map((l, i) => (l.includes('WA_ShowWithoutActivating') ? i : -1)).filter((i) => i >= 0);
+  assert.equal(uses.length, 2);
   const probe = m.indexOf('UJWALAM_STUDIO_PROBE_SHOW');
-  assert.ok(probe >= 0 && m.indexOf('WA_ShowWithoutActivating') > probe, 'kept only inside the headless probe');
+  assert.ok(probe >= 0 && m.indexOf('WA_ShowWithoutActivating') > probe, 'first use inside the headless probe');
+  assert.match(lines[uses[1] - 1], /WA_DontShowOnScreen/, 'second use only with WA_DontShowOnScreen (hidden test window)');
   assert.match(m, /win\.show\(\);[^\n]*\n\s*win\.raise\(\);\s*\n\s*win\.activateWindow\(\);/);
   const leave = body(src('app/studio/src/main_window.cpp'), 'void MainWindow::leaveTray()');
   assert.doesNotMatch(leave, /WA_ShowWithoutActivating/);
