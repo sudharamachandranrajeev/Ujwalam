@@ -34,9 +34,11 @@ test('store: rows are validated; only the five actions and known sources; refs k
 test('cap (LL1 hook): oldest stream folders go first until the store fits; the newest is never removed', () => {
   const dataDir = tmp();
   try {
-    const store = createLearningStore({ dataDir, capBytes: 2500 });
+    let started = Date.parse('2026-11-01T00:00:00Z');
+    const store = createLearningStore({ dataDir, capBytes: 2500, now: () => new Date(started) });
     const t0 = Date.parse('2026-11-01T00:00:00Z') / 1000;
     ['s1', 's2', 's3', 's4'].forEach((s, i) => {
+      started += 60_000;
       store.add({ action: 'kept', source: 'my-clips', session: s, ref: { file: 'x' } });
       const f = path.join(store.root, s, 'evidence.bin');
       writeFileSync(f, Buffer.alloc(1000));
@@ -51,6 +53,26 @@ test('cap (LL1 hook): oldest stream folders go first until the store fits; the n
     const one = createLearningStore({ dataDir, capBytes: 10 });
     assert.deepEqual(one.enforceCap().removed, ['s3']);
     assert.deepEqual(one.sessions(), ['s4']);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('cap (Codex P1): a late label in an old session never makes the newest stream session removable', () => {
+  const dataDir = tmp();
+  try {
+    let t = Date.parse('2026-11-01T00:00:00Z');
+    const store = createLearningStore({ dataDir, capBytes: 1500, now: () => new Date(t) });
+    for (const s of ['s1', 's2', 's3', 's4']) {
+      store.add({ action: 'kept', source: 'my-clips', session: s, ref: { file: 'x' } });
+      writeFileSync(path.join(store.root, s, 'evidence.bin'), Buffer.alloc(1000));
+      t += 3_600_000;
+    }
+    // Days later the user deletes a clip of the first stream: s1 gets a new row (its files are now the newest).
+    store.add({ action: 'deleted', source: 'my-clips', session: 's1', ref: { file: 'x' } });
+    const old = Date.parse('2026-10-01T00:00:00Z') / 1000;
+    for (const s of ['s2', 's3', 's4']) for (const f of ['evidence.bin', 'labels.jsonl']) utimesSync(path.join(store.root, s, f), old, old);
+    const r = store.enforceCap();
+    assert.deepEqual(r.removed, ['s1', 's2', 's3'], 'oldest by start time, not by last write');
+    assert.deepEqual(store.sessions(), ['s4'], 'the latest stream session is always kept');
   } finally { rmSync(dataDir, { recursive: true, force: true }); }
 });
 
@@ -128,6 +150,49 @@ test('feedback hotkey (Ctrl+Alt+F): each new moment folder becomes one feedback 
     r = sig.tick();
     assert.deepEqual(r.rows.map((x) => x.ref.moment), ['2026-11-10/201500-2']);
     assert.equal(sig.tick().rows.length, 0, 'a moment is labelled once');
+  } finally { rmSync(dataDir, { recursive: true, force: true }); rmSync(fb, { recursive: true, force: true }); }
+});
+
+test('My clips (Codex P2): a label that cannot be written is tried again on the next pass, never lost', () => {
+  const dataDir = tmp();
+  try {
+    const [a, b, c] = publishClips(dataDir, ['game_short_a_01_v.mp4', 'game_short_b_02_v.mp4', 'game_short_c_03_v.mp4'], '2026-11-10T20:30:00+00:00');
+    const sig = createLearningSignals({ dataDir, now: () => new Date('2026-11-11T09:00:00Z') });
+    // The session folder cannot be made (a file is in the way): every append fails.
+    const blocker = path.join(sig.store.root, 'rec-h-20261110-200000');
+    mkdirSync(sig.store.root, { recursive: true });
+    writeFileSync(blocker, 'x');
+    assert.equal(sig.tick({ startup: true }).rows.length, 0);
+    renameSync(b, path.join(path.dirname(b), 'renamed.mp4'));
+    unlinkSync(c);
+    assert.equal(sig.tick().rows.length, 0, 'still failing');
+    unlinkSync(blocker);
+    // Writable again: the kept, renamed and deleted rows all arrive.
+    const r = sig.tick();
+    assert.deepEqual(r.rows.map((x) => [x.action, x.ref.file ?? x.ref.to]).sort(), [['deleted', 'game_short_c_03_v.mp4'], ['kept', 'game_short_a_01_v.mp4'], ['kept', 'renamed.mp4'], ['renamed', 'renamed.mp4']], 'the kept row owed from the start comes too');
+    assert.equal(sig.tick().rows.length, 0, 'and only once');
+    assert.ok(a);
+  } finally { rmSync(dataDir, { recursive: true, force: true }); }
+});
+
+test('feedback hotkey (Codex P2): a moment labelled once is never labelled again, also after a long history', () => {
+  const dataDir = tmp(); const fb = tmp();
+  try {
+    const moment = (d, t) => { mkdirSync(path.join(fb, d, t), { recursive: true }); writeFileSync(path.join(fb, d, t, 'moment.json'), JSON.stringify({ v: 1, at: `${d}T12:00:00.000Z` })); };
+    moment('2026-11-01', '100000'); moment('2026-11-02', '100000'); moment('2026-11-02', '100000-2'); moment('2026-11-02', '100000-10');
+    // State from a pass whose remembered list was trimmed: the oldest moment fell out of it but its folder still exists.
+    const store = createLearningStore({ dataDir });
+    mkdirSync(store.root, { recursive: true });
+    writeFileSync(path.join(store.root, 'signals-state.json'), JSON.stringify({ v: 1, clips: {}, moments: ['2026-11-02/100000', '2026-11-02/100000-2', '2026-11-02/100000-10'] }));
+    const sig = createLearningSignals({ dataDir, feedbackDir: fb });
+    assert.equal(sig.tick({ startup: true }).rows.length, 0, 'the trimmed moment is not labelled again');
+    moment('2026-11-03', '090000');
+    assert.deepEqual(sig.tick().rows.map((x) => x.ref.moment), ['2026-11-03/090000']);
+    for (let i = 0; i < 3; i++) assert.equal(sig.tick().rows.length, 0);
+    // More moments than the feedback page lists (200) at once: all labelled, each once.
+    for (let i = 0; i < 250; i++) moment('2026-11-04', String(100000 + i));
+    assert.equal(sig.tick().rows.length, 250);
+    assert.equal(sig.tick().rows.length, 0);
   } finally { rmSync(dataDir, { recursive: true, force: true }); rmSync(fb, { recursive: true, force: true }); }
 });
 

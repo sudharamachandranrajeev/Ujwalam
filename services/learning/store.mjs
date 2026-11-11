@@ -13,14 +13,17 @@
 // No event names, weights or windows are added here. Chat text and viewer names are never written to the store;
 // chat-feedback rows only point at the local feedback file and the message id.
 //
-// Cap (LL1, user 2026-11-10): 5 GB for the whole store; whole session folders are removed oldest first (by their
-// newest file time) until the total fits. The newest session is never removed.
+// Cap (LL1, user 2026-11-10): 5 GB for the whole store; whole session folders are removed oldest first until the total
+// fits. "Oldest" is the session's start: session.json { createdAt } is written once, with the first row, and never
+// changed, so a late label in an old session (a clip deleted days later) does not make it look new (Codex review). The
+// latest session (by start) is never removed.
 
-import { appendFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const STORE_DIR = 'learning-store';
 export const LABELS_FILE = 'labels.jsonl';
+export const SESSION_META = 'session.json';
 export const CAP_BYTES = 5 * 1024 ** 3;
 export const ACTIONS = Object.freeze(['kept', 'deleted', 'posted', 'renamed', 'feedback']);
 export const SOURCES = Object.freeze(['my-clips', 'posting', 'hotkey', 'feedback-form', 'chat-feedback']);
@@ -59,8 +62,8 @@ export function makeRow({ action, source, session, ref, at }) {
   return { v: 1, at: t.toISOString(), action, source, session: s, ref: cleanRef(ref) };
 }
 
-function dirBytesAndNewest(dir) {
-  let bytes = 0; let newest = 0;
+function dirBytesAndOldest(dir) {
+  let bytes = 0; let oldest = Infinity;
   const walk = (d) => {
     let names = [];
     try { names = readdirSync(d); } catch { return; }
@@ -69,11 +72,11 @@ function dirBytesAndNewest(dir) {
       let st; try { st = lstatSync(p); } catch { continue; }
       if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) walk(p);
-      else { bytes += st.size; if (st.mtimeMs > newest) newest = st.mtimeMs; }
+      else { bytes += st.size; if (st.mtimeMs < oldest) oldest = st.mtimeMs; }
     }
   };
   walk(dir);
-  return { bytes, newest };
+  return { bytes, oldest: Number.isFinite(oldest) ? oldest : 0 };
 }
 
 /** opts: { dataDir, capBytes? (tests), now?() -> Date }. */
@@ -89,6 +92,8 @@ export function createLearningStore(opts) {
     const dir = path.join(root, row.session);
     try {
       mkdirSync(dir, { recursive: true });
+      // Written once ('wx' fails when it exists): the session's start, the cap's age order.
+      try { writeFileSync(path.join(dir, SESSION_META), `${JSON.stringify({ v: 1, createdAt: now().toISOString() })}\n`, { flag: 'wx' }); } catch (e) { if (e?.code !== 'EEXIST') throw e; }
       appendFileSync(path.join(dir, LABELS_FILE), `${JSON.stringify(row)}\n`, 'utf8');
     } catch { return 'write-failed'; }
     return row;
@@ -110,16 +115,24 @@ export function createLearningStore(opts) {
     return out;
   }
 
+  // A session's start: session.json createdAt; else its first row's time; else its oldest file (never its newest).
+  function startOf(n, oldestFile) {
+    const dir = path.join(root, n);
+    try { const t = Date.parse(JSON.parse(readFileSync(path.join(dir, SESSION_META), 'utf8')).createdAt); if (Number.isFinite(t)) return t; } catch { /* fall back */ }
+    try { const t = Date.parse(JSON.parse(readFileSync(path.join(dir, LABELS_FILE), 'utf8').split('\n')[0]).at); if (Number.isFinite(t)) return t; } catch { /* fall back */ }
+    return oldestFile;
+  }
+
   /**
-   * Cap (LL1): removes whole session folders, oldest first (by their newest file), until the store fits capBytes.
-   * The newest session and any name in `keep` are never removed. Returns { total, removed: [names], bytes }.
+   * Cap (LL1): removes whole session folders, oldest start first, until the store fits capBytes. The latest session
+   * (by start) and any name in `keep` are never removed. Returns { total, removed: [names], bytes }.
    */
   function enforceCap({ keep = [] } = {}) {
-    const list = sessions().map((n) => ({ n, ...dirBytesAndNewest(path.join(root, n)) }));
+    const list = sessions().map((n) => { const d = dirBytesAndOldest(path.join(root, n)); return { n, bytes: d.bytes, start: startOf(n, d.oldest) }; });
     let total = list.reduce((a, x) => a + x.bytes, 0);
     const removed = [];
     if (total <= capBytes) return { total, removed, bytes: total };
-    list.sort((a, b) => a.newest - b.newest || (a.n < b.n ? -1 : 1));
+    list.sort((a, b) => a.start - b.start || (a.n < b.n ? -1 : 1));
     const newest = list.at(-1)?.n;
     for (const x of list) {
       if (total <= capBytes) break;

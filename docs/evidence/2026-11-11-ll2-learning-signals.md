@@ -37,10 +37,23 @@ user's real clips folder or a real stream: **UNVERIFIED in real use**.
 | Cap (LL1) | PASS | `tests/learning-signals.test.mjs` "cap (LL1 hook) ..." (oldest two removed, newest kept even when alone over the cap) |
 | Privacy scan covers the store (LL5) | PASS | `tests/private-scan.test.mjs` "LL5 (D338) ..." (pre-commit at three depths and mixed case, pre-push over history; `services/learning/` and a doc named learning-store-notes pass) |
 
+## Codex review fixes (2026-11-11)
+
+Each fix has a regression test that failed before the fix (run on the unfixed code, then again after):
+
+| Finding | Fix | Test (before -> after) |
+|---|---|---|
+| P1 cap could delete the newest session (a late row in an old session refreshed its mtime) | cap orders by `session.json` `createdAt` (written once; fallback first row time, then oldest file); latest by start never removed | "cap (Codex P1): a late label in an old session ..." FAIL ("oldest by start time, not by last write") -> PASS |
+| P2 a failed append lost the label (state already advanced) | clip state (kept, renamed path, deleted) moves on only after a written row; kept is checked on every pass for clips published before this app start | "My clips (Codex P2): a label that cannot be written is tried again ..." FAIL -> PASS |
+| P2 more than 5,000 moments: trimmed ids looked unseen and were labelled again | checkpoint `momentMark` (newest moment labelled, sortable key with the `-nn` suffix); a failed write stops the pass before the mark; old state's id list migrates to its newest id; no 200-moment page limit | "feedback hotkey (Codex P2): a moment labelled once is never labelled again ..." FAIL ("the trimmed moment is not labelled again") -> PASS |
+
+Not changed (coordinator decision): clip file names in rename rows are the user's own words, kept in the local,
+gitignored, scan-blocked store only (line added to D338).
+
 ## Commands and results (2026-11-11, one suite at a time)
 
 ```
-node --test --test-timeout=60000 tests/learning-signals.test.mjs           tests 7  pass 7  fail 0
+node --test --test-timeout=60000 tests/learning-signals.test.mjs           tests 10 pass 10 fail 0 (after the review fixes; 7 before)
 node --test --test-timeout=60000 tests/live-test-kit.test.mjs              tests 16 pass 16 fail 0
 node --test --test-timeout=60000 tests/studio-ui-flags-feedback.test.mjs   tests 16 pass 16 fail 0
 node --test --test-timeout=60000 tests/studio-ui-posting-youtube.test.mjs  tests 8  pass 8  fail 0

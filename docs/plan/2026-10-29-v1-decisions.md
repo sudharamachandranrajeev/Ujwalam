@@ -898,9 +898,15 @@ parts of LL1 (store, cap) and LL5 (privacy scan) it needs. Decided:
   - Chat-feedback replies: the read-only collector (tools/collect-stream-feedback.mjs, run by the live test kit when
     a stream ends) adds one row per newly collected reply with the feedback file name, the message id and the
     platform, never the viewer name or text. Session `stream-<local start stamp>`.
-- **Cap (LL1):** 5 GB for the whole store, whole session folders removed oldest first (by their newest file), never
-  the newest one; run at launcher start and every tenth pass. Implemented now (cheap).
-- **Privacy (LL5):** the store is in the app data folder, never the repo; `learning-store/` is gitignored and the
+- **Cap (LL1):** 5 GB for the whole store, whole session folders removed oldest first, never the latest one; run at
+  launcher start and every tenth pass. Implemented now (cheap). Age is the session's start (`session.json`
+  `createdAt`, written once with its first row), not its last write: a late row in an old session (a clip deleted
+  days later) must not make the newest stream removable (Codex review).
+- **Retries (Codex review):** a clip's or moment's state moves on only after its row is written, so a failed write is
+  tried again on the next pass. Moments keep a checkpoint (the newest moment labelled; the host adds moments with the
+  current time), never a trimmed list of ids, so old moments are never labelled twice.
+- **Privacy (LL5):** clip file names in the store (rename rows) are the user's own words; they stay in the local store
+  only and are never committed (store, gitignore and private scan below). The store is in the app data folder, never the repo; `learning-store/` is gitignored and the
   private scan's local rule refuses any path with a `learning-store/` folder at any depth and case (pre-commit,
   pre-push, history). Nothing is written to `data/labels/`; its rules are unchanged.
 - **No flag:** pure background label writing with no visible effect; recorded exception to "behind a flag" as the

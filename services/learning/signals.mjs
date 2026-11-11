@@ -13,6 +13,8 @@
 //   Feedback hotkey (Ctrl+Alt+F): the host writes a moment folder <feedbackDir>/<date>/<time>/moment.json; each new
 //   moment becomes one "feedback" row (source hotkey). Its note (tag and severity, never the text) is labelled by the
 //   UI server when it is saved (server.mjs).
+// A clip's or moment's state moves on only after its row is written, so a failed write is retried on the next pass
+// (Codex review). Moments use a checkpoint (the newest moment labelled), not a trimmed list of ids.
 // Posting and chat-feedback rows are written where those happen (posting/youtube.mjs, tools/collect-stream-feedback.mjs).
 //
 // Runs in the launcher: once at start (with the cap check) and then every minute; stats and small JSON reads only.
@@ -20,13 +22,13 @@
 
 import { existsSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync, mkdirSync, lstatSync } from 'node:fs';
 import path from 'node:path';
-import { createFeedback } from '../studio-ui/feedback.mjs';
 import { createLearningStore, sessionId } from './store.mjs';
 
 export const STATE_FILE = 'signals-state.json';
 const DAY_DIR = /^\d{4}-\d{2}-\d{2}$/;
 const VIDEO = /\.(mp4|mov|mkv|webm)$/i;
-const MAX_SEEN_MOMENTS = 5000;
+const TIME_DIR = /^(\d{6})(?:-([1-9]\d?))?$/;
+const MAX_MOMENT_BYTES = 65_536;
 
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; } };
 const isPlain = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -41,12 +43,20 @@ function identity(file) {
 }
 const sameFile = (a, b) => (a.ino !== '0' && b.ino !== '0' ? a.ino === b.ino && a.size === b.size : a.size === b.size && a.mtimeMs === b.mtimeMs);
 
+// Moment ids sort by this key: <date>/<HHMMSS>-<nn>, the host's same-second copies -2 .. -99 after the first (-01).
+export function momentKey(id) {
+  const m = typeof id === 'string' ? /^(\d{4}-\d{2}-\d{2})\/(\d{6})(?:-([1-9]\d?))?$/.exec(id) : null;
+  return m ? `${m[1]}/${m[2]}-${String(m[3] ?? 1).padStart(2, '0')}` : null;
+}
+// State before the checkpoint kept a list of ids (trimmed at 5000): its newest id becomes the mark.
+const markOf = (ids) => ids.map(momentKey).filter(Boolean).sort().at(-1) ?? '';
+
 function loadState(file) {
   const s = readJson(file);
   return {
     v: 1,
     clips: isPlain(s?.clips) ? s.clips : {},
-    moments: Array.isArray(s?.moments) ? s.moments.filter((x) => typeof x === 'string') : [],
+    momentMark: typeof s?.momentMark === 'string' ? s.momentMark : markOf(Array.isArray(s?.moments) ? s.moments : []),
   };
 }
 function saveState(file, state) {
@@ -74,15 +84,17 @@ function candidates(clipsRoot) {
 }
 
 /**
- * One pass over uploads.json. opts: { dataDir, store, state, startup (bool), startedAt (ms), now () -> Date }.
+ * One pass over uploads.json. opts: { dataDir, store, state, startedAt (ms, this app start), now () -> Date }.
  * Mutates state.clips; returns the rows written.
  */
-export function reconcileClips({ dataDir, store, state, startup = false, startedAt = 0, now = () => new Date() }) {
+export function reconcileClips({ dataDir, store, state, startedAt = 0, now = () => new Date() }) {
   const doc = readJson(path.join(dataDir, 'clips', 'uploads.json'));
   const rows = Array.isArray(doc?.files) ? doc.files.filter((r) => isPlain(r) && typeof r.file === 'string' && path.isAbsolute(r.file)) : [];
   const written = [];
   const at = now();
-  const label = (action, row, ref) => { const r = store.add({ action, source: 'my-clips', session: clipSession(row, at), ref: { run: row.run ?? null, kind: row.kind ?? null, ...ref }, at }); if (typeof r !== 'string') written.push(r); };
+  // true when the row was written. The clip's state moves on only then, so a failed write is tried again next pass
+  // (Codex review of D338).
+  const label = (action, row, ref) => { const r = store.add({ action, source: 'my-clips', session: clipSession(row, at), ref: { run: row.run ?? null, kind: row.kind ?? null, ...ref }, at }); if (typeof r === 'string') return false; written.push(r); return true; };
   let cands = null;
   const tracked = () => new Set(Object.values(state.clips).filter((c) => c.state === 'present').map((c) => path.resolve(c.file).toLowerCase()));
   for (const row of rows) {
@@ -93,45 +105,60 @@ export function reconcileClips({ dataDir, store, state, startup = false, started
       st = state.clips[key] = id ? { file: row.file, ...id, state: 'present', kept: false } : { file: row.file, state: 'missing-at-first-sight' };
     }
     if (st.state !== 'present') continue;
-    const id = identity(st.file);
-    if (id) {
-      const addedMs = Date.parse(row.addedAt ?? '');
-      if (startup && !st.kept && Number.isFinite(addedMs) && addedMs < startedAt) {
-        st.kept = true;
-        label('kept', row, { file: path.basename(st.file) });
-      }
-      continue;
-    }
-    // Gone: renamed in place (or into another day folder), or deleted.
-    cands ??= candidates(path.dirname(path.dirname(row.file)));
-    const busy = tracked();
-    const hit = cands.find((f) => !busy.has(path.resolve(f).toLowerCase()) && (() => { const c = identity(f); return c && sameFile(st, c); })());
-    if (hit) {
-      label('renamed', row, { from: path.basename(st.file), to: path.basename(hit) });
+    if (!identity(st.file)) {
+      // Gone: renamed in place (or into another day folder), or deleted.
+      cands ??= candidates(path.dirname(path.dirname(row.file)));
+      const busy = tracked();
+      const hit = cands.find((f) => !busy.has(path.resolve(f).toLowerCase()) && (() => { const c = identity(f); return c && sameFile(st, c); })());
+      if (!hit) { if (label('deleted', row, { file: path.basename(st.file) })) st.state = 'deleted'; continue; }
+      if (!label('renamed', row, { from: path.basename(st.file), to: path.basename(hit) })) continue;
       st.file = hit;
-    } else {
-      st.state = 'deleted';
-      label('deleted', row, { file: path.basename(st.file) });
     }
+    // Published before this app start and still here: kept. Checked on every pass, not only the first, so a kept row
+    // whose write failed at start is written later (the clip was here at start too: a pass runs right at start).
+    const addedMs = Date.parse(row.addedAt ?? '');
+    if (!st.kept && Number.isFinite(addedMs) && addedMs < startedAt && label('kept', row, { file: path.basename(st.file) })) st.kept = true;
   }
   return written;
 }
 
-/** New feedback-hotkey moments become "feedback" rows (source hotkey). Mutates state.moments; returns the rows written. */
+// Moment folders (no links) with a moment.json, newer than the mark: [{ id, key, file }] sorted oldest first.
+function momentsAfter(feedbackDir, mark) {
+  const real = (p, dir) => { try { const s = lstatSync(p); return !s.isSymbolicLink() && (dir ? s.isDirectory() : s.isFile() && s.size <= MAX_MOMENT_BYTES); } catch { return false; } };
+  const out = [];
+  let days = [];
+  try { days = readdirSync(feedbackDir).filter((d) => DAY_DIR.test(d) && d >= mark.slice(0, 10)); } catch { return out; }
+  for (const d of days) {
+    if (!real(path.join(feedbackDir, d), true)) continue;
+    let times = [];
+    try { times = readdirSync(path.join(feedbackDir, d)).filter((t) => TIME_DIR.test(t)); } catch { continue; }
+    for (const t of times) {
+      const id = `${d}/${t}`; const key = momentKey(id);
+      const dir = path.join(feedbackDir, d, t); const file = path.join(dir, 'moment.json');
+      if (key > mark && real(dir, true) && real(file, false)) out.push({ id, key, file });
+    }
+  }
+  return out.sort((a, b) => (a.key < b.key ? -1 : 1));
+}
+
+/**
+ * New feedback-hotkey moments become "feedback" rows (source hotkey), oldest first. Checkpoint (Codex review of D338):
+ * state.momentMark is the newest moment labelled; the host only adds moments with the current time, so every moment
+ * at or before the mark is done and is never labelled again, however many there are. A failed write stops the pass
+ * there (the mark stays before it), so it is tried again next pass. Returns the rows written.
+ */
 export function reconcileMoments({ feedbackDir, store, state, now = () => new Date() }) {
   if (!feedbackDir || !existsSync(feedbackDir)) return [];
-  const seen = new Set(state.moments);
   const written = [];
-  for (const m of createFeedback({ feedbackDir }).list().reverse()) { // oldest first
-    if (seen.has(m.id)) continue;
-    const t = typeof m.timestamp === 'string' || typeof m.timestamp === 'number' ? new Date(m.timestamp) : now();
+  for (const m of momentsAfter(feedbackDir, state.momentMark)) {
+    const j = readJson(m.file);
+    const ts = j?.at ?? j?.timestamp;
+    const t = typeof ts === 'string' || typeof ts === 'number' ? new Date(ts) : now();
     const r = store.add({ action: 'feedback', source: 'hotkey', session: `day-${m.id.slice(0, 10)}`, ref: { moment: m.id }, at: Number.isFinite(t.getTime()) ? t : now() });
-    if (typeof r === 'string') continue; // not marked seen: tried again next pass
+    if (typeof r === 'string') break;
     written.push(r);
-    seen.add(m.id);
-    state.moments.push(m.id);
+    state.momentMark = m.key;
   }
-  if (state.moments.length > MAX_SEEN_MOMENTS) state.moments = state.moments.slice(-MAX_SEEN_MOMENTS);
   return written;
 }
 
@@ -151,7 +178,7 @@ export function createLearningSignals(opts) {
   function tick({ startup = false } = {}) {
     const state = loadState(stateFile);
     let rows = [];
-    try { rows = rows.concat(reconcileClips({ dataDir: opts.dataDir, store, state, startup, startedAt, now })); } catch (e) { log(`learning: clips check failed (${e?.code ?? 'error'})`); }
+    try { rows = rows.concat(reconcileClips({ dataDir: opts.dataDir, store, state, startedAt, now })); } catch (e) { log(`learning: clips check failed (${e?.code ?? 'error'})`); }
     try { rows = rows.concat(reconcileMoments({ feedbackDir: opts.feedbackDir, store, state, now })); } catch (e) { log(`learning: feedback check failed (${e?.code ?? 'error'})`); }
     try { saveState(stateFile, state); } catch { log('learning: state not saved; the next pass repeats it'); }
     let cap = null;
