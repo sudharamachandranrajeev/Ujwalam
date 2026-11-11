@@ -1569,3 +1569,60 @@ split it into after. add the settings to customise clip length for different typ
 - **No feature flag** (user-ordered cap). The old behaviour is reachable by raising a maximum up to 60 s.
 - UNVERIFIED: a real recording rendered into parts (headless tests use synthetic pieces); the picture of the new group at
   real DPI.
+
+## D352 — Payoff-first reel hook: every reel opens on its strongest moment in the first 1–3 s (2026-11-11, ED1)
+
+Growth plan ED1 (`docs/plan/2026-11-11-growth-content-instagram-plan.md`). Decided:
+- **Where.** Kill montages, match reels, impact-play reels and live clips. Short clips are one moment already and are
+  not changed. Core function `registry/functions/reel-hook.json` (format `post-render`, added to the function schema
+  enum: a step on the reel plan before the render, with no layer), presets `reel-hook-payoff-first` (2 s teaser) and
+  `reel-hook-quick-tease` (1 s), similar to each other. Data: `data/clip/reel-hook.json`; code
+  `services/clip/reel_hook.py`, wired in `services/clip/clipper.py`.
+- **Strategy per type (data, with the reason in the file).** Montage: **reorder**. Its pieces are separate kill runs, so
+  moving the strongest run to the front keeps the order of the rest and adds no length; a teaser is added only when the
+  peak is deeper than the window inside that piece and the teaser fits the cap. Match reel, impact-play reel, live clip:
+  **teaser**. Each is one story in time order (a match, the lead-up to the play, the moments around a save), so a
+  reorder would break it; a 1–3 s teaser of the peak plays first, then the reel from its start. The choice used
+  (`already`, `reorder`, `reorder+teaser`, `teaser`, `none`) and its reason are in the reel row (`hook`).
+- **Strongest moment.** The peak with the most kills in the window before it plus the medal weights in the window after
+  it (multi-kill and streak medals from the existing medal reader; the impact-play medal is not a kill).
+- **Hard rules.** The total, teaser included, stays within the D350 maximum: a teaser reel is split at maximum − teaser,
+  so every part keeps room; a reorder adds nothing. A teaser never starts or ends on a death span (`rank.death_spans`);
+  when every candidate overlaps a death the reel opens as before (`none`, reason recorded). CL1 split still holds and
+  every part gets its own hook (parts keep their own peaks and medals, fixed in `reel_length.split_reel`/`trim`).
+- **Hook score for AN2.** `hook.score` in render.json, match-reels.json and candidates.json rows, for every reel (hook on
+  or off, so there is a baseline): kill in the first 3 s (.35), multi-kill (.25), medal (.2), motion (.2) where motion is
+  the mean signalstats YDIF of the first 3 s of the rendered file above 3.0. Weights proposed, threshold UNVERIFIED on
+  real footage.
+- **Settings.** Settings > Clips > REEL OPENING (Qt studio): per type "Open with the best moment" (switch with visible
+  text) and the teaser length 1–3 s, Reset to defaults, Save/Discard. Stored as `settings.json clips.reelHooks` (only
+  changed types). Checked the same in Python and the studio server.
+- **Flag** `reel-hook`, off by default (data/flags.json). Off: reels render exactly as before; only the score is added.
+- UNVERIFIED: real recordings rendered with a hook; the motion threshold; the picture of the group at real DPI.
+
+## D353 — Burned-in reel captions from local speech to text, confidence-gated, original script (2026-11-11, ED2)
+
+Growth plan ED2. Decided:
+- **Speech to text.** The existing local backends in `services/clip/clip_captions.py` (faster-whisper default, model
+  `faster-whisper-small`; whisper.cpp optional). Task is `transcribe` (never `translate`), language auto-detected
+  (`multilingual`), so the original script is kept; nothing is transliterated. Per-segment confidence:
+  faster-whisper exp(avg_logprob) × (1 − no_speech_prob); whisper.cpp the mean token probability (`-ojf`).
+- **Gate (data).** `data/clip/reel-captions.json`: `minConfidence` 0.55 (UNVERIFIED, proposed), `minSegmentSec` 0.3.
+  Segments below it, without a confidence, or too short are kept in the transcript but hidden.
+- **Font.** Bundled OFL fonts only (`data/fonts`, licences in `docs/licence-headers.md`); never a Microsoft font. The
+  preset names the file; libass loads it from a `fonts` folder next to the render (`fontsdir`), so no system font is used.
+  **No bundled font covers Malayalam** (Inter, Barlow, Exo 2 have no Malayalam glyphs; checked with a cmap reader that
+  matches fontTools). Malayalam (and any script the font lacks) stays in the transcript, marked `fontMissing`, and is not
+  burned, so there is no tofu and no fallback to a system font. A Malayalam OFL font is an install for the user to approve.
+- **Placement.** Inside the V safe zone (intersection of the platform safe areas in `data/platforms`): margins left 65,
+  right 140, bottom 670 on 1080×1920; cards of at most 3 words, 2 lines.
+- **Editable transcript.** `transcript.json` next to the reel (segments with text, start, end, confidence, show, reason).
+  `clipper.py recaption --id <reel>` re-renders from the stored pieces with the edited transcript and replaces published
+  copies listed in published.json. An edited segment the user un-hides is burned.
+- **Core function** `registry/functions/reel-captions.json` (format `post-render`) with presets `reel-captions-bold`
+  (Inter Bold 72 px) and `reel-captions-barlow` (Barlow Bold 80 px), similar.
+- **Flag** `reel-captions`, off by default.
+- Not changed: the short-clip caption path (`clip_captions.to_ass`) still names "Arial" (a Microsoft font, resolved by
+  libass from the system). Reported, not changed here.
+- UNVERIFIED: caption quality and confidence on real stream audio, Malayalam/Manglish speech to text, whisper.cpp `-ojf`
+  with a real binary, recaption of a live clip after its replay save was dropped (`--drop-used-saves` deletes the source).
