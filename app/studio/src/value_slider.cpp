@@ -2,9 +2,12 @@
 // The shared value slider (D330). See value_slider.h.
 #include "value_slider.h"
 
+#include "theme.h"
+
 #include <QApplication>
 #include <QEventLoop>
 #include <QHBoxLayout>
+#include <QLabel>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QStyle>
@@ -120,7 +123,7 @@ ValueSlider::ValueSlider(double lo, double hi, double step, int decimals, QWidge
 	box_->setToolTip(QStringLiteral("Type a value and press Enter"));
 	auto *h = new QHBoxLayout(this);
 	h->setContentsMargins(0, 0, 0, 0);
-	h->setSpacing(8);
+	theme::space(h, 8);
 	h->addWidget(slider_, 1);
 	h->addWidget(box_);
 	settle_->setSingleShot(true);
@@ -133,16 +136,20 @@ ValueSlider::ValueSlider(double lo, double hi, double step, int decimals, QWidge
 			box_->setValue(v);
 		}
 		emit valueChanged(box_->value());
+		updateBubble();
 		if (!slider_->isSliderDown())
 			settle_->start(); // a key, the wheel or a click that is not held: commit after the pause
 	});
 	// A mouse gesture commits on release only: the jump of a track click starts the settle timer before the slider is
 	// down, so the press stops it (else a hold-and-drag past 250 ms committed a value on the way, Codex review).
 	connect(slider_, &QSlider::sliderPressed, settle_, &QTimer::stop);
+	connect(slider_, &QSlider::sliderPressed, this, &ValueSlider::updateBubble);
 	connect(slider_, &QSlider::sliderReleased, this, [this]() {
 		settle_->stop();
 		commit();
+		updateBubble();
 	});
+	connect(theme::notifier(), &theme::Notifier::changed, this, &ValueSlider::updateBubble);
 	// The box: a step (arrow key held, wheel) waits for the pause like the slider's keys; Enter or leaving the box
 	// commits at once.
 	connect(box_, &QDoubleSpinBox::valueChanged, this, [this](double v) {
@@ -157,6 +164,46 @@ ValueSlider::ValueSlider(double lo, double hi, double step, int decimals, QWidge
 		settle_->stop();
 		commit();
 	});
+}
+
+ValueSlider::~ValueSlider()
+{
+	delete bubble_.data(); // a child of the window, not of the slider
+}
+
+void ValueSlider::setBubblePinned(bool on)
+{
+	bubblePinned_ = on;
+	updateBubble();
+}
+
+bool ValueSlider::bubbleShown() const
+{
+	return bubble_ && !bubble_->isHidden();
+}
+
+void ValueSlider::updateBubble()
+{
+	const bool want = theme::componentFlag(QStringLiteral("slider.valueBubble")) && (slider_->isSliderDown() || bubblePinned_);
+	if (!want) {
+		if (bubble_)
+			bubble_->hide();
+		return;
+	}
+	QWidget *win = window();
+	if (!bubble_ || bubble_->parentWidget() != win) {
+		delete bubble_.data();
+		bubble_ = new QLabel(win);
+		bubble_->setObjectName(QStringLiteral("valueBubble"));
+		bubble_->setAttribute(Qt::WA_TransparentForMouseEvents);
+		bubble_->setAlignment(Qt::AlignCenter);
+	}
+	bubble_->setText(box_->textFromValue(box_->value()) + box_->suffix());
+	bubble_->adjustSize();
+	const QPoint handle = slider_->mapTo(win, slider_->pointFor(slider_->value()));
+	bubble_->move(handle.x() - bubble_->width() / 2, slider_->mapTo(win, QPoint(0, 0)).y() - bubble_->height() - 2);
+	bubble_->show();
+	bubble_->raise();
 }
 
 double ValueSlider::fromPos(int pos) const

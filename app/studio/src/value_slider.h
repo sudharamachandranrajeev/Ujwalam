@@ -12,9 +12,11 @@
 #pragma once
 
 #include <QDoubleSpinBox>
+#include <QPointer>
 #include <QSlider>
 #include <QWidget>
 
+class QLabel;
 class QTimer;
 
 // The slider part: a click on the track jumps there; the wheel needs focus.
@@ -49,6 +51,7 @@ class ValueSlider : public QWidget {
 public:
 	// lo..hi in steps of step (at most 100000 positions); decimals for the box.
 	ValueSlider(double lo, double hi, double step, int decimals, QWidget *parent = nullptr);
+	~ValueSlider() override;
 	void setValue(double v); // from code: no signals
 	double value() const;
 	void setSuffix(const QString &s);
@@ -65,6 +68,10 @@ public:
 	// a press on the track at share `from`, held still for holdMs, then moved to share `to` and released
 	bool probeHoldDrag(double from, double to, int holdMs);
 	bool probeBoxKey(int key, int times); // key presses in the number box (Qt::Key_Up steps it), one after another
+	// Value bubble (D336, components.slider.valueBubble): the value in a small bubble above the handle while it is
+	// dragged. Pinned (the theme specimen page): shown whenever the slider is visible and the pack asks for it.
+	void setBubblePinned(bool on);
+	bool bubbleShown() const;
 
 signals:
 	void valueChanged(double v);
@@ -74,6 +81,7 @@ private:
 	double fromPos(int pos) const;
 	int toPos(double v) const;
 	void commit();
+	void updateBubble(); // show, move or hide the value bubble
 
 	JumpSlider *slider_;
 	NumberBox *box_;
@@ -81,4 +89,6 @@ private:
 	double lo_, step_;
 	double last_ = 0;     // the last committed value
 	bool hasLast_ = false;
+	QPointer<QLabel> bubble_; // child of the window, created on first use, deleted with the slider
+	bool bubblePinned_ = false;
 };

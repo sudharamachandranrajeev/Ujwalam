@@ -68,8 +68,8 @@ Bubble::Bubble(QWidget *host) : QWidget(host)
 		update();
 	});
 	auto *l = new QVBoxLayout(this);
-	l->setContentsMargins(kArrow + 16, kArrow + 12, kArrow + 16, kArrow + 12);
-	l->setSpacing(8);
+	theme::margins(l, kArrow + 16, kArrow + 12, kArrow + 16, kArrow + 12);
+	theme::space(l, 8);
 	body_ = l;
 	hide();
 }

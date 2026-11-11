@@ -90,7 +90,9 @@ protected:
 
 private:
 	void sync();
+	void render(); // the label from plain_: in square brackets when the pack's chip variant is bracket (D336)
 	QLabel *text_;
+	QString plain_; // the chip's words without decoration (text() returns it)
 	qreal pulse_ = 1.0;
 	bool active_ = false;
 	QVariantAnimation *pulseAnim_ = nullptr;

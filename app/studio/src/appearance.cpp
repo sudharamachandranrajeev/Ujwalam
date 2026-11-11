@@ -166,8 +166,8 @@ Page::Page(const QString &themeNow, const QString &effectsNow, const QString &mo
 	scroll->setWidget(body);
 	outer->addWidget(scroll);
 	auto *v = new QVBoxLayout(body);
-	v->setContentsMargins(0, 0, 8, 0);
-	v->setSpacing(12);
+	theme::margins(v, 0, 0, 8, 0);
+	theme::space(v, 12);
 
 	auto *box = new QGroupBox(QStringLiteral("THEME"), body);
 	auto *bv = new QVBoxLayout(box);
@@ -176,7 +176,7 @@ Page::Page(const QString &themeNow, const QString &effectsNow, const QString &mo
 	hint->setObjectName(QStringLiteral("muted"));
 	bv->addWidget(hint);
 	auto *grid = new QGridLayout();
-	grid->setSpacing(10);
+	theme::space(grid, 10);
 	auto *group = new QButtonGroup(this);
 	group->setExclusive(true);
 	int i = 0;

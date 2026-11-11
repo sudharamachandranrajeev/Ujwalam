@@ -229,7 +229,7 @@ StreamPage::StreamPage(ApiClient *api, QWidget *parent) : QWidget(parent), api_(
 	setObjectName(QStringLiteral("streamPage"));
 	auto *v = new QVBoxLayout(this);
 	v->setContentsMargins(0, 0, 0, 0);
-	v->setSpacing(12);
+	theme::space(v, 12);
 
 	auto *modeBox = new QGroupBox(QStringLiteral("CANVAS"), this);
 	auto *mh = new QHBoxLayout(modeBox);
@@ -399,7 +399,7 @@ void StreamPage::render()
 		auto *it = new QListWidgetItem(outputs_);
 		auto *w = new QWidget(outputs_);
 		auto *rh = new QHBoxLayout(w);
-		rh->setContentsMargins(6, 4, 6, 4);
+		theme::margins(rh, 6, 4, 6, 4);
 		rh->addWidget(badge(s(platformOf(options_, s(o, "platform")), "badge", s(o, "platform").left(2).toUpper()), w));
 		auto *txt = new QLabel(QStringLiteral("<b>%1</b>  %2<br><span>%3</span>")
 					       .arg(s(o, "name").toHtmlEscaped(), s(o, "canvas") == QStringLiteral("V") ? QStringLiteral("Portrait") : QStringLiteral("Main"),
@@ -636,7 +636,7 @@ TransitionsPage::TransitionsPage(ApiClient *api, bool live, QWidget *parent) : Q
 	setObjectName(QStringLiteral("transitionsPage"));
 	auto *v = new QVBoxLayout(this);
 	v->setContentsMargins(0, 0, 0, 0);
-	v->setSpacing(12);
+	theme::space(v, 12);
 	auto build = [&](Row &r, const QString &title, const QString &canvas) {
 		auto *box = new QGroupBox(title, this);
 		auto *f = new QFormLayout(box);
@@ -834,7 +834,7 @@ IntegrationsPage::IntegrationsPage(ApiClient *api, QWidget *parent) : QWidget(pa
 	setObjectName(QStringLiteral("integrationsPage"));
 	auto *v = new QVBoxLayout(this);
 	v->setContentsMargins(0, 0, 0, 0);
-	v->setSpacing(12);
+	theme::space(v, 12);
 	auto bot = [&](const QString &title, const QString &id, QSpinBox *&port, QLabel *&status, const QString &note) {
 		auto *box = new QGroupBox(title, this);
 		auto *f = new QFormLayout(box);
@@ -1007,7 +1007,7 @@ OutputsPanel::OutputsPanel(ApiClient *api, QWidget *parent) : QGroupBox(QStringL
 {
 	setObjectName(QStringLiteral("outputsPanel"));
 	auto *v = new QVBoxLayout(this);
-	v->setSpacing(6);
+	theme::space(v, 6);
 	auto *head = new QHBoxLayout();
 	head->addStretch(1);
 	auto *plus = new QPushButton(QStringLiteral("+"), this);
@@ -1017,7 +1017,7 @@ OutputsPanel::OutputsPanel(ApiClient *api, QWidget *parent) : QGroupBox(QStringL
 	head->addWidget(plus);
 	v->addLayout(head);
 	rows_ = new QVBoxLayout();
-	rows_->setSpacing(4);
+	theme::space(rows_, 4);
 	v->addLayout(rows_);
 	connect(plus, &QPushButton::clicked, this, &OutputsPanel::addRequested);
 }

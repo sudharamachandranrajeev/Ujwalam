@@ -303,17 +303,26 @@ TaskChip::TaskChip(QWidget *parent) : QWidget(parent)
 	setCursor(Qt::PointingHandCursor);
 	setAttribute(Qt::WA_StyledBackground, true);
 	auto *h = new QHBoxLayout(this);
-	h->setContentsMargins(24, 3, 12, 3); // left room for the pulsing dot
-	h->setSpacing(6);
+	theme::margins(h, 24, 3, 12, 3); // left room for the pulsing dot
+	theme::space(h, 6);
 	text_ = new QLabel(this);
 	text_->setAttribute(Qt::WA_TransparentForMouseEvents);
 	h->addWidget(text_);
+	connect(theme::notifier(), &theme::Notifier::changed, this, &TaskChip::render);
 	hide();
 }
 
 QString TaskChip::text() const
 {
-	return text_->text();
+	return plain_;
+}
+
+void TaskChip::render()
+{
+	const bool bracket = theme::component(QStringLiteral("chip")) == QStringLiteral("bracket");
+	const QString shown = bracket && !plain_.isEmpty() ? QStringLiteral("[ %1 ]").arg(plain_) : plain_;
+	if (text_->text() != shown)
+		text_->setText(shown);
 }
 
 void TaskChip::setState(int running, int waiting, int listed, int stalled, const QString &tip)
@@ -328,7 +337,8 @@ void TaskChip::setState(int running, int waiting, int listed, int stalled, const
 		t = QStringLiteral("Tasks"); // only finished ones are listed: a quiet button
 	if (stalled > 0)
 		t += QStringLiteral(" - %1 may be stuck").arg(stalled);
-	text_->setText(t);
+	plain_ = t;
+	render();
 	setToolTip(tip.isEmpty() ? QStringLiteral("Show the task list") : tip);
 	if (property("quiet").toBool() != !active_ || property("stalled").toBool() != (stalled > 0)) {
 		setProperty("quiet", !active_);
@@ -395,8 +405,8 @@ TaskRow::TaskRow(const QString &id, QWidget *parent) : QFrame(parent), id_(id)
 {
 	setObjectName(QStringLiteral("taskRow"));
 	auto *v = new QVBoxLayout(this);
-	v->setContentsMargins(12, 10, 10, 10);
-	v->setSpacing(4);
+	theme::margins(v, 12, 10, 10, 10);
+	theme::space(v, 4);
 	auto *top = new QHBoxLayout();
 	title_ = new QLabel(this);
 	title_->setObjectName(QStringLiteral("taskTitle"));
@@ -488,9 +498,9 @@ Toast::Toast(const QString &title, const QString &note, bool failed, QWidget *pa
 	setCursor(Qt::PointingHandCursor);
 	setToolTip(QStringLiteral("Show the task list"));
 	auto *h = new QHBoxLayout(this);
-	h->setContentsMargins(16, 12, 8, 12);
+	theme::margins(h, 16, 12, 8, 12);
 	auto *v = new QVBoxLayout();
-	v->setSpacing(3);
+	theme::space(v, 3);
 	auto *t = new QLabel(title, this);
 	t->setObjectName(QStringLiteral("toastTitle"));
 	t->setWordWrap(true);
@@ -534,8 +544,8 @@ TaskBar::TaskBar(QMainWindow *host) : QObject(host), host_(host)
 	panel_->setFocusPolicy(Qt::NoFocus);
 	panel_->setFixedWidth(kPanelW);
 	auto *pv = new QVBoxLayout(panel_);
-	pv->setContentsMargins(12, 10, 12, 12);
-	pv->setSpacing(8);
+	theme::margins(pv, 12, 10, 12, 12);
+	theme::space(pv, 8);
 	auto *head = new QHBoxLayout();
 	auto *ht = new QLabel(QStringLiteral("TASKS"), panel_);
 	ht->setObjectName(QStringLiteral("heading"));
@@ -569,7 +579,7 @@ TaskBar::TaskBar(QMainWindow *host) : QObject(host), host_(host)
 	auto *inner = new QWidget(scroll_);
 	rows_ = new QVBoxLayout(inner);
 	rows_->setContentsMargins(0, 0, 0, 0);
-	rows_->setSpacing(8);
+	theme::space(rows_, 8);
 	empty_ = new QLabel(QStringLiteral("Nothing is running."), inner);
 	empty_->setObjectName(QStringLiteral("muted"));
 	rows_->addWidget(empty_);
