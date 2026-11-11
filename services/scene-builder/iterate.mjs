@@ -60,7 +60,11 @@ const clampBox = (b) => {
   const w = Math.min(1, Math.max(MIN_SIDE, b.w)), h = Math.min(1, Math.max(MIN_SIDE, b.h));
   return { x: Math.min(1 - w, Math.max(0, b.x)), y: Math.min(1 - h, Math.max(0, b.y)), w, h };
 };
-const rnd = (b) => ({ x: r4(b.x), y: r4(b.y), w: r4(b.w), h: r4(b.h) });
+// Round the left/top edge, then the right/bottom edge, and derive the size: x + w never exceeds the rounded edge.
+const rnd = (b) => {
+  const x = r4(b.x), y = r4(b.y);
+  return { x, y, w: Math.max(0, r4(r4(b.x + b.w) - x)), h: Math.max(0, r4(r4(b.y + b.h) - y)) };
+};
 
 function setQuerySize(query, box, cv) {
   const q = new URLSearchParams(query ?? '');
@@ -107,6 +111,7 @@ function applyOne(pkg, e, ctx) {
         : { x: num('x'), y: num('y'), w: num('w'), h: num('h') };
     if (!onCanvas(next)) throw new IterateError(`${e.op} ${e.canvas}:${e.key}: the box would leave the canvas or be smaller than ${MIN_SIDE}`);
     placeLayer(l, next, { ...c, refit: e.op !== 'move' });
+    if (!onCanvas(l.rect)) throw new IterateError(`${e.op} ${e.canvas}:${e.key}: the stored box would leave the canvas or be smaller than ${MIN_SIDE}`);
     return `${e.op} ${e.canvas}:${e.key}`;
   }
   if (e.op === 'swap') {
@@ -115,6 +120,7 @@ function applyOne(pkg, e, ctx) {
     const boxA = { ...a.rect }, boxB = { ...b.rect };
     placeLayer(a, boxB, { ...c, refit: true });
     placeLayer(b, boxA, { ...c, refit: true });
+    if (!onCanvas(a.rect) || !onCanvas(b.rect)) throw new IterateError(`swap ${e.canvas}:${e.a} <-> ${e.b}: a stored box would leave the canvas`);
     return `swap ${e.canvas}:${e.a} <-> ${e.b}`;
   }
   throw new IterateError(`unknown edit "${e.op}"`);
@@ -157,7 +163,26 @@ export function editPackage(pkg, edits, { canvases, rules = loadBuildRules(), no
   return { package: out, changes, warnings: out.warnings.filter((w) => /safe zone/.test(w)) };
 }
 
-const overlapSum = (boxes) => { let s = 0; for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++) s += area(boxes[i], boxes[j]); return s; };
+// Each pair of layers may overlap no more than it did in the original (a smaller A/B overlap never hides a new B/C one).
+function pairsGrow(orig, next) {
+  for (let i = 0; i < orig.length; i++) for (let j = i + 1; j < orig.length; j++) if (area(next[i], next[j]) > area(orig[i], orig[j]) + 1e-4) return true;
+  return false;
+}
+
+// The stored rects of a variant, after rounding and fitting: canvas bounds, V safe zone kept, pairwise overlap.
+function storedProblem(from, to, rules) {
+  const S = rules.v.safeBox;
+  for (const p of from.presets) {
+    const q = presetOf(to, p.params.canvas);
+    if (!q || q.params.layers.length !== p.params.layers.length) return 'layers changed';
+    const m = p.params.layers.map((l) => q.params.layers.find((x) => x.key === l.key));
+    if (m.some((x) => !x)) return 'layers changed';
+    if (m.some((x) => !onCanvas(x.rect))) return 'off canvas';
+    if (p.params.canvas === 'v' && S && p.params.layers.some((l, i) => inside(l.rect, S) && !inside(m[i].rect, S))) return 'left the safe zone';
+    if (pairsGrow(p.params.layers.map((l) => l.rect), m.map((x) => x.rect))) return 'overlap grew';
+  }
+  return null;
+}
 
 // Edits for one candidate; null when a rule rejects it.
 function candidate(pkg, kind, rng, { canvases, rules }) {
@@ -184,7 +209,7 @@ function candidate(pkg, kind, rng, { canvases, rules }) {
       if (!onCanvas(b)) return null;
       if (canvas === 'v' && S && inside(l.rect, S) && !inside(b, S)) return null;
     }
-    if (overlapSum(planned.map((x) => x.b)) > overlapSum(planned.map((x) => x.l.rect)) + 1e-4) return null;
+    if (pairsGrow(planned.map((x) => x.l.rect), planned.map((x) => x.b))) return null;
     for (const { l, b } of planned) {
       const same = Math.abs(b.w - l.rect.w) < 1e-9 && Math.abs(b.h - l.rect.h) < 1e-9;
       edits.push(same ? { op: 'move', canvas, key: l.key, x: b.x, y: b.y } : { op: 'place', canvas, key: l.key, x: b.x, y: b.y, w: b.w, h: b.h });
@@ -225,6 +250,7 @@ export function similarVariants(pkg, { count = 3, seed = 'sb5', canvases, rules 
     if (!edits) continue;
     const copy = structuredClone(pkg);
     try { edits.forEach((e) => applyOne(copy, e, { canvases, rules })); } catch (e) { if (e instanceof IterateError) continue; throw e; }
+    if (storedProblem(pkg, copy, rules)) continue;
     if (seen.has(signature(copy))) continue;
     if (!gameCropKept(pkg, copy)) continue; // the game is never cropped more than it was
     seen.add(signature(copy));

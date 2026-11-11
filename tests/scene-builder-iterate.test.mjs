@@ -259,6 +259,16 @@ describe('SB5 edit: move, resize, swap', () => {
     assert.throws(() => editPackage(pkg, [{ op: 'move', canvas: 'h', key: 'game', x: 0.2, y: 0.2 }, { op: 'move', canvas: 'h', key: 'game', x: 5, y: 0 }], { canvases: cv }));
   });
 
+  test('rounding never pushes a stored box off the canvas (x + w <= 1 after rounding)', () => {
+    const pkg = base('H'), cv = canvasesOf(project());
+    const r = editPackage(pkg, [{ op: 'place', canvas: 'h', key: 'chat', x: 0.33335, y: 0.33335, w: 0.66665, h: 0.66665 }, { op: 'place', canvas: 'h', key: 'alerts', x: 0.12345, y: 0.1, w: 0.87655, h: 0.2 }], { canvases: cv });
+    for (const k of ['chat', 'alerts']) {
+      const b = layerOf(r.package, 'h', k).rect;
+      assert.ok(b.x + b.w <= 1 + 1e-9 && b.y + b.h <= 1 + 1e-9, `${k}: ${JSON.stringify(b)}`);
+    }
+    assert.equal(layerOf(r.package, 'h', 'chat').rect.w, 0.6666);
+  });
+
   test('a V layer moved outside the safe zone is a warning, not a refusal and not a silent move', () => {
     const pkg = base('V'), cv = canvasesOf(project());
     const r = editPackage(pkg, [{ op: 'move', canvas: 'v', key: 'chat', x: 0, y: 0.7 }], { canvases: cv });
@@ -316,7 +326,11 @@ describe('SB5 similar variants', () => {
         for (const v of vs) {
           for (const preset of v.package.presets) {
             const c = preset.params.canvas, orig = pkg.presets.find((x) => x.params.canvas === c);
-            assert.ok(overlaps(v.package, c) <= overlaps(pkg, c) + 1e-3, `${kind}/${seed}/${v.kind}/${c} overlap`);
+            const Lo = orig.params.layers, Ln = preset.params.layers;
+            for (let i = 0; i < Lo.length; i++) for (let j = i + 1; j < Lo.length; j++) {
+              const n1 = Ln.find((l) => l.key === Lo[i].key), n2 = Ln.find((l) => l.key === Lo[j].key);
+              assert.ok(overlapOf(n1.rect, n2.rect) <= overlapOf(Lo[i].rect, Lo[j].rect) + 1e-4, `${kind}/${seed}/${v.kind}/${c} pair ${Lo[i].key}/${Lo[j].key}`);
+            }
             for (const l of preset.params.layers) {
               assert.ok(l.rect.x >= -1e-6 && l.rect.y >= -1e-6 && l.rect.x + l.rect.w <= 1 + 1e-6 && l.rect.y + l.rect.h <= 1 + 1e-6, `${kind}/${seed}/${v.kind}/${c}:${l.key} on canvas`);
               const o = orig.params.layers.find((x) => x.key === l.key);
