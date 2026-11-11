@@ -62,6 +62,9 @@ feedback/
 # Local datasets (reference crops can show player names; never committed).
 data/datasets/
 
+# Local learning store (LL2/LL5, D338): label rows and stream evidence. Normally in the app data folder; never committed.
+learning-store/
+
 # Per-game local data (pack format W0): reference datasets, crops, labels work files, evaluations. Never committed.
 data/games/*/local/
 

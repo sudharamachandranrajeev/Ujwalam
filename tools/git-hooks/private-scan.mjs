@@ -221,8 +221,12 @@ function summary() {
 // (core.ignorecase) ignores Foo.LOCAL.json and data/games/codm/Local/ but lets them be force-added.
 const LOCAL_DIR_RE = /^data\/games\/[^/]+\/local\//i;
 const LOCAL_NAME_RE = /\.local\./i;
+// LL5 (D338): the learning store (services/learning/store.mjs, <dataDir>/learning-store/) holds label rows, clip names
+// and later detector evidence from the user's streams. Any path with a learning-store folder is refused, at any depth.
+const LEARNING_STORE_RE = /(^|\/)learning-store\//i;
 function localRule(p) {
   if (LOCAL_DIR_RE.test(p)) return 'local rule: data/games/<game>/local/ is local-only and never committed';
+  if (LEARNING_STORE_RE.test(p)) return 'local rule: learning-store/ (the local learning store) is local-only and never committed';
   if (LOCAL_NAME_RE.test(p)) return 'local rule: *.local.* files are local-only and never committed';
   return null;
 }

@@ -568,6 +568,26 @@ test('M3: local game data and *.local.* files are blocked in pre-commit, pre-pus
   assert.ok(hasRule(p, /label-notes\/s\.jsonl@[0-9a-f]{12}:1: local rule/), p.stdout);
 });
 
+test('LL5 (D338): the learning store is blocked at any depth and any case in pre-commit and pre-push', () => {
+  const f = fresh();
+  for (const p of ['learning-store/stream-1/labels.jsonl', 'data/x/learning-store/signals-state.json', 'tmp/Learning-Store/day-2026-11-11/labels.jsonl']) {
+    f.add(p, '{"v":1}\n');
+    blocked(f.scan(['pre-commit']), new RegExp(`${p.replace(/[.]/g, '\\.')}:1: local rule: learning-store/`), p);
+    f.g('reset', '-q');
+  }
+  f.add('services/learning/store.mjs', '// ok\n');
+  f.add('docs/learning-store-notes.md', 'ok\n');
+  const ok = f.scan(['pre-commit']);
+  assert.equal(ok.status, 0, ok.stdout);
+  f.g('commit', '-q', '-m', 'code');
+  f.add('learning-store/s/labels.jsonl', '{"v":1}\n');
+  f.g('commit', '-q', '-m', 'oops');
+  const tip = f.g('rev-parse', 'HEAD').trim();
+  const p = f.scan(['pre-push'], { input: `refs/heads/main ${tip} refs/heads/main ${'0'.repeat(40)}\n`, env: { ...process.env, UJWALAM_PUSH_APPROVED: '1' } });
+  assert.equal(p.status, 1);
+  assert.ok(hasRule(p, /learning-store\/s\/labels\.jsonl@[0-9a-f]{12}:1: local rule/), p.stdout);
+});
+
 test('M4: an unreadable staged blob under data/labels/ is a hit', () => {
   const f = fresh();
   f.g('update-index', '--add', '--cacheinfo', `100644,${'1'.repeat(40)},${LABEL}`);
