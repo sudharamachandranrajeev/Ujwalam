@@ -25,7 +25,7 @@
 // like the real host's markers role; any other method with it answers -32001 forbidden. Recorded: shape ok, whether it
 // equals the api token or appears in argv (never the value).
 import http from 'node:http';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const argv = process.argv.slice(2);
@@ -119,7 +119,14 @@ const sim = (s, base) => {
 };
 
 const methods = {
-  'host.shutdown': () => { setTimeout(() => { save(); process.exit(0); }, 50); return { shuttingDown: true }; },
+  'host.shutdown': () => {
+    // LU5 test (Codex re-review): a pointer file names a file the old host changes while it shuts down, so the
+    // launcher's last check before the new host's spawn sees a copy that changed after the queue's check.
+    const tamper = process.env.UJWALAM_FAKE_HOST_TAMPER_ON_SHUTDOWN;
+    if (tamper && existsSync(tamper)) { const f = readFileSync(tamper, 'utf8').trim(); rmSync(tamper); chmodSync(f, 0o666); appendFileSync(f, '// changed\n'); }
+    setTimeout(() => { save(); process.exit(0); }, 50);
+    return { shuttingDown: true };
+  },
   'overlay.status': () => ({ state: 'ready', staticPort: 50101, feedPort: 50102, eventFeed: argv.includes('--overlay-events-url'), childHasEventToken: record.eventTokenOk, browserAllowed: argv.includes('--allow-browser') }),
   'overlay.stats': () => ({ clients: 3, chatFrames: 7, busFrames: 2, effects: 0, effectsBlocked: 0, chatEffects: 0, chatGated: 0, slowDropped: 0, refused: 0 }),
   'devices.list': () => {

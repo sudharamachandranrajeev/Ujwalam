@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -241,7 +241,7 @@ test('LU5: a failed host apply is rejected for good; the last known good stays t
   const dataDir = tmp();
   const old = hostEntry(stagedRelease(path.join(tmp(), 'old'), { n: 40 }), { script: true });
   acceptHost(dataDir, old);
-  const q2 = queue({ dataDir, startupHost: { entry: old, kind: 'good' }, hostResult: { result: 'restored-old', reason: 'the host did not get ready' } });
+  const q2 = queue({ dataDir, startupHost: { entry: old, kind: 'good' }, hostResult: { result: 'restored-old', reason: 'the host did not get ready', candidateFailed: true } });
   q2.st.busy = false;
   const r = await q2.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'new'), { n: 41 }) });
   assert.equal(r.result, 'restored-old');
@@ -503,7 +503,10 @@ test('P1-2 integrity: release metadata is required, the whole host part is hashe
   // The copy itself changed before it runs: checked right before the restart, rejected, never started.
   const q2 = queue();
   assert.equal((await q2.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'r2'), { n: 71 }) })).result, 'staged');
-  appendFileSync(path.join(q2.stage().pending.root, 'bin', 'ujwalam-host.mjs'), '\n// tampered\n');
+  const copied = path.join(q2.stage().pending.root, 'bin', 'ujwalam-host.mjs');
+  assert.throws(() => appendFileSync(copied, '\n// x\n'), /EPERM|EACCES/, 'the copied files are read-only (Codex re-review)');
+  chmodSync(copied, 0o666); // a writer with the user's rights (out of scope for read-only, D343): the hash still catches it
+  appendFileSync(copied, '\n// tampered\n');
   q2.st.busy = false;
   assert.ok(await until(() => q2.mirror().waiting.length === 0));
   assert.deepEqual(q2.calls, [], 'the host was not restarted');
@@ -567,4 +570,80 @@ test('P2-6 confirmed exit: stopHostChild reports a host that does not exit; it r
   const p = stopHostChild({ call: async () => { setTimeout(() => { quits.exitCode = 0; quits.emit('exit', 0); }, 20); } }, quits, { askMs: 10, exitMs: 2000, killMs: 30 });
   assert.equal(await p, true);
   assert.equal(await stopHostChild(null, { exitCode: 3, signalCode: null }), true, 'already gone');
+});
+
+test('Codex re-review B: an aborted replacement (the old host did not exit) keeps the candidate pending and retries it; only its own failure rejects it', async () => {
+  const answers = [{ result: 'failed', reason: 'the running host did not exit; nothing was replaced' }, { result: 'swapped' }];
+  const calls = [];
+  const q = queue({ applyHost: async (entry) => { calls.push(entry.n); return answers.shift(); } });
+  assert.equal((await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'b1'), { n: 60 }) })).result, 'staged');
+  q.st.busy = false;
+  assert.ok(await until(() => calls.length === 2), 'tried again at the next poll');
+  assert.ok(await until(() => q.stage().good?.n === 60));
+  assert.deepEqual([q.stage().pending, q.stage().rejected], [null, []], 'never rejected for an abort');
+  assert.ok(q.mirror().recent.some((r) => /kept, tried again/.test(r.text)));
+  // The candidate's own failure (readiness, project load, hash before the start) rejects it.
+  const q2 = queue({ hostResult: { result: 'restored-old', reason: 'the host did not get ready', candidateFailed: true } });
+  q2.st.busy = false;
+  assert.equal((await q2.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'b2'), { n: 61 }) })).result, 'restored-old');
+  assert.deepEqual([q2.stage().pending, q2.stage().rejected.map((x) => x.n)], [null, [61]]);
+  // An abort on an immediate apply (nothing live) also keeps it pending for a retry instead of a rejection.
+  const q3 = queue({ hostResult: { result: 'failed', reason: 'the running host did not exit' } });
+  q3.st.busy = false;
+  const r3 = await q3.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'b3'), { n: 62 }) });
+  assert.equal(r3.retry, true);
+  assert.equal(q3.stage().pending.n, 62);
+  assert.deepEqual(q3.stage().rejected, []);
+  q3.u.close();
+});
+
+test('Codex re-review C: one release.json snapshot: the copy carries it, and the freshness and unchanged checks use the prepared entry', async () => {
+  const q = queue();
+  const src = stagedRelease(path.join(tmp(), 'c1'), { n: 64 });
+  assert.equal((await q.u.request({ service: 'host', root: src })).result, 'staged');
+  const pend = q.stage().pending;
+  // The offered release.json changes after the request: the copy keeps the snapshot the checks used.
+  writeFileSync(path.join(src, 'release.json'), JSON.stringify({ ...JSON.parse(readFileSync(path.join(src, 'release.json'), 'utf8')), n: 3, version: '0.1.0-alpha.3' }));
+  const copyRel = JSON.parse(readFileSync(path.join(pend.root, 'release.json'), 'utf8'));
+  assert.deepEqual([copyRel.n, copyRel.version, pend.n], [64, '0.1.0-alpha.64', 64]);
+  assert.equal(copyRel.parts.host.sha256, pend.sha256);
+  // The same folder offered again (its release.json now says n 3): refused on the prepared entry's n.
+  assert.match((await q.u.request({ service: 'host', root: src })).reason, /release 3 is not newer than the running host|already waits/);
+  // Unchanged: the running host's part hash is compared with the prepared copy's.
+  q.st.busy = false;
+  assert.ok(await until(() => q.stage().good?.n === 64));
+  const again = stagedRelease(path.join(tmp(), 'c2'), { n: 65, version: '0.1.0-alpha.64' }); // same host bytes as 64
+  assert.equal((await q.u.request({ service: 'host', root: again })).result, 'unchanged');
+});
+
+test('Codex re-review A: a lease grant that arrives after its request timed out is given back; a lost release is sent again; hold() then succeeds', async () => {
+  const child = new EventEmitter(); child.connected = true;
+  const ui = new EventEmitter(); ui.connected = true;
+  let delayLease = 150; let dropRelease = 1;
+  child.send = (m) => { const late = m.ok === true && Number.isInteger(m.lease) && delayLease ? delayLease : 0; delayLease = 0; setTimeout(() => ui.emit('message', m), late); };
+  ui.send = (m) => { if (m.op === 'release' && dropRelease > 0) { dropRelease -= 1; return; } setImmediate(() => child.emit('message', m)); };
+  ui.disconnect = () => {};
+  const gate = createStartGate();
+  serveAuthority(child, createLiveAuthority(), { gate });
+  const client = authorityClient({ proc: ui, timeoutMs: 50, retryMs: 20 });
+  // The grant comes after the request gave up: the start is refused, and the orphan lease is released.
+  assert.deepEqual(await client.lease(), { ok: false, reason: 'the launcher did not answer' });
+  assert.equal(gate.state().inFlight, 1, 'granted on the launcher side');
+  assert.ok(await until(() => gate.state().inFlight === 0), 'the late grant was given back');
+  assert.equal(await gate.hold('the video engine (host) is being updated', 500), true, 'host updates are not blocked');
+  gate.end();
+  // A release whose message is lost (no answer) is retried while the link is up.
+  dropRelease = 1;
+  const l = await client.lease();
+  assert.equal(l.ok, true);
+  await client.release(l.lease);
+  assert.ok(await until(() => gate.state().inFlight === 0), 'the release was sent again');
+  assert.equal(await gate.hold('x', 500), true);
+  gate.end();
+  // An active lease is never expired on its own.
+  const held = await client.lease();
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(gate.state().inFlight, 1);
+  await client.release(held.lease);
+  assert.equal(gate.state().inFlight, 0);
 });

@@ -104,7 +104,7 @@ import { writeZip } from '../../tools/package/zip.mjs';
 import { createFront } from '../supervisor/front.mjs';
 import { createEventCoreSlot, createUiSlot } from '../supervisor/slots.mjs';
 import { refuseReason, SERVICES } from '../supervisor/swap.mjs';
-import { acceptHost, createStartGate, createUpdates, hostArgsFor, outputsBusy, readRelease, rejectHost, serveUpdates, serviceRootProblem, takeStartupHost } from '../supervisor/updates.mjs';
+import { acceptHost, createStartGate, createUpdates, hostArgsFor, hostEntryProblem, outputsBusy, readRelease, rejectHost, serveUpdates, serviceRootProblem, takeStartupHost } from '../supervisor/updates.mjs';
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
 import { readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
@@ -919,7 +919,10 @@ function superviseHost(o) {
   return {
     client: () => client,
     restarting: () => busy,
-    async restartPlanned(useNew, useOld) {
+    // check(): the candidate's last hash, run after the old host has exited and right before the new one is spawned
+    // (Codex re-review). candidateFailed in the answer: the candidate itself failed (check, readiness, project load);
+    // without it nothing of the candidate ran (it is kept for a retry).
+    async restartPlanned(useNew, useOld, check = () => null) {
       if (busy || isStopping()) return { result: 'refused', reason: 'the host is restarting' };
       busy = true;
       try {
@@ -933,18 +936,18 @@ function superviseHost(o) {
           console.log(`[studio] WARNING: host update aborted: ${reason}`);
           return { result: 'failed', reason };
         }
-        useNew();
-        const up = await startAndLoad({ isPlanned: true });
+        const bad = check();
+        const up = bad ? { ok: false, reason: `its files changed before it started (${bad})` } : (useNew(), await startAndLoad({ isPlanned: true }));
         if (up.ok) return { result: 'swapped' };
         if (up.stuck) {
           console.log(`[studio] WARNING: host update failed (${up.reason}); the previous host is NOT started next to it`);
-          return { result: 'failed', reason: up.reason };
+          return { result: 'failed', reason: up.reason, candidateFailed: true };
         }
         console.log(`[studio] WARNING: host update failed (${up.reason}); starting the previous host again`);
         useOld();
         // Not planned: if the previous host cannot start either, the crash restart policy takes over.
         const back = await startAndLoad({ isPlanned: false });
-        return back.ok ? { result: 'restored-old', reason: up.reason } : { result: 'failed', reason: `${up.reason}; the previous host did not come back (${back.reason})` };
+        return back.ok ? { result: 'restored-old', reason: up.reason, candidateFailed: true } : { result: 'failed', reason: `${up.reason}; the previous host did not come back (${back.reason})`, candidateFailed: true };
       } finally { busy = false; }
     },
   };
@@ -1188,6 +1191,25 @@ export async function main(argv = process.argv.slice(2)) {
       console.log(`[studio] host log: ${hostLog.file}`);
       return child;
     };
+    // A candidate's copy is hashed once more right before its spawn (Codex re-review); a changed copy is rejected and
+    // the next candidate (finally the installed host) is used.
+    const nextCandidate = () => {
+      startupHost = startupCandidates.shift() ?? null;
+      const e = startupHost?.entry ?? installedHost;
+      if (startupHost) tryNote(startupHost); else console.log('[studio] starting the installed host');
+      useHost(e);
+      hostRun = { exe: e.exe, args: hostArgsFor(hostRun.args, { runtime: e.runtime, overlayScript: hostCfg.overlayScript }), script: /\.m?js$/i.test(e.exe), runtime: e.runtime, root: startupHost?.entry?.root ?? null };
+    };
+    const checkCandidate = () => {
+      while (startupHost) {
+        const bad = hostEntryProblem(startupHost.entry, { script: /\.m?js$/i.test(hostCfg?.exe ?? ''), runtime: hostCfg?.runtime ?? null });
+        if (!bad) return;
+        rejectHost(dataDir, startupHost.entry, bad, (l) => console.log(`[studio] ${l}`));
+        console.log(`[studio] WARNING: host update ${startupHost.entry.version} not started (${bad}); it is not tried again`);
+        nextCandidate();
+      }
+    };
+    checkCandidate();
     spawnHost();
     hostDiscoveryFile = hostDiscovery;
     // The UI server and the browser start only after the host has written its discovery file (up to 60 s), so the page never meets the fake backend first.
@@ -1217,11 +1239,8 @@ export async function main(argv = process.argv.slice(2)) {
         await stopAll();
         return 1;
       }
-      startupHost = startupCandidates.shift() ?? null;
-      const e = startupHost?.entry ?? installedHost;
-      if (startupHost) tryNote(startupHost); else console.log('[studio] starting the installed host');
-      useHost(e);
-      hostRun = { exe: e.exe, args: hostArgsFor(hostRun.args, { runtime: e.runtime, overlayScript: hostCfg.overlayScript }), script: /\.m?js$/i.test(e.exe), runtime: e.runtime, root: startupHost?.entry?.root ?? null };
+      nextCandidate();
+      checkCandidate();
       spawnHost();
       disc = await waitForDiscovery(hostDiscovery, hostChild, startupHost ? updateReadyMs() : undefined);
     }
@@ -1379,7 +1398,8 @@ export async function main(argv = process.argv.slice(2)) {
         const prev = hostRun;
         return await hostSup.restartPlanned(
           () => { hostRun = { ...prev, exe: entry.exe, script: /\.m?js$/i.test(entry.exe), args: hostArgsFor(prev.args, entry), runtime: entry.runtime, root: entry.root ?? null }; },
-          () => { hostRun = prev; });
+          () => { hostRun = prev; },
+          () => hostEntryProblem(entry, { script: prev.script === true, runtime: prev.runtime ?? null }));
       } finally { startGate.end(); }
     } : null,
     hostInfo: () => ({ script: hostRun?.script === true, runtime: hostRun?.runtime ?? null }),

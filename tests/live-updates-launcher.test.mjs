@@ -10,7 +10,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -166,4 +166,24 @@ test('LU5: a host update that does not start is rolled back to the previous host
   assert.deepEqual([st.pending, st.good, st.rejected.map((x) => x.n)], [null, null, [77]], 'nothing for the next start; never tried again');
   assert.equal(await l.close(), 0);
   assert.doesNotMatch(l.out, /HOST CRASHED/);
+});
+
+test('Codex re-review 2: the copy is read-only, and a copy changed after the queue check (while the old host shuts down) is hashed again before the spawn: not started, rejected, the previous host comes back', { timeout: 120_000 }, async (t) => {
+  const s = setup(t, 'rehash');
+  const stopFile = path.join(s.root, 'stop');
+  const pointer = path.join(s.root, 'tamper.txt');
+  const rel = stagedRelease(path.join(s.root, 'release'), { n: 55 });
+  const l = await launch(t, s, { UJWALAM_FAKE_HOST_RECORDING: '1', UJWALAM_FAKE_HOST_STOP_ON: stopFile, UJWALAM_FAKE_HOST_TAMPER_ON_SHUTDOWN: pointer });
+  assert.equal((await l.ask('host', rel)).result, 'staged', l.out.slice(-2000));
+  const exe = path.join(s.live('host-update.json').pending.root, 'bin', 'ujwalam-host.mjs');
+  assert.throws(() => appendFileSync(exe, '// x\n'), /EPERM|EACCES/, 'the copied release files are read-only');
+  writeFileSync(pointer, exe); // the old host changes the copy while it shuts down (after the queue's own check)
+  writeFileSync(stopFile, 'stop');
+  assert.ok(await until(() => s.live('host-update.json')?.rejected?.some((r) => r.n === 55)), l.out.slice(-3000));
+  assert.ok(await until(() => s.calls().filter((c) => c.event === 'start').length === 2), l.out.slice(-3000));
+  const starts = s.calls().filter((c) => c.event === 'start');
+  assert.equal(starts[1].dir, path.dirname(FAKE_HOST), 'the previous host started again; the changed copy never ran');
+  assert.match(l.out, /its files changed before it started/);
+  assert.equal(s.live('host-update.json').pending, null);
+  assert.equal(await l.close(), 0);
 });

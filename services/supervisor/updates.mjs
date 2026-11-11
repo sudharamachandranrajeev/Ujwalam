@@ -35,7 +35,7 @@
 // (readUpdatesStatus). It is never read back for a decision. No paths, keys or names in it: versions and plain words.
 
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { folderFiles, partOf, partsProblem } from './parts.mjs';
 
@@ -134,9 +134,12 @@ const liveFile = (dataDir, name) => path.join(dataDir, LIVE_DIR, name);
 const releasesDir = (dataDir) => path.join(dataDir, LIVE_DIR, RELEASES_DIR);
 
 /**
- * Copies the given parts of a checked release folder (plus its release.json) into <dataDir>/live/releases/<kind>-<n>-
- * <hash>, then checks the copy against release.json again; the update runs from the copy only. An existing copy with
- * the same name is checked and reused. -> { dir } or { problem }.
+ * Copies the given parts of a release folder into <dataDir>/live/releases/<kind>-<n>-<hash> and writes the ONE
+ * release.json snapshot (rel) that every check uses into it (Codex re-review: the offered release.json is read once),
+ * then checks the copy against it again and makes its files read-only; the update runs from the copy only. An existing
+ * copy with the same name is checked and reused. Read-only stops an accident, not a writer with the user's rights:
+ * the data folder belongs to the same user (D343), so the copy is hashed again right before the host starts.
+ * -> { dir } or { problem }.
  */
 function copyRelease(dataDir, root, rel, parts, kind) {
   if (typeof dataDir !== 'string') return { problem: 'no data folder for the update copy' };
@@ -151,14 +154,16 @@ function copyRelease(dataDir, root, rel, parts, kind) {
   try {
     rmSync(tmp, { recursive: true, force: true });
     for (const f of folderFiles(root)) {
-      if (f.rel !== 'release.json' && !parts.includes(partOf(f.rel))) continue;
+      if (!parts.includes(partOf(f.rel))) continue;
       const to = path.join(tmp, ...f.rel.split('/'));
       mkdirSync(path.dirname(to), { recursive: true });
       cpSync(f.abs, to);
     }
+    writeFileSync(path.join(tmp, 'release.json'), `${JSON.stringify({ version: rel.version, n: rel.n, hostExeSha256: rel.hostExeSha256, parts: rel.parts })}\n`);
     const again = partsProblem(tmp, parts, rel.parts);
     if (again) throw new Error(`${again} (changed while it was copied)`);
     renameSync(tmp, dir);
+    for (const f of folderFiles(dir)) chmodSync(f.abs, 0o444);
     return { dir };
   } catch (e) {
     try { rmSync(tmp, { recursive: true, force: true }); } catch { /* temp folder */ }
@@ -166,15 +171,21 @@ function copyRelease(dataDir, root, rel, parts, kind) {
   }
 }
 
-/** A host update: strict checks on the offered folder, then a checked private copy. -> entry (of the copy) or { problem }. */
+/**
+ * A host update: release.json is read ONCE (the snapshot), the part is checked against it and copied with it; the
+ * entry (exe hash, layout) is then read from the copy, so every later check (freshness, unchanged, the hash before the
+ * start) is about the same release. -> entry (of the copy) or { problem }.
+ */
 export function prepareHost(root, { dataDir, script = false, runtime = null } = {}) {
-  const src = hostEntry(root, { script, runtime });
-  if (src.problem) return src;
-  const c = copyRelease(dataDir, root, readRelease(root), HOST_PARTS, 'host');
+  if (typeof root !== 'string' || !path.isAbsolute(root)) return { problem: 'the update folder must be an absolute path' };
+  const rel = readRelease(root);
+  const bad = releaseProblem(rel, HOST_PARTS, { host: true });
+  if (bad) return { problem: bad };
+  const c = copyRelease(dataDir, root, rel, HOST_PARTS, 'host');
   if (c.problem) return c;
   const e = hostEntry(c.dir, { script, runtime });
   if (e.problem) return e;
-  if (e.sha256 !== src.sha256) return { problem: 'the staged host is not the one that was checked' };
+  if (e.sha256 !== rel.parts.host.sha256 || e.n !== rel.n) return { problem: 'the staged host is not the one that was checked' };
   return e;
 }
 
@@ -422,7 +433,14 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
         versions.host = w.version; versions['overlay-server'] = w.version;
         nOf.host = w.n; nOf['overlay-server'] = w.n; hostSha = w.entry.sha256;
         acceptHost(dataDir, w.entry, log);
-      } else rejectHost(dataDir, w.entry, r?.reason ?? r?.result ?? 'failed', log);
+      } else if (r?.candidateFailed === true) {
+        // Only the candidate's own failure (its hash right before the start, readiness, project load) rejects it.
+        rejectHost(dataDir, w.entry, r?.reason ?? r?.result ?? 'failed', log);
+      } else {
+        // Aborted before the candidate ran (the old host did not exit, Ujwalam closing): kept for a retry.
+        note('host', w.version, r?.result ?? 'failed', `${r?.reason ?? 'not started'}; kept, tried again`);
+        return { ...(r ?? { result: 'failed' }), retry: true };
+      }
       note('host', w.version, r?.result ?? 'failed', r?.reason);
       return r ?? { result: 'failed' };
     }
@@ -461,7 +479,7 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
         drop(w);
         mirror();
         const r = await applyNow(w);
-        if (r?.result === 'busy') { enqueue(w); break; }
+        if (r?.result === 'busy' || r?.retry) { enqueue(w); break; }
         mirror();
       }
     });
@@ -478,12 +496,11 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
         let w;
         if (part === 'host') {
           if (!applyHost) return { result: 'refused', reason: 'no host is running' };
-          const src = hostEntry(root, hostInfo());
-          if (src.problem) return { result: 'refused', reason: src.problem };
-          if (hostSha && src.sha256 === hostSha) return { result: 'unchanged', reason: 'the update does not change the host' };
-          if (src.n <= nOf.host) return { result: 'refused', reason: `release ${src.n} is not newer than the running host (${nOf.host})` };
+          // One snapshot (Codex re-review): the checks below run on the prepared copy, never on a second read.
           const entry = prepareHost(root, { dataDir, ...hostInfo() });
           if (entry.problem) return { result: 'refused', reason: entry.problem };
+          if (hostSha && entry.sha256 === hostSha) return { result: 'unchanged', reason: 'the update does not change the host' };
+          if (entry.n <= nOf.host) return { result: 'refused', reason: `release ${entry.n} is not newer than the running host (${nOf.host})` };
           w = { id: `u${++seq}`, part, root: entry.root, entry, version: entry.version, n: entry.n, click: false, at: iso() };
         } else {
           if (!Object.hasOwn(SERVICE_ENTRY, part)) return { result: 'refused', reason: 'unknown or not wired service' };
@@ -498,6 +515,7 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
         if (!(await busy())) {
           mirror();
           const r = await applyNow(w);
+          if (r?.retry) { enqueue(w); return r; }
           if (r?.result !== 'busy') { mirror(); return r; }
         }
         enqueue(w);
@@ -516,6 +534,7 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
         mirror();
         const r = await applyNow(w);
         if (r?.result === 'busy') { enqueue(w); return { result: 'refused', reason: 'the host is updated only when every stream and recording has stopped' }; }
+        if (r?.retry) enqueue(w);
         mirror();
         return r;
       });
