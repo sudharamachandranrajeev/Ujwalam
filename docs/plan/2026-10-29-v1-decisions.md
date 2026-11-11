@@ -1183,3 +1183,46 @@ the D338 store and the D340 review answers. Decided:
   `.ll4-new` files without a journal are removed. The changelog is replaced by rename, never truncated in place.
 Not done: an approval button in the studio. Real use on a stream is UNVERIFIED (no real labels exist yet). Evidence:
 `docs/evidence/2026-11-11-ll4-after-stream-train.md`.
+
+## D345 — Scene builder SB4: a studio theme pack from a reference, contrast-checked, saved as a new custom theme only on --apply (2026-11-11, plan D324 section C)
+
+Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` row SB4 (approved, D324). Input: the SB2
+typed read (D339). Output: a theme pack in the `data/themes` format, schema v2 with a components block (T1, D336).
+Decided:
+- **One check, shared.** The T1 contrast pairs, `derived()` and the check moved from
+  `tests/studio-theme-contrast.test.mjs` to `services/studio-ui/theme-contrast.mjs` unchanged; the test imports it.
+  A generated pack is checked by exactly the rules the shipped packs are (text 4.5:1, controls and focus 3:1, every
+  state, the base look plus the variants it picks).
+- **Colours (`services/scene-builder/theme.mjs` mapColours).** background -> bg, surface -> panel, text -> text,
+  accent -> accent, as read. Every other token is derived from read colours and says how: field (surface, 0.035
+  lightness toward the middle), border (surface mixed toward the text, at most 14 %, text keeps 4.5:1 on it), muted
+  (text 35 % toward the background), accentHi (accent lightness +-0.10), onAccent (the background or the text colour,
+  whichever gives the accent less to move), disabled (muted 45 % toward the background; exempt). No accent read: the
+  most chromatic cluster, else the text colour (a neutral accent). danger and ok: a red or green cluster of the read
+  (never the accent itself), else the semantic hue (OKLab 29 / 142 degrees) at the accent's lightness and chroma: the
+  one place a hue is not from the picture, because a warning must read as a warning; it is labelled "convention".
+  Dark or light follows the read's text polarity (a mid-tone ground goes by its text). Then each colour is pushed with
+  the §4.6 maths (new `forceContrastAll` in `colour.mjs`: the same 0.01 lightness steps against several grounds, hue
+  and chroma kept), and a settle loop pushes whatever still fails (the ink first, a face only when the ink cannot move
+  or would oscillate); every push is reported with the pair that needed it. A pack that still fails is never written.
+- **Variants (chooseVariants).** Corner radius class: none -> button sharp, tabs boxed, input filled, chip and section
+  header bracket, slider handle bar, card framed (when no shadow); pill -> pill buttons and tabs; otherwise rounded,
+  underline tabs, outline inputs. Studio radius = read radius at 1080 / 2 (2..16), small and large around it. Glow ->
+  focus glow, bezel primary, outline plain buttons, bezel switch, glow on the primary button in the read glow colour,
+  round controls when active, toasts. Shadow -> raised cards, solid buttons, focus ring, thick slider track, a black
+  drop shadow on cards, primary and round controls, toasts, menus and the task panel (opacity from the read depth).
+  Neither -> soft buttons, tinted plain buttons, focus border, flat cards, no depth. Type size -> density (small
+  compact, large airy) and base size; weight -> heading weight and icon stroke. metal and neumorph are never picked
+  (the rules read no surface texture). A style answer below confidence 0.5 keeps the base look for the keys it decides
+  (left out of the pack). Motion, control sizes and padding are the studio defaults.
+- **Where it goes.** The studio's user themes folder (`theme.cpp` searchDirs `<app data>/themes` =
+  `%APPDATA%\Ujwalam Studio\themes`; `UJWALAM_THEMES_DIR` first, as in the studio; `--themes-dir` overrides). Never
+  the built-in `data/themes` folder, never a built-in id, never over an existing file: a temp file is hard-linked into
+  place (fails if the name appeared) and removed. The studio lists it as a custom theme; with `theme-components` off
+  it draws the base look (no components, no fragments).
+- **Entry point.** `node services/scene-builder/cli.mjs theme <reference> [--name N] [--themes-dir DIR] [--apply]
+  [--json]`, behind the `scene-builder` flag. Dry run by default: prints every colour with where it came from, every
+  push, the variants with why and the contrast result. `build --theme-from-reference` was skipped: `build --theme`
+  passes an overlay brand theme id, a different theme system, so the link is not trivial.
+Real references: every pack passes the check and loads in the headless studio with no stylesheet errors; the looks
+themselves are UNVERIFIED (no human check yet). Evidence: `docs/evidence/2026-11-11-sb4-theme-from-reference.md`.
