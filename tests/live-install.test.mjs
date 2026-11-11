@@ -137,6 +137,44 @@ test('localSwapAsker: install requests take the serveSwaps checks and then the u
   updates.close();
 });
 
+test('server: a click on the control page server\'s own update is answered first (202 started) and applied after the answer went out; other parts answer with the result', async (t) => {
+  const { createStudioServer } = await import('../services/studio-ui/server.mjs');
+  const { createFakeHost } = await import('../services/studio-ui/backends.mjs');
+  const http = await import('node:http');
+  const dataDir = tmp('srv');
+  t.after(() => rmSync(dataDir, { recursive: true, force: true }));
+  const fake = createFakeHost();
+  const KEY = 'k'.repeat(48);
+  const state = { accepting: true, parts: [], waiting: [{ id: 'u1', part: 'studio-ui', version: '0.1.0-alpha.2', click: true, text: 'ready' }, { id: 'u2', part: 'event-core', version: '0.1.0-alpha.2', click: true, text: 'ready' }], recent: [] };
+  const events = [];
+  const srv = createStudioServer({ uiRoot: path.join(REPO, 'ui'), core: { describe: () => ({ available: false }), call: async () => null, confirm: async () => null },
+    host: { describe: () => fake.describe(), call: (m, p) => fake.call(m, p) }, launchKey: KEY, dataDir, limits: { statusPollMs: 1000 }, log: () => {},
+    updatesStatus: () => state, // u1 never finishes (as a swap of this server waits for the click's own request): the click is still answered.
+    updates: { apply: (id) => { events.push(`apply ${id}`); return id === 'u1' ? new Promise(() => {}) : Promise.resolve({ result: 'swapped' }); } } });
+  const { port } = await srv.listen();
+  const origin = `http://127.0.0.1:${port}`;
+  const req = (method, u, { cookie, body, csrf } = {}) => new Promise((resolve) => {
+    const data = body ? JSON.stringify(body) : null;
+    const r = http.request({ host: '127.0.0.1', port, path: u, method, agent: false, headers: { ...(cookie ? { cookie } : {}), ...(data ? { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data), origin } : {}), ...(csrf ? { 'x-ujwalam-csrf': csrf } : {}) } },
+      (res) => { let b = ''; res.on('data', (c) => { b += c; }); res.on('end', () => { events.push(`answer ${res.statusCode}`); resolve({ status: res.statusCode, headers: res.headers, body: b ? JSON.parse(b) : null }); }); });
+    if (data) r.write(data);
+    r.end();
+  });
+  try {
+    const cookie = (await req('GET', `/login?k=${KEY}`)).headers['set-cookie'][0].split(';')[0];
+    const { csrf } = (await req('GET', '/ui/api/session', { cookie })).body;
+    events.length = 0;
+    const self = await req('POST', '/ui/api/updates/apply', { cookie, csrf, body: { id: 'u1' } });
+    assert.deepEqual([self.status, self.body.result], [202, 'started']);
+    await sleep(50);
+    assert.deepEqual(events.sort(), ['answer 202', 'apply u1'], 'answered without waiting for the swap, which starts after the answer');
+    events.length = 0;
+    const other = await req('POST', '/ui/api/updates/apply', { cookie, csrf, body: { id: 'u2' } });
+    assert.deepEqual([other.status, other.body.result], [200, 'swapped']);
+    assert.deepEqual(events, ['apply u2', 'answer 200']);
+  } finally { await srv.close(); }
+});
+
 // ---- Install-Ujwalam.ps1 while a program runs from the install folder ----
 
 const START_EXE = path.join(REPO, 'out', 'studio', 'build', 'ujwalam-start.exe');

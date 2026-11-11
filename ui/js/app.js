@@ -511,7 +511,7 @@
         kids.push(el('button', { class: 'btn', type: 'button', text: 'Apply now', 'aria-label': 'Apply the ' + w.part + ' update now', onclick: function () {
           setText(note, 'Updating ' + w.part + '...');
           guard(Api.updateApply(w.id).then(function (r) {
-            setText(note, r && r.result === 'swapped' ? 'Updated.' : 'Not applied: ' + ((r && (r.reason || r.result)) || 'unknown'));
+            setText(note, r && r.result === 'swapped' ? 'Updated.' : r && r.result === 'started' ? (r.reason || 'Updating...') : 'Not applied: ' + ((r && (r.reason || r.result)) || 'unknown'));
             if (r && r.updates) renderUpdates(r.updates);
           }, function (e) { setText(note, 'Not applied: ' + ((e && (e.detail || e.message)) || 'error')); }));
         } }));

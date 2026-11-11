@@ -1273,6 +1273,17 @@ export function createStudioServer(opts) {
       // never applied while a stream or recording runs).
       if (typeof body.id !== 'string' || !/^u\d{1,9}$/.test(body.id)) return json(res, 400, { error: 'bad-id' });
       if (!updatesLink) return json(res, 503, { error: 'no-launcher' });
+      // An update of this server itself (LU6 E2E, D349): the swap's hand-over waits for every request in flight on the
+      // front, this click included, so waiting for the result here would always end in kept-old. The click is answered
+      // first (202, started); the swap starts once the answer has gone out. The page gets the new state from the new
+      // server's event stream (it starts with the whole state, retry 500).
+      const self = (() => { try { return updatesState()?.waiting?.find((w) => w.id === body.id)?.part === 'studio-ui'; } catch { return false; } })();
+      if (self) {
+        res.once('finish', () => setImmediate(() => {
+          updatesLink.apply(body.id).then((r) => log(`[studio-ui] control page server update: ${r?.result ?? 'failed'}`), (e) => log(`[studio-ui] control page server update failed: ${e?.message ?? e}`));
+        }));
+        return json(res, 202, { result: 'started', reason: 'The control page server is being updated; this page reconnects in a few seconds.', updates: updatesState() });
+      }
       const r = await updatesLink.apply(body.id);
       const ok = r.result === 'swapped';
       try { lastSnapshot = await snapshot(); broadcast('status', lastSnapshot); } catch { /* the next poll sends it */ }

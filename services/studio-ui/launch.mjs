@@ -1669,7 +1669,7 @@ export async function main(argv = process.argv.slice(2)) {
     // the stop). An installer that finds no channel installs side by side for the next start.
     try {
       installChannel = await createInstallChannel({
-        dataDir, ask: localSwapAsker(slots, track.log, updates), running: () => updates.runningParts(), has: (s) => !!slots[s], log: track.log,
+        dataDir, ask: localSwapAsker(slots, track.log, updates), running: () => updates.runningParts(), has: (s) => s === 'host' || !!slots[s], log: track.log, // the queue answers for the host
       });
       console.log('[studio] live install: an install while Ujwalam runs is handed to the update queue');
     } catch (e) { console.log(`[studio] live install channel not started (${e.message}); an install while running takes effect at the next start`); }
