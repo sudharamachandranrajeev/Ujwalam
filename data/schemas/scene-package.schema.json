@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ujwalam.local/schema/scene-package.schema.json",
+  "title": "Scene package (scene builder SB3, D341)",
+  "description": "One new scene for a project, as one scene-layout-preset per canvas (h, v), plus the bindings to the project's existing layers and devices. Written by services/scene-builder/build.mjs, applied by services/project/scene-package.mjs as a NEW namespaced scene: existing scenes, layers, devices and settings are never changed. Layer rects are fractions of the canvas; crops are source pixels. A placeholder layer is a transparent colour layer that keeps the geometry of a slot with low confidence or without a matching source; the reason is listed in placeholders.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["format", "version", "id", "name", "created", "builder", "reference", "theme", "bindings", "sources", "presets", "placeholders", "notCarried", "warnings"],
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+    "rect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "w", "h"],
+      "properties": { "x": { "type": "number" }, "y": { "type": "number" }, "w": { "type": "number", "minimum": 0 }, "h": { "type": "number", "minimum": 0 } }
+    },
+    "crop": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": { "left": { "type": "number", "minimum": 0 }, "top": { "type": "number", "minimum": 0 }, "right": { "type": "number", "minimum": 0 }, "bottom": { "type": "number", "minimum": 0 } }
+    },
+    "slotRole": { "enum": ["game", "camera", "chat", "alerts", "graphics"] },
+    "layer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["key", "type", "name", "z", "rect", "slot"],
+      "properties": {
+        "key": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,39}$" },
+        "type": { "enum": ["link", "capture", "browser", "color"] },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "z": { "type": "integer", "minimum": 0 },
+        "rect": { "$ref": "#/$defs/rect" },
+        "crop": { "$ref": "#/$defs/crop" },
+        "fit": { "enum": ["contain", "cover"] },
+        "role": { "enum": ["game", "camera", "game-capture", "facecam"], "description": "link: the bindings.links role; capture: the bindings.roles role." },
+        "overlay": { "type": "string", "maxLength": 200 },
+        "query": { "type": "string", "maxLength": 2000 },
+        "color": { "type": "string", "pattern": "^#[0-9a-fA-F]{8}$" },
+        "link": { "type": "object", "description": "What the layer shows in the project the package was built for (for the diff)." },
+        "placeholder": { "type": "string", "maxLength": 300 },
+        "slot": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["role", "confidence", "from"],
+          "properties": {
+            "role": { "$ref": "#/$defs/slotRole" },
+            "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+            "from": { "enum": ["reference", "rule"], "description": "reference: the slot box as read; rule: laid out by the build rules on the other canvas." }
+          }
+        }
+      }
+    },
+    "preset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "function", "functionVersion", "name", "params"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$" },
+        "version": { "type": "string" },
+        "function": { "const": "scene-layout-preset" },
+        "functionVersion": { "type": "string" },
+        "name": { "type": "string", "maxLength": 140 },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["sceneName", "canvas", "layers"],
+          "properties": {
+            "sceneName": { "type": "string", "minLength": 1, "maxLength": 100 },
+            "canvas": { "enum": ["h", "v"] },
+            "layers": { "type": "array", "maxItems": 64, "items": { "$ref": "#/$defs/layer" } }
+          }
+        }
+      }
+    }
+  },
+  "properties": {
+    "format": { "const": "ujwalam-scene-package" },
+    "version": { "const": 1 },
+    "id": { "$ref": "#/$defs/id" },
+    "name": { "type": "string", "minLength": 1, "maxLength": 100, "description": "Namespaced scene name (rules sceneNamePrefix + reference base name); the importer adds (2), (3) ... when the project already has it." },
+    "created": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T", "description": "ISO 8601 time the package was built." },
+    "builder": { "type": "object" },
+    "reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "kind", "canvas", "width", "height"],
+      "properties": {
+        "name": { "type": "string", "maxLength": 255, "description": "Base name only, never a folder." },
+        "kind": { "enum": ["image", "video"] },
+        "canvas": { "enum": ["H", "V"] },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "theme": { "type": ["string", "null"], "pattern": "^[a-z0-9][a-z0-9-]{0,39}$" },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["links", "roles"],
+      "properties": {
+        "links": { "type": "object", "additionalProperties": { "$ref": "#/$defs/id" }, "propertyNames": { "enum": ["game", "camera"] } },
+        "roles": { "type": "object", "additionalProperties": { "$ref": "#/$defs/id" }, "propertyNames": { "enum": ["game-capture", "facecam"] } }
+      }
+    },
+    "sources": { "type": "object" },
+    "presets": { "type": "array", "minItems": 1, "maxItems": 2, "items": { "$ref": "#/$defs/preset" } },
+    "placeholders": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["canvas", "key", "role", "reason"],
+        "properties": { "canvas": { "enum": ["h", "v"] }, "key": { "type": "string" }, "role": { "$ref": "#/$defs/slotRole" }, "reason": { "type": "string", "maxLength": 300 } }
+      }
+    },
+    "notCarried": { "type": "array", "items": { "type": "object" } },
+    "warnings": { "type": "array", "items": { "type": "string" } }
+  }
+}
