@@ -21,6 +21,10 @@
 // restarts, moments kept so far while it watches), and the task panel shows it as task "live-clipper" while a stream or
 // recording is watched. A finished job whose reels (kill montages + match reels) were not made says why in its task
 // note ("Reels not made: <reason>"), from the job itself or the run's render.json montage status.
+// LL4 (D342, flag learning-train, off by default): when a stream's clip job ends, a game pack check (type 'train',
+// services/clip/pack_tune.py propose) is queued last. It goes through this same queue, so it is one job at a time,
+// hidden, below-normal, never started while a stream is live and stopped when one starts; it loads no model. It only
+// writes a candidate for the user to approve; it never changes the pack.
 
 import { spawn } from 'node:child_process';
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -144,6 +148,12 @@ export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(data
   const t = clipTools({ clipRoot, exists });
   if (!t.py) return { spec: null, reason: t.reason };
   const out = path.join(workRoot, job.name);
+  if (job.type === 'train') {
+    // LL4 (D342): the game pack check reads the local learning store and writes a candidate; no video, no model.
+    const tune = path.join(clipRoot, 'services', 'clip', 'pack_tune.py');
+    if (!exists(tune)) return { spec: null, reason: 'the game pack check is not in the clip maker folder' };
+    return { spec: { exe: t.py, argv: ['-I', tune, '--data-dir', dataDir, 'propose', '--report', path.join(out, TRAIN_REPORT)], out, folder: null }, reason: null };
+  }
   const argv = ['-I', t.script, '--data-dir', dataDir];
   // The recording is the H canvas, not clean game footage: the project's game layer tells the detectors where the game
   // is (D235). Without it they scan the full frame and the end-screen boxes (top 3, mode) fall in the wrong place.
@@ -176,6 +186,18 @@ export function clipRunSpec({ clipRoot, dataDir, job, outRoot = clipsFolder(data
 
 /** Number of finished clips of a run: the videos published to the clips folder (out/published.json and
  *  out/montage/published.json); a run folder without them (older runs) counts out/clips/<id>/*.mp4. */
+/** LL4 (D342): the game pack check's run report, in its run folder. */
+export const TRAIN_REPORT = 'train.json';
+/** The task note of a finished game pack check: what it proposed, or why it proposed nothing. */
+export function trainNote(code, out, { readJson = (f) => JSON.parse(readFileSync(f, 'utf8')) } = {}) {
+  if (code === 3) return 'Not run: the flag learning-train is off';
+  if (code !== 0) return 'Something went wrong; see the log';
+  let r = null; try { r = readJson(path.join(out, TRAIN_REPORT)); } catch { return 'Done; no report was written'; }
+  if (r?.candidate?.version) return `Game pack ${String(r.candidate.version).slice(0, 20)} proposed (status unverified); it waits for your approval`;
+  const why = (Array.isArray(r?.values) ? r.values : []).map((v) => v?.reason).find((x) => typeof x === 'string');
+  return `No game pack change${why ? `: ${why.slice(0, 140)}` : ''}`;
+}
+
 export function countClips(out) {
   const pubs = [path.join(out, 'published.json'), path.join(out, 'montage', 'published.json')].filter((p) => existsSync(p));
   if (pubs.length) {
@@ -187,20 +209,22 @@ export function countClips(out) {
   } catch { return 0; }
 }
 
-export const PROGRESS_STAGES = Object.freeze(['detect', 'candidates', 'render', 'validate', 'review', 'gate', 'publish', 'montage']);
+export const PROGRESS_STAGES = Object.freeze(['detect', 'candidates', 'render', 'validate', 'review', 'gate', 'publish', 'montage', 'train']);
 const PROGRESS_RE = /^ujwalam-progress\s+(\{.*\})\s*$/;
 const STAGE_TITLE = { detect: 'Finding the best moments in', candidates: 'Choosing the best moments in', render: 'Editing clips from', validate: 'Checking the clips from', review: 'Reviewing the moments in', gate: 'Checking the match results of',
-  publish: 'Saving the clips from', montage: 'Making the kill montage from' };
+  publish: 'Saving the clips from', montage: 'Making the kill montage from', train: 'Checking the game pack against' };
 // Task panel (2026-11-10): each stage in plain words, what its done/total counts (null = only a percent shown), and
 // whether it reports progress while it works. publish and montage write one line when they start and none after
 // (clipper.py), so their silence is not counted by the stall warning (measured: false; tasks.mjs stallOf).
 const STAGE_TEXT = { detect: ['Reading the game screen', 'frame'], candidates: ['Choosing the best moments', null], gate: ['Sorting clips by match', 'match'],
   render: ['Making clip videos', 'clip'], validate: ['Checking the clip files', 'clip'], review: ['Making clip videos from live saves', 'clip'],
-  publish: ['Copying the finished clips to your clips folder', null, false], montage: ['Making the kill montage', null, false] };
+  publish: ['Copying the finished clips to your clips folder', null, false], montage: ['Making the kill montage', null, false],
+  train: ['Testing a game pack update on held-out streams', null, false] };
 /** The stages a job goes through, in order (clipper.py cmd_run: detect, candidates, gate, render, validate, publish,
  *  then the montage when the V recording exists; live-review: detect and gate over the stream's own recording when
  *  there is one, then review and publish, then the montage when the V recording exists too, D322 proposed). */
 export function jobStages(job) {
+  if (job?.type === 'train') return ['train'];
   if (job?.type === 'review') {
     const h = typeof job.h === 'string' && job.h;
     if (!h) return ['review', 'publish'];
@@ -235,7 +259,7 @@ const JOB_KEYS = ['type', 'kind', 'h', 'v', 'since', 'until', 'name', 'minutes']
 const pickJob = (j) => Object.fromEntries(JOB_KEYS.filter((k) => j[k] !== undefined).map((k) => [k, j[k]]));
 
 /** The queue and the child. feed(status) is called with each outputs.status. */
-export function createRecordClips({ clipRoot, dataDir, project = null, log, spawnFn = spawn, now = Date.now, postChain = null, killTreeFn = killChildTree, liveClipper = null }) {
+export function createRecordClips({ clipRoot, dataDir, project = null, log, spawnFn = spawn, now = Date.now, postChain = null, killTreeFn = killChildTree, liveClipper = null, trainFlag = () => false }) {
   const stateDir = path.join(dataDir, 'clips');
   const statusFile = path.join(stateDir, 'status.json');
   const answerFile = path.join(stateDir, 'answer.json');
@@ -253,7 +277,7 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
     const old = JSON.parse(readFileSync(statusFile, 'utf8'));
     last = old.last ?? null;
     for (const j of [old.running, ...(old.queued ?? [])]) {
-      if (j && (j.type === 'review' || (typeof j.h === 'string' && existsSync(j.h)))) queue.push(pickJob(j));
+      if (j && (j.type === 'review' || j.type === 'train' || (typeof j.h === 'string' && existsSync(j.h)))) queue.push(pickJob(j));
     }
     asks = (old.asks ?? []).filter((a) => a && typeof a.id === 'string' && typeof a.h === 'string' && existsSync(a.h));
     if (queue.length) log(`clips: ${queue.length} unfinished clip job(s) from the last session will run again`);
@@ -262,7 +286,7 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
   // Task bar (tasks.mjs): one task file per clip job, rewritten with every status write (that also keeps it fresh).
   const taskId = (j) => `clip-${String(j.name ?? 'run').replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 70)}`;
   const taskFor = (j, p) => {
-    const nm = j.name ?? 'the stream';
+    const nm = j.type === 'train' ? 'your answers from the streams' : j.name ?? 'the stream';
     const base = { id: taskId(j), kind: 'clips', startedAt: j.taskStart ?? now(), updatedAt: now() };
     if (j === current && !j.pausedForLive) {
       const st = p?.stage ?? jobStages(j)[0];
@@ -271,7 +295,7 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
       return { ...base, title: `${STAGE_TITLE[st]} ${nm}`, state: 'running', stage: st, done: p?.done ?? null, total: p?.total ?? null, note: p?.note ?? null,
         stages: jobStages(j), ...words, activeAt: j.activeAt ?? null, progressAt: j.progressAt ?? null };
     }
-    return { ...base, title: `Clips from ${nm}`, state: 'waiting', stage: null, done: null, total: null,
+    return { ...base, title: j.type === 'train' ? 'Game pack check' : `Clips from ${nm}`, state: 'waiting', stage: null, done: null, total: null,
       note: j === current ? 'Paused while the stream runs' : liveNow ? 'Waiting until the stream ends' : 'Waiting for its turn' };
   };
   const writeTasks = () => {
@@ -284,7 +308,8 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
     if (t) writeTaskFile(dataDir, t);
     watchEnded = false;
   };
-  const finishTask = (j, ok, note) => writeTaskFile(dataDir, { id: taskId(j), kind: 'clips', title: ok ? `Clips ready from ${j.name}` : `Clips from ${j.name} did not finish`, state: ok ? 'done' : 'failed', note, startedAt: j.taskStart ?? now(), updatedAt: now() });
+  const finishTask = (j, ok, note) => writeTaskFile(dataDir, { id: taskId(j), kind: 'clips', title: j.type === 'train' ? (ok ? 'Game pack check done' : 'Game pack check did not finish') : ok ? `Clips ready from ${j.name}` : `Clips from ${j.name} did not finish`, state: ok ? 'done' : 'failed', note, startedAt: j.taskStart ?? now(), updatedAt: now() });
+  const trainOn = () => { try { return trainFlag() === true; } catch { return false; } };
 
   const write = () => {
     writeTasks();
@@ -352,6 +377,12 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
       const done = current; child = null; current = null;
       if (done.pausedForLive) { delete done.pausedForLive; log(`clips: ${done.name} paused for the stream; it continues after`); write(); return; }
       queue.shift(); progress = null;
+      if (done.type === 'train') {
+        const note = trainNote(code, spec.out);
+        log(`clips: game pack check ${code === 0 ? 'done' : `ended (exit ${code})`}: ${note}`);
+        finishTask(done, code === 0, note);
+        write(); start(); return;
+      }
       const n = code === 0 ? countClips(spec.out) : 0;
       const reels = code === 0 ? reelsNotMade(done, spec.out) : null;
       last = { name: done.name, kind: done.kind, result: code === 0 ? 'done' : 'failed', code, clips: n, out: spec.out, folder: spec.folder, ...(reels ? { reelsNotMade: reels } : {}) };
@@ -360,6 +391,8 @@ export function createRecordClips({ clipRoot, dataDir, project = null, log, spaw
       finishTask(done, code === 0, code === 0 ? `${n} clip${n === 1 ? '' : 's'} made${reels ? `. Reels not made: ${reels}` : ''}` : 'Something went wrong; see the log');
       // D300: package + auto-approve + private upload (flags posting + auto-post; each step fails closed while live).
       if (code === 0 && n > 0 && postChain) void Promise.resolve(postChain.afterRun(spec.out, lastStatus)).catch(() => {});
+      // LL4 (D342): after a stream's clip job, the game pack check runs last (flag learning-train, off by default).
+      if (done.kind === 'live' && trainOn() && !queue.some((q) => q.type === 'train')) add({ type: 'train', kind: 'train', name: `pack-check-${stamp(now())}` }, 'stream clips done; checking the game pack against the labels (runs last)');
       write();
       start();
     });

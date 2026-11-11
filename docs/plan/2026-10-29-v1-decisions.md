@@ -1140,3 +1140,46 @@ Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` row SB3 
 Tolerance on the drawn fixtures: every side within 0.03 of the canvas side (the game: contained, centred, one axis
 within 0.03). Build rules, the V safe zone for live and the results on real references are UNVERIFIED.
 Evidence: `docs/evidence/2026-11-11-sb3-build-scenes.md`.
+
+## D342 — After a stream, a game pack check proposes a new pack version only when it beats the current one on held-out streams (2026-11-11, LL4 of D324)
+
+Spec: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` section B, row LL4 (approved, D324). Builds on
+the D338 store and the D340 review answers. Decided:
+- **Job and trigger:** `services/clip/pack_tune.py propose` runs as the last job of the launcher's clip queue
+  (`services/studio-ui/record-clips.mjs`, job type `train`), queued when a stream's clip job ends (done or failed),
+  only with the new flag **`learning-train`** on (off by default). Same queue as every clip job: one at a time, hidden
+  (`windowsHide`), below normal, never started while a stream is live, stopped when a stream starts and run again
+  after, kept across a restart. pack_tune.py also refuses while the live clipper is asked to watch
+  (`clips/live-worker.json`) and when the flag is off (exit 3). Stdlib only: no model, no GPU, no OCR (VRAM rule).
+- **Values tuned, and only these:** W1 `banner.kinds` `y0`/`y1` (from `unclassified-banner` answers: the item's OCR box
+  whose text is the read word gives the centre y) and `game.json` `ocr.minConfidence` (from `ocr-low` answers: the
+  read kept is right, `wrong read` or a typed correction is wrong; lowered only, since the review holds reads below the
+  current value only). A banner range is widened only as far as the training answers need, never over a read answered
+  as another kind or "not a banner", never into the other range. No detector, pattern, event name, weight or window is
+  added or changed. `ocr.minConfidence` is null in the CODM pack, so no `ocr-low` read exists and that value is reported
+  as "not set", never invented. Kept / deleted / posted / renamed clips, feedback rows and `unknown-mode` answers are
+  counted in the run report but give no pack value: no row links a clip or a feedback moment to the read that made it.
+- **Held-out test (existing rule):** split by session. Per value, the newest 2 sessions (by `session.json` start) that
+  hold labels for it are held out and the older ones train. Metric: held-out accuracy (banner: the kind each confirmed
+  read gets, "not a banner" = none; OCR: read taken as right iff score >= threshold, null = all taken as right).
+  Offered only when the proposal's held-out accuracy is strictly higher than the current pack's and, for the banner
+  ranges, no held-out evidence banner the current pack placed changes kind. Agent settings (proposed, not tuned, not
+  pack values): at least 3 sessions with labels for the value (2 held out, 1 or more to train), at least 10 training
+  and 6 held-out labels. Below that it proposes nothing and says why.
+- **Candidate, never applied by itself:** `data/games/<id>/local/candidates/<stamp>-<version>.json` (gitignored by
+  `data/games/*/local/`): changes, held-out score, evidence (label counts, session counts, dates), status
+  `unverified`, the base file hashes and a changelog entry draft; `last-run.json` holds every run's report. The pack
+  version is bumped by one patch step (a value change). `pack_tune.py approve --candidate <id>` (flag `learning-train`)
+  writes the values, the version and the changelog entry, keeps the kind status `unverified` with a note, and refuses a
+  candidate made from other pack files (hash or version changed) or one already approved. Approval is a command, not a
+  studio window, in this step; the task panel note says when a candidate waits.
+- **Codex review fixes:** `approve` refuses while the live clipper is asked to watch, the same check as `propose`.
+  `propose` checks again after reading the pack, after each store session and before any write, and stops with
+  nothing written when a stream starts. The base hashes are of the exact bytes parsed at the start (and approve's stale
+  check uses the bytes it parses). `approve` is a recoverable transaction: every new file (both JSONs, the changelog,
+  the candidate marked approved) is written as `<name>.ll4-new`, then a journal
+  (`local/candidates/approve.journal.json`) lists the renames, then they run (the candidate last) and the journal is
+  removed. A leftover journal is finished at the next start of any command, so a retry after a crash succeeds; stray
+  `.ll4-new` files without a journal are removed. The changelog is replaced by rename, never truncated in place.
+Not done: an approval button in the studio. Real use on a stream is UNVERIFIED (no real labels exist yet). Evidence:
+`docs/evidence/2026-11-11-ll4-after-stream-train.md`.

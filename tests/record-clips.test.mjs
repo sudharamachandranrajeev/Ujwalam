@@ -7,7 +7,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { CLIP_MAKER_FIX, clipRunSpec, clipTools, countClips, countSaves, createRecordClips, finishedRecording, isLive, jobStages, liveClipperTask, parseProgress, reelsNotMade, stageWords } from '../services/studio-ui/record-clips.mjs';
+import { CLIP_MAKER_FIX, clipRunSpec, clipTools, countClips, countSaves, createRecordClips, finishedRecording, isLive, jobStages, liveClipperTask, parseProgress, reelsNotMade, stageWords, trainNote } from '../services/studio-ui/record-clips.mjs';
 import { folderProblem, readSettings, settingsProblems, writeSettings } from '../services/studio-ui/user-settings.mjs';
 
 const RUNGS = [{ id: 'rec-h', canvas: 'H' }, { id: 'rec-v', canvas: 'V' }];
@@ -482,5 +482,80 @@ test('LC1: status.json and the task panel show the live clipper while a stream i
     assert.equal(done.note, '0 clips made. Reels not made: there is no portrait (V) recording of this stream');
     assert.equal(s.status().last.reelsNotMade, 'there is no portrait (V) recording of this stream');
     assert.ok(s.lines.some((l) => /reels not made from practice-h-1/.test(l)));
+  } finally { rmSync(s.d, { recursive: true, force: true }); }
+});
+
+test('LL4 (D342): after a stream clip job the game pack check runs last, hidden and below normal, only with learning-train on, never while live', async () => {
+  const s = setup();
+  try {
+    writeFileSync(path.join(s.root, 'services', 'clip', 'pack_tune.py'), '');
+    writeSettings(s.dataDir, { clips: { recording: 'after', live: 'after' } });
+    let on = false;
+    const rc = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: s.log, spawnFn: s.spawnFn, now: s.now, trainFlag: () => on });
+    const stream = () => { rc.feed(s.S('live', { stream: 'live' })); s.advance(60000); rc.feed(s.S('stopped')); };
+    // flag off (the default): the stream's clips are made, no check follows
+    stream();
+    assert.equal(s.spawned.length, 1);
+    s.spawned[0].c.emit('exit', 0);
+    assert.equal(s.spawned.length, 1, 'flag off: no game pack check');
+    // a plain recording (not a stream) never queues the check
+    on = true;
+    rc.feed(s.S('live')); rc.feed(s.S('stopped'));
+    s.spawned[1].c.emit('exit', 0);
+    assert.equal(s.spawned.length, 2, 'recording only: no game pack check');
+    // flag on, a stream: the check follows its clip job, last in the queue
+    stream();
+    assert.equal(s.spawned.length, 3);
+    s.spawned[2].c.emit('exit', 1);
+    assert.equal(s.spawned.length, 4, 'after the stream clip job (done or failed)');
+    const t = s.spawned[3];
+    assert.equal(t.o.windowsHide, true);
+    assert.equal(t.argv[1], path.join(s.root, 'services', 'clip', 'pack_tune.py'));
+    assert.deepEqual(t.argv.slice(2, 5), ['--data-dir', s.dataDir, 'propose']);
+    assert.equal(s.status().running.type, 'train');
+    // a stream that starts stops it (nothing extra while live); it runs again after the stream
+    rc.feed(s.S('stopped', { stream: 'live' }));
+    assert.equal(t.c.killed, true, 'live: the check is stopped');
+    await tick(); await tick();
+    rc.feed(s.S('stopped', { stream: 'live' }));
+    assert.equal(s.spawned.length, 4, 'nothing starts while live');
+    rc.feed(s.S('stopped'));
+    assert.equal(s.spawned.length, 5, 'the check runs again after the stream');
+    const again = s.spawned[4];
+    const out = again.argv[again.argv.indexOf('--report') + 1];
+    mkdirSync(path.dirname(out), { recursive: true });
+    writeFileSync(out, JSON.stringify({ candidate: { id: '20261111-200000-0.8.1', version: '0.8.1' }, values: [] }));
+    again.c.emit('exit', 0);
+    const task = JSON.parse(readFileSync(path.join(s.dataDir, 'tasks', `clip-${path.basename(path.dirname(out))}.json`), 'utf8'));
+    assert.deepEqual([task.state, task.title], ['done', 'Game pack check done']);
+    assert.match(task.note, /Game pack 0\.8\.1 proposed \(status unverified\); it waits for your approval/);
+    assert.equal(s.status().last.kind, 'live', 'the check does not replace the last clip run');
+    // closing Ujwalam during a check keeps it for the next start
+    stream();
+    s.spawned.at(-1).c.emit('exit', 0);
+    assert.equal(s.status().running.type, 'train');
+    rc.stop();
+    await tick(); await tick();
+    const rc2 = createRecordClips({ clipRoot: s.root, dataDir: s.dataDir, log: s.log, spawnFn: s.spawnFn, now: s.now, trainFlag: () => on });
+    const n = s.spawned.length;
+    rc2.feed(s.S('stopped'));
+    assert.equal(s.spawned.length, n + 1);
+    assert.ok(s.spawned.at(-1).argv.includes('propose'));
+  } finally { rmSync(s.d, { recursive: true, force: true }); }
+});
+
+test('LL4 (D342): trainNote and the check spec in plain words', () => {
+  const read = (j) => () => j;
+  assert.equal(trainNote(3, 'x'), 'Not run: the flag learning-train is off');
+  assert.equal(trainNote(1, 'x'), 'Something went wrong; see the log');
+  assert.equal(trainNote(0, 'x', { readJson: () => { throw new Error('none'); } }), 'Done; no report was written');
+  assert.equal(trainNote(0, 'x', { readJson: read({ candidate: null, values: [{ status: 'insufficient', reason: 'labels in 1 session(s); 3 or more are needed (2 held out, at least 1 to train)' }] }) }),
+    'No game pack change: labels in 1 session(s); 3 or more are needed (2 held out, at least 1 to train)');
+  const s = setup();
+  try {
+    const job = { type: 'train', kind: 'train', name: 'pack-check-1' };
+    assert.equal(clipRunSpec({ clipRoot: s.root, dataDir: s.dataDir, job }).reason, 'the game pack check is not in the clip maker folder');
+    assert.deepEqual(jobStages(job), ['train']);
+    assert.equal(stageWords('train', job).measured, false, 'one quiet step: never called stuck');
   } finally { rmSync(s.d, { recursive: true, force: true }); }
 });
