@@ -154,6 +154,16 @@ a time, `--test-timeout=60000`:
 
 Lint: `lint: 0 finding(s)`. Not run: `tests/studio-swap-stream.test.mjs` (heavy, real host and loopback stream).
 
+## Codex review of the merge (1 P2)
+
+The host replacement is one transaction (D343). Tests, one file at a time, `--test-timeout=60000`: live-updates 27/27
+(new: an exception from the replacement is a failure, versions stay with the running host), live-updates-launcher
+6/6 (new: after the old host exited, the copy's exe becomes a folder, the last hash fails with EISDIR, the copy is
+rejected and the previous host is started again; the shown version stays the running host's), studio-swap-launcher
+9/9, service-swap-launcher 4/4, studio-ui-quit-lock 5/5, studio-ui-crash-recovery 5/5. Lint: 0 findings.
+UNVERIFIED: an exception thrown inside the start of the replacement after its spawn (the catch that stops it before
+the previous host starts) has no own test; the fake host gives no way to make that step throw.
+
 ## UNVERIFIED
 
 - The Qt studio window does not show the update status yet (needs C++; not built in this task). The control page does.

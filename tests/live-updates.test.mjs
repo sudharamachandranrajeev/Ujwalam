@@ -708,3 +708,19 @@ test('LU4 + LU5: serveSwaps sends a studio request through the queue with the en
   assert.match(p.sent.at(-1).reason, /entry file/);
   assert.equal(asked.length, 1);
 });
+
+test('Codex review of the merge: an exception from the host replacement is a failure, not a crash of the queue; versions stay with the running host', async () => {
+  const q = queue({ applyHost: async () => { throw new Error('EBUSY: resource busy or locked'); } });
+  q.st.busy = false;
+  const r = await q.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'x1'), { n: 66 }) });
+  assert.deepEqual([r.result, r.running, r.retry], ['failed', 'unknown', true]);
+  assert.equal(q.mirror().parts.find((p) => p.part === 'host').version, 'dev');
+  assert.equal(q.stage().pending.n, 66, 'kept: nothing shows the candidate itself failed');
+  q.u.close();
+  // A 'swapped' answer that says the old host still runs does not move the version.
+  const q2 = queue({ hostResult: { result: 'swapped', running: 'old' } });
+  q2.st.busy = false;
+  await q2.u.request({ service: 'host', root: stagedRelease(path.join(tmp(), 'x2'), { n: 67 }) });
+  assert.equal(q2.mirror().parts.find((p) => p.part === 'host').version, 'dev');
+  q2.u.close();
+});

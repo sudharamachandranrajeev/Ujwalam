@@ -917,28 +917,41 @@ function superviseHost(o) {
   // update's folder and must write its discovery file and load the project; otherwise the old host is started again.
   // A host is replaced only after its exit is confirmed (stopHostChild); two hosts never run at once.
   const readyMs = updateReadyMs();
+  const msg = (e) => String(e?.message ?? e).slice(0, 120);
+  // Never throws (Codex review of the merge): any failure before the switch stops what was spawned (exit confirmed) and
+  // answers { ok: false, stuck }; after the switch the new host runs, and a failed status line or snapshot is only
+  // logged.
   async function startAndLoad({ isPlanned }) {
     if (isStopping()) return { ok: false, reason: 'Ujwalam is closing' };
-    const next = spawnHost();
-    if (isPlanned) planned.add(next);
-    arm(next);
-    const disc = await waitForDiscovery(hostDiscovery, next, readyMs);
-    if (!disc) {
-      const gone = await stopHostChild(null, next, { exitMs: 0 });
-      return { ok: false, stuck: !gone, reason: `the host did not get ready${gone ? '' : ` and did not exit (pid ${next.pid} still running)`}` };
-    }
-    const c = new HostClient({ port: disc.port, token: hostToken });
-    if (alpha) {
-      try { await alphaProject({ client: c, dataDir, args, hostCfg, embedded }); } catch (e) {
-        const gone = await stopHostChild(c, next);
-        return { ok: false, stuck: !gone, reason: `the project did not load on it (${String(e?.message ?? e).slice(0, 120)})${gone ? '' : `; it did not exit (pid ${next.pid} still running)`}` };
+    let next = null; let c = null;
+    try {
+      next = spawnHost();
+      if (isPlanned) planned.add(next);
+      arm(next);
+      const disc = await waitForDiscovery(hostDiscovery, next, readyMs);
+      if (!disc) {
+        const gone = await stopHostChild(null, next, { exitMs: 0 });
+        return { ok: false, stuck: !gone, reason: `the host did not get ready${gone ? '' : ` and did not exit (pid ${next.pid} still running)`}` };
       }
+      c = new HostClient({ port: disc.port, token: hostToken });
+      if (alpha) {
+        try { await alphaProject({ client: c, dataDir, args, hostCfg, embedded }); } catch (e) {
+          const gone = await stopHostChild(c, next);
+          return { ok: false, stuck: !gone, reason: `the project did not load on it (${msg(e)})${gone ? '' : `; it did not exit (pid ${next.pid} still running)`}` };
+        }
+      }
+    } catch (e) {
+      if (!next) return { ok: false, reason: `the host could not be started (${msg(e)})` };
+      const gone = await stopHostChild(c, next).catch(() => false);
+      return { ok: false, stuck: !gone, reason: `starting it failed (${msg(e)})${gone ? '' : `; it did not exit (pid ${next.pid} still running)`}` };
     }
     planned.delete(next); // from here on an exit is a crash again
     client = c;
     onClient(c);
-    if (alpha) await alphaStatus(c);
-    await writeSnapshot(c, logsDir);
+    try {
+      if (alpha) await alphaStatus(c);
+      await writeSnapshot(c, logsDir);
+    } catch (e) { console.log(`[studio] WARNING: the new host runs, but its status or snapshot failed (${msg(e)})`); }
     return { ok: true };
   }
   return {
@@ -946,33 +959,41 @@ function superviseHost(o) {
     restarting: () => busy,
     // check(): the candidate's last hash, run after the old host has exited and right before the new one is spawned
     // (Codex re-review). candidateFailed in the answer: the candidate itself failed (check, readiness, project load);
-    // without it nothing of the candidate ran (it is kept for a retry).
+    // without it nothing of the candidate ran (it is kept for a retry). running (Codex review of the merge): which host
+    // runs afterwards: 'new', 'old', 'none' (the crash restart policy takes over) or 'unknown'. The replacement is one
+    // transaction: an exception in the check, the switch or the start never skips the previous host's restart, and a
+    // replacement that was spawned is confirmed gone (startAndLoad) before the previous host starts.
     async restartPlanned(useNew, useOld, check = () => null) {
       if (busy || isStopping()) return { result: 'refused', reason: 'the host is restarting' };
       busy = true;
       try {
         const old = getChild();
         planned.add(old);
-        if (!(await stopHostChild(client, old))) {
+        let exited;
+        try { exited = await stopHostChild(client, old); } catch (e) { exited = false; console.log(`[studio] WARNING: stopping the host failed (${msg(e)})`); }
+        if (!exited) {
           // Not replaced: a second host next to one that did not exit would fight over devices and encoders. Its
           // exit from here on counts as a crash again (the crash restart policy brings back the same host).
           planned.delete(old);
           const reason = `the running host did not exit within the stop window (pid ${old.pid}, still running after host.shutdown and the kill); nothing was replaced`;
           console.log(`[studio] WARNING: host update aborted: ${reason}`);
-          return { result: 'failed', reason };
+          return { result: 'failed', reason, running: old.exitCode === null ? 'old' : 'unknown' };
         }
-        const bad = check();
-        const up = bad ? { ok: false, reason: `its files changed before it started (${bad})` } : (useNew(), await startAndLoad({ isPlanned: true }));
-        if (up.ok) return { result: 'swapped' };
+        let up;
+        try {
+          const bad = check();
+          up = bad ? { ok: false, reason: `its files changed before it started (${bad})` } : (useNew(), await startAndLoad({ isPlanned: true }));
+        } catch (e) { up = { ok: false, reason: `its last check failed (${msg(e)})` }; }
+        if (up.ok) return { result: 'swapped', running: 'new' };
         if (up.stuck) {
           console.log(`[studio] WARNING: host update failed (${up.reason}); the previous host is NOT started next to it`);
-          return { result: 'failed', reason: up.reason, candidateFailed: true };
+          return { result: 'failed', reason: up.reason, candidateFailed: true, running: 'unknown' };
         }
         console.log(`[studio] WARNING: host update failed (${up.reason}); starting the previous host again`);
-        useOld();
+        try { useOld(); } catch (e) { console.log(`[studio] WARNING: ${msg(e)}`); }
         // Not planned: if the previous host cannot start either, the crash restart policy takes over.
         const back = await startAndLoad({ isPlanned: false });
-        return back.ok ? { result: 'restored-old', reason: up.reason, candidateFailed: true } : { result: 'failed', reason: `${up.reason}; the previous host did not come back (${back.reason})`, candidateFailed: true };
+        return back.ok ? { result: 'restored-old', reason: up.reason, candidateFailed: true, running: 'old' } : { result: 'failed', reason: `${up.reason}; the previous host did not come back (${back.reason})`, candidateFailed: true, running: 'none' };
       } finally { busy = false; }
     },
   };

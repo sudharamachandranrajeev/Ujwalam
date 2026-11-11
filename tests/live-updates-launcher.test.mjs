@@ -187,3 +187,24 @@ test('Codex re-review 2: the copy is read-only, and a copy changed after the que
   assert.equal(s.live('host-update.json').pending, null);
   assert.equal(await l.close(), 0);
 });
+
+test('Codex review of the merge: a final hash that cannot read the copy after the old host exited restarts the old host; the versions follow the host that runs', { timeout: 120_000 }, async (t) => {
+  const s = setup(t, 'throw');
+  const stopFile = path.join(s.root, 'stop');
+  const pointer = path.join(s.root, 'tamper.txt');
+  const rel = stagedRelease(path.join(s.root, 'release'), { n: 56 });
+  const l = await launch(t, s, { UJWALAM_FAKE_HOST_RECORDING: '1', UJWALAM_FAKE_HOST_STOP_ON: stopFile, UJWALAM_FAKE_HOST_TAMPER_ON_SHUTDOWN: pointer });
+  assert.equal((await l.ask('host', rel)).result, 'staged', l.out.slice(-2000));
+  // While the old host shuts down, the copy's exe becomes a folder: the last hash's read throws (EISDIR).
+  writeFileSync(pointer, `dir:${path.join(s.live('host-update.json').pending.root, 'bin', 'ujwalam-host.mjs')}`);
+  writeFileSync(stopFile, 'stop');
+  assert.ok(await until(() => s.live('host-update.json')?.rejected?.some((r) => r.n === 56)), l.out.slice(-3000));
+  assert.ok(await until(() => s.calls().filter((c) => c.event === 'start').length === 2), l.out.slice(-3000));
+  assert.equal(s.calls().filter((c) => c.event === 'start')[1].dir, path.dirname(FAKE_HOST), 'the previous host was started again');
+  assert.match(l.out, /could not be read \(EISDIR\)/);
+  assert.match(l.out, /starting the previous host again/);
+  assert.ok(await until(() => s.live('updates.json')?.parts?.find((p) => p.part === 'host')?.version === 'dev'), 'the version is the running host\'s');
+  assert.equal(s.live('host-update.json').pending, null);
+  assert.equal(await l.close(), 0);
+  assert.doesNotMatch(l.out, /HOST CRASHED|HOST EXITED UNEXPECTEDLY/);
+});

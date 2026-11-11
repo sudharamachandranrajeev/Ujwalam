@@ -123,7 +123,13 @@ const methods = {
     // LU5 test (Codex re-review): a pointer file names a file the old host changes while it shuts down, so the
     // launcher's last check before the new host's spawn sees a copy that changed after the queue's check.
     const tamper = process.env.UJWALAM_FAKE_HOST_TAMPER_ON_SHUTDOWN;
-    if (tamper && existsSync(tamper)) { const f = readFileSync(tamper, 'utf8').trim(); rmSync(tamper); chmodSync(f, 0o666); appendFileSync(f, '// changed\n'); }
+    // "dir:<file>": the file is replaced by a folder, so reading it for the hash throws (EISDIR, Codex review of the merge).
+    if (tamper && existsSync(tamper)) {
+      const t = readFileSync(tamper, 'utf8').trim(); rmSync(tamper);
+      const f = t.replace(/^dir:/, '');
+      chmodSync(f, 0o666);
+      if (t.startsWith('dir:')) { rmSync(f); mkdirSync(f); } else appendFileSync(f, '// changed\n');
+    }
     setTimeout(() => { save(); process.exit(0); }, 50);
     return { shuttingDown: true };
   },

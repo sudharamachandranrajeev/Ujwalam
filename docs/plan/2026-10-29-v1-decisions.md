@@ -1153,6 +1153,11 @@ Plan rows LU5 and LU7 (D324), built on LU3 (D337). Decided:
   Codex re-review: only the candidate's own failure rejects it (its hash right before the start, readiness, project
   load). A replacement aborted before the candidate ran (the old host did not exit, Ujwalam closing) keeps it pending
   in host-update.json and back in the queue; it is tried again at the next poll once nothing is live.
+  Codex review of the merge: the replacement is one transaction. An exception anywhere after the old host stopped
+  (the last hash cannot read a file, the switch, the start) never skips the previous host's restart; a replacement
+  that was spawned is stopped with its exit confirmed first; the hash check never throws (an unreadable file is a
+  problem like a wrong hash). The launcher answers which host runs (`running`: new, old, none, unknown) and the queue
+  moves the shown versions only when the new one runs.
 - **Services (LU7).** Not live: applied at once (the request is the user's own install action). Live: the update waits
   for one click, "Apply now" on the control page (D332: no typed phrase, no "are you sure"); the click runs the LU3
   swap while live. **Reversed after the Codex review (P2):** a waiting service is NOT applied at the stop; nothing

@@ -133,10 +133,14 @@ export function hostArgsFor(argv, { runtime, overlayScript }) {
 
 /** Right before a host copy runs (and at start): its exe and its whole host part still match. -> problem or null. */
 export function hostEntryProblem(entry, { script = false, runtime = null } = {}) {
-  const e = hostEntry(entry?.root, { script, runtime });
-  if (e.problem) return e.problem;
-  if (e.sha256 !== entry.sha256 || e.n !== entry.n) return 'the staged host is not the one that was checked';
-  return partsProblem(entry.root, HOST_PARTS, { host: { sha256: entry.sha256, files: entry.files } });
+  // Never throws (Codex review of the merge): a file that cannot be read (a sharing violation, a folder in its place)
+  // is a problem like a wrong hash, so the caller rejects the copy and keeps or restores the running host.
+  try {
+    const e = hostEntry(entry?.root, { script, runtime });
+    if (e.problem) return e.problem;
+    if (e.sha256 !== entry.sha256 || e.n !== entry.n) return 'the staged host is not the one that was checked';
+    return partsProblem(entry.root, HOST_PARTS, { host: { sha256: entry.sha256, files: entry.files } });
+  } catch (e) { return `its files could not be read (${String(e?.code ?? e?.message ?? e).slice(0, 80)})`; }
 }
 
 const liveFile = (dataDir, name) => path.join(dataDir, LIVE_DIR, name);
@@ -437,11 +441,13 @@ export function createUpdates({ dataDir, session, own = null, outputs = async ()
       const bad = hostEntryProblem(w.entry, hostInfo());
       if (bad) { rejectHost(dataDir, w.entry, bad, log); note('host', w.version, 'failed', bad); return { result: 'failed', reason: bad }; }
       stageHostPending(dataDir, w.entry, log); // a crash of the launcher during the restart still tries it next start
-      const r = await applyHost(w.entry);
+      let r;
+      try { r = await applyHost(w.entry); } catch (e) { r = { result: 'failed', reason: String(e?.message ?? e).slice(0, 160), running: 'unknown' }; }
+      // The versions follow the host that actually runs: the launcher answers running 'new' only after a swap.
       // 'busy': a stream or recording started between the queue's check and the restart (the launcher checks again
       // right before it stops the host); the update goes back to waiting.
       if (r?.result === 'busy') return r;
-      if (r?.result === 'swapped') {
+      if (r?.result === 'swapped' && r?.running !== 'old') {
         versions.host = w.version; versions['overlay-server'] = w.version;
         nOf.host = w.n; nOf['overlay-server'] = w.n; hostSha = w.entry.sha256;
         acceptHost(dataDir, w.entry, log);
