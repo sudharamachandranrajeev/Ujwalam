@@ -14,7 +14,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { startSwappableService } from '../services/event-core/api/swappable.mjs';
-import { swapCommand } from '../services/event-core/cli.mjs';
+import { parseArgs, swapCommand } from '../services/event-core/cli.mjs';
 import { createIdGenerator } from '../services/event-core/model.mjs';
 import { createFront, splitFrames } from '../services/supervisor/front.mjs';
 import { coreRpc, createEventCoreSlot } from '../services/supervisor/slots.mjs';
@@ -80,6 +80,16 @@ test('pure: swap control lines and the id floor', () => {
   const g2 = createIdGenerator({ wall: () => 999, floor }); // clock behind the floor: still after it
   assert.ok(g2() > floor);
   assert.ok(createIdGenerator({ floor: 'nonsense' })().startsWith('e'));
+});
+
+test('serve arguments: --lan is a switch, so the launcher argv keeps the next argument (found while wiring the swap flags)', () => {
+  const a = parseArgs(['serve', '--data-dir', 'D', '--lan', '--url', 'ws://127.0.0.1:8093/', '--swap-control', '--public-port', '5000']);
+  assert.equal(a.lan, true);
+  assert.equal(a.url, 'ws://127.0.0.1:8093/');
+  assert.equal(a['swap-control'], true);
+  assert.equal(a['public-port'], '5000');
+  const b = parseArgs(['serve', '--lan', '--lan-address', '192.168.1.20', '--mock']);
+  assert.deepEqual({ lan: b.lan, address: b['lan-address'], mock: b.mock }, { lan: true, address: '192.168.1.20', mock: true });
 });
 
 test('in-process: standby answers core.status only; the audit lock keeps a second writer out; hand-off and re-activation', async () => {

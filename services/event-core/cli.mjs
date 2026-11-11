@@ -43,13 +43,13 @@ import { formatPriority, setLivePriority } from './priority.mjs';
 import { createCredentialStore, credentialProvider, DEFAULT_TARGET } from './streamerbot/credential.mjs';
 import { watchParent } from '../common/parent-pipe.mjs';
 
-function parseArgs(argv) {
+export function parseArgs(argv) {
   const out = { _: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a.startsWith('--')) {
       const k = a.slice(2);
-      if (['show-text', 'no-fixtures', 'stdin', 'all', 'mock', 'no-stall-tracer', 'allow-remote', 'swap-control', 'standby'].includes(k)) out[k] = true;
+      if (['show-text', 'no-fixtures', 'stdin', 'all', 'mock', 'no-stall-tracer', 'allow-remote', 'swap-control', 'standby', 'lan'].includes(k)) out[k] = true;
       else out[k] = argv[++i];
     } else out._.push(a);
   }
