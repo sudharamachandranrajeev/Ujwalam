@@ -1616,3 +1616,17 @@ Plan row IG1 (`docs/plan/` growth and Instagram plan, 2026-11-11). Flag `instagr
   "start stream test".
 - Left out: the Qt Settings > Connections page is unchanged (its generic rows show Instagram; a used key shows as not
   connected with the reason). No Instagram API is used (none starts a live).
+
+## D355 — Studio UI moves to Qt Quick (QML), one agent, step by step (user, 2026-11-11)
+
+- The user chose option 2 of the UI audit (Qt Quick), with no multi-agent work, much faster than 6–10 weeks, and no
+  loss of quality. Plan: `docs/plan/2026-11-11-qml-studio-plan.md` (Q1 models, Q2 main window, Q3 settings, Q4 other
+  screens, Q5 web page on the studio theme, Q6 switch after a real stream). Approved by the user on 2026-11-11.
+- The QML studio ships behind the flag `studio-qml` (off by default). The widget studio stays the default until the
+  parity checklist passes and a real stream has no high-severity feedback.
+
+## D356 — The Instagram output flag applies at stream start only (user, 2026-11-11)
+
+- An exception to "switchable while live": adding or removing the instagram sink means restarting the encoders, so
+  `instagram-live` is read when a stream starts, and the control page shows "applies at next start" when it differs.
+  Accepted by the user on 2026-11-11.
