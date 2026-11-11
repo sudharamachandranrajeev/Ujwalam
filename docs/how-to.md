@@ -16,6 +16,11 @@ Anything marked UNVERIFIED was read from the code but not run end to end on a re
 4. Roll back to the previous version:
    `powershell -ExecutionPolicy Bypass -File .\Install-Ujwalam.ps1 -Rollback`
    Run it again to switch forward. Nothing is deleted.
+5. Install while Ujwalam runs, also while live: run the same command. It sees the running copy and replaces none of
+   its files: the new version goes next to it and the next start uses it. With the feature flag `service-swap` on, the
+   running Ujwalam also takes the new version at once: when nothing is live the services are updated straight away;
+   when a stream or recording runs, each service waits for one click on Apply now (control page, Versions and
+   updates), and the video engine (host) waits until everything has stopped. The installer lists what happened.
 
 ## 2. First launch
 
