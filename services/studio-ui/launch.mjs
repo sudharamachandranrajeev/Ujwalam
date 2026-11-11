@@ -102,7 +102,7 @@ import { rpc } from './backends.mjs';
 import { collectDiag, CRASH_LOG_FILE, outputsSafe, SNAPSHOT_FILE } from '../../tools/diag/bundle.mjs';
 import { writeZip } from '../../tools/package/zip.mjs';
 import { createFront } from '../supervisor/front.mjs';
-import { createEventCoreSlot, createUiSlot } from '../supervisor/slots.mjs';
+import { createEventCoreSlot, createStudioSlot, createUiSlot } from '../supervisor/slots.mjs';
 import { refuseReason, SERVICES } from '../supervisor/swap.mjs';
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
@@ -241,6 +241,9 @@ function parseArgs(argv) {
 // UJWALAM_HEADLESS=1 (every test run, D191): no preview windows (the host gets the same variable and refuses them)
 // and no browser window; the control page URL is printed only.
 export const isHeadless = () => process.env.UJWALAM_HEADLESS === '1';
+// LU4 tests (D346): UJWALAM_HEADLESS=1 + UJWALAM_STUDIO_HIDDEN=1 starts the Qt studio anyway, with its window laid out
+// but never on screen (Qt::WA_DontShowOnScreen), so the studio swap can be tested with real preview embedding.
+export const studioHidden = (env = process.env) => env.UJWALAM_HEADLESS === '1' && env.UJWALAM_STUDIO_HIDDEN === '1';
 
 // UJWALAM_BROWSER (an executable) and UJWALAM_BROWSER_ARGS (space separated flags) pick the browser; used by the UI tests.
 // Under UJWALAM_HEADLESS=1 only UJWALAM_BROWSER = this Node executable is honoured (a login script, never a browser).
@@ -392,6 +395,28 @@ export function shellSpawnSpec({ uiPort, launchKey, exe, qtBin = null, qtPlugins
   if (logsDir) clean.UJWALAM_STUDIO_LOG_DIR = logsDir;
   if (version) clean.UJWALAM_STUDIO_VERSION = version;
   return { cmd: exe, env: { ...clean, UJWALAM_UI_URL: `http://127.0.0.1:${uiPort}/`, UJWALAM_UI_LAUNCH_KEY: launchKey } };
+}
+
+/** The studio exe of a swap root (LU4, pure; tested): <root>/studio/ujwalam-studio.exe (a staged or installed version),
+ *  else for this checkout the development build (studioShellPaths). The Qt kit's bin stays on PATH for a staged copy
+ *  of a development build; a packaged studio finds its own DLLs beside it first. null when there is none. */
+export function studioRootPaths(root, { repo = REPO, devExe = STUDIO_EXE, devQtDir = null, exists = existsSync } = {}) {
+  const exe = path.join(root, 'studio', 'ujwalam-studio.exe');
+  if (exists(exe)) return { exe, qtBin: devQtDir ? path.join(devQtDir, 'bin') : null, qtPlugins: null };
+  if (path.resolve(root).toLowerCase() === path.resolve(repo).toLowerCase()) return studioShellPaths({ root, devExe, devQtDir, exists });
+  return null;
+}
+
+/** Starts one studio window with the LU4 control pipe (stdin: "swap-close"; stdout: "studio attach: ..." lines). The
+ *  launcher and the studio-swap tests use it. Throws when the root holds no studio exe. */
+export function spawnStudio({ root, key, uiPort, logsDir = null, version = null, devQtDir = studioQtDir(), env = process.env }) {
+  const paths = studioRootPaths(root, { devQtDir });
+  const spec = paths ? shellSpawnSpec({ uiPort, launchKey: key, ...paths, logsDir, version, env }) : null;
+  if (!spec) throw new Error(`no studio exe in ${root}`);
+  return spawn(spec.cmd, [], {
+    stdio: ['pipe', 'pipe', 'ignore'], env: { ...spec.env, UJWALAM_STUDIO_CONTROL: '1' },
+    windowsHide: false // GUI window: the Qt studio window (D277, LU4 swap); a GUI exe, no console
+  });
 }
 
 export const SHELL_EXITS_FILE = 'studio-exits.jsonl';
@@ -878,7 +903,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (!shellMode) { console.log('[studio] --shell takes qt (the default) or browser'); return 2; }
   // The Qt shell shows the previews inside its window (D280): known before the host starts, so the host then opens
   // no separate preview windows.
-  const shellPaths = shellMode === 'qt' && args['no-open'] !== true && !isHeadless() ? studioShellPaths({ devQtDir: studioQtDir() }) : null;
+  const shellPaths = shellMode === 'qt' && args['no-open'] !== true && (!isHeadless() || studioHidden()) ? studioShellPaths({ devQtDir: studioQtDir() }) : null;
   let dataDir;
   try { dataDir = resolveDataDir({ dataDir: typeof args['data-dir'] === 'string' ? args['data-dir'] : undefined }); } catch (e) { console.log(`[studio] ${e.message}`); return 1; }
   if (args.live === true && !alpha) { console.log('[studio] --live is for the alpha session only (npm run alpha -- --live)'); return 2; }
@@ -1270,30 +1295,37 @@ export async function main(argv = process.argv.slice(2)) {
   const shellLogs = path.join(dataDir, 'logs');
   const shellSpec = shellPaths ? shellSpawnSpec({ uiPort, launchKey, ...shellPaths, logsDir: shellLogs, version: releaseVersion() }) : null;
   if (wantShell && !shellSpec && args['no-open'] !== true && !isHeadless()) console.log('[studio] the Qt studio shell is not built (npm run build:studio); opening the browser instead');
-  if (args['no-open'] !== true && shellSpec && !isHeadless()) {
+  let studioSlot = null; // LU4 (flag service-swap): the Qt studio window behind a stop-start slot
+  if (args['no-open'] !== true && shellSpec && (!isHeadless() || studioHidden())) {
     const crashTimes = [];
-    const startShell = (spec) => {
-      const shell = spawn(spec.cmd, [], {
-        stdio: 'ignore', env: spec.env,
-        windowsHide: false // GUI window: the Qt studio window (default, D277); a GUI exe, no console
-      });
-      shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
-      // One close (D280): the window closed by the user (exit 0; while live too, D332) stops
-      // everything. Any other exit is a crash: the studio keeps running (a stream is never cut by a UI crash) and the
-      // window is opened again (at most SHELL_RELAUNCH_MAX times in SHELL_RELAUNCH_WINDOW_MS), with a new one-time key
-      // the UI server gets on its stdin pipe. Without a console (ujwalam-start.exe) the window is the only way to stop.
-      const shellStarted = Date.now();
+    // A new one-time login key for the next studio window, on the UI server's stdin (through the slot when swaps are
+    // on: a rearm during a UI swap waits and goes to the process that serves after it).
+    const rearm = (key) => {
+      try {
+        if (uiSlot) return uiSlot.control(`rearm ${key}`);
+        if (!uiChild()?.stdin?.writable) return false;
+        uiChild().stdin.write(`rearm ${key}\n`);
+        return true;
+      } catch { return false; }
+    };
+    // One close (D280): the window closed by the user (exit 0; while live too, D332) stops
+    // everything. Any other exit is a crash: the studio keeps running (a stream is never cut by a UI crash) and the
+    // window is opened again (at most SHELL_RELAUNCH_MAX times in SHELL_RELAUNCH_WINDOW_MS), with a new one-time key
+    // the UI server gets on its stdin pipe. Without a console (ujwalam-start.exe) the window is the only way to stop.
+    // LU4: an exit a studio swap planned (swap-close, a new build on probation or rolled back) is only recorded.
+    const watchShell = (shell, shellStarted) => {
       shell.on('exit', (code, signal) => {
         const i = children.indexOf(shell);
         if (i >= 0) children.splice(i, 1);
+        const swap = studioSlot?.isPlanned(shell) === true;
         // Every exit goes to <logs>/studio-exits.jsonl too (the console may be hidden or gone; 2026-11-08 crash).
         let rec = null;
         try {
           mkdirSync(shellLogs, { recursive: true });
           rec = shellExitRecord({ code, signal, startedAt: shellStarted, reports: readdirSync(shellLogs).filter((n) => n.startsWith('studio-crash-')) });
-          appendFileSync(path.join(shellLogs, SHELL_EXITS_FILE), `${JSON.stringify({ ...rec, stopping })}\n`);
+          appendFileSync(path.join(shellLogs, SHELL_EXITS_FILE), `${JSON.stringify({ ...rec, stopping, ...(swap ? { swap: true } : {}) })}\n`);
         } catch { /* best effort: the log line below still says it */ }
-        if (stopping) return;
+        if (stopping || swap) return;
         if (code === 0) {
           console.log('[studio] studio window closed: stopping Ujwalam');
           stopAll().then(() => process.exit(0));
@@ -1317,17 +1349,42 @@ export async function main(argv = process.argv.slice(2)) {
         }
         const key = hex(32);
         // Through the slot when swaps are on: a rearm during a swap waits and goes to the process that serves after it.
-        try { if (uiSlot) { if (!uiSlot.control(`rearm ${key}`)) throw new Error('not sent'); } else uiChild().stdin.write(`rearm ${key}\n`); } catch { console.log(`[studio] Qt shell ended unexpectedly (${what}); could not reopen it`); return; }
+        if (!rearm(key)) { console.log(`[studio] Qt shell ended unexpectedly (${what}); could not reopen it`); return; }
         console.log(`[studio] Qt shell ended unexpectedly (${what}); the studio keeps running. Reopening the window in 2 s.`);
         setTimeout(() => {
           if (stopping) return;
+          if (studioSlot) { try { studioSlot.start(studioSlot.root(), key); } catch (e) { console.log(`[studio] Qt shell could not be reopened: ${e.message}`); } return; }
           const again = shellSpawnSpec({ uiPort, launchKey: key, ...shellPaths, logsDir: shellLogs, version: releaseVersion() });
           if (again) startShell(again);
         }, 2000).unref();
       });
+    };
+    const startShell = (spec) => {
+      const shell = spawn(spec.cmd, [], {
+        stdio: 'ignore', env: spec.env,
+        windowsHide: false // GUI window: the Qt studio window (default, D277); a GUI exe, no console
+      });
+      shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
+      watchShell(shell, Date.now());
       children.push(shell);
     };
-    startShell(shellSpec);
+    if (swapOn) {
+      // LU4 (D346): the studio window behind a stop-start slot. A swap closes it with "swap-close" (exit 75, planned:
+      // no quit lock, nothing stopped), starts the new exe and waits until it is logged in and every preview it had is
+      // embedded again; else the old version starts again. The exit handler below skips planned exits.
+      studioSlot = createStudioSlot({
+        spawn: (root, key) => {
+          const shell = spawnStudio({ root, key, uiPort, logsDir: shellLogs, version: releaseVersion() });
+          shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
+          watchShell(shell, Date.now());
+          return shell;
+        },
+        rearm,
+        onLine: (l) => { if (/^studio (attach|swap):/.test(l)) console.log(`[studio] window: ${l}`); },
+        ...track,
+      });
+      studioSlot.start(REPO, launchKey);
+    } else startShell(shellSpec);
     console.log('[studio] Qt studio shell started');
   } else if (args['no-open'] !== true && (!isHeadless() || headlessLoginScript())) openBrowser(`http://127.0.0.1:${uiPort}/login?k=${launchKey}`);
   if (alphaClient) {
@@ -1369,7 +1426,7 @@ export async function main(argv = process.argv.slice(2)) {
     process.stdin.once('data', () => { stopAll().then(() => process.exit(0)); });
     process.stdin.once('end', () => { stopAll().then(() => process.exit(0)); });
   }
-  if (swapOn) serveSwaps({ slots: { 'event-core': coreSlot, 'studio-ui': uiSlot }, log: track.log });
+  if (swapOn) serveSwaps({ slots: { 'event-core': coreSlot, 'studio-ui': uiSlot, studio: studioSlot }, log: track.log });
   // Flag on: an exit of the current core or UI process that no swap planned ends the session through endSession.
   const code = await new Promise((resolve) => { core?.once('exit', () => resolve(0)); ui?.once('exit', () => resolve(0)); sessionEnded.then(resolve); });
   await stopAll();
@@ -1379,27 +1436,38 @@ export async function main(argv = process.argv.slice(2)) {
 /**
  * LU3 swap requests (D337, flag service-swap). Only the process that started this launcher can ask, over its IPC
  * channel (no port, no file): { t: 'ujwalam-swap', id, service, root } -> { t, id, result, ... }. root is the folder
- * of the new version (a staged install, LU6) and must hold the service's entry file. The host and the overlay server
+ * of the new version (a staged install, LU6) and must hold the service's entry file (the studio: studio/ujwalam-studio.exe,
+ * or this checkout's development build; LU4, D346). One swap runs at a time; others are refused while it runs. The host and the overlay server
  * (a child of the host) are refused (LU5); the workers have a stop-start slot (slots.mjs) that is not wired here yet.
  */
-export function serveSwaps({ slots, log, proc = process }) {
+export function serveSwaps({ slots, log, proc = process, entryOk = swapEntryOk }) {
   if (typeof proc.send !== 'function') return false;
+  let running = false; // one swap at a time over all services (a studio swap needs the UI server for its login key)
   proc.on('message', async (m) => {
     if (m?.t !== 'ujwalam-swap' || !Number.isInteger(m.id)) return;
     const reply = (r) => { try { if (proc.connected) proc.send({ t: 'ujwalam-swap', id: m.id, ...r }); } catch { /* the asker is gone */ } };
-    const why = refuseReason(m.service, {});
+    const why = refuseReason(m.service, { busy: running });
     if (why) { reply({ result: 'refused', reason: why }); return; }
     const slot = slots[m.service];
     if (!slot) { reply({ result: 'refused', reason: SERVICES[m.service] ? 'not wired in the launcher yet' : 'unknown service' }); return; }
-    const entry = m.service === 'event-core' ? ['services', 'event-core', 'cli.mjs'] : ['services', 'studio-ui', 'cli.mjs'];
-    if (typeof m.root !== 'string' || !path.isAbsolute(m.root) || !existsSync(path.join(m.root, ...entry))) { reply({ result: 'refused', reason: 'root must be an absolute folder that holds the service entry file' }); return; }
+    if (typeof m.root !== 'string' || !path.isAbsolute(m.root) || !entryOk(m.service, m.root)) { reply({ result: 'refused', reason: 'root must be an absolute folder that holds the service entry file' }); return; }
     log(`swap ${m.service} requested`);
+    running = true;
     try {
       const r = await slot.swap(path.resolve(m.root));
-      reply({ result: r.result, ms: r.ms, reason: r.reason, failed: r.history?.filter((h) => !h.ok).map((h) => `${h.action}: ${h.error}`) });
-    } catch (e) { reply({ result: 'failed', reason: String(e?.message ?? e).slice(0, 200) }); }
+      const checked = r.history?.find((h) => h.action === 'check-new' && h.ok)?.value;
+      reply({ result: r.result, ms: r.ms, reason: r.reason, failed: r.history?.filter((h) => !h.ok).map((h) => `${h.action}: ${h.error}`), ...(checked && m.service === 'studio' ? { studio: checked } : {}) });
+    } catch (e) { reply({ result: 'failed', reason: String(e?.message ?? e).slice(0, 200) }); } finally { running = false; }
   });
   return true;
+}
+
+/** Whether root holds the entry of service (pure apart from the file checks): the service's cli.mjs, or for the
+ *  studio window (LU4) its exe (studioRootPaths). */
+export function swapEntryOk(service, root, { exists = existsSync, devQtDir = null } = {}) {
+  if (service === 'studio') return !!studioRootPaths(path.resolve(root), { exists, devQtDir });
+  const entry = service === 'event-core' ? ['services', 'event-core', 'cli.mjs'] : ['services', 'studio-ui', 'cli.mjs'];
+  return exists(path.join(root, ...entry));
 }
 
 if (process.argv[1] && process.argv[1].endsWith('launch.mjs') && process.argv[1].includes('studio-ui')) process.exit(await main());

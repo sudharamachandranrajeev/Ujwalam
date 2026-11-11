@@ -62,6 +62,7 @@ private:
 	class QTimer *debounce_;
 	class QLabel *msg_;
 	bool busy_ = false, again_ = false;
+	bool embedded_ = false; // the host's preview sits in this slot; "studio attach: preview <c> embedded" on each gain
 };
 
 class MainWindow : public QMainWindow {
@@ -76,6 +77,13 @@ public:
 
 protected:
 	void closeEvent(class QCloseEvent *e) override; // one close for the whole app (D280)
+public:
+	// LU4 studio swap (D346): the launcher closes this window for an update. Not a user close: no quit lock, no
+	// dialog, and the launcher does not stop the host. Ends the tray icon (no double tray in the overlap) and exits
+	// with kSwapExitCode.
+	static constexpr int kSwapExitCode = 75;
+	void swapClose();
+protected:
 
 public:
 	// Probe action (tests only, UJWALAM_STUDIO_PROBE_ACTIONS, D275): clicks the real widget so its own handler runs.

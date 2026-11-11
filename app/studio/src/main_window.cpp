@@ -399,6 +399,18 @@ void MainWindow::closeEvent(QCloseEvent *e)
 	e->accept();
 }
 
+// LU4 studio swap (D346): asked by the launcher on the studio's control pipe. The host, its encoders and every output
+// keep running; the previews drawn in this window go with it (the host drops them when the slot windows are destroyed)
+// and the new studio embeds them again. Not closeEvent: no task dialog, no quit lock, nothing stopped.
+void MainWindow::swapClose()
+{
+	std::printf("studio swap: closing for an update (host and outputs keep running)\n");
+	std::fflush(stdout);
+	if (tray_ && tray_->active())
+		tray_->end();
+	QApplication::exit(kSwapExitCode);
+}
+
 // Keep running in the tray (D311 proposed): the window hides (its previews with it), the polls go on, the tray shows
 // the tasks. The app no longer quits on the last window; it ends when the tasks finish or on Stop all.
 void MainWindow::enterTray()
@@ -525,13 +537,20 @@ void PreviewSlot::embed()
 	api_->host(QStringLiteral("preview.open"), p, [this](bool ok, const QJsonObject &b, const QString &err) {
 		busy_ = false;
 		if (!ok) {
+			embedded_ = false;
 			const QString detail = b.value(QStringLiteral("detail")).toString();
 			setMessage(QStringLiteral("No preview here: ") + (detail.isEmpty() ? err : detail));
 			// The host may still be starting or loading the project (no canvas yet): try again (D280).
 			if (!again_ && isVisible())
 				QTimer::singleShot(2000, this, [this]() { schedule(); });
-		} else
+		} else {
 			setMessage(QString());
+			if (!embedded_) { // the launcher's studio swap waits for this line (LU4, D346)
+				embedded_ = true;
+				std::printf("studio attach: preview %s embedded\n", qUtf8Printable(canvas_));
+				std::fflush(stdout);
+			}
+		}
 		if (again_) {
 			again_ = false;
 			embed();

@@ -8,7 +8,8 @@
 // on a display picks that display (else the main one); the whole window is then kept inside that display's work area
 // (shrunk if larger, pplace::fit_in), so it never hangs off an edge or under the taskbar. Embedded previews (parent set)
 // stay WS_CHILD windows of the studio's preview slot and leave activation to the studio window. Headless
-// (--headless / UJWALAM_HEADLESS=1, used by every test run): open() refuses with CONFLICT and no window exists.
+// (--headless / UJWALAM_HEADLESS=1, used by every test run): open() refuses with CONFLICT and no window exists, except
+// an embedded preview whose parent's top-level window is hidden (LU4 studio-swap tests, D346): nothing can be seen.
 //
 // Mouse editing (P5, D230, flag preview-edit): clicks in a preview select, move and resize layers (preview_edit.h).
 // The window takes mouse capture while a drag runs.

@@ -449,7 +449,9 @@ static json::Value win_json(const Previews::Win *w)
 
 json::Value Previews::open(const OpenArgs &a)
 {
-	if (headless_)
+	// Headless: no window of our own. An embedded preview into a hidden studio window is allowed (LU4, D346: the
+	// studio-swap tests re-embed previews with no window on screen); open_embedded refuses a visible parent.
+	if (headless_ && !a.parent)
 		throw rpc::Error(rpc::CONFLICT, "headless (--headless / UJWALAM_HEADLESS=1): no preview windows");
 	return run_on_ui([this, a]() -> json::Value {
 		if (a.parent)
@@ -555,6 +557,9 @@ json::Value Previews::open_embedded(const OpenArgs &a)
 	HWND parent = reinterpret_cast<HWND>(static_cast<uintptr_t>(a.parent));
 	if (!IsWindow(parent))
 		throw rpc::Error(rpc::INVALID_PARAMS, "parent is not a window");
+	// Headless (tests, LU4): only into a parent whose top-level window is hidden, so the child can never be seen.
+	if (headless_ && IsWindowVisible(GetAncestor(parent, GA_ROOT)))
+		throw rpc::Error(rpc::CONFLICT, "headless (--headless / UJWALAM_HEADLESS=1): an embedded preview needs a hidden parent window");
 	if (a.width <= 0 || a.height <= 0 || a.x < 0 || a.y < 0)
 		throw rpc::Error(rpc::INVALID_PARAMS, "an embedded preview needs x, y, width and height");
 	// Embedded previews are child windows of the studio's preview slot and follow the studio window wherever it is.
