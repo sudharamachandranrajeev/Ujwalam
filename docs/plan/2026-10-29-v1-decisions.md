@@ -1556,14 +1556,27 @@ Plan row IG1 (`docs/plan/` growth and Instagram plan, 2026-11-11). Flag `instagr
   recommendation gives a NOT_RECOMMENDED warning, not a second encode.
 - **Plan file.** With the flag on, the launcher writes `<data>/outputs/live-plan-instagram.json` (the plan in effect
   plus the sink and its target) and starts from it. Target: transport `auto`, `serverRef Ujwalam/stream/instagram-server`,
-  `keyRef Ujwalam/stream/instagram`; the scheme follows the pasted URL. The flag is read at start: switching it applies
-  from the next start, not mid-stream (adding an encoder while live is not done here).
+  `keyRef Ujwalam/stream/instagram`; the scheme follows the pasted URL.
+- **Flag is start-only.** The flag is read at start and latched with the launched plan: switching it applies from the
+  next start, never mid-stream. Switching Instagram on while live would add an encoder to the running graph, which the
+  live-path rule does not allow; so this flag is an exception to "switchable from the control page while live". The
+  user is being asked to confirm this exception (UNCONFIRMED until they answer). The launcher passes `--instagram-live`
+  to the UI server when the configured plan has the instagram sink; readiness and key tracking follow that, not the
+  flag's current value. The flag list marks a flag that differs from the running plan as "applies at next start"
+  (Codex review).
 - **Key per broadcast.** Pasted in Settings > Connections or the new Instagram box on the control page (needs
   `platform-connect`); both URL and key are required together; only Credential Manager holds them; only the last 4
-  characters are shown. `<data>/outputs/instagram-key.json` keeps times only (`savedAt`, `liveAt`, `usedAt`). The sink
-  seen live sets `liveAt`; seen not running afterwards (stop, failure, or the next start after a crash) sets `usedAt`.
-  A key with `usedAt >= savedAt`, or never pasted through Ujwalam, fails readiness with the plain fix text (open Live
-  Producer, copy the new URL and key, paste both). A `?` in the Instagram key is allowed (other platforms still warn).
+  characters are shown. `<data>/outputs/instagram-key.json` keeps times only (`savedAt`, `startedAt`, `usedAt`), never
+  a key, URL, hash or other derivative. Any start attempt counts as consuming the key: the UI server writes
+  `startedAt` before it sends a Start that includes the instagram sink, and the status reconciliation (each poll,
+  right before the readiness check, and at studio start) also sets it when the sink runs or its host start count
+  (`attempts`) has grown, so a broadcast shorter than a poll or a start by another path is seen. Started and then seen
+  not running (stop, failure, or the next studio start after a crash) sets `usedAt`; a start on its way is not judged.
+  Pasting the key already stored keeps the state (a used key stays used): the stored key is read from Credential
+  Manager and compared in memory in constant time (HMAC with a one-time random key, `timingSafeEqual`) before it is
+  overwritten (Codex review). A key with `usedAt >= savedAt`, or never pasted through Ujwalam, fails readiness with
+  the plain fix text (open Live Producer, copy the new URL and key, paste both). A `?` in the Instagram key is allowed
+  (other platforms still warn).
 - **Loopback first.** `app/host/tests/host-instagram-loopback.test.mjs` streams the instagram sink to a local ffmpeg
   RTMP listener and checks it with ffprobe against the platform file. No real Instagram test until the user says
   "start stream test".

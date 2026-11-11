@@ -38,7 +38,7 @@ Plan: preset `youtube-1080p60` + instagram add-on, cut to the instagram sink, lo
 
 | File | Result |
 |---|---|
-| tests/instagram-live.test.mjs | 18/18 |
+| tests/instagram-live.test.mjs | 26/26 (after the Codex review fixes; 18/18 before) |
 | tests/outputs/schema.test.mjs | 29/29 |
 | tests/outputs/validate.test.mjs | 49/49 |
 | tests/platform-connect.test.mjs | 37/37 |
@@ -58,9 +58,24 @@ validate-registry, validate-outputs, validate-games, private-scan, legacy-verify
 `tests/instagram-live.test.mjs` covers: the platform values; the preset V rung is not reused and `ig-v` 720x1280@30 is
 added; a fitting V rung is reused; 25 fps on a 50 fps canvas; deduplication; refusals; the plan file through
 `planFile` (allowLive; `auto` unresolved without schemes, rtmps with them; `--sinks` drops `ig-v`); flag off by
-default; key state fresh, live, used (also after a crash and when never live); connect row, paste needs both URL and
+default; key state fresh, started, used (also after a crash and when never live); connect row, paste needs both URL and
 key, only the last 4 shown, no secret on disk; readiness fails with the fix text and passes with a fresh key; no limit
 number hardcoded in the module. Test values are throwaway strings in memory stores; no Credential Manager write.
+
+## Codex review fixes (2026-11-11)
+
+- P1: the same used key pasted again stays used (stored key read and compared in memory, constant time); a different
+  key is fresh; the state file holds times only (keys `savedAt`, `startedAt`, `usedAt`, `version`).
+- P2: a broadcast shorter than a poll (start count grew, sink stopped) makes the key used; a count that grew while a new
+  key was pasted is not counted for it; a start marked before it is sent, then a crash, is used at the next studio
+  start; a start on its way is not judged as ended. Studio server: Start stream marks the key started before the host
+  call, and the end seen between polls makes it used.
+- P2: the server follows the launched plan (`--instagram-live`), not the current flag value; the flag list shows
+  "applies at next start" when they differ; launched without Instagram, starts and polls leave the key alone.
+
+Re-run after the fixes, one file at a time: instagram-live 26/26, platform-connect 37/37, studio-ui-connect 14/14,
+studio-ui-connect-setup 4/4, studio-ui-readiness 39/39, studio-launch-d327 4/4, flags 7/7, studio-ui-alpha 37/37,
+studio-ui-flags-feedback 16/16.
 
 ## UNVERIFIED
 
