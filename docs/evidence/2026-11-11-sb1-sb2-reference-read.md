@@ -35,6 +35,30 @@ flags:                   ℹ tests 7   ℹ pass 7   ℹ fail 0
 
 Lint on every new or changed file: `lint: 0 finding(s)`. Commit hook quick checks: `ci: 9/9 passed` on each commit.
 
+### Hardening after the Codex review (2026-11-11)
+
+Four findings fixed in `frames.mjs` / `analyse.mjs`, each with a test in the `SB1 hardening` group:
+
+1. Demuxer fixed per extension (`-f`) for ffprobe and ffmpeg; self-contained formats only (.avi dropped); a link or
+   mapped drive that resolves to a share is refused. Test: a concat list renamed `.mkv` and an HLS playlist renamed
+   `.mp4` both fail; a file literally named `seq%03d.png` loads itself (960x540), never the portrait `seq001.png`
+   next to it. Checked by hand on ffmpeg n8.1.3: without `-f`, ffprobe opens the renamed list as `concat`; it
+   already refuses HLS with a non-standard extension, so `-f` is defence in depth there.
+2. Memory: frames × analysis pixels ≤ 40 M (`MAX_TOTAL_PIXELS`, refused above with a plain message); `measure()`
+   handles one frame at a time and keeps OKLab and gradient arrays for the key frame only, plus the previous
+   frame's lightness for motion. Test: the budget refusal, and a second identical frame on the streamed path gives
+   the same per-cell edge and colour counts as the key-frame path, with zero motion.
+3. `-map 0:v:0`. Test: an `.mkv` with a small red stream 0 and a larger blue stream 1 reads 480x270 and red.
+4. Display rotation from side data or the rotate tag; width/height are the display size, used for the analysis
+   size and the H/V canvas; `-autorotate` set on explicitly. Test: a 960x540 video with a red left stripe, tagged
+   `-display_rotation 90`, reads 540x960, rotation 90/270, canvas V, and the stripe is a full-width band (turned,
+   not squeezed). The result schema gains `reference.rotation`.
+
+```
+scene-builder-reference: ℹ tests 23  ℹ pass 23  ℹ fail 0  (about 10 s)
+lint: 0 finding(s)
+```
+
 ## Synthetic fixtures against known truth
 
 Tolerances (D339): every slot side within 0.03 of the frame side; palette colour within OKLab distance 0.02 and share

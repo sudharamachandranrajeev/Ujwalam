@@ -45,12 +45,13 @@
     "reference": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "kind", "width", "height", "durationS", "frameTimesS", "analysisWidth", "analysisHeight"],
+      "required": ["name", "kind", "width", "height", "rotation", "durationS", "frameTimesS", "analysisWidth", "analysisHeight"],
       "properties": {
         "name": { "type": "string", "minLength": 1, "maxLength": 255, "description": "Base name of the file only, never a folder." },
         "kind": { "enum": ["image", "video"] },
-        "width": { "type": "integer", "minimum": 1 },
-        "height": { "type": "integer", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 1, "description": "Display width: the stored size turned by the display rotation." },
+        "height": { "type": "integer", "minimum": 1, "description": "Display height: the stored size turned by the display rotation." },
+        "rotation": { "enum": [0, 90, 180, 270], "description": "Display rotation from the file's side data or rotate tag, in degrees." },
         "durationS": { "type": ["number", "null"], "minimum": 0 },
         "frameTimesS": { "type": "array", "minItems": 1, "maxItems": 64, "items": { "type": "number", "minimum": 0 } },
         "analysisWidth": { "type": "integer", "minimum": 1 },

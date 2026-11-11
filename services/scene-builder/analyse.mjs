@@ -48,22 +48,32 @@ export function gradient(lab, width, height) {
 /** Skin-tone test on bytes (a common RGB rule; coarse on purpose, used only as one vote among several). */
 export const isSkin = (r, g, b) => r > 95 && g > 40 && b > 20 && r > g && r > b && r - g > 15 && Math.max(r, g, b) - Math.min(r, g, b) > 15 && r - b > 30;
 
+/** |grad L| at pixel i = (x, y), the same central difference as gradient() (0 on the border), without its arrays. */
+function edgeMag(lab, width, height, i, x, y) {
+  if (x < 1 || y < 1 || x >= width - 1 || y >= height - 1) return 0;
+  return Math.hypot(lab[(i + 1) * 3] - lab[(i - 1) * 3], lab[(i + width) * 3] - lab[(i - width) * 3]);
+}
+
 /** All per-pixel and per-cell measurements of a list of same-size frames. The middle frame is the "key" frame that
- *  pixel-level rules (edges, boxes, style) read. */
+ *  pixel-level rules (edges, boxes, style) read. Frames are measured one at a time: only the key frame keeps its
+ *  OKLab and gradient arrays, and motion needs only the previous frame's lightness (Codex review of D339: memory
+ *  stays near one frame's measurements plus the rgb input, whatever the number of samples). */
 export function measure(frames) {
   const { width, height } = frames[0];
-  const key = frames[Math.floor((frames.length - 1) / 2)];
-  const labs = frames.map(frameLab);
-  const keyLab = labs[frames.indexOf(key)];
-  const grad = gradient(keyLab, width, height);
+  const keyIndex = Math.floor((frames.length - 1) / 2);
+  const key = frames[keyIndex];
+  let keyLab = null, grad = null;
   const cell = Math.max(4, Math.round(Math.max(width, height) / CELLS_LONG));
   const cols = Math.ceil(width / cell), rows = Math.ceil(height / cell);
   const nc = cols * rows;
   const edge = new Float32Array(nc), distinct = new Float32Array(nc), skin = new Float32Array(nc), motion = new Float32Array(nc);
   const meanLab = new Float32Array(nc * 3), area = new Float32Array(nc);
-  const grads = labs.map((l) => (l === keyLab ? grad : gradient(l, width, height)));
+  let prevL = null;
   for (let f = 0; f < frames.length; f++) {
-    const lab = labs[f], g = grads[f], rgb = frames[f].rgb;
+    const rgb = frames[f].rgb;
+    const lab = frameLab(frames[f]);
+    const g = f === keyIndex ? gradient(lab, width, height) : null;
+    if (g) { keyLab = lab; grad = g; }
     for (let cy = 0; cy < rows; cy++) {
       for (let cx = 0; cx < cols; cx++) {
         const c = cy * cols + cx;
@@ -73,12 +83,12 @@ export function measure(frames) {
           for (let x = cx * cell; x < Math.min(width, (cx + 1) * cell); x++) {
             const i = y * width + x, o = i * 3;
             n++;
-            if (g.mag[i] >= EDGE_T) e++;
+            if ((g ? g.mag[i] : edgeMag(lab, width, height, i, x, y)) >= EDGE_T) e++;
             if (isSkin(rgb[o], rgb[o + 1], rgb[o + 2])) sk++;
             L += lab[o]; A += lab[o + 1]; B += lab[o + 2];
             const bin = (Math.floor(lab[o] * 10) * 64 + Math.floor((lab[o + 1] + 0.4) / 0.04)) * 64 + Math.floor((lab[o + 2] + 0.4) / 0.04);
             bins.set(bin, (bins.get(bin) ?? 0) + 1);
-            if (f > 0) mo += Math.abs(lab[o] - labs[f - 1][o]);
+            if (prevL) mo += Math.abs(lab[o] - prevL[i]);
           }
         }
         let d = 0;
@@ -88,6 +98,10 @@ export function measure(frames) {
         if (f > 0) motion[c] += mo / n;
         area[c] = n;
       }
+    }
+    if (f < frames.length - 1) {
+      prevL ??= new Float32Array(width * height);
+      for (let i = 0; i < width * height; i++) prevL[i] = lab[i * 3];
     }
   }
   const F = frames.length;

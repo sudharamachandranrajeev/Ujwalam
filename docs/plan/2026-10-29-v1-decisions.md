@@ -878,8 +878,14 @@ Evidence: `docs/evidence/2026-11-10-f8-preview-select-snap.md`.
 
 Plan `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` section C (approved, D324), with the build
 plan's §4.6 "Theme from media" and §4.7 "Theme → scene generator". Decided:
-- SB1 input: a local image (.png .jpg .jpeg .webp .bmp .gif) or video (.mp4 .mov .mkv .webm .avi .m4v) only. URLs,
-  `file:` and network shares are refused; ffprobe/ffmpeg run hidden (D191) with `-protocol_whitelist file`. Frames
+- SB1 input: a local image (.png .jpg .jpeg .webp .bmp .gif) or video (.mp4 .mov .m4v .mkv .webm) only. URLs,
+  `file:` and network shares (also through a link or mapped drive) are refused; ffprobe/ffmpeg run hidden (D191)
+  with `-protocol_whitelist file` and a demuxer fixed per extension (`-f`: mov, matroska, png/jpeg/webp/bmp pipe,
+  gif), never guessed from the content, so a playlist, concat list or image-sequence pattern cannot open other
+  files (.avi dropped). ffmpeg decodes `0:v:0`, the stream ffprobe measured. Width/height are the display size (the
+  display rotation from side data or the rotate tag turns a quarter-turned video; autorotation on, so the frames
+  match), and that size picks the analysis size and the H/V canvas. Frames × analysis pixels ≤ 40 M (refused
+  above); frames are measured one at a time, keeping full measurements for the key frame only (Codex review). Frames
   are scaled (area filter) to a 960 px long side. A video is sampled at N evenly spaced times
   t_i = (i + 0.5) · duration / N (default 8, at most 64; one seek per sample; a time past the last frame's start
   moves back to it). `services/scene-builder/frames.mjs`.

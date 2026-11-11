@@ -11,10 +11,12 @@ import { after, before, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { deltaE, hexLab } from '../services/scene-builder/colour.mjs';
-import { checkLocalFile, loadReference } from '../services/scene-builder/frames.mjs';
+import { execFileSync } from 'node:child_process';
+import { measure } from '../services/scene-builder/analyse.mjs';
+import { budgetProblem, checkLocalFile, DEMUXER, displayRotation, loadReference, MAX_TOTAL_PIXELS } from '../services/scene-builder/frames.mjs';
 import { readFrames, readReference } from '../services/scene-builder/read.mjs';
 import { main as cli } from '../services/scene-builder/cli.mjs';
-import { layoutH, layoutV, paletteBlocks, stylePanels, writePng, writeVideo } from './helpers/sb-fixtures.mjs';
+import { Canvas, layoutH, layoutV, paletteBlocks, stylePanels, writePng, writeVideo } from './helpers/sb-fixtures.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const schema = JSON.parse(readFileSync(path.join(REPO, 'data', 'schemas', 'reference-read.schema.json'), 'utf8'));
@@ -75,6 +77,87 @@ describe('SB1 reference input', () => {
     await assert.rejects(loadReference(p, { longSide: 10 }), /longSide/);
     const bad = path.join(dir, 'broken.png'); writeFileSync(bad, 'not a png');
     await assert.rejects(loadReference(bad), /failed|no picture/);
+  });
+});
+
+// Codex review of D339: fixed demuxers, a memory budget with streamed measurement, the probed stream decoded, and
+// display rotation honoured.
+describe('SB1 hardening', () => {
+  const FF = process.env.FFMPEG || 'ffmpeg';
+  const ff = (args) => execFileSync(FF, ['-hide_banner', '-v', 'error', '-y', ...args], { windowsHide: true, stdio: 'ignore' });
+  const solid = (w, h, c) => { const k = new Canvas(w, h); k.rect(0, 0, w, h, c); return k; };
+  const red = ([r, g, b]) => r > 180 && g < 80 && b < 80;
+  const at = (fr, x, y) => [...fr.rgb.subarray((y * fr.width + x) * 3, (y * fr.width + x) * 3 + 3)];
+
+  test('1: a playlist or concat list renamed to a video type, and image-sequence patterns, never open other files', async () => {
+    const seg = writeVideo([layoutH().canvas, layoutH().canvas], dir, 'seg', 2);
+    // an HLS playlist that points at a local file, renamed .mp4: auto-detection would open it as HLS
+    const hls = path.join(dir, 'playlist.mp4');
+    writeFileSync(hls, `#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:1\n#EXTINF:1.0,\n${path.basename(seg)}\n#EXT-X-ENDLIST\n`);
+    await assert.rejects(loadReference(hls), /failed|no picture/);
+    // a concat list renamed .mkv
+    const cat = path.join(dir, 'list.mkv');
+    writeFileSync(cat, `ffconcat version 1.0\nfile '${path.basename(seg)}'\n`);
+    await assert.rejects(loadReference(cat), /failed|no picture/);
+    // a single file literally named with %03d loads itself, never seq001.png (a different, portrait picture)
+    writePng(layoutV().canvas, dir, 'seq001');
+    const lit = writePng(layoutH().canvas, dir, 'lit');
+    const pattern = path.join(dir, 'seq%03d.png');
+    writeFileSync(pattern, readFileSync(lit));
+    const r = await loadReference(pattern);
+    assert.deepEqual([r.width, r.height], [960, 540]);
+    // the demuxer is fixed per extension, self-contained formats only
+    assert.deepEqual([checkLocalFile(pattern).demuxer, checkLocalFile(seg).demuxer, checkLocalFile(cat).demuxer], ['png_pipe', 'mov', 'matroska']);
+    assert.ok(Object.values(DEMUXER).every((d) => !/image2$|hls|dash|concat|m3u/.test(d)));
+  });
+
+  test('2: frames x pixels over the budget is refused; streamed measurement matches the per-frame result', async () => {
+    assert.equal(budgetProblem({ width: 960, height: 540 }, 64), null);
+    assert.match(budgetProblem({ width: 4096, height: 2304 }, 64), /memory budget/);
+    assert.ok(MAX_TOTAL_PIXELS * 3 < 200 * 1024 * 1024); // the rgb input of a full budget stays under 200 MB
+    const p = writeVideo([0, 1, 2, 3].map((i) => layoutH({ seed: 40 + i }).canvas), dir, 'budget', 2);
+    await assert.rejects(loadReference(p, { frames: 4, maxPixels: 960 * 540 * 3 }), /memory budget/);
+    // a second, identical frame measured on the streamed path (not the key frame) gives the same cell stats, no motion
+    const ref = await loadReference(writePng(layoutH().canvas, dir, 'twice'));
+    const one = measure(ref.frames), two = measure([ref.frames[0], { ...ref.frames[0] }]);
+    assert.deepEqual([...two.edge], [...one.edge]);
+    assert.deepEqual([...two.distinct], [...one.distinct]);
+    assert.ok(two.motion.every((v) => v === 0));
+    assert.equal(two.keyLab.length, 960 * 540 * 3);
+  });
+
+  test('3: ffmpeg decodes the first video stream, the one ffprobe measured', async () => {
+    const a = writeVideo([solid(480, 270, [220, 20, 20]), solid(480, 270, [220, 20, 20])], dir, 'v0', 2);
+    const b = writeVideo([solid(960, 540, [20, 20, 220]), solid(960, 540, [20, 20, 220])], dir, 'v1', 2);
+    const two = path.join(dir, 'twostreams.mkv');
+    ff(['-i', a, '-i', b, '-map', '0:v', '-map', '1:v', '-c', 'copy', two]);
+    const r = await loadReference(two, { frames: 1 });
+    assert.deepEqual([r.width, r.height], [480, 270]);
+    assert.ok(red(at(r.frames[0], 240, 135)), String(at(r.frames[0], 240, 135)));
+  });
+
+  test('4: display rotation turns the size, the canvas and the decoded frames the same way', async () => {
+    assert.equal(displayRotation({ side_data_list: [{ rotation: -90 }] }), 270);
+    assert.equal(displayRotation({ tags: { rotate: '90' } }), 90);
+    assert.equal(displayRotation({ side_data_list: [{ rotation: 180 }], tags: { rotate: '90' } }), 180);
+    assert.equal(displayRotation({}), 0);
+    // stored 960x540 with a red stripe down the left third; shown turned a quarter: 540x960, the stripe a band
+    const mk = () => { const k = solid(960, 540, [20, 20, 20]); k.rect(0, 0, 320, 540, [220, 20, 20]); return k; };
+    const plain = writeVideo([mk(), mk()], dir, 'unrot', 2);
+    const rot = path.join(dir, 'rot.mp4');
+    ff(['-display_rotation', '90', '-i', plain, '-c', 'copy', rot]);
+    const r = await loadReference(rot, { frames: 1 });
+    assert.ok(r.rotation === 90 || r.rotation === 270, String(r.rotation));
+    assert.deepEqual([r.width, r.height], [540, 960]);
+    const f = r.frames[0];
+    assert.deepEqual([f.width, f.height], [540, 960]);
+    // turned, not squeezed: the left edge mid-height is not red, and a full-width band at the top or bottom is
+    assert.ok(!red(at(f, 10, 480)), 'squeezed, not turned');
+    assert.ok([10, 950].some((y) => red(at(f, 20, y)) && red(at(f, 520, y))), 'no turned band');
+    const read = await readFrames(r);
+    assert.equal(read.canvas, 'V');
+    assert.equal(read.reference.rotation, r.rotation);
+    valid(read);
   });
 });
 

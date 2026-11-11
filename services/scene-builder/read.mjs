@@ -86,7 +86,7 @@ export async function readFrames(ref, { model = null } = {}) {
     schemaVersion: SCHEMA_VERSION,
     tool: 'scene-builder/reference-read',
     reference: {
-      name: ref.name, kind: ref.kind, width: ref.width, height: ref.height, durationS: ref.durationS,
+      name: ref.name, kind: ref.kind, width: ref.width, height: ref.height, rotation: ref.rotation ?? 0, durationS: ref.durationS,
       frameTimesS: ref.frames.map((f) => f.t), analysisWidth: m.width, analysisHeight: m.height,
     },
     canvas,
