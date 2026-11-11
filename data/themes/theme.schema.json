@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://ujwalam.local/schemas/theme.schema.json",
   "title": "Ujwalam studio theme pack (D293; schema v2 with components, D336)",
-  "description": "A whole-UI theme as data: colours, type, geometry, depth (shadow, glow, extrusion per element class), motion, background and icon weight. Fonts are Windows family names only (nothing is bundled). Add your own file beside the built-in ones; the id must match the file name. Schema v2 (D336) adds optional parts: the components block (enumerated variants only), depth highlight / inset / rim, caps flags and a type scale, the blueprint and columns patterns and a backdrop frame. They are read only while the feature flag theme-components is on; a pack without them looks exactly as before.",
+  "description": "A whole-UI theme as data: colours, type, geometry, depth (shadow, glow, extrusion per element class), motion, background and icon weight. Fonts are family names: Windows fonts, or the bundled open-licence families in data/fonts (Inter, Barlow, Exo 2; SIL OFL 1.1, D344). Microsoft font files are never bundled. Add your own file beside the built-in ones; the id must match the file name. Schema v2 (D336) adds optional parts: the components block (enumerated variants only), depth highlight / inset / rim, caps flags and a type scale, the blueprint and columns patterns and a backdrop frame. They are read only while the feature flag theme-components is on; a pack without them looks exactly as before.",
   "type": "object",
   "additionalProperties": false,
   "required": ["id", "name", "topic", "version", "dark", "colors", "typography", "geometry", "depth", "motion", "background", "icons"],

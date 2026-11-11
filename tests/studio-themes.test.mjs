@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Studio theme packs (D293): data/themes/*.json against theme.schema.json, text contrast computed from the tokens,
 // the effect rules (glow only on primary or active things, extrusion only on buttons and round controls), and the
-// fonts (Windows family names only, no Microsoft fonts that may not be redistributed).
+// fonts (family names: Windows fonts or the bundled OFL families, D344; no Microsoft fonts that may not be redistributed).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
@@ -89,10 +89,15 @@ test('effect rules: glow only where it marks primary or active things; extrusion
   assert.ok(Object.values(light.depth).every((d) => !d.glow && !d.extrusion), 'Studio Light: soft shadows only');
   const tac = themes.find(({ t }) => t.id === 'tactical').t;
   assert.ok(tac.depth.roundControl.extrusion.depth >= 3 && tac.depth.primaryButton.extrusion.color2, 'Tactical: bevelled edges');
-  for (const id of ['daylight-blue', 'copper-graphite', 'sand-teal', 'teal-grid']) { // 2026-11-10: no effect on plain buttons (many widgets)
+  for (const id of ['daylight-blue', 'copper-graphite', 'teal-grid']) { // 2026-11-10: no effect on plain buttons (many widgets)
     const d = themes.find(({ t }) => t.id === id).t.depth.button;
     assert.deepEqual(d, {}, `${id}: plain buttons carry no depth effect`);
   }
+  // D344: the neumorphic Sand Teal is the one exception. Its plain buttons are plates drawn only by a light and a dark
+  // shadow (the stylesheet cannot draw them), so without the effect they would be invisible. The cost is measured in
+  // the headless probe (89 depth widgets against 27) and High performance drops every depth effect.
+  const sand = themes.find(({ t }) => t.id === 'sand-teal').t.depth.button;
+  assert.ok(sand.shadow && sand.highlight && !sand.glow && !sand.extrusion, 'sand-teal: plain buttons are neumorphic plates (shadow plus highlight only)');
   const neon = themes.find(({ t }) => t.id === 'neon-arcade').t;
   assert.ok(neon.geometry.radius.large <= 6 && neon.depth.primaryButton.glow.when === 'always', 'Neon: sharp and glowing');
 });
@@ -102,7 +107,7 @@ test('themes differ in more than colour: type, geometry, depth, motion and backg
   assert.equal(new Set(themes.map(({ t }) => sig(t))).size, themes.length);
 });
 
-test('fonts: Windows family names only; no Corbel or Consolas (not redistributable); no font files in data/themes', () => {
+test('fonts: family names only (Windows or bundled OFL); no Corbel or Consolas (not redistributable); no font files in data/themes', () => {
   for (const { file, t } of themes) {
     for (const f of [t.typography.family, ...(t.typography.fallbacks ?? [])]) assert.doesNotMatch(f, /corbel|consolas/i, `${file}: ${f}`);
   }

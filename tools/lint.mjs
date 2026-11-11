@@ -205,7 +205,9 @@ function checkText(rel, text, lines, out, wanted, ctx) {
   // Unified diffs (.diff/.patch): a blank context line is a single space by format, and vendored patches
   // must stay byte-identical to upstream, so trailing whitespace is content there, not a defect. Only this
   // rule is off for them; every other rule (secret, user-path, eol, spdx) still runs.
-  const isDiff = /\.(diff|patch)$/i.test(rel);
+  // Same for the bundled fonts' licence texts (data/fonts/<Family>-OFL.txt, D344): copied byte for byte from the
+  // upstream font repository, and their SHA-256 is pinned in tools/package/manifest.mjs.
+  const isDiff = /\.(diff|patch)$/i.test(rel) || /^data\/fonts\/[A-Za-z0-9]+-OFL\.txt$/.test(rel);
   if (wanted('trailing-ws') && !isDiff) {
     lines.forEach((l, i) => {
       if (/[ \t]+$/.test(l)) out.push([rel, i + 1, 'trailing-ws', 'trailing whitespace']);

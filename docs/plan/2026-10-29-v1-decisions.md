@@ -874,6 +874,55 @@ Not done: a snap-distance setting (the triage row mentions one; the distance sta
 user's screen is UNVERIFIED until the user tries it.
 Evidence: `docs/evidence/2026-11-10-f8-preview-select-snap.md`.
 
+## D344 — Reference themes T2–T5, bundled OFL fonts, font allowlist (2026-11-11, request R10, user answers 2026-11-10)
+
+Plan: `docs/plan/2026-11-10-theme-framework.md` §2 A–D, §3.1, §5 rows T2–T5, §6. Built on the T1 framework (D336); no
+framework code was added. Branch `theme/t2-t5-reference-themes`.
+
+- **Fonts bundled (user answer §6.2).** Inter (daylight-blue, sand-teal), Barlow (copper-graphite) and Exo 2
+  (teal-grid), all SIL Open Font Licence 1.1, licence texts checked and shipped beside the fonts (`data/fonts/`). The
+  files are downloaded unmodified from the upstream repositories (file download only, nothing installed, nothing
+  installed into Windows); sources, versions and SHA-256 are in `docs/third-party-notices.md`. Regular, semibold and bold
+  only (the weights the packs use: 400, 600, 700). Inter and Exo 2 come from their own upstream releases as static
+  files, because Google Fonts ships them only as variable fonts and Qt's weight selection on those is UNVERIFIED.
+- **Loading.** `theme.cpp` `loadBundledFonts()` runs at studio start (before the first theme) and calls
+  `QFontDatabase::addApplicationFont` for each `*.ttf` in `UJWALAM_FONTS_DIR`, `<app>/fonts` or the repo/install
+  `data/fonts`. This process only. The probe reports `bundledFamilies`.
+- **Allowlist rule change.** The packager's blanket font-file ban (D133 era, "none ship") becomes an allowlist: only the
+  12 pinned files in `OFL_FONTS` / `OFL_FONT_LICENCES` (`tools/package/manifest.mjs`) ship, each pinned by SHA-256, and
+  `build-alpha.mjs` fails if a staged font differs from its pin or a licence text is missing. Every other font file is
+  still forbidden, and Microsoft fonts (Corbel, Consolas) stay forbidden by name as before.
+- **Lint rule change (a check that flagged a verbatim third-party file).** The `trailing-ws` rule skips the three
+  `data/fonts/<Family>-OFL.txt` licence texts, the same way it already skips vendored `.diff`/`.patch` files: they are
+  byte-identical copies of upstream and their hashes are pinned. Any other file there is still checked
+  (`tests/lint.test.mjs`).
+- **Theme designs** (measurement to value per theme: `docs/evidence/2026-11-11-t2-t5-reference-themes.md`):
+  - daylight-blue: rounded solid buttons with outline secondary, underline tabs, outline inputs, ring focus, plain
+    switch, thin slider, rule section headers, raised cards with accent-tinted soft shadows (3 levels), airy density,
+    faint layout columns.
+  - copper-graphite: Barlow, caps on buttons, tabs and headings; pill metal buttons, pill tabs, inset wells, glow
+    focus, bezel switch, thick inset slider with sphere handle and value bubble, raised metal cards and plate rows with
+    copper gradient rims, inner-glow rim on the primary button.
+  - sand-teal: neumorphic plates (light shadow up-left, dark shadow down-right), pill buttons, sunken fields, ring
+    focus, labelled ON/OFF switch, thin slider with value bubble, caps headers, segmented tabs, plate rows, airy.
+  - teal-grid: Exo 2, brass-bezel primary button (gradient rim plus inner glow), boxed tabs, filled inputs, glow focus,
+    bezel switch, bracket headers and chips, framed cards, compact, blueprint grid with outer frame and ticks.
+- **Judgement calls.** (1) Plain-button depth: the existing rule (2026-11-10) that plain buttons carry no depth effect
+  stays for daylight-blue, copper-graphite and teal-grid. Sand Teal is the one exception: its neumorphic buttons are
+  drawn only by a light and a dark shadow, so without the effect they would be invisible; measured cost 89 depth
+  widgets against 27 in the headless probe, and High performance drops every depth effect. `tests/studio-themes.test.mjs`
+  states the exception. (2) Approximations inside the T1 variants, no new variant: sand-teal tabs use `segmented` (the
+  reference's raised container with an underlined selected tab would need an underline-in-container variant);
+  teal-grid secondary buttons are teal-tinted, not coral (the tint colour is the accent); `filled` inputs for teal-grid
+  follow the §3.1 table although the reference draws a full edge. (3) Pack fonts apply with the flag off too (the
+  family is a v1 field); the components block and every v2 part still need the flag.
+- **Switch contrast.** The base Switch gap T1 listed is fixed inside each pack by its switch variant (plain, labelled or
+  bezel paint onAccent on the "on" side); the contrast test passes for all four in every state.
+- Not done: the other five themes (T6); illustration from reference B stays dropped (§6.3). The package does not ship
+  `data/themes` today (UNVERIFIED whether the installed studio finds packs another way), so the packaged fonts are
+  loaded but only used when the packs ship.
+Evidence: `docs/evidence/2026-11-11-t2-t5-reference-themes.md`.
+
 ## D338 — Learning signals become label rows in a local learning store (2026-11-11, LL2 of D324)
 
 Spec: `docs/plan/2026-11-10-live-updates-live-learning-scene-builder.md` section B (approved, D324). LL2 plus the

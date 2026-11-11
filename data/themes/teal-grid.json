@@ -32,7 +32,7 @@
     }
   },
   "typography": {
-    "family": "Bahnschrift",
+    "family": "Exo 2",
     "fallbacks": [
       "Segoe UI"
     ],
@@ -42,7 +42,18 @@
     "headingWeight": 600,
     "letterSpacing": 0.3,
     "captionLetterSpacing": 1.6,
-    "captionCaps": true
+    "captionCaps": true,
+    "buttonCaps": false,
+    "tabCaps": true,
+    "headingCaps": true,
+    "scale": {
+      "h1": 15,
+      "h2": 12,
+      "subtitle": 9.5,
+      "body": 10,
+      "caption": 8.5,
+      "button": 10
+    }
   },
   "geometry": {
     "radius": {
@@ -87,6 +98,16 @@
         "color": "accent",
         "opacity": 0.4,
         "when": "always"
+      },
+      "rim": {
+        "from": "#e0c27a",
+        "to": "#7a5a20",
+        "width": 2,
+        "innerGlow": {
+          "color": "accent",
+          "opacity": 0.5,
+          "width": 1
+        }
       }
     },
     "roundControl": {
@@ -160,12 +181,38 @@
   },
   "background": {
     "kind": "pattern",
-    "pattern": "grid",
+    "pattern": "blueprint",
     "patternColor": "#5fd9e3",
-    "patternOpacity": 0.06,
-    "patternSpacing": 24
+    "patternOpacity": 0.07,
+    "patternSpacing": 24,
+    "frame": {
+      "ticks": true,
+      "opacity": 0.35
+    }
   },
   "icons": {
     "stroke": 1.6
+  },
+  "components": {
+    "button": {
+      "shape": "rounded",
+      "style": "bezel",
+      "secondary": "tinted",
+      "caps": false
+    },
+    "tabs": "boxed",
+    "input": "filled",
+    "focus": "glow",
+    "switch": "bezel",
+    "slider": {
+      "track": "thin",
+      "handle": "round",
+      "valueBubble": true
+    },
+    "sectionHeader": "bracket",
+    "card": "framed",
+    "list": "plain",
+    "chip": "bracket",
+    "density": "compact"
   }
 }
