@@ -1715,3 +1715,15 @@ Growth plan ED2. Decided:
   audio source (debounced, the same path as the layer edits). Supersedes D222's "CUE state is live-only".
 - **Limit.** A mixer channel with no `audio.sources` entry (layer sound without a project audio source) stays
   live-only, as for track routing. Game and Mic in the alpha project have entries.
+
+## D359 — Live clipping keeps its replay saves and the after-stream recording pass (user, 2026-11-11)
+
+- **Question.** While live, the stream, the H and V recordings and the replay buffers share the three stream encoders
+  (no double encoding). Two things repeat: each live save writes the last 60 s of H and V again (also in the
+  recordings; deleted after the clip job used them), and the after-stream job runs detection over the whole H
+  recording to find match edges, after the live clipper already read the game once a second.
+- **Decision.** Kept as they are (user: "if the current setup works better - keep it that way, results are
+  important"). The replay saves hold a moment even when no recording runs or the recording fails; the full-rate
+  recording pass finds match edges more reliably than the 1-per-second live reads. Neither touches the live stream
+  (saves are muxing only; the recording pass runs after every stream stopped, below normal priority).
+- **Not built.** Marker-only saves while a recording runs; live match edges replacing the recording pass.
