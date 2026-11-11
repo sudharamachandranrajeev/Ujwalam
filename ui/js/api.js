@@ -33,6 +33,7 @@
     cancel: function (pendingId) { return request('POST', '/ui/api/cancel', { pendingId: pendingId }); },
     readiness: function () { return request('GET', '/ui/api/readiness'); },
     endAll: function () { return request('POST', '/ui/api/streams/end-all', {}); },
+    updateApply: function (id) { return request('POST', '/ui/api/updates/apply', { id: id }); }, // one click (LU7, D332)
     flags: function () { return request('GET', '/ui/api/flags'); },
     setFlag: function (id, on) { return request('POST', '/ui/api/flags/set', { id: id, on: on }); },
     feedback: function () { return request('GET', '/ui/api/feedback'); },

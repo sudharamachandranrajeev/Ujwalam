@@ -84,7 +84,21 @@ const stopFailCount = Number(process.env.UJWALAM_FAKE_HOST_STOP_FAIL_COUNT ?? In
 let stopCalls = 0;
 const streamState = new Map(fakeStreams.map((x) => [x.id, 'idle']));
 const callLog = (o) => appendFileSync(`${process.env.UJWALAM_FAKE_HOST_RECORD}.calls.jsonl`, `${JSON.stringify({ run, ...o })}\n`);
-callLog({ event: 'start' });
+// LU5 host update tests: the start event names the folder this copy runs from (a staged release copies this file to
+// <release>/bin/ujwalam-host.mjs). UJWALAM_FAKE_HOST_STOP_ON=<file>: once that file exists, the recording and every
+// stream sink stop (as if the user clicked Stop), so the update queue sees everything stopped.
+callLog({ event: 'start', dir: path.dirname(process.argv[1]), runtime: arg('--runtime') ?? null });
+if (process.env.UJWALAM_FAKE_HOST_STOP_ON) {
+  const stopOn = process.env.UJWALAM_FAKE_HOST_STOP_ON;
+  const iv = setInterval(() => {
+    if (!existsSync(stopOn)) return;
+    clearInterval(iv);
+    if (recordState === 'live') recordState = 'stopped';
+    for (const id of streamState.keys()) if (streamState.get(id) === 'live') streamState.set(id, 'stopped');
+    callLog({ event: 'stopped-by-user' });
+  }, 100);
+  iv.unref();
+}
 const save = () => writeFileSync(process.env.UJWALAM_FAKE_HOST_RECORD, JSON.stringify(record, null, 2));
 save();
 
