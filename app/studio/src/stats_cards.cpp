@@ -66,13 +66,13 @@ StatsCards::StatsCards(QWidget *parent) : QWidget(parent), clock_(new QTimer(thi
 {
 	auto *g = new QGridLayout(this);
 	g->setContentsMargins(0, 0, 0, 0);
-	g->setSpacing(8);
+	theme::space(g, 8);
 	auto card = [this](const QString &name, QLabel *&value, Sparkline *&line, double lo, double hi) {
 		auto *f = new QFrame(this);
 		f->setObjectName(QStringLiteral("statCard"));
 		auto *v = new QVBoxLayout(f);
-		v->setContentsMargins(12, 8, 12, 8);
-		v->setSpacing(2);
+		theme::margins(v, 12, 8, 12, 8);
+		theme::space(v, 2);
 		auto *top = new QHBoxLayout();
 		auto *n = new QLabel(name, f);
 		n->setObjectName(QStringLiteral("statName"));
@@ -90,7 +90,7 @@ StatsCards::StatsCards(QWidget *parent) : QWidget(parent), clock_(new QTimer(thi
 	auto *s = new QFrame(this);
 	s->setObjectName(QStringLiteral("statCard"));
 	auto *sv = new QVBoxLayout(s);
-	sv->setContentsMargins(12, 8, 12, 8);
+	theme::margins(sv, 12, 8, 12, 8);
 	sv->setSpacing(0);
 	auto *sh = new QLabel(QStringLiteral("STREAM STATS"), s);
 	sh->setObjectName(QStringLiteral("heading"));

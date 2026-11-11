@@ -6,11 +6,16 @@
 // old look back.
 #pragma once
 
+#include <QPointer>
 #include <QString>
 #include <QWidget>
 
 class QCheckBox;
 class QComboBox;
+
+namespace appearance {
+class Specimen;
+}
 
 namespace appearance {
 
@@ -35,6 +40,7 @@ private:
 	QCheckBox *perf_ = nullptr;
 	bool reduceBefore_ = false; // Reduce effects as the user left it, before High performance went on (opened in performance: off)
 	QComboBox *motion_ = nullptr;
+	QPointer<Specimen> specimen_; // "Preview all components" (D336)
 };
 
 } // namespace appearance

@@ -63,7 +63,7 @@ LookPanel::LookPanel(QWidget *parent) : QWidget(parent), debounce_(new QTimer(th
 {
 	root_ = new QVBoxLayout(this);
 	root_->setContentsMargins(0, 0, 0, 0);
-	root_->setSpacing(8);
+	theme::space(root_, 8);
 	debounce_->setSingleShot(true);
 	debounce_->setInterval(250); // short pause after the last change, so a slider drag sends once
 	connect(debounce_, &QTimer::timeout, this, [this]() { emit commit(); });
@@ -191,8 +191,8 @@ void LookPanel::setTypes(const QList<LookType> &types)
 			c.frame = new QFrame(this);
 			c.frame->setObjectName(QStringLiteral("lookCard"));
 			auto *v = new QVBoxLayout(c.frame);
-			v->setContentsMargins(12, 8, 12, 8);
-			v->setSpacing(6);
+			theme::margins(v, 12, 8, 12, 8);
+			theme::space(v, 6);
 			auto *head = new QHBoxLayout();
 			auto *name = new QLabel(t.label, c.frame);
 			name->setObjectName(QStringLiteral("lookName"));
@@ -203,8 +203,8 @@ void LookPanel::setTypes(const QList<LookType> &types)
 			v->addLayout(head);
 			c.body = new QWidget(c.frame);
 			auto *bv = new QVBoxLayout(c.body);
-			bv->setContentsMargins(0, 2, 0, 2);
-			bv->setSpacing(6);
+			theme::margins(bv, 0, 2, 0, 2);
+			theme::space(bv, 6);
 			for (const LookParam &p : t.params) {
 				auto *cap = new QLabel(p.label, c.body);
 				cap->setObjectName(QStringLiteral("muted"));

@@ -2,6 +2,7 @@
 // Settings > Connections (D327). See connections_page.h.
 #include "connections_page.h"
 #include "api_client.h"
+#include "theme.h"
 
 #include <QDesktopServices>
 #include <QDialog>
@@ -81,7 +82,7 @@ Page::Page(ApiClient *api, QWidget *parent, const QString &onlyOutput) : QWidget
 {
 	auto *v = new QVBoxLayout(this);
 	v->setContentsMargins(0, 0, 0, 0);
-	v->setSpacing(12);
+	theme::space(v, 12);
 	auto *intro = new QLabel(QStringLiteral("Connect each stream output here instead of the Windows Credential Manager tool. Ujwalam stores the keys in "
 						"Windows Credential Manager itself and shows only their last 4 characters. Each change happens on your click; "
 						"an output that is streaming cannot be changed until it stops. A new key is used from "
@@ -92,7 +93,7 @@ Page::Page(ApiClient *api, QWidget *parent, const QString &onlyOutput) : QWidget
 	v->addWidget(intro);
 	auto *box = new QGroupBox(QStringLiteral("STREAM OUTPUTS"), this);
 	rows_ = new QVBoxLayout(box);
-	rows_->setSpacing(8);
+	theme::space(rows_, 8);
 	v->addWidget(box);
 	jobLabel_ = new QLabel(this);
 	jobLabel_->setWordWrap(true);

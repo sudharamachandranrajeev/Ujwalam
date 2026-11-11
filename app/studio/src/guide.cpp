@@ -3,6 +3,7 @@
 #include "coach.h"
 #include "help_panel.h"
 #include "hints.h"
+#include "theme.h"
 
 #include <QAbstractButton>
 #include <QApplication>
@@ -296,7 +297,7 @@ void Guide::fillSettingsPage(QVBoxLayout *page, QDialog *dlg)
 	auto *box = new QGroupBox(QStringLiteral("TIPS FOR NEW USERS"), dlg);
 	tipsBox_ = box;
 	auto *v = new QVBoxLayout(box);
-	v->setSpacing(10);
+	theme::space(v, 10);
 	auto *on = new QCheckBox(QStringLiteral("Show tips for new users"), box);
 	on->setObjectName(QStringLiteral("guideTips"));
 	on->setChecked(tips_);

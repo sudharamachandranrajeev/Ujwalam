@@ -6,6 +6,7 @@
 #include "add_dialogs.h"
 #include "look_panel.h"
 #include "appearance.h"
+#include "specimen.h"
 #include "motion.h"
 #include "stats_cards.h"
 #include "stream_pages.h"
@@ -543,7 +544,7 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	setWindowTitle(QStringLiteral("Ujwalam Studio"));
 	auto *central = new QWidget(this);
 	auto *outer = new QVBoxLayout(central);
-	outer->setContentsMargins(6, 6, 6, 6);
+	theme::margins(outer, 6, 6, 6, 6);
 	outer->addWidget(buildTop());
 	// Live alerts (flag live-test-kit, D305 proposed): plain-words lines from the status snapshot ("alerts"): a sound
 	// source that stopped, a stream restarted (or not) after a host crash, the Streamer.bot test-action reminder, the
@@ -552,7 +553,7 @@ MainWindow::MainWindow(ApiClient *api, QWidget *parent) : QMainWindow(parent), a
 	alertBar_->setObjectName(QStringLiteral("alertBar"));
 	alertBar_->setTextFormat(Qt::PlainText);
 	alertBar_->setWordWrap(true);
-	alertBar_->setContentsMargins(10, 6, 10, 6);
+	theme::margins(alertBar_, 10, 6, 10, 6);
 	alertBar_->hide();
 	outer->addWidget(alertBar_);
 	auto *split = new QSplitter(Qt::Horizontal, central);
@@ -658,8 +659,8 @@ QWidget *MainWindow::buildTop()
 {
 	auto *w = new QWidget(this);
 	auto *h = new QHBoxLayout(w);
-	h->setContentsMargins(4, 0, 4, 0);
-	h->setSpacing(4);
+	theme::margins(h, 4, 0, 4, 0);
+	theme::space(h, 4);
 	const QColor ink(theme::color(QStringLiteral("text")));
 	auto *brand = new QLabel(QStringLiteral("Ujwalam"), w);
 	brand->setObjectName(QStringLiteral("brand"));
@@ -755,7 +756,7 @@ QPushButton *MainWindow::roundButton(QWidget *parent, const QString &icon, const
 	auto *cell = new QWidget(parent);
 	auto *v = new QVBoxLayout(cell);
 	v->setContentsMargins(0, 0, 0, 0);
-	v->setSpacing(6);
+	theme::space(v, 6);
 	auto *b = new QPushButton(cell);
 	b->setObjectName(QStringLiteral("round"));
 	b->setFixedSize(52, 52);
@@ -800,13 +801,13 @@ QWidget *MainWindow::buildControls()
 	auto *card = new QFrame(this);
 	card->setObjectName(QStringLiteral("card"));
 	auto *v = new QVBoxLayout(card);
-	v->setContentsMargins(14, 12, 14, 12);
-	v->setSpacing(10);
+	theme::margins(v, 14, 12, 14, 12);
+	theme::space(v, 10);
 	auto *cap = new QLabel(QStringLiteral("CONTROLS"), card);
 	cap->setObjectName(QStringLiteral("heading"));
 	v->addWidget(cap);
 	auto *row = new QHBoxLayout();
-	row->setSpacing(4);
+	theme::space(row, 4);
 	streamBtn_ = roundButton(card, QStringLiteral("play"), QStringLiteral("Start stream"), QString(), QStringLiteral("primary"), row);
 	recordBtn_ = roundButton(card, QStringLiteral("record"), QStringLiteral("Record"), QString(), QStringLiteral("danger"), row);
 	// Clipping (D281): save the replay buffer (last 60 s of H and V) now; mark a moment for the post-stream clipper.
@@ -840,7 +841,7 @@ QWidget *MainWindow::buildLeft()
 	auto *w = new QWidget(this);
 	auto *v = new QVBoxLayout(w);
 	v->setContentsMargins(0, 0, 0, 0);
-	v->setSpacing(8);
+	theme::space(v, 8);
 	auto *shdr = new QHBoxLayout();
 	shdr->addWidget(captionLabel(QStringLiteral("Scenes"), w));
 	shdr->addStretch(1);
@@ -1111,7 +1112,7 @@ QWidget *MainWindow::buildRight()
 	auto *w = new QWidget(this);
 	auto *outer = new QVBoxLayout(w);
 	outer->setContentsMargins(0, 0, 0, 0);
-	outer->setSpacing(10);
+	theme::space(outer, 10);
 	// The inspector, looks, transitions and bots scroll; the controls and the stats cards stay in view.
 	auto *scroll = new QScrollArea(w);
 	scroll->setWidgetResizable(true);
@@ -1120,8 +1121,8 @@ QWidget *MainWindow::buildRight()
 	auto *body = new QWidget(scroll);
 	body->setObjectName(QStringLiteral("scrollBody"));
 	auto *v = new QVBoxLayout(body);
-	v->setContentsMargins(0, 0, 6, 0);
-	v->setSpacing(10);
+	theme::margins(v, 0, 0, 6, 0);
+	theme::space(v, 10);
 	scroll->setWidget(body);
 	outer->addWidget(buildControls());
 	outer->addWidget(scroll, 1);
@@ -1143,7 +1144,7 @@ QWidget *MainWindow::buildRight()
 		auto *cell = new QWidget(inspForm_);
 		auto *cv = new QVBoxLayout(cell);
 		cv->setContentsMargins(0, 0, 0, 0);
-		cv->setSpacing(2);
+		theme::space(cv, 2);
 		auto *cl = new QLabel(label, cell);
 		cl->setObjectName(QStringLiteral("muted"));
 		cv->addWidget(cl);
@@ -1183,7 +1184,7 @@ QWidget *MainWindow::buildRight()
 	auto *cropRow = new QWidget(inspForm_);
 	auto *crl = new QHBoxLayout(cropRow);
 	crl->setContentsMargins(0, 0, 0, 0);
-	crl->setSpacing(10);
+	theme::space(crl, 10);
 	crl->addWidget(field(QStringLiteral("Crop left"), crL_));
 	crl->addWidget(field(QStringLiteral("Crop top"), crT_));
 	crl->addWidget(field(QStringLiteral("Crop right"), crR_));
@@ -1359,11 +1360,11 @@ QWidget *MainWindow::buildMixer()
 	scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
 	auto *inner = new QWidget(scroll);
 	mixerBox_ = new QHBoxLayout(inner);
-	mixerBox_->setSpacing(10);
+	theme::space(mixerBox_, 10);
 	mixerBox_->addStretch(1);
 	scroll->setWidget(inner);
 	auto *mv = new QVBoxLayout(mix);
-	mv->setContentsMargins(4, 4, 4, 4);
+	theme::margins(mv, 4, 4, 4, 4);
 	mv->addWidget(scroll);
 	return mix;
 }
@@ -1953,7 +1954,7 @@ void MainWindow::renderMixer()
 		strip->setMinimumWidth(240);
 		strip->setMaximumWidth(320);
 		auto *g = new QVBoxLayout(strip);
-		g->setContentsMargins(10, 8, 10, 8);
+		theme::margins(g, 10, 8, 10, 8);
 		auto *top = new QHBoxLayout();
 		top->addWidget(new QLabel(QStringLiteral("<b>%1</b>").arg(m.value(QStringLiteral("name")).toString().toHtmlEscaped())), 1);
 		const bool muted = m.value(QStringLiteral("muted")).toBool();
@@ -2254,6 +2255,11 @@ void MainWindow::loadFlags()
 			return;
 		const QJsonArray fl = b.value(QStringLiteral("flags")).toArray();
 		flags_ = fl; // Settings > Advanced reads it when it opens
+		bool tc = false; // D336: theme components (the pack's component language); switches live
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("theme-components"))
+				tc = x.toObject().value(QStringLiteral("on")).toBool();
+		theme::setComponents(tc);
 		bool se = false, tr = false;
 		for (const auto &x : fl) {
 			const QJsonObject f = x.toObject();
@@ -3912,7 +3918,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			auto *row = new QWidget(parent);
 			auto *h = new QHBoxLayout(row);
 			h->setContentsMargins(0, 0, 0, 0);
-			h->setSpacing(10);
+			theme::space(h, 10);
 			auto *sw = new Switch(row);
 			sw->setAccessibleName(text);
 			auto *l = new QLabel(text, row);
@@ -3923,15 +3929,15 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		};
 		dlg->setWindowTitle(firstRun ? QStringLiteral("Welcome: clips") : QStringLiteral("Settings"));
 		auto *outer = new QVBoxLayout(dlg);
-		outer->setContentsMargins(18, 16, 18, 14);
-		outer->setSpacing(12);
+		theme::margins(outer, 18, 16, 18, 14);
+		theme::space(outer, 12);
 		if (firstRun) {
 			auto *intro = new QLabel(QStringLiteral("Ujwalam can find the best moments in your recordings and streams and edit them into short clips.\nHow should it do that? You can change this later in Settings."), dlg);
 			intro->setWordWrap(true);
 			outer->addWidget(intro);
 		}
 		auto *main = new QHBoxLayout();
-		main->setSpacing(18);
+		theme::space(main, 18);
 		auto *nav = new QListWidget(dlg);
 		nav->setObjectName(QStringLiteral("settingsNav"));
 		nav->setFixedWidth(170);
@@ -3944,7 +3950,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			auto *w = new QWidget(pages);
 			auto *v = new QVBoxLayout(w);
 			v->setContentsMargins(0, 0, 0, 0);
-			v->setSpacing(12);
+			theme::space(v, 12);
 			auto *t = new QLabel(title, w);
 			t->setObjectName(QStringLiteral("sectionTitle"));
 			v->addWidget(t);
@@ -3985,7 +3991,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		const bool recordLiveStart = c.value(QStringLiteral("recordLive")).toBool(true);
 		auto *recLiveBox = new QGroupBox(QStringLiteral("WHILE I STREAM"), dlg);
 		auto *rlv = new QVBoxLayout(recLiveBox);
-		rlv->setSpacing(8);
+		theme::space(rlv, 8);
 		const auto recLiveParts = switchRow(QStringLiteral("Record while live"), recLiveBox);
 		Switch *recLive = std::get<1>(recLiveParts);
 		recLive->setObjectName(QStringLiteral("settingsRecordLive"));
@@ -4004,7 +4010,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		const int gateKills = gate.value(QStringLiteral("minKills")).isDouble() ? gate.value(QStringLiteral("minKills")).toInt() : -1;
 		auto *gateBox = new QGroupBox(QStringLiteral("WHICH MATCHES GET CLIPS"), dlg);
 		auto *gv = new QVBoxLayout(gateBox);
-		gv->setSpacing(8);
+		theme::space(gv, 8);
 		const auto top3Parts = switchRow(QStringLiteral("Only make clips from matches where I finish in the top 3"), gateBox);
 		QWidget *top3Row = std::get<0>(top3Parts);
 		Switch *top3 = std::get<1>(top3Parts);
@@ -4024,7 +4030,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		killsOn->setChecked(gateKills > 0);
 		kills->setEnabled(killsOn->isChecked());
 		connect(killsOn, &QAbstractButton::toggled, kills, &QWidget::setEnabled);
-		kh->setSpacing(10);
+		theme::space(kh, 10);
 		kh->addWidget(killsOn);
 		kh->addWidget(killsText);
 		kh->addWidget(kills);
@@ -4095,7 +4101,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		auto *pl = page(QStringLiteral("Layer effects"));
 		auto *fxBox = new QGroupBox(QStringLiteral("EFFECTS THAT COME WITH THE SCENES"), dlg);
 		auto *fv = new QVBoxLayout(fxBox);
-		fv->setSpacing(8);
+		theme::space(fv, 8);
 		const auto fxParts = switchRow(QStringLiteral("Show layer effects from the scene (rounded corners, shadows, video buttons)"), fxBox);
 		QWidget *fxRow = std::get<0>(fxParts);
 		Switch *fxOn = std::get<1>(fxParts);
@@ -4123,7 +4129,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		auto *ppv = page(QStringLiteral("Preview"));
 		auto *snapBox = new QGroupBox(QStringLiteral("MOVING LAYERS WITH THE MOUSE"), dlg);
 		auto *sv = new QVBoxLayout(snapBox);
-		sv->setSpacing(8);
+		theme::space(sv, 8);
 		const bool snapStart = st.value(QStringLiteral("ui")).toObject().value(QStringLiteral("snap")).toBool(false);
 		const auto snapParts = switchRow(QStringLiteral("Snap to preview edges and other layers"), snapBox);
 		Switch *snapOn = std::get<1>(snapParts);
@@ -4165,8 +4171,8 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		auto *flagRows = new QWidget(flagScroll);
 		flagRows->setObjectName(QStringLiteral("settingsFlagRows"));
 		auto *frv = new QVBoxLayout(flagRows);
-		frv->setContentsMargins(0, 0, 8, 0);
-		frv->setSpacing(12);
+		theme::margins(frv, 0, 0, 8, 0);
+		theme::space(frv, 12);
 		Switch *fxFlagSw = nullptr;
 		for (const auto &x : flags_) {
 			const QJsonObject fo = x.toObject();
@@ -4176,14 +4182,14 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			row->setProperty("flag", id);
 			auto *rh = new QHBoxLayout(row);
 			rh->setContentsMargins(0, 0, 0, 0);
-			rh->setSpacing(12);
+			theme::space(rh, 12);
 			auto *sw = new Switch(row);
 			sw->setObjectName(QStringLiteral("flagSwitch"));
 			sw->setProperty("flag", id);
 			sw->setAccessibleName(id);
 			sw->setChecked(flagStart.value(id, false));
 			auto *words = new QVBoxLayout();
-			words->setSpacing(2);
+			theme::space(words, 2);
 			auto *name = new QLabel(id, row);
 			name->setObjectName(QStringLiteral("flagName"));
 			auto *desc = new QLabel(fo.value(QStringLiteral("description")).toString(), row);
@@ -4446,6 +4452,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("motion"), motion::systemAnimations());
 	o.insert(QStringLiteral("motionMode"), motion::mode());
 	o.insert(QStringLiteral("theme"), theme::probe()); // D293
+	o.insert(QStringLiteral("specimen"), appearance::specimenProbe()); // D336
 	QJsonObject look = look_->probe();
 	look.insert(QStringLiteral("shown"), !look_->isHidden());
 	look.insert(QStringLiteral("advancedShown"), !effBox_->isHidden());
@@ -4583,7 +4590,7 @@ bool MainWindow::probeAction(const QString &action)
 	if (action.startsWith(QStringLiteral("guide-")))
 		return guide_->probeAction(action); // tips, tour and help (D294 proposed)
 	// Look panel and Settings (D290): the real widgets are clicked, so their own handlers run.
-	if (p.size() == 2 && (p[0] == QStringLiteral("theme") || p[0] == QStringLiteral("effects"))) // D293
+	if (p.size() == 2 && (p[0] == QStringLiteral("theme") || p[0] == QStringLiteral("effects") || p[0] == QStringLiteral("components"))) // D293, D336
 		return theme::probeAction(action);
 	if (p.size() == 2 && p[0] == QStringLiteral("select-layer")) {
 		for (int i = 0; i < layerList_->count(); i++)
@@ -4829,6 +4836,13 @@ bool MainWindow::probeAction(const QString &action)
 				sa->verticalScrollBar()->setValue(p[1] == QStringLiteral("end") ? sa->verticalScrollBar()->maximum() : p[1].toInt());
 				return true;
 			}
+		}
+		if (p.size() == 1 && p[0] == QStringLiteral("settings-specimen")) { // D336: a click on "Preview all components"
+			if (auto *b = settingsDlg_->findChild<QPushButton *>(QStringLiteral("appearanceSpecimen")); b && !b->isHidden()) {
+				b->click();
+				return true;
+			}
+			return false;
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-performance")) { // High performance (2026-11-10)
 			if (auto *cb = settingsDlg_->findChild<QCheckBox *>(QStringLiteral("settingsPerformance"))) {
