@@ -24,6 +24,7 @@ JSON cannot carry comments; its licence is covered by the repo `LICENSE`. Files 
 
 - `legacy/`: private reference copy of Meld Schenanigans; never distributed. It may contain personal paths and channel details.
 - Microsoft fonts **Corbel** and **Consolas**: not redistributable. Themes reference them by name only; never bundle the files.
+- Fonts that do ship (D344, 2026-11-11): only the pinned SIL OFL 1.1 files in `data/fonts/` (Inter, Barlow, Exo 2), each with its licence text; the packager's font ban is an allowlist of exactly those files (`OFL_FONTS` in `tools/package/manifest.mjs`). Any other font file stays forbidden.
 - Excluded from the legacy copy and never to be committed: `engage/logs/`, `engage/memory/` (viewer data), `brand/secrets.local.js`, `.claude/settings.local.json`.
 
 ## Fonts found in `legacy/brand/fonts/`

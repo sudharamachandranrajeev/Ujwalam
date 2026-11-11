@@ -15,8 +15,10 @@
 #include <QFileSystemWatcher>
 #include <QTimer>
 #include <QDir>
+#include <QSet>
 #include <QFile>
 #include <QFont>
+#include <QFontDatabase>
 #include <QFontInfo>
 #include <QHash>
 #include <QJsonArray>
@@ -97,6 +99,37 @@ QStringList searchDirs()
 			break;
 		}
 	return d;
+}
+
+// Bundled open-licence fonts (SIL OFL 1.1, D344): data/fonts beside the app (package: <root>/data/fonts, studio exe in
+// <root>/studio), or UJWALAM_FONTS_DIR. Loaded for this process only with addApplicationFont; never installed into Windows.
+QStringList g_bundledFamilies;
+
+void loadBundledFonts()
+{
+	QStringList dirs;
+	const QString env = qEnvironmentVariable("UJWALAM_FONTS_DIR");
+	if (!env.isEmpty())
+		dirs << env;
+	dirs << QCoreApplication::applicationDirPath() + QStringLiteral("/fonts");
+	QDir up(QCoreApplication::applicationDirPath());
+	for (int i = 0; i < 5 && up.cdUp(); i++)
+		if (QDir(up.filePath(QStringLiteral("data/fonts"))).exists()) {
+			dirs << up.filePath(QStringLiteral("data/fonts"));
+			break;
+		}
+	QSet<QString> seen;
+	for (const QString &d : dirs)
+		for (const QFileInfo &fi : QDir(d).entryInfoList({QStringLiteral("*.ttf")}, QDir::Files, QDir::Name)) {
+			if (seen.contains(fi.fileName()))
+				continue;
+			seen.insert(fi.fileName());
+			const int id = QFontDatabase::addApplicationFont(fi.absoluteFilePath());
+			if (id >= 0)
+				for (const QString &fam : QFontDatabase::applicationFontFamilies(id))
+					if (!g_bundledFamilies.contains(fam))
+						g_bundledFamilies << fam;
+		}
 }
 
 QJsonObject readJson(const QString &path)
@@ -1031,6 +1064,7 @@ void apply(QApplication &app)
 	QString id = qEnvironmentVariable("UJWALAM_THEME");
 	if (id.isEmpty())
 		id = kDefaultId;
+	loadBundledFonts();
 	g_cur = load(id);
 	if (!g_cur.valid)
 		g_cur = load(kDefaultId);
@@ -1383,6 +1417,7 @@ QJsonObject probe()
 	o.insert(QStringLiteral("custom"), g_cur.custom);
 	o.insert(QStringLiteral("family"), g_cur.family);
 	o.insert(QStringLiteral("appliedFamily"), QFontInfo(QApplication::font()).family());
+	o.insert(QStringLiteral("bundledFamilies"), QJsonArray::fromStringList(g_bundledFamilies));
 	o.insert(QStringLiteral("depthWidgets"), depth::count());
 	o.insert(QStringLiteral("depthEligible"), depth::eligible());
 	o.insert(QStringLiteral("backgroundKind"), g_cur.bg.kind);

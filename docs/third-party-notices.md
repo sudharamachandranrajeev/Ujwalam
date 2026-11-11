@@ -19,7 +19,7 @@ The OCR packages below are not bundled: they live in the project-local, gitignor
 | CEF / Chromium (obs-browser) | `libcef.dll`, `chrome_elf.dll`, `*.pak`, `icudtl.dat`, `v8_context_snapshot.bin`, `libEGL`, `libGLESv2`, `locales/en-US.pak` only | BSD-3-Clause (CEF, verified verbatim) plus Chromium's bundled third-party licences (best-available source, 2026-11-05) | `docs/licenses/CEF-LICENSE.txt` + `CEF-CHROMIUM-CREDITS-source.md`; platform/version caveat and recommended exact-match steps: `docs/evidence/2026-11-05-cef-credits-sourcing.md` |
 | zlib, curl, SRT, librist, libdatachannel, LuaJIT | as imported | Zlib; curl (MIT-style); MPL-2.0; BSD-2-Clause; MPL-2.0; MIT | from obs-deps; not re-checked |
 
-Not shipped: Microsoft fonts, `legacy/`, any font file, `.pdb` symbols, disabled modules (obs-websocket, win-capture, rtmp-services, VST and others), Qt plugins, the frontend's data and scripting files, and CEF locales other than en-US. The Visual C++ runtime and `d3dcompiler_47.dll` are not bundled either: they are system prerequisites, and the installer checks the VC++ runtime.
+Not shipped: Microsoft fonts, `legacy/`, any font file except the pinned OFL theme fonts (next section, D344), `.pdb` symbols, disabled modules (obs-websocket, win-capture, rtmp-services, VST and others), Qt plugins, the frontend's data and scripting files, and CEF locales other than en-US. The Visual C++ runtime and `d3dcompiler_47.dll` are not bundled either: they are system prerequisites, and the installer checks the VC++ runtime.
 
 ### Modified OBS file: obs-nvenc.dll (2026-11-06)
 
@@ -48,6 +48,42 @@ GPL-3.0-or-later project-wide) and CEF/Chromium credits (best-available
 source checked in, platform/version caveat documented) — see
 `docs/evidence/2026-11-05-licence-verification.md` and
 `docs/evidence/2026-11-05-cef-credits-sourcing.md`.
+
+## Bundled theme fonts (2026-11-11, D344)
+
+Three open-licence families, all **SIL Open Font Licence 1.1** (licence text checked in each family's own file, copied
+unchanged beside the fonts as `data/fonts/<Family>-OFL.txt`). The files are downloaded unmodified (curl from the
+upstream repositories, never installed into Windows) and pinned by SHA-256 in `tools/package/manifest.mjs`
+(`OFL_FONTS`); `tests/package-alpha.test.mjs` fails if a file's bytes or a hash line here change. The studio loads them
+at start with `QFontDatabase::addApplicationFont` from `data/fonts` beside the app (this process only). Only the
+regular, semibold and bold weights the themes use are shipped. Microsoft fonts (Corbel, Consolas) stay forbidden.
+
+| Family | Used by | Version (name table) | Source | Licence |
+|---|---|---|---|---|
+| Inter | daylight-blue, sand-teal | 4.001 (git-9221beed3), release 4.1 | `https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip` (zip SHA-256 `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e`), entries `extras/ttf/Inter-{Regular,SemiBold,Bold}.ttf` and `LICENSE.txt` | OFL 1.1, Copyright (c) 2016 The Inter Project Authors |
+| Barlow | copper-graphite | 1.408 | `https://github.com/google/fonts/raw/main/ofl/barlow/` (folder last changed in commit `6cdf01867df0813c2390f90dff7dc66c87f14cf7`, 2026-02-26), files `Barlow-{Regular,SemiBold,Bold}.ttf`, `OFL.txt` | OFL 1.1, Copyright 2017 The Barlow Project Authors |
+| Exo 2 | teal-grid | 2.001 | `https://github.com/NDISCOVER/Exo-2.0/` at commit `182060cd38adf3cde0d22add3f8009d30bd48cde`, `fonts/ttf/Exo2-{Regular,SemiBold,Bold}.ttf`, `OFL.txt` | OFL 1.1, Copyright 2013 The Exo 2 Project Authors |
+
+SHA-256 of every shipped file (data/fonts/):
+
+| File | SHA-256 |
+|---|---|
+| `Inter-Regular.ttf` | `40d692fce188e4471e2b3cba937be967878f631ad3ebbbdcd587687c7ebe0c82` |
+| `Inter-SemiBold.ttf` | `78a843fade9d4612a5567302fb595b56976eb5fcebf4fea5a5912d638bafcde3` |
+| `Inter-Bold.ttf` | `288316099b1e0a47a4716d159098005eef7c0066921f34e3200393dbdb01947f` |
+| `Inter-OFL.txt` | `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a` |
+| `Barlow-Regular.ttf` | `95aa02c7c43096e0dd44d787ba6216864a67157e402adab59b35572e0c1577ea` |
+| `Barlow-SemiBold.ttf` | `86577cb32f8abe3673db53ca0f4221e6856751a4f6730c867e00f720f8bb1fc5` |
+| `Barlow-Bold.ttf` | `84e6a4d61e7c3e21f3c50ea6a4f7e5303a3467864c038be6ea3759bab8d547f9` |
+| `Barlow-OFL.txt` | `186d750eb496a4c17a76385f82be6aea2ac1cf2de074a811d63786cf374ea73f` |
+| `Exo2-Regular.ttf` | `b00c1abe9cccdaef971fb79d2445220ae53ab11643558d48063cb002e7e60293` |
+| `Exo2-SemiBold.ttf` | `20a233e8c4b109c1203d9de6b126afff8b383eff0ccbc2bcfd7f5fde48b917f7` |
+| `Exo2-Bold.ttf` | `0bae8c900d1c84abfb5264c6867ec2113fd0507680861f79b206093ebe0ce374` |
+| `Exo2-OFL.txt` | `cecc43de8bf5449d88fb03a6d33b0b569df304545d3b57760863e833a6434d45` |
+
+The OFL "Reserved Font Name" clause: the files are unmodified, so their names are unchanged. Inter and Exo 2 come from
+their own upstream releases (statics); Google Fonts ships those two only as variable fonts, which Qt may not select by
+weight, so the static upstream files are used.
 
 ## OCR worker (P2a A5, installed 2026-10-27)
 

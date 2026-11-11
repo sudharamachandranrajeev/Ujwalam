@@ -102,6 +102,13 @@ test('trailing-ws: unified diffs are exempt (blank context line is a space by fo
   assert.deepEqual((await run({ 'p/fix.diffx': ' \n' }, 'trailing-ws')).map(formatFinding), ['p/fix.diffx:1: trailing-ws: trailing whitespace']);
 });
 
+test('trailing-ws: licence texts of the bundled fonts are exempt (D344); any other file under data/fonts is not', async () => {
+  const sp = 'x ' + String.fromCharCode(10);
+  assert.deepEqual(await run({ 'data/fonts/Inter-OFL.txt': sp }, 'trailing-ws'), []);
+  assert.deepEqual((await run({ 'data/fonts/notes.txt': sp, 'data/other/Inter-OFL.txt': sp }, 'trailing-ws')).map(formatFinding),
+    ['data/fonts/notes.txt:1: trailing-ws: trailing whitespace', 'data/other/Inter-OFL.txt:1: trailing-ws: trailing whitespace']);
+});
+
 test('spdx: missing header flagged; header after shebang or doctype accepted; json and unknown exempt', async () => {
   const bad = await run({ 'a.mjs': 'export const a = 1;\n', 'b.py': 'x = 1\n', 'c.css': 'a {}\n', 'd.html': '<!doctype html>\n<p>x</p>\n' }, 'spdx');
   assert.deepEqual(bad.map((f) => f.path), ['a.mjs', 'b.py', 'c.css', 'd.html']);
