@@ -56,6 +56,9 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <functional>
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QPainter>
@@ -749,6 +752,9 @@ QWidget *MainWindow::buildTop()
 	postsAct_ = menu->addAction(QStringLiteral("Posts..."), this, &MainWindow::openPosts);
 	postsAct_->setToolTip(QStringLiteral("Review clip packages. Nothing is uploaded until you click Upload."));
 	postsAct_->setVisible(false);
+	growthAct_ = menu->addAction(QStringLiteral("Growth numbers..."), this, &MainWindow::openGrowth);
+	growthAct_->setToolTip(QStringLiteral("Your own YouTube numbers for the videos Ujwalam posted. Read only."));
+	growthAct_->setVisible(false);
 	reportAct_ = menu->addAction(QStringLiteral("Report a problem..."), this, &MainWindow::report);
 	reportAct_->setToolTip(QStringLiteral("Opens a prefilled GitHub issue in your browser; you review it before submitting."));
 	reportAct_->setVisible(false);
@@ -2322,6 +2328,11 @@ void MainWindow::loadFlags()
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("posting"))
 				po = x.toObject().value(QStringLiteral("on")).toBool();
 		postsAct_->setVisible(po);
+		bool gr = false;
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("growth"))
+				gr = x.toObject().value(QStringLiteral("on")).toBool();
+		growthAct_->setVisible(gr);
 		bool ap = false;
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("auto-post"))
@@ -2482,6 +2493,209 @@ void MainWindow::loadReviewCount()
 // Review reads (LL3, D340, flag learning-review): one item at a time, its frame, what was read and why it is asked,
 // and the answers the game pack allows. Confirm writes one label in the local learning store (the click is the
 // decision, D332); Close leaves the rest for later. Nothing else waits for these answers.
+// Growth numbers (AN1b, D372, flag growth): the user's own YouTube numbers for the videos Ujwalam posted, read only.
+// Its own window from the More menu; never needed while live or recording. Refresh asks the server to read YouTube again
+// (at most once an hour unless the second button is used); nothing is posted or changed on YouTube.
+void MainWindow::openGrowth()
+{
+	if (growthDlg_) {
+		growthDlg_->raise();
+		return;
+	}
+	auto *dlg = new QDialog(this);
+	growthDlg_ = dlg;
+	dlg->setObjectName(QStringLiteral("growthDlg"));
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setWindowTitle(QStringLiteral("Growth numbers"));
+	dlg->resize(1360, 520);
+	auto *v = new QVBoxLayout(dlg);
+	auto *info = new QLabel(QStringLiteral("Loading..."), dlg);
+	info->setObjectName(QStringLiteral("growthInfo"));
+	info->setWordWrap(true);
+	auto *fetched = new QLabel(dlg);
+	fetched->setObjectName(QStringLiteral("growthFetched"));
+	fetched->setWordWrap(true);
+	auto *table = new QTableWidget(0, 10, dlg);
+	table->setObjectName(QStringLiteral("growthTable"));
+	table->setHorizontalHeaderLabels({QStringLiteral("Video"), QStringLiteral("Kind"), QStringLiteral("Public since"), QStringLiteral("Views"),
+					  QStringLiteral("Likes"), QStringLiteral("Avg viewed %"), QStringLiteral("Shares"), QStringLiteral("Subs gained"),
+					  QStringLiteral("After 24 hours"), QStringLiteral("After 7 days")});
+	table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	table->setSelectionMode(QAbstractItemView::SingleSelection);
+	table->verticalHeader()->setVisible(false);
+	table->horizontalHeader()->setStretchLastSection(false);
+	table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+	for (int c = 1; c < 10; c++)
+		table->horizontalHeader()->setSectionResizeMode(c, QHeaderView::ResizeToContents);
+	table->setSortingEnabled(true);
+	auto *row = new QHBoxLayout();
+	auto *refreshB = new QPushButton(QStringLiteral("Refresh"), dlg);
+	refreshB->setObjectName(QStringLiteral("growthRefresh"));
+	refreshB->setToolTip(QStringLiteral("Read your numbers from YouTube again. Allowed once an hour."));
+	auto *forceB = new QPushButton(QStringLiteral("Refresh now"), dlg);
+	forceB->setObjectName(QStringLiteral("growthForce"));
+	forceB->setToolTip(QStringLiteral("Read again even if it was read less than an hour ago. Uses a little of YouTube's daily allowance."));
+	forceB->setVisible(false);
+	auto *closeB = new QPushButton(QStringLiteral("Close"), dlg);
+	row->addWidget(refreshB);
+	row->addWidget(forceB);
+	row->addStretch(1);
+	row->addWidget(closeB);
+	v->addWidget(info);
+	v->addWidget(fetched);
+	v->addWidget(table, 1);
+	v->addLayout(row);
+	connect(closeB, &QPushButton::clicked, dlg, &QDialog::close);
+
+	struct State {
+		bool busy = false, signedIn = false, on = true;
+		QString nextAt, note; // note: the result line of the last Refresh, shown once the list is re-read
+	};
+	auto st = std::make_shared<State>();
+	QPointer<QDialog> guard(dlg);
+	const auto local = [](const QString &iso, const QString &fmt) {
+		const QDateTime t = QDateTime::fromString(iso, Qt::ISODateWithMs);
+		return t.isValid() ? t.toLocalTime().toString(fmt) : QString();
+	};
+	const auto kindName = [](const QString &k) {
+		if (k == QStringLiteral("montage"))
+			return QStringLiteral("Montage");
+		if (k == QStringLiteral("won-reel"))
+			return QStringLiteral("Won-round reel");
+		if (k == QStringLiteral("impact-play"))
+			return QStringLiteral("Impact play");
+		if (k == QStringLiteral("clip") || k == QStringLiteral("short"))
+			return QStringLiteral("Clip");
+		return k.isEmpty() ? QStringLiteral("-") : k;
+	};
+	// A number (sorts as a number) or "-" when YouTube has not given it yet.
+	const auto numItem = [](const QJsonValue &x, int decimals = 0) {
+		auto *it = new QTableWidgetItem();
+		if (x.isDouble()) {
+			it->setData(Qt::DisplayRole, decimals ? QVariant(QString::number(x.toDouble(), 'f', decimals).toDouble()) : QVariant(qlonglong(x.toDouble())));
+		} else {
+			it->setText(QStringLiteral("-"));
+			it->setData(Qt::UserRole, -1);
+		}
+		it->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+		return it;
+	};
+	const auto checkpoint = [](const QJsonValue &c) {
+		const QJsonObject o = c.toObject();
+		if (o.isEmpty())
+			return QStringLiteral("not reached yet");
+		const auto n = [&](const char *k, int d = 0) {
+			const QJsonValue x = o.value(QLatin1String(k));
+			return x.isDouble() ? QString::number(x.toDouble(), 'f', d) : QStringLiteral("-");
+		};
+		return QStringLiteral("%1 views, %2 likes, %3% viewed, +%4 subs").arg(n("views"), n("likes"), n("avgViewedPct", 1), n("subs"));
+	};
+	const auto setBusy = [=](bool b) {
+		st->busy = b;
+		refreshB->setEnabled(!b && st->signedIn && st->on);
+		forceB->setEnabled(!b && st->signedIn && st->on);
+	};
+	const auto fail = [=](const QString &err) {
+		if (err.contains(QStringLiteral("growth-off")))
+			return QStringLiteral("Growth numbers are switched off. Switch on \"Growth numbers\" in Settings > Posting & growth and click Save.");
+		if (err.contains(QStringLiteral("analytics-scope-missing")))
+			return QStringLiteral("YouTube is signed in but does not yet allow reading statistics. Sign in again so it asks for that permission (steps: Settings > Posting & growth, and docs/plan/2026-11-12-growth-setup-notes.md).");
+		if (err.contains(QStringLiteral("youtube-not-signed-in")) || err.contains(QStringLiteral("youtube-no-client")))
+			return QStringLiteral("Not signed in to YouTube. Set up the sign-in first (Settings > Posting & growth, and docs/plan/2026-11-12-growth-setup-notes.md).");
+		if (err.contains(QStringLiteral("refresh-in-progress")))
+			return QStringLiteral("A read is already running.");
+		return QStringLiteral("Could not read your numbers (%1). Nothing was changed.").arg(err);
+	};
+	const auto load = std::make_shared<std::function<void()>>();
+	*load = [=]() {
+		api_->get(QStringLiteral("ui/api/growth"), [=](bool ok, const QJsonObject &r, const QString &err) {
+			if (!guard)
+				return;
+			st->on = !(!ok && err.contains(QStringLiteral("growth-off")));
+			if (!ok) {
+				table->setRowCount(0);
+				fetched->clear();
+				st->signedIn = false;
+				info->setText(fail(err));
+				st->note.clear();
+				setBusy(false);
+				return;
+			}
+			st->signedIn = r.value(QStringLiteral("signedIn")).toBool();
+			st->nextAt = r.value(QStringLiteral("nextAllowedAt")).toString();
+			const QJsonArray vids = r.value(QStringLiteral("videos")).toArray();
+			const QString last = r.value(QStringLiteral("lastFetchAt")).toString();
+			fetched->setText(last.isEmpty() ? QStringLiteral("Not read from YouTube yet.")
+							: QStringLiteral("Last read from YouTube: %1.").arg(local(last, QStringLiteral("d MMM yyyy HH:mm"))) +
+								  (st->nextAt.isEmpty() ? QString() : QStringLiteral(" Refresh is allowed again at %1.").arg(local(st->nextAt, QStringLiteral("HH:mm")))));
+			if (!st->signedIn)
+				info->setText(QStringLiteral("Not signed in to YouTube, so numbers cannot be read yet. Set up the sign-in (Settings > Posting & growth, and docs/plan/2026-11-12-growth-setup-notes.md)."
+							     "%1").arg(vids.isEmpty() ? QString() : QStringLiteral(" The numbers below are from the last read.")));
+			else if (vids.isEmpty())
+				info->setText(QStringLiteral("No posted videos yet. Upload a clip to YouTube from the Posts window, then click Refresh. YouTube shows the full statistics a day or two after a video goes public."));
+			else
+				info->setText(QStringLiteral("%1 posted video(s). Read only: nothing is posted or changed on YouTube. Click a column to sort.").arg(vids.size()));
+			if (!st->note.isEmpty()) {
+				info->setText(st->note);
+				st->note.clear();
+			}
+			table->setSortingEnabled(false);
+			table->setRowCount(0);
+			for (const auto &x : vids) {
+				const QJsonObject o = x.toObject();
+				const QJsonObject lt = o.value(QStringLiteral("latest")).toObject();
+				const int i = table->rowCount();
+				table->insertRow(i);
+				table->setItem(i, 0, new QTableWidgetItem(o.value(QStringLiteral("title")).toString(o.value(QStringLiteral("videoId")).toString())));
+				table->setItem(i, 1, new QTableWidgetItem(kindName(o.value(QStringLiteral("kind")).toString())));
+				const QString pub = o.value(QStringLiteral("publicAt")).toString();
+				table->setItem(i, 2, new QTableWidgetItem(pub.isEmpty() ? QStringLiteral("not public yet") : local(pub, QStringLiteral("d MMM yyyy HH:mm"))));
+				table->setItem(i, 3, numItem(lt.value(QStringLiteral("views"))));
+				table->setItem(i, 4, numItem(lt.value(QStringLiteral("likes"))));
+				table->setItem(i, 5, numItem(lt.value(QStringLiteral("avgViewedPct")), 1));
+				table->setItem(i, 6, numItem(lt.value(QStringLiteral("shares"))));
+				table->setItem(i, 7, numItem(lt.value(QStringLiteral("subs"))));
+				table->setItem(i, 8, new QTableWidgetItem(checkpoint(o.value(QStringLiteral("at24h")))));
+				table->setItem(i, 9, new QTableWidgetItem(checkpoint(o.value(QStringLiteral("at7d")))));
+			}
+			table->setSortingEnabled(true);
+			setBusy(r.value(QStringLiteral("busy")).toBool());
+		});
+	};
+	const auto refresh = [=](bool force) {
+		if (st->busy)
+			return;
+		setBusy(true);
+		info->setText(QStringLiteral("Reading your numbers from YouTube..."));
+		QJsonObject b;
+		if (force)
+			b.insert(QStringLiteral("force"), true);
+		api_->post(QStringLiteral("ui/api/growth/refresh"), b, [=](bool ok, const QJsonObject &r, const QString &err) {
+			if (!guard)
+				return;
+			setBusy(false);
+			if (!ok)
+				st->note = fail(err);
+			else if (r.value(QStringLiteral("skipped")).isString()) {
+				forceB->setVisible(true);
+				st->note = QStringLiteral("Read less than an hour ago, so nothing new was fetched. Use \"Refresh now\" to read again anyway.");
+			} else
+				st->note = QStringLiteral("Done: %1 video(s) read, %2 public%3.")
+					      .arg(r.value(QStringLiteral("snapshots")).toInt())
+					      .arg(r.value(QStringLiteral("public")).toInt())
+					      .arg(r.value(QStringLiteral("analyticsMissing")).toInt() > 0
+							   ? QStringLiteral(", %1 without statistics yet (YouTube fills them a day or two late)").arg(r.value(QStringLiteral("analyticsMissing")).toInt())
+							   : QString());
+			(*load)();
+		});
+	};
+	connect(refreshB, &QPushButton::clicked, dlg, [=]() { refresh(false); });
+	connect(forceB, &QPushButton::clicked, dlg, [=]() { refresh(true); });
+	setBusy(true);
+	(*load)();
+}
+
 void MainWindow::openReview()
 {
 	if (reviewDlg_) {
@@ -4754,6 +4968,23 @@ QJsonObject MainWindow::probe() const
 	QJsonObject o;
 	o.insert(QStringLiteral("flags"), flags);
 	o.insert(QStringLiteral("shown"), shown);
+	o.insert(QStringLiteral("growthMenu"), growthAct_->isVisible()); // AN1b (D372): Growth numbers in the More menu
+	if (growthDlg_) { // the open Growth window: rows, the info line and the buttons
+		auto *gt = growthDlg_->findChild<QTableWidget *>(QStringLiteral("growthTable"));
+		auto *gi = growthDlg_->findChild<QLabel *>(QStringLiteral("growthInfo"));
+		auto *gf = growthDlg_->findChild<QLabel *>(QStringLiteral("growthFetched"));
+		auto *gr = growthDlg_->findChild<QPushButton *>(QStringLiteral("growthRefresh"));
+		QJsonArray cells;
+		for (int r = 0; gt && r < gt->rowCount(); r++) {
+			QJsonArray c;
+			for (int k = 0; k < gt->columnCount(); k++)
+				c.append(gt->item(r, k) ? gt->item(r, k)->text() : QString());
+			cells.append(c);
+		}
+		o.insert(QStringLiteral("growth"), QJsonObject{{QStringLiteral("rows"), gt ? gt->rowCount() : -1}, {QStringLiteral("cells"), cells},
+							       {QStringLiteral("info"), gi ? gi->text() : QString()}, {QStringLiteral("fetched"), gf ? gf->text() : QString()},
+							       {QStringLiteral("refreshEnabled"), gr && gr->isEnabled()}});
+	}
 	if (reviewDlg_) { // LL3 (D340): the open Review reads window
 		auto *rl = reviewDlg_->findChild<QListWidget *>(QStringLiteral("reviewList"));
 		auto *ra = reviewDlg_->findChild<QComboBox *>(QStringLiteral("reviewAnswer"));
@@ -5107,6 +5338,27 @@ bool MainWindow::probeAction(const QString &action)
 		answer->setCurrentIndex(p[1].toInt());
 		b->click();
 		return true;
+	}
+	if (p.size() == 1 && p[0] == QStringLiteral("growth-open")) { // AN1b (D372): the Growth numbers window
+		openGrowth();
+		return true;
+	}
+	if (p.size() == 1 && p[0] == QStringLiteral("growth-refresh") && growthDlg_) {
+		auto *b = growthDlg_->findChild<QPushButton *>(QStringLiteral("growthRefresh"));
+		if (!b || !b->isEnabled())
+			return false;
+		b->click();
+		return true;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("growth-shot") && growthDlg_) { // a picture of the Growth window into $UJWALAM_STUDIO_SETTINGS_SHOT_DIR/<name>.png (evidence only)
+		const QString dir = qEnvironmentVariable("UJWALAM_STUDIO_SETTINGS_SHOT_DIR");
+		if (dir.isEmpty())
+			return false;
+		for (int pass = 0; pass < 2; pass++) {
+			QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+			growthDlg_->layout()->activate();
+		}
+		return growthDlg_->grab().save(QDir(dir).filePath(p[1] + QStringLiteral(".png")), "PNG");
 	}
 	if (p.size() == 1 && p[0] == QStringLiteral("posts-open")) { // the Posts window (for the theme pictures, 2026-11-10)
 		openPosts();

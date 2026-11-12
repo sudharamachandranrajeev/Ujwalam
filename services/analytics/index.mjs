@@ -127,3 +127,22 @@ export function summary(store) {
     return { ...v, latest: snaps.at(-1) ?? null, at24h: first(CHECKPOINTS.at24h), at7d: first(CHECKPOINTS.at7d) };
   });
 }
+
+const pick = (s) => (s ? {
+  fetchedAt: s.fetchedAt, ageHours: s.ageHours,
+  views: s.analytics?.views ?? s.data?.views ?? null, likes: s.analytics?.likes ?? s.data?.likes ?? null,
+  avgViewedPct: s.analytics?.averageViewPercentage ?? null, shares: s.analytics?.shares ?? null,
+  subs: s.analytics?.subscribersGained ?? null, hasAnalytics: !!s.analytics,
+} : null);
+
+/** What the Growth window shows (AN1b): per video the numbers only (no raw snapshots), plus when the last fetch was and
+ *  when a non-forced fetch is allowed again. Read only. */
+export function view(store, now = Date.now()) {
+  const last = store.lastFetchAt();
+  const next = last ? Date.parse(last) + MIN_INTERVAL_MIN * 60_000 : null;
+  return {
+    lastFetchAt: last, minIntervalMin: MIN_INTERVAL_MIN, nextAllowedAt: next && next > now ? new Date(next).toISOString() : null,
+    videos: summary(store).map((v) => ({ videoId: v.videoId, kind: v.kind, title: v.title, privacy: v.privacy, publicAt: v.publicAt,
+      latest: pick(v.latest), at24h: pick(v.at24h), at7d: pick(v.at7d) })),
+  };
+}

@@ -166,6 +166,7 @@ private:
 	void updateAddButtons();
 	void openImport();   // Meld session import -> host check -> project.load on the click (the page's flow)
 	void openPosts();    // flag posting (P16a): review clip packages; YouTube private upload on the click
+	void openGrowth();   // flag growth (AN1b, D372): the Growth numbers window, read only
 	void openReview();   // flag learning-review (LL3, D340): confirm or correct the reads the clip maker queued
 	void loadReviewCount();
 	void report();       // flag report-button (D199): prefilled GitHub issue link opened in the user's browser
@@ -225,7 +226,7 @@ private:
 	int botPoll_ = 0; // bot status reads the process list: every 5th status poll (10 s), and after each action
 	QGroupBox *botBox_ = nullptr;
 	streampages::OutputsPanel *outputsPanel_ = nullptr; // D327 OS3
-	QAction *reportAct_ = nullptr, *postsAct_ = nullptr; // in the More menu (D285)
+	QAction *reportAct_ = nullptr, *postsAct_ = nullptr, *growthAct_ = nullptr; // in the More menu (D285)
 	QVBoxLayout *botRows_ = nullptr;
 	QJsonObject structure_;   // GET /ui/api/project/structure
 	QJsonArray lookClip_;     // Copy look (D292): the effects list of the layer copied, in this process only
@@ -263,7 +264,7 @@ private:
 	QPushButton *reviewBtn_ = nullptr; // My clips > Review reads (LL3, D340): flag on and items queued
 	bool learningReviewOn_ = false;
 	int reviewPoll_ = 0, reviewCount_ = 0;
-	QPointer<QDialog> reviewDlg_;
+	QPointer<QDialog> reviewDlg_, growthDlg_;
 	Guide *guide_ = nullptr;       // tips, tour and help (D294 proposed)
 	QPushButton *helpBtn_ = nullptr;
 	QWidget *moreBtn_ = nullptr;

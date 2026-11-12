@@ -39,6 +39,8 @@ import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, createRulesSource, describeMod
 import { previewRules } from '../posting/preview.mjs';
 import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
+import { GROWTH_FLAG, DB_NAME as GROWTH_DB, collect as growthCollect, openStore as openGrowthStore, view as growthView } from '../analytics/index.mjs';
+import { AnalyticsError } from '../analytics/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { createLearningStore } from '../learning/store.mjs';
 import { createReview } from '../learning/review.mjs';
@@ -375,6 +377,10 @@ export function createStudioServer(opts) {
   const bots = opts.bots ?? (typeof opts.dataDir === 'string' ? createBots({ dataDir: opts.dataDir }) : null);
   const botsOn = () => !!bots && !!flags && flags.isOn(BOT_FLAG);
   const postingOn = () => !!posting && !!flags && flags.isOn(POSTING_FLAG);
+  // Growth window (AN1b, flag `growth`, D372): reads <dataDir>/analytics/analytics.db; Refresh runs services/analytics collect.
+  // Read only towards YouTube. opts.growth = { auth, fetchImpl, now } are test seams.
+  const growthOn = () => typeof opts.dataDir === 'string' && !!flags && flags.isOn(GROWTH_FLAG);
+  let growthBusy = false;
   // Report button (flag `report-button`, D199): builds a prefilled GitHub new-issue link; the page opens it. No network here.
   const reporter = opts.reporter ?? createReporter({ profileFile: opts.profileFile, releaseFile: opts.releaseFile });
   const reportOn = () => !!flags && flags.isOn(REPORT_FLAG);
@@ -1213,6 +1219,7 @@ export function createStudioServer(opts) {
       // Presence, scheme and last 4 characters only; never a key, token, address or account name.
       try { const c = connect(); return json(res, 200, { ...(await c.status({ fresh: url.searchParams.get('fresh') === '1' })), job: c.currentJob() }); } catch (e) { return connectFail(res, e); }
     }
+    if (route.startsWith('/ui/api/growth') && !growthOn()) return json(res, 404, { error: 'growth-off' });
     if (route.startsWith('/ui/api/posts') && !postingOn()) return json(res, 404, { error: 'posting-off' });
     if (route.startsWith('/ui/api/bots') && !botsOn()) return json(res, 404, { error: 'bot-manager-off' });
     if (req.method === 'GET' && route === '/ui/api/bots') {
@@ -1259,6 +1266,13 @@ export function createStudioServer(opts) {
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
         return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
       } catch { return json(res, 200, { mode: { enabled: false, flagOn: false, autoUpload: false, ruleCount: 0, privacy: 'private', error: 'rules-unreadable' }, rulesFile, plan: [] }); }
+    }
+    if (req.method === 'GET' && route === '/ui/api/growth') {
+      // Numbers per posted video + the sign-in state. Never a token; the store is opened per call and closed again.
+      let st = { signedIn: false, hasClient: false };
+      try { st = await (opts.growth?.auth ?? youtubeAuth()).status?.() ?? st; } catch { /* shown as not signed in */ }
+      const store = openGrowthStore(path.join(opts.dataDir, GROWTH_DB));
+      try { return json(res, 200, { ...growthView(store, now()), signedIn: st.signedIn === true, hasClient: st.hasClient === true, busy: growthBusy }); } catch { return json(res, 500, { error: 'growth-failed' }); } finally { store.close(); }
     }
     if (req.method === 'GET' && route === '/ui/api/posts/media') return postMedia(req, res, url);
     if (req.method === 'GET' && route === '/ui/api/posts/youtube/status') {
@@ -1454,6 +1468,22 @@ export function createStudioServer(opts) {
         ut.done();
         return json(res, 200, { videoId: r.videoId, uploadStatus: r.uploadStatus, thumbnailOk: r.thumbnailOk, privacy: 'private' });
       } catch (e) { ut.fail('The upload did not finish'); return fail(e); } finally { uploading.delete(body.id); }
+    }
+    if (route === '/ui/api/growth/refresh') {
+      // Reads the user's own numbers from YouTube (read only; nothing is posted or changed). One run at a time; a run within
+      // the hour of the last one is skipped unless `force` is true. Not tied to live: it is never needed while live, only allowed.
+      if (Object.keys(body).some((k) => k !== 'force') || (body.force !== undefined && typeof body.force !== 'boolean')) return json(res, 400, { error: 'bad-params' });
+      if (growthBusy) return json(res, 409, { error: 'refresh-in-progress' });
+      growthBusy = true;
+      try {
+        const a = opts.growth?.auth ?? youtubeAuth();
+        const r = await growthCollect({ dataDir: opts.dataDir, auth: a, fetchImpl: opts.growth?.fetchImpl ?? opts.youtube?.fetchImpl ?? fetch, now: opts.growth?.now ?? now, force: body.force === true });
+        return json(res, 200, { ok: true, ...r });
+      } catch (e) {
+        if (e instanceof AnalyticsError) return json(res, e.code === 'analytics-scope-missing' ? 401 : 502, { error: e.code });
+        if (e?.code === 'oauth-no-client' || e?.code === 'oauth-reauth-needed') return json(res, 401, { error: e.code === 'oauth-no-client' ? 'youtube-no-client' : 'youtube-not-signed-in' });
+        return json(res, 502, { error: 'growth-failed' });
+      } finally { growthBusy = false; }
     }
     if (route === '/ui/api/posts/queue/retry') {
       // D301 "Retry now": puts a failed (or waiting) item back in the upload queue at once; the chain's next tick uploads it.
