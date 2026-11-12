@@ -414,7 +414,7 @@ def crossfade_sec(pieces, transition):
 
 
 def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1, max_sec=None,
-                captions=None, fontsdir=None, transition=None, thumbnail=None):
+                captions=None, fontsdir=None, transition=None, thumbnail=None, title=None):
     """One ffmpeg run: each piece is its own input (-ss/-t, exact because it is re-encoded), scaled into the frame,
     audio faded in and out by fade_ms (no pop at a hard cut), then concatenated. Every audio track of the source
     (audio_tracks) is kept as its own track, in source order (track 1 = the studio mix); none is dropped or remixed.
@@ -423,7 +423,9 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     audio_tracks=0: a source without audio renders picture only (no audio filters, maps or audio encoder).
     transition (RP1): {"xfade", "ms"} cross-fades each join (see crossfade_sec); None = hard cut.
     thumbnail (RP6): a bare PNG name in the working folder shown as the reel's first frame (one frame, 1/60 s); the
-    sound starts one frame later."""
+    sound starts one frame later.
+    title (RP4): reel_title.prepare() dict; for title.start..end the joined picture is replaced by a blurred, darkened
+    copy of itself carrying the title text, faded in and out (the sound is not touched)."""
     ow, oh = int(frame["width"]), int(frame["height"])
     fd = fade_ms / 1000.0
     argv = [ffmpeg, "-v", "error", "-nostdin", "-y", "-threads", str(threads), "-filter_threads", "2"]
@@ -445,6 +447,9 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
         for k in range(audio_tracks):
             parts.append(f"[{i}:a:{k}]{','.join(af)}[a{i}_{k}]")
     vlast = "[vcat]" if captions or thumbnail else "[vout]"
+    vfinal = vlast
+    if title:
+        vlast = "[vjoin]"
     alast = "ab" if thumbnail else "aout"  # RP6: the sound is delayed by the thumbnail frame
     if xd:  # RP1: each join overlaps the pieces by xd seconds (picture xfade, audio acrossfade per track)
         n, acc = len(pieces), 0.0
@@ -461,6 +466,19 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
         ins = "".join(f"[v{i}]" + "".join(f"[a{i}_{k}]" for k in range(audio_tracks)) for i in range(len(pieces)))
         outs = vlast + "".join(f"[{alast}{k}]" for k in range(audio_tracks))
         parts.append(ins + f"concat=n={len(pieces)}:v=1:a={audio_tracks}{outs}")
+    if title:  # RP4: blurred, darkened copy of the reel with the title, faded in/out, over the reel for its window
+        s, e = float(title["start"]), float(title["end"])
+        fi, fo = title["fadeInMs"] / 1000.0, title["fadeOutMs"] / 1000.0
+        b = title["blur"]
+        parts.append("[vjoin]split=2[tmain][ttit]")
+        parts.append(f"[ttit]trim=start={s:.3f}:end={e:.3f},setpts=PTS-STARTPTS+{s:.3f}/TB,"
+                     f"gblur=sigma={float(b['sigma']):g}:steps={int(b['steps'])},"
+                     f"lutyuv=y=val*{title['darken']:g},"
+                     f"drawtext=fontfile={title['fontFile']}:textfile={title['textFile']}:expansion=none:"
+                     f"fontsize={title['size']}:fontcolor={title['colour']}:borderw={title['border']}:bordercolor=0x000000@0.85:"
+                     f"x={title['left']}+({title['safeWidth']}-text_w)/2:y=(h-text_h)/2,"
+                     f"format=yuva420p,fade=t=in:st={s:.3f}:d={fi:.3f}:alpha=1,fade=t=out:st={e - fo:.3f}:d={fo:.3f}:alpha=1[tov]")
+        parts.append(f"[tmain][tov]overlay=eof_action=pass:enable='between(t,{s:.3f},{e:.3f})'{vfinal}")
     if captions:
         parts.append(f"[vcat]subtitles={captions}" + (f":fontsdir={fontsdir}" if fontsdir else "")
                      + ("[vcap]" if thumbnail else "[vout]"))

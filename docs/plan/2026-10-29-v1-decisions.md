@@ -1767,3 +1767,9 @@ Growth plan ED2. Decided:
 - **Decision.** Flag `reel-thumbnail` is ON by default (the user asked, 2026-11-12; it can be switched off in Settings > Advanced). Every reel opens on one edited frame (1/60 s) that acts as its cover: the picture of the reel's strongest moment (0.4 s after the heaviest medal, else the densest kills), colour lifted, a title (medal or result, kill count, mode) and the streamer brand from the local profile, all made locally with ffmpeg and a bundled font. Posting takes the cover from frame 0.
 - **Why.** The user asked (2026-11-12) for a one-frame thumbnail per reel showing what the reel is about, processed locally.
 - **Status.** Look, sizes, position and wording proposed (`data/clip/thumbnail.json`); evidence `docs/evidence/2026-11-12-rp6-thumbnail-start-frame.md`; the user confirms after watching reels made with the flag on.
+
+## D369 — Reel title card (RP4, 2026-11-12)
+
+- **Decision.** Behind flag `reel-title` (off), a reel shows the streamer title (the brand from the local profile) for 1.6 s right after its teaser (part 1 of a montage, the payoff-first hook of other reels), else at its start: a Gaussian-blurred copy of the reel, darkened to 55 %, with the title centred in the safe width, fading in over 450 ms and out over 350 ms (overlay rule). It is drawn inside the reel's own ffmpeg render; the length does not change; captions stay on top; Captions again keeps it. No brand in the profile, or a reel under 4 s: no title. Silent until RP3 adds the music bed.
+- **Why.** The user asked (2026-11-11) for a streamer title fade over a blurred background after the fast-cut part of a montage. `boxblur` is not in the LGPL ffmpeg build, so the blur is `gblur`.
+- **Status.** Durations, blur, darkness, size and position proposed (`data/clip/title.json`); evidence `docs/evidence/2026-11-12-rp4-title-card.md`; the user confirms after watching reels made with the flag on.
