@@ -1727,3 +1727,20 @@ Growth plan ED2. Decided:
   recording pass finds match edges more reliably than the 1-per-second live reads. Neither touches the live stream
   (saves are muxing only; the recording pass runs after every stream stopped, below normal priority).
 - **Not built.** Marker-only saves while a recording runs; live match edges replacing the recording pass.
+
+## D361 — Montage story structure: fast cut, title, one match as a story (user, 2026-11-11 evening)
+
+- **User's words.** "before the title intro can be fast cut of kills from any matches, after title try to create a continuity like story and if not enough can use from other match as well, but don't re use that section in other videos if possible."
+- **Decision.** Replaces "pieces of different matches may be joined" (2026-11-07/08) for the body of a montage: part 1 (before the title) is a short fast cut from any match (the D352 hook); part 2 is one match in time order, topped up from other matches of the session only when it has too few kills; a used section is recorded and not reused in another video when there is another choice. No result screen of another match inside a montage. Plan RP2 in `2026-11-12-reel-polish-music-learning.md`.
+
+## D362 — Reel title card over a blurred background, music fading with it (user, 2026-11-11 evening)
+
+- **Decision.** The streamer title (from the local profile, never committed) fades in and out over a blurred copy of the video, about 1.2–1.8 s; the music bed fades out as the title ends; the reel's end gets a few seconds of music fade. Flag `reel-title`, off by default. Plan RP4.
+
+## D363 — Reel music from a local AI model, chosen after a licence and fit check (user, 2026-11-11 evening)
+
+- **Decision.** The user chose a local AI music model over a built-in synthesizer. Before any install the agent reports the candidates (licence for monetised posting, disk, VRAM at 6 GB, speed, Windows wheels) and the user approves the pick and the install. Runs only after a stream, one model at a time. Plan RP3, RP3a.
+
+## D364 — Self-learning applies changes on its own, inside limits the user approves (user, 2026-11-11 evening)
+
+- **Decision.** Changes AN2 ("proposals only, never applies itself") to "auto within limits": the learning loop shifts the mix of reel kinds and edit choices toward what performs better, with a minimum share per kind, at most 15 points of change per week, every change logged with its numbers, a one-click undo and a weekly report. Kill rules, detector weights, privacy and posting targets stay changes the user approves. Plan RP5; waits for AN1 and auto-posting.

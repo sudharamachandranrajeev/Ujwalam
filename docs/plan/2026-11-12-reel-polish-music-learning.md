@@ -1,0 +1,37 @@
+# Reel polish, generated music and self-learning (user, 2026-11-11 evening)
+
+Status: **requested by the user; plan, not built.** Decisions D361–D364 in `2026-10-29-v1-decisions.md`. Triage of the
+same evening's clip feedback: `docs/feedback/2026-11-12-triage.md`.
+
+## The user's words (short)
+
+1. "option to choose animations between the transitions of the reel needs to be in the settings. to start with a cross
+   fade animation between transitions. (subtle)"
+2. "A feature to add subtle calm and relaxing lofi, chill like music that could be generated within the app, that can be
+   added to the start and finish for a few seconds." Music source chosen: **local AI music model** (not a built-in
+   synthesizer).
+3. "a streamer title fade animation, with a background blur while it is playing for a very short duration and after the
+   title fade ends the music also needs to be stopped fading."
+4. "after implementation of analytics and autoposting, evaluate which reel and videos performed better and focus more on
+   creating that type of videos and the software should be self learning that way." Authority chosen: **auto within
+   limits** (changes the "proposals only" rule of AN2 in `2026-11-11-growth-content-instagram-plan.md`).
+5. Montage structure (answer to the 8-kill montage feedback): "before the title intro can be fast cut of kills from any
+   matches, after title try to create a continuity like story and if not enough can use from other match as well, but
+   don't re use that section in other videos if possible."
+
+## Steps
+
+| Id | What | Needs from the user | Status |
+|---|---|---|---|
+| RP1 | **Reel transitions setting.** Settings > Clips: "Transition between pieces" with Cut (today) and Cross fade (subtle, default length 250 ms, range 150–500 ms). Rendered with ffmpeg `xfade=fade` and `acrossfade` between pieces; the audio fade of today stays for Cut. Data-driven list (`data/clip/transitions.json`), so more kinds can be added later without code. Applies to shorts, montages and match reels. Behind flag `reel-transitions`, off by default. Test: rendered frame luminance across a join rises and falls smoothly (no black frame, no flash, D-flash rule), duration of the output = sum of pieces − overlaps. | none | plan |
+| RP2 | **Montage story structure (D361).** Part 1 (before the title): a fast cut of the best kill moments from any match of the session (about 3–5 s, the payoff-first hook of D352). Part 2 (after the title): one match told in order (its kills in time order, dead time cut, result screen only at the end of that match); if that match has too few kills, kills from other matches of the same session top it up. A section used in one video is recorded in a per-session ledger and not used again in another video when there is any other choice. Result and victory screens of other matches never appear inside a montage. | none | plan |
+| RP3 | **Generated music (D363).** A local AI music model writes calm lofi / chill beds (a few seconds each for the start and the end). Runs only after a stream, never while live or recording (VRAM rule), one model loaded at a time, below normal priority. Each generated bed is cached and reused across reels with a seeded variation. Mixed under the game audio at about −20 dB, fades in and out, never louder than the speech. The model is chosen in RP3a. | the install (model + runtime) and the model choice | plan |
+| RP3a | **Model choice (research, before any install).** Compare local music models on: licence (must allow posting to monetised channels; e.g. MusicGen weights are CC-BY-NC 4.0, non-commercial: UNVERIFIED for this use, likely ruled out), size on disk, VRAM at 6 GB, time per 10 s on the RTX 4050 Laptop, CPU fallback, Windows wheels for Python 3.14 (else a project-local 3.12 venv, AGENTS.md rule). Report a short table and ask the user before installing anything. | approval of the pick and the install | plan |
+| RP4 | **Title card (D362).** After part 1 of the montage (and at the start of other reels): the streamer title (brand wordmark from `data/profile.local.json`, never committed; placeholder in tests) fades in and out over a blurred, slightly darkened copy of the video behind it; about 1.2–1.8 s in total (entrance under 600 ms, exit under 400 ms, overlay rule). The music bed plays under it and fades out as the title ends. The end of the reel gets a short music fade-in and fade-out of a few seconds (no title unless the user asks). Behind flag `reel-title`, off by default. | none (title text comes from the local profile) | plan |
+| RP5 | **Self-learning within limits (D364, after AN1 and auto-posting).** Each posted video is linked to its results (views, average view duration / retention, likes, shares, follows gained, per platform, at 24 h and 7 d). A bandit (Thompson sampling) over reel kinds and edit choices (kind, length band, transition, title on or off, music on or off, posting hour) shifts what gets made and posted toward what performs better. Limits the user approves once: each kind keeps a minimum share (exploration, default 10 %), a change moves a share by at most 15 points per week, nothing changes kill rules, detector weights, privacy or posting targets. Every change is logged with the numbers behind it (`data/learning/` local, gitignored), shown in the Growth window with a one-click undo, and summarised in a short weekly report. | the limits, once (defaults above) | plan, waits for AN1 and auto-posting |
+| CL2 | **BR short cut fix** (triage F2). | footage access for the check (see triage) | plan |
+
+## Order
+
+CL2 and RP2 first (user's bug reports beat wishes), then RP1, RP4 (with silence until RP3), RP3a research, RP3 after
+the install is approved, RP5 after AN1 and auto-posting ship.
