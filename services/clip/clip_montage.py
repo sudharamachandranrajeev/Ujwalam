@@ -71,11 +71,12 @@ def _kill_events(hits, ranking, cfg):
     return [e["t"] for e in evs if e["kind"] == "kill"], [e["medal"] for e in evs if e["kind"] == "medal"]
 
 
-def groups(hits, ranking, cfg):
+def groups(hits, ranking, cfg, bounds=()):
     """([{kills: [t], actions: [t], medals: [...], score, streak}], deaths): every kill group in time order. Kills,
     actions and medals no more than the chain gap apart (chainGapSecByMode for the event's game mode, else
     chainGapSec) form one group, never across a death; a group with actions only (a knock nobody finished) is no kill
-    group. streak = the group's score reaches ranking.minScore."""
+    group. bounds: times no group spans (match starts and end screens, _bounds). streak = the group's score reaches
+    ranking.minScore."""
     evs = _events(hits, ranking, cfg)
     deaths = rank.death_spans(hits, ranking)
     gap0, lead, near = float(cfg["chainGapSec"]), float(cfg["medalLeadSec"]), float(cfg["medalMatchSec"])
@@ -84,7 +85,7 @@ def groups(hits, ranking, cfg):
     for e in evs:
         t = e["t"]
         gap = float(by_mode.get(e["mode"], gap0)) if e["mode"] else gap0
-        crossed = last is not None and any(last < ds <= t for ds, _ in deaths)
+        crossed = last is not None and (any(last < ds <= t for ds, _ in deaths) or any(last < b <= t for b in bounds))
         if cur is None or t - last > gap or crossed:
             cur = {"kills": [], "actions": [], "medals": []}
             out.append(cur)
@@ -185,16 +186,35 @@ def _match_of(t, matches):
     return next((m for m in matches or [] if float(m["start"]) <= t < float(m["end"])), None)
 
 
+def _bounds(matches):
+    """Times a kill group never spans: each match's start and its end screen."""
+    out = set()
+    for m in matches or []:
+        out.add(float(m["start"]))
+        if m.get("endScreenAt") is not None:
+            out.add(float(m["endScreenAt"]))
+    return sorted(out)
+
+
+def _play_span(t, matches, duration):
+    """(start, stop) of the gameplay around t: its match's start to its end screen (else the match end)."""
+    mt = _match_of(t, matches)
+    if not mt:
+        return 0.0, float(duration)
+    stop = mt.get("endScreenAt")
+    return float(mt["start"]), float(stop if stop is not None else mt["end"])
+
+
 def _units(gs, deaths, ranking, cfg, duration, matches=None):
-    """One unit per kill group: its pieces (ending before its match's end screen), peaks, medals, score, match."""
+    """One unit per kill group: its pieces (inside its match's gameplay: never before the match start or into its end
+    screen), peaks, medals, score, match."""
     units = []
     for g in gs:
         mt = _match_of(g["kills"][0], matches)
-        stop = float(mt["endScreenAt"]) if mt and mt.get("endScreenAt") is not None else None
+        a, b = _play_span(g["kills"][0], matches, duration)
         ps = []
         for p in _pieces(g["kills"], deaths, ranking, cfg, g["actions"]):
-            if stop is not None and p["start"] < stop < p["end"]:
-                p = dict(p, end=round(stop, 3))
+            p = dict(p, start=round(max(p["start"], a), 3), end=round(min(p["end"], b), 3))
             if p["end"] <= duration and p["end"] > p["start"]:
                 ps.append(p)
         if ps:
@@ -203,7 +223,7 @@ def _units(gs, deaths, ranking, cfg, duration, matches=None):
                           "score": g["score"] if g["streak"] else 0.0, "streak": g["streak"],
                           "kills": sum(p["kills"] for p in ps), "start": ps[0]["start"], "seconds": _length(ps),
                           "labels": [m["label"] for m in g["medals"]] if g["streak"] else [],
-                          "match": mt.get("index") if mt else None, "mode": mt.get("mode") if mt else None})
+                          "match": mt.get("index") if mt else None, "mode": mt.get("mode") if mt else None, "span": (a, b)})
     return units
 
 
@@ -218,7 +238,7 @@ def _new_montage():
 
 def plan_montages(hits, ranking, cfg, duration, matches=None):
     """matches (match_gate.segment): hits on their end screens are dropped and pieces end before them (triage F1)."""
-    gs, deaths = groups(drop_end_screens(hits, matches), ranking, cfg)
+    gs, deaths = groups(drop_end_screens(hits, matches), ranking, cfg, _bounds(matches))
     cap = float(cfg["maxSec"])  # CL1 (D350): the user's maximum for kill montages (reel_length.py); longer ones split
     hi, lo, tmin = min(float(cfg["targetMaxSec"]), cap), min(float(cfg["minSec"]), cap), min(float(cfg["targetMinSec"]), cap)
     units = _units(gs, deaths, ranking, cfg, duration, matches)
@@ -272,11 +292,10 @@ def _strength(u, t, window):
 
 
 def _result_piece(mt, cfg, duration):
-    t = mt.get("resultAt")
-    t = float(t if t is not None else mt.get("endScreenAt", mt["end"]))
+    t = next((float(x) for x in (mt.get("resultAt"), mt.get("endScreenAt"), mt["end"]) if x is not None))
     end = float(mt.get("resultEnd") or t) + float(cfg["resultHoldSec"])
     end = min(end, float(mt["end"]), float(duration))
-    s = t - float(cfg["resultLeadSec"])
+    s = max(0.0, float(mt["start"]), t - float(cfg["resultLeadSec"]))
     return {"start": round(s, 3), "end": round(end, 3), "kills": 0, "result": True} if end > s else None
 
 
@@ -293,7 +312,7 @@ def plan_story_montages(hits, ranking, cfg, duration, matches, avoid=()):
     session (the live clips); a kill group inside one is used only when the montage cannot be made without it. Each
     kill group is used by one montage only."""
     st = cfg["story"]
-    gs, deaths = groups(drop_end_screens(hits, matches), ranking, cfg)
+    gs, deaths = groups(drop_end_screens(hits, matches), ranking, cfg, _bounds(matches))
     pool = sorted(_units(gs, deaths, ranking, cfg, duration, matches), key=lambda u: u["start"])
     for u in pool:
         u["elsewhere"] = any(p["start"] < b and a < p["end"] for p in u["pieces"] for a, b in avoid)
@@ -358,7 +377,8 @@ def plan_story_montages(hits, ranking, cfg, duration, matches, avoid=()):
                 break
             if any(abs(t - h["at"]) < lead + tail for h in hook):
                 continue
-            r = rank._cut_deaths(max(0.0, t - lead), min(t + tail, float(duration)), t, deaths, ranking)
+            a, b = u["span"]  # inside the moment's own match gameplay: never a result screen
+            r = rank._cut_deaths(max(0.0, a, t - lead), min(t + tail, b, float(duration)), t, deaths, ranking)
             if r and r[1] > t:
                 hook.append({"start": round(r[0], 3), "end": round(r[1], 3), "kills": 0, "hook": True, "teaser": True, "at": t})
         taken.update(h["at"] for h in hook)

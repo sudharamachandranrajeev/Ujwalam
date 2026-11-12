@@ -739,6 +739,9 @@ def _retime_live_clips(a, clips, matches_path, durations):
         ranking = load_config("ranking", getattr(a, "ranking", None))
         cfg = load_config("montage", getattr(a, "montage_config", None))
         min_sec = float(load_config("live-clips", None)["minClipSec"])
+        # the longest re-cut: the live-clip maximum minus the longest teaser (a re-cut is never split into parts)
+        max_sec = (float(rl.effective_limits(resolve_data_dir(getattr(a, "data_dir", None)))["live-clip"]["maxSec"])
+                   - float(rh.load_defaults()["teaserSec"]["max"]))
     except (ClipError, OSError, ValueError, KeyError) as e:
         eprint(f"live-review: clips keep their live windows ({type(e).__name__})")
         return 0
@@ -774,6 +777,9 @@ def _retime_live_clips(a, clips, matches_path, durations):
         lo = span[0] if last_end is None else max(span[0], last_end)
         ps = mont.live_clip_pieces(mine, deaths, ranking, cfg, min_sec, lo=lo, hi=span[1])
         if not ps:
+            continue
+        if sum(p["end"] - p["start"] for p in ps) > max_sec:  # too long for one clip: it keeps its live window
+            eprint(f"live-review: {c['id']} keeps its live window (its kills need more than {max_sec:g} s)")
             continue
         last_end = ps[-1]["end"]
         c["pieces"] = [dict(p, start=round(p["start"] - off, 3), end=round(p["end"] - off, 3)) for p in ps]
@@ -976,7 +982,7 @@ def cmd_montage(a):
     encoder = rnd.pick_encoder(a.encoder)
     out = os.path.join(a.out, "montage")
     os.makedirs(out, exist_ok=True)
-    gs, _ = mont.groups(mont.drop_end_screens(hits, matches), ranking, cfg)
+    gs, _ = mont.groups(mont.drop_end_screens(hits, matches), ranking, cfg, mont._bounds(matches))
     sk = sum(len(g["kills"]) for g in gs if g["streak"])
     nk = sum(len(g["kills"]) for g in gs)
     print(f"montage: {nk} own kill(s): {sk} in {sum(1 for g in gs if g['streak'])} streak(s), {nk - sk} single; "

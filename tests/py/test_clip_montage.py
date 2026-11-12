@@ -358,6 +358,21 @@ class StoryMontageTests(unittest.TestCase):
         opens = [t for m in ms_out for t in m["story"]["hookMoments"]]
         self.assertEqual(len(opens), len(set(opens)), "a moment opens one montage only")
 
+    def test_pieces_stay_inside_their_match_gameplay(self):
+        # Codex review: a group spanning a match boundary, and the pre-roll of a match's first kill
+        ms = [match(1, 0, 200, end_screen=190), match(2, 200, 400, end_screen=390)]
+        hits = [kill(188), kill(201)] + [kill(230 + 25 * i) for i in range(6)]
+        gs, _ = mont.groups(mont.drop_end_screens(hits, ms), RANKING, CFG, mont._bounds(ms))
+        self.assertFalse(any(min(g["kills"]) < 200 <= max(g["kills"]) for g in gs), "no group spans two matches")
+        for u in mont._units(gs, [], RANKING, CFG, 1000, ms):
+            a, b = u["span"]
+            for p in u["pieces"]:
+                self.assertTrue(a <= p["start"] and p["end"] <= b, (p, a, b))
+
+    def test_a_match_without_result_times_does_not_crash(self):
+        mt = {"index": 1, "start": 0.0, "end": 100.0, "resultAt": None, "endScreenAt": None}
+        self.assertEqual(mont._result_piece(mt, CFG, 1000)["end"], 100.0)
+
     def test_story_needs_the_flag_and_is_off_by_default(self):
         import json
         with open(os.path.join(os.path.dirname(__file__), "..", "..", "data", "flags.json"), encoding="utf-8") as f:
