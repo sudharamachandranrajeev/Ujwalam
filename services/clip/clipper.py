@@ -1145,6 +1145,10 @@ def cmd_montage(a):
             # hits, settings and flags), so a finished file is used as it is and only the missing ones are rendered
             print(f"montage {cid}: kept from the earlier run (--resume)")
             r = subprocess.CompletedProcess([], 0, "", "")
+            try:  # a stopped render's leftover must never replace the finished reel below
+                os.remove(os.path.join(wd, "montage-v.mp4.part"))
+            except OSError:
+                pass
         else:
             r, _ = _render_job(mk, encoder, wd, "montage-v.mp4.part", f"montage {cid}")
         _drop_fonts(wd)

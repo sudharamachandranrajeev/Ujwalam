@@ -46,8 +46,14 @@ class RunToolWatchTests(unittest.TestCase):
 
     def test_no_output_at_all_counts_from_the_start(self):
         r = cc.run_tool(script("import time; time.sleep(60)"), cwd=self.dir, timeout=120, watch="out.part",
-                        stall_sec=1.0, poll_sec=0.2)
+                        stall_sec=1.0, poll_sec=0.2, setup_sec=1.0)
         self.assertEqual(r.returncode, cc.STALLED_RC)
+
+    def test_set_up_without_output_gets_the_longer_grace(self):
+        body = "import time\ntime.sleep(2.0)\nf=open('out.part','wb')\nf.write(b'x'*10); f.flush()\nprint('done')"
+        r = cc.run_tool(script(body), cwd=self.dir, timeout=60, watch="out.part", stall_sec=0.8, poll_sec=0.2,
+                        setup_sec=10.0)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_the_timeout_still_raises(self):
         body = ("import time\nf=open('out.part','wb')\nwhile True:\n f.write(b'x'); f.flush(); time.sleep(0.1)")

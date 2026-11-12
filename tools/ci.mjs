@@ -143,6 +143,7 @@ const INSTALLED_PS = '$ErrorActionPreference="SilentlyContinue"; $l=[IO.Path]::C
 export function installedUjwalamProcesses() {
   if (process.platform !== 'win32') return [];
   const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', INSTALLED_PS], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+  if (r.error || r.status !== 0) return null; // the check failed: callers treat that as busy, never as free
   return String(r.stdout ?? '').split(/\r?\n/).filter(Boolean).map((l) => { const [pid, name] = l.split('|'); return { pid: Number(pid), name }; });
 }
 /** Message when GPU steps are selected and an installed Ujwalam runs (cloud runs have no GPU steps); else null. */
@@ -151,6 +152,7 @@ export function gpuGuard(steps, cloud, find = installedUjwalamProcesses, env = p
   const gpu = steps.filter((s) => GPU_STEPS.includes(s.name)).map((s) => s.name);
   if (!gpu.length) return null;
   const busy = find();
+  if (busy === null) return `ci: refused: could not check whether your installed Ujwalam is running; GPU steps (${gpu.join(', ')}) not started. Set UJWALAM_CI_ALLOW_GPU=1 to run them anyway.`;
   if (!busy.length) return null;
   return `ci: refused: your installed Ujwalam is running (${busy.map((b) => `${b.name} pid ${b.pid}`).join(', ')}). `
     + `GPU steps (${gpu.join(', ')}) next to it can reset the GPU driver. Close Ujwalam, or run the other steps with --only.`;
@@ -161,7 +163,8 @@ export function gpuResetsSince(sinceMs) {
   if (process.platform !== 'win32') return 0;
   const ps = `$ErrorActionPreference="SilentlyContinue"; @(Get-WinEvent -FilterHashtable @{LogName='System';ProviderName='nvlddmkm','Display';StartTime=[DateTimeOffset]::FromUnixTimeMilliseconds(${Math.floor(sinceMs)}).LocalDateTime} | Where-Object { $_.Id -in 14,153,4101 }).Count`;
   const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', ps], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
-  return Number(String(r.stdout ?? '').trim()) || 0;
+  const out = String(r.stdout ?? '').trim();
+  return r.error || r.status !== 0 || !/^\d+$/.test(out) ? null : Number(out); // null: the event log could not be read
 }
 
 export const notRunLine = (s) => `${s.name.padEnd(18)} NOT RUN (laptop only: ${s.reason})`;
@@ -289,8 +292,9 @@ async function main() {
   console.log(`\n${summaryLines({ results, skipped: plan.skipped, cloud, seconds: total }).join('\n')}`);
   // A GPU driver reset during the run makes the GPU steps' results unreliable and can hurt a running app: report it, no stamp.
   const resets = cloud ? 0 : gpuResetsSince(startedAt);
-  if (resets) console.log(`ci: GPU driver reset logged ${resets} time(s) during this run (nvlddmkm); GPU step results are unreliable; no pass stamp`);
-  if (full && !failed.length && !resets) {
+  if (resets === null) console.log('ci: could not read the GPU driver event log; no pass stamp');
+  else if (resets) console.log(`ci: FAILED: GPU driver reset logged ${resets} time(s) during this run (nvlddmkm); GPU step results are unreliable; no pass stamp`);
+  if (full && !failed.length && resets === 0) {
     const treeAtEnd = tryTree(root);
     if (treeAtStart && treeAtStart === treeAtEnd) {
       recordPass(root, treeAtStart);
@@ -299,7 +303,7 @@ async function main() {
       console.log('ci: no pass stamp: files changed during the run (or not a git work tree); run again on an unchanged tree before pushing');
     }
   }
-  process.exit(failed.length ? 1 : 0);
+  process.exit(failed.length || resets ? 1 : 0);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

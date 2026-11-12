@@ -375,12 +375,13 @@ def lower_own_priority():
 STALLED_RC = -2  # run_tool(watch=...): the child wrote nothing for stall_sec and was stopped
 
 
-def run_tool(argv, cwd=None, timeout=None, watch=None, stall_sec=None, poll_sec=2.0):
+def run_tool(argv, cwd=None, timeout=None, watch=None, stall_sec=None, poll_sec=2.0, setup_sec=300.0):
     """Runs a child at below-normal priority; returns CompletedProcess (text, utf-8, errors replaced).
 
     watch + stall_sec (2026-11-12, a render hung for 30 min after a GPU driver reset): the child is stopped when the
-    file `watch` (its output; relative to cwd) has not grown for stall_sec seconds, counted from the start too; the
-    result then has returncode STALLED_RC and says so in stderr. timeout still raises subprocess.TimeoutExpired."""
+    file `watch` (its output; relative to cwd) has not grown for stall_sec seconds; before its first byte the child
+    gets max(stall_sec, setup_sec) (a long seek or filter set-up writes nothing yet). The result then has returncode
+    STALLED_RC and says so in stderr. timeout still raises subprocess.TimeoutExpired."""
     if watch is None or not stall_sec:
         return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
                               timeout=timeout, stdin=subprocess.DEVNULL, **child_kwargs(**NO_WINDOW))
@@ -389,7 +390,7 @@ def run_tool(argv, cwd=None, timeout=None, watch=None, stall_sec=None, poll_sec=
     with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:  # files, not pipes: no pipe can fill and block
         p = subprocess.Popen(argv, cwd=cwd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, **child_kwargs(**NO_WINDOW))
         t0 = last = time.monotonic()
-        size, stalled = -1, False
+        size, stalled, grew = -1, False, False
         try:
             while True:
                 try:
@@ -403,8 +404,11 @@ def run_tool(argv, cwd=None, timeout=None, watch=None, stall_sec=None, poll_sec=
                 except OSError:
                     s = -1
                 if s != size:
+                    grew = grew or size >= 0 or s > 0
                     size, last = s, now
-                if now - last >= stall_sec:
+                if now - last >= (stall_sec if grew else max(stall_sec, setup_sec)):
+                    if p.poll() is not None:  # it ended between the wait and this check: its own exit code counts
+                        break
                     stalled = True
                     p.kill()
                     p.wait()
