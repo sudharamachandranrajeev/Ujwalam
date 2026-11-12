@@ -875,6 +875,27 @@ def _reel_extras(a, data_dir):
                      "whisper_model": rcap.model_path(data_dir, ccfg, getattr(a, "whisper_model", None))}}
 
 
+def _live_clip_spans(a):
+    """RP2: [(start, end)] recording spans of this stream's live clips (DIR/render.json of live-review, its clip
+    windows or re-cut pieces; recording time from DIR/matches.json recordStartUtc). [] when there are none."""
+    try:
+        rdoc = load_json(os.path.join(a.out, RENDER))
+        rec0 = sig.parse_iso(load_json(os.path.join(a.out, mg.MATCHES)).get("recordStartUtc"))
+    except (ClipError, OSError, ValueError):
+        return []
+    if rdoc.get("recording") != "live-saves" or not rec0:
+        return []
+    spans = []
+    for c in rdoc.get("clips") or []:
+        try:  # file time -> recording time: the clip's start is at wallStart
+            off = float(c["wallStart"]) - float(c["start"]) - rec0.timestamp()
+            ps = [p for p in c.get("pieces") or [{"start": c["start"], "end": c["end"]}] if not p.get("teaser")]
+            spans += [(float(p["start"]) + off, float(p["end"]) + off) for p in ps]
+        except (KeyError, TypeError, ValueError):
+            continue
+    return spans
+
+
 def _hook_jobs(reels, typ, prefix, lim, ex, deaths=None):
     """CL1 split, then the hook of every part from its own pieces. With a teaser the split keeps room for it, so a part
     and its teaser stay within the type's maximum (D350)."""
@@ -884,7 +905,9 @@ def _hook_jobs(reels, typ, prefix, lim, ex, deaths=None):
     cap = {"maxSec": lim["maxSec"] - room, "minSec": min(lim["minSec"], lim["maxSec"] - room)}
     out = []
     for cid, r in rl.cap_reels(reels, cap, prefix):
-        if h["on"]:
+        if r.get("story"):  # RP2: a story montage opens with its own fast cut; moving a piece would break the story
+            rec = {"on": False, "used": "story"}
+        elif h["on"]:
             r, rec = rh.plan_hook(r, strat, h["teaserSec"], ex["hcfg"], max_sec=lim["maxSec"], deaths=deaths)
         else:
             rec = {"on": False}
@@ -942,16 +965,22 @@ def cmd_montage(a):
     lim = rl.effective_limits(resolve_data_dir(a.data_dir))  # CL1 (D350): the user's length per reel type
     ex = _reel_extras(a, resolve_data_dir(a.data_dir))  # ED1 hook, ED2 captions (D352, D353)
     cfg = dict(cfg, minSec=lim["montage"]["minSec"], maxSec=lim["montage"]["maxSec"])
-    plans = mont.plan_montages(hits, ranking, cfg, min(info["duration"], vinfo["duration"]))
+    matches, reel_doc = _reel_matches(a, hits_path, info["duration"])
+    story_on = flag_on(resolve_data_dir(a.data_dir), cfg["story"]["flag"])  # RP2 (D361)
+    if story_on:
+        avoid = _live_clip_spans(a)
+        plans = mont.plan_story_montages(hits, ranking, cfg, min(info["duration"], vinfo["duration"]), matches, avoid)
+        print(f"montage: story montages ({len(avoid)} live-clip span(s) avoided where possible)")
+    else:
+        plans = mont.plan_montages(hits, ranking, cfg, min(info["duration"], vinfo["duration"]), matches)
     encoder = rnd.pick_encoder(a.encoder)
     out = os.path.join(a.out, "montage")
     os.makedirs(out, exist_ok=True)
-    gs, _ = mont.groups(hits, ranking, cfg)
+    gs, _ = mont.groups(mont.drop_end_screens(hits, matches), ranking, cfg)
     sk = sum(len(g["kills"]) for g in gs if g["streak"])
     nk = sum(len(g["kills"]) for g in gs)
     print(f"montage: {nk} own kill(s): {sk} in {sum(1 for g in gs if g['streak'])} streak(s), {nk - sk} single; "
           f"{sum(m['kills'] for m in plans)} used in {len(plans)} montage(s)")
-    matches, reel_doc = _reel_matches(a, hits_path, info["duration"])
     reels = mont.match_reels(hits, ranking, cfg, matches, min(info["duration"], vinfo["duration"]))  # D315 rules, every own kill (D237)
     for m in matches:
         d = m["reel"]
@@ -1025,6 +1054,7 @@ def cmd_montage(a):
                      "pieces": m["pieces"], "part": m.get("part"), "parts": m.get("parts"),
                      "trimmed": m.get("trimmed"), "belowMin": m.get("belowMin"), "kills": m.get("kills"), "streakKills": m.get("streakKills"),
                      "singleKills": m.get("singleKills"), "captions": cinfo, "hook": hook,
+                     **({"story": m["story"]} if m.get("story") else {}),
                      "files": files, "errors": errors})
     write_json_atomic(os.path.join(out, RENDER), {
         "tool": "clipper.montage", "toolVersion": TOOL_VERSION, "createdAt": _now(),

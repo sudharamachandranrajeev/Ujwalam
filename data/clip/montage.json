@@ -40,6 +40,17 @@
     "order": "2026-11-08: streak groups by score (best first), then single-kill groups (most kills first, then time); each group goes into the first montage with room up to targetMaxSec; shorts join inside maxSec; a montage left below minSec gives its groups to the others inside maxSec",
     "resultLeadSec": "won-match reel (D237): the VICTORY screen piece starts this long before the W1 hit and ends resultHoldSec after its last frame (agent values, proposed)"
   },
+  "story": {
+    "flag": "montage-story",
+    "status": "proposed",
+    "approved": "structure: user 2026-11-12 'before the title intro can be fast cut of kills from any matches, after title try to create a continuity like story and if not enough can use from other match as well, but don't re use that section in other videos if possible.' (D361); the numbers below are the agent's proposal",
+    "hookCuts": 3,
+    "hookLeadSec": 0.8,
+    "hookTailSec": 0.6,
+    "hookMaxSec": 5.0,
+    "windowSec": 3.0,
+    "notes": "Part 1: hookCuts cuts of hookLeadSec before to hookTailSec after a kill (3 x 1.4 s = 4.2 s, inside the user's 3-5 s), the strongest moments by own kills in the 3 s before plus medal weight in the 3 s after (as reel-hook.json windowSec). hookMaxSec is kept free for part 1 when the story is filled to targetMaxSec."
+  },
   "resultLeadSec": 0.5,
   "resultHoldSec": 3.0
 }

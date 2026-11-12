@@ -173,6 +173,40 @@ def live_clip_pieces(sel, deaths, ranking, cfg, min_sec, lo=0.0, hi=None):
     return [dict(p, start=round(p["start"], 3), end=round(p["end"], 3)) for p in ps]
 
 
+def drop_end_screens(hits, matches):
+    """Triage F1 (2026-11-11 montage): hits read on a match's end screens (from its endScreenAt to the match end:
+    result banner, MVP and summary screens) are no kills. Kill-feed and medal reads there put the victory screens of
+    several matches into one montage."""
+    spans = [(float(m["endScreenAt"]), float(m["end"])) for m in matches or [] if m.get("endScreenAt") is not None]
+    return [h for h in hits if not any(a <= float(h["t"]) < b for a, b in spans)] if spans else list(hits)
+
+
+def _match_of(t, matches):
+    return next((m for m in matches or [] if float(m["start"]) <= t < float(m["end"])), None)
+
+
+def _units(gs, deaths, ranking, cfg, duration, matches=None):
+    """One unit per kill group: its pieces (ending before its match's end screen), peaks, medals, score, match."""
+    units = []
+    for g in gs:
+        mt = _match_of(g["kills"][0], matches)
+        stop = float(mt["endScreenAt"]) if mt and mt.get("endScreenAt") is not None else None
+        ps = []
+        for p in _pieces(g["kills"], deaths, ranking, cfg, g["actions"]):
+            if stop is not None and p["start"] < stop < p["end"]:
+                p = dict(p, end=round(stop, 3))
+            if p["end"] <= duration and p["end"] > p["start"]:
+                ps.append(p)
+        if ps:
+            units.append({"pieces": ps, "peaks": [float(k) for k in g["kills"]],
+                          "medals": [{"t": float(md["t"]), "w": float(md["w"]), "label": md.get("label")} for md in g["medals"]],
+                          "score": g["score"] if g["streak"] else 0.0, "streak": g["streak"],
+                          "kills": sum(p["kills"] for p in ps), "start": ps[0]["start"], "seconds": _length(ps),
+                          "labels": [m["label"] for m in g["medals"]] if g["streak"] else [],
+                          "match": mt.get("index") if mt else None, "mode": mt.get("mode") if mt else None})
+    return units
+
+
 def _unit_order(u):
     # streaks first, best score first; then single-kill groups, most kills first; ties by time
     return (0, -u["score"], u["start"]) if u["streak"] else (1, -u["kills"], u["start"])
@@ -182,19 +216,12 @@ def _new_montage():
     return {"units": [], "seconds": 0.0}
 
 
-def plan_montages(hits, ranking, cfg, duration):
-    gs, deaths = groups(hits, ranking, cfg)
+def plan_montages(hits, ranking, cfg, duration, matches=None):
+    """matches (match_gate.segment): hits on their end screens are dropped and pieces end before them (triage F1)."""
+    gs, deaths = groups(drop_end_screens(hits, matches), ranking, cfg)
     cap = float(cfg["maxSec"])  # CL1 (D350): the user's maximum for kill montages (reel_length.py); longer ones split
     hi, lo, tmin = min(float(cfg["targetMaxSec"]), cap), min(float(cfg["minSec"]), cap), min(float(cfg["targetMinSec"]), cap)
-    units = []
-    for g in gs:
-        ps = [p for p in _pieces(g["kills"], deaths, ranking, cfg, g["actions"]) if p["end"] <= duration]
-        if ps:
-            units.append({"pieces": ps, "peaks": [float(k) for k in g["kills"]],
-                          "medals": [{"t": float(md["t"]), "w": float(md["w"]), "label": md.get("label")} for md in g["medals"]],
-                          "score": g["score"] if g["streak"] else 0.0, "streak": g["streak"],
-                          "kills": sum(p["kills"] for p in ps), "start": ps[0]["start"], "seconds": _length(ps),
-                          "labels": [m["label"] for m in g["medals"]] if g["streak"] else []})
+    units = _units(gs, deaths, ranking, cfg, duration, matches)
     units.sort(key=_unit_order)
     montages = []
     for u in units:
@@ -235,6 +262,125 @@ def plan_montages(hits, ranking, cfg, duration):
                     "labels": [lb for u in m["units"] for lb in u["labels"]],
                     "kills": nk, "streakKills": sk, "singleKills": nk - sk,
                     "streaks": sum(1 for u in m["units"] if u["streak"])})
+    return sorted(out, key=lambda m: (-m["score"], -m["kills"]))
+
+
+def _strength(u, t, window):
+    # as reel_hook._moments: own kills in [t - window, t] plus the medal weight in [t, t + window]
+    return (sum(1 for k in u["peaks"] if t - window <= k <= t)
+            + sum(m["w"] for m in u["medals"] if t <= m["t"] <= t + window))
+
+
+def _result_piece(mt, cfg, duration):
+    t = mt.get("resultAt")
+    t = float(t if t is not None else mt.get("endScreenAt", mt["end"]))
+    end = float(mt.get("resultEnd") or t) + float(cfg["resultHoldSec"])
+    end = min(end, float(mt["end"]), float(duration))
+    s = t - float(cfg["resultLeadSec"])
+    return {"start": round(s, 3), "end": round(end, 3), "kills": 0, "result": True} if end > s else None
+
+
+def plan_story_montages(hits, ranking, cfg, duration, matches, avoid=()):
+    """RP2 (D361, user 2026-11-12): montages that tell a story, behind the flag montage-story.
+
+    Part 1, before the title: a fast cut of the strongest kill moments (cfg.story.hookCuts cuts of hookLeadSec before
+    and hookTailSec after the kill), from this montage's own kills or kills no montage uses, never one already in
+    another montage's opening. Part 2, after the title (titleAt): one match in time order, its kills with the dead time
+    cut; when it has too few, the best kills of other matches top it up after it (in time order). The story match's
+    result screen ends the montage only when nothing from another match follows and the match qualifies for a reel
+    (won or top 3) and the montage holds the match's last kills (a match told over several montages shows its result
+    once, at the end); no other result screen ever plays. avoid: [(start, end)] recording spans used by other videos of the
+    session (the live clips); a kill group inside one is used only when the montage cannot be made without it. Each
+    kill group is used by one montage only."""
+    st = cfg["story"]
+    gs, deaths = groups(drop_end_screens(hits, matches), ranking, cfg)
+    pool = sorted(_units(gs, deaths, ranking, cfg, duration, matches), key=lambda u: u["start"])
+    for u in pool:
+        u["elsewhere"] = any(p["start"] < b and a < p["end"] for p in u["pieces"] for a, b in avoid)
+    cap = float(cfg["maxSec"])
+    hi, lo, tmin = min(float(cfg["targetMaxSec"]), cap), min(float(cfg["minSec"]), cap), min(float(cfg["targetMinSec"]), cap)
+    hook_room = float(st["hookMaxSec"])
+    by_index = {m.get("index"): m for m in matches or []}
+    plans, unused_units = [], []
+    while pool:
+        by = {}
+        for u in pool:
+            by.setdefault(u["match"], []).append(u)
+        free = {k: sum(u["seconds"] for u in us if not u["elsewhere"]) for k, us in by.items()}
+        mid = min(by, key=lambda k: (-free[k], -sum(u["seconds"] for u in by[k]), str(k)))
+        room, want = hi - hook_room, tmin - hook_room
+        mine = by[mid]
+        cand = [u for u in mine if not u["elsewhere"]]
+        if _length([p for u in cand for p in u["pieces"]]) < want:
+            cand = mine
+        body, total = [], 0.0
+        for u in cand:  # time order
+            if not body or total + u["seconds"] <= room:
+                body.append(u)
+                total += u["seconds"]
+        tops = []
+        if total < want:
+            for u in sorted((u for u in pool if u["match"] != mid), key=lambda u: (u["elsewhere"], _unit_order(u))):
+                if total >= want:
+                    break
+                if total + u["seconds"] <= room:
+                    tops.append(u)
+                    total += u["seconds"]
+            tops.sort(key=lambda u: u["start"])
+        for u in body + tops:
+            pool.remove(u)
+        mt = by_index.get(mid)
+        result = None
+        # the result screen once per match: on the montage that holds the match's last kills (its story's end)
+        if not tops and mt and (mt.get("reel") or {}).get("qualifies") and not any(u["match"] == mid for u in pool):
+            r = _result_piece(mt, cfg, duration)
+            if r:  # never before the last kill piece (it may overlap it)
+                r = dict(r, start=max(r["start"], body[-1]["pieces"][-1]["end"]))
+            if r and r["end"] > r["start"] and total + hook_room + (r["end"] - r["start"]) <= cap:
+                result = r
+        if total + (result["end"] - result["start"] if result else 0.0) < lo - hook_room:
+            unused_units += body + tops  # too short even with the opening: these kills stay for other videos
+            break
+        plans.append({"match": mid, "body": body, "tops": tops, "result": result})
+    unused_units += pool
+    # part 1: the openings, best montage first; a moment opens one montage only
+    window = float(st["windowSec"])
+    lead, tail, n_cuts = float(st["hookLeadSec"]), float(st["hookTailSec"]), int(st["hookCuts"])
+    spare = [(u, t) for u in unused_units for t in u["peaks"]]
+    taken = set()
+    out = []
+    for pl in sorted(plans, key=lambda p: -sum(u["score"] for u in p["body"] + p["tops"])):
+        own = [(u, t) for u in pl["body"] + pl["tops"] for t in u["peaks"]]
+        moments = sorted(own + [x for x in spare if x[1] not in taken], key=lambda x: (-_strength(x[0], x[1], window), x[1]))
+        hook = []
+        for u, t in moments:
+            if len(hook) == n_cuts:
+                break
+            if any(abs(t - h["at"]) < lead + tail for h in hook):
+                continue
+            r = rank._cut_deaths(max(0.0, t - lead), min(t + tail, float(duration)), t, deaths, ranking)
+            if r and r[1] > t:
+                hook.append({"start": round(r[0], 3), "end": round(r[1], 3), "kills": 0, "hook": True, "teaser": True, "at": t})
+        taken.update(h["at"] for h in hook)
+        units = pl["body"] + pl["tops"]
+        hook_sec = round(_length(hook), 3)
+        pieces = [{k: v for k, v in h.items() if k != "at"} for h in hook] + [p for u in units for p in u["pieces"]]
+        if pl["result"]:
+            pieces.append(pl["result"])
+        sk = sum(u["kills"] for u in units if u["streak"])
+        nk = sum(u["kills"] for u in units)
+        mt = by_index.get(pl["match"]) or {}
+        out.append({"pieces": pieces, "seconds": round(_length(pieces), 3),
+                    "peaks": sorted(k for u in units for k in u["peaks"]),
+                    "medals": sorted((md for u in units for md in u["medals"]), key=lambda x: x["t"]),
+                    "score": round(sum(u["score"] for u in units), 3),
+                    "labels": [lb for u in units for lb in u["labels"]],
+                    "kills": nk, "streakKills": sk, "singleKills": nk - sk,
+                    "streaks": sum(1 for u in units if u["streak"]),
+                    "story": {"match": pl["match"], "mode": mt.get("mode"), "result": mt.get("result") if pl["result"] else None,
+                              "topUps": sorted({u["match"] for u in pl["tops"]}, key=str), "hookSec": hook_sec,
+                              "titleAt": hook_sec, "hookMoments": [h["at"] for h in hook],
+                              "usedElsewhere": sum(1 for u in units if u["elsewhere"])}})
     return sorted(out, key=lambda m: (-m["score"], -m["kills"]))
 
 

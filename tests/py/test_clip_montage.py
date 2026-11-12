@@ -293,6 +293,77 @@ class LiveRecutTests(unittest.TestCase):
             self.assertEqual([(round(p["start"] + 545.0, 2), round(p["end"] + 545.0, 2)) for p in c["pieces"]],
                              [(548.0, 562.5), (577.0, 582.5)])
 
+def match(i, start, end, end_screen=None, qualifies=False, result=None, mode="mp"):
+    return {"index": i, "start": float(start), "end": float(end), "mode": mode, "result": result,
+            "endScreenAt": end_screen, "resultAt": end_screen if result else None, "reel": {"qualifies": qualifies}}
+
+
+class StoryMontageTests(unittest.TestCase):
+    """RP2 (D361) story montages and the end-screen fix (triage F1)."""
+
+    def test_kills_read_on_end_screens_never_reach_a_montage(self):
+        # 2026-11-11: kill-feed and medal reads after VICTORY put result screens of several matches into one montage
+        ms = [match(1, 0, 400, end_screen=300, qualifies=True, result="VICTORY")]
+        hits = [kill(100 + 25 * i) for i in range(8)] + [kill(305), kill(320), medal(321, "Fury Kill")]
+        for m in mont.plan_montages(hits, RANKING, CFG, 1000, ms):
+            for p in m["pieces"]:
+                self.assertLessEqual(p["end"], 300.0, p)
+        hits = [kill(299)] + [kill(100 + 25 * i) for i in range(7)]
+        (m,) = mont.plan_montages(hits, RANKING, CFG, 1000, ms)
+        self.assertEqual(max(p["end"] for p in m["pieces"]), 300.0, "the last kill's piece stops at the end screen")
+
+    def test_one_match_told_in_order_after_a_fast_cut_then_its_own_result(self):
+        ms = [match(1, 0, 400, end_screen=380, qualifies=True, result="VICTORY"), match(2, 400, 800, end_screen=780)]
+        hits = [kill(50 + 40 * i) for i in range(8)] + streak(600, n=3, step=10)
+        (m, *_rest) = mont.plan_story_montages(hits, RANKING, CFG, 1000, ms)
+        st = m["story"]
+        self.assertEqual(st["match"], 1)
+        hook = [p for p in m["pieces"] if p.get("hook")]
+        body = [p for p in m["pieces"] if not p.get("hook") and not p.get("result")]
+        self.assertEqual(len(hook), CFG["story"]["hookCuts"])
+        self.assertEqual(m["pieces"][:len(hook)], hook, "the fast cut comes first")
+        self.assertAlmostEqual(st["titleAt"], sum(p["end"] - p["start"] for p in hook))
+        self.assertLessEqual(st["titleAt"], CFG["story"]["hookMaxSec"])
+        self.assertTrue(all(0 <= p["start"] < 400 for p in body), "the story is one match")
+        self.assertEqual([p["start"] for p in body], sorted(p["start"] for p in body), "in time order")
+        self.assertTrue(m["pieces"][-1].get("result"), "its own result screen ends it")
+        self.assertEqual(st["result"], "VICTORY")
+        self.assertEqual(st["topUps"], [])
+        self.assertTrue(CFG["minSec"] <= m["seconds"] <= CFG["maxSec"])
+
+    def test_a_short_match_is_topped_up_after_the_story_and_shows_no_result(self):
+        ms = [match(1, 0, 400, end_screen=380, qualifies=True, result="VICTORY"), match(2, 400, 800, end_screen=780,
+                                                                                   qualifies=True, result="VICTORY")]
+        hits = [kill(50 + 40 * i) for i in range(4)] + [kill(450 + 40 * i) for i in range(3)]
+        (m,) = mont.plan_story_montages(hits, RANKING, CFG, 1000, ms)
+        self.assertEqual((m["story"]["match"], m["story"]["topUps"]), (1, [2]))
+        body = [p for p in m["pieces"] if not p.get("hook")]
+        self.assertFalse(any(p.get("result") for p in body), "no result screen when another match follows")
+        first2 = next(i for i, p in enumerate(body) if p["start"] >= 400)
+        self.assertTrue(all(p["start"] < 400 for p in body[:first2]) and all(p["start"] >= 400 for p in body[first2:]),
+                        "the story match first, the top-up after it")
+
+    def test_kills_in_live_clips_are_left_out_when_possible_and_no_kill_is_used_twice(self):
+        ms = [match(1, 0, 400, end_screen=380), match(2, 400, 800, end_screen=780), match(3, 800, 1200, end_screen=1180)]
+        hits = ([kill(50 + 40 * i) for i in range(7)] + [kill(450 + 40 * i) for i in range(7)]
+                + [kill(850 + 40 * i) for i in range(7)])
+        ms_out = mont.plan_story_montages(hits, RANKING, CFG, 2000, ms, avoid=[(0.0, 400.0)])
+        self.assertEqual(sorted(m["story"]["match"] for m in ms_out[:2]), [2, 3], "the live-clip match is not a story first")
+        seen = []
+        for m in ms_out:
+            for p in m["pieces"]:
+                if not p.get("hook"):
+                    self.assertNotIn((p["start"], p["end"]), seen)
+                    seen.append((p["start"], p["end"]))
+        opens = [t for m in ms_out for t in m["story"]["hookMoments"]]
+        self.assertEqual(len(opens), len(set(opens)), "a moment opens one montage only")
+
+    def test_story_needs_the_flag_and_is_off_by_default(self):
+        import json
+        with open(os.path.join(os.path.dirname(__file__), "..", "..", "data", "flags.json"), encoding="utf-8") as f:
+            flags = {x["id"]: x for x in json.load(f)["flags"]}
+        self.assertIs(flags[CFG["story"]["flag"]]["default"], False)
+
 
 if __name__ == "__main__":
     unittest.main()
