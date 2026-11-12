@@ -126,12 +126,14 @@ def publish(work, to, data_dir, game, layouts_by_id, det_weights=None, run_name=
         counters[(kind, canvas)] = nn
         how = _link_or_copy(src, os.path.join(day, name))
         rows.append({"id": c["id"], "layout": f["layout"], "file": os.path.join(day, name), "how": how, "kind": kind,
-                     "label": label, "seconds": round(float(c["end"]) - float(c["start"]), 3)})
+                     "label": label, "seconds": round(float(c["end"]) - float(c["start"]), 3),
+                     **({"thumbnail": True} if f.get("thumbnail") else {})})  # RP6: frame 0 is the cover
     run = run_name or os.path.basename(os.path.normpath(work))
     write_json_atomic(prev_path, {"tool": "clipper.publish", "to": to, "files": prev + rows})
     if data_dir and rows:
         add_uploads(data_dir, [{**{k: r[k] for k in ("file", "kind", "label", "seconds")}, "run": run,
-                                "recording": rdoc.get("recording"), "posted": []} for r in rows])
+                                "recording": rdoc.get("recording"), "posted": [],
+                                **({"thumbnail": True} if r.get("thumbnail") else {})} for r in rows])
     return rows
 
 

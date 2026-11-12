@@ -128,6 +128,24 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(sorted(os.listdir(os.path.join(self.clips, "2026-11-08"))),
                          ["codm_montage_20261108-185705_kills-3_01_v.mp4", "codm_won-reel_20261108-185535_victory-kills-1_01_v.mp4"])
 
+    def test_a_file_with_its_start_frame_is_marked_for_the_cover(self):
+        rdoc = {"tool": "clipper.montage", "recording": "practice-h-20261108-185525.mkv", "clips": [
+            {"id": "M01", "start": 0.0, "end": 9.0, "pieces": [{"start": 400.0, "end": 409.0, "kills": 2}],
+             "thumbnail": {"file": "thumbnail.png", "at": 402.3, "lines": []},
+             "files": [{"layout": "montage-v", "file": "montage-v.mp4", "thumbnail": True}]},
+            {"id": "M02", "start": 0.0, "end": 9.0, "pieces": [{"start": 500.0, "end": 509.0, "kills": 2}],
+             "files": [{"layout": "montage-v", "file": "montage-v.mp4"}]}]}
+        mont = os.path.join(self.work, "montage")
+        write(os.path.join(mont, "render.json"), json.dumps(rdoc))
+        write(os.path.join(mont, "report.json"), json.dumps({"results": [
+            {"id": c, "file": "montage-v.mp4", "ok": True} for c in ("M01", "M02")]}))
+        for c in ("M01", "M02"):
+            write(os.path.join(mont, "clips", c, "montage-v.mp4"))
+        rows = pub.publish(mont, self.clips, self.data, "codm", LAYOUTS, WEIGHTS)
+        self.assertEqual([r.get("thumbnail") for r in rows], [True, None])
+        up = read_json(os.path.join(self.data, "clips", "uploads.json"))["files"]
+        self.assertEqual([r.get("thumbnail") for r in up], [True, None], "RP6: posting takes the cover from frame 0")
+
     def test_live_clip_uses_its_wall_time(self):
         ts = WHEN.timestamp()
         rdoc = {"tool": "clipper", "recording": "live-saves", "clips": [

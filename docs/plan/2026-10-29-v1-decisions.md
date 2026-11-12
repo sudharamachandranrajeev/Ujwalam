@@ -1761,3 +1761,9 @@ Growth plan ED2. Decided:
 - **Decision.** The join between the pieces of a reel is a setting (Settings > Clips, `clips.reelTransition`): Cut, or Cross fade (ffmpeg `xfade=fade` with `acrossfade`), default 250 ms, range 150–500 ms, never more than half the shortest piece. A reel with burned-in captions keeps the cut for now (the caption times follow the sum of the pieces). Behind flag `reel-transitions`, off by default. Plan RP1.
 - **Why.** The user asked for a subtle cross fade as the first transition (2026-11-11); 250 ms is short enough to stay subtle and long enough to see. Each join makes the reel shorter by the overlap, which is recorded (`end`, `belowMin`).
 - **Status.** Length proposed; evidence `docs/evidence/2026-11-12-rp1-reel-transitions.md`; the user confirms after watching reels made with the flag on.
+
+## D368 — Reel start frame as thumbnail (RP6, 2026-11-12)
+
+- **Decision.** Behind flag `reel-thumbnail` (off), every reel opens on one edited frame (1/60 s) that acts as its cover: the picture of the reel's strongest moment (0.4 s after the heaviest medal, else the densest kills), colour lifted, a title (medal or result, kill count, mode) and the streamer brand from the local profile, all made locally with ffmpeg and a bundled font. Posting takes the cover from frame 0.
+- **Why.** The user asked (2026-11-12) for a one-frame thumbnail per reel showing what the reel is about, processed locally.
+- **Status.** Look, sizes, position and wording proposed (`data/clip/thumbnail.json`); evidence `docs/evidence/2026-11-12-rp6-thumbnail-start-frame.md`; the user confirms after watching reels made with the flag on.

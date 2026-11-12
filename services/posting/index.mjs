@@ -232,6 +232,13 @@ export function findFfmpeg(explicit) {
 }
 
 /** Extracts one JPEG frame at `atSec`. CPU only, one thread, below-normal priority. Resolves true on success. */
+/** Where the cover of a finished video (uploads.json row) is taken, in seconds. RP6 (D366): a reel that opens on its
+ *  edited start frame (row.thumbnail) uses that frame; otherwise 2 s in, or the middle of a short video. */
+export function uploadCoverAt(row, seconds) {
+  if (row?.thumbnail === true) return 0;
+  return Number.isFinite(seconds) && seconds > 0.4 ? Math.min(2, seconds / 2) : 0;
+}
+
 export function extractCover(ffmpeg, video, atSec, out) {
   return new Promise((resolve) => {
     const args = ['-v', 'error', '-nostdin', '-y', '-threads', '1', '-ss', atSec.toFixed(3), '-i', video, '-frames:v', '1', '-q:v', '2', out];
@@ -404,7 +411,7 @@ export async function packageUploads(opts) {
       hashtags: tpl.hashtags.map((t) => renderText(t, ctx, missing)),
       target,
     };
-    const at = Number.isFinite(seconds) && seconds > 0.4 ? Math.min(2, seconds / 2) : 0;
+    const at = uploadCoverAt(row, seconds);
     const coverOk = await extractCover(ffmpeg, dst, at, path.join(dir, 'cover.jpg'));
     const stamp = now().toISOString();
     const clipId = `${row.kind}-${sha.slice(0, 12)}`;

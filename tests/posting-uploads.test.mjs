@@ -8,7 +8,7 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { createPostChain, createUploadQueue } from '../services/posting/auto-chain.mjs';
 import { loadRules, planAuto, validateRules } from '../services/posting/auto-post.mjs';
-import { createPostStore, loadLimits, loadTemplates, packageUploads, pickYoutubeTarget } from '../services/posting/index.mjs';
+import { createPostStore, loadLimits, loadTemplates, packageUploads, pickYoutubeTarget, uploadCoverAt } from '../services/posting/index.mjs';
 
 const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-d301-')); tmp.push(d); return d; };
@@ -56,6 +56,16 @@ describe('target by length and aspect (from limits.json, not code)', () => {
     const t = loadTemplates();
     for (const target of ['youtube-shorts', 'youtube-video']) for (const k of ['montage', 'won-reel']) assert.ok(t.targets[target].kinds[k].title, `${target}/${k}`);
     assert.ok(limits.targets['youtube-video'].fields.title);
+  });
+});
+
+describe('cover frame', () => {
+  test('RP6: a reel with its edited start frame takes the cover from frame 0; others 2 s in or the middle', () => {
+    assert.equal(uploadCoverAt({ thumbnail: true }, 45), 0);
+    assert.equal(uploadCoverAt({ thumbnail: 'yes' }, 45), 2, 'only a real true counts');
+    assert.equal(uploadCoverAt({}, 45), 2);
+    assert.equal(uploadCoverAt({}, 3), 1.5);
+    assert.equal(uploadCoverAt({}, NaN), 0);
   });
 });
 

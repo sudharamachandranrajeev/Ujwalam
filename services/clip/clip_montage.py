@@ -414,13 +414,16 @@ def crossfade_sec(pieces, transition):
 
 
 def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1, max_sec=None,
-                captions=None, fontsdir=None, transition=None):
+                captions=None, fontsdir=None, transition=None, thumbnail=None):
     """One ffmpeg run: each piece is its own input (-ss/-t, exact because it is re-encoded), scaled into the frame,
     audio faded in and out by fade_ms (no pop at a hard cut), then concatenated. Every audio track of the source
     (audio_tracks) is kept as its own track, in source order (track 1 = the studio mix); none is dropped or remixed.
     captions (ED2, D353): a bare ASS file name in the working folder, burned over the joined picture with libass;
     fontsdir: a bare folder name next to it holding the caption font (no system font, no path escaping).
-    audio_tracks=0: a source without audio renders picture only (no audio filters, maps or audio encoder)."""
+    audio_tracks=0: a source without audio renders picture only (no audio filters, maps or audio encoder).
+    transition (RP1): {"xfade", "ms"} cross-fades each join (see crossfade_sec); None = hard cut.
+    thumbnail (RP6): a bare PNG name in the working folder shown as the reel's first frame (one frame, 1/60 s); the
+    sound starts one frame later."""
     ow, oh = int(frame["width"]), int(frame["height"])
     fd = fade_ms / 1000.0
     argv = [ffmpeg, "-v", "error", "-nostdin", "-y", "-threads", str(threads), "-filter_threads", "2"]
@@ -441,7 +444,8 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
             af.append(f"afade=t=out:st={max(0.0, d - fd):.3f}:d={fd:.3f}")
         for k in range(audio_tracks):
             parts.append(f"[{i}:a:{k}]{','.join(af)}[a{i}_{k}]")
-    vlast = "[vcat]" if captions else "[vout]"
+    vlast = "[vcat]" if captions or thumbnail else "[vout]"
+    alast = "ab" if thumbnail else "aout"  # RP6: the sound is delayed by the thumbnail frame
     if xd:  # RP1: each join overlaps the pieces by xd seconds (picture xfade, audio acrossfade per track)
         n, acc = len(pieces), 0.0
         for i in range(1, n):
@@ -451,14 +455,24 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
             parts.append(f"{vin}[v{i}]xfade=transition={transition['xfade']}:duration={xd:.3f}:offset={acc - i * xd:.3f}{vout}")
             for k in range(audio_tracks):
                 ain = f"[a0_{k}]" if i == 1 else f"[ax{i - 1}_{k}]"
-                aout = f"[aout{k}]" if i == n - 1 else f"[ax{i}_{k}]"
+                aout = f"[{alast}{k}]" if i == n - 1 else f"[ax{i}_{k}]"
                 parts.append(f"{ain}[a{i}_{k}]acrossfade=d={xd:.3f}:c1=tri:c2=tri{aout}")
     else:
         ins = "".join(f"[v{i}]" + "".join(f"[a{i}_{k}]" for k in range(audio_tracks)) for i in range(len(pieces)))
-        outs = vlast + "".join(f"[aout{k}]" for k in range(audio_tracks))
+        outs = vlast + "".join(f"[{alast}{k}]" for k in range(audio_tracks))
         parts.append(ins + f"concat=n={len(pieces)}:v=1:a={audio_tracks}{outs}")
     if captions:
-        parts.append(f"[vcat]subtitles={captions}" + (f":fontsdir={fontsdir}" if fontsdir else "") + "[vout]")
+        parts.append(f"[vcat]subtitles={captions}" + (f":fontsdir={fontsdir}" if fontsdir else "")
+                     + ("[vcap]" if thumbnail else "[vout]"))
+    if thumbnail:  # RP6 (D366): one still frame in front of the reel (after the captions, so none lands on it)
+        ti = len(pieces)
+        argv += ["-loop", "1", "-framerate", "60", "-t", f"{1 / 60:.6f}", "-i", thumbnail]
+        parts.append(f"[{ti}:v]scale={ow}:{oh}:force_original_aspect_ratio=decrease:flags=lanczos,"
+                     f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p,trim=end_frame=1,"
+                     f"setpts=PTS-STARTPTS[vth]")
+        parts.append(f"[vth]{'[vcap]' if captions else '[vcat]'}concat=n=2:v=1:a=0[vout]")
+        for k in range(audio_tracks):  # 800 samples at 48 kHz = one frame at 60 fps
+            parts.append(f"[ab{k}]adelay=delays=800S:all=1[aout{k}]")
     maps = ["-map", "[vout]"] + [x for k in range(audio_tracks) for x in ("-map", f"[aout{k}]")]
     # CL1 (D350): nothing here adds time (no pad or hold; a crossfade only shortens: each join overlaps by xd); the fps
     # filter can round a piece by up to one frame, so the output is also cut at the type's maximum.
