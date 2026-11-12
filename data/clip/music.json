@@ -1,0 +1,32 @@
+{
+  "$comment": "RP3 music beds (D363, user 2026-11-11: calm lofi at the start and end of reels; 2026-11-12 chose 'procedural now, ACE-Step later'). Read by services/clip/reel_music.py. A calm lofi bed (electric-piano chords, soft bass, kick, snare, swung hats, vinyl crackle, warm low-pass) is synthesised on this PC in plain Python (no model, no download, own code, no licence limits), different per reel (seeded by the reel), and mixed under the reel's studio mix (track 1) at the start (under the RP4 title, ending as it ends) and at the end. The game sound ducks the bed (sidechain compressor) so it never covers speech. Behind the flag reel-music (off by default). ACE-Step 1.5 (MIT) may be added later as a second generator after a benchmark (RP3a).",
+  "version": "1.0.0",
+  "status": "proposed",
+  "approved": "user 2026-11-12 chose procedural beds first; tempo, keys, chords, levels and lengths are the agent's proposal (plan RP3)",
+  "checked": "2026-11-12",
+  "flag": "reel-music",
+  "generator": "procedural",
+  "sampleRate": 48000,
+  "bpm": { "min": 72, "max": 86 },
+  "keys": [57, 58, 60, 62, 63, 65],
+  "progressions": [
+    { "id": "ii-V-I-vi", "chords": [[2, "m7"], [7, "7"], [0, "maj7"], [9, "m7"]] },
+    { "id": "I-vi-ii-V", "chords": [[0, "maj7"], [9, "m7"], [2, "m7"], [7, "7"]] },
+    { "id": "vi-IV-I-V", "chords": [[9, "m7"], [5, "maj7"], [0, "maj7"], [7, "7"]] },
+    { "id": "IV-iii-ii-I", "chords": [[5, "maj7"], [4, "m7"], [2, "m7"], [0, "maj7"]] }
+  ],
+  "chordTypes": { "maj7": [0, 4, 7, 11], "m7": [0, 3, 7, 10], "7": [0, 4, 7, 10] },
+  "swing": 0.58,
+  "lowpassHz": 3200,
+  "voices": { "keys": 0.30, "bass": 0.32, "kick": 0.55, "snare": 0.16, "hat": 0.06, "crackle": 0.03 },
+  "gainDb": -20,
+  "introSec": 3.0,
+  "introFadeInMs": 400,
+  "introFadeOutMs": 900,
+  "outroSec": 4.0,
+  "outroFadeInMs": 1000,
+  "outroFadeOutMs": 1500,
+  "minReelSec": 8.0,
+  "duck": { "threshold": 0.05, "ratio": 6, "attackMs": 20, "releaseMs": 400 },
+  "why": "70-86 BPM, seventh chords and swung hats are the usual lofi traits; -20 dB under the studio mix (plan RP3: about -20 dB) and a sidechain duck keep it a bed, never louder than speech. The start bed ends with the title (RP4) or after introSec without one, fading out over 0.9 s; the end bed covers the last 4 s with a 1 s fade-in and a 1.5 s fade-out. A reel under 8 s gets no music."
+}
