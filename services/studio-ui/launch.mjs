@@ -755,6 +755,9 @@ async function writeSnapshot(client, logsDir) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // LU5 (D343): how long a new host release gets to write its discovery file (an update while running, or a trial at start).
 const updateReadyMs = () => Math.max(1000, Number(process.env.UJWALAM_HOST_UPDATE_READY_MS ?? 60_000) || 60_000);
+// LU4 (D346): how long a new studio window stays on probation after it attached (default 1 s; never shorter). Tests
+// widen it so a close "during probation" stays inside it under full-CI load.
+const studioHealthMs = () => Math.max(1000, Number(process.env.UJWALAM_STUDIO_HEALTH_MS ?? 1000) || 1000);
 /**
  * LU5 (Codex review of D343): stops a host and CONFIRMS its exit (host.shutdown, then the process tree). -> true when
  * the process has exited; false when it was still running after the kill (the caller must not start another host).
@@ -1618,6 +1621,7 @@ export async function main(argv = process.argv.slice(2)) {
           return shell;
         },
         rearm,
+        waits: { healthMs: studioHealthMs() },
         // The user closed a window during a swap (exit 0 on probation, Codex review of D346): one close stops
         // everything (D280), the swap restores nothing.
         onUserClose: () => {

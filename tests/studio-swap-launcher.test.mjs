@@ -225,7 +225,8 @@ test('launcher: the studio window swaps over IPC (closed for the update, not sto
 
 test('launcher: the user closing the new window on probation stops everything (D280); the old one is not restored', { skip, timeout: 120_000 }, async (t) => {
   const root = mkdtempSync(path.join(os.tmpdir(), 'lu4-probe-close-'));
-  const st = startLauncher(root);
+  // Probation 5 s: the close 200 ms after "ready" must land inside it even under full-CI load (flaked at 1 s, 2026-11-12).
+  const st = startLauncher(root, { UJWALAM_STUDIO_HEALTH_MS: '5000' });
   t.after(() => { killChildTree(st.child); rmSync(root, { recursive: true, force: true, maxRetries: 10 }); }); // retries: the last window (from a copy in root) may still be exiting
   assert.ok(await st.until(/window: studio attach: ready/, 60_000), st.out.slice(-3000));
   const uiPort = Number(/UI at http:\/\/127\.0\.0\.1:(\d+)\//.exec(st.out)?.[1]);
