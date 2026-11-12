@@ -373,36 +373,48 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('controls and flags (D290): round controls carry their captions; the flag list is not on the main window', async () => {
     const p = await probe([]);
     assert.deepEqual(p.controls, { stream: 'Start stream', record: 'Record', clip: 'Save clip', mark: 'Mark moment', streamIcon: 'play-' });
-    assert.equal(p.flagsInSettings, false, 'the flag rows exist only inside Settings > Advanced');
+    assert.equal(p.flagsInSettings, false, 'the flag rows exist only inside Settings');
     assert.ok(p.flags.length > 5, 'still loaded: the list follows the server');
   });
-  test('Settings (D290, D294): sections Clips, Folders, Layer effects, Appearance, Preview (D335), Connections (D327), Help & tips, Advanced; the layer-effects item and animations choice are there', async () => {
+  test('Settings (D290, D294): nav groups General / Live / Studio / Clips, the pages in them, Advanced last; each flag sits on its own page, A-Z, with its summary and the full description as tooltip', async () => {
     const p = await probe([], 6000, 'settings-open,settings-section:Advanced');
-    assert.deepEqual(p.settings.sections, ['Clips', 'Folders', 'Layer effects', 'Appearance', 'Preview', 'Connections', 'Help & tips', 'Advanced']);
-    assert.equal(p.settings.layerEffects, false);
-    assert.equal(p.settings.layerEffectsText, 'Show layer effects from the scene (rounded corners, shadows, video buttons)');
+    assert.deepEqual(p.settings.navGroups, ['GENERAL', 'LIVE', 'STUDIO', 'CLIPS'], 'headings are not pages');
+    assert.deepEqual(p.settings.sections, ['Appearance', 'Help & tips', 'Stream', 'Transitions', 'Connections', 'Chat & bots', 'Editing', 'Preview', 'Clips', 'Posting & growth', 'Folders', 'Advanced']);
     assert.equal(p.settings.motionChoices, 3, 'Follow Windows / Always on / Off');
     assert.equal(p.settings.motion, 'system');
-    assert.equal(p.flagsInSettings, true, 'the feature flags list sits in Settings > Advanced');
-    // N2: one row per flag with a switch and its plain description from data/flags.json, always shown.
+    assert.equal(p.flagsInSettings, true, 'the feature rows sit in the FEATURES cards of the pages');
+    // N2: one row per flag with a switch, its plain summary and the full description (tooltip) from data/flags.json, on its page.
     const rows = p.settings.flagRows;
+    const defs = JSON.parse(readFileSync(new URL('../data/flags.json', import.meta.url), 'utf8')).flags;
     assert.equal(rows.length, p.flags.length, 'a row for every flag the server lists');
     for (const r of rows) {
-      assert.equal(r.on, p.flags.find((f) => f.id === r.id).on, r.id);
-      assert.ok(r.description.length > 10, `${r.id}: its description is shown`);
-      assert.equal(r.visible, true, r.id);
+      const f = { ...defs.find((x) => x.id === r.id), ...p.flags.find((x) => x.id === r.id) };
+      assert.equal(r.on, f.on, r.id);
+      assert.equal(r.label, f.label, r.id);
+      assert.equal(r.summary, f.summary, `${r.id}: its plain summary is shown`);
+      assert.equal(r.page, f.page, r.id);
+      assert.equal(r.description, `${f.description}
+(flag: ${f.id})`, `${r.id}: the full description is the tooltip`);
+      if (r.page === 'advanced') assert.equal(r.visible, true, r.id); // only the current page is shown; the others sit hidden in the stack
     }
+    const byPage = (pg) => rows.filter((r) => r.page === pg).map((r) => r.label);
+    for (const pg of new Set(rows.map((r) => r.page))) {
+      const labels = byPage(pg);
+      assert.deepEqual(labels, [...labels].sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase())), `${pg}: A-Z by name`);
+    }
+    assert.ok(byPage('advanced').length >= 1 && byPage('clips').length >= 10 && byPage('editing').includes('Layer effects'));
     assert.equal(p.settings.dirty, false, 'nothing changed yet');
   });
-  test('Settings > Advanced (2026-11-10 offset bug): with the window shown, the flag rows have no native handle and sit inside their box, also on a second open', async () => {
+  test('Settings > Advanced (2026-11-10 offset bug): with the window shown, the flag rows have no native handle and sit inside their card, also on a second open', async () => {
     const p = await probe([], 8000, 'settings-open,settings-section:Advanced,settings-cancel,settings-open,settings-section:Advanced', null, { UJWALAM_STUDIO_PROBE_SHOW: '1' });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     const f = p.settings.flagList;
-    assert.ok(f, 'the Advanced page reports the flag rows');
+    assert.ok(f, 'the Advanced page reports its flag rows');
     assert.equal(f.native, false, 'a native handle made the list a separate child window placed off its box');
     assert.equal(f.nativeAttr, false);
     assert.equal(f.insideBox, true);
-    assert.ok(f.w > 300 && f.h >= 220, `laid out to the page: ${f.w}x${f.h}`);
+    assert.equal(f.insideDialog, true, 'the card sits inside the dialog');
+    assert.ok(f.w > 300 && f.rowH > 20 && f.rowW > 200, `laid out to the page: card ${f.w}x${f.h}, row ${f.rowW}x${f.rowH}`);
     assert.deepEqual([f.scrollX, f.scrollY], [0, 0]);
   });
   test('Settings deleted without closing (no finished signal): the flags still refresh and the rows are built again', async () => {
@@ -417,8 +429,8 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.flagsInSettings, true, 'Settings was still open at quit');
   });
   test('Settings (D290, D332): layer effects on turns flag layer-effects on at Save, no phrase; animations Off is saved as ui.motion', async () => {
-    const p = await probe([], 11000, 'settings-open,settings-layer-effects:on,settings-motion:off,settings-save');
-    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true]]);
+    const p = await probe([], 11000, 'settings-open,settings-flag:layer-effects:on,settings-motion:off,settings-save');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-flag:layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true]]);
     assert.equal(p.store.isOn('layer-effects'), true, 'applied on Save through the flags route');
     assert.equal(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).ui.motion, 'off');
     assert.equal(p.motionMode, 'off');
@@ -426,37 +438,37 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(p.flagsInSettings, false, 'the rows went with the closed Settings window');
   });
   test('Settings > Clips (CL1, D350): reel length rows show the defaults, Save sends the changed type, a shortest over the longest blocks Save', async () => {
-    const p = await probe([], 9000, 'settings-open,settings-page:0,settings-reel:montage:10:30,settings-save');
-    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:0', true], ['settings-reel:montage:10:30', true], ['settings-save', true]]);
+    const p = await probe([], 9000, 'settings-open,settings-page:Clips,settings-reel:montage:10:30,settings-save');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:Clips', true], ['settings-reel:montage:10:30', true], ['settings-save', true]]);
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).clips.reelLengths, { montage: { minSec: 10, maxSec: 30 } });
-    const q = await probe([], 8000, 'settings-open,settings-page:0');
+    const q = await probe([], 8000, 'settings-open,settings-page:Clips');
     assert.deepEqual(Object.keys(q.settings.reelLengths.rows).sort(), ['impact-play', 'live-clip', 'match-reel', 'montage', 'short']);
     assert.deepEqual(q.settings.reelLengths.rows.montage, { min: 20, max: 60, maxLimit: 60 });
     assert.equal(q.settings.reelLengths.error, '');
-    const r = await probe([], 9000, 'settings-open,settings-page:0,settings-reel:montage:50:40,settings-save');
+    const r = await probe([], 9000, 'settings-open,settings-page:Clips,settings-reel:montage:50:40,settings-save');
     assert.match(r.settings.reelLengths.error, /montage: the shortest \(50 s\) is longer than the longest \(40 s\)/);
     assert.equal(r.settings.dirty, true, 'Settings stayed open with the edit');
     assert.equal(existsSync(path.join(r.dataDir, 'settings.json')), false, 'nothing saved');
   });
   test('Settings > Clips (ED1, D352): reel opening rows show on and 2 s per type, Save sends only the changed type', async () => {
-    const q = await probe([], 8000, 'settings-open,settings-page:0');
+    const q = await probe([], 8000, 'settings-open,settings-page:Clips');
     assert.deepEqual(Object.keys(q.settings.reelHooks).sort(), ['impact-play', 'live-clip', 'match-reel', 'montage']);
     assert.deepEqual(q.settings.reelHooks.montage, { on: true, teaserSec: 2, teaserEnabled: true, min: 1, max: 3 });
-    const p = await probe([], 9000, 'settings-open,settings-page:0,settings-hook:match-reel:0:3,settings-save');
-    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:0', true], ['settings-hook:match-reel:0:3', true], ['settings-save', true]]);
+    const p = await probe([], 9000, 'settings-open,settings-page:Clips,settings-hook:match-reel:0:3,settings-save');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:Clips', true], ['settings-hook:match-reel:0:3', true], ['settings-save', true]]);
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).clips.reelHooks, { 'match-reel': { on: false, teaserSec: 3 } });
   });
   test('Settings > Clips (RP1): Transition between pieces shows Cross fade 250 ms (150-500); Save sends the choice; Cut saves no length', async () => {
-    const q = await probe([], 8000, 'settings-open,settings-page:0');
+    const q = await probe([], 8000, 'settings-open,settings-page:Clips');
     assert.deepEqual(q.settings.reelTransition, { kind: 'fade', label: 'Cross fade', ms: 250, msEnabled: true, min: 150, max: 500 });
-    const p = await probe([], 9000, 'settings-open,settings-page:0,settings-transition:fade:400,settings-save');
-    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:0', true], ['settings-transition:fade:400', true], ['settings-save', true]]);
+    const p = await probe([], 9000, 'settings-open,settings-page:Clips,settings-transition:fade:400,settings-save');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:Clips', true], ['settings-transition:fade:400', true], ['settings-save', true]]);
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).clips.reelTransition, { kind: 'fade', ms: 400 });
-    const c = await probe([], 9000, 'settings-open,settings-page:0,settings-transition:cut:0,settings-save');
+    const c = await probe([], 9000, 'settings-open,settings-page:Clips,settings-transition:cut:0,settings-save');
     assert.deepEqual(JSON.parse(readFileSync(path.join(c.dataDir, 'settings.json'), 'utf8')).clips.reelTransition, { kind: 'cut', ms: 0 });
   });
   test('Settings > Clips (LC2, D334 proposed): Record while live is a switch row with its explanation, on by default; off is saved at Save', async () => {
-    const p = await probe([], 7000, 'settings-open,settings-page:0');
+    const p = await probe([], 7000, 'settings-open,settings-page:Clips');
     assert.deepEqual(p.settings.recordLive, { on: true, text: 'Record while live', visible: true,
       hint: 'Records the stream (H and V) to your recordings folder so reels can be made after it ends. Uses about 10 GB per hour.' });
     assert.equal(p.settings.dirty, false);
@@ -466,7 +478,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.ok(saved.actions.every((x) => x.done), JSON.stringify(saved.actions));
     assert.equal(JSON.parse(readFileSync(path.join(saved.dataDir, 'settings.json'), 'utf8')).clips.recordLive, false);
   });
-  test('Settings > Advanced (N2, D332): a flag switch is a draft; Save applies it, on and off alike', async () => {
+  test('Settings FEATURES cards (N2, D332): a flag switch is a draft; Save applies it, on and off alike', async () => {
     const draft = await probe(['scene-edit'], 7000, 'settings-open,settings-flag:transitions:on,settings-flag:scene-edit:off');
     assert.ok(draft.actions.every((a) => a.done), JSON.stringify(draft.actions));
     assert.deepEqual(draft.settings.flagRows.filter((r) => ['transitions', 'scene-edit'].includes(r.id)).map((r) => [r.id, r.on]).sort(), [['scene-edit', false], ['transitions', true]]);
@@ -479,11 +491,13 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.equal(saved.store.isOn('scene-edit'), false, 'off at Save');
     assert.equal(saved.shown.transitions, true);
   });
-  test('Settings > Advanced (N2): the layer-effects row and the Layer effects switch are one setting', async () => {
+  test('Settings > Editing: Layer effects is one switch in the Editing FEATURES card with its hint; no separate Layer effects page', async () => {
     const p = await probe([], 7000, 'settings-open,settings-flag:layer-effects:on');
-    assert.equal(p.settings.layerEffects, true, 'the Layer effects page follows the row');
-    const q = await probe([], 7000, 'settings-open,settings-layer-effects:on');
-    assert.equal(q.settings.flagRows.find((r) => r.id === 'layer-effects').on, true, 'the row follows the Layer effects page');
+    assert.equal(p.settings.sections.includes('Layer effects'), false);
+    const r = p.settings.flagRows.find((x) => x.id === 'layer-effects');
+    assert.equal(r.on, true);
+    assert.equal(r.page, 'editing');
+    assert.equal(p.settings.dirty, true);
   });
   test('Settings > Preview (D335 F10): the snap switch is off by default with its words beside it; Save writes ui.snap', async () => {
     const p = await probe([], 7000, 'settings-open,settings-section:Preview');
@@ -740,7 +754,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
   test('scene menu (D292): Delete is greyed for the active scene and without the flag; with the flag the click removes another scene', async () => {
     const off = await probe([], 5000, 'select-scene:scene-2,scene-menu:show', null, {}, { project: true });
     assert.deepEqual(off.menu.items.map((i) => [i.text, i.enabled]), [['Add scene…', true], ['Add layer…', true], ['Rename…', true], ['Duplicate scene', true], ['Delete…', false]]);
-    assert.equal(off.menu.items[4].tip, 'Turn on scene editing in Settings > Advanced');
+    assert.equal(off.menu.items[4].tip, 'Turn on scene editing in Settings > Editing');
     const on = await probe(['scene-edit'], 8000, 'select-scene:scene-1,scene-menu:delete,select-scene:scene-2,scene-menu:delete', null, {}, { project: true });
     assert.deepEqual(on.actions.map((a) => a.done), [true, false, true, true], 'the active scene cannot be deleted');
     assert.equal(on.sceneNames.length, 2);

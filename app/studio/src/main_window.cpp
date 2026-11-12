@@ -2274,7 +2274,7 @@ void MainWindow::loadFlags()
 		if (!ok)
 			return;
 		const QJsonArray fl = b.value(QStringLiteral("flags")).toArray();
-		flags_ = fl; // Settings > Advanced reads it when it opens
+		flags_ = fl; // Settings reads it when it opens
 		bool tc = false; // D336: theme components (the pack's component language); switches live
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("theme-components"))
@@ -3284,7 +3284,7 @@ QString plainStructureError(const QString &code)
 {
 	static const QHash<QString, QString> words = {
 		{QStringLiteral("live-locked"), QStringLiteral("Not while live.")},
-		{QStringLiteral("scene-edit-off"), QStringLiteral("Turn on scene editing in Settings > Advanced first.")},
+		{QStringLiteral("scene-edit-off"), QStringLiteral("Turn on scene editing in Settings > Editing first.")},
 		{QStringLiteral("scene-active"), QStringLiteral("That scene is the one the project starts with; make another scene the start scene first.")},
 		{QStringLiteral("last-scene"), QStringLiteral("The last scene cannot be deleted.")},
 		{QStringLiteral("layer-copied"), QStringLiteral("Another layer shows this one; delete that copy first.")},
@@ -3390,7 +3390,7 @@ QMenu *MainWindow::buildSceneMenu(QWidget *parent, const QString &sceneId, bool 
 	menu->addSeparator();
 	QString delTip = lockTip;
 	if (delTip.isEmpty() && !sceneEditOn_)
-		delTip = QStringLiteral("Turn on scene editing in Settings > Advanced");
+		delTip = QStringLiteral("Turn on scene editing in Settings > Editing");
 	else if (delTip.isEmpty() && active)
 		delTip = QStringLiteral("Switch to another scene first");
 	add("delete", QStringLiteral("Delete…"), QStringLiteral("Del"), has && !live_ && sceneEditOn_ && !active, delTip, [this, sceneId]() { sceneDelete(sceneId); });
@@ -3583,7 +3583,7 @@ void MainWindow::sceneDelete(const QString &id)
 	if (live_)
 		return note(QStringLiteral("Not while live."));
 	if (!sceneEditOn_)
-		return note(QStringLiteral("Turn on scene editing in Settings > Advanced to delete scenes."));
+		return note(QStringLiteral("Turn on scene editing in Settings > Editing to delete scenes."));
 	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("scene.remove")}, {QStringLiteral("scene"), id}});
 }
 
@@ -3913,8 +3913,17 @@ void MainWindow::saveSettings(const QJsonObject &body, bool retried)
 	});
 }
 
-// Settings (D284, D290, D293): sections on the left (Clips, Folders, Layer effects, Appearance, Advanced), the page on the right. The
-// feature flags are switch rows in Advanced, built fresh each time (D332, N2). Every page is a draft: Save applies it
+// A Settings nav entry by its page title. Group headings (GENERAL, LIVE, ...) carry no page and never match.
+static QListWidgetItem *settingsNavItem(QListWidget *nav, const QString &title)
+{
+	for (int i = 0; i < nav->count(); i++)
+		if (nav->item(i)->data(Qt::UserRole).isValid() && nav->item(i)->text() == title)
+			return nav->item(i);
+	return nullptr;
+}
+
+// Settings (D284, D290, D293): sections on the left in groups (General, Live, Studio, Clips, Advanced), the page on the right. Each
+// feature flag is a switch row in the FEATURES card of the page it belongs to, built fresh each time (D332, N2). Every page is a draft: Save applies it
 // (flags included, on and off), Cancel or the X with edits asks Save changes / Discard / Cancel.
 void MainWindow::openSettings(bool firstRun, const QString &startPage)
 {
@@ -3962,21 +3971,117 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		nav->setObjectName(QStringLiteral("settingsNav"));
 		nav->setFixedWidth(170);
 		auto *pages = new QStackedWidget(dlg);
+		QHash<QString, int> pageIndex; // page title -> index in pages
 		main->addWidget(nav);
 		main->addWidget(pages, 1);
 		outer->addLayout(main, 1);
-		// A page: a title and its cards in a column.
-		auto page = [&](const QString &title) {
+		// A page: a title and its cards in a column. It scrolls as a whole (pages that scroll themselves pass scroll = false).
+		// The nav entries are added at the end, in groups, and point at their page by item data (not by row).
+		auto page = [&](const QString &title, bool scroll = true) {
 			auto *w = new QWidget(pages);
 			auto *v = new QVBoxLayout(w);
-			v->setContentsMargins(0, 0, 0, 0);
+			v->setContentsMargins(0, 0, scroll ? 8 : 0, 0);
 			theme::space(v, 12);
 			auto *t = new QLabel(title, w);
 			t->setObjectName(QStringLiteral("sectionTitle"));
 			v->addWidget(t);
-			pages->addWidget(w);
-			nav->addItem(title);
+			if (scroll) {
+				auto *sa = new QScrollArea(pages);
+				sa->setWidgetResizable(true);
+				sa->setFrameShape(QFrame::NoFrame);
+				sa->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+				sa->setWidget(w);
+				pages->addWidget(sa);
+			} else {
+				pages->addWidget(w);
+			}
+			pageIndex.insert(title, pages->count() - 1);
 			return v;
+		};
+		// The flags as the server last said (flags_); the switches change a draft that Save applies.
+		QHash<QString, bool> flagStart;
+		for (const auto &x : flags_)
+			flagStart.insert(x.toObject().value(QStringLiteral("id")).toString(), x.toObject().value(QStringLiteral("on")).toBool());
+		auto flagDraft = std::make_shared<QHash<QString, bool>>(flagStart);
+		auto flagOn = [&flagStart](const char *id) { return flagStart.value(QLatin1String(id), false); };
+		auto flagLabel = [this](const char *id) {
+			for (const auto &x : flags_)
+				if (x.toObject().value(QStringLiteral("id")).toString() == QLatin1String(id))
+					return x.toObject().value(QStringLiteral("label")).toString(QString::fromLatin1(id));
+			return QString::fromLatin1(id);
+		};
+		auto mutedNote = [dlg](const QString &text) {
+			auto *l = new QLabel(text, dlg);
+			l->setWordWrap(true);
+			l->setObjectName(QStringLiteral("muted"));
+			return l;
+		};
+		// The FEATURES card of a page: the flags whose page it is, A-Z by their plain name. A flag the server did not list never
+		// shows. Built fresh inside the dialog (no widget with a native handle is moved in: the 2026-11-10 offset bug). The row
+		// shows the plain summary; the full developer description is its tooltip.
+		const QStringList knownPages{QStringLiteral("clips"), QStringLiteral("posting"), QStringLiteral("stream"), QStringLiteral("transitions"), QStringLiteral("connections"),
+					     QStringLiteral("chat"), QStringLiteral("editing"), QStringLiteral("preview"), QStringLiteral("appearance"), QStringLiteral("advanced")};
+		auto featuresCard = [&, this](QVBoxLayout *pv, const QString &pageId) {
+			struct Row {
+				QString id, label, summary, tip;
+			};
+			QList<Row> rows;
+			for (const auto &x : flags_) {
+				const QJsonObject fo = x.toObject();
+				const QString id = fo.value(QStringLiteral("id")).toString();
+				QString pg = fo.value(QStringLiteral("page")).toString();
+				if (!knownPages.contains(pg))
+					pg = QStringLiteral("advanced");
+				if (pg != pageId)
+					continue;
+				const QString desc = fo.value(QStringLiteral("description")).toString();
+				rows.append({id, fo.value(QStringLiteral("label")).toString(id), fo.value(QStringLiteral("summary")).toString(desc), desc + QStringLiteral("\n(flag: ") + id + QLatin1Char(')')});
+			}
+			if (rows.isEmpty())
+				return;
+			std::sort(rows.begin(), rows.end(), [](const Row &a, const Row &b) { return QString::compare(a.label, b.label, Qt::CaseInsensitive) < 0; });
+			auto *card = new QGroupBox(QStringLiteral("FEATURES"), dlg);
+			card->setObjectName(QStringLiteral("featuresCard"));
+			card->setProperty("page", pageId);
+			auto *cv = new QVBoxLayout(card);
+			theme::space(cv, 12);
+			for (const Row &r : rows) {
+				auto *row = new QWidget(card);
+				row->setObjectName(QStringLiteral("flagRow"));
+				row->setProperty("flag", r.id);
+				row->setToolTip(r.tip);
+				auto *rh = new QHBoxLayout(row);
+				rh->setContentsMargins(0, 0, 0, 0);
+				theme::space(rh, 12);
+				auto *sw = new Switch(row);
+				sw->setObjectName(QStringLiteral("flagSwitch"));
+				sw->setProperty("flag", r.id);
+				sw->setAccessibleName(r.label);
+				sw->setChecked(flagStart.value(r.id, false));
+				auto *words = new QVBoxLayout();
+				theme::space(words, 2);
+				auto *name = new QLabel(r.label, row);
+				name->setObjectName(QStringLiteral("flagName"));
+				auto *desc = new QLabel(r.summary, row);
+				desc->setObjectName(QStringLiteral("muted"));
+				desc->setProperty("flagDesc", true);
+				desc->setWordWrap(true);
+				words->addWidget(name);
+				words->addWidget(desc);
+				if (r.id == QStringLiteral("layer-effects")) { // the effects only change when the scenes are rebuilt
+					auto *fxHint = new QLabel(QStringLiteral("The effects appear the next time the scenes are built (start Ujwalam with the rebuild option). "
+										 "To change the look of one layer, select it and use the Look panel in the inspector; that needs no setting."), row);
+					fxHint->setObjectName(QStringLiteral("muted"));
+					fxHint->setWordWrap(true);
+					words->addWidget(fxHint);
+				}
+				rh->addWidget(sw, 0, Qt::AlignTop);
+				rh->addLayout(words, 1);
+				cv->addWidget(row);
+				const QString id = r.id;
+				connect(sw, &QAbstractButton::toggled, dlg, [flagDraft, id](bool on) { flagDraft->insert(id, on); });
+			}
+			pv->addWidget(card);
 		};
 
 		// Clips
@@ -4270,6 +4375,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			tv->addLayout(tf);
 			pc->addWidget(trBox);
 		}
+		featuresCard(pc, QStringLiteral("clips"));
 		pc->addStretch(1);
 
 		// Folders
@@ -4307,55 +4413,57 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		pf->addWidget(dirBox);
 		pf->addStretch(1);
 
-		// D327: Stream, Transitions and Integrations pages, each behind its flag (stream_pages.h).
-		// The flags as the server last said (flags_); the Advanced switches change a draft that Save applies.
-		QHash<QString, bool> flagStart;
-		for (const auto &x : flags_)
-			flagStart.insert(x.toObject().value(QStringLiteral("id")).toString(), x.toObject().value(QStringLiteral("on")).toBool());
-		auto flagDraft = std::make_shared<QHash<QString, bool>>(flagStart);
-		auto flagOn = [&flagStart](const char *id) { return flagStart.value(QLatin1String(id), false); };
-		auto scrolled = [dlg](QWidget *w) {
-			auto *sa = new QScrollArea(dlg);
-			sa->setWidgetResizable(true);
-			sa->setFrameShape(QFrame::NoFrame);
-			sa->setWidget(w);
-			return sa;
-		};
-		if (flagOn("stream-settings"))
-			page(QStringLiteral("Stream"))->addWidget(scrolled(new streampages::StreamPage(api_, dlg)), 1);
-		if (flagOn("stream-settings") && flagOn("transitions"))
-			page(QStringLiteral("Transitions"))->addWidget(scrolled(new streampages::TransitionsPage(api_, live_, dlg)), 1);
-		if (flagOn("integrations"))
-			page(QStringLiteral("Integrations"))->addWidget(scrolled(new streampages::IntegrationsPage(api_, dlg)), 1);
+		// Posting & growth: only its features (the Posts window itself is in the More menu).
+		auto *ppost = page(QStringLiteral("Posting & growth"));
+		ppost->addWidget(mutedNote(QStringLiteral("Posts are reviewed in the Posts window, in the More menu, once Posts window is switched on below.")));
+		featuresCard(ppost, QStringLiteral("posting"));
+		ppost->addStretch(1);
 
-		// Layer effects: the scene's own effects (rounded game frame, shadows, the video buttons) are a feature flag
-		// underneath; this is its plain on/off. The Look panel in the inspector needs no setting.
-		auto *pl = page(QStringLiteral("Layer effects"));
-		auto *fxBox = new QGroupBox(QStringLiteral("EFFECTS THAT COME WITH THE SCENES"), dlg);
-		auto *fv = new QVBoxLayout(fxBox);
-		theme::space(fv, 8);
-		const auto fxParts = switchRow(QStringLiteral("Show layer effects from the scene (rounded corners, shadows, video buttons)"), fxBox);
-		QWidget *fxRow = std::get<0>(fxParts);
-		Switch *fxOn = std::get<1>(fxParts);
-		QLabel *fxText = std::get<2>(fxParts);
-		fxOn->setObjectName(QStringLiteral("settingsLayerEffects"));
-		fxText->setObjectName(QStringLiteral("settingsLayerEffectsText"));
-		const bool fxKnown = flagStart.contains(QStringLiteral("layer-effects"));
-		fxOn->setChecked(flagStart.value(QStringLiteral("layer-effects"), false));
-		fxOn->setEnabled(fxKnown);
-		auto *fxHint = new QLabel(QStringLiteral("This is the layer-effects flag; it changes when you click Save. The effects appear the next time the scenes are built (start Ujwalam with the rebuild option). "
-							 "To change the look of one layer, select it and use the Look panel in the inspector; that needs no setting."), fxBox);
-		fxHint->setWordWrap(true);
-		fxHint->setObjectName(QStringLiteral("muted"));
-		fv->addWidget(fxRow);
-		fv->addWidget(fxHint);
-		pl->addWidget(fxBox);
-		pl->addStretch(1);
+		// D327: the Stream, Transitions and Chat & bots pages always exist; their settings show only while their flag is on
+		// (stream_pages.h), otherwise a note says which switch below turns them on.
+		auto *pst = page(QStringLiteral("Stream"));
+		if (flagOn("stream-settings"))
+			pst->addWidget(new streampages::StreamPage(api_, dlg));
+		else
+			pst->addWidget(mutedNote(QStringLiteral("Switch on %1 below and click Save to use these settings.").arg(flagLabel("stream-settings"))));
+		featuresCard(pst, QStringLiteral("stream"));
+		pst->addStretch(1);
+
+		auto *ptr = page(QStringLiteral("Transitions"));
+		if (flagOn("stream-settings") && flagOn("transitions"))
+			ptr->addWidget(new streampages::TransitionsPage(api_, live_, dlg));
+		else if (!flagOn("transitions"))
+			ptr->addWidget(mutedNote(QStringLiteral("Switch on %1 below and click Save to use these settings.").arg(flagLabel("transitions"))));
+		else
+			ptr->addWidget(mutedNote(QStringLiteral("These settings also need %1: switch it on in Settings > Stream and click Save.").arg(flagLabel("stream-settings"))));
+		featuresCard(ptr, QStringLiteral("transitions"));
+		ptr->addStretch(1);
+
+		// Connections (D327, flag platform-connect): sign in to YouTube / Twitch or paste keys per stream output. The page
+		// talks to the studio UI server itself; each write acts on the click there and then (D332).
+		auto *pcn = page(QStringLiteral("Connections"));
+		pcn->addWidget(new connections::Page(api_, dlg));
+		featuresCard(pcn, QStringLiteral("connections"));
+		pcn->addStretch(1);
+
+		auto *pch = page(QStringLiteral("Chat & bots"));
+		if (flagOn("integrations"))
+			pch->addWidget(new streampages::IntegrationsPage(api_, dlg));
+		else
+			pch->addWidget(mutedNote(QStringLiteral("Switch on %1 below and click Save to use these settings.").arg(flagLabel("integrations"))));
+		featuresCard(pch, QStringLiteral("chat"));
+		pch->addStretch(1);
+
+		// Editing: the scene, layer, effect and mixer features. The Look panel in the inspector needs no setting.
+		auto *ped = page(QStringLiteral("Editing"));
+		featuresCard(ped, QStringLiteral("editing"));
+		ped->addStretch(1);
 
 		// Appearance (D293): theme cards, reduce effects, animations
-		auto *pap = page(QStringLiteral("Appearance"));
+		auto *pap = page(QStringLiteral("Appearance"), false); // the page scrolls itself
 		auto *appear = new appearance::Page(theme::currentId(), theme::effects(), motionNow, dlg);
 		pap->addWidget(appear, 1);
+		featuresCard(pap, QStringLiteral("appearance"));
 
 		// Preview (D335 F10): snapping while dragging layers with the mouse; off unless the user turns it on.
 		auto *ppv = page(QStringLiteral("Preview"));
@@ -4376,100 +4484,69 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		sv->addWidget(std::get<0>(snapParts));
 		sv->addWidget(snapHint);
 		ppv->addWidget(snapBox);
+		featuresCard(ppv, QStringLiteral("preview"));
 		ppv->addStretch(1);
-
-		// Connections (D327, flag platform-connect): sign in to YouTube / Twitch or paste keys per stream output. The page
-		// talks to the studio UI server itself; each write acts on the click there and then (D332).
-		page(QStringLiteral("Connections"))->addWidget(new connections::Page(api_, dlg), 1);
 
 		// Help & tips (D294 proposed): tips on/off, reset "Don't show again", replay the welcome tour
 		guide_->fillSettingsPage(page(QStringLiteral("Help & tips")), dlg);
 
-		// Advanced: the developer feature flags
+		// Advanced: the developer feature flags. Every other switch is on its own page.
 		auto *pa = page(QStringLiteral("Advanced"));
-		auto *flagBox = new QGroupBox(QStringLiteral("FEATURE FLAGS (FOR TESTING NEW FEATURES)"), dlg);
-		auto *flv = new QVBoxLayout(flagBox);
-		auto *flagHint = new QLabel(QStringLiteral("New features ship switched off. A switch changes when you click Save."), flagBox);
-		flagHint->setWordWrap(true);
-		flagHint->setObjectName(QStringLiteral("muted"));
-		flv->addWidget(flagHint);
-		// One row per flag (N2): the switch, the flag's name and its plain description, always shown. Built fresh here,
-		// inside the dialog, so no widget with a native handle is moved in (2026-11-10 offset bug).
-		auto *flagScroll = new QScrollArea(flagBox);
-		flagScroll->setObjectName(QStringLiteral("settingsFlagScroll"));
-		flagScroll->setWidgetResizable(true);
-		flagScroll->setFrameShape(QFrame::NoFrame);
-		flagScroll->setMinimumHeight(220);
-		auto *flagRows = new QWidget(flagScroll);
-		flagRows->setObjectName(QStringLiteral("settingsFlagRows"));
-		auto *frv = new QVBoxLayout(flagRows);
-		theme::margins(frv, 0, 0, 8, 0);
-		theme::space(frv, 12);
-		Switch *fxFlagSw = nullptr;
-		for (const auto &x : flags_) {
-			const QJsonObject fo = x.toObject();
-			const QString id = fo.value(QStringLiteral("id")).toString();
-			auto *row = new QWidget(flagRows);
-			row->setObjectName(QStringLiteral("flagRow"));
-			row->setProperty("flag", id);
-			auto *rh = new QHBoxLayout(row);
-			rh->setContentsMargins(0, 0, 0, 0);
-			theme::space(rh, 12);
-			auto *sw = new Switch(row);
-			sw->setObjectName(QStringLiteral("flagSwitch"));
-			sw->setProperty("flag", id);
-			sw->setAccessibleName(id);
-			sw->setChecked(flagStart.value(id, false));
-			auto *words = new QVBoxLayout();
-			theme::space(words, 2);
-			auto *name = new QLabel(id, row);
-			name->setObjectName(QStringLiteral("flagName"));
-			auto *desc = new QLabel(fo.value(QStringLiteral("description")).toString(), row);
-			desc->setObjectName(QStringLiteral("muted"));
-			desc->setProperty("flagDesc", true);
-			desc->setWordWrap(true);
-			words->addWidget(name);
-			words->addWidget(desc);
-			rh->addWidget(sw, 0, Qt::AlignTop);
-			rh->addLayout(words, 1);
-			frv->addWidget(row);
-			if (id == QStringLiteral("layer-effects"))
-				fxFlagSw = sw;
-			connect(sw, &QAbstractButton::toggled, dlg, [flagDraft, id](bool on) { flagDraft->insert(id, on); });
-		}
+		featuresCard(pa, QStringLiteral("advanced"));
+		pa->addWidget(mutedNote(QStringLiteral("Every other feature switch is on its page. A switch changes when you click Save.")));
 		if (flags_.isEmpty())
-			frv->addWidget(new QLabel(QStringLiteral("The flags are not loaded yet. Open Settings again in a moment."), flagRows));
-		frv->addStretch(1);
-		flagScroll->setWidget(flagRows);
-		flv->addWidget(flagScroll, 1);
-		pa->addWidget(flagBox, 1);
-		// The Layer effects switch and the layer-effects flag row are one setting: each follows the other.
-		connect(fxOn, &QAbstractButton::toggled, dlg, [flagDraft, fxFlagSw](bool on) {
-			flagDraft->insert(QStringLiteral("layer-effects"), on);
-			if (fxFlagSw)
-				fxFlagSw->setCheckedSilently(on);
+			pa->addWidget(mutedNote(QStringLiteral("The flags are not loaded yet. Open Settings again in a moment.")));
+		pa->addStretch(1);
+
+		// The nav: group headings (muted, small caps, never a page) and the pages in them, each pointing at its page by item data.
+		{
+			const QList<std::pair<QString, QStringList>> navLayout{
+				{QStringLiteral("General"), {QStringLiteral("Appearance"), QStringLiteral("Help & tips")}},
+				{QStringLiteral("Live"), {QStringLiteral("Stream"), QStringLiteral("Transitions"), QStringLiteral("Connections"), QStringLiteral("Chat & bots")}},
+				{QStringLiteral("Studio"), {QStringLiteral("Editing"), QStringLiteral("Preview")}},
+				{QStringLiteral("Clips"), {QStringLiteral("Clips"), QStringLiteral("Posting & growth"), QStringLiteral("Folders")}},
+				{QString(), {QStringLiteral("Advanced")}}};
+			for (const auto &g : navLayout) {
+				if (!g.first.isEmpty()) {
+					auto *h = new QListWidgetItem(g.first.toUpper(), nav);
+					h->setFlags(Qt::NoItemFlags);
+					QFont hf = nav->font();
+					hf.setPointSizeF(std::max(7.0, hf.pointSizeF() * 0.8));
+					hf.setBold(true);
+					hf.setLetterSpacing(QFont::PercentageSpacing, 112);
+					h->setFont(hf);
+					h->setForeground(nav->palette().color(QPalette::Disabled, QPalette::Text));
+					h->setTextAlignment(Qt::AlignLeft | Qt::AlignBottom);
+					h->setSizeHint(QSize(0, 30));
+				}
+				for (const QString &t : g.second) {
+					auto *it = new QListWidgetItem(t, nav);
+					it->setData(Qt::UserRole, pageIndex.value(t, 0));
+				}
+			}
+		}
+		connect(nav, &QListWidget::currentItemChanged, pages, [pages](QListWidgetItem *cur) {
+			if (cur && cur->data(Qt::UserRole).isValid())
+				pages->setCurrentIndex(cur->data(Qt::UserRole).toInt());
 		});
-		if (fxFlagSw)
-			connect(fxFlagSw, &QAbstractButton::toggled, dlg, [fxOn](bool on) { fxOn->setCheckedSilently(on); });
-		connect(nav, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
-		nav->setCurrentRow(0);
+		nav->setCurrentItem(settingsNavItem(nav, QStringLiteral("Clips")));
 		if (!startPage.isEmpty())
-			if (const auto found = nav->findItems(startPage, Qt::MatchExactly); !found.isEmpty())
-				nav->setCurrentItem(found.first());
+			if (auto *found = settingsNavItem(nav, startPage))
+				nav->setCurrentItem(found);
 		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
 		dlg->save = [this, dlg, nav, reelRows, hookRows, transKind, transMs, transKindStart, transMsStart]() {
 			for (const ReelRow &r : *reelRows)
 				if (r.lo->value() > r.hi->value()) {
-					if (const auto found = nav->findItems(QStringLiteral("Clips"), Qt::MatchExactly); !found.isEmpty())
-						nav->setCurrentItem(found.first());
+					if (auto *found = settingsNavItem(nav, QStringLiteral("Clips")))
+						nav->setCurrentItem(found);
 					note(QStringLiteral("Not saved: Settings > Clips has a reel whose shortest length is longer than its longest."));
 					return;
 				}
 			// D327: a Stream page change over a platform limit keeps Settings open on that page (problems shown there).
 			for (auto *sp : dlg->findChildren<streampages::StreamPage *>())
 				if (sp->blocksSave()) {
-					if (const auto found = nav->findItems(QStringLiteral("Stream"), Qt::MatchExactly); !found.isEmpty())
-						nav->setCurrentItem(found.first());
+					if (auto *found = settingsNavItem(nav, QStringLiteral("Stream")))
+						nav->setCurrentItem(found);
 					note(QStringLiteral("Not saved: Settings > Stream has a value over a platform limit (shown in red)."));
 					return;
 				}
@@ -4514,7 +4591,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			return false;
 		};
 		outer->addWidget(bb);
-		dlg->resize(860, std::max(560, dlg->sizeHint().height()));
+		dlg->resize(860, std::max(720, dlg->sizeHint().height()));
 
 		connect(dlg, &QDialog::finished, this, [=](int result) {
 			settingsDlg_.clear();
@@ -4756,7 +4833,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("controls"), QJsonObject{{QStringLiteral("stream"), streamBtn_->accessibleName()}, {QStringLiteral("record"), recordBtn_->accessibleName()},
 							{QStringLiteral("clip"), clipBtn_->accessibleName()}, {QStringLiteral("mark"), markBtn_->accessibleName()},
 							{QStringLiteral("streamIcon"), streamBtn_->property("iconState").toString()}});
-	o.insert(QStringLiteral("flagsInSettings"), settingsDlg_ && settingsDlg_->findChild<QWidget *>(QStringLiteral("settingsFlagRows")) != nullptr); // Advanced holds the rows (D290, N2)
+	o.insert(QStringLiteral("flagsInSettings"), settingsDlg_ && settingsDlg_->findChild<QWidget *>(QStringLiteral("flagRow")) != nullptr); // each page holds its own flag rows (FEATURES card)
 	if (auto *cb = findChild<QMessageBox *>(QStringLiteral("confirmBox")))
 		o.insert(QStringLiteral("confirmBox"), QJsonObject{{QStringLiteral("title"), cb->windowTitle()}, {QStringLiteral("text"), cb->text()},
 								    {QStringLiteral("ok"), cb->findChild<QPushButton *>(QStringLiteral("confirmOk"))->text()}});
@@ -4772,16 +4849,13 @@ QJsonObject MainWindow::probe() const
 			o.insert(QStringLiteral("integrationsPage"), ip->probe());
 	}
 	if (settingsDlg_) {
-		QJsonArray sections;
+		QJsonArray sections, navGroups; // sections: the pages in nav order; navGroups: the group headings in nav order
 		if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")))
 			for (int i = 0; i < nav->count(); i++)
-				sections.append(nav->item(i)->text());
-		auto *fx = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsLayerEffects"));
-		auto *fxText = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsLayerEffectsText"));
+				(nav->item(i)->data(Qt::UserRole).isValid() ? sections : navGroups).append(nav->item(i)->text());
 		auto *mo = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsMotion"));
 		auto *sd = static_cast<SettingsDialog *>(settingsDlg_.data());
-		QJsonObject s{{QStringLiteral("sections"), sections}, {QStringLiteral("layerEffects"), fx ? QJsonValue(fx->isChecked()) : QJsonValue()},
-			      {QStringLiteral("layerEffectsText"), fxText ? fxText->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
+		QJsonObject s{{QStringLiteral("sections"), sections}, {QStringLiteral("navGroups"), navGroups}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
 			      {QStringLiteral("motionChoices"), mo ? mo->count() : 0}, {QStringLiteral("dirty"), sd->dirty ? sd->dirty() : false},
 			      {QStringLiteral("unsavedAsked"), settingsDlg_->findChild<QMessageBox *>(QStringLiteral("settingsUnsaved")) != nullptr}};
 		if (auto *rl = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsRecordLive"))) { // LC2
@@ -4833,29 +4907,45 @@ QJsonObject MainWindow::probe() const
 			s.insert(QStringLiteral("snap"), sn->isChecked());
 			s.insert(QStringLiteral("snapText"), snText ? snText->text() : QString());
 		}
-		// Advanced page (N2): one row per flag, switch state and description; geometry for the 2026-11-10 offset bug:
-		// where the rows sit in their box and in the dialog, and whether they carry their own native window handle.
-		if (auto *rows = settingsDlg_->findChild<QWidget *>(QStringLiteral("settingsFlagRows"))) {
+		// FEATURES cards (N2): one row per flag on its page, with switch state, plain summary and full description (the tooltip);
+		// geometry for the 2026-11-10 offset bug: where the Advanced rows sit in their card and in the dialog, and whether they
+		// carry their own native window handle.
+		{
 			QJsonArray fr;
-			for (auto *sw : rows->findChildren<QAbstractButton *>(QStringLiteral("flagSwitch"))) {
-				QString desc;
+			for (auto *sw : settingsDlg_->findChildren<QAbstractButton *>(QStringLiteral("flagSwitch"))) {
+				QString desc, label, pg;
 				for (auto *l : sw->parentWidget()->findChildren<QLabel *>())
 					if (l->property("flagDesc").toBool())
 						desc = l->text();
-				fr.append(QJsonObject{{QStringLiteral("id"), sw->property("flag").toString()}, {QStringLiteral("on"), sw->isChecked()},
-						      {QStringLiteral("description"), desc}, {QStringLiteral("visible"), sw->parentWidget()->isVisibleTo(settingsDlg_.data())}});
+				if (auto *nm = sw->parentWidget()->findChild<QLabel *>(QStringLiteral("flagName")))
+					label = nm->text();
+				for (QWidget *w = sw->parentWidget(); w && pg.isEmpty(); w = w->parentWidget())
+					pg = w->property("page").toString();
+				fr.append(QJsonObject{{QStringLiteral("id"), sw->property("flag").toString()}, {QStringLiteral("on"), sw->isChecked()}, {QStringLiteral("label"), label},
+						      {QStringLiteral("page"), pg}, {QStringLiteral("description"), sw->parentWidget()->toolTip()}, {QStringLiteral("summary"), desc},
+						      {QStringLiteral("visible"), sw->parentWidget()->isVisibleTo(settingsDlg_.data())}});
 			}
 			s.insert(QStringLiteral("flagRows"), fr);
-			auto *scroll = settingsDlg_->findChild<QScrollArea *>(QStringLiteral("settingsFlagScroll"));
-			QWidget *box = scroll ? scroll->parentWidget() : nullptr;
-			if (scroll && box) {
-				const QRect g = scroll->geometry(), inDlg(scroll->mapTo(settingsDlg_.data(), QPoint(0, 0)), scroll->size());
-				s.insert(QStringLiteral("flagList"), QJsonObject{{QStringLiteral("native"), rows->internalWinId() != 0 || scroll->internalWinId() != 0},
-										 {QStringLiteral("nativeAttr"), rows->testAttribute(Qt::WA_NativeWindow) || scroll->testAttribute(Qt::WA_NativeWindow)},
+			QGroupBox *box = nullptr;
+			for (auto *g : settingsDlg_->findChildren<QGroupBox *>(QStringLiteral("featuresCard")))
+				if (g->property("page").toString() == QStringLiteral("advanced"))
+					box = g;
+			QWidget *row = box ? box->findChild<QWidget *>(QStringLiteral("flagRow")) : nullptr;
+			if (box && row) {
+				QScrollArea *scroll = nullptr;
+				for (QWidget *w = box->parentWidget(); w && !scroll; w = w->parentWidget())
+					scroll = qobject_cast<QScrollArea *>(w);
+				const QRect g = box->geometry(), inDlg(box->mapTo(settingsDlg_.data(), QPoint(0, 0)), box->size());
+				s.insert(QStringLiteral("flagList"), QJsonObject{{QStringLiteral("native"), box->internalWinId() != 0 || row->internalWinId() != 0},
+										 {QStringLiteral("nativeAttr"), box->testAttribute(Qt::WA_NativeWindow) || row->testAttribute(Qt::WA_NativeWindow)},
 										 {QStringLiteral("x"), g.x()}, {QStringLiteral("y"), g.y()}, {QStringLiteral("w"), g.width()}, {QStringLiteral("h"), g.height()},
+										 {QStringLiteral("rowX"), row->geometry().x()}, {QStringLiteral("rowY"), row->geometry().y()},
+										 {QStringLiteral("rowW"), row->geometry().width()}, {QStringLiteral("rowH"), row->geometry().height()},
 										 {QStringLiteral("dlgX"), inDlg.x()}, {QStringLiteral("dlgY"), inDlg.y()},
-										 {QStringLiteral("insideBox"), box->contentsRect().contains(g)}, {QStringLiteral("scrollY"), scroll->verticalScrollBar()->value()},
-										 {QStringLiteral("scrollX"), scroll->horizontalScrollBar()->value()}});
+										 {QStringLiteral("insideBox"), box->contentsRect().contains(row->geometry())},
+										 {QStringLiteral("insideDialog"), settingsDlg_->rect().contains(inDlg)},
+										 {QStringLiteral("scrollY"), scroll ? scroll->verticalScrollBar()->value() : -1},
+										 {QStringLiteral("scrollX"), scroll ? scroll->horizontalScrollBar()->value() : -1}});
 			}
 		}
 		o.insert(QStringLiteral("settings"), s);
@@ -5049,10 +5139,10 @@ bool MainWindow::probeAction(const QString &action)
 		if (!settingsDlg_)
 			return false;
 		auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav"));
-		const auto found = nav ? nav->findItems(QUrl::fromPercentEncoding(p[1].toUtf8()), Qt::MatchExactly) : QList<QListWidgetItem *>();
-		if (found.isEmpty())
+		auto *found = nav ? settingsNavItem(nav, QUrl::fromPercentEncoding(p[1].toUtf8())) : nullptr;
+		if (!found)
 			return false;
-		nav->setCurrentItem(found.first());
+		nav->setCurrentItem(found);
 		return true;
 	}
 	if (p.size() >= 1 && p[0].startsWith(QStringLiteral("settings-")) && p[0] != QStringLiteral("settings-open")) {
@@ -5072,18 +5162,37 @@ bool MainWindow::probeAction(const QString &action)
 			delete settingsDlg_.data();
 			return true;
 		}
-		if (p.size() == 2 && p[0] == QStringLiteral("settings-page")) { // show a section (for the picture)
-			if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")); nav && p[1].toInt() >= 0 && p[1].toInt() < nav->count()) {
-				nav->setCurrentRow(p[1].toInt());
-				return true;
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-shot")) { // a picture of the Settings dialog into $UJWALAM_STUDIO_SETTINGS_SHOT_DIR/<name>.png (evidence only)
+			const QString dir = qEnvironmentVariable("UJWALAM_STUDIO_SETTINGS_SHOT_DIR");
+			if (dir.isEmpty())
+				return false;
+			settingsDlg_->resize(860, 720);
+			for (int pass = 0; pass < 2; pass++) {
+				QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+				for (QWidget *w : settingsDlg_->findChildren<QWidget *>())
+					if (w->layout())
+						w->layout()->activate();
+				settingsDlg_->layout()->activate();
 			}
+			settingsDlg_->grab();
+			return settingsDlg_->grab().save(QDir(dir).filePath(p[1] + QStringLiteral(".png")), "PNG");
 		}
-		if (p.size() == 2 && p[0] == QStringLiteral("settings-layer-effects")) {
-			if (auto *fx = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsLayerEffects")); fx && fx->isEnabled()) {
-				if (fx->isChecked() != (p[1] == QStringLiteral("on")))
-					fx->click(); // a click on the switch
-				return true;
-			}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-page")) { // show a page by its title (percent-encoded) or by its page index
+			auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav"));
+			if (!nav)
+				return false;
+			const QString arg = QUrl::fromPercentEncoding(p[1].toUtf8());
+			bool isIndex = false;
+			const int idx = arg.toInt(&isIndex);
+			QListWidgetItem *found = isIndex ? nullptr : settingsNavItem(nav, arg);
+			if (isIndex)
+				for (int i = 0; i < nav->count() && !found; i++)
+					if (nav->item(i)->data(Qt::UserRole).isValid() && nav->item(i)->data(Qt::UserRole).toInt() == idx)
+						found = nav->item(i);
+			if (!found)
+				return false;
+			nav->setCurrentItem(found);
+			return true;
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-record-live")) { // LC2: a click on the Record while live switch
 			if (auto *rl = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsRecordLive"))) {
@@ -5099,7 +5208,7 @@ bool MainWindow::probeAction(const QString &action)
 				return true;
 			}
 		}
-		if (p.size() == 3 && p[0] == QStringLiteral("settings-flag")) { // N2: a click on one flag's switch in Advanced
+		if (p.size() == 3 && p[0] == QStringLiteral("settings-flag")) { // N2: a click on one flag's switch (on whichever page's FEATURES card it sits)
 			for (auto *sw : settingsDlg_->findChildren<QAbstractButton *>(QStringLiteral("flagSwitch")))
 				if (sw->property("flag").toString() == p[1]) {
 					if (sw->isChecked() != (p[2] == QStringLiteral("on")))

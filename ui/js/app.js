@@ -549,7 +549,7 @@
     var readyOn = (list || []).some(function (f) { return f.id === 'readiness' && f.on; }); // D299
     $('readiness').hidden = !readyOn;
     if (!readyOn) { clear($('ready-list')); setText($('ready-summary'), ''); }
-    (list || []).forEach(function (f) {
+    (list || []).slice().sort(function (a, b) { return String(a.label || a.id).toLowerCase() < String(b.label || b.id).toLowerCase() ? -1 : 1; }).forEach(function (f) {
       var cb = el('input', { type: 'checkbox', id: 'flag-' + f.id, 'aria-label': f.id });
       cb.checked = !!f.on;
       cb.addEventListener('change', function () {
@@ -559,9 +559,10 @@
           if (r.flags) renderFlags(r.flags);
         }));
       });
-      var name = [el('span', { class: 'name', text: f.id })];
+      var name = [el('span', { class: 'name', text: f.label || f.id })];
+      if (f.summary) name.push(el('span', { class: 'muted', text: ' - ' + f.summary }));
       if (f.note) name.push(el('span', { class: 'muted', text: ' (' + f.note + ')' })); // e.g. instagram-live: applies at next start
-      ul.appendChild(el('li', { class: 'row flag-row', title: f.description }, name.concat([el('label', null, [cb])])));
+      ul.appendChild(el('li', { class: 'row flag-row', title: f.description + ' (flag: ' + f.id + ')' }, name.concat([el('label', null, [cb])])));
     });
     if (!list || !list.length) setText($('flag-note'), 'No feature flags defined.');
     else setText($('flag-note'), 'A flag switches on or off when you tick it.');

@@ -74,7 +74,7 @@ describe('Qt studio D327 pages (headless probe)', { skip }, () => {
       shot: 'stream.png', ms: 9000 });
     const d = done(r.p);
     assert.equal(d['settings-section:Stream'], true);
-    assert.ok(r.p.settings.sections.includes('Stream') && r.p.settings.sections.includes('Transitions') && r.p.settings.sections.includes('Integrations'), JSON.stringify(r.p.settings.sections));
+    assert.ok(r.p.settings.sections.includes('Stream') && r.p.settings.sections.includes('Transitions') && r.p.settings.sections.includes('Chat & bots'), JSON.stringify(r.p.settings.sections));
     assert.equal(r.p.streamPage.loaded, true);
     assert.ok(r.p.streamPage.outputs.length >= 3, JSON.stringify(r.p.streamPage.outputs));
     assert.match(r.p.streamPage.problems, /50000/, 'the limit is shown on the page');
@@ -109,11 +109,11 @@ describe('Qt studio D327 pages (headless probe)', { skip }, () => {
   });
 
   test('Settings > Integrations: Test goes to the mocked TCP check; Allow remote connections saves (off by default)', async () => {
-    const r = await probe({ actions: ['settings-open', 'settings-section:Integrations', 'int-test:streamerbot', 'settings-section:Integrations'], shot: 'integrations.png' });
+    const r = await probe({ actions: ['settings-open', 'settings-section:Chat%20%26%20bots', 'int-test:streamerbot', 'settings-section:Chat%20%26%20bots'], shot: 'integrations.png' });
     assert.equal(r.p.integrationsPage.remote, false, 'off by default');
     assert.match(r.p.integrationsPage.streamerbotStatus, /Not reachable on 127\.0\.0\.1:\d+/);
     assert.equal(r.tcpCalls.length, 1);
-    const s = await probe({ actions: ['settings-open', 'settings-section:Integrations', 'int-remote:on', 'settings-save'] });
+    const s = await probe({ actions: ['settings-open', 'settings-section:Chat%20%26%20bots', 'int-remote:on', 'settings-save'] });
     const v = JSON.parse(readFileSync(path.join(s.dataDir, 'integrations.json'), 'utf8'));
     assert.equal(v.remote.enabled, true);
     assert.equal(v.remote.address, null);

@@ -299,7 +299,7 @@ describe('SB4 generated pack in the studio (headless Qt probe)', { skip: skipQt 
     const srv = createStudioServer({ uiRoot: path.join(REPO, 'ui'), core, host, launchKey: key, dataDir, flags: createFlags({ dataDir }), bots: createFakeBots(), limits: { statusPollMs: 50 } });
     const { port } = await srv.listen();
     try {
-      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: '7000', UJWALAM_STUDIO_PROBE_ACTIONS: 'settings-open,settings-page:3,settings-specimen', UJWALAM_THEMES_DIR: themes, UJWALAM_THEME: pack.id });
+      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: '7000', UJWALAM_STUDIO_PROBE_ACTIONS: 'settings-open,settings-page:Appearance,settings-specimen', UJWALAM_THEMES_DIR: themes, UJWALAM_THEME: pack.id });
       assert.equal(r.code, 0, r.err);
       const m = /^studio probe: (.+)$/m.exec(r.out);
       assert.ok(m, `no probe line: ${r.out} ${r.err}`);

@@ -98,7 +98,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
   }
 
   test('flag off (the default): no components, no fragments, no specimen button', async () => {
-    const p = await probe({ ms: 7000, actions: 'settings-open,settings-page:3,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants' } });
+    const p = await probe({ ms: 7000, actions: 'settings-open,settings-page:Appearance,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants' } });
     assert.equal(p.theme.id, 'all-variants');
     assert.equal(p.theme.componentsOn, false);
     assert.deepEqual(p.theme.components, {}, 'a v2 pack falls back to its v1 look');
@@ -107,7 +107,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
     assert.deepEqual(p.theme.caps, { button: false, tab: false, heading: false });
     assert.equal(p.theme.pattern, 'grid', 'blueprint shows as the v1 grid');
     assert.equal(p.theme.frame, false);
-    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:3', true], ['settings-specimen', false]]);
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:Appearance', true], ['settings-specimen', false]]);
     assert.equal(p.specimen.open, false);
     assert.doesNotMatch(p.err, NO_ERRORS, p.err);
   });
@@ -176,7 +176,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
   });
 
   test('a pack using every variant: parts reported, no stylesheet errors, the specimen shows every section', async () => {
-    const p = await probe({ ms: 9000, flagOn: true, actions: 'settings-open,settings-page:3,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants' } });
+    const p = await probe({ ms: 9000, flagOn: true, actions: 'settings-open,settings-page:Appearance,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants' } });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.equal(p.theme.componentsOn, true);
     assert.ok(Object.keys(p.theme.components).length >= 14, JSON.stringify(p.theme.components));
@@ -203,7 +203,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
   });
 
   test('the flag switches live (control page): components appear and the specimen button works', async () => {
-    const p = await probe({ ms: 9000, actions: 'flag-on:theme-components,settings-open,settings-page:3,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants' } });
+    const p = await probe({ ms: 9000, actions: 'flag-on:theme-components,settings-open,settings-page:Appearance,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants' } });
     assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
     assert.equal(p.theme.componentsOn, true);
     assert.equal(p.theme.density, 1.25);
@@ -218,7 +218,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
   });
 
   test('High performance: a pack using every variant is drawn flat (no gradients, no depth effects)', async () => {
-    const p = await probe({ ms: 9000, flagOn: true, actions: 'settings-open,settings-page:3,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants', UJWALAM_EFFECTS: 'performance', UJWALAM_STUDIO_PROBE_SHOW: '1' } });
+    const p = await probe({ ms: 9000, flagOn: true, actions: 'settings-open,settings-page:Appearance,settings-specimen', env: { UJWALAM_THEMES_DIR: packs(), UJWALAM_THEME: 'all-variants', UJWALAM_EFFECTS: 'performance', UJWALAM_STUDIO_PROBE_SHOW: '1' } });
     assert.equal(p.theme.performance, true);
     assert.equal(p.theme.gradientsInStyle, false);
     assert.equal(p.theme.depthWidgets, 0);
@@ -231,7 +231,7 @@ describe('Qt studio theme components (D336, headless probe)', { skip }, () => {
       const dir = EVIDENCE ?? tmp('ujw-qtc-shot-');
       mkdirSync(dir, { recursive: true });
       const shot = path.join(dir, `specimen-copper-graphite-${Number(scale) * 100}.png`);
-      const p = await probe({ ms: 9000, flagOn: true, actions: 'settings-open,settings-page:3,settings-specimen', shot, env: { UJWALAM_THEME: 'copper-graphite', QT_SCALE_FACTOR: scale } });
+      const p = await probe({ ms: 9000, flagOn: true, actions: 'settings-open,settings-page:Appearance,settings-specimen', shot, env: { UJWALAM_THEME: 'copper-graphite', QT_SCALE_FACTOR: scale } });
       assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
       assert.equal(p.specimenShot, true);
       const file = shot.replace(/\.png$/, '-specimen.png');

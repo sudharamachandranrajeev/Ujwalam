@@ -159,7 +159,7 @@ describe('owners', () => {
     const later = Date.now() + 1100; while (Date.now() < later) { /* the definitions are checked once a second */ }
     assert.equal(f.ids().length, defs.flags.length, 'definitions kept');
     assert.ok(seen.some((e) => e.kind === 'flags-definitions' && !e.ok));
-    writeFileSync(defsFile, JSON.stringify({ flags: [...defs.flags, { id: 'lu2-test-flag', description: 'test', default: true, since: '2026-11-10' }] })); old(defsFile);
+    writeFileSync(defsFile, JSON.stringify({ flags: [...defs.flags, { id: 'lu2-test-flag', description: 'test', default: true, since: '2026-11-10', label: 'Test flag', page: 'advanced', summary: 'A test flag.' }] })); old(defsFile);
     const later2 = Date.now() + 1100; while (Date.now() < later2) { /* idem */ }
     assert.equal(f.isOn('lu2-test-flag'), true, 'new definition applied');
   });
@@ -168,7 +168,7 @@ describe('owners', () => {
     const d = tmp(); const seen = [];
     const defsFile = path.join(d, 'flags.json');
     const defs = JSON.parse(readFileSync(DEFAULT_FLAGS_FILE, 'utf8'));
-    defs.flags.push({ id: 'lu2-default-on', description: 'test', default: true, since: '2026-11-10' });
+    defs.flags.push({ id: 'lu2-default-on', description: 'test', default: true, since: '2026-11-10', label: 'Test flag', page: 'advanced', summary: 'A test flag.' });
     writeFileSync(defsFile, JSON.stringify(defs)); old(defsFile);
     const f = createFlags({ dataDir: d, definitionsFile: defsFile, report: (e) => seen.push(e) });
     const local = path.join(d, LOCAL_NAME);

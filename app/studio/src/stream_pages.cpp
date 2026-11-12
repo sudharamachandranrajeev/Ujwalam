@@ -121,8 +121,8 @@ public:
 		const QJsonObject row = conn.value(QStringLiteral("row")).toObject();
 		connect_->setEnabled(on && !row.isEmpty());
 		if (!on) {
-			connect_->setToolTip(QStringLiteral("Turn on the feature flag platform-connect (Settings > Advanced) to sign in or paste the stream key from Ujwalam."));
-			status_->setText(QStringLiteral("Sign-in and connection status need the feature flag platform-connect (Settings > Advanced). The stream key is kept in Windows Credential Manager under the name shown below."));
+			connect_->setToolTip(QStringLiteral("Turn on the feature flag platform-connect (Settings > Connections) to sign in or paste the stream key from Ujwalam."));
+			status_->setText(QStringLiteral("Sign-in and connection status need the feature flag platform-connect (Settings > Connections). The stream key is kept in Windows Credential Manager under the name shown below."));
 		} else if (row.isEmpty()) {
 			connect_->setToolTip(QStringLiteral("Save this output first (OK, then Save in Settings), then open it again to connect it."));
 			status_->setText(QStringLiteral("Not connected. Save this output first (OK, then Save in Settings), then open it again to connect it."));
