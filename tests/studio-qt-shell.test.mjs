@@ -135,7 +135,7 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     const p = await probe([]);
     const ids = JSON.parse(readFileSync(path.join(UI, '..', 'data', 'flags.json'), 'utf8')).flags.map((f) => f.id);
     assert.deepEqual(p.flags.map((f) => f.id), ids);
-    assert.ok(p.flags.every((f) => f.on === (f.id === 'preview-edit')), 'all off but preview-edit (on by default, D330)');
+    assert.ok(p.flags.every((f) => f.on === (f.id === 'preview-edit' || f.id === 'reel-thumbnail')), 'all off but preview-edit (D330) and reel-thumbnail (D368)');
     assert.deepEqual(p.shown, { structure: false, transitions: false, bots: false, report: false, posts: false, review: false });
     assert.equal(p.scenes, 3);
     assert.ok(p.layers > 0, 'the active scene\'s layers are listed');

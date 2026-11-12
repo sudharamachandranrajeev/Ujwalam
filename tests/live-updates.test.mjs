@@ -378,12 +378,13 @@ test('LU1: every packaged file has a part; release.json parts tell what changed'
   assert.deepEqual(changedParts(null, b), ['host', 'studio-window', 'services', 'overlay', 'data']);
 });
 
-test('LU7: every feature flag added since 2026-11-10 is off by default, and every flag has a since date', () => {
+test('LU7: every feature flag added since 2026-11-10 is off by default (except one the user turned on by decision), and every flag has a since date', () => {
+  const ON_BY_DECISION = ['reel-thumbnail']; // D368: the user asked for reel thumbnails on by default (2026-11-12)
   const { flags } = JSON.parse(readFileSync(path.join(REPO, 'data', 'flags.json'), 'utf8'));
   for (const f of flags) assert.match(f.since ?? '', /^\d{4}-\d{2}-\d{2}$/, `${f.id}: since must be a date`);
   const recent = flags.filter((f) => f.since >= '2026-11-10');
   assert.ok(recent.length >= 1);
-  assert.deepEqual(recent.filter((f) => f.default !== false).map((f) => f.id), [], 'on by default');
+  assert.deepEqual(recent.filter((f) => f.default !== false && !ON_BY_DECISION.includes(f.id)).map((f) => f.id), [], 'on by default');
 });
 
 
