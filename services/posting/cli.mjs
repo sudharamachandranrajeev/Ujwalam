@@ -11,9 +11,10 @@ import { fileURLToPath } from 'node:url';
 import { dataDirNote, resolveCliDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, PostingError, createPostStore, packageRun } from './index.mjs';
-import { READONLY_SCOPE, SCHEDULE_SCOPES, SCOPE, createYoutubeAuth } from './oauth.mjs';
+import { ANALYTICS_SCOPE, READONLY_SCOPE, SCOPE, createYoutubeAuth, joinScopes } from './oauth.mjs';
 import { uploadPost, UploadError } from './youtube.mjs';
 import { SCHEDULE_FLAG } from './schedule.mjs';
+import { GROWTH_FLAG } from '../analytics/index.mjs';
 import { streamOnly } from './auto-chain.mjs';
 import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, initUserRules, loadRules, planAuto, rulesFileFor, runAuto } from './auto-post.mjs';
 import { formatPreview, previewRules } from './preview.mjs';
@@ -187,13 +188,17 @@ async function youtubeMain(a, out, err, deps) {
   if (!flags.isOn(POSTING_FLAG)) { err(`posting: the '${POSTING_FLAG}' feature flag is off (switch it on from the control page)`); return EXIT_FLAG_OFF; }
   // post-schedule on: also ask for read access, to see the channel's scheduled posts (D310 proposed).
   const scheduled = flags.isOn(SCHEDULE_FLAG);
-  const auth = (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen, scope: scheduled ? SCHEDULE_SCOPES : SCOPE });
+  // growth on: also ask to read the channel's analytics and each video's public state (AN1, D371).
+  const growth = flags.isOn(GROWTH_FLAG);
+  const scope = joinScopes(SCOPE, (scheduled || growth) && READONLY_SCOPE, growth && ANALYTICS_SCOPE);
+  const auth = (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen, scope });
   const sub = a._[1];
   try {
     if (sub === 'signin') {
       const r = await auth.signIn();
       out(`youtube: signed in (scope: ${r.scope})`);
       if (scheduled && !String(r.scope ?? '').split(/\s+/).includes(READONLY_SCOPE)) out('youtube: reading scheduled posts was not allowed, so scheduled posting waits; sign in again and allow it');
+      if (growth && !String(r.scope ?? '').split(/\s+/).includes(ANALYTICS_SCOPE)) out('youtube: reading statistics was not allowed, so the Growth section waits; sign in again and allow it');
       return 0;
     }
     if (sub === 'status') { const s = await auth.status(); out(`youtube: signed in: ${s.signedIn}, OAuth client set: ${s.hasClient}`); return 0; }
