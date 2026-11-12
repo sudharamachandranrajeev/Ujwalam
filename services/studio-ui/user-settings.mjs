@@ -15,6 +15,9 @@
 //   clips.reelHooks: open each reel type with its best moment, and the teaser length (ED1, D352; defaults, strategies
 //                    and the 1-3 s range in data/clip/reel-hook.json, read by services/clip/reel_hook.py):
 //                    { <type>: { on, teaserSec } }, only the types the user changed. Used while the reel-hook flag is on.
+//   clips.reelTransition: the join between the pieces of a reel (RP1; kinds and the length range in
+//                         data/clip/transitions.json, read by services/clip/reel_transition.py): { kind, ms }.
+//                         Absent = the default kind. Used while the reel-transitions flag is on.
 //   folders.recordings: where recordings are saved (used from the next start); null = <host data>/recordings
 //   folders.clips: where finished clips are saved; null = <dataDir>/clips
 //   ui.motion (D290), ui.guide (D294 proposed): see the blocks below
@@ -156,6 +159,45 @@ function mergeReelHooks(cur, patch) {
 }
 // ---- reel hook end
 
+// ---- reel transition (RP1) begin: clips.reelTransition checks and read; also marked "reel transition" in
+// readSettings, settingsProblems and writeSettings. Same rules as services/clip/reel_transition.py transition_problems().
+export const REEL_TRANSITION_FILE = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'clip', 'transitions.json');
+let transitionDefaultsCache = null;
+/** { flag, default, kinds: [{ id, label, about, ms: { min, max, default } | null }] } from data/clip/transitions.json, or null. */
+export function transitionDefaults(file = REEL_TRANSITION_FILE) {
+  if (file === REEL_TRANSITION_FILE && transitionDefaultsCache) return transitionDefaultsCache;
+  try {
+    const j = JSON.parse(readFileSync(file, 'utf8'));
+    const d = { flag: String(j.flag), default: String(j.default), kinds: j.kinds.map((k) => ({ id: String(k.id), label: String(k.label ?? k.id), about: String(k.about ?? ''),
+      ms: k.ms ? { min: Number(k.ms.min), max: Number(k.ms.max), default: Number(k.ms.default) } : null })) };
+    if (!d.kinds.some((k) => k.id === d.default) || d.kinds.some((k) => k.ms && !(k.ms.min > 0 && k.ms.min <= k.ms.default && k.ms.default <= k.ms.max))) return null;
+    if (file === REEL_TRANSITION_FILE) transitionDefaultsCache = d;
+    return d;
+  } catch { return null; }
+}
+
+/** Problems with a clips.reelTransition value { kind, ms }; [] when fine. */
+export function reelTransitionProblems(v, d = transitionDefaults()) {
+  if (!d) return ['reel transitions are not available (data/clip/transitions.json is missing)'];
+  if (!v || typeof v !== 'object' || Array.isArray(v) || Object.keys(v).sort().join() !== 'kind,ms') return ['clips.reelTransition needs kind and ms'];
+  const k = d.kinds.find((x) => x.id === v.kind);
+  if (!k) return [`clips.reelTransition.kind must be one of ${d.kinds.map((x) => x.id).join(', ')}`];
+  if (k.ms && (!isNum(v.ms) || v.ms < k.ms.min || v.ms > k.ms.max)) return [`clips.reelTransition.ms must be ${k.ms.min}-${k.ms.max}`];
+  return [];
+}
+
+const readReelTransition = (v) => (v !== undefined && reelTransitionProblems(v).length === 0 ? { kind: v.kind, ms: v.ms } : null);
+
+/** Defaults + the user's choice, for the Settings page: { flag, kind, ms, kinds }, or null when the defaults file is unreadable. */
+export function reelTransitionInfo(dataDir) {
+  const d = transitionDefaults();
+  if (!d) return null;
+  const k = d.kinds.find((x) => x.id === d.default);
+  const mine = readReelTransition(readSettings(dataDir).clips.reelTransition);
+  return { flag: d.flag, kinds: d.kinds, kind: mine?.kind ?? k.id, ms: mine?.ms ?? k.ms?.default ?? 0 };
+}
+// ---- reel transition end
+
 // ---- match gate (D286 proposed) begin: clips.matchGate checks and read; also one line each in DEFAULTS,
 // readSettings, settingsProblems and writeSettings, marked "match gate"
 const okMinKills = (v) => v === null || (Number.isInteger(v) && v >= MIN_KILLS.min && v <= MIN_KILLS.max);
@@ -289,7 +331,8 @@ export function readSettings(dataDir) {
     clips: { recording: mode(c.recording, DEFAULTS.clips.recording), live: mode(c.live, DEFAULTS.clips.live),
       recordLive: typeof c.recordLive === 'boolean' ? c.recordLive : DEFAULTS.clips.recordLive, matchGate: readMatchGate(c.matchGate),
       ...(Object.keys(readReelLengths(c.reelLengths)).length ? { reelLengths: readReelLengths(c.reelLengths) } : {}), // reel length
-      ...(Object.keys(readReelHooks(c.reelHooks)).length ? { reelHooks: readReelHooks(c.reelHooks) } : {}) }, // reel hook
+      ...(Object.keys(readReelHooks(c.reelHooks)).length ? { reelHooks: readReelHooks(c.reelHooks) } : {}), // reel hook
+      ...(readReelTransition(c.reelTransition) ? { reelTransition: readReelTransition(c.reelTransition) } : {}) }, // reel transition
     folders: { recordings: dir(f.recordings), clips: dir(f.clips) },
     ...uiRead(j), // D290
   };
@@ -306,6 +349,7 @@ export function settingsProblems(patch, { forbidden = [] } = {}) {
     if (k === 'matchGate') out.push(...matchGateProblems(v)); // match gate
     else if (k === 'reelLengths') out.push(...reelLengthProblems(v)); // reel length
     else if (k === 'reelHooks') out.push(...reelHookProblems(v)); // reel hook
+    else if (k === 'reelTransition') out.push(...reelTransitionProblems(v)); // reel transition
     else if (k === 'recordLive') { if (typeof v !== 'boolean') out.push('clips.recordLive must be true or false'); } // LC2
     else if (!['recording', 'live'].includes(k)) out.push(`unknown clip setting ${k}`);
     else if (!CLIP_MODES.includes(v)) out.push(`clips.${k} must be one of ${CLIP_MODES.join(', ')}`);

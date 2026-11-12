@@ -4208,6 +4208,68 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			});
 			pc->addWidget(hookBox);
 		}
+		// Reel transition (RP1): the join between the pieces of a reel, Cut or Cross fade with its length. Used while
+		// the reel-transitions flag is on (data/clip/transitions.json holds the kinds and the length range).
+		QComboBox *transKind = nullptr;
+		QSpinBox *transMs = nullptr;
+		QString transKindStart;
+		int transMsStart = 0;
+		const QJsonObject transInfo = b.value(QStringLiteral("reelTransition")).toObject();
+		if (!transInfo.value(QStringLiteral("kinds")).toArray().isEmpty()) {
+			auto *trBox = new QGroupBox(QStringLiteral("REEL TRANSITION"), dlg);
+			auto *tv = new QVBoxLayout(trBox);
+			theme::space(tv, 8);
+			auto *trNote = new QLabel(QStringLiteral("How one piece of a reel joins the next. A cross fade overlaps the two pieces, so each join makes the reel that much shorter. A reel with burned-in captions keeps the cut. Works while the Reel transitions switch (reel-transitions) is on."), trBox);
+			trNote->setObjectName(QStringLiteral("muted"));
+			trNote->setWordWrap(true);
+			tv->addWidget(trNote);
+			auto *tf = new QFormLayout();
+			tf->setVerticalSpacing(10);
+			transKind = new QComboBox(trBox);
+			transKind->setObjectName(QStringLiteral("settingsTransKind"));
+			transKind->setAccessibleName(QStringLiteral("Transition between pieces"));
+			transMs = new QSpinBox(trBox);
+			transMs->setObjectName(QStringLiteral("settingsTransMs"));
+			transMs->setAccessibleName(QStringLiteral("Transition length"));
+			transMs->setSuffix(QStringLiteral(" ms"));
+			transMs->setSingleStep(50);
+			for (const QJsonValue &kv : transInfo.value(QStringLiteral("kinds")).toArray()) {
+				const QJsonObject k = kv.toObject();
+				transKind->addItem(k.value(QStringLiteral("label")).toString(), k.value(QStringLiteral("id")).toString());
+				transKind->setItemData(transKind->count() - 1, k.value(QStringLiteral("about")).toString(), Qt::ToolTipRole);
+				transKind->setItemData(transKind->count() - 1, k.value(QStringLiteral("ms")).toObject(), Qt::UserRole + 1);
+			}
+			transKindStart = transInfo.value(QStringLiteral("kind")).toString();
+			transMsStart = transInfo.value(QStringLiteral("ms")).toInt();
+			// the length box follows the kind: its range, or greyed out for a kind without a length (Cut)
+			const auto applyKind = [transKind, transMs]() {
+				const QJsonObject r = transKind->currentData(Qt::UserRole + 1).toJsonObject();
+				transMs->setEnabled(!r.isEmpty());
+				if (!r.isEmpty())
+					transMs->setRange(r.value(QStringLiteral("min")).toInt(), r.value(QStringLiteral("max")).toInt());
+			};
+			transKind->setCurrentIndex(std::max(0, transKind->findData(transKindStart)));
+			applyKind();
+			if (transMs->isEnabled())
+				transMs->setValue(transMsStart);
+			connect(transKind, &QComboBox::currentIndexChanged, dlg, [transKind, transMs, applyKind]() {
+				applyKind();
+				const QJsonObject r = transKind->currentData(Qt::UserRole + 1).toJsonObject();
+				if (!r.isEmpty())
+					transMs->setValue(r.value(QStringLiteral("default")).toInt());
+			});
+			auto *trRow = new QWidget(trBox);
+			auto *trh = new QHBoxLayout(trRow);
+			trh->setContentsMargins(0, 0, 0, 0);
+			theme::space(trh, 8);
+			trh->addWidget(transKind);
+			trh->addWidget(new QLabel(QStringLiteral("Length"), trRow));
+			trh->addWidget(transMs);
+			trh->addStretch(1);
+			tf->addRow(QStringLiteral("Transition between pieces"), trRow);
+			tv->addLayout(tf);
+			pc->addWidget(trBox);
+		}
 		pc->addStretch(1);
 
 		// Folders
@@ -4395,7 +4457,7 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			if (const auto found = nav->findItems(startPage, Qt::MatchExactly); !found.isEmpty())
 				nav->setCurrentItem(found.first());
 		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
-		dlg->save = [this, dlg, nav, reelRows, hookRows]() {
+		dlg->save = [this, dlg, nav, reelRows, hookRows, transKind, transMs, transKindStart, transMsStart]() {
 			for (const ReelRow &r : *reelRows)
 				if (r.lo->value() > r.hi->value()) {
 					if (const auto found = nav->findItems(QStringLiteral("Clips"), Qt::MatchExactly); !found.isEmpty())
@@ -4490,6 +4552,12 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 					hookBody.insert(r.id, QJsonObject{{QStringLiteral("on"), r.on->isChecked()}, {QStringLiteral("teaserSec"), r.sec->value()}});
 			if (!hookBody.isEmpty())
 				clipsBody.insert(QStringLiteral("reelHooks"), hookBody);
+			if (transKind) { // RP1: sent only when it changed (an older server refuses the key)
+				const QString k = transKind->currentData().toString();
+				const int ms = transMs->isEnabled() ? transMs->value() : 0;
+				if (k != transKindStart || ms != (transMs->isEnabled() ? transMsStart : 0))
+					clipsBody.insert(QStringLiteral("reelTransition"), QJsonObject{{QStringLiteral("kind"), k}, {QStringLiteral("ms"), ms}});
+			}
 			body.insert(QStringLiteral("clips"), clipsBody);
 			body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
 			const QString motionNew = appear->motion();
@@ -4753,6 +4821,12 @@ QJsonObject MainWindow::probe() const
 				}
 			if (!hooks.isEmpty())
 				s.insert(QStringLiteral("reelHooks"), hooks);
+		}
+		if (auto *tk = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsTransKind"))) { // RP1
+			auto *tm = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("settingsTransMs"));
+			s.insert(QStringLiteral("reelTransition"), QJsonObject{{QStringLiteral("kind"), tk->currentData().toString()}, {QStringLiteral("label"), tk->currentText()},
+									      {QStringLiteral("ms"), tm ? tm->value() : -1}, {QStringLiteral("msEnabled"), tm && tm->isEnabled()},
+									      {QStringLiteral("min"), tm ? tm->minimum() : -1}, {QStringLiteral("max"), tm ? tm->maximum() : -1}});
 		}
 		if (auto *sn = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsSnap"))) { // D335 F10
 			auto *snText = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsSnapText"));
@@ -5078,6 +5152,16 @@ bool MainWindow::probeAction(const QString &action)
 			if (on && sec) {
 				on->setChecked(p[2] == QStringLiteral("1"));
 				sec->setValue(p[3].toInt());
+				return true;
+			}
+		}
+		if (p.size() == 3 && p[0] == QStringLiteral("settings-transition")) { // RP1: settings-transition:<kind>:<ms>
+			auto *kind = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsTransKind"));
+			auto *ms = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("settingsTransMs"));
+			if (kind && ms && kind->findData(p[1]) >= 0) {
+				kind->setCurrentIndex(kind->findData(p[1]));
+				if (ms->isEnabled())
+					ms->setValue(p[2].toInt());
 				return true;
 			}
 		}

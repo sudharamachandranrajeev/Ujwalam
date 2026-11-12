@@ -446,6 +446,15 @@ describe('Qt studio shell panels (headless probe)', { skip }, () => {
     assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:0', true], ['settings-hook:match-reel:0:3', true], ['settings-save', true]]);
     assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).clips.reelHooks, { 'match-reel': { on: false, teaserSec: 3 } });
   });
+  test('Settings > Clips (RP1): Transition between pieces shows Cross fade 250 ms (150-500); Save sends the choice; Cut saves no length', async () => {
+    const q = await probe([], 8000, 'settings-open,settings-page:0');
+    assert.deepEqual(q.settings.reelTransition, { kind: 'fade', label: 'Cross fade', ms: 250, msEnabled: true, min: 150, max: 500 });
+    const p = await probe([], 9000, 'settings-open,settings-page:0,settings-transition:fade:400,settings-save');
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:0', true], ['settings-transition:fade:400', true], ['settings-save', true]]);
+    assert.deepEqual(JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8')).clips.reelTransition, { kind: 'fade', ms: 400 });
+    const c = await probe([], 9000, 'settings-open,settings-page:0,settings-transition:cut:0,settings-save');
+    assert.deepEqual(JSON.parse(readFileSync(path.join(c.dataDir, 'settings.json'), 'utf8')).clips.reelTransition, { kind: 'cut', ms: 0 });
+  });
   test('Settings > Clips (LC2, D334 proposed): Record while live is a switch row with its explanation, on by default; off is saved at Save', async () => {
     const p = await probe([], 7000, 'settings-open,settings-page:0');
     assert.deepEqual(p.settings.recordLive, { on: true, text: 'Record while live', visible: true,

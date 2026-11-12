@@ -404,8 +404,17 @@ def plan_story_montages(hits, ranking, cfg, duration, matches, avoid=()):
     return sorted(out, key=lambda m: (-m["score"], -m["kills"]))
 
 
+def crossfade_sec(pieces, transition):
+    """RP1: the overlap of each join in seconds, or 0.0 for a hard cut. transition: {"xfade": ffmpeg kind, "ms"} or
+    None/cut. Never more than half the shortest piece (xfade needs the overlap inside both pieces)."""
+    if not transition or not transition.get("xfade") or len(pieces) < 2:
+        return 0.0
+    shortest = min(p["end"] - p["start"] for p in pieces)
+    return round(min(float(transition["ms"]) / 1000.0, shortest / 2.0), 3)
+
+
 def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, out_name, threads=4, audio_tracks=1, max_sec=None,
-                captions=None, fontsdir=None):
+                captions=None, fontsdir=None, transition=None):
     """One ffmpeg run: each piece is its own input (-ss/-t, exact because it is re-encoded), scaled into the frame,
     audio faded in and out by fade_ms (no pop at a hard cut), then concatenated. Every audio track of the source
     (audio_tracks) is kept as its own track, in source order (track 1 = the studio mix); none is dropped or remixed.
@@ -418,21 +427,41 @@ def render_argv(ffmpeg, src, pieces, frame, encoder_args, audio_args, fade_ms, o
     for p in pieces:
         argv += ["-ss", f"{p['start']:.3f}", "-t", f"{p['end'] - p['start']:.3f}", "-i", src]
     parts = []
+    xd = crossfade_sec(pieces, transition)
     for i, p in enumerate(pieces):
         d = p["end"] - p["start"]
         parts.append(f"[{i}:v]scale={ow}:{oh}:force_original_aspect_ratio=decrease:flags=lanczos,"
                      f"pad={ow}:{oh}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=60,format=yuv420p,setpts=PTS-STARTPTS[v{i}]")
+        # hard cut: every piece fades in and out (no pop); crossfade: only the reel's own start and end (the joins
+        # are the acrossfade)
+        af = ["aresample=48000", "asetpts=PTS-STARTPTS"]
+        if not xd or i == 0:
+            af.append(f"afade=t=in:d={fd:.3f}")
+        if not xd or i == len(pieces) - 1:
+            af.append(f"afade=t=out:st={max(0.0, d - fd):.3f}:d={fd:.3f}")
         for k in range(audio_tracks):
-            parts.append(f"[{i}:a:{k}]aresample=48000,asetpts=PTS-STARTPTS,afade=t=in:d={fd:.3f},"
-                         f"afade=t=out:st={max(0.0, d - fd):.3f}:d={fd:.3f}[a{i}_{k}]")
-    ins = "".join(f"[v{i}]" + "".join(f"[a{i}_{k}]" for k in range(audio_tracks)) for i in range(len(pieces)))
-    outs = ("[vcat]" if captions else "[vout]") + "".join(f"[aout{k}]" for k in range(audio_tracks))
-    parts.append(ins + f"concat=n={len(pieces)}:v=1:a={audio_tracks}{outs}")
+            parts.append(f"[{i}:a:{k}]{','.join(af)}[a{i}_{k}]")
+    vlast = "[vcat]" if captions else "[vout]"
+    if xd:  # RP1: each join overlaps the pieces by xd seconds (picture xfade, audio acrossfade per track)
+        n, acc = len(pieces), 0.0
+        for i in range(1, n):
+            acc += pieces[i - 1]["end"] - pieces[i - 1]["start"]
+            vin = "[v0]" if i == 1 else f"[vx{i - 1}]"
+            vout = vlast if i == n - 1 else f"[vx{i}]"
+            parts.append(f"{vin}[v{i}]xfade=transition={transition['xfade']}:duration={xd:.3f}:offset={acc - i * xd:.3f}{vout}")
+            for k in range(audio_tracks):
+                ain = f"[a0_{k}]" if i == 1 else f"[ax{i - 1}_{k}]"
+                aout = f"[aout{k}]" if i == n - 1 else f"[ax{i}_{k}]"
+                parts.append(f"{ain}[a{i}_{k}]acrossfade=d={xd:.3f}:c1=tri:c2=tri{aout}")
+    else:
+        ins = "".join(f"[v{i}]" + "".join(f"[a{i}_{k}]" for k in range(audio_tracks)) for i in range(len(pieces)))
+        outs = vlast + "".join(f"[aout{k}]" for k in range(audio_tracks))
+        parts.append(ins + f"concat=n={len(pieces)}:v=1:a={audio_tracks}{outs}")
     if captions:
         parts.append(f"[vcat]subtitles={captions}" + (f":fontsdir={fontsdir}" if fontsdir else "") + "[vout]")
     maps = ["-map", "[vout]"] + [x for k in range(audio_tracks) for x in ("-map", f"[aout{k}]")]
-    # CL1 (D350): nothing here adds time (no transition, pad, crossfade or hold: a hard concat, fades inside the pieces);
-    # the fps filter can round a piece by up to one frame, so the output is also cut at the type's maximum.
+    # CL1 (D350): nothing here adds time (no pad or hold; a crossfade only shortens: each join overlaps by xd); the fps
+    # filter can round a piece by up to one frame, so the output is also cut at the type's maximum.
     cap = ["-t", f"{float(max_sec):.3f}"] if max_sec else []
     argv += ["-filter_complex", ";".join(parts), *maps, *encoder_args, *(audio_args if audio_tracks else ["-an"]), *cap,
              "-movflags", "+faststart", "-f", "mp4", out_name]

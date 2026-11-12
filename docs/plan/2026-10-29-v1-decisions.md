@@ -1755,3 +1755,9 @@ Growth plan ED2. Decided:
 
 - **Decision.** Every reel (short, montage, match reel) starts with one frame that acts as its thumbnail and is edited to show what the reel is about: the strongest moment of the reel as the picture, a short title from the reel's own facts (kind, kill count, medal), cleanly cropped for the platform frame. Made on the laptop only (ffmpeg plus the existing local OCR/detector data; no cloud service, no paid API). Plan RP6.
 - **Why.** The user: "for each reel, there needs be a start frame which will need to act as the thumbnail, just 1 frame, this should be edited in a way to showcase what's the reel is about".
+
+## D367 — Reel transitions: Cut or a 250 ms cross fade, captions keep the cut (agent, 2026-11-12)
+
+- **Decision.** The join between the pieces of a reel is a setting (Settings > Clips, `clips.reelTransition`): Cut, or Cross fade (ffmpeg `xfade=fade` with `acrossfade`), default 250 ms, range 150–500 ms, never more than half the shortest piece. A reel with burned-in captions keeps the cut for now (the caption times follow the sum of the pieces). Behind flag `reel-transitions`, off by default. Plan RP1.
+- **Why.** The user asked for a subtle cross fade as the first transition (2026-11-11); 250 ms is short enough to stay subtle and long enough to see. Each join makes the reel shorter by the overlap, which is recorded (`end`, `belowMin`).
+- **Status.** Length proposed; evidence `docs/evidence/2026-11-12-rp1-reel-transitions.md`; the user confirms after watching reels made with the flag on.
