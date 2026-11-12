@@ -15,8 +15,21 @@
   "audioFadeMs": 80,
   "killDetectors": [
     "M5",
-    "B1"
+    "B1",
+    "B2:ELIMINATED"
   ],
+  "actionDetectors": [
+    "B2:KNOCKED DOWN"
+  ],
+  "chainGapSecByMode": {
+    "br": 30.0
+  },
+  "cl2": {
+    "status": "proposed",
+    "by": "agent 2026-11-12 (triage F2, user: 'there was 2 kills before that which was not captured ... then it's boring long footage of streamer just running through the map')",
+    "evidence": "session 2026-11-11 21:10 (BR match 1): B1 kill feed read no own kill in 300 hits (own name cut off in the V cutout); the own HUD text B2 read KNOCKED DOWN at 555, 561, 580 s and ELIMINATED at 560, 581 s (signal true), the 3X MULTI-KILL medal at 582 s; the medal's kills spanned 555-582 s (27 s), more than chainGapSec 12. 21 B2 hits in the session, all BR.",
+    "values": "B2:ELIMINATED counts as an own kill; B2:KNOCKED DOWN is an action (shown, not counted); chain gap 30 s in BR (above the 21-27 s seen), 12 s elsewhere"
+  },
   "medalLeadSec": 0.5,
   "medalMatchSec": 3.0,
   "notes": {

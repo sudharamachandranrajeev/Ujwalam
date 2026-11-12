@@ -179,7 +179,7 @@ def audio_loudness(ffmpeg, path, duration, floor):
 # ---------------------------------------------------------------- detector hits (seam)
 
 def read_hits(path, duration):
-    """Detector hits jsonl {t, detector, label?, signal?, role?, clipReason?, weight?} written by the post-stream
+    """Detector hits jsonl {t, detector, label?, signal?, role?, clipReason?, weight?, mode?} written by the post-stream
     detector pass (detector_pass.py; every detector still unverified). The optional fields are kept only when
     present and well typed; they feed clip_rank.detector_weight."""
     if not path:
@@ -205,6 +205,8 @@ def read_hits(path, duration):
                         h[k] = r[k]
                 if r.get("role") in ("positive", "negative"):
                     h["role"] = r["role"]
+                if isinstance(r.get("mode"), str) and r["mode"]:  # game mode of the frame (montage gaps per mode, CL2)
+                    h["mode"] = r["mode"][:16]
                 te = r.get("tEnd")
                 if isinstance(te, (int, float)) and not isinstance(te, bool) and t <= te <= duration:
                     h["tEnd"] = float(te)

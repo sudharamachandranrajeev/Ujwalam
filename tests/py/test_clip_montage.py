@@ -37,6 +37,17 @@ def streak(t0, n=3, step=5):
     return hs + [medal(t0 + 2 * step + 0.5)]
 
 
+def b2(t, label):
+    return {"t": float(t), "detector": "B2", "label": label, "signal": True, "role": "positive", "mode": "br"}
+
+
+def br_chain():
+    """The BR hits of the 2026-11-11 session around its 3X short (triage F2), seconds into the recording."""
+    return [b2(555, "KNOCKED DOWN"), b2(560, "ELIMINATED"), b2(561, "KNOCKED DOWN"), b2(580, "KNOCKED DOWN"),
+            b2(581, "ELIMINATED"),
+            {"t": 582.0, "detector": "X1", "label": "3X MULTI-KILL", "signal": True, "role": "positive", "mode": "br"}]
+
+
 class MontageTests(unittest.TestCase):
     def test_config_user_values(self):
         self.assertEqual((CFG["preSec"], CFG["postSec"], CFG["audioFadeMs"]), (3.0, 1.5, 80))
@@ -132,6 +143,42 @@ class MontageTests(unittest.TestCase):
         sts, _ = mont.streaks(hits, RANKING, CFG)
         self.assertEqual(len(sts[0]["kills"]), 4)
 
+    def test_br_own_hud_kills_and_knocks_chain_into_one_group(self):
+        # CL2 (triage F2): the 2026-11-11 BR short. B1 read no own kill; B2 (own HUD) read the knocks and kills; the
+        # 3X medal's kills spanned 555-582 s, more than the 12 s MP chain gap
+        gs, _ = mont.groups(br_chain(), RANKING, CFG)
+        self.assertEqual(len(gs), 1)
+        self.assertEqual(gs[0]["kills"], [560.0, 581.0], "ELIMINATED counts, the medal is covered by the 581 kill")
+        self.assertEqual(gs[0]["actions"], [555.0, 561.0, 580.0], "knocks are shown, not counted")
+        self.assertTrue(gs[0]["streak"])
+
+    def test_br_gap_does_not_change_multiplayer(self):
+        hits = [dict(kill(100), mode="mp"), dict(kill(120), mode="mp")]  # 20 s apart: two groups in MP
+        self.assertEqual(len(mont.groups(hits, RANKING, CFG)[0]), 2)
+
+    def test_a_knock_alone_is_no_kill_group(self):
+        self.assertEqual(mont.groups([b2(300, "KNOCKED DOWN")], RANKING, CFG)[0], [])
+
+    def test_live_clip_recut_keeps_the_earlier_kills_and_cuts_the_running(self):
+        # the live window was 567-587 s (17 s before the medal): it missed 555-561 and kept 567-580 of running
+        gs, deaths = mont.groups(br_chain(), RANKING, CFG)
+        ps = mont.live_clip_pieces(mont.groups_in(gs, 567.0, 587.0), deaths, RANKING, CFG, 20.0, lo=538.0, hi=598.0)
+        # knock 555 + kill 560 + knock 561 = 552-562.5; knock 580 + kill 581 = 577-582.5; 16 s, so 4 s earlier
+        self.assertEqual([(p["start"], p["end"]) for p in ps], [(548.0, 562.5), (577.0, 582.5)])
+        self.assertEqual(sum(p["kills"] for p in ps), 2)
+        self.assertAlmostEqual(sum(p["end"] - p["start"] for p in ps), 20.0)
+
+    def test_live_clip_recut_stays_inside_the_save_and_before_a_death(self):
+        gs, deaths = mont.groups(br_chain() + [death(590.0)], RANKING, CFG)
+        ps = mont.live_clip_pieces(mont.groups_in(gs, 567.0, 587.0), deaths, RANKING, CFG, 40.0, lo=552.0, hi=598.0)
+        self.assertEqual(ps[0]["start"], 552.0, "never before the save file starts")
+        self.assertLessEqual(ps[-1]["end"], 590.0 - RANKING["death"]["endBeforeSec"])
+
+    def test_live_clip_without_a_group_keeps_its_window(self):
+        gs, deaths = mont.groups(br_chain(), RANKING, CFG)
+        self.assertEqual(mont.groups_in(gs, 900.0, 920.0), [])
+        self.assertEqual(mont.live_clip_pieces([], deaths, RANKING, CFG, 20.0), [])
+
     def test_render_argv_keeps_every_audio_track(self):
         pieces = [{"start": 10.0, "end": 14.5, "kills": 1}, {"start": 30.0, "end": 34.5, "kills": 1}]
         argv = mont.render_argv("ffmpeg", "v.mkv", pieces, {"width": 1080, "height": 1920}, ["-c:v", "x"],
@@ -197,6 +244,54 @@ class MatchReelTests(unittest.TestCase):
     def test_reel_ends_at_the_recording_end(self):
         r = reels([kill(355), result(358)], {358: 1}, duration=359.0)[0]
         self.assertEqual(r["pieces"], [{"start": 352.0, "end": 356.5, "kills": 1}, {"start": 357.5, "end": 359.0, "kills": 0}])
+
+class LiveRecutTests(unittest.TestCase):
+    """CL2 in live-review (clipper._retime_live_clips): the recording's hits re-cut the live clips."""
+
+    def test_live_clips_are_recut_and_two_clips_of_one_chain_become_one(self):
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        import clipper
+        with tempfile.TemporaryDirectory() as d:
+            rec = os.path.join(d, "rec.mkv")
+            open(rec, "wb").close()
+            with open(os.path.join(d, "detector-hits.jsonl"), "w", encoding="utf-8") as f:
+                f.write("".join(json.dumps(h) + "\n" for h in br_chain()))
+            with open(os.path.join(d, "detector-pass.json"), "w", encoding="utf-8") as f:
+                json.dump({"recording": "rec.mkv", "duration": 3000}, f)
+            mpath = os.path.join(d, "matches.json")
+            with open(mpath, "w", encoding="utf-8") as f:
+                json.dump({"recordStartUtc": "2026-11-11T21:10:46.000Z", "duration": 3000, "matches": []}, f)
+            t0 = 1794431446.0  # 2026-11-11T21:10:46Z
+            clips = [  # the 3X save (window 567-587 s) and a later save whose window holds the same chain's end
+                {"id": "L01", "file": "v1", "start": 29.23, "end": 49.23, "wallStart": t0 + 567.2, "labels": ["3X MULTI-KILL"],
+                 "reasons": ["a"], "score": 5, "anchor": 44.0},
+                {"id": "L02", "file": "v2", "start": 10.0, "end": 25.0, "wallStart": t0 + 575.0, "labels": ["Other"],
+                 "reasons": ["b"], "score": 3},
+            ]
+            a = SimpleNamespace(recording=rec, out=d, ranking=None, montage_config=None)
+            self.assertEqual(clipper._retime_live_clips(a, clips, mpath, {"v1": 60.0, "v2": 60.0}), 1)
+            self.assertEqual([c["id"] for c in clips], ["L01"], "the same kills are not cut twice")
+            (c,) = clips
+            off = 567.2 - 29.23
+            self.assertEqual([(round(p["start"] + off, 2), round(p["end"] + off, 2)) for p in c["pieces"]],
+                             [(548.0, 562.5), (577.0, 582.5)])
+            self.assertEqual(c["labels"], ["3X MULTI-KILL", "Other"])
+            self.assertTrue(c["retimed"])
+            self.assertTrue(c["start"] <= c["anchor"] <= c["end"])
+            # the earlier save ends at 570 s (before the chain's last kill): the later save that holds it all wins
+            clips = [
+                {"id": "L01", "file": "v1", "start": 20.0, "end": 29.0, "wallStart": t0 + 560.0, "labels": ["A"],
+                 "reasons": ["a"], "score": 5},
+                {"id": "L02", "file": "v2", "start": 30.0, "end": 45.0, "wallStart": t0 + 575.0, "labels": ["B"],
+                 "reasons": ["b"], "score": 3},
+            ]
+            self.assertEqual(clipper._retime_live_clips(a, clips, mpath, {"v1": 30.0, "v2": 60.0}), 1)
+            (c,) = clips
+            self.assertEqual((c["id"], c["labels"]), ("L02", ["B", "A"]))
+            self.assertEqual([(round(p["start"] + 545.0, 2), round(p["end"] + 545.0, 2)) for p in c["pieces"]],
+                             [(548.0, 562.5), (577.0, 582.5)])
 
 
 if __name__ == "__main__":

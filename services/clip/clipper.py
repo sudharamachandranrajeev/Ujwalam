@@ -637,6 +637,9 @@ def cmd_live_review(a):
             if str(fl.get("canvas", "")).lower() == "v" and p and p not in infos and os.path.isfile(p):
                 infos[p] = media_info(ffprobe, p)
     clips = merge_saves(rows, {p: i["duration"] for p, i in infos.items()})
+    retimed = _retime_live_clips(a, clips, matches_path, {p: i["duration"] for p, i in infos.items()})
+    if retimed:
+        print(f"live-review: {retimed} clip(s) re-cut to the recording's kills (dead time between them cut)")
     lay_doc = load_config("layouts", a.layouts_file)
     frame = lay_doc["output"]
     by_id = {x["id"]: x for x in lay_doc["layouts"]}
@@ -659,7 +662,8 @@ def cmd_live_review(a):
         sinfo = infos[c["file"]]
         # the canvas layout renders through the pieces path when a teaser opens the clip or captions are on; a save
         # without audio renders picture only there, so a planned teaser is always what is rendered (and recorded)
-        pieces_path = bool(m["hook"].get("teaser")) or (ex["cap_on"] and bool(sinfo.get("has_audio")))
+        pieces_path = (bool(m["hook"].get("teaser")) or (ex["cap_on"] and bool(sinfo.get("has_audio")))
+                       or len(m["pieces"]) > 1)  # CL2: a re-cut clip with its dead time removed
         if pieces_path and sinfo.get("has_audio"):
             ass, fdir, cinfo = _caption_reel(ffmpeg, c["file"], m["pieces"], frame, wd, ex, m["seconds"])
         else:
@@ -688,7 +692,7 @@ def cmd_live_review(a):
         out_rows.append({"id": c["id"], "start": c["start"], "end": c["end"], "wallStart": c["wallStart"],
                          "source": os.path.basename(c["file"]), "sourcePath": c["file"],
                          "score": c["score"], "labels": c["labels"], "reasons": c["reasons"],
-                         **({"pieces": m["pieces"]} if pieces_path else {}),
+                         **({"pieces": m["pieces"]} if pieces_path else {}), "retimed": bool(c.get("retimed")),
                          "captions": cinfo, "hook": hook, "files": files, "errors": errors})
         progress_line("review", n, len(clips), f"clip {c['id']} {'failed' if errors else 'done'}")
     write_json_atomic(os.path.join(a.out, RENDER), {
@@ -719,12 +723,80 @@ def cmd_live_review(a):
     return 0  # a montage outcome never changes the exit code (D322 proposed): see render.json `montage`
 
 
+def _retime_live_clips(a, clips, matches_path, durations):
+    """CL2 (triage F2): after the stream, each live clip is re-cut from the recording's detector hits: the kill
+    groups in its live window, with their earlier kills and knocks, dead time cut (clip_montage.live_clip_pieces).
+    Needs the recording's hits and its start time (matches.json recordStartUtc); without them, or with no group in a
+    window, the clip keeps its live window. Sets c["pieces"] (file time) and returns how many clips changed."""
+    import clip_montage as mont  # noqa: PLC0415
+    try:
+        mdoc = load_json(matches_path) if matches_path else {}
+        rec0 = sig.parse_iso(mdoc.get("recordStartUtc"))
+        hits_path = _own_hits(a) if getattr(a, "recording", None) else None
+        if not rec0 or not hits_path:
+            return 0
+        hits, _ = sig.read_hits(hits_path, float(mdoc.get("duration") or 1e9))
+        ranking = load_config("ranking", getattr(a, "ranking", None))
+        cfg = load_config("montage", getattr(a, "montage_config", None))
+        min_sec = float(load_config("live-clips", None)["minClipSec"])
+    except (ClipError, OSError, ValueError, KeyError) as e:
+        eprint(f"live-review: clips keep their live windows ({type(e).__name__})")
+        return 0
+    gs, deaths = mont.groups(hits, ranking, cfg)
+    clips.sort(key=lambda x: x["wallStart"])
+    # recording time = file time + off; span = the part of the recording the clip's save file holds
+    plan = []
+    for c in clips:
+        off = float(c["wallStart"]) - float(c["start"]) - rec0.timestamp()
+        plan.append((c, off, (off, float(durations[c["file"]]) + off),
+                     mont.groups_in(gs, float(c["start"]) + off, float(c["end"]) + off)))
+
+    def held(g, span):  # seconds of the group's pieces inside a save file
+        return sum(max(0.0, min(p["end"], span[1]) - max(p["start"], span[0]))
+                   for p in mont._pieces(g["kills"], deaths, ranking, cfg, g["actions"]))
+
+    # a kill group seen by several clips belongs to the one whose save file holds most of it (the earliest on a tie):
+    # one clip shows the whole chain, and no two clips show the same kills
+    owner = {}
+    for c, _, span, sel in plan:
+        for g in sel:
+            if id(g) not in owner or held(g, span) > held(g, owner[id(g)][1]):
+                owner[id(g)] = (c, span)
+    n, last_end, gone = 0, None, []
+    for c, off, span, sel in plan:
+        mine = [g for g in sel if owner[id(g)][0] is c]
+        if sel and not mine:  # its kills are shown by another clip: one clip, not the same kills twice
+            keep = owner[id(sel[0])][0]
+            keep["labels"] = list(dict.fromkeys(keep["labels"] + c["labels"]))
+            keep["reasons"] = keep["reasons"] + c["reasons"]
+            gone.append(c)
+            continue
+        lo = span[0] if last_end is None else max(span[0], last_end)
+        ps = mont.live_clip_pieces(mine, deaths, ranking, cfg, min_sec, lo=lo, hi=span[1])
+        if not ps:
+            continue
+        last_end = ps[-1]["end"]
+        c["pieces"] = [dict(p, start=round(p["start"] - off, 3), end=round(p["end"] - off, 3)) for p in ps]
+        c["start"], c["end"] = c["pieces"][0]["start"], c["pieces"][-1]["end"]
+        c["wallStart"] = round(c["start"] + off + rec0.timestamp(), 3)
+        if c.get("anchor") is not None:
+            c["anchor"] = min(max(float(c["anchor"]), c["start"]), c["end"])
+        c["retimed"] = True
+        n += 1
+    for c in gone:
+        clips.remove(c)
+        print(f"live-review: clip {c['id']} joined the clip that holds its kills")
+    return n
+
+
 def _live_hook(c, ex, lim):
     """ED1 (D352) for one live clip: {pieces, seconds, peaks, medals, hook}. The clip's strongest medal (anchor) is
-    the moment; with a teaser the clip is first cut to the maximum minus the teaser around it (D350)."""
+    the moment; with a teaser the clip is first cut to the maximum minus the teaser around it (D350). A clip re-cut
+    from the recording (CL2) keeps its pieces."""
     anchor = c.get("anchor")
-    reel = {"pieces": [{"start": float(c["start"]), "end": float(c["end"]), "kills": 0}],
-            "seconds": round(float(c["end"]) - float(c["start"]), 3),
+    pieces = [dict(p) for p in c.get("pieces") or [{"start": float(c["start"]), "end": float(c["end"]), "kills": 0}]]
+    reel = {"pieces": pieces,
+            "seconds": round(sum(p["end"] - p["start"] for p in pieces), 3),
             "peaks": [float(anchor)] if anchor is not None else [],
             "medals": [{"t": float(anchor), "w": 1.0, "label": (c.get("labels") or [None])[0]}] if anchor is not None else []}
     h = ex["hooks"].get("live-clip") or {"on": False, "teaserSec": 0}

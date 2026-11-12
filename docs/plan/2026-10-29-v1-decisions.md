@@ -1744,3 +1744,14 @@ Growth plan ED2. Decided:
 ## D364 — Self-learning applies changes on its own, inside limits the user approves (user, 2026-11-11 evening)
 
 - **Decision.** Changes AN2 ("proposals only, never applies itself") to "auto within limits": the learning loop shifts the mix of reel kinds and edit choices toward what performs better, with a minimum share per kind, at most 15 points of change per week, every change logged with its numbers, a one-click undo and a weekly report. Kill rules, detector weights, privacy and posting targets stay changes the user approves. Plan RP5; waits for AN1 and auto-posting.
+
+## D365 — BR kills from the own HUD text, knocks shown, a 30 s BR chain gap; live clips re-cut after the stream (agent, 2026-11-12, proposed)
+
+- **Decision.** Fix for the user's report on the 2026-11-11 Battle Royale short (triage F2, plan CL2). Montage settings (`data/clip/montage.json`): the own-kill HUD text B2 "ELIMINATED" counts as an own kill (the BR kill feed B1 cannot read the own name in the V cutout), B2 "KNOCKED DOWN" is an action (shown in the cut, not counted as a kill), and kills in Battle Royale chain over up to 30 s (12 s stays for every other mode). After the stream, each live clip is re-cut from the recording's detector hits: every kill and knock of the chain its medal belongs to, the dead time between them cut, padded to the 20 s minimum from the build-up before the first kill; a chain seen by two clips goes to the clip whose save file holds most of it, and the other clip joins it.
+- **Why.** The live window starts 17 s before the medal; in BR the medal's kills spanned 27 s, so the earlier kills were outside and 13 s of running stayed inside.
+- **Status.** Values proposed from one session's footage (evidence `docs/evidence/2026-11-12-cl2-br-short-recut.md`); the user approves them after watching the re-cut.
+
+## D366 — Each reel opens on one edited thumbnail frame, made locally (user, 2026-11-12)
+
+- **Decision.** Every reel (short, montage, match reel) starts with one frame that acts as its thumbnail and is edited to show what the reel is about: the strongest moment of the reel as the picture, a short title from the reel's own facts (kind, kill count, medal), cleanly cropped for the platform frame. Made on the laptop only (ffmpeg plus the existing local OCR/detector data; no cloud service, no paid API). Plan RP6.
+- **Why.** The user: "for each reel, there needs be a start frame which will need to act as the thumbnail, just 1 frame, this should be edited in a way to showcase what's the reel is about".

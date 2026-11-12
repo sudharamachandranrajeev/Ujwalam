@@ -10,8 +10,10 @@ recording; the V recording of the same session has the same timeline).
 
 1. Kills: own-kill kill-feed lines (cfg.killDetectors, signal true) plus streak medals (detector weight > 0 under
    the approved ranking, clip_rank.detector_weight). A medal with no own kill within medalMatchSec before it
-   (a missed feed line) becomes a kill at t - medalLeadSec.
-2. Groups: kills and medals no more than chainGapSec apart, never across a streamer death (hard negative). A group
+   (a missed feed line) becomes a kill at t - medalLeadSec. A spec "DET:Label" takes one label of a detector (BR:
+   B2 "ELIMINATED", the own HUD text). Actions (cfg.actionDetectors, e.g. a BR knock) get a piece but count no kill.
+2. Groups: kills, actions and medals no more than chainGapSec apart (chainGapSecByMode for the hit's game mode, e.g.
+   BR chains are slower), never across a streamer death (hard negative); a group needs a kill. A group
    whose score (medal weights, sumKinds summed) reaches ranking.minScore is a streak ("Triple Kill and up");
    every other group is a run of single kills (no medal, or a medal below minScore).
 3. Pieces: [kill - preSec, kill + postSec] per kill, cut before a death (ranking.death); pieces closer than
@@ -30,35 +32,66 @@ from __future__ import annotations
 import clip_rank as rank
 
 
-def _kill_events(hits, ranking, cfg):
+def _specs(items):
+    """Detector specs of montage.json: "M5" (every label of the detector) or "B2:ELIMINATED" (one label, any case)."""
+    out = set()
+    for s in items or []:
+        det, _, label = str(s).partition(":")
+        out.add((det, label.strip().upper() or None))
+    return out
+
+
+def _is(h, specs):
+    return (h["detector"], None) in specs or (h["detector"], str(h.get("label") or "").strip().upper()) in specs
+
+
+def _events(hits, ranking, cfg):
+    """Own kills (cfg.killDetectors), actions (cfg.actionDetectors: moments worth showing that are no kill, e.g. a BR
+    knock) and medals (detector weight > 0), each with signal true, in time order: [{t, kind, mode, medal?}]."""
     approved = ranking.get("detectorWeightsStatus") == "approved"
     dw = ranking.get("detectorWeights") or {}
-    kd = set(cfg.get("killDetectors") or [])
-    kills, medals = [], []
+    kd, ad = _specs(cfg.get("killDetectors")), _specs(cfg.get("actionDetectors"))
+    out = []
     for h in hits:
-        if h["detector"] in kd and h.get("signal") is True:
-            kills.append(float(h["t"]))
+        t, mode = float(h["t"]), h.get("mode")
+        if h.get("signal") is True and _is(h, kd):
+            out.append({"t": t, "kind": "kill", "mode": mode})
+        elif h.get("signal") is True and _is(h, ad):
+            out.append({"t": t, "kind": "action", "mode": mode})
         w, _ = rank.detector_weight(h, dw, approved)
         if w > 0:
-            medals.append({"t": float(h["t"]), "w": w, "strength": 1.0, "kind": f"detector.{h['detector']}",
-                           "label": h.get("label") or h["detector"]})
-    return sorted(kills), sorted(medals, key=lambda m: m["t"])
+            out.append({"t": t, "kind": "medal", "mode": mode,
+                        "medal": {"t": t, "w": w, "strength": 1.0, "kind": f"detector.{h['detector']}",
+                                  "label": h.get("label") or h["detector"]}})
+    return sorted(out, key=lambda e: e["t"])
+
+
+def _kill_events(hits, ranking, cfg):
+    evs = _events(hits, ranking, cfg)
+    return [e["t"] for e in evs if e["kind"] == "kill"], [e["medal"] for e in evs if e["kind"] == "medal"]
 
 
 def groups(hits, ranking, cfg):
-    """([{kills: [t], medals: [...], score, streak}], deaths): every kill group in time order. streak = the group's
-    score reaches ranking.minScore."""
-    kills, medals = _kill_events(hits, ranking, cfg)
+    """([{kills: [t], actions: [t], medals: [...], score, streak}], deaths): every kill group in time order. Kills,
+    actions and medals no more than the chain gap apart (chainGapSecByMode for the event's game mode, else
+    chainGapSec) form one group, never across a death; a group with actions only (a knock nobody finished) is no kill
+    group. streak = the group's score reaches ranking.minScore."""
+    evs = _events(hits, ranking, cfg)
     deaths = rank.death_spans(hits, ranking)
-    gap, lead, near = float(cfg["chainGapSec"]), float(cfg["medalLeadSec"]), float(cfg["medalMatchSec"])
-    evs = sorted([(t, "kill", None) for t in kills] + [(m["t"], "medal", m) for m in medals], key=lambda e: e[0])
+    gap0, lead, near = float(cfg["chainGapSec"]), float(cfg["medalLeadSec"]), float(cfg["medalMatchSec"])
+    by_mode = cfg.get("chainGapSecByMode") or {}
     out, cur, last = [], None, None
-    for t, kind, m in evs:
+    for e in evs:
+        t = e["t"]
+        gap = float(by_mode.get(e["mode"], gap0)) if e["mode"] else gap0
         crossed = last is not None and any(last < ds <= t for ds, _ in deaths)
         if cur is None or t - last > gap or crossed:
-            cur = {"kills": [], "medals": []}
+            cur = {"kills": [], "actions": [], "medals": []}
             out.append(cur)
-        (cur["kills"] if kind == "kill" else cur["medals"]).append(t if kind == "kill" else m)
+        if e["kind"] == "medal":
+            cur["medals"].append(e["medal"])
+        else:
+            cur["kills" if e["kind"] == "kill" else "actions"].append(t)
         last = t
     sum_kinds = set(ranking.get("sumKinds") or [])
     min_score = float(ranking.get("minScore") or 0)
@@ -69,7 +102,7 @@ def groups(hits, ranking, cfg):
         g["kills"].sort()
         g["score"] = rank._score(g["medals"], sum_kinds) if g["medals"] else 0.0
         g["streak"] = bool(g["medals"]) and g["score"] >= min_score
-    return out, deaths
+    return [g for g in out if g["kills"]], deaths
 
 
 def streaks(hits, ranking, cfg):
@@ -79,13 +112,15 @@ def streaks(hits, ranking, cfg):
     return [g for g in gs if g["streak"]], deaths
 
 
-def _pieces(kill_ts, deaths, ranking, cfg):
+def _pieces(kill_ts, deaths, ranking, cfg, actions=()):
+    """[kill - preSec, kill + postSec] per kill and per action (an action adds no kill), cut before deaths, pieces
+    closer than joinGapSec merged."""
     pre, post, join = float(cfg["preSec"]), float(cfg["postSec"]), float(cfg["joinGapSec"])
     raw = []
-    for k in kill_ts:
+    for k, n in [(k, 1) for k in kill_ts] + [(x, 0) for x in actions]:
         r = rank._cut_deaths(max(0.0, k - pre), k + post, k, deaths, ranking)
         if r and r[1] > k:
-            raw.append([r[0], r[1], 1])
+            raw.append([r[0], r[1], n])
     out = []
     for a, b, n in sorted(raw):
         if out and a - out[-1][1] <= join:
@@ -98,6 +133,44 @@ def _pieces(kill_ts, deaths, ranking, cfg):
 
 def _length(pieces):
     return sum(p["end"] - p["start"] for p in pieces)
+
+
+def groups_in(gs, w0, w1):
+    """The kill groups with a kill or medal inside [w0, w1]."""
+    return [g for g in gs if any(w0 <= t <= w1 for t in g["kills"] + [m["t"] for m in g["medals"]])]
+
+
+def live_clip_pieces(sel, deaths, ranking, cfg, min_sec, lo=0.0, hi=None):
+    """CL2 (triage F2, 2026-11-11 BR short): the pieces of a live clip from the kill groups `sel` in its live window
+    (groups_in; the live window starts preSec before the first medal and missed the earlier kills of a BR chain).
+    Every kill and action piece of those groups, also before the window; the dead time between them is cut. A total
+    below min_sec grows the first piece earlier, then the last one later, never into a death and never outside
+    [lo, hi] (the save file's span, or after the previous clip). [] when nothing is left."""
+    raw = sorted((p for g in sel for p in _pieces(g["kills"], deaths, ranking, cfg, g["actions"])),
+                 key=lambda p: p["start"])
+    ps = []
+    for p in raw:
+        s, e = max(p["start"], lo), min(p["end"], hi) if hi is not None else p["end"]
+        if e <= s:
+            continue
+        if ps and s <= ps[-1]["end"]:
+            ps[-1] = dict(ps[-1], end=max(ps[-1]["end"], e), kills=ps[-1]["kills"] + p["kills"])
+        else:
+            ps.append({"start": s, "end": e, "kills": p["kills"]})
+    if not ps:
+        return []
+    need = float(min_sec) - _length(ps)
+    if need > 0:  # earlier first: the build-up before the first kill, not the running after the last
+        r = rank._cut_deaths(max(lo, ps[0]["start"] - need), ps[0]["end"], ps[0]["start"], deaths, ranking)
+        if r:
+            need -= ps[0]["start"] - r[0]
+            ps[0] = dict(ps[0], start=r[0])
+    if need > 0:
+        end = ps[-1]["end"] + need
+        r = rank._cut_deaths(ps[-1]["start"], min(end, hi) if hi is not None else end, ps[-1]["end"], deaths, ranking)
+        if r:
+            ps[-1] = dict(ps[-1], end=max(ps[-1]["end"], r[1]))
+    return [dict(p, start=round(p["start"], 3), end=round(p["end"], 3)) for p in ps]
 
 
 def _unit_order(u):
@@ -115,7 +188,7 @@ def plan_montages(hits, ranking, cfg, duration):
     hi, lo, tmin = min(float(cfg["targetMaxSec"]), cap), min(float(cfg["minSec"]), cap), min(float(cfg["targetMinSec"]), cap)
     units = []
     for g in gs:
-        ps = [p for p in _pieces(g["kills"], deaths, ranking, cfg) if p["end"] <= duration]
+        ps = [p for p in _pieces(g["kills"], deaths, ranking, cfg, g["actions"]) if p["end"] <= duration]
         if ps:
             units.append({"pieces": ps, "peaks": [float(k) for k in g["kills"]],
                           "medals": [{"t": float(md["t"]), "w": float(md["w"]), "label": md.get("label")} for md in g["medals"]],
