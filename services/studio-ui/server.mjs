@@ -40,6 +40,7 @@ import { previewRules } from '../posting/preview.mjs';
 import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { GROWTH_FLAG, DB_NAME as GROWTH_DB, collect as growthCollect, openStore as openGrowthStore, view as growthView } from '../analytics/index.mjs';
+import { MIX_FLAG, step as mixStep, undo as mixUndo, view as mixView, weeklyReport as mixReport } from '../learning/mix.mjs';
 import { AnalyticsError } from '../analytics/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { createLearningStore } from '../learning/store.mjs';
@@ -381,6 +382,10 @@ export function createStudioServer(opts) {
   // Read only towards YouTube. opts.growth = { auth, fetchImpl, now } are test seams.
   const growthOn = () => typeof opts.dataDir === 'string' && !!flags && flags.isOn(GROWTH_FLAG);
   let growthBusy = false;
+  // RP5 self-learning (flag `self-learning` on top of `growth`, D373): the learned mix and its log, one-call undo; the weekly
+  // change runs after a successful Growth refresh. opts.learning = { cfg, rows, posts, now, hourOf } are test seams.
+  const mixOn = () => growthOn() && flags.isOn(MIX_FLAG);
+  const mixIo = () => ({ dataDir: opts.dataDir, ...(opts.learning ?? {}), now: opts.learning?.now ?? now() });
   // Report button (flag `report-button`, D199): builds a prefilled GitHub new-issue link; the page opens it. No network here.
   const reporter = opts.reporter ?? createReporter({ profileFile: opts.profileFile, releaseFile: opts.releaseFile });
   const reportOn = () => !!flags && flags.isOn(REPORT_FLAG);
@@ -1267,6 +1272,11 @@ export function createStudioServer(opts) {
         return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
       } catch { return json(res, 200, { mode: { enabled: false, flagOn: false, autoUpload: false, ruleCount: 0, privacy: 'private', error: 'rules-unreadable' }, rulesFile, plan: [] }); }
     }
+    if (route.startsWith('/ui/api/growth/mix') && !mixOn()) return json(res, 404, { error: 'self-learning-off' });
+    if (req.method === 'GET' && route === '/ui/api/growth/mix') {
+      // Read only: the mix in use, why it is (not) applied, the numbers behind it, the change log and the weekly report text.
+      try { const v = await mixView(mixIo()); return json(res, 200, { ...v, report: mixReport(v, opts.learning?.cfg) }); } catch { return json(res, 500, { error: 'mix-failed' }); }
+    }
     if (req.method === 'GET' && route === '/ui/api/growth') {
       // Numbers per posted video + the sign-in state. Never a token; the store is opened per call and closed again.
       let st = { signedIn: false, hasClient: false };
@@ -1478,12 +1488,25 @@ export function createStudioServer(opts) {
       try {
         const a = opts.growth?.auth ?? youtubeAuth();
         const r = await growthCollect({ dataDir: opts.dataDir, auth: a, fetchImpl: opts.growth?.fetchImpl ?? opts.youtube?.fetchImpl ?? fetch, now: opts.growth?.now ?? now, force: body.force === true });
-        return json(res, 200, { ok: true, ...r });
+        // RP5 (D373): the weekly change of the learned mix, on its own (at most once a week, inside the limits)
+        let mix;
+        if (mixOn()) { try { const m = await mixStep(mixIo()); mix = { changed: m.changed, reason: m.reason }; } catch { mix = { changed: false, reason: 'mix-failed' }; } }
+        return json(res, 200, { ok: true, ...r, ...(mix ? { mix } : {}) });
       } catch (e) {
         if (e instanceof AnalyticsError) return json(res, e.code === 'analytics-scope-missing' ? 401 : 502, { error: e.code });
         if (e?.code === 'oauth-no-client' || e?.code === 'oauth-reauth-needed') return json(res, 401, { error: e.code === 'oauth-no-client' ? 'youtube-no-client' : 'youtube-not-signed-in' });
         return json(res, 502, { error: 'growth-failed' });
       } finally { growthBusy = false; }
+    }
+    if (route === '/ui/api/growth/mix/undo') {
+      // RP5 one-click undo (D364): the newest change still in effect goes back to the mix before it. Local file only.
+      if (Object.keys(body).length) return json(res, 400, { error: 'bad-params' });
+      try {
+        const u = mixUndo(mixIo());
+        if (!u.undone) return json(res, 409, { error: 'nothing-to-undo' });
+        const v = await mixView(mixIo());
+        return json(res, 200, { ok: true, undoes: u.entry.undoes, ...v });
+      } catch { return json(res, 500, { error: 'mix-failed' }); }
     }
     if (route === '/ui/api/posts/queue/retry') {
       // D301 "Retry now": puts a failed (or waiting) item back in the upload queue at once; the chain's next tick uploads it.

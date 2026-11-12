@@ -39,6 +39,7 @@ import { READONLY_SCOPE, createYoutubeAuth } from './oauth.mjs';
 import { UploadError, uploadPost } from './youtube.mjs';
 import { SCHEDULE_FLAG, ScheduleError, chunkDeadlineMs, fallbackBps, isRetry, loadScheduleConfig, marginMs, minLeadMs, planQueueSlots, toIso } from './schedule.mjs';
 import { readChannelSchedule } from './schedule-read.mjs';
+import { MIX_FLAG, appliedKindShares } from '../learning/mix.mjs';
 import { removeTaskFile, writeTaskFile } from '../studio-ui/tasks.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -407,7 +408,10 @@ export function createPostChain(opts) {
     if (!recovered) { recovered = true; queue.recover(); }
     const store = createPostStore({ ledgerFile, dataDir });
     // Approvals are local file work, but they share the fail-closed live check (unreadable state -> nothing happens).
-    const r = await runAuto({ store, rules, outputsStatus, logFile: autoLogFile, now: () => new Date(nowMs()) });
+    // RP5 (D373): the learned kind order only while the flag self-learning is on and a learned mix is in use
+    let kindShares = null;
+    if (flags.isOn(MIX_FLAG)) { try { kindShares = appliedKindShares(dataDir); } catch { kindShares = null; } }
+    const r = await runAuto({ store, rules, outputsStatus, logFile: autoLogFile, now: () => new Date(nowMs()), kindShares });
     if (rules.autoUpload) {
       const autoApproved = new Set(createAutoLog(autoLogFile).list().filter((e) => e.action === 'approve').map((e) => e.id));
       for (const p of store.list()) if (p.status === 'approved' && UPLOAD_TARGETS.includes(p.target) && autoApproved.has(p.id)) queue.add(p.id);

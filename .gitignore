@@ -64,6 +64,9 @@ data/datasets/
 
 # Local learning store (LL2/LL5, D338): label rows and stream evidence. Normally in the app data folder; never committed.
 learning-store/
+# Self-learning mix and its change log (RP5, D373): <data>/learning/mix.json, mix-log.jsonl. App data; never committed.
+learning/mix.json
+learning/mix-log.jsonl
 
 # Per-game local data (pack format W0): reference datasets, crops, labels work files, evaluations. Never committed.
 data/games/*/local/

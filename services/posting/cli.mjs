@@ -10,6 +10,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dataDirNote, resolveCliDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
+import { MIX_FLAG, appliedKindShares } from '../learning/mix.mjs';
 import { LEDGER_NAME, POSTING_FLAG, PostingError, createPostStore, packageRun } from './index.mjs';
 import { ANALYTICS_SCOPE, READONLY_SCOPE, SCOPE, createYoutubeAuth, joinScopes } from './oauth.mjs';
 import { uploadPost, UploadError } from './youtube.mjs';
@@ -167,8 +168,10 @@ async function autoMain(a, out, err, deps) {
     const auth = rules.autoUpload && !scheduled ? (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen }) : null;
     // D300: only stream sinks block (a local recording does not); an unreadable state still refuses.
     const outputsStatus = streamOnly(deps.outputsStatus ?? outputsStatusFor(dataDir));
+    let kindShares = null; // RP5 (D373): the learned kind order only with the flag self-learning on and a mix in use
+    if (flags.isOn(MIX_FLAG)) { try { kindShares = appliedKindShares(dataDir); } catch { kindShares = null; } }
     const r = await runAuto({
-      store, rules, outputsStatus, logFile, now: deps.now,
+      store, rules, outputsStatus, logFile, now: deps.now, kindShares,
       upload: auth ? (id) => (deps.upload ?? uploadPost)({ id, store, auth, outputsStatus, fetchImpl: deps.fetchImpl }) : undefined,
     });
     if (r.refused) { err(`auto-post: refused (${r.refused}); nothing approved or uploaded`); return 1; }

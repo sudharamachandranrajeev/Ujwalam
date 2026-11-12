@@ -132,8 +132,33 @@ export async function liveBlock(outputsStatus) {
 
 const dayOf = (now) => new Date(now).toISOString().slice(0, 10);
 
-/** Pure. posts = store.list() views. Returns what a run would do, highest score first, caps applied. */
-export function planAuto({ posts, rules, autoUpload, log, now }) {
+/**
+ * RP5 (D373, flag self-learning): posts in the learned kind shares. Each next post is from the kind furthest below its
+ * share of the posts taken so far (score order inside a kind; a tie goes to the higher score). Only the ORDER changes,
+ * so inside a rule's daily cap the kinds come out in about these shares; the count per day and the targets do not change.
+ */
+export function mixOrder(posts, kindShares) {
+  const queues = new Map();
+  for (const p of posts) { const k = p.kind ?? 'short'; if (!queues.has(k)) queues.set(k, []); queues.get(k).push(p); }
+  const taken = new Map([...queues.keys()].map((k) => [k, 0]));
+  const out = [];
+  while (out.length < posts.length) {
+    let best = null; let bestGap = -Infinity;
+    for (const [k, q] of queues) {
+      if (!q.length) continue;
+      const share = Number.isFinite(kindShares[k]) ? kindShares[k] : 0;
+      const gap = share * (out.length + 1) - taken.get(k);
+      if (gap > bestGap + 1e-12 || (Math.abs(gap - bestGap) <= 1e-12 && (q[0].score ?? -Infinity) > (queues.get(best)[0].score ?? -Infinity))) { best = k; bestGap = gap; }
+    }
+    out.push(queues.get(best).shift());
+    taken.set(best, taken.get(best) + 1);
+  }
+  return out;
+}
+
+/** Pure. posts = store.list() views. Returns what a run would do, highest score first, caps applied.
+ *  kindShares (RP5, only while the flag self-learning is on and a learned mix is in use): the order follows mixOrder. */
+export function planAuto({ posts, rules, autoUpload, log, now, kindShares = null }) {
   const today = dayOf(now);
   const plan = [];
   const count = (ruleId, action) => log.filter((e) => e.ruleId === ruleId && e.action === action && String(e.at).slice(0, 10) === today).length;
@@ -146,7 +171,8 @@ export function planAuto({ posts, rules, autoUpload, log, now }) {
     used.set(k, n + 1); return true;
   };
   const claimed = new Set();
-  const sorted = [...posts].sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+  const byScore = [...posts].sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
+  const sorted = kindShares ? mixOrder(byScore, kindShares) : byScore;
   for (const rule of rules) {
     const canUpload = autoUpload && UPLOAD_TARGETS.includes(rule.target);
     for (const p of sorted) {
@@ -181,7 +207,7 @@ export function planAuto({ posts, rules, autoUpload, log, now }) {
 // ---------------------------------------------------------------- run
 
 /**
- * opts: { store, rules: {autoUpload, rules}, outputsStatus, upload?(id) -> Promise, logFile, now? }
+ * opts: { store, rules: {autoUpload, rules}, outputsStatus, upload?(id) -> Promise, logFile, now?, kindShares? (RP5) }
  * `upload` is injected (CLI passes uploadPost with real auth; tests pass a fake). Without it: approvals only.
  */
 export async function runAuto(opts) {
@@ -189,7 +215,7 @@ export async function runAuto(opts) {
   const log = createAutoLog(opts.logFile);
   const blocked = await liveBlock(opts.outputsStatus);
   if (blocked) return { refused: blocked, done: [] };
-  const plan = planAuto({ posts: opts.store.list(), rules: opts.rules.rules, autoUpload: opts.rules.autoUpload && typeof opts.upload === 'function', log: log.list(), now: nowFn() });
+  const plan = planAuto({ posts: opts.store.list(), rules: opts.rules.rules, autoUpload: opts.rules.autoUpload && typeof opts.upload === 'function', log: log.list(), now: nowFn(), kindShares: opts.kindShares ?? null });
   const done = []; let uploadsStopped = false;
   const record = (e) => { const entry = { at: nowFn().toISOString(), ...e }; log.append(entry); done.push(entry); };
   for (const step of plan) {
