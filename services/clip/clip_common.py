@@ -372,10 +372,59 @@ def lower_own_priority():
             pass
 
 
-def run_tool(argv, cwd=None, timeout=None):
-    """Runs a child at below-normal priority; returns CompletedProcess (text, utf-8, errors replaced)."""
-    return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout, stdin=subprocess.DEVNULL, **child_kwargs(**NO_WINDOW))
+STALLED_RC = -2  # run_tool(watch=...): the child wrote nothing for stall_sec and was stopped
+
+
+def run_tool(argv, cwd=None, timeout=None, watch=None, stall_sec=None, poll_sec=2.0):
+    """Runs a child at below-normal priority; returns CompletedProcess (text, utf-8, errors replaced).
+
+    watch + stall_sec (2026-11-12, a render hung for 30 min after a GPU driver reset): the child is stopped when the
+    file `watch` (its output; relative to cwd) has not grown for stall_sec seconds, counted from the start too; the
+    result then has returncode STALLED_RC and says so in stderr. timeout still raises subprocess.TimeoutExpired."""
+    if watch is None or not stall_sec:
+        return subprocess.run(argv, cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              timeout=timeout, stdin=subprocess.DEVNULL, **child_kwargs(**NO_WINDOW))
+    import tempfile  # noqa: PLC0415
+    path = watch if os.path.isabs(watch) or not cwd else os.path.join(cwd, watch)
+    with tempfile.TemporaryFile() as fo, tempfile.TemporaryFile() as fe:  # files, not pipes: no pipe can fill and block
+        p = subprocess.Popen(argv, cwd=cwd, stdout=fo, stderr=fe, stdin=subprocess.DEVNULL, **child_kwargs(**NO_WINDOW))
+        t0 = last = time.monotonic()
+        size, stalled = -1, False
+        try:
+            while True:
+                try:
+                    p.wait(timeout=poll_sec)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+                now = time.monotonic()
+                try:
+                    s = os.path.getsize(path)
+                except OSError:
+                    s = -1
+                if s != size:
+                    size, last = s, now
+                if now - last >= stall_sec:
+                    stalled = True
+                    p.kill()
+                    p.wait()
+                    break
+                if timeout is not None and now - t0 >= timeout:
+                    p.kill()
+                    p.wait()
+                    raise subprocess.TimeoutExpired(argv, timeout)
+        finally:
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+        fo.seek(0)
+        fe.seek(0)
+        out = fo.read().decode("utf-8", errors="replace")
+        err = fe.read().decode("utf-8", errors="replace")
+    if stalled:
+        return subprocess.CompletedProcess(argv, STALLED_RC, out,
+                                           err + f"\nstalled: no output for {stall_sec:g} s; stopped")
+    return subprocess.CompletedProcess(argv, p.returncode, out, err)
 
 
 def host_running(name="ujwalam-host.exe"):

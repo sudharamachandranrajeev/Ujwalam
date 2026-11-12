@@ -370,6 +370,42 @@ class WorkerReviewTests(unittest.TestCase):
         fw.serve(self.args(), ctl, pipe=_FakePipe(), stop=stop.is_set, open_link=open_link)
         self.assertEqual(links, [1, 2])
 
+    def test_stale_host_heartbeat_backs_off_and_logs_once(self):
+        # 2026-11-12: a stale heartbeat reopened the link ~2,700 times a second with a log line each
+        stop = threading.Event()
+        ctl = fw.Control()
+        ctl.feed('{"hostPid": 3, "key": "%s"}' % ("33" * 32))
+        opens, sleeps, lines = [], [], []
+
+        class L(_FakeLink):
+            def host_alive(self):
+                return len(opens) > 4  # stale for the first four opens, then back
+
+            def host_age_ms(self):
+                return 4321
+
+            def read_frame(self, last):
+                stop.set()
+                return None
+
+        def open_link(pid, key):
+            opens.append(pid)
+            return L([], stop)
+
+        saved = fw.time.sleep, fw.log
+        fw.time.sleep, fw.log = sleeps.append, lines.append
+        try:
+            fw.serve(self.args(), ctl, pipe=_FakePipe(), stop=stop.is_set, open_link=open_link)
+        finally:
+            fw.time.sleep, fw.log = saved
+        self.assertEqual(len(opens), 5)
+        self.assertEqual(sleeps.count(fw.STALE_RETRY_SEC), 4, "one pause per stale open")
+        stale = [s for s in lines if "heartbeat stopped" in s]
+        self.assertEqual(len(stale), 1, lines)
+        self.assertIn("4321 ms", stale[0])
+        self.assertEqual(sum("face link open" in s and "back" not in s for s in lines), 1, lines)
+        self.assertEqual(sum("heartbeat back" in s for s in lines), 1, lines)
+
 
 class _Resp(io.BytesIO):
     def __init__(self, data, length=None):

@@ -42,6 +42,7 @@ import face_post as fp  # noqa: E402
 
 FLAG = "face-ai"
 FLAG_EVERY_SEC = 5.0
+STALE_RETRY_SEC = 1.0  # a stale host heartbeat: the link is retried this often (and the outage logged once)
 UNLOAD_AFTER_SEC = 30.0
 
 
@@ -168,6 +169,10 @@ def serve(a, ctl, pipe=None, stop=lambda: False, open_link=None):
     next_flag = 0.0
     backoff = 0.5
     last_beat = 0.0
+    # 2026-11-12: a stale host heartbeat made this loop close and reopen the link about 2,700 times a second for three
+    # hours, one log line each. Now an outage is logged once (with the heartbeat's age), the link is retried once a
+    # second, and the return of the heartbeat is logged once.
+    stale = False
     while not stop():
         now = time.monotonic()
         if now >= next_flag:
@@ -194,7 +199,8 @@ def serve(a, ctl, pipe=None, stop=lambda: False, open_link=None):
                 if link is None:
                     time.sleep(1.0)
                     continue
-                log(f"face link open (host pid {pid})")
+                if not stale:
+                    log(f"face link open (host pid {pid})")
                 link_target = target
                 last_seq = 0
                 last_gen = None
@@ -202,11 +208,19 @@ def serve(a, ctl, pipe=None, stop=lambda: False, open_link=None):
                 link.heartbeat()
                 last_beat = now
             if not link.host_alive():
-                log("host heartbeat stopped; closing the face link")
+                if not stale:
+                    age = getattr(link, "host_age_ms", lambda: None)()
+                    log(f"host heartbeat stopped (last beat {age} ms ago); closing the face link, retrying every "
+                        f"{STALE_RETRY_SEC:g} s")
+                    stale = True
                 link.close()
                 link = None
                 pipe.unload()
+                time.sleep(STALE_RETRY_SEC)
                 continue
+            if stale:
+                log(f"host heartbeat back; face link open (host pid {link_target[0]})")
+                stale = False
             pipe.unload_idle()
             want = link.want()
             got = link.read_frame(last_seq) if want else None

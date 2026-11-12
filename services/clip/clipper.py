@@ -67,6 +67,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import time
@@ -832,17 +833,43 @@ def _live_hook(c, ex, lim):
     return dict(r, seconds=round(sum(p["end"] - p["start"] for p in r["pieces"]), 3), hook=rec)
 
 
+RENDER_STALL_SEC = 120  # a render that writes nothing this long is stopped (2026-11-12: NVENC hung after a GPU reset)
+CPU_ENCODER = "libopenh264"
+
+
+def _render_job(mk_argv, encoder, wd, part, what):
+    """Runs one reel render (mk_argv(encoder) -> argv writing `part` in wd) with the stall watch. A GPU render that
+    fails, stalls or times out is tried once more on the CPU encoder (the part file is removed first). A timeout never
+    raises: it comes back as a failed result, so one reel never stops the others. -> (CompletedProcess, encoder)."""
+    def once(enc):
+        try:
+            return rnd.run_tool(mk_argv(enc), cwd=wd, timeout=1800, watch=part, stall_sec=RENDER_STALL_SEC)
+        except subprocess.TimeoutExpired:
+            return subprocess.CompletedProcess([], 1, "", "timed out after 1800 s")
+    r = once(encoder)
+    if r.returncode != 0 and encoder != CPU_ENCODER:
+        eprint(f"{what}: the {encoder} render did not finish ({r.stderr.strip()[-120:]}); trying again on the CPU")
+        try:
+            os.remove(os.path.join(wd, part))
+        except OSError:
+            pass
+        encoder = CPU_ENCODER
+        r = once(encoder)
+    return r, encoder
+
+
 def _render_pieces(ffmpeg, src, pieces, frame, encoder, wd, lid, sinfo, fade_ms, max_sec, ass=None, fdir=None,
                    transition=None, thumbnail=None, title=None, music=None):
     """A canvas layout rendered from pieces (teaser + clip) with optional captions, the RP1 transition, the RP6
     start frame and the RP4 title card -> '<layout>.mp4'."""
     import clip_montage as mont  # noqa: PLC0415
     name = f"{lid}.mp4"
-    argv = mont.render_argv(ffmpeg, src, pieces, frame, rnd.ENCODERS[encoder], rnd.AUDIO, fade_ms, name + ".part",
-                            audio_tracks=max(1, int(sinfo.get("audio_tracks") or 1)) if sinfo.get("has_audio") else 0,
-                            max_sec=max_sec, captions=ass, fontsdir=fdir, transition=transition, thumbnail=thumbnail,
-                            title=title, music=music)
-    r = rnd.run_tool(argv, cwd=wd, timeout=1800)
+    def mk(enc):
+        return mont.render_argv(ffmpeg, src, pieces, frame, rnd.ENCODERS[enc], rnd.AUDIO, fade_ms, name + ".part",
+                                audio_tracks=max(1, int(sinfo.get("audio_tracks") or 1)) if sinfo.get("has_audio") else 0,
+                                max_sec=max_sec, captions=ass, fontsdir=fdir, transition=transition, thumbnail=thumbnail,
+                                title=title, music=music)
+    r, _ = _render_job(mk, encoder, wd, name + ".part", f"render {lid}")
     if r.returncode != 0:
         try:
             os.remove(os.path.join(wd, name + ".part"))
@@ -1107,18 +1134,27 @@ def cmd_montage(a):
         thumb, trec = _thumbnail(ffmpeg, vrec, m, typ, frame, wd, ex, matches)  # RP6
         ttl, tirec = _title(wd, m["pieces"], xd, frame, ex)  # RP4
         mus, murec = _music(wd, m["pieces"], xd, tirec, ex, cid, os.path.basename(vrec))  # RP3
-        argv = mont.render_argv(ffmpeg, vrec, m["pieces"], frame, rnd.ENCODERS[encoder], rnd.AUDIO,
-                                int(cfg["audioFadeMs"]), "montage-v.mp4.part", audio_tracks=max(1, vinfo["audio_tracks"]),
-                                max_sec=lim[typ]["maxSec"], captions=ass, fontsdir=fdir, transition=tr, thumbnail=thumb,
-                                title=ttl, music=mus)
-        r = rnd.run_tool(argv, cwd=wd, timeout=1800)
+        def mk(enc, m=m, ass=ass, fdir=fdir, tr=tr, thumb=thumb, ttl=ttl, mus=mus, typ=typ):
+            return mont.render_argv(ffmpeg, vrec, m["pieces"], frame, rnd.ENCODERS[enc], rnd.AUDIO,
+                                    int(cfg["audioFadeMs"]), "montage-v.mp4.part",
+                                    audio_tracks=max(1, vinfo["audio_tracks"]), max_sec=lim[typ]["maxSec"], captions=ass,
+                                    fontsdir=fdir, transition=tr, thumbnail=thumb, title=ttl, music=mus)
+        done = os.path.join(wd, "montage-v.mp4")
+        if getattr(a, "resume", False) and os.path.isfile(done) and os.path.getsize(done) > 0:
+            # --resume (2026-11-12): a run stopped part-way keeps the reels it finished; the plan is the same (same
+            # hits, settings and flags), so a finished file is used as it is and only the missing ones are rendered
+            print(f"montage {cid}: kept from the earlier run (--resume)")
+            r = subprocess.CompletedProcess([], 0, "", "")
+        else:
+            r, _ = _render_job(mk, encoder, wd, "montage-v.mp4.part", f"montage {cid}")
         _drop_fonts(wd)
         rti.cleanup(wd)
         rmu.cleanup(wd)
         files, errors = [], []
         hook = m.get("hook") or {"on": False}
         if r.returncode == 0:
-            os.replace(os.path.join(wd, "montage-v.mp4.part"), os.path.join(wd, "montage-v.mp4"))
+            if os.path.isfile(os.path.join(wd, "montage-v.mp4.part")):
+                os.replace(os.path.join(wd, "montage-v.mp4.part"), done)
             hook = _hook_score(ffmpeg, wd, "montage-v.mp4", m, typ, ex)
             if hook.get("used") not in (None, "already", "none"):
                 print(f"montage {cid}: opens on its strongest moment ({hook['used']}, at {hook['peakOut']:.1f} s)")
@@ -1134,6 +1170,10 @@ def cmd_montage(a):
                   f"({m.get('streakKills', '-')} in {m.get('streaks', '-')} streak(s), {m.get('singleKills', '-')} single), "
                   f"score {m['score']:g}")
         else:
+            try:
+                os.remove(os.path.join(wd, "montage-v.mp4.part"))
+            except OSError:
+                pass
             errors.append({"layout": "montage-v", "error": r.stderr.strip()[-300:]})
             failed += 1
             eprint(f"montage {cid}: FAILED")
@@ -1456,6 +1496,8 @@ def build_parser():
     s.add_argument("--whisper-bin"); s.add_argument("--whisper-model")  # ED2 captions (flag reel-captions)
     s.add_argument("--v-recording", type=os.path.abspath); s.add_argument("--encoder", default="auto")
     s.add_argument("--record-start"); s.add_argument("--no-decode", action="store_true"); publish_arg(s)
+    s.add_argument("--resume", action="store_true",
+                   help="keep each reel an earlier, stopped run of this folder finished; render only the missing ones")
     s.set_defaults(fn=cmd_montage)
     s = sub.add_parser("recaption", help="render one reel again with its edited transcript (ED2, flag reel-captions)")
     common(s, recording=False)

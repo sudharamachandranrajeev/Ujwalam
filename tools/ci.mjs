@@ -135,6 +135,27 @@ export function planSteps(steps, cloud) {
   };
 }
 
+// 2026-11-12: a full CI next to the user's running Ujwalam (host, NVENC test sessions, browser overlays) reset the GPU
+// driver and crashed the host. The GPU steps refuse to start while an installed Ujwalam runs (found by its install path
+// under %LOCALAPPDATA%\Ujwalam, never by process name).
+export const GPU_STEPS = ['bench', 'test-host', 'test-capture'];
+const INSTALLED_PS = '$ErrorActionPreference="SilentlyContinue"; $l=[IO.Path]::Combine($env:LOCALAPPDATA,"Ujwalam").ToLower(); Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID } | ForEach-Object { if (([string]$_.ExecutablePath).ToLower().StartsWith($l + "\\")) { "{0}|{1}" -f $_.ProcessId,$_.Name } }';
+export function installedUjwalamProcesses() {
+  if (process.platform !== 'win32') return [];
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', INSTALLED_PS], { encoding: 'utf8', windowsHide: true, timeout: 60000 });
+  return String(r.stdout ?? '').split(/\r?\n/).filter(Boolean).map((l) => { const [pid, name] = l.split('|'); return { pid: Number(pid), name }; });
+}
+/** Message when GPU steps are selected and an installed Ujwalam runs (cloud runs have no GPU steps); else null. */
+export function gpuGuard(steps, cloud, find = installedUjwalamProcesses) {
+  if (cloud) return null;
+  const gpu = steps.filter((s) => GPU_STEPS.includes(s.name)).map((s) => s.name);
+  if (!gpu.length) return null;
+  const busy = find();
+  if (!busy.length) return null;
+  return `ci: refused: your installed Ujwalam is running (${busy.map((b) => `${b.name} pid ${b.pid}`).join(', ')}). `
+    + `GPU steps (${gpu.join(', ')}) next to it can reset the GPU driver. Close Ujwalam, or run the other steps with --only.`;
+}
+
 export const notRunLine = (s) => `${s.name.padEnd(18)} NOT RUN (laptop only: ${s.reason})`;
 
 /** Summary lines. Cloud adds the not-run count and states that the run is not stampable. */
@@ -245,6 +266,8 @@ async function main() {
   // Every step and its children run headless: the host opens no preview window, the launcher no browser (D191).
   process.env.UJWALAM_HEADLESS = '1';
   const cloud = isCloud();
+  const refused = gpuGuard(steps, cloud);
+  if (refused) { console.error(refused); process.exit(3); }
   const plan = planSteps(steps, cloud);
   const full = !cloud && steps === STEPS;
   steps = plan.run;
