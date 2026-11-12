@@ -287,5 +287,6 @@ test('GPU steps are refused while an installed Ujwalam runs (2026-11-12 GPU rese
   assert.match(msg, /pid 42/);
   assert.equal(gpuGuard(STEPS, false, none), null);
   assert.equal(gpuGuard(STEPS, true, busy), null, 'cloud runs have no GPU steps');
+  assert.equal(gpuGuard(STEPS, false, busy, { UJWALAM_CI_ALLOW_GPU: '1' }), null, 'the user override');
   assert.equal(gpuGuard(selectSteps(STEPS, 'lint,test-py'), false, busy), null, 'CPU-only steps still run');
 });
