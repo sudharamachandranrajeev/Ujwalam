@@ -2,7 +2,7 @@
 """RP6 thumbnail start frame (D366, plan 2026-11-12-reel-polish-music-learning.md): one edited frame that opens a reel
 and acts as its cover.
 
-Data: data/clip/thumbnail.json (look, sizes, title templates). Behind the flag reel-thumbnail (off by default).
+Data: data/clip/thumbnail.json (look, sizes, title templates). Flag reel-thumbnail, ON by default (D368; switch off in Settings > Advanced).
 Made locally: one ffmpeg run grabs the frame of the reel's strongest moment, scales it into the reel's frame, lifts
 the colour a little and draws the title lines with a bundled font (data/fonts; copied into the reel's folder, no system
 font). The text is the reel's own facts: the strongest medal's name and the result as read from the game picture by

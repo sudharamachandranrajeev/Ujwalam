@@ -1764,6 +1764,6 @@ Growth plan ED2. Decided:
 
 ## D368 — Reel start frame as thumbnail (RP6, 2026-11-12)
 
-- **Decision.** Behind flag `reel-thumbnail` (off), every reel opens on one edited frame (1/60 s) that acts as its cover: the picture of the reel's strongest moment (0.4 s after the heaviest medal, else the densest kills), colour lifted, a title (medal or result, kill count, mode) and the streamer brand from the local profile, all made locally with ffmpeg and a bundled font. Posting takes the cover from frame 0.
+- **Decision.** Flag `reel-thumbnail` is ON by default (the user asked, 2026-11-12; it can be switched off in Settings > Advanced). Every reel opens on one edited frame (1/60 s) that acts as its cover: the picture of the reel's strongest moment (0.4 s after the heaviest medal, else the densest kills), colour lifted, a title (medal or result, kill count, mode) and the streamer brand from the local profile, all made locally with ffmpeg and a bundled font. Posting takes the cover from frame 0.
 - **Why.** The user asked (2026-11-12) for a one-frame thumbnail per reel showing what the reel is about, processed locally.
 - **Status.** Look, sizes, position and wording proposed (`data/clip/thumbnail.json`); evidence `docs/evidence/2026-11-12-rp6-thumbnail-start-frame.md`; the user confirms after watching reels made with the flag on.

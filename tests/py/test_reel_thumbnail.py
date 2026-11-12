@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """RP6 thumbnail start frame (services/clip/reel_thumbnail.py, D366): the moment picked for the picture, the title
-from the reel's facts, the flag (off by default), the filter graph, and a real render (ffmpeg cases skip without
+from the reel's facts, the flag (on by default, D368), the filter graph, and a real render (ffmpeg cases skip without
 ffmpeg): the reel's first frame is the PNG, the reel is one frame longer, the text sits inside the safe area.
 Synthetic pictures, times and a placeholder brand only."""
 
@@ -33,9 +33,9 @@ def reel(**kw):
 
 
 class DataTests(unittest.TestCase):
-    def test_flag_is_off_by_default(self):
+    def test_flag_is_on_by_default_d368(self):
         flags = {f["id"]: f for f in cc.load_json(cc.FLAGS_FILE)["flags"]}
-        self.assertIs(flags[th.FLAG]["default"], False)
+        self.assertIs(flags[th.FLAG]["default"], True)
 
     def test_config(self):
         self.assertEqual(CFG["flag"], th.FLAG)

@@ -3,7 +3,7 @@
 Plan: `docs/plan/2026-11-12-reel-polish-music-learning.md` (RP6), decision D366. User request 2026-11-12: every reel
 opens on one frame that acts as its thumbnail, edited to show what the reel is about, made locally.
 
-Status: **built behind flag `reel-thumbnail` (off by default); not yet used on a real stream.** The look, sizes and
+Status: **built; flag `reel-thumbnail` ON by default (user, 2026-11-12, D368); not yet used on a real stream.** The look, sizes and
 title wording are proposed (`data/clip/thumbnail.json`, status proposed).
 
 ## What was built
@@ -29,14 +29,14 @@ title wording are proposed (`data/clip/thumbnail.json`, status proposed).
   reel's run folder (the clips folder holds finished videos only).
 - `services/clip/clip_publish.py` → `uploads.json` rows carry `thumbnail: true`; `services/posting/index.mjs`
   `uploadCoverAt()` then takes the cover from frame 0.
-- `data/flags.json`: `reel-thumbnail`, default false.
+- `data/flags.json`: `reel-thumbnail`, default true (D368).
 
 ## Tests
 
 | Command | Result |
 |---|---|
 | `python -I -m unittest discover -s tests/py -t tests/py` | Ran 620 tests, OK (skipped=51) |
-| `tests/py/test_reel_thumbnail.py` (in the suite) | 17 tests: flag off by default; moment rules (heaviest medal, kept inside its piece, densest kills, teaser skipped, fallbacks); titles per type, placeholder brand dropped, a sub equal to the main dropped, cleaning and cut; brand from the profile; a failure is a record; filter graph (text only via files, centred in the safe width, from the safe top); render_argv order (captions before the start frame, sound delayed per track, picture-only); real renders: frame 0 of the reel = the PNG (luma within 6), frame 1 = the reel's own start, the reel is 1/60 s longer, every lit pixel of the title inside the safe area |
+| `tests/py/test_reel_thumbnail.py` (in the suite) | 17 tests: flag on by default; moment rules (heaviest medal, kept inside its piece, densest kills, teaser skipped, fallbacks); titles per type, placeholder brand dropped, a sub equal to the main dropped, cleaning and cut; brand from the profile; a failure is a record; filter graph (text only via files, centred in the safe width, from the safe top); render_argv order (captions before the start frame, sound delayed per track, picture-only); real renders: frame 0 of the reel = the PNG (luma within 6), frame 1 = the reel's own start, the reel is 1/60 s longer, every lit pixel of the title inside the safe area |
 | `tests/py/test_clip_output_layout.py` | publish marks the file and the uploads row `thumbnail: true` only when the reel has the frame |
 | `node --test tests/posting-uploads.test.mjs` | 11 pass, incl. `uploadCoverAt`: frame 0 for a reel with its start frame |
 | `npm run lint` | 0 findings |
