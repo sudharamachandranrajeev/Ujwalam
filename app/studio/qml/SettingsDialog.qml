@@ -122,8 +122,10 @@ Dialog {
         if (opened) { if (startPage) page = startPage; return }
         if (busy) return;
         busy = true;
+        streamPg.reset();
         Api.get("ui/api/flags", (fok, fb) => {
             if (fok && Array.isArray(fb.flags)) store.takeFlags(fb.flags);
+            if (store.flags["stream-settings"] === true) streamPg.load(); // in step with the settings, not after them
             Api.get("ui/api/settings", (ok, b, err) => {
                 busy = false;
                 if (!ok) return store.say("Settings not available: " + err);
@@ -211,7 +213,7 @@ Dialog {
         if (transMsNow(d) !== (kindRange(d.transKind) ? s.transMs : 0)) return true;
         if (d.recDir.trim() !== s.recDir.trim() || d.clipDir.trim() !== s.clipDir.trim()) return true;
         for (const id in flagDraft) if ((flagStart[id] === true) !== flagDraft[id]) return true;
-        return false;
+        return streamPg.dirty;
     }
     function body() {
         const d = draft, s = start, out = {};
@@ -249,9 +251,15 @@ Dialog {
             store.say("Not saved: Settings > Clips has a reel whose shortest length is longer than its longest.");
             return false;
         }
+        if (streamPg.blocksSave) { // a Stream value over a platform limit keeps Settings open on that page (the limit is shown there)
+            page = "Stream";
+            store.say("Not saved: Settings > Stream has a value over a platform limit (shown in red).");
+            return false;
+        }
         const b = body(), d = draft, s = start;
         const flagChanges = [];
         for (const id in flagDraft) if ((flagStart[id] === true) !== flagDraft[id]) flagChanges.push([id, flagDraft[id], flagLabel(id)]);
+        streamPg.save(); // its own route; the server checks every value again (before the window closes: closing resets the page)
         saving = true;
         unsaved.close();
         close();
@@ -303,7 +311,7 @@ Dialog {
 
     Shortcut {
         sequence: "Escape"
-        enabled: dlg.opened && !unsaved.opened
+        enabled: dlg.opened && !unsaved.opened && !outDlg.opened
         onActivated: dlg.cancel()
     }
 
@@ -482,8 +490,8 @@ Dialog {
                 anchors.fill: parent
                 title: "Stream"
                 pageId: "stream"
-                lead: !dlg.flagOn("stream-settings") ? "Switch on " + dlg.flagLabel("stream-settings") + " below and click Save to use these settings."
-                                                     : "This window does not show the stream settings yet. Use Settings in the classic studio window for now."
+                lead: !dlg.flagOn("stream-settings") ? "Switch on " + dlg.flagLabel("stream-settings") + " below and click Save to use these settings." : ""
+                SettingsStream { id: streamPg; box: dlg; editor: outDlg }
             }
 
             SettingsPage {
@@ -707,6 +715,9 @@ Dialog {
         }
     }
 
+    // Add / Edit output (opened from Settings > Stream)
+    OutputDialog { id: outDlg; stream: streamPg }
+
     // ---- probe (tests): the same names as the widget studio's probe ----
     function probe() {
         const sections = [], heads = [];
@@ -728,7 +739,7 @@ Dialog {
             reelTransition: k ? { kind: k.id, label: k.label, ms: transMsNow(draft), msEnabled: !!r, min: r ? r.min : 0, max: r ? r.max : 0 } : null,
             recordLive: { on: draft.recordLive, text: "Record while live", visible: page === "Clips",
                 hint: "Records the stream (H and V) to your recordings folder so reels can be made after it ends. Uses about 10 GB per hour." },
-            snap: draft.snap, unsavedOpen: unsaved.opened, guide: guide,
+            snap: draft.snap, unsavedOpen: unsaved.opened, guide: guide, streamPage: streamPg.active ? streamPg.probe() : null,
             size: [width, height]
         };
     }
@@ -754,6 +765,7 @@ Dialog {
             return true;
         }
         if (!opened) return false;
+        if (p[0].startsWith("stream-")) return streamPg.active && streamPg.probeAction(p);
         switch (p[0]) {
         case "settings-shot": { // settings-shot:<png path>: a picture of the Settings window (it is its own window)
             const file = a.slice("settings-shot:".length);
