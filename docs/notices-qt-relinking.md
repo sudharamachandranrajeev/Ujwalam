@@ -1,7 +1,12 @@
 # Qt 6 LGPL-3.0 relinking note (D-pending, 2026-11-05)
 
 Scope: Qt6Core/Qt6Gui/Qt6Widgets, imported by `obs-browser.dll` and
-`obs-frontend-api.dll` in the bundled OBS runtime. Qt open-source build,
+`obs-frontend-api.dll` in the bundled OBS runtime; and the studio shell's own
+Qt kit DLLs in `studio/` (Core, Gui, Widgets, Network, and from 2026-11-11 the
+Qt Quick set: Qml, QmlModels, QmlMeta, QmlWorkerScript, Quick,
+QuickControls2*, QuickTemplates2, OpenGL), its platform plugins in
+`studio/platforms/` and the Qt Quick import plugins and `qmldir`/`.qml` files
+in `studio/qml/` (QtQml, QtQuick, QtQuick/Controls Basic). Qt open-source build,
 licensed LGPL-3.0-only (confirmed via Qt's own open-source licensing terms
 for the standard Qt 6 distribution; version string in the shipped DLL reads
 "Qt 6.8.3" — checked 2026-11-05, see
@@ -30,12 +35,17 @@ To close out the remaining §4 requirements, the packaged zip must carry:
    include Qt's copyright notice there too — check with whoever owns the
    about/credits screen (not yet built as of this note).
 
-## Not yet done (flagging, not fixing here)
-- `tools/package/build-alpha.mjs` does not yet copy `LGPL-3.0.txt` /
-  `GPL-3.0.txt` into the zip's `notices/` folder — only `GPL-2.0.txt` is
-  wired up (extracted live from the OBS runtime). These two are checked-in
-  static files in this repo instead (no equivalent bundled text exists in
-  the OBS runtime for Qt), so the build script needs a small addition to
-  copy them in whenever a `Qt6*.dll` is present in the file list.
-- No in-app "about/credits" screen exists yet to display the Qt copyright
+The studio shell links its Qt DLLs dynamically in the same way (ordinary
+files beside `ujwalam-studio.exe`, loaded at run time); the Qt Quick import
+plugins are loaded by Qt's own plugin mechanism from `studio/qml/`, so each
+can be swapped for an interface-compatible build. The studio's own QML files
+are compiled into the exe as resources; they are Ujwalam code (GPL-3.0), not
+Qt's.
+
+## Status
+- Done: `tools/package/build-alpha.mjs` copies `docs/licenses/GPL-3.0.txt`
+  and `LGPL-3.0.txt` into the zip's `notices/` folder, and the generated
+  component list names every Qt file (DLLs, platform plugins, Qt Quick import
+  plugins) as LGPL-3.0-only with a pointer to this note.
+- Not yet done: no in-app "about/credits" screen exists yet to display the Qt copyright
   notice live (requirement 3 above) — out of scope for this note.

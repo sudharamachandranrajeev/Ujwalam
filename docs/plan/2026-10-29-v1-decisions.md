@@ -1728,6 +1728,26 @@ Growth plan ED2. Decided:
   (saves are muxing only; the recording pass runs after every stream stopped, below normal priority).
 - **Not built.** Marker-only saves while a recording runs; live match edges replacing the recording pass.
 
+## D360 — The QML studio calls the UI server routes directly; no model extraction first (2026-11-11, plan Q1)
+
+- **Change to the plan.** Q1 was to move the logic out of `main_window.cpp` into shared `QObject` models first. The
+  widget studio's logic is mostly the order of its UI server calls and the rules around them (merge scenes by id,
+  layer arguments per canvas, held actions, preview selection), not state machines. Moving it would touch the
+  widget studio (the default, and the live path) for no gain to the user.
+- **Decision.** The QML screens call the same UI server routes through the same `ApiClient` (bridge `QmlApi`), and
+  keep the same rules in one QML state object (`app/studio/qml/Store.qml`), each rule commented with the widget
+  function it mirrors. The widget studio is not changed. Q1 becomes the bridge: `QmlApi`, `QmlTheme` (theme packs
+  through `theme.h`), the icon provider (`icons.h`), `PreviewView` (the host's preview in a native child window of
+  the QML window).
+- **One exe.** `ujwalam-studio.exe` holds both windows; `UJWALAM_STUDIO_QML=1` (set by the launcher while flag
+  `studio-qml` is on) opens the QML one. The launcher's lines, swap close (exit 75), hidden and probe modes are the
+  same. The exe now links Qt Quick, so the package ships the Qt Quick DLLs and imports for both windows.
+- **On-air bar data.** The status snapshot gains `host.onAir` (stream and recording time, summed stream bitrate, per
+  stream sink platform, state and bitrate), read from `outputs.status` only while something runs. Numbers and short
+  ids only.
+- **Close.** With tasks running and not live, the QML window asks: stop them and close, or do not close. Keeping them
+  in the tray comes with Q4.
+
 ## D361 — Montage story structure: fast cut, title, one match as a story (user, 2026-11-11 evening)
 
 - **User's words.** "before the title intro can be fast cut of kills from any matches, after title try to create a continuity like story and if not enough can use from other match as well, but don't re use that section in other videos if possible."

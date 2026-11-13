@@ -631,6 +631,12 @@ test('Qt shell spawn spec: the log folder and the version for the studio log and
   assert.equal(releaseVersion(path.join(os.tmpdir(), 'no-such-release.json')), 'dev');
 });
 
+test('Qt shell spawn spec: the Qt Quick window only when asked (flag studio-qml, D355), never from the inherited env', () => {
+  const base = { uiPort: 5000, launchKey: 'K'.repeat(40), exe: 'C:/studio.exe', exists: () => true };
+  assert.equal(shellSpawnSpec({ ...base, qml: true, env: { PATH: 'C:/x' } }).env.UJWALAM_STUDIO_QML, '1');
+  assert.equal('UJWALAM_STUDIO_QML' in shellSpawnSpec({ ...base, env: { PATH: 'C:/x', UJWALAM_STUDIO_QML: '1' } }).env, false, 'flag off');
+});
+
 test('Qt shell exit record: code as hex, crash flag, the crash report written since the start (studio-exits.jsonl)', () => {
   const startedAt = Date.parse('2026-11-08T18:54:00.000Z');
   const now = Date.parse('2026-11-08T19:20:35.000Z');

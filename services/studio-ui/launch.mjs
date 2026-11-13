@@ -405,7 +405,7 @@ export function studioShellPaths({ root = REPO, devExe = STUDIO_EXE, devQtDir = 
 /** Qt shell spawn spec (pure; tested). null when the exe is missing. env: the launcher's environment without any
  *  UJWALAM_*TOKEN* or *_KEY variable, plus the UI URL, the one-time launch key, qtBin (the folder holding the Qt
  *  DLLs) first on PATH and, when given, QT_QPA_PLATFORM_PLUGIN_PATH = qtPlugins (packaged build). */
-export function shellSpawnSpec({ uiPort, launchKey, exe, qtBin = null, qtPlugins = null, logsDir = null, version = null, env = process.env, exists = existsSync }) {
+export function shellSpawnSpec({ uiPort, launchKey, exe, qtBin = null, qtPlugins = null, logsDir = null, version = null, qml = false, env = process.env, exists = existsSync }) {
   if (!exe || !exists(exe) || !Number.isInteger(uiPort) || uiPort < 1 || uiPort > 65535) return null;
   const clean = {};
   for (const [k, v] of Object.entries(env)) if (!/^UJWALAM_.*(TOKEN|KEY)/i.test(k)) clean[k] = v;
@@ -415,6 +415,9 @@ export function shellSpawnSpec({ uiPort, launchKey, exe, qtBin = null, qtPlugins
   // logsDir: the studio writes studio-*.log and, on a crash, studio-crash-*.txt there (app/studio/src/studio_log.h).
   if (logsDir) clean.UJWALAM_STUDIO_LOG_DIR = logsDir;
   if (version) clean.UJWALAM_STUDIO_VERSION = version;
+  // D355 (flag studio-qml): the Qt Quick studio window instead of the widget one; never inherited from the launcher's env.
+  delete clean.UJWALAM_STUDIO_QML;
+  if (qml) clean.UJWALAM_STUDIO_QML = '1';
   return { cmd: exe, env: { ...clean, UJWALAM_UI_URL: `http://127.0.0.1:${uiPort}/`, UJWALAM_UI_LAUNCH_KEY: launchKey } };
 }
 
@@ -430,9 +433,9 @@ export function studioRootPaths(root, { repo = REPO, devExe = STUDIO_EXE, devQtD
 
 /** Starts one studio window with the LU4 control pipe (stdin: "swap-close"; stdout: "studio attach: ..." lines). The
  *  launcher and the studio-swap tests use it. Throws when the root holds no studio exe. */
-export function spawnStudio({ root, key, uiPort, logsDir = null, version = null, devQtDir = studioQtDir(), env = process.env }) {
+export function spawnStudio({ root, key, uiPort, logsDir = null, version = null, qml = false, devQtDir = studioQtDir(), env = process.env }) {
   const paths = studioRootPaths(root, { devQtDir });
-  const spec = paths ? shellSpawnSpec({ uiPort, launchKey: key, ...paths, logsDir, version, env }) : null;
+  const spec = paths ? shellSpawnSpec({ uiPort, launchKey: key, ...paths, logsDir, version, qml, env }) : null;
   if (!spec) throw new Error(`no studio exe in ${root}`);
   return spawn(spec.cmd, [], {
     stdio: ['pipe', 'pipe', 'ignore'], env: { ...spec.env, UJWALAM_STUDIO_CONTROL: '1' },
@@ -1625,7 +1628,9 @@ export async function main(argv = process.argv.slice(2)) {
   // Node runs that script (windowsHide, no window) with the login URL, so it can drive the page API like the browser.
   const wantShell = shellMode === 'qt';
   const shellLogs = path.join(dataDir, 'logs');
-  const shellSpec = shellPaths ? shellSpawnSpec({ uiPort, launchKey, ...shellPaths, logsDir: shellLogs, version: releaseVersion() }) : null;
+  // D355: the Qt Quick studio while flag studio-qml is on (read at each window start, so a switch applies at the next one).
+  const studioQml = () => { try { return createFlags({ dataDir }).isOn('studio-qml'); } catch { return false; } };
+  const shellSpec = shellPaths ? shellSpawnSpec({ uiPort, launchKey, ...shellPaths, logsDir: shellLogs, version: releaseVersion(), qml: studioQml() }) : null;
   if (wantShell && !shellSpec && args['no-open'] !== true && !isHeadless()) console.log('[studio] the Qt studio shell is not built (npm run build:studio); opening the browser instead');
   let studioSlot = null; // LU4 (flag service-swap): the Qt studio window behind a stop-start slot
   if (args['no-open'] !== true && shellSpec && (!isHeadless() || studioHidden())) {
@@ -1687,7 +1692,7 @@ export async function main(argv = process.argv.slice(2)) {
         setTimeout(() => {
           if (stopping) return;
           if (studioSlot) { try { studioSlot.start(studioSlot.root(), key); } catch (e) { console.log(`[studio] Qt shell could not be reopened: ${e.message}`); } return; }
-          const again = shellSpawnSpec({ uiPort, launchKey: key, ...shellPaths, logsDir: shellLogs, version: releaseVersion() });
+          const again = shellSpawnSpec({ uiPort, launchKey: key, ...shellPaths, logsDir: shellLogs, version: releaseVersion(), qml: studioQml() });
           if (again) startShell(again);
         }, 2000).unref();
       });
@@ -1707,7 +1712,7 @@ export async function main(argv = process.argv.slice(2)) {
       // embedded again; else the old version starts again. The exit handler below skips planned exits.
       studioSlot = createStudioSlot({
         spawn: (root, key) => {
-          const shell = spawnStudio({ root, key, uiPort, logsDir: shellLogs, version: releaseVersion() });
+          const shell = spawnStudio({ root, key, uiPort, logsDir: shellLogs, version: releaseVersion(), qml: studioQml() });
           shell.on('error', (e) => console.log(`[studio] Qt shell failed to start: ${e.code ?? 'error'}`));
           watchShell(shell, Date.now());
           return shell;

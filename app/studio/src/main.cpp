@@ -23,6 +23,7 @@
 #include "interaction.h"
 #include "main_window.h"
 #include "motion.h"
+#include "qml_studio.h"
 #include "specimen.h"
 #include "studio_log.h"
 #include "theme.h"
@@ -133,6 +134,92 @@ static void startControlReader(QApplication *app, std::function<void(const QStri
 	}).detach(); // end of input (the launcher gone) ends only this thread
 }
 #endif
+
+// Logs in with the launcher's key and applies the saved theme and effects choice (settings.json ui.theme / ui.effects,
+// D293) before any window shows, so it never flashes the default look; UJWALAM_THEME / UJWALAM_EFFECTS (tests) win.
+// Then runs then(). A failed login exits 77.
+static void loginThen(QApplication &app, ApiClient &api, const QString &key, int &code, std::function<void()> then)
+{
+	api.login(key, [&app, &api, &code, then](bool ok, const QJsonObject &, const QString &err) {
+		if (!ok) {
+			std::fprintf(stderr, "studio: login failed: %s\n", qPrintable(err));
+			code = 77;
+			QTimer::singleShot(0, &app, [&app]() { app.exit(77); });
+			return;
+		}
+		api.get(QStringLiteral("ui/api/settings"), [then](bool okS, const QJsonObject &sb, const QString &) {
+			if (okS) {
+				const QJsonObject ui = sb.value(QStringLiteral("settings")).toObject().value(QStringLiteral("ui")).toObject();
+				if (qEnvironmentVariable("UJWALAM_THEME").isEmpty() && !ui.value(QStringLiteral("theme")).toString().isEmpty())
+					theme::setCurrent(ui.value(QStringLiteral("theme")).toString());
+				if (qEnvironmentVariable("UJWALAM_EFFECTS").isEmpty() && !ui.value(QStringLiteral("effects")).toString().isEmpty())
+					theme::setEffects(ui.value(QStringLiteral("effects")).toString());
+			}
+			then();
+		});
+	});
+}
+
+// The Qt Quick studio (D355, flag studio-qml; the launcher sets UJWALAM_STUDIO_QML=1): the same launcher lines, swap
+// close, hidden and probe modes as the widget window below.
+static int runQml(QApplication &app, ApiClient &api, const QString &key, bool headless, bool hidden)
+{
+	QmlStudio studio(&api);
+	int code = 0;
+#ifdef Q_OS_WIN
+	if (qEnvironmentVariable("UJWALAM_STUDIO_CONTROL") == QStringLiteral("1"))
+		startControlReader(&app, [&studio](const QString &cmd) {
+			if (cmd == QStringLiteral("swap-close"))
+				studio.swapClose();
+		});
+#endif
+	loginThen(app, api, key, code, [&]() {
+		const int probeMs = headless ? qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS") : 0;
+		const QmlStudio::Mode mode = probeMs > 0 ? QmlStudio::Mode::Probe : hidden ? QmlStudio::Mode::Hidden : QmlStudio::Mode::Normal;
+		if (!studio.begin(mode)) {
+			code = 70;
+			QTimer::singleShot(0, &app, [&app]() { app.exit(70); });
+			return;
+		}
+		if (mode == QmlStudio::Mode::Probe) {
+			// Actions: one every 700 ms from 2.5 s (after the first loads and a status poll), as the widget probe.
+			auto actions = std::make_shared<QJsonArray>();
+			const QStringList todo = qEnvironmentVariable("UJWALAM_STUDIO_PROBE_ACTIONS").split(QLatin1Char(','), Qt::SkipEmptyParts);
+			for (int i = 0; i < todo.size() && i < 20; i++)
+				QTimer::singleShot(2500 + 700 * i, &app, [&studio, actions, a = todo[i].trimmed()]() {
+					actions->append(QJsonObject{{QStringLiteral("action"), a}, {QStringLiteral("done"), studio.probeAction(a)}});
+				});
+			QTimer::singleShot(std::min(probeMs, 60000), &app, [&app, &studio, actions]() {
+				QJsonObject o = studio.probe();
+				o.insert(QStringLiteral("actions"), *actions);
+				const QString shot = qEnvironmentVariable("UJWALAM_STUDIO_PROBE_SHOT");
+				if (shot.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
+					o.insert(QStringLiteral("shot"), studio.shot(shot));
+				std::printf("studio probe: %s\n", QJsonDocument(o).toJson(QJsonDocument::Compact).constData());
+				std::fflush(stdout);
+				app.exit(0);
+			});
+			return;
+		}
+		if (mode == QmlStudio::Mode::Hidden) {
+			std::printf("studio attach: ready (hidden)\n");
+			std::fflush(stdout);
+			int closeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_TEST_CLOSE_MS");
+#ifdef Q_OS_WIN
+			if (closeMs <= 0)
+				closeMs = testMarker(L"ujwalam-studio.test-close").toInt();
+#endif
+			if (closeMs > 0)
+				QTimer::singleShot(closeMs, &app, [&studio]() { studio.close(); });
+			return;
+		}
+		std::printf("studio attach: ready\n");
+		std::fflush(stdout);
+	});
+	const int r = app.exec();
+	qInfo("studio exiting with code %d", code ? code : r);
+	return code ? code : r;
+}
 
 // UJWALAM_HEADLESS=1 + UJWALAM_STUDIO_HIDDEN=1: every window is laid out and painted on the native platform (the real
 // Windows font engine, so the probe's pictures show the text as the screen does, ClearType included, D376) but none is
@@ -256,7 +343,11 @@ int main(int argc, char **argv)
 		}
 	}
 #endif
-	if (headless && !hidden)
+	// A QML probe "shows" its window so bindings and layouts run: always on the offscreen platform, never on a screen
+	// (the native hidden platform of D376 is for the widget probe, which keeps its windows off screen itself).
+	const bool qmlProbe = headless && qEnvironmentVariable("UJWALAM_STUDIO_QML") == QStringLiteral("1") &&
+			      qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS") > 0;
+	if (headless && (!hidden || qmlProbe))
 		qputenv("QT_QPA_PLATFORM", "offscreen");
 	QApplication app(argc, argv);
 	if (logs.crash && !studiolog::reassert())
@@ -269,8 +360,13 @@ int main(int argc, char **argv)
 		QApplication::setWindowIcon(appIcon);
 	}
 	theme::apply(app);
-	motion::installHover(app); // hover glow on buttons and cards (D287)
-	interaction::install(app); // depth effects, captions, backdrops, popup fades (D293)
+	// The QML studio runs for a window, a hidden window or a probe; the plain headless smoke stays on the widget path.
+	const bool qml = qEnvironmentVariable("UJWALAM_STUDIO_QML") == QStringLiteral("1") &&
+			 (!headless || hidden || qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS") > 0);
+	if (!qml) {
+		motion::installHover(app); // hover glow on buttons and cards (D287)
+		interaction::install(app); // depth effects, captions, backdrops, popup fades (D293)
+	}
 	const QString url = takeEnv("UJWALAM_UI_URL");
 	const QString key = takeEnv("UJWALAM_UI_LAUNCH_KEY");
 
@@ -279,6 +375,8 @@ int main(int argc, char **argv)
 		std::fprintf(stderr, "studio: start it from the launcher (npm run alpha -- --shell qt); no UI server URL or key\n");
 		return 64;
 	}
+	if (qml)
+		return runQml(app, api, key, headless, hidden);
 	MainWindow win(&api);
 	int code = 0;
 #ifdef Q_OS_WIN
@@ -288,23 +386,7 @@ int main(int argc, char **argv)
 				win.swapClose();
 		});
 #endif
-	api.login(key, [&](bool ok, const QJsonObject &, const QString &err) {
-		if (!ok) {
-			std::fprintf(stderr, "studio: login failed: %s\n", qPrintable(err));
-			code = 77;
-			QTimer::singleShot(0, &app, [&app]() { app.exit(77); });
-			return;
-		}
-		// The saved theme and effects choice (settings.json ui.theme / ui.effects, D293) is applied before the window
-		// shows, so it never flashes the default look. UJWALAM_THEME / UJWALAM_EFFECTS (tests) win.
-		api.get(QStringLiteral("ui/api/settings"), [&](bool okS, const QJsonObject &sb, const QString &) {
-		if (okS) {
-			const QJsonObject ui = sb.value(QStringLiteral("settings")).toObject().value(QStringLiteral("ui")).toObject();
-			if (qEnvironmentVariable("UJWALAM_THEME").isEmpty() && !ui.value(QStringLiteral("theme")).toString().isEmpty())
-				theme::setCurrent(ui.value(QStringLiteral("theme")).toString());
-			if (qEnvironmentVariable("UJWALAM_EFFECTS").isEmpty() && !ui.value(QStringLiteral("effects")).toString().isEmpty())
-				theme::setEffects(ui.value(QStringLiteral("effects")).toString());
-		}
+	loginThen(app, api, key, code, [&]() {
 		// Probe (tests): run the window's loads and polls without showing it, then print what its panels show.
 		const int probeMs = qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS");
 		if (headless && probeMs > 0) {
@@ -478,7 +560,6 @@ int main(int argc, char **argv)
 		win.start();
 		std::printf("studio attach: ready\n");
 		std::fflush(stdout);
-		});
 	});
 	if (hidden) // the probe on the native platform (D376): no window it opens (Settings, Growth, menus) ever reaches the screen
 		app.installEventFilter(new HiddenWindows(&app));

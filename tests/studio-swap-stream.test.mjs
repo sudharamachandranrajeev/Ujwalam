@@ -18,8 +18,8 @@ import { resolveConfig } from '../app/host/lib/config.mjs';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('parseStudioSwapArgs: defaults, values, refusals', () => {
-  assert.deepEqual(parseStudioSwapArgs([]), { swaps: 20, workDir: null, wait: false });
-  assert.deepEqual(parseStudioSwapArgs(['--swaps', '3', '--work-dir', 'W', '--wait']), { swaps: 3, workDir: 'W', wait: true });
+  assert.deepEqual(parseStudioSwapArgs([]), { swaps: 20, workDir: null, wait: false, qml: false });
+  assert.deepEqual(parseStudioSwapArgs(['--swaps', '3', '--work-dir', 'W', '--wait', '--qml']), { swaps: 3, workDir: 'W', wait: true, qml: true });
   assert.throws(() => parseStudioSwapArgs(['--swaps', '0']), /1\.\.200/);
   assert.throws(() => parseStudioSwapArgs(['--live']), /unknown argument/);
 });
