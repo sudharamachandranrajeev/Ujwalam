@@ -45,6 +45,8 @@ add_executable(ujwalam-studio WIN32
 	src/main_window.h
 	src/motion.cpp
 	src/motion.h
+	src/soft.cpp
+	src/soft.h
 	src/stats_cards.cpp
 	src/stats_cards.h
 	src/stream_pages.cpp

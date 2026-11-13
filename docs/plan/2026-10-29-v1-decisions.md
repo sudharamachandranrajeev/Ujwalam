@@ -1828,3 +1828,25 @@ Growth plan ED2. Decided:
   - In the host, `host.alive` reads atomics only; the checker logs without holding a lock.
   - The stall report is read as one consistent snapshot: a single-writer seqlock, still lock-free for `host.alive`. A stress test showed 0 torn reads (re-review). A read that runs out of retries reports `"snapshot": "busy"` with no stall fields, never mixed values.
   - The task-bar write is retried when the file is open elsewhere, and an older state never overwrites a newer one.
+
+## D376 — Soft theme and ClearType text in the Qt studio (2026-11-13, agent)
+
+- **Why.** The user said the themes look dated and the text does not look like ClearType, and asked for a redesign
+  after a reference picture: soft raised plates, gentle shadows, a warm amber glow for what is on.
+- **ClearType finding.** The studio already renders ClearType on screen (Qt DirectWrite follows the Windows setting).
+  The offscreen test platform renders greyscale, so probe screenshots are no evidence of text quality; use the hidden
+  native probe or the real screen. What looked soft is the bundled web fonts with default hinting at 9–10 pt.
+- **Soft pack** (`data/themes/soft.json`):
+  - Font Segoe UI, a Windows system font used at runtime only (no Microsoft font file is bundled).
+  - New `typography.hinting` (`default | full | vertical | none`); Soft uses `full` (`QFont::PreferFullHinting`).
+  - New `componentsAlways`: a pack built only from components uses its components block with flag `theme-components`
+    off. The flag stays off by default; other packs are unchanged.
+  - New `surface` block (faces, edges, wells, warm and glow colours, shadow layers, radii, room for the shadow),
+    read only with the `soft` card variant. New variants: button `raised`, input `soft`, switch `knob`, card `soft`.
+- **Painting.** `app/studio/src/soft.cpp` paints cards, small cards, rows with a switch, pills and round controls
+  from an event filter behind the widget's own paint. No `QGraphicsEffect`: text always lands on an opaque face.
+  Shadows are blurred once per kind, radius, tone and device pixel ratio and drawn as 9-slice pictures. Hover and press
+  fade in the theme's fast time (≤ 150 ms). Reduced effects: no shadows; High performance: flat faces.
+- **Appearance.** Soft is listed first. The default stays Violet Night: a new look is off until the user picks it.
+- **Status.** Built and tested headless and with the hidden native probe; one real on-screen capture. Other display
+  scales and a machine with ClearType off are UNVERIFIED. Evidence `docs/evidence/2026-11-13-soft-theme-cleartype.md`.

@@ -2,6 +2,7 @@
 #include "interaction.h"
 
 #include "depth.h"
+#include "soft.h"
 #include "motion.h"
 #include "theme.h"
 
@@ -183,6 +184,7 @@ public:
 			applyCaps(w); // D336
 			if (!w->isWindow() && !w->graphicsEffect() && !depth::classFor(w).isEmpty())
 				depth::attach(w, QString()); // once per style: also in the probe, where no window is shown
+			soft::attach(w); // D376: soft surfaces, when the pack has them
 			return false;
 		}
 		if (w->isWindow()) {

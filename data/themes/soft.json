@@ -1,0 +1,187 @@
+{
+  "$schema": "./theme.schema.json",
+  "id": "soft",
+  "name": "Soft",
+  "topic": "Soft light plates on an off-white backdrop: raised pills with a light top edge and a soft shadow below, sunken tracks with round knobs, and a warm amber glow on whatever is switched on.",
+  "version": 1,
+  "dark": false,
+  "componentsAlways": true,
+  "colors": {
+    "bg": "#e9e9ee",
+    "panel": "#f2f1f5",
+    "field": "#e6e5eb",
+    "border": "#cfced6",
+    "text": "#16161a",
+    "muted": "#56555e",
+    "accent": "#a95400",
+    "accentHi": "#8a4400",
+    "danger": "#b0241c",
+    "ok": "#1d6a39",
+    "onAccent": "#ffffff",
+    "disabled": "#a09fa8"
+  },
+  "gradients": {
+    "window": {
+      "from": "#f6f6f8",
+      "to": "#e0e0e6",
+      "angle": 90
+    },
+    "accent": {
+      "from": "#b65e06",
+      "to": "#994a00",
+      "angle": 90
+    },
+    "panel": {
+      "from": "#f8f7fa",
+      "to": "#ebeaf0",
+      "angle": 90
+    },
+    "control": {
+      "from": "#f9f8fb",
+      "to": "#e9e8ee",
+      "angle": 90
+    }
+  },
+  "typography": {
+    "family": "Segoe UI",
+    "fallbacks": [
+      "Segoe UI Variable Text",
+      "Inter"
+    ],
+    "baseSize": 10,
+    "captionSize": 8.5,
+    "titleSize": 17,
+    "headingWeight": 600,
+    "letterSpacing": 0,
+    "captionLetterSpacing": 0.4,
+    "captionCaps": false,
+    "hinting": "full",
+    "buttonCaps": false,
+    "tabCaps": false,
+    "headingCaps": false,
+    "scale": {
+      "h1": 17,
+      "h2": 11,
+      "subtitle": 9,
+      "body": 10,
+      "caption": 8.5,
+      "button": 10
+    }
+  },
+  "geometry": {
+    "radius": {
+      "small": 8,
+      "medium": 14,
+      "large": 22
+    },
+    "spacing": {
+      "small": 4,
+      "medium": 8,
+      "large": 16
+    },
+    "borderWidth": 1,
+    "controlHeight": 20,
+    "roundControl": 58,
+    "controlPadding": {
+      "y": 6,
+      "x": 16
+    }
+  },
+  "depth": {
+    "card": {},
+    "button": {},
+    "primaryButton": {},
+    "roundControl": {},
+    "toast": {},
+    "menu": {},
+    "taskPanel": {}
+  },
+  "surface": {
+    "faceTop": "#fbfbfd",
+    "faceBottom": "#ebeaf0",
+    "edgeLight": "#ffffff",
+    "edgeDark": "#c3c2cb",
+    "wellTop": "#d9d8e0",
+    "wellBottom": "#efeef3",
+    "warmTop": "#fffaf1",
+    "warmBottom": "#ffe3bb",
+    "warmEdge": "#e9a24f",
+    "glowCore": "#fffbef",
+    "glowColor": "#ffad42",
+    "glowInk": "#6a3300",
+    "shadow": {
+      "blur": 11,
+      "offsetX": 0,
+      "offsetY": 6,
+      "color": "#3a3846",
+      "opacity": 0.26
+    },
+    "contact": {
+      "blur": 2,
+      "offsetX": 0,
+      "offsetY": 1,
+      "color": "#3a3846",
+      "opacity": 0.2
+    },
+    "halo": {
+      "blur": 8,
+      "offsetX": -2,
+      "offsetY": -3,
+      "color": "#ffffff",
+      "opacity": 0.9
+    },
+    "glowHalo": {
+      "blur": 12,
+      "offsetX": 0,
+      "offsetY": 3,
+      "color": "#ff9d2e",
+      "opacity": 0.55
+    },
+    "cardRadius": 22,
+    "plateRadius": 28,
+    "margin": {
+      "x": 12,
+      "top": 9,
+      "bottom": 18
+    }
+  },
+  "motion": {
+    "fastMs": 110,
+    "normalMs": 140,
+    "slowMs": 220,
+    "easing": "outCubic",
+    "hoverLift": 0,
+    "pressSink": 1
+  },
+  "background": {
+    "kind": "gradient",
+    "pattern": "none",
+    "patternColor": "#000000",
+    "patternOpacity": 0,
+    "patternSpacing": 24
+  },
+  "icons": {
+    "stroke": 1.6
+  },
+  "components": {
+    "button": {
+      "shape": "pill",
+      "style": "raised",
+      "caps": false
+    },
+    "tabs": "segmented",
+    "input": "soft",
+    "focus": "ring",
+    "switch": "knob",
+    "slider": {
+      "track": "thin",
+      "handle": "round",
+      "valueBubble": true
+    },
+    "sectionHeader": "plain",
+    "card": "soft",
+    "list": "plain",
+    "chip": "pill",
+    "density": "normal"
+  }
+}

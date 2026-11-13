@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "motion.h"
+#include "soft.h"
 #include "theme.h"
 
 #include <QAbstractButton>
@@ -166,6 +167,8 @@ public:
 protected:
 	void paintEvent(QPaintEvent *) override
 	{
+		if (soft::owns(parentWidget())) // D376: the soft painter shows hover, press and focus itself
+			return;
 		QPainter p(this);
 		p.setRenderHint(QPainter::Antialiasing);
 		const QRectF r = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
