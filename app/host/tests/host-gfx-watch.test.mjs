@@ -88,11 +88,17 @@ test('a blocked graphics thread is reported once while host.alive keeps answerin
 });
 
 test('the stall snapshot host.alive reads is never torn: seqlock stress, writer thread against reader (Codex re-review)', { skip }, async () => {
-  const r = await h.client.call('graphics.testSnapshot', { writes: 2_000_000, reads: 2_000_000 });
-  assert.equal(r.writes, 2_000_000);
-  assert.ok(r.reads >= 2_000_000, `${r.reads} reads`);
-  assert.ok(r.changes >= 100, `the reader ran during the writes (${r.changes} new values seen)`);
-  assert.equal(r.torn, 0, 'no read mixed two writes');
+  // The overlap of the two threads is the precondition, not the property: on a loaded machine (full CI) the scheduler
+  // can run them mostly apart (12 new values seen on 2026-11-13). Up to 3 runs to get the overlap; no run may tear.
+  let r;
+  for (let i = 0; i < 3; i++) {
+    r = await h.client.call('graphics.testSnapshot', { writes: 2_000_000, reads: 2_000_000 });
+    assert.equal(r.writes, 2_000_000);
+    assert.ok(r.reads >= 2_000_000, `${r.reads} reads`);
+    assert.equal(r.torn, 0, 'no read mixed two writes');
+    if (r.changes >= 100) break;
+  }
+  assert.ok(r.changes >= 100, `the reader ran during the writes (${r.changes} new values seen, 3 runs)`);
   // A read out of retries is reported as "snapshot": "busy" (never a torn value); under this 2M-write hammer on a
   // loaded machine a few can happen (17 in the 2026-11-13 full CI), so the bound is a tiny share, not zero.
   assert.ok(r.retriedOut <= r.reads / 10_000, `reads out of retries stay rare (${r.retriedOut} of ${r.reads})`);
