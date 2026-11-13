@@ -93,7 +93,7 @@ Worst case: about 35 s to detect, up to 15 s to kill, 2 s backoff, then the star
 | `node --test tests/host-watch.test.mjs` | 14 / 14 pass (after the review fixes) |
 | `node --test tests/host-watch.test.mjs tests/studio-ui-alpha.test.mjs tests/stream-recovery.test.mjs tests/studio-ui-crash-recovery.test.mjs` | 74 tests: 73 pass, 1 skipped (face worker, no `.venv-gpu` in the worktree) |
 | `node --test app/host/tests/host-gfx-watch.test.mjs app/host/tests/host-api.test.mjs` (real host, installed app not running) | 19 / 19 pass |
-| after the seqlock: `node --test app/host/tests/host-gfx-watch.test.mjs app/host/tests/host-api.test.mjs app/host/tests/host-structure.test.mjs tests/host-watch.test.mjs` | 38 / 38 pass |
+| after the seqlock: `node --test app/host/tests/host-gfx-watch.test.mjs app/host/tests/host-api.test.mjs app/host/tests/host-structure.test.mjs tests/host-watch.test.mjs` | 38 / 38 pass; after fix 6: 39 / 39 pass |
 | `npm run test:host` (installed app not running) | 173 tests: 162 pass, 0 fail, 11 skipped (opt-in benches; face tests need `.venv-gpu`, absent in this worktree). The first run had a failure in `host-live-plan-record.test.mjs` (EPIPE on a loopback stream write) and one other failing assertion. A full rerun with no other load passed. Treated as load flakiness, not this change: that test does not use the watchdog. After the review fixes: 173 tests, 162 pass, 0 fail, 11 skipped, first run. |
 | `node tools/lint.mjs` | 0 findings |
 
