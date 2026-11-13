@@ -1031,6 +1031,31 @@ test('D291 file effects: a missing file is a plan warning (layer kept, effect dr
     [{ type: 'blendDarken', opacity: 1 }, { type: 'flip' }]);
 });
 
+test('D381 realism LUT: the shipped .cube on base luts loads in the clut filter and grades the colour as its generator says', async () => {
+  const { grade } = await import('../../../tools/make-realism-lut.mjs');
+  const luts = path.join(REPO_ROOT, 'data', 'luts');
+  const doc = {
+    version: 1, id: 'realism-check', name: 'Realism check', activeScene: 'main',
+    canvases: [{ id: 'h', width: 1280, height: 720, fps: 60 }],
+    devices: [], overlays: [], outputs: [],
+    scenes: [{ id: 'main', name: 'Main', layers: [
+      { id: 'bg', type: 'color', name: 'Bg', source: { color: '#ffffff' }, placements: { h: { visible: true, x: 0, y: 0, width: 1280, height: 720 } } },
+      L('real', 0, 'color', { color: '#ff0000' }, [{ type: 'lut', file: { base: 'luts', rel: 'realism-filmic.cube' }, amount: 1 }]),
+      L('raw', 1, 'color', { color: '#ff0000' }),
+    ] }],
+    audio: { tracks: [{ id: 't1', name: 'Track 1' }], sources: [] }
+  };
+  const r = await loadIntoHost(c, doc, { bases: { luts } });
+  assert.deepEqual(r.unavailable, []);
+  const px = frameRgb(await recordFrame('realism-h.mkv'), 1280, 720);
+  const at = (i) => { const p = cell(i); return px(p.x + 70, p.y + 70); };
+  const want = grade(1, 0, 0).map((v) => Math.round(v * 255)); // 221, 10, 12
+  const got = at(0), raw = at(1);
+  assert.ok(got.every((v, i) => Math.abs(v - want[i]) <= 14), `graded red: got ${got} want ${want}`);
+  assert.ok(raw[0] - got[0] >= 20, `the grade is applied (raw ${raw} vs graded ${got})`);
+  await c.call('outputs.clear');
+});
+
 test('D291 grain is temporal noise, never a flash: full canvas grain at amount 1 stays at or under 3 flashes/s', async () => {
   const doc = {
     version: 1, id: 'grain-flash', name: 'Grain flash', activeScene: 'main',

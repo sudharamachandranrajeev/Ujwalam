@@ -76,13 +76,16 @@ validate-games PASS, private-scan PASS, legacy-verify PASS; ci: 9/9 passed in 20
 - GPU cost of lut + sharpen + vignette on the game layers (H 2K, V 2K, backdrop duplicates) next to the three NVENC
   encodes: not measured. Per-pixel filters in OBS's own obs-filters; expected small, to be measured by the lead with the
   host running (bench / health dashboard, NVENC and GPU load before and after).
-- That OBS's clut_filter loads this .cube (header lines LUT_3D_SIZE, DOMAIN_MIN, DOMAIN_MAX only) and the look on real
-  game footage: no host or fx test was run, because the installed Ujwalam was running (GPU tests next to it reset the
-  GPU, 2026-11-12).
-- The studio menu item ("Make realism scene") in the running Qt window: built, not clicked; `tests/studio-qt-shell.test.mjs`
-  (starts the studio exe) was not run. With the flag off the scene menu is unchanged, so that test's menu lists hold.
-- The launcher end-to-end test in `tests/studio-ui-alpha.test.mjs` (its expected host bases now include `luts`) was not
-  run: it starts the launcher, which may open a browser window when the studio shell is not built.
+- The look on real game footage.
+- The studio menu item ("Make realism scene") in the running Qt window: built, not clicked.
+
+## Checked later the same day (lead)
+
+- OBS's clut_filter loads the shipped .cube from base `luts`: `node --test --test-name-pattern="D381 realism LUT"
+  app/host/tests/host-project.test.mjs`: PASS. A pure red layer records as the generator's `grade(1, 0, 0)` (221, 10,
+  12) within 14 per channel; the same red without the LUT stays at least 20 higher in red.
+- Full CI 16/16 on the merge into `claude/alpha0-d1` (tree e6724a3df409), which runs `tests/studio-qt-shell.test.mjs`
+  and `tests/studio-ui-alpha.test.mjs`; package E2E 20/20 on alpha.29 (ships `data/luts/realism-filmic.cube`).
 - Live use: awaiting live test. Not done until used on a real stream with no high-severity feedback.
 
 ## Files
