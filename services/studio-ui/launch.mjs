@@ -1268,16 +1268,28 @@ export async function main(argv = process.argv.slice(2)) {
   let core = null; // flag off: the event core process; flag on: coreSlot owns it
   let coreSlot = null;
   let corePort = null;
+  // Opening delay (D380): the event core starts (about 2 s: data folder rights, audit database, system pipe check)
+  // while the host config and the outputs plan are prepared; its port is first needed by the host's start arguments.
+  let corePortP;
   if (coreFront) {
     coreSlot = createEventCoreSlot({ front: coreFront, root: REPO, spawn: spawnCore, systemToken: coreTokens.system, onLine: (l) => console.log(l), onUnexpectedExit: () => endSession(0), ...track });
-    try { await coreSlot.start(); corePort = coreFront.port(); } catch (e) { console.log(`[studio] event core: ${e.message}`); }
-    if (corePort) console.log(`[studio] service swap on: the event core is reached through port ${corePort}`);
+    corePortP = coreSlot.start().then(() => {
+      const p = coreFront.port();
+      if (p) console.log(`[studio] service swap on: the event core is reached through port ${p}`);
+      return p;
+    }, (e) => { console.log(`[studio] event core: ${e.message}`); return null; });
   } else {
     core = spawnCore(REPO);
     children.push(core);
-    corePort = await portFrom(core, /api on 127\.0\.0\.1:(\d+)/);
+    corePortP = portFrom(core, /api on 127\.0\.0\.1:(\d+)/);
   }
-  if (!corePort) { console.log('[studio] event core did not start; stopping'); await stopAll(); return 1; }
+  const coreStarted = async () => {
+    corePort = await corePortP;
+    if (corePort) return true;
+    console.log('[studio] event core did not start; stopping');
+    await stopAll();
+    return false;
+  };
 
   // 2. host (optional). Config (exe, OBS runtime, data) comes from app/host/lib/config.mjs (env or host.local.json).
   // Devices stay off unless --allow-devices is given here; this launcher never opens a device by itself.
@@ -1328,9 +1340,7 @@ export async function main(argv = process.argv.slice(2)) {
         console.log(`[studio] host config: ${hostConfigFile} (hotkeys on, replay ${ALPHA_REPLAY_SECONDS} s autostart, feedback folder ${feedbackDir}, monitoring output ${monitoringOutput ? 'from the profile' : 'Windows default'})`);
       } catch (e) { console.log(`[studio] host config could not be written owner-only (${e.message}); stopping`); await stopAll(); return 1; }
     }
-    const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system, embedded: !!shellPaths });
-    for (const n of spec.notes) console.log(`[studio] WARNING: ${n}`);
-    const hostArgs = spec.argv;
+    let outputsParamsFile = null; // the planned graph for --outputs (below, once the event core's port is known)
     const { planFile, readServerSchemes } = await import('../../app/host/lib/outputs-plan.mjs');
     // One plan attempt: the plan file and its planned graph. Real host + --live: the stored server addresses' schemes
     // (only the scheme, the value is dropped at once) choose "auto" transports (Twitch: rtmp or rtmps) and check named
@@ -1369,8 +1379,13 @@ export async function main(argv = process.argv.slice(2)) {
       const f = path.join(hostCfg.dataDir, 'outputs-params.json');
       mkdirSync(hostCfg.dataDir, { recursive: true });
       writeFileSync(f, JSON.stringify(params, null, 2));
-      hostArgs.push('--outputs', f);
+      outputsParamsFile = f;
     }
+    if (!(await coreStarted())) return 1;
+    const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system, embedded: !!shellPaths });
+    for (const n of spec.notes) console.log(`[studio] WARNING: ${n}`);
+    const hostArgs = spec.argv;
+    if (outputsParamsFile) hostArgs.push('--outputs', outputsParamsFile);
     const logsDir = path.join(dataDir, 'logs');
     // What spawnHost starts; an LU5 host update (D343) replaces it, a failed one puts the previous one back.
     hostRun = { exe: hostExe, args: hostArgs, script: /\.m?js$/i.test(hostExe), runtime: hostCfg.runtime, root: startupHost?.entry?.root ?? null };
@@ -1576,6 +1591,8 @@ export async function main(argv = process.argv.slice(2)) {
     console.log('[studio] BLOCKED-ON-HOST: no libobs host executable (build it with node app/host/tools/build.mjs, or set UJWALAM_HOST_EXE / --host-exe); the UI uses its fake backend');
     if (alpha) { console.log('[studio] alpha needs the libobs host; stopping'); await stopAll(); return 1; }
   }
+
+  if (corePort === null && !(await coreStarted())) return 1; // no host started above: the event core is still needed
 
   // LU5/LU7 update queue (D343): versions per part on the control page; with the flag service-swap on, updates from the
   // launcher's parent are applied at once when nothing is live, wait for one click (services) or for the stop (host)

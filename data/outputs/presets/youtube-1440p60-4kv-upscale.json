@@ -1,0 +1,97 @@
+{
+  "name": "YouTube 2K H + 4K V from 1080p canvases (upscaled, D378) + Twitch/Kick re-encode",
+  "canvases": [
+    {
+      "id": "H",
+      "w": 1920,
+      "h": 1080,
+      "fps": 60
+    },
+    {
+      "id": "V",
+      "w": 1080,
+      "h": 1920,
+      "fps": 60
+    }
+  ],
+  "encoders": [
+    {
+      "id": "yt-h",
+      "canvas": "H",
+      "w": 2560,
+      "h": 1440,
+      "upscale": true,
+      "codec": "h264",
+      "bitrate": 24000,
+      "rc": "cbr",
+      "gop_sec": 2,
+      "encoder": "nvenc"
+    },
+    {
+      "id": "reencode-tk",
+      "canvas": "H",
+      "w": 1920,
+      "h": 1080,
+      "fps": 60,
+      "codec": "h264",
+      "bitrate": 6000,
+      "rc": "cbr",
+      "gop_sec": 2,
+      "encoder": "nvenc"
+    },
+    {
+      "id": "vert",
+      "canvas": "V",
+      "w": 2160,
+      "h": 3840,
+      "upscale": true,
+      "codec": "h264",
+      "bitrate": 35000,
+      "rc": "cbr",
+      "gop_sec": 2,
+      "encoder": "nvenc"
+    }
+  ],
+  "audio": {
+    "tracks": [
+      {
+        "id": "master",
+        "name": "Master Track",
+        "codec": "aac",
+        "bitrate": 160,
+        "sampleRate": 48000
+      }
+    ]
+  },
+  "sinks": [
+    {
+      "id": "youtube-h",
+      "platform": "youtube",
+      "encoder": "yt-h",
+      "proto": "rtmps",
+      "priority": 1
+    },
+    {
+      "id": "youtube-v",
+      "platform": "youtube",
+      "encoder": "vert",
+      "proto": "rtmps",
+      "priority": 2
+    },
+    {
+      "id": "twitch",
+      "platform": "twitch",
+      "encoder": "reencode-tk",
+      "proto": "rtmps",
+      "priority": 3
+    },
+    {
+      "id": "kick",
+      "platform": "kick",
+      "encoder": "reencode-tk",
+      "proto": "rtmps",
+      "priority": 4
+    }
+  ],
+  "note": "4K portrait load test (D378), NOT usable on the RTX 4050 Laptop: 3-minute loopback soak 2026-11-13 20:00 reached 100% NVENC load, youtube-v delivered 8228 of about 11000 frames (about 45 fps), 1 render-lagged frame. Total egress 65640 kbps (video 65000 + audio 160 x 4 sinks)."
+}

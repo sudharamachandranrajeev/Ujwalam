@@ -248,14 +248,15 @@ export async function readServerSchemes(file, readFacts, { select } = {}) {
     if (Array.isArray(select) && !select.includes(id)) continue;
     refs.add(t.serverRef);
   }
+  // All at once (opening delay, D380): each read starts one Windows PowerShell (about 0.4 s); one by one they added up.
   const out = {};
-  for (const ref of refs) {
+  await Promise.all([...refs].map(async (ref) => {
     try {
       const f = await readFacts(ref);
       out[ref] = { present: f?.present === true, scheme: f?.present === true && typeof f.scheme === 'string' ? f.scheme : null };
     } catch {
       out[ref] = { error: true };
     }
-  }
+  }));
   return out;
 }
