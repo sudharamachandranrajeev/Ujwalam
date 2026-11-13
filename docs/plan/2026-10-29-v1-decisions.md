@@ -1892,3 +1892,22 @@ Growth plan ED2. Decided:
 - **What went out (host log 2026-11-12, 19:07-20:33).** The YouTube main sink ran on the shared main rung: NVENC H.264 CBR 17000 kbps, 1920x1080, keyint 120. The 6000 kbps encoder in the same log is the Twitch/Kick re-encode rung, as set.
 - **Fix.** Box off: Resolution and Bitrate show the shared canvas encoder (main, or portrait for a portrait output; Resolution hidden for portrait), greyed out, with a line "Sends the main canvas stream: N kbps, set under VIDEO". Box ticked: starts from the shared values and keeps its own after that. Saved setup unchanged (no `video` unless ticked).
 - **Evidence.** `tests/studio-qt-d327.test.mjs` "Edit output: the Bitrate box shows what the output sends" (3 headless runs: shared, ticked, own).
+
+## D378 — Stream above the canvas size: 2K on both YouTube outputs from the 1080p canvases (2026-11-13, user request)
+
+- **Request.** "for now get the youtube both H and V to stream 2k resolution". The canvases stay 1920x1080 and 1080x1920 (the capture card is 1080p60); YouTube gives a 1440p stream its higher-quality encode.
+- **Why it was refused.** Settings > Stream offered 1440p, but the validator (UPSCALE) and the host ("no upscaling") refuse a rung larger than its canvas, and the portrait size was fixed at 1080x1920. No stream setup was saved, so `alpha-live.json` (1080p) was in use.
+- **Change.** Flag `stream-upscale` (off by default, page stream). With it on, every rung of the Settings > Stream plan carries `upscale: true`; the validator turns UPSCALE into info UPSCALED, still refusing a changed aspect ratio (UPSCALE_ASPECT); the host accepts a larger rung only with `upscale: true` and the canvas aspect ratio, scaled on the GPU (Lanczos, `obs_encoder_set_scaled_size`). New optional `video.portraitOutput` (1080x1920, 1440x2560, 2160x3840 from `data/stream/stream-options.json` `portraitResolutions`) with a "Portrait output resolution" box on the Stream page. Flag off: as before.
+- **Values for the user's setup (agent).** 1440p main and 1440x2560 portrait, 24000 kbps each (YouTube's 1440p60 guidance; `data/platforms` max 50000). Upload need about 54 Mbps with the 6000 kbps Twitch/Kick rung: UNVERIFIED on the user's line. NVENC load of two 2K encodes plus the 1080p re-encode: UNVERIFIED until the loopback test (ffprobe + skipped-frame counts) passes; no real stream before "start stream test".
+- **Evidence.** `tests/stream-setup.test.mjs` "D378: 2K on both YouTube outputs", `app/host/tests/host-api.test.mjs` (upscale accepted, non-boolean and wrong aspect refused).
+
+## D379 — A refused live plan never keeps the studio from opening (2026-11-13, user report)
+
+- **Report.** "ujwalam is not opening". Launcher log: `outputs plan refused: sink "instagram": no server address is stored in Windows Credential Manager target Ujwalam/stream/instagram-server`, exit 1, no window. Flag `instagram-live` was on with no Instagram server address.
+- **Change.** `planForStart` (launch.mjs): Instagram Live is an add-on, so a refused plan is tried again without it; a live plan still refused opens the studio on the record plan (no stream targets). Each step is logged with its reason. An explicit `--outputs` plan still stops the start. Released in 0.1.0-alpha.28 with the data files the package check missed (`data/live/host-watch.json`, `data/counters.json`, reel data).
+
+## D380 — Faster opening: the outputs plan and replay buffer are built once (2026-11-13, user report)
+
+- **Report.** "the opening delay was prominent". Host log 2026-11-13 17:59: start 04.2, ready 07.7, `project.load` 3257 ms, window about 11.5 s after the click. The host built the outputs plan, ran the NVENC probe and started both replay buffers for the throwaway test card, stopped them at the project load (about 1.1 s) and built everything again.
+- **Change.** Host flag `--defer-outputs` (passed by the alpha launcher, whose project load always follows): the `--outputs` plan is kept as the last configure params and the replay buffer is marked wanted, without building; the first `project.load` builds both once. A plan the host refuses is now logged after the load ("outputs not configured after the project load") and the record plan is configured instead, so the studio opens recording-only, never with a silent empty graph (Codex review). Saves about 2 s per start; other start costs (D3D and module load about 2 s) are libobs's own.
+- **Evidence.** `app/host/tests/host-defer-outputs.test.mjs`, `tests/studio-ui-alpha.test.mjs` (alpha argv).

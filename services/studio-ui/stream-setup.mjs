@@ -7,7 +7,8 @@
 //
 // File shape (version 1):
 //   { version: 1, canvasMode: "main" | "multi",
-//     video: { fps, output: <resolution id>, hardware: bool, bitrateKbps, portraitBitrateKbps, quality: <preset id>, audioKbps },
+//     video: { fps, output: <resolution id>, hardware: bool, bitrateKbps, portraitBitrateKbps, quality: <preset id>, audioKbps,
+//              portraitOutput?: <portrait resolution id> (D378; absent = stream-options portrait, 1080x1920) },
 //     outputs: [ { id, name, platform, canvas: "H" | "V", enabled: bool, video?: { output, bitrateKbps } } ] }
 // output.video (H only) gives that output its own rung (e.g. Twitch at 6000 kbps); without it the output uses the main
 // rung of its canvas. canvasMode "main": portrait outputs stay in the list but are left out of the plan.
@@ -25,6 +26,9 @@ export const OPTIONS_FILE = path.join(REPO, 'data', 'stream', 'stream-options.js
 export const OUTPUT_ID = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 export const MAX_OUTPUTS = 12;
 export const CANVAS_MODES = Object.freeze(['main', 'multi']);
+// D378: with this flag on, a stream may be sent larger than its canvas (GPU-scaled up, same aspect ratio), e.g. a 1080p
+// canvas sent as 1440p so YouTube gives it its higher-quality encode. Off: larger than the canvas is refused as before.
+export const STREAM_UPSCALE_FLAG = 'stream-upscale';
 // Validator codes that mean "a value is over a platform limit". Severity "warning" in data/platforms is still a limit
 // for the settings page: the user asked for values to be refused, with the limit shown (D327).
 export const LIMIT_CODES = Object.freeze(['BITRATE_RANGE', 'RESOLUTION_MAX', 'FPS_MAX', 'GOP_MAX', 'CODEC_REFUSED', 'RC_REFUSED', 'PROTO_UNSUPPORTED', 'AUDIO_BITRATE_RANGE', 'AUDIO_CODEC_REFUSED']);
@@ -37,6 +41,11 @@ const isObj = (v) => !!v && typeof v === 'object' && !Array.isArray(v);
 const keysOnly = (o, allowed, where, out) => { for (const k of Object.keys(o)) if (!allowed.includes(k)) out.push({ field: where, message: `${where}: unknown setting "${k}"` }); };
 
 function resolutionOf(options, id) { return options.resolutions.find((r) => r.id === id); }
+/** The portrait stream size: video.portraitOutput from stream-options portraitResolutions, else the portrait default. */
+export function portraitOf(options, v) {
+  if (v?.portraitOutput === undefined) return options.portrait;
+  return (options.portraitResolutions ?? []).find((r) => r.id === v.portraitOutput) ?? null;
+}
 
 /** Seeds a setup from a live plan file (copies the rung values of its config; nothing guessed). */
 export function seedSetup({ options = readOptions(), planFile = path.join(REPO, options.seedPlan) } = {}) {
@@ -89,9 +98,10 @@ export function shapeProblems(s, options = readOptions()) {
   const v = s.video;
   if (!isObj(v)) out.push({ field: 'video', message: 'video settings are missing' });
   else {
-    keysOnly(v, ['fps', 'output', 'hardware', 'bitrateKbps', 'portraitBitrateKbps', 'quality', 'audioKbps'], 'video', out);
+    keysOnly(v, ['fps', 'output', 'hardware', 'bitrateKbps', 'portraitBitrateKbps', 'quality', 'audioKbps', 'portraitOutput'], 'video', out);
     if (!options.frameRates.includes(v.fps)) out.push({ field: 'video.fps', message: `frame rate must be one of ${options.frameRates.join(', ')}` });
     if (!resolutionOf(options, v.output)) out.push({ field: 'video.output', message: `output resolution must be one of ${options.resolutions.map((r) => r.id).join(', ')}` });
+    if (!portraitOf(options, v)) out.push({ field: 'video.portraitOutput', message: `portrait resolution must be one of ${(options.portraitResolutions ?? []).map((r) => r.id).join(', ')}` });
     if (typeof v.hardware !== 'boolean') out.push({ field: 'video.hardware', message: 'hardware encoder must be on or off' });
     kbps(v.bitrateKbps, 'video.bitrateKbps', 'main video bitrate');
     kbps(v.portraitBitrateKbps, 'video.portraitBitrateKbps', 'portrait video bitrate');
@@ -174,19 +184,23 @@ export function connectTargets(setup, { platforms = loadPlatforms(PLATFORMS_DIR)
  * portrait stream's rung, so the kill montages and match reels can be cut after the stream (LC1, D333 proposed). It is
  * optional: a start without the V stream (output toggles) leaves it out, so it never adds an encoder.
  */
-export function toPlan(setup, { options = readOptions(), canvases, platforms = loadPlatforms(PLATFORMS_DIR), recordName = 'stream.mkv' } = {}) {
+export function toPlan(setup, { options = readOptions(), canvases, platforms = loadPlatforms(PLATFORMS_DIR), recordName = 'stream.mkv', upscale = false } = {}) {
   const v = setup.video;
   const main = resolutionOf(options, v.output);
+  const portrait = portraitOf(options, v);
   const cv = { H: canvases?.H ?? { w: main.w, h: main.h }, V: canvases?.V ?? options.portrait };
   const q = options.qualityPresets.find((x) => x.id === v.quality);
   const encoder = v.hardware ? 'nvenc' : 'x264';
+  // upscale (flag stream-upscale, D378): every rung may be larger than its canvas; the validator and the host still
+  // refuse one that changes the canvas aspect ratio. The launcher plans without the project's canvas sizes, so the
+  // mark goes on every rung, not only on those larger than the sizes known here.
   const rung = (id, canvas, w, h, bitrate) => ({
     id, canvas, w, h, fps: v.fps, codec: options.codec, bitrate, rc: options.rateControl, gop_sec: options.keyframeSec, encoder,
-    encoderOptions: { preset: q[encoder] }
+    encoderOptions: { preset: q[encoder] }, ...(upscale ? { upscale: true } : {})
   });
   const included = setup.outputs.filter((o) => setup.canvasMode === 'multi' || o.canvas === 'H');
   const encoders = [rung('h-main', 'H', main.w, main.h, v.bitrateKbps)];
-  if (included.some((o) => o.canvas === 'V')) encoders.push(rung('v-main', 'V', options.portrait.w, options.portrait.h, v.portraitBitrateKbps));
+  if (included.some((o) => o.canvas === 'V')) encoders.push(rung('v-main', 'V', portrait.w, portrait.h, v.portraitBitrateKbps));
   const sinks = [];
   const targets = {};
   included.forEach((o, i) => {
@@ -218,17 +232,19 @@ export function toPlan(setup, { options = readOptions(), canvases, platforms = l
 }
 
 /** Every problem of a setup: shape first, then the platform limits (validator), with the limit's message. */
-export function setupProblems(setup, { options = readOptions(), canvases, platforms = loadPlatforms(PLATFORMS_DIR) } = {}) {
+export function setupProblems(setup, { options = readOptions(), canvases, platforms = loadPlatforms(PLATFORMS_DIR), upscale = false } = {}) {
   const shape = shapeProblems(setup, options);
   if (shape.length) return shape;
-  const { config } = toPlan(setup, { options, canvases, platforms });
+  const { config } = toPlan(setup, { options, canvases, platforms, upscale });
   const res = validate(config, platforms);
   const out = [];
   const seen = new Set();
   for (const e of [...res.errors, ...res.warnings.filter((w) => LIMIT_CODES.includes(w.code))]) {
     if (e.code === 'SHARED_RUNG_CONFLICT' || !e.message || seen.has(e.message)) continue;
     seen.add(e.message);
-    out.push({ field: e.sink ? `output:${e.sink}` : 'video', code: e.code, platform: e.platform, message: e.message });
+    // Larger than the canvas with the flag off: say how to send it scaled up (D378).
+    const message = e.code === 'UPSCALE' ? `${e.message}. Switch on "Stream above the canvas size" (Settings > Stream, FEATURES) to send it scaled up, or pick a size up to the canvas.` : e.message;
+    out.push({ field: e.sink ? `output:${e.sink}` : 'video', code: e.code, platform: e.platform, message });
   }
   return out;
 }
@@ -275,7 +291,8 @@ export function writePlanFile(dataDir, setup, opts = {}) {
 /** A one-line summary for an output row: "1080p @ 60fps 7,500 kbps · Main canvas". */
 export function outputSummary(setup, o, options = readOptions()) {
   const v = setup.video;
-  const res = o.canvas === 'V' ? `${options.portrait.w}x${options.portrait.h}` : (o.video?.output ?? v.output);
+  const p = portraitOf(options, v) ?? options.portrait;
+  const res = o.canvas === 'V' ? `${p.w}x${p.h}` : (o.video?.output ?? v.output);
   const kbps = o.canvas === 'V' ? v.portraitBitrateKbps : (o.video?.bitrateKbps ?? v.bitrateKbps);
   const canvas = o.canvas === 'V' ? 'Portrait canvas' : 'Main canvas';
   return `${res} @ ${v.fps}fps ${kbps.toLocaleString('en-US')} kbps · ${canvas}`;

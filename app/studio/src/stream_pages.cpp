@@ -282,6 +282,8 @@ StreamPage::StreamPage(ApiClient *api, QWidget *parent) : QWidget(parent), api_(
 	auto *vf = new QFormLayout(vid);
 	canvasInfo_ = muted(QString(), vid);
 	res_ = new QComboBox(vid);
+	pres_ = new QComboBox(vid); // D378: the portrait stream size (above the canvas needs flag stream-upscale)
+	pres_->setObjectName(QStringLiteral("streamPortraitOutput"));
 	fps_ = new QComboBox(vid);
 	hw_ = new Switch(vid);
 	hw_->setObjectName(QStringLiteral("streamHardware"));
@@ -292,6 +294,7 @@ StreamPage::StreamPage(ApiClient *api, QWidget *parent) : QWidget(parent), api_(
 	quality_ = new QComboBox(vid);
 	vf->addRow(QStringLiteral("Canvas resolution"), canvasInfo_);
 	vf->addRow(QStringLiteral("Output resolution"), res_);
+	vf->addRow(QStringLiteral("Portrait output resolution"), pres_);
 	vf->addRow(QStringLiteral("Frame rate"), fps_);
 	auto *hwRow = new QWidget(vid);
 	auto *hh = new QHBoxLayout(hwRow);
@@ -346,7 +349,7 @@ StreamPage::StreamPage(ApiClient *api, QWidget *parent) : QWidget(parent), api_(
 		pkbps_->setEnabled(mode_->checkedButton() && mode_->checkedButton()->property("mode").toString() == QStringLiteral("multi"));
 		changed();
 	});
-	for (QComboBox *c : {res_, fps_, quality_, audio_})
+	for (QComboBox *c : {res_, pres_, fps_, quality_, audio_})
 		connect(c, &QComboBox::currentIndexChanged, this, changed);
 	for (QSpinBox *b : {kbps_, pkbps_})
 		connect(b, &QSpinBox::valueChanged, this, changed);
@@ -377,10 +380,14 @@ void StreamPage::load()
 		setup_ = b.value(QStringLiteral("setup")).toObject();
 		options_ = b.value(QStringLiteral("options")).toObject();
 		canvases_ = b.value(QStringLiteral("canvases")).toObject();
-		const QSignalBlocker b1(res_), b2(fps_), b3(quality_), b4(audio_), b5(kbps_), b6(pkbps_);
+		const QSignalBlocker b1(res_), b2(fps_), b3(quality_), b4(audio_), b5(kbps_), b6(pkbps_), b7(pres_);
 		res_->clear();
 		for (const auto &x : options_.value(QStringLiteral("resolutions")).toArray())
 			res_->addItem(s(x.toObject(), "label"), s(x.toObject(), "id"));
+		pres_->clear();
+		for (const auto &x : options_.value(QStringLiteral("portraitResolutions")).toArray())
+			pres_->addItem(s(x.toObject(), "label"), s(x.toObject(), "id"));
+		pres_->setEnabled(pres_->count() > 0);
 		fps_->clear();
 		for (const auto &x : options_.value(QStringLiteral("frameRates")).toArray())
 			fps_->addItem(QStringLiteral("%1 fps").arg(x.toInt()), x.toInt());
@@ -412,6 +419,7 @@ void StreamPage::render()
 		b->setChecked(b->property("mode").toString() == s(setup_, "canvasMode"));
 	pkbps_->setEnabled(s(setup_, "canvasMode") == QStringLiteral("multi"));
 	res_->setCurrentIndex(std::max(0, res_->findData(s(v, "output"))));
+	pres_->setCurrentIndex(std::max(0, pres_->findData(s(v, "portraitOutput"))));
 	fps_->setCurrentIndex(std::max(0, fps_->findData(v.value(QStringLiteral("fps")).toInt())));
 	quality_->setCurrentIndex(std::max(0, quality_->findData(s(v, "quality"))));
 	audio_->setCurrentIndex(std::max(0, audio_->findData(v.value(QStringLiteral("audioKbps")).toInt())));
@@ -457,6 +465,8 @@ QJsonObject StreamPage::current() const
 		out.insert(QStringLiteral("canvasMode"), b->property("mode").toString());
 	QJsonObject v = setup_.value(QStringLiteral("video")).toObject();
 	v.insert(QStringLiteral("output"), res_->currentData().toString());
+	if (pres_->count() > 0)
+		v.insert(QStringLiteral("portraitOutput"), pres_->currentData().toString());
 	v.insert(QStringLiteral("fps"), fps_->currentData().toInt());
 	v.insert(QStringLiteral("quality"), quality_->currentData().toString());
 	v.insert(QStringLiteral("audioKbps"), audio_->currentData().toInt());

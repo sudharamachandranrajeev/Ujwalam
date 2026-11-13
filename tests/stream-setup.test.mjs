@@ -109,6 +109,31 @@ test('main-canvas mode leaves portrait outputs out of the plan (no V rung)', () 
   assert.ok(!config.encoders.some((e) => e.canvas === 'V'));
 });
 
+test('D378: 2K on both YouTube outputs from 1080p canvases only with stream-upscale; aspect kept; portrait size choice', () => {
+  const canvases = { H: { w: 1920, h: 1080 }, V: { w: 1080, h: 1920 } };
+  const s = seedSetup(); s.video.output = '1440p'; s.video.portraitOutput = '1440x2560';
+  s.video.bitrateKbps = 24000; s.video.portraitBitrateKbps = 24000;
+  // Flag off: larger than the canvas is refused, with a hint to the flag.
+  const off = setupProblems(s, { canvases });
+  assert.ok(off.some((p) => p.code === 'UPSCALE' && /Stream above the canvas size/.test(p.message)), JSON.stringify(off));
+  // Flag on: no problems; rungs are 2560x1440 and 1440x2560, marked upscale, and reach the host params.
+  assert.deepEqual(setupProblems(s, { canvases, upscale: true }), []);
+  const { config } = toPlan(s, { canvases, upscale: true });
+  const res = validate(config, loadPlatforms(PLATFORMS_DIR));
+  assert.deepEqual(res.errors, []);
+  assert.deepEqual(res.rungs.filter((r) => r.id !== 'h-twitch').map((r) => [r.id, r.w, r.h, r.upscale]), [['h-main', 2560, 1440, true], ['v-main', 1440, 2560, true]]);
+  assert.ok(res.info.some((i) => i.code === 'UPSCALED'));
+  const p = planSetup(s, { canvases, upscale: true, allowLive: true, schemes: { 'Ujwalam/stream/twitch-server': { present: true, scheme: 'rtmps' } } });
+  assert.ok(p.params.rungs.filter((r) => r.w > 1920 || r.h > 1920).every((r) => r.upscale === true));
+  assert.equal(outputSummary(s, s.outputs[1]), '1440x2560 @ 60fps 24,000 kbps · Portrait canvas');
+  // An unknown portrait size is a shape problem.
+  const bad = clone(s); bad.video.portraitOutput = '999x999';
+  assert.ok(shapeProblems(bad).some((p) => p.field === 'video.portraitOutput'));
+  // No portraitOutput: the portrait default (1080x1920), as before.
+  assert.equal(toPlan(seedSetup()).config.encoders.find((e) => e.id === 'v-main').w, 1080);
+  assert.equal(toPlan(seedSetup()).config.encoders[0].upscale, undefined, 'flag off: no upscale mark');
+});
+
 test('summary line and new ids', () => {
   const s = seedSetup();
   assert.equal(outputSummary(s, s.outputs[1]), '1080x1920 @ 60fps 7,500 kbps · Portrait canvas');

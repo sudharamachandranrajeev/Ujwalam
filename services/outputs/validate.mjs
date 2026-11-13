@@ -27,7 +27,7 @@ function sortKeys(v) {
 function rungKey(e, canvas) {
   return JSON.stringify({
     canvas: e.canvas, w: e.w, h: e.h, fps: e.fps ?? canvas?.fps, codec: e.codec, bitrate: e.bitrate,
-    rc: e.rc, gop_sec: e.gop_sec, encoder: e.encoder ?? null, encoderOptions: sortKeys(e.encoderOptions ?? null)
+    rc: e.rc, gop_sec: e.gop_sec, encoder: e.encoder ?? null, encoderOptions: sortKeys(e.encoderOptions ?? null), upscale: e.upscale === true
   });
 }
 
@@ -75,6 +75,7 @@ export function validate(config, platforms = {}) {
       rc: e.rc, gop_sec: e.gop_sec, encoder: e.encoder ?? null, mergedFrom: [], sinks: [], pending
     };
     if (e.encoderOptions) rung.encoderOptions = e.encoderOptions;
+    if (e.upscale === true) rung.upscale = true;
     // Pending or canvas-less rungs are never merged: their values are not real.
     const key = pending || !canvas ? null : rungKey(e, canvas);
     const existing = key ? byKey.get(key) : undefined;
@@ -97,7 +98,11 @@ export function validate(config, platforms = {}) {
     const canvas = canvasById.get(r.canvas);
     if (!canvas || r.pending) continue;
     if (r.w > canvas.w || r.h > canvas.h) {
-      errors.push({ code: 'UPSCALE', rung: r.id, message: `rung "${r.id}": ${r.w}x${r.h} is larger than canvas "${canvas.id}" ${canvas.w}x${canvas.h}` });
+      // An upscaled rung (D378) is allowed when the plan asks for it and keeps the canvas aspect ratio (the host checks
+      // the same against the real canvas).
+      if (!r.upscale) errors.push({ code: 'UPSCALE', rung: r.id, message: `rung "${r.id}": ${r.w}x${r.h} is larger than canvas "${canvas.id}" ${canvas.w}x${canvas.h}` });
+      else if (r.w * canvas.h !== r.h * canvas.w) errors.push({ code: 'UPSCALE_ASPECT', rung: r.id, message: `rung "${r.id}": an upscaled ${r.w}x${r.h} must keep the aspect ratio of canvas "${canvas.id}" ${canvas.w}x${canvas.h}` });
+      else info.push({ code: 'UPSCALED', rung: r.id, message: `rung "${r.id}": ${r.w}x${r.h} is scaled up from canvas "${canvas.id}" ${canvas.w}x${canvas.h}` });
     }
     if (r.fps > canvas.fps || !Number.isInteger(canvas.fps / r.fps)) {
       errors.push({ code: 'FPS_DIVISOR', rung: r.id, message: `rung "${r.id}": canvas fps ${canvas.fps} is not an integer multiple of rung fps ${r.fps}` });

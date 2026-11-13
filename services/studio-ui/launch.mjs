@@ -109,7 +109,7 @@ import { refuseReason, SERVICES } from '../supervisor/swap.mjs';
 import { acceptHost, createStartGate, createUpdates, hostArgsFor, hostEntryProblem, outputsBusy, partFor, readRelease, rejectHost, serveUpdates, serviceRootProblem, takeStartupHost } from '../supervisor/updates.mjs';
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
-import { readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
+import { STREAM_UPSCALE_FLAG, readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
 import { createHostWatch, driverResets, driverResetText, HOST_WATCH_FLAG, incidentTask, loadHostWatchConfig, staleText } from './host-watch.mjs';
 import { writeTaskFile } from './tasks.mjs';
 import { INSTAGRAM_FLAG, loadAddon as instagramAddon, writeInstagramPlan } from '../outputs/instagram.mjs';
@@ -128,8 +128,8 @@ export const ALPHA_LIVE_PLAN = path.join(REPO, 'data', 'outputs', 'alpha-live.js
 /** The --live plan file (D327 OS1/OS2). With the `stream-settings` flag on and a saved Settings > Stream setup, the plan
  *  generated from it (<dataDir>/outputs/stream-setup-plan.json, recording "alpha.mkv" on the main H rung like
  *  alpha-live.json); otherwise alpha-live.json. A setup with problems throws (the start stops; the user fixes Settings). */
-export function livePlanFile({ dataDir, streamSettingsOn, instagramOn = false }) {
-  const base = baseLivePlanFile({ dataDir, streamSettingsOn });
+export function livePlanFile({ dataDir, streamSettingsOn, instagramOn = false, upscale = false }) {
+  const base = baseLivePlanFile({ dataDir, streamSettingsOn, upscale });
   // IG1 (D351, flag instagram-live): the plan in effect plus the instagram sink on the V canvas, written to
   // <dataDir>/outputs/live-plan-instagram.json (target names only). A plan that cannot take it stops the start.
   if (!instagramOn) return base;
@@ -161,13 +161,13 @@ export async function planForStart({ live, instagramOn, planOnce, recordPlan, lo
   }
 }
 
-function baseLivePlanFile({ dataDir, streamSettingsOn }) {
+function baseLivePlanFile({ dataDir, streamSettingsOn, upscale }) {
   if (!streamSettingsOn) return ALPHA_LIVE_PLAN;
   const { exists, setup } = readSetup(dataDir);
   if (!exists) return ALPHA_LIVE_PLAN;
-  const problems = setupProblems(setup);
+  const problems = setupProblems(setup, { upscale });
   if (problems.length) throw new Error(`Settings > Stream has problems: ${problems.map((p) => p.message).join('; ')}`);
-  return writePlanFile(dataDir, setup, { recordName: 'alpha.mkv' });
+  return writePlanFile(dataDir, setup, { recordName: 'alpha.mkv', upscale });
 }
 // The folder that holds services/clip and the Python venv (.venv-gpu or .venv): this tree, or for an installed run the
 // clipRoot from ujwalam.json (UJWALAM_CLIP_ROOT; the zip ships no Python, D283).
@@ -565,6 +565,10 @@ export function hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha = false, co
     else notes.push('no event-core system token: panic cannot tell the event core');
     if (args.live === true) argv.push('--allow-live');
     if (args.live === true && args['twitch-bandwidth-test'] === true) argv.push('--twitch-bandwidth-test');
+    // Opening delay (2026-11-13): the alpha project load always follows the host start, so the outputs plan and the
+    // replay buffer are built once by that load, not first for the test card (saves an NVENC probe, an outputs build,
+    // a replay start and its stop: about 2 s of every start).
+    argv.push('--defer-outputs');
   }
   return { argv, env, notes };
 }
@@ -691,6 +695,17 @@ export async function alphaProject({ client, dataDir, args, hostCfg, embedded = 
   const loaded = await loadFileIntoHost(client, r.file, { bases, skipUnavailable: true });
   console.log(`[studio] alpha project loaded into the host: ${JSON.stringify(loaded.built ?? {})}; not built: ${loaded.unavailable?.length ?? 0}`);
   for (const u of loaded.unavailable ?? []) console.log(`[studio]   not built: ${u.layer ?? u.audio}: ${u.code}: ${u.reason}`);
+  // The outputs plan is built by this load (--defer-outputs): a plan the host refuses (e.g. an upscaled rung whose
+  // aspect ratio does not match this project's canvas, D378) is said here, and the studio still opens with the record
+  // plan (D379; Codex review of D380: never an empty graph without a word).
+  if (loaded.outputs?.error) {
+    console.log(`[studio] WARNING: outputs not configured after the project load: ${loaded.outputs.error}`);
+    try {
+      const { planFile } = await import('../../app/host/lib/outputs-plan.mjs');
+      await client.call('outputs.configure', planFile(ALPHA_RECORD_PLAN, { allowLive: false }).params);
+      console.log('[studio] WARNING: the studio opens without stream outputs (recording only); fix the reason above and restart Ujwalam');
+    } catch (e) { console.log(`[studio] WARNING: the record plan was refused too (${e.message}); nothing can be recorded or streamed`); }
+  }
   for (const w of hudWarnings(r.file)) console.log(`[studio] WARNING: ${w}`);
   // A preview that did not open at start (e.g. closed by hand on a reused host) is opened now. The host opens previews
   // as normal windows on the main display, also with one display (D316); if it refuses, this says why.
@@ -1321,7 +1336,7 @@ export async function main(argv = process.argv.slice(2)) {
     // (only the scheme, the value is dropped at once) choose "auto" transports (Twitch: rtmp or rtmps) and check named
     // ones. A stand-in (script) host reaches no platform, so nothing is read for it and "auto" stays unresolved.
     const planOnce = async ({ instagramOn }) => {
-      const file = args.live === true ? livePlanFile({ dataDir, streamSettingsOn: createFlags({ dataDir }).isOn(STREAM_SETTINGS_FLAG), instagramOn })
+      const file = args.live === true ? (() => { const fl = createFlags({ dataDir }); return livePlanFile({ dataDir, streamSettingsOn: fl.isOn(STREAM_SETTINGS_FLAG), instagramOn, upscale: fl.isOn(STREAM_UPSCALE_FLAG) }); })()
         : typeof args.outputs === 'string' ? path.resolve(args.outputs) : alpha ? ALPHA_RECORD_PLAN : null;
       if (!file) return { file: null, planned: null };
       let schemes;

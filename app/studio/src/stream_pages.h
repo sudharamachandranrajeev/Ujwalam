@@ -63,7 +63,7 @@ private:
 	bool connectOn_ = false;  // flag platform-connect on (ui/api/connect answers)
 	QJsonObject connectRows_; // output id -> its row of ui/api/connect (presence, last 4 at most)
 	QButtonGroup *mode_ = nullptr;
-	QComboBox *fps_ = nullptr, *res_ = nullptr, *quality_ = nullptr, *audio_ = nullptr;
+	QComboBox *fps_ = nullptr, *res_ = nullptr, *pres_ = nullptr, *quality_ = nullptr, *audio_ = nullptr;
 	Switch *hw_ = nullptr;
 	QSpinBox *kbps_ = nullptr, *pkbps_ = nullptr;
 	QLabel *canvasInfo_ = nullptr, *problems_ = nullptr;

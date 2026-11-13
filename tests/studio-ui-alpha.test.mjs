@@ -314,7 +314,7 @@ const HCF = path.join(REPO, 'x', 'host-config.json');
 test('launch spec: studio mode keeps the test card and adds nothing', () => {
   const s = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'C:/d/host.json', args: { live: true }, alpha: false, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS });
   assert.ok(s.argv.includes('--project'));
-  for (const f of ['--preview', '--allow-browser', '--overlay-root', '--overlay-events-url', '--allow-devices', '--host-config', '--allow-live']) assert.ok(!s.argv.includes(f), f);
+  for (const f of ['--preview', '--allow-browser', '--overlay-root', '--overlay-events-url', '--allow-devices', '--host-config', '--allow-live', '--defer-outputs']) assert.ok(!s.argv.includes(f), f);
   assert.deepEqual(s.env, {});
 });
 
@@ -362,6 +362,8 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
   assert.ok(!Object.hasOwn(bad.env, 'UJWALAM_EVENT_CORE_SYSTEM_TOKEN'));
   const live = hostLaunchSpec({ hostCfg: CFG, hostDiscovery: 'x', args: { live: true }, alpha: true, corePort: 1234, coreApiToken: TOKEN, hostConfigFile: HCF, coreSystemToken: SYS });
   assert.ok(live.argv.includes('--allow-live'));
+  // Opening delay (2026-11-13): the alpha project load builds the outputs and the replay buffer once.
+  assert.ok(live.argv.includes('--defer-outputs') && bad.argv.includes('--defer-outputs'));
 });
 
 test('host config: day-2 keys only (hotkeys on, replay 60 s autostart, feedback folder, event-core system file); written owner-only', () => {

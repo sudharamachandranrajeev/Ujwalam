@@ -107,6 +107,10 @@
             "type": "object",
             "description": "Encoder-specific settings (preset, tuning, b-frames, container). Part of the dedup key."
           },
+          "upscale": {
+            "type": "boolean",
+            "description": "true: the rung may be larger than its canvas (GPU-scaled up, same aspect ratio; flag stream-upscale, D378). Absent or false: larger than the canvas is an error. Part of the dedup key."
+          },
           "migration": {
             "type": "object",
             "required": [

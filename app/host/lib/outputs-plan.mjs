@@ -184,6 +184,7 @@ export function plan(config, targets, { platformsDir = PLATFORMS_DIR, policy, al
         w: r.w, h: r.h, fps: r.fps, bitrate: r.bitrate, gopSec: r.gop_sec
       };
       if (r.encoderOptions) o.options = r.encoderOptions;
+      if (r.upscale === true) o.upscale = true;
       return o;
     }),
     audio: { bitrate: tracks[0].bitrate, sampleRate: tracks[0].sampleRate },
