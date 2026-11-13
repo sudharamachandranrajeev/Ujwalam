@@ -76,8 +76,8 @@ Studio::LoadOptions load_options(App &a, const Params &q)
 		o.overlay_port = o.overlay_feed_port = 0; // not running: overlay layers are listed as unavailable
 	if (const json::Value *b = q.obj_opt("bases")) {
 		for (auto &m : b->members()) {
-			if (m.first != "data" && m.first != "media" && m.first != "overlays" && m.first != "profile")
-				throw Error(rpc::INVALID_PARAMS, "bases: keys are data, media, overlays, profile");
+			if (m.first != "data" && m.first != "luts" && m.first != "media" && m.first != "overlays" && m.first != "profile")
+				throw Error(rpc::INVALID_PARAMS, "bases: keys are data, luts, media, overlays, profile");
 			if (!m.second.is_string() || m.second.as_string().empty() || m.second.as_string().size() > 1024 ||
 			    !std::filesystem::u8path(m.second.as_string()).is_absolute())
 				throw Error(rpc::INVALID_PARAMS, "bases: values are absolute directory paths");

@@ -33,7 +33,7 @@
 namespace model {
 
 struct Options {
-	std::map<std::string, std::string> bases; // pathRef base -> absolute directory (media, overlays, data, profile)
+	std::map<std::string, std::string> bases; // pathRef base -> absolute directory (media, overlays, data, profile, luts)
 	bool allow_devices = false;
 	bool allow_browser = false;
 	const devices::List *devices = nullptr; // null: devices were not listed (capture layers are unavailable)

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import Ajv2020 from 'ajv/dist/2020.js';
 import { loadDevicePresets, matchRoles, overrideProblems } from '../services/project/device-roles.mjs';
 import { validateProject } from '../services/project/index.mjs';
-import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
+import { LUTS_DIR, alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject } from '../services/studio-ui/alpha.mjs';
 import { ALPHA_LIVE_PLAN, alphaHostConfig, loadAudioHealth, clipperExited, clipsEnv, LIVE_CLIPPER_MAX_RESTARTS, coreEnv, faceControlLine, faceEnv, faceSpec, liveClipsSpec, releaseVersion, shellChoice, shellExitRecord, shellRelaunchAllowed, shellSpawnSpec, studioShellPaths, startCommandLine, DEFAULT_FEEDBACK_DIR, headlessLoginScript, hostLaunchSpec, hotkeyOverrides, main as launchMain, openHostLog, writeHostConfig } from '../services/studio-ui/launch.mjs';
 import { closeSync } from 'node:fs';
 
@@ -286,18 +286,29 @@ test('alpha project: an existing file is loaded unchanged; --rebuild-alpha moves
 test('alpha bases: profile assets dir from paths.profile_assets, else the overlay root', () => {
   const ov = tmp('ov');
   const pa = tmp('pa');
-  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: null }), { profile: ov });
-  assert.deepEqual(alphaBases({ profile: { paths: { profile_assets: pa } }, overlayRoot: ov, assetsDefault: null }), { profile: pa });
-  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: path.join(ov, 'missing'), assetsDefault: null }), {});
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: null, lutsDir: null }), { profile: ov });
+  assert.deepEqual(alphaBases({ profile: { paths: { profile_assets: pa } }, overlayRoot: ov, assetsDefault: null, lutsDir: null }), { profile: pa });
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: path.join(ov, 'missing'), assetsDefault: null, lutsDir: null }), {});
 });
 
 test('alpha bases: media = paths.stream_assets, else the default folder when it exists (D241)', () => {
   const ov = tmp('ov2');
   const sa = tmp('sa');
   const def = tmp('def');
-  assert.deepEqual(alphaBases({ profile: { paths: { stream_assets: sa } }, overlayRoot: ov, assetsDefault: def }), { profile: ov, media: sa });
-  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: def }), { profile: ov, media: def });
-  assert.deepEqual(alphaBases({ profile: { paths: { stream_assets: 'relative' } }, overlayRoot: ov, assetsDefault: path.join(def, 'missing') }), { profile: ov });
+  assert.deepEqual(alphaBases({ profile: { paths: { stream_assets: sa } }, overlayRoot: ov, assetsDefault: def, lutsDir: null }), { profile: ov, media: sa });
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: def, lutsDir: null }), { profile: ov, media: def });
+  assert.deepEqual(alphaBases({ profile: { paths: { stream_assets: 'relative' } }, overlayRoot: ov, assetsDefault: path.join(def, 'missing'), lutsDir: null }), { profile: ov });
+});
+
+test('alpha bases: luts = the shipped data/luts folder when it exists (D381)', () => {
+  const ov = tmp('ov3');
+  const lt = tmp('lt');
+  assert.equal(path.basename(LUTS_DIR), 'luts');
+  assert.ok(existsSync(path.join(LUTS_DIR, 'realism-filmic.cube')), 'the realism LUT ships in the default folder');
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: null, lutsDir: lt }), { profile: ov, luts: lt });
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: null, lutsDir: path.join(lt, 'missing') }), { profile: ov });
+  assert.deepEqual(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: null, lutsDir: 'relative' }), { profile: ov });
+  assert.equal(alphaBases({ profile: {}, overlayRoot: ov, assetsDefault: null }).luts, LUTS_DIR, 'default');
 });
 
 // ---- launcher wiring
@@ -516,7 +527,7 @@ test('launcher --alpha with a fake host: flags, tokens by env, host config, feed
     assert.equal(h.load.skipUnavailable, true);
     assert.equal(h.load.captureLayers, 0);
     assert.ok(h.load.browserLayers > 0 && h.load.browserUrls === h.load.browserLayers && h.load.urlsOk, JSON.stringify(h.load));
-    assert.deepEqual(h.load.bases, ['media', 'profile'], 'the stream assets folder from the profile is the media base');
+    assert.deepEqual(h.load.bases, ['luts', 'media', 'profile'], 'the stream assets folder from the profile is the media base; the shipped LUTs are base luts (D381)');
     assert.match(r.out, /alpha project built/);
     assert.match(r.out, /overlay server: ready; event feed: on; child has the event token: yes; browser layers allowed/);
     assert.match(r.out, /overlay feed after 0 s: 3 overlay page\(s\) connected, 7 chat and 2 event frame\(s\) delivered, 0 effect\(s\)/);

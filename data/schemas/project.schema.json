@@ -37,7 +37,7 @@
     "pathRef": {
       "type": "object", "additionalProperties": false, "required": ["base", "rel"],
       "properties": {
-        "base": { "enum": ["data", "media", "overlays", "profile"] },
+        "base": { "enum": ["data", "luts", "media", "overlays", "profile"] },
         "rel": { "type": "string", "minLength": 1, "maxLength": 260 }
       }
     },

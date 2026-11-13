@@ -263,3 +263,84 @@ export function duplicateScene(doc, { scene } = {}) {
   project.scenes.splice(project.scenes.findIndex((x) => x.id === scene) + 1, 0, copy);
   return checked(project, { scene: copy, layers: copy.layers });
 }
+
+// ---- Realism scene (D381, flag realism-look). A per-pixel grade, not a neural filter: a neural "photoreal" pass does
+// not fit live on a 6 GB laptop GPU next to three NVENC encodes.
+//
+//   realismScene(doc, { scene }) -> { project, scene, layers, graded }
+//     duplicateScene, named "<name> Realism" (then "<name> Realism 2", ...), id "<id>-realism"; on every layer of the
+//     copy that shows the game capture (the capture layer itself, now a duplicate of it, and every duplicate of it, such
+//     as the blurred backdrop) REALISM_EFFECTS go after the layer's own effects. graded: the ids of those layers.
+//     The source scene is never changed. Refused: no-game-capture (the scene shows no game capture), too-many-effects
+//     (a game layer would pass the 6-effect limit). The game device: the one bound to the game-capture role (origin
+//     role/game-capture), else the project's only capture card.
+// REALISM_EFFECTS[0] equals preset fx-realism-grade (registry/presets/fx-realism-grade.json; a test checks it).
+export const REALISM_EFFECTS = Object.freeze([
+  Object.freeze({ type: 'lut', file: Object.freeze({ base: 'luts', rel: 'realism-filmic.cube' }), amount: 0.85 }),
+  Object.freeze({ type: 'sharpen', amount: 0.3 }),
+  Object.freeze({ type: 'vignette', amount: 0.25, size: 0.55, softness: 0.8, color: '#000000' }),
+]);
+const MAX_EFFECTS = 6; // data/schemas/project.schema.json layer effects maxItems
+
+function gameDevices(doc) {
+  const devs = doc.devices ?? [];
+  const byRole = devs.filter((d) => d.origin?.id === 'role/game-capture');
+  if (byRole.length) return new Set(byRole.map((d) => d.id));
+  const cards = devs.filter((d) => d.kind === 'capture-card');
+  return new Set(cards.length === 1 ? [cards[0].id] : []);
+}
+
+function freeLabel(root, names, max = 120) {
+  for (let n = 1; n < 10000; n++) {
+    const suffix = n === 1 ? ' Realism' : ` Realism ${n}`;
+    const out = root.slice(0, max - suffix.length) + suffix;
+    if (!names.has(out)) return out;
+  }
+  return null;
+}
+
+function freeRealismId(base, taken) {
+  const root = base.replace(/-copy(-\d+)?$/, '').replace(/-realism(-\d+)?$/, '');
+  for (let n = 1; n < 10000; n++) {
+    const suffix = n === 1 ? '-realism' : `-realism-${n}`;
+    const id = root.slice(0, 64 - suffix.length) + suffix;
+    if (!taken.has(id)) return id;
+  }
+  return null;
+}
+
+export function realismScene(doc, { scene } = {}) {
+  const s = doc.scenes.find((x) => x.id === scene);
+  if (!s) return { error: 'unknown-scene' };
+  const games = gameDevices(doc);
+  const byId = new Map(allLayers(doc).map(({ layer: l }) => [l.id, l]));
+  const showsGame = (l) => {
+    const real = l.type === 'duplicate' ? byId.get(l.source?.layer) : l;
+    return real?.type === 'capture' && games.has(real.source?.device);
+  };
+  const graded = s.layers.filter(showsGame);
+  if (!graded.length) return { error: 'no-game-capture' };
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+  const extra = REALISM_EFFECTS.map((e) => structuredClone(e));
+  for (const l of graded) {
+    const own = (l.effects ?? []).filter((e) => !extra.some((x) => same(x, e)));
+    if (own.length + extra.length > MAX_EFFECTS) return { error: 'too-many-effects', layer: l.id };
+  }
+  const d = duplicateScene(doc, { scene });
+  if (d.error) return d;
+  const project = d.project;
+  const copy = project.scenes.find((x) => x.id === d.scene.id);
+  const id = freeRealismId(s.id, new Set(doc.scenes.map((x) => x.id)));
+  const name = freeLabel(s.name.replace(/\s+Realism(\s+\d+)?$/, ''), new Set(doc.scenes.map((x) => x.name)));
+  if (!id || !name) return { error: 'too-many-scenes' };
+  copy.id = id;
+  copy.name = name;
+  const gradedIds = [];
+  s.layers.forEach((src, i) => {
+    if (!graded.includes(src)) return;
+    const l = copy.layers[i]; // duplicateScene keeps the order
+    l.effects = [...(l.effects ?? []).filter((e) => !extra.some((x) => same(x, e))), ...structuredClone(extra)];
+    gradedIds.push(l.id);
+  });
+  return checked(project, { scene: copy, layers: copy.layers, graded: gradedIds });
+}
