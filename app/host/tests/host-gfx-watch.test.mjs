@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Graphics watchdog in a real host (gfx_watch.h, D373; libobs, test card, no devices, no previews, headless):
+// Graphics watchdog in a real host (gfx_watch.h, D374; libobs, test card, no devices, no previews, headless):
 // graphics.testStall (--test-hooks only) blocks the graphics thread in the frame tick, as a stuck GPU would; the host
 // must report the stall in host.alive and host.status (lastFrameAgeMs grows, stalled true), log it ONCE (not per
 // frame), then report and log the recovery. host.alive must answer while the graphics thread is blocked (it takes no
@@ -60,6 +60,7 @@ test('healthy: frames flow, no stall, no device loss; host.alive and host.status
   assert.equal(g.stallMs, STALL_MS);
   assert.ok(g.lastFrameAgeMs < 500, `last frame ${g.lastFrameAgeMs} ms ago`);
   assert.deepEqual([g.stalled, g.stalls, g.deviceLosses, g.deviceRebuilds], [false, 0, 0, 0]);
+  assert.deepEqual([g.lastStallAt, g.lastDeviceLossAt, g.lastDeviceRebuildAt], [null, null, null]);
   const s = (await h.client.call('host.status')).graphics;
   assert.deepEqual(Object.keys(s).sort(), Object.keys(g).sort());
   assert.match(hostLog(), /graphics watchdog: on \(stall after 1000 ms, check every 200 ms\); device-loss report on/);

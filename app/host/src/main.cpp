@@ -453,7 +453,7 @@ int wmain(int argc, wchar_t **wargv)
 	}
 	stats::init();
 	{
-		// Graphics stall + GPU device-loss report (gfx_watch.h, D373): report only; the launcher decides.
+		// Graphics stall + GPU device-loss report (gfx_watch.h, D374): report only; the launcher decides.
 		gfxwatch::Config gc;
 		gc.stall_ms = app.config.graphics_watch.stall_ms;
 		gc.check_interval_ms = app.config.graphics_watch.check_interval_ms;

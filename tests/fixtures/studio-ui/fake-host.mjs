@@ -16,7 +16,7 @@
 // host.status reports live while one is live. UJWALAM_FAKE_HOST_STREAM_FAIL="kick" makes those sinks go 'failed' on
 // stream.start. UJWALAM_FAKE_HOST_CRASH_ON=<file>: a crash run exits (code 3) once that file exists (the file is
 // removed), instead of after UJWALAM_FAKE_HOST_CRASH_MS.
-// Host watchdog (D373): host.alive answers { pid, uptimeMs, graphics: { lastFrameAgeMs } }. UJWALAM_FAKE_HOST_HANG_RUNS=
+// Host watchdog (D374): host.alive answers { pid, uptimeMs, graphics: { lastFrameAgeMs } }. UJWALAM_FAKE_HOST_HANG_RUNS=
 // "1" with UJWALAM_FAKE_HOST_HANG_ON=<file>: once that file exists (it is removed), those runs freeze.
 // UJWALAM_FAKE_HOST_HANG_MODE=rpc (default): no RPC is answered any more (the process keeps running, as a stuck host);
 // graphics: every method still answers, but host.alive reports no video frame since the freeze (a stalled GPU).
@@ -78,6 +78,8 @@ const crashRuns = (process.env.UJWALAM_FAKE_HOST_CRASH_RUNS ?? '').split(',').fi
 const hangRuns = (process.env.UJWALAM_FAKE_HOST_HANG_RUNS ?? '').split(',').filter(Boolean).map(Number);
 const hangMode = process.env.UJWALAM_FAKE_HOST_HANG_MODE === 'graphics' ? 'graphics' : 'rpc';
 let hungAt = null; // Date.now() of the freeze
+// UJWALAM_FAKE_HOST_ALIVE_DROP_RUNS="2": in those runs the FIRST host.alive is never answered (one lost probe).
+let aliveDrop = (process.env.UJWALAM_FAKE_HOST_ALIVE_DROP_RUNS ?? '').split(',').filter(Boolean).map(Number).includes(run);
 const withRecordSink = process.env.UJWALAM_FAKE_HOST_RECORDING === '1';
 let recordState = withRecordSink && run === 1 ? 'live' : 'idle';
 const fakeStreams = (process.env.UJWALAM_FAKE_HOST_STREAMS ?? '').split(',').filter(Boolean).map((x) => { const [id, platform] = x.split(':'); return { id, platform }; });
@@ -190,7 +192,10 @@ const methods = {
     for (const id of ids) if (!stoppedAt.has(id)) stoppedAt.set(id, Date.now() - t0);
     return { stopped: ids };
   },
-  'host.alive': () => ({ pid: process.pid, uptimeMs: Date.now() - t0, graphics: { watch: true, lastFrameAgeMs: hungAt === null ? 16 : Date.now() - hungAt } }),
+  'host.alive': () => {
+    if (aliveDrop) { aliveDrop = false; callLog({ event: 'alive-dropped' }); return new Promise(() => {}); } // never answered
+    return { pid: process.pid, uptimeMs: Date.now() - t0, graphics: { watch: true, lastFrameAgeMs: hungAt === null ? 16 : Date.now() - hungAt } };
+  },
   'host.info': () => ({ name: 'ujwalam-host', version: 'fake', obsVersion: '0.0.0', adapter: 'fake adapter', encoders: ['fake_enc'], run }),
   'host.status': () => ({ run, uptimeMs: 1, ...(fakeStreams.length ? { live: [...streamState.values()].includes('live'), outputsReady: { stream: true, record: withRecordSink } } : {}) }),
   'outputs.status': () => ({

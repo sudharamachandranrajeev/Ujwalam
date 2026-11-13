@@ -49,7 +49,7 @@ struct App {
 	std::unique_ptr<face::Link> face; // face AI link (face.h, D295 proposed); also published through face::get()
 	std::unique_ptr<ahealth::Ticker> audio_watch; // audio health watchdog (audio_health.h); null when not configured
 	std::unique_ptr<devwatch::Watcher> device_watch; // device hot-plug (device_watch.h, D329); --allow-devices or --test-hooks
-	std::unique_ptr<gfxwatch::Watch> gfx_watch; // graphics stall + GPU device-loss report (gfx_watch.h, D373)
+	std::unique_ptr<gfxwatch::Watch> gfx_watch; // graphics stall + GPU device-loss report (gfx_watch.h, D374)
 
 	void *shutdown_event = nullptr; // HANDLE; set by host.shutdown or Ctrl+C
 	std::atomic<bool> shutting_down{false};

@@ -1,5 +1,5 @@
 {
-  "$comment": "Host watchdog (services/studio-ui/host-watch.mjs, flag 'host-watchdog', D373 proposed; docs/evidence/2026-11-13-gpu-reset-recovery.md). Every limit the launcher's liveness check and the host's graphics stall report use lives here, never in code. status 'proposed' = agent values derived as noted in source, not yet approved by the user or seen on a real stream.",
+  "$comment": "Host watchdog (services/studio-ui/host-watch.mjs, flag 'host-watchdog', D374 proposed; docs/evidence/2026-11-13-gpu-reset-recovery.md). Every limit the launcher's liveness check and the host's graphics stall report use lives here, never in code. status 'proposed' = agent values derived as noted in source, not yet approved by the user or seen on a real stream.",
   "version": "0.1.0",
   "status": "proposed",
   "checked": "2026-11-13",

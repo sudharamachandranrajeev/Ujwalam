@@ -1822,3 +1822,8 @@ Growth plan ED2. Decided:
   - During a live stream the NVIDIA driver reset (21:42). The host crashed and stayed down until a manual restart at 22:00.
   - libobs rebuilds its D3D11 device only from `Present` with a preview swap chain. It never rebuilds encoders, and calls bcrash if the rebuild fails. A whole-host restart is therefore the reliable recovery.
 - **Status.** Built; tested with a fake host and with a real host using a simulated stall. A real driver reset is UNVERIFIED. Evidence `docs/evidence/2026-11-13-gpu-reset-recovery.md`.
+- **Review fixes (Codex, 2026-11-13).**
+  - All elapsed times use a monotonic clock.
+  - The liveness window starts when a restore has finished, not when the host starts.
+  - In the host, `host.alive` reads atomics only; the checker logs without holding a lock.
+  - The task-bar write is retried when the file is open elsewhere, and an older state never overwrites a newer one.

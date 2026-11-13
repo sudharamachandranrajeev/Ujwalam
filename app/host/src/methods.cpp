@@ -143,7 +143,7 @@ json::Value host_status_json(App &a)
 		}
 	r.set("sinks", std::move(sinks));
 	r.set("uptimeMs", (int64_t)(GetTickCount64() - a.start_tick));
-	// D373: last video frame age, stalls and GPU device losses (gfx_watch.h); the launcher's host watchdog reads it.
+	// D374: last video frame age, stalls and GPU device losses (gfx_watch.h); the launcher's host watchdog reads it.
 	r.set("graphics", a.gfx_watch ? a.gfx_watch->status() : json::Value());
 	json::Value rp = json::Value::object();
 	rp.set("H", a.outputs->replay_running("H"));
@@ -285,7 +285,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		return host_status_json(a);
 	});
 	m["host.status"].clips = true; // the live clipper's health check
-	// host.alive {}: the launcher's liveness probe (D373, services/studio-ui/host-watch.mjs). Takes no studio or output
+	// host.alive {}: the launcher's liveness probe (D374, services/studio-ui/host-watch.mjs). Takes no studio or output
 	// lock (a long project load never makes it wait), so "no answer" means the host itself is stuck.
 	add("host.alive", [&a](const json::Value &p) {
 		(void)Params(p, {});
@@ -704,7 +704,7 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		return a.studio->test_audio_stall(q.str("id", 64), q.bool_or("stall", true));
 	});
 	// graphics.testStall {ms}: the next video frame's tick blocks the graphics thread for ms (a stuck GPU), for the
-	// graphics watchdog test (gfx_watch.h, D373). --test-hooks only.
+	// graphics watchdog test (gfx_watch.h, D374). --test-hooks only.
 	add("graphics.testStall", [&a](const json::Value &p) {
 		Params q(p, {"ms"});
 		if (!a.test_hooks)

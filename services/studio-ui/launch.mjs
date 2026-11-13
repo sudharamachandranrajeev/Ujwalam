@@ -211,7 +211,7 @@ export function loadAudioHealth(file = AUDIO_HEALTH_FILE) {
   return out;
 }
 
-/** data/live/host-watch.json "host" -> the host config's graphicsWatch (D373; report only in the host). null when the
+/** data/live/host-watch.json "host" -> the host config's graphicsWatch (D374; report only in the host). null when the
  *  file cannot be used: the host then runs without its stall report and the launcher says so. */
 export function hostGraphicsWatch(load = loadHostWatchConfig) {
   try { return load().host; } catch (e) { console.log(`[studio] WARNING: data/live/host-watch.json not usable (${e.message}); no graphics stall report`); return null; }
@@ -229,7 +229,7 @@ export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, h
     audio: { lowLatency: true },
     // A device audio source that stops delivering (game audio lost 2026-11-08) is reported and restarted.
     audioHealth,
-    // A graphics thread that stops producing frames is reported in host.status / host.alive (D373; report only).
+    // A graphics thread that stops producing frames is reported in host.status / host.alive (D374; report only).
     ...(graphicsWatch ? { graphicsWatch } : {}),
     // Headphones for monitored sources (profile devices.monitoringOutput.name); absent: the Windows default output.
     ...(typeof monitoringOutput === 'string' && monitoringOutput ? { monitoringDevice: monitoringOutput } : {}),
@@ -859,7 +859,7 @@ function superviseHost(o) {
   void readOutputs();
   writeSnapshot(client, logsDir);
 
-  // Host watchdog (D373 proposed, host-watch.mjs): a host that stops answering or stops producing video frames is
+  // Host watchdog (D374 proposed, host-watch.mjs): a host that stops answering or stops producing video frames is
   // logged once per incident; with flag host-watchdog on it is stopped (tree kill) and the crash path below restarts
   // it. Everything new here (the stop, the task-bar entry, the driver-reset lookup) happens only with the flag on.
   let watchCfg = null;
@@ -867,10 +867,19 @@ function superviseHost(o) {
   const watchOn = () => { try { return createFlags({ dataDir }).isOn(HOST_WATCH_FLAG); } catch { return false; } };
   const hung = new WeakMap(); // child -> why the watchdog stopped it (the exit is then not a "crash")
   let incident = null; // { id, at, kind: 'hung' | 'crash', why, cause, state }: one task-bar entry per incident
+  let tellSeq = 0;
   const tell = (state, result = null) => {
     if (!incident || !watchOn()) return;
     incident.state = state;
-    writeTaskFile(dataDir, incidentTask({ ...incident, result }));
+    const task = incidentTask({ ...incident, result });
+    // The rename in writeTaskFile fails (EPERM) while a reader (the task bar) has the file open: retry a few times, and
+    // never let an older state's retry overwrite a newer one.
+    const seq = ++tellSeq;
+    const put = (left) => {
+      if (seq !== tellSeq || writeTaskFile(dataDir, task) || left <= 0) return;
+      setTimeout(() => put(left - 1), 200).unref();
+    };
+    put(10);
   };
   const lookForDriverReset = (inc) => {
     if (!watchCfg) return;
@@ -995,9 +1004,15 @@ function superviseHost(o) {
     crashLog({ at: new Date().toISOString(), action: 'restarted', attempt: d.attempt, resumed, streams, streamsRestarted: sr.restarted, streamsByHand: sr.byHand });
     tell('done', `Recording restarted: ${resumed.length ? 'yes, in a new file' : 'it was off'}${sr.restarted.length ? `; streams restarted: ${sr.restarted.join(', ')}` : ''}${sr.byHand.length ? `; start these streams by hand: ${sr.byHand.join(', ')}` : ''}`);
     incident = null;
-    if (alpha) await alphaStatus(client);
-    await writeSnapshot(client, logsDir);
-    busy = false;
+    try {
+      if (alpha) await alphaStatus(client);
+      await writeSnapshot(client, logsDir);
+    } finally {
+      busy = false;
+      // Codex review (D374): the liveness window starts when the restore has FINISHED, never at the host's start, so
+      // the project reload, record and stream restarts (no checks run while busy) never count toward noAnswerMs.
+      watch?.reset();
+    }
   }
   arm(getChild());
 
@@ -1084,7 +1099,7 @@ function superviseHost(o) {
         // Not planned: if the previous host cannot start either, the crash restart policy takes over.
         const back = await startAndLoad({ isPlanned: false });
         return back.ok ? { result: 'restored-old', reason: up.reason, candidateFailed: true, running: 'old' } : { result: 'failed', reason: `${up.reason}; the previous host did not come back (${back.reason})`, candidateFailed: true, running: 'none' };
-      } finally { busy = false; }
+      } finally { busy = false; watch?.reset(); } // the liveness window starts after the update (D374)
     },
   };
 }

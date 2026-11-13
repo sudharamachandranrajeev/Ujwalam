@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// ujwalam-host: graphics watchdog and GPU device-loss report (D373; docs/evidence/2026-11-13-gpu-reset-recovery.md).
+// ujwalam-host: graphics watchdog and GPU device-loss report (D374; docs/evidence/2026-11-13-gpu-reset-recovery.md).
 //
 // Why: on 2026-11-12 the host's graphics thread stopped producing frames at 19:03 (frames.grab timed out, the face
 // link heartbeat went stale for 3 hours) and nothing noticed; at 21:42 the NVIDIA driver reset (nvlddmkm 153) while
@@ -62,9 +62,13 @@ private:
 	std::atomic<uint64_t> last_tick_ms_{0}; // GetTickCount64 at the last frame (start time before the first)
 	std::atomic<uint64_t> ticks_{0};
 	std::atomic<uint32_t> test_stall_ms_{0};
-	mutable std::mutex m_;
-	Stall stall_;
-	std::string last_stall_at_; // UTC time the newest stall was detected ("" = none)
+	Stall stall_; // the checker thread's own state (one writer, no other reader)
+	// What status() reads, published by the checker without a lock (Codex review: host.alive must never wait on the
+	// checker, which logs).
+	std::atomic<bool> pub_stalled_{false};
+	std::atomic<uint64_t> pub_since_ms_{0}, pub_longest_ms_{0};
+	std::atomic<uint32_t> pub_count_{0};
+	std::atomic<uint64_t> last_stall_ft_{0}; // FILETIME (UTC) the newest stall was detected (0 = none)
 	void *ev_ = nullptr;        // HANDLE (manual reset; set = stop)
 	std::thread th_;
 };

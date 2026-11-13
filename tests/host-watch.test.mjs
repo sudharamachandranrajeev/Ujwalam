@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Host watchdog (D373 proposed, flag host-watchdog; services/studio-ui/host-watch.mjs and launch.mjs superviseHost).
+// Host watchdog (D374 proposed, flag host-watchdog; services/studio-ui/host-watch.mjs and launch.mjs superviseHost).
 // Unit tests of the stale decision and the watch loop with a fake clock and a fake probe (no GPU, no host), the driver
 // reset lookup with a fake PowerShell, the incident task; then the launcher end to end with the fake host freezing
 // (tests/fixtures/studio-ui/fake-host.mjs UJWALAM_FAKE_HOST_HANG_*): stale -> stopped -> restarted -> recording and the
@@ -77,7 +77,7 @@ test('judge: no answer for noAnswerMs is stale once per incident; a healthy answ
   const g = j.observe({ now: 55_000, ok: true, status: { graphics: { lastFrameAgeMs: 30_000 } } });
   assert.deepEqual(g, { state: 'stale', reason: 'graphics-stalled', forMs: 30_000, isNew: true });
   assert.equal(j.observe({ now: 56_000, ok: false }).state, 'stale-wait', 'a failed probe inside an incident is not a new one');
-  // A host from before D373 (no host.alive, or no graphics field) is judged by its answers only.
+  // A host from before D374 (no host.alive, or no graphics field) is judged by its answers only.
   assert.equal(j.observe({ now: 60_000, ok: true, status: null }).state, 'ok');
   assert.equal(j.observe({ now: 61_000, ok: true, status: { graphics: null } }).state, 'ok');
   // A new host: counted from its start, not from the old host's last answer.
@@ -148,6 +148,17 @@ test('watch loop, flag on: a graphics stall acts once; a healthy look re-arms; n
   assert.equal(probes, 1);
 });
 
+test('watch loop: the default clock is monotonic; a wall-clock jump never makes a healthy host look silent (Codex review)', async (t) => {
+  let fail = false; let acts = 0;
+  const w = createHostWatch({ cfg: CFG, flagOn: () => true, probe: async () => { if (fail) throw new Error('timeout'); return { graphics: { lastFrameAgeMs: 16 } }; }, onStale: async () => { acts++; } });
+  assert.equal((await w.tick()).state, 'ok');
+  const real = Date.now();
+  t.mock.method(Date, 'now', () => real + 3_600_000); // the PC clock jumps 1 h ahead (time sync)
+  fail = true; // one lost probe right after the jump
+  assert.equal((await w.tick()).state, 'ok', 'one failed probe after a clock jump is not 1 h of silence');
+  assert.equal(acts, 0);
+});
+
 test('watch loop: an old host without host.alive (method not found) counts as answering', async () => {
   const notFound = Object.assign(new Error('method not found'), { code: -32601 });
   const f = fakeWatch({ flag: true, answers: () => notFound });
@@ -184,7 +195,7 @@ test('incident task: one entry per incident in the task-bar shape, plain words',
 
 // ---- launcher end to end (fake host) ----
 
-function launch(name, { flags = {}, hangMode = 'rpc', hangRuns = '1' } = {}) {
+function launch(name, { flags = {}, hangMode = 'rpc', hangRuns = '1', env: extraEnv = {} } = {}) {
   const root = mkdtempSync(path.join(os.tmpdir(), `ujw-hw-${name}-`));
   const dataDir = path.join(root, 'core');
   mkdirSync(dataDir, { recursive: true });
@@ -207,6 +218,7 @@ function launch(name, { flags = {}, hangMode = 'rpc', hangRuns = '1' } = {}) {
     UJWALAM_HOST_WATCH_CONFIG: watchCfg,
     UJWALAM_HOST_RESTART_BACKOFF_MS: '200', UJWALAM_HOST_WATCH_MS: '200', UJWALAM_ALPHA_STATS_MS: '60000',
     UJWALAM_HOST_TOKEN: '', UJWALAM_HOST_EXE: '', UJWALAM_HOST_BUILD: '', UJWALAM_LIVE_SESSION: '',
+    ...extraEnv,
   };
   const args = [path.join(REPO, 'services', 'studio-ui', 'launch.mjs'), '--alpha', '--mock', '--stop-on-stdin', '--shell', 'browser',
     '--data-dir', dataDir, '--host-exe', path.join(FIX, 'studio-ui', 'fake-host.mjs'), '--profile', profile, '--feedback-dir', path.join(root, 'feedback')];
@@ -309,6 +321,24 @@ test('graphics stalled (host still answering), watchdog on, stream recovery off:
     assert.deepEqual(streamStarts(s).map((x) => x.run), [1], 'never a stream start by the watchdog: stream recovery is off');
     assert.match(s.out, /streams youtube-h, twitch are NOT running|streams YouTube H, Twitch are NOT running/);
     assert.equal(s.crashes().find((x) => x.action === 'hung').reason, 'graphics-stalled');
+  } finally { await s.stop(); }
+});
+
+test('a slow restore does not count as silence: the liveness window starts after the restore (Codex review)', { timeout: 180_000 }, async () => {
+  // The restore's stream.start takes 2.5 s (longer than noAnswerMs 2 s; no checks run meanwhile), and the new host's
+  // first host.alive is lost. Counted from the host's start that would be 3 s of silence and a second, false restart;
+  // counted from the end of the restore it is one lost probe.
+  const s = launch('slow', { flags: { 'host-watchdog': true, 'stream-recovery': true }, env: { UJWALAM_FAKE_HOST_START_DELAY_MS: '2500', UJWALAM_FAKE_HOST_ALIVE_DROP_RUNS: '2' } });
+  try {
+    await s.login();
+    await s.goLive();
+    s.hang();
+    await s.until(() => s.crashes().some((x) => x.action === 'restarted'), 'the restore', 90_000);
+    await s.until(() => s.calls().some((x) => x.run === 2 && x.event === 'alive-dropped'), 'the lost probe');
+    await sleep(4000); // two noAnswerMs windows after the restore
+    assert.deepEqual(s.calls().filter((x) => x.event === 'start').map((x) => x.run), [1, 2], `one restart only\n${s.out}`);
+    assert.equal((s.out.match(/HOST NOT RESPONDING/g) ?? []).length, 1);
+    assert.deepEqual(streamStarts(s).map((x) => x.run), [1, 2]);
   } finally { await s.stop(); }
 });
 

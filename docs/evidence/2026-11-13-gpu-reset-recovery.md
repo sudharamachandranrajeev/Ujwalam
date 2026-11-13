@@ -1,4 +1,4 @@
-# 2026-11-13 — GPU reset recovery: host graphics watchdog and launcher liveness check (D373, flag `host-watchdog`)
+# 2026-11-13 — GPU reset recovery: host graphics watchdog and launcher liveness check (D374, flag `host-watchdog`)
 
 Status: built and tested with a fake host and a real host on this PC. A real NVIDIA driver reset was NOT reproduced (UNVERIFIED, see the end).
 
@@ -37,7 +37,7 @@ The launcher (`services/studio-ui/launch.mjs`, `superviseHost`) restarted the ho
 - The host is **stale** when either:
   - it gave no answer for `noAnswerMs` (counted from its last answer, or from its start), or
   - it answers, but `lastFrameAgeMs >= graphicsStallMs`.
-- A host from before D373 (no `host.alive`, "method not found") counts as answering; only the no-answer rule applies to it.
+- A host from before D374 (no `host.alive`, "method not found") counts as answering; only the no-answer rule applies to it.
 - The first stale look of an incident is logged once, with the flag on or off:
   - `[studio] HOST NOT RESPONDING: it did not answer for 30 s; the host watchdog stops and restarts it`
   - Flag off: `... (flag host-watchdog is off: not restarting it; restart Ujwalam by hand)`, and nothing else happens.
@@ -72,14 +72,22 @@ Worst case: about 35 s to detect, up to 15 s to kill, 2 s backoff, then the star
 
 `host-watchdog` in `data/flags.json`: off by default, page "stream", label "Host watchdog". The flag is re-read at every look, so it switches live.
 
+### Review fixes (Codex review of the first commit, 2026-11-13)
+
+1. **Monotonic clock.** The launcher's liveness check measures every elapsed time with `performance.now()` (`createHostWatch` default `now`). A wall-clock jump (time sync, a user change) can no longer make a healthy host look silent. Wall-clock time is used only for timestamps (crash log, task, driver-log window).
+2. **Window starts after the restore.** No checks run while a restart or update is in progress (`busy`). The observation window is now reset when the restore FINISHES (end of `onExit`, in a `finally`; end of `restartPlanned`), not when the new host starts. A slow project reload or stream restart no longer counts toward `noAnswerMs`. The `finally` also clears `busy` if the last status or snapshot step throws, so the watchdog is not left switched off.
+3. **`host.alive` lock-free in the host.** The checker thread is the only writer of the stall state. It publishes stalled, since, count, longest and the stall, loss and rebuild times (FILETIME) to atomics before it logs, and holds no lock while logging. `status()` (`host.status` / `host.alive`) reads only atomics.
+4. **Task-bar write retried.** `writeTaskFile` renames a temp file over the task file. On Windows that rename fails while a reader has the file open, so an incident's final state could be lost. That happened once in a test run: the task stayed "running". `tell()` now retries up to 10 times, 200 ms apart. An older state's retry never overwrites a newer one. The cause is inferred from the code: the failed write was not observed directly.
+5. **Decision renumbered.** D373 was taken on master by RP5 self-learning, so this decision is D374.
+
 ## Tests
 
 | command | result |
 |---|---|
-| `node --test tests/host-watch.test.mjs` | 12 / 12 pass |
-| `node --test tests/host-watch.test.mjs tests/studio-ui-alpha.test.mjs tests/stream-recovery.test.mjs tests/studio-ui-crash-recovery.test.mjs` | 72 / 72 pass |
-| `node --test app/host/tests/host-gfx-watch.test.mjs` (real host, installed app not running) | 3 / 3 pass |
-| `npm run test:host` (installed app not running) | 173 tests: 162 pass, 0 fail, 11 skipped (opt-in benches; face tests need `.venv-gpu`, absent in this worktree). The first run had a failure in `host-live-plan-record.test.mjs` (EPIPE on a loopback stream write) and one other failing assertion. A full rerun with no other load passed. Treated as load flakiness, not this change: that test does not use the watchdog. |
+| `node --test tests/host-watch.test.mjs` | 14 / 14 pass (after the review fixes) |
+| `node --test tests/host-watch.test.mjs tests/studio-ui-alpha.test.mjs tests/stream-recovery.test.mjs tests/studio-ui-crash-recovery.test.mjs` | 74 tests: 73 pass, 1 skipped (face worker, no `.venv-gpu` in the worktree) |
+| `node --test app/host/tests/host-gfx-watch.test.mjs app/host/tests/host-api.test.mjs` (real host, installed app not running) | 19 / 19 pass |
+| `npm run test:host` (installed app not running) | 173 tests: 162 pass, 0 fail, 11 skipped (opt-in benches; face tests need `.venv-gpu`, absent in this worktree). The first run had a failure in `host-live-plan-record.test.mjs` (EPIPE on a loopback stream write) and one other failing assertion. A full rerun with no other load passed. Treated as load flakiness, not this change: that test does not use the watchdog. After the review fixes: 173 tests, 162 pass, 0 fail, 11 skipped, first run. |
 | `node tools/lint.mjs` | 0 findings |
 
 `tests/host-watch.test.mjs` covers:
@@ -99,6 +107,8 @@ Worst case: about 35 s to detect, up to 15 s to kill, 2 s backoff, then the star
   1. RPC freeze while live (watchdog and stream recovery on): one log line, kill, one restart, `record.start` in the new host, `stream.start` of exactly the sinks that were live, crash-log `hung` / `restart` / `restarted`, and one task in state "done".
   2. Graphics freeze with stream recovery off: restart and recording, no `stream.start`, the "NOT running" line.
   3. Flag off: one log line, no kill, no restart, no task.
+  4. Slow restore (review fix 2): the restore's `stream.start` takes 2.5 s, longer than `noAnswerMs` (2 s), and the new host's first `host.alive` is lost (`UJWALAM_FAKE_HOST_ALIVE_DROP_RUNS`). Result: one restart only. Measured from the host's start, this would have been about 3 s of "silence" and a second, false restart.
+- **Monotonic clock (review fix 1):** `Date.now` is mocked one hour ahead after a healthy answer, then one probe fails. The result is still "ok".
 
 `app/host/tests/host-gfx-watch.test.mjs` (real libobs host, headless, test card) covers:
 

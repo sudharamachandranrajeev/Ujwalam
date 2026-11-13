@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Host watchdog (D373 proposed, flag `host-watchdog`, off by default; docs/evidence/2026-11-13-gpu-reset-recovery.md).
+// Host watchdog (D374 proposed, flag `host-watchdog`, off by default; docs/evidence/2026-11-13-gpu-reset-recovery.md).
 //
 // Why: on 2026-11-12 the host (libobs) froze twice and nothing recovered it. At 19:03 its graphics thread stopped
 // producing frames for 3 hours while the process kept running; at 21:42 the NVIDIA driver reset while live and the
@@ -30,7 +30,7 @@ const NUMS = Object.freeze({
   checkMs: [500, 60_000], rpcTimeoutMs: [500, 60_000], noAnswerMs: [2000, 600_000], graphicsStallMs: [2000, 600_000],
   killWaitMs: [1000, 120_000], driverLookbackMs: [0, 86_400_000],
 });
-// JSON-RPC "method not found": a host from before D373 has no host.alive; it counts as an answer without frame data.
+// JSON-RPC "method not found": a host from before D374 has no host.alive; it counts as an answer without frame data.
 const METHOD_NOT_FOUND = -32601;
 
 /** data/live/host-watch.json (or UJWALAM_HOST_WATCH_CONFIG) -> the config. Throws a plain-words error on a bad file. */
@@ -89,8 +89,10 @@ export function staleText(d) {
  * running), flagOn: () => bool (read at every look: switches live), onStale: async (d) => void (stop the host),
  * log, now }. One log line per incident; onStale at most once per incident and only with the flag on (a flag
  * switched on during an incident acts at the next look). reset(): a new host is running.
+ * now is a MONOTONIC clock in ms (performance.now; Codex review): a wall-clock jump (time sync, DST, a user change)
+ * must never make a healthy host look silent for noAnswerMs. Wall-clock time is used only for timestamps.
  */
-export function createHostWatch({ cfg, probe, canCheck = () => true, flagOn = () => false, onStale, log = () => {}, now = Date.now }) {
+export function createHostWatch({ cfg, probe, canCheck = () => true, flagOn = () => false, onStale, log = () => {}, now = () => performance.now() }) {
   const judge = livenessJudge(cfg);
   let gen = 0; let inFlight = false; let acted = false;
   judge.reset(now());
