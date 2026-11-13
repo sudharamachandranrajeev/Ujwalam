@@ -124,8 +124,10 @@ Dialog {
         busy = true;
         streamPg.reset();
         transPg.reset();
+        postPg.reset();
         Api.get("ui/api/flags", (fok, fb) => {
             if (fok && Array.isArray(fb.flags)) store.takeFlags(fb.flags);
+            if (store.flags["posting"] === true) postPg.load();
             if (store.flags["stream-settings"] === true) streamPg.load(); // in step with the settings, not after them
             if (store.flags["stream-settings"] === true && store.flags["transitions"] === true) transPg.load();
             Api.get("ui/api/settings", (ok, b, err) => {
@@ -215,7 +217,7 @@ Dialog {
         if (transMsNow(d) !== (kindRange(d.transKind) ? s.transMs : 0)) return true;
         if (d.recDir.trim() !== s.recDir.trim() || d.clipDir.trim() !== s.clipDir.trim()) return true;
         for (const id in flagDraft) if ((flagStart[id] === true) !== flagDraft[id]) return true;
-        return streamPg.dirty || transPg.dirty;
+        return streamPg.dirty || transPg.dirty || postPg.dirty;
     }
     function body() {
         const d = draft, s = start, out = {};
@@ -258,10 +260,16 @@ Dialog {
             store.say("Not saved: Settings > Stream has a value over a platform limit (shown in red).");
             return false;
         }
+        if (postPg.blocksSave) { // no kind of clip chosen: keeps Settings open on that page (the note is shown there)
+            page = "Posting & growth";
+            store.say("Not saved: Settings > Posting & growth > Auto-post needs at least one kind of clip.");
+            return false;
+        }
         const b = body(), d = draft, s = start;
         const flagChanges = [];
         for (const id in flagDraft) if ((flagStart[id] === true) !== flagDraft[id]) flagChanges.push([id, flagDraft[id], flagLabel(id)]);
         transPg.save(); // its own routes, like the Stream page
+        postPg.save(); // its own route, only when the card changed
         streamPg.save(); // its own route; the server checks every value again (before the window closes: closing resets the page)
         saving = true;
         unsaved.close();
@@ -565,8 +573,8 @@ Dialog {
                 anchors.fill: parent
                 title: "Posting & growth"
                 pageId: "posting"
-                lead: "Posts are reviewed in the Posts window once Posts window is switched on below." +
-                      (dlg.flagOn("posting") ? " This window does not show the auto-post settings yet. Use Settings in the classic studio window for now." : "")
+                lead: "Posts are reviewed in the Posts window, in the More menu, once Posts window is switched on below."
+                SettingsPosting { id: postPg; box: dlg }
             }
 
             SettingsPage {
@@ -745,6 +753,7 @@ Dialog {
                 hint: "Records the stream (H and V) to your recordings folder so reels can be made after it ends. Uses about 10 GB per hour." },
             snap: draft.snap, unsavedOpen: unsaved.opened, guide: guide, streamPage: streamPg.active ? streamPg.probe() : null,
             transitionsPage: transPg.active ? transPg.probe() : null,
+            postingPage: postPg.active ? postPg.probe() : null,
             size: [width, height]
         };
     }
@@ -758,7 +767,12 @@ Dialog {
         switch (p[0]) {
         case "settings-open": openAt(p[1] || ""); return true;
         case "settings-section":
-        case "settings-page": if (!opened || !shownPages.includes(p[1])) return false; page = p[1]; return true;
+        case "settings-page": { // the name may be percent-encoded (the "&" of "Posting & growth", as on the widget studio's probe)
+            const name = decodeURIComponent(p[1]);
+            if (!opened || !shownPages.includes(name)) return false;
+            page = name;
+            return true;
+        }
         case "settings-search": if (!opened) return false; query = a.slice(a.indexOf(":") + 1); return true;
         case "settings-save": return save();
         case "settings-cancel": return cancel();
@@ -772,6 +786,7 @@ Dialog {
         if (!opened) return false;
         if (p[0].startsWith("stream-")) return streamPg.active && streamPg.probeAction(p);
         if (p[0].startsWith("tr-")) return transPg.active && transPg.probeAction(p);
+        if (p[0].startsWith("ap-")) return postPg.active && postPg.probeAction(p);
         switch (p[0]) {
         case "settings-shot": { // settings-shot:<png path>: a picture of the Settings window (it is its own window)
             const file = a.slice("settings-shot:".length);
