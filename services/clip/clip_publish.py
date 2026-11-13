@@ -5,7 +5,8 @@ other file in the app data folder; the live clipper's replay saves removed once 
 publish(work, to, data_dir, ...) -> [row]   each validated (PASS) video of a run folder in app data is linked (a hard
     link, so no second copy on disk; a copy when the folders are on different drives) into
     <to>/<YYYY-MM-DD>/<convention name>.mp4. The run folder keeps its own file (posting packages from it). Rows go to
-    <work>/published.json and the upload list <data>/clips/uploads.json ({file, kind, label, run, posted: []}).
+    <work>/published.json and the upload list <data>/clips/uploads.json ({file, kind, label, run, posted: [], choices?};
+    choices = the edit choices of a reel, RP5 / D373).
 drop_used_saves(paths) -> deleted   the live clipper's replay saves (host names replay-<H|V>-<stamp>[-n].mkv inside a
     'replay' folder) after live-review made clips from them. Anything else is never touched.
 tidy_plan(recordings, clips, data_dir) -> [action]   read-only; `apply_plan` acts on it (clipper.py tidy --apply).
@@ -20,6 +21,7 @@ import shutil
 from datetime import datetime
 
 import clip_names as names
+import learning_mix as lmix
 from clip_common import ClipError, load_json, write_json_atomic
 
 PUBLISHED = "published.json"
@@ -112,6 +114,7 @@ def publish(work, to, data_dir, game, layouts_by_id, det_weights=None, run_name=
         prev = []
     done = {(r.get("id"), r.get("layout")) for r in prev}
     rows, counters = [], {}
+    tool = rdoc.get("tool") or ""
     for c, f, kind, when, label, canvas in name_rows(rdoc, game, layouts_by_id, det_weights, rec_start_local):
         if not passed.get((c["id"], f["file"])) or (c["id"], f["layout"]) in done:
             continue
@@ -126,12 +129,18 @@ def publish(work, to, data_dir, game, layouts_by_id, det_weights=None, run_name=
         counters[(kind, canvas)] = nn
         how = _link_or_copy(src, os.path.join(day, name))
         rows.append({"id": c["id"], "layout": f["layout"], "file": os.path.join(day, name), "how": how, "kind": kind,
-                     "label": label, "seconds": round(float(c["end"]) - float(c["start"]), 3)})
+                     "label": label, "seconds": round(float(c["end"]) - float(c["start"]), 3),
+                     **({"thumbnail": True} if f.get("thumbnail") else {}),  # RP6: frame 0 is the cover
+                     # RP5 (D373): the edit choices a reel was made with, so its results can be linked to them
+                     **({"choices": lmix.choices_record(c, (c.get("learning") or {}).get("mixAt"))}
+                        if tool.startswith("clipper.montage") else {})})
     run = run_name or os.path.basename(os.path.normpath(work))
     write_json_atomic(prev_path, {"tool": "clipper.publish", "to": to, "files": prev + rows})
     if data_dir and rows:
         add_uploads(data_dir, [{**{k: r[k] for k in ("file", "kind", "label", "seconds")}, "run": run,
-                                "recording": rdoc.get("recording"), "posted": []} for r in rows])
+                                "recording": rdoc.get("recording"), "posted": [],
+                                **({"thumbnail": True} if r.get("thumbnail") else {}),
+                                **({"choices": r["choices"]} if r.get("choices") else {})} for r in rows])
     return rows
 
 

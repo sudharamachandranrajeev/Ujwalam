@@ -54,7 +54,7 @@ describe('rules file', () => {
     assert.deepEqual(loadRules(), { autoUpload: false, rules: [] });
   });
   test('validation rejects bad rules', () => {
-    for (const bad of [{ rules: [{ ...RULE, maxPerDay: 0 }] }, { rules: [{ ...RULE, maxPerDay: 99 }] }, { rules: [{ ...RULE, minScore: 'x' }] }, { rules: [RULE, RULE] }, { rules: [{ ...RULE, id: 'A B' }] }, { rules: [], autoUpload: 'yes' }, {}])
+    for (const bad of [{ rules: [{ ...RULE, maxPerDay: 0 }] }, { rules: [{ ...RULE, maxPerDay: 101 }] }, { rules: [{ ...RULE, minScore: 'x' }] }, { rules: [RULE, RULE] }, { rules: [{ ...RULE, id: 'A B' }] }, { rules: [], autoUpload: 'yes' }, {}])
       assert.throws(() => validateRules(bad), { code: 'bad-rules' });
   });
 });

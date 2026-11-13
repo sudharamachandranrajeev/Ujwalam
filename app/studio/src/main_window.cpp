@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "main_window.h"
 #include "guide.h"
+#include "autopost_card.h"
 #include "connections_page.h"
 #include "icons.h"
 #include "add_dialogs.h"
@@ -56,6 +57,9 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QSplitter>
+#include <QTableWidget>
+#include <QHeaderView>
+#include <functional>
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QPainter>
@@ -749,6 +753,9 @@ QWidget *MainWindow::buildTop()
 	postsAct_ = menu->addAction(QStringLiteral("Posts..."), this, &MainWindow::openPosts);
 	postsAct_->setToolTip(QStringLiteral("Review clip packages. Nothing is uploaded until you click Upload."));
 	postsAct_->setVisible(false);
+	growthAct_ = menu->addAction(QStringLiteral("Growth numbers..."), this, &MainWindow::openGrowth);
+	growthAct_->setToolTip(QStringLiteral("Your own YouTube numbers for the videos Ujwalam posted. Read only."));
+	growthAct_->setVisible(false);
 	reportAct_ = menu->addAction(QStringLiteral("Report a problem..."), this, &MainWindow::report);
 	reportAct_->setToolTip(QStringLiteral("Opens a prefilled GitHub issue in your browser; you review it before submitting."));
 	reportAct_->setVisible(false);
@@ -2274,7 +2281,7 @@ void MainWindow::loadFlags()
 		if (!ok)
 			return;
 		const QJsonArray fl = b.value(QStringLiteral("flags")).toArray();
-		flags_ = fl; // Settings > Advanced reads it when it opens
+		flags_ = fl; // Settings reads it when it opens
 		bool tc = false; // D336: theme components (the pack's component language); switches live
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("theme-components"))
@@ -2322,6 +2329,11 @@ void MainWindow::loadFlags()
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("posting"))
 				po = x.toObject().value(QStringLiteral("on")).toBool();
 		postsAct_->setVisible(po);
+		bool gr = false;
+		for (const auto &x : fl)
+			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("growth"))
+				gr = x.toObject().value(QStringLiteral("on")).toBool();
+		growthAct_->setVisible(gr);
 		bool ap = false;
 		for (const auto &x : fl)
 			if (x.toObject().value(QStringLiteral("id")).toString() == QStringLiteral("auto-post"))
@@ -2482,6 +2494,209 @@ void MainWindow::loadReviewCount()
 // Review reads (LL3, D340, flag learning-review): one item at a time, its frame, what was read and why it is asked,
 // and the answers the game pack allows. Confirm writes one label in the local learning store (the click is the
 // decision, D332); Close leaves the rest for later. Nothing else waits for these answers.
+// Growth numbers (AN1b, D372, flag growth): the user's own YouTube numbers for the videos Ujwalam posted, read only.
+// Its own window from the More menu; never needed while live or recording. Refresh asks the server to read YouTube again
+// (at most once an hour unless the second button is used); nothing is posted or changed on YouTube.
+void MainWindow::openGrowth()
+{
+	if (growthDlg_) {
+		growthDlg_->raise();
+		return;
+	}
+	auto *dlg = new QDialog(this);
+	growthDlg_ = dlg;
+	dlg->setObjectName(QStringLiteral("growthDlg"));
+	dlg->setAttribute(Qt::WA_DeleteOnClose);
+	dlg->setWindowTitle(QStringLiteral("Growth numbers"));
+	dlg->resize(1360, 520);
+	auto *v = new QVBoxLayout(dlg);
+	auto *info = new QLabel(QStringLiteral("Loading..."), dlg);
+	info->setObjectName(QStringLiteral("growthInfo"));
+	info->setWordWrap(true);
+	auto *fetched = new QLabel(dlg);
+	fetched->setObjectName(QStringLiteral("growthFetched"));
+	fetched->setWordWrap(true);
+	auto *table = new QTableWidget(0, 10, dlg);
+	table->setObjectName(QStringLiteral("growthTable"));
+	table->setHorizontalHeaderLabels({QStringLiteral("Video"), QStringLiteral("Kind"), QStringLiteral("Public since"), QStringLiteral("Views"),
+					  QStringLiteral("Likes"), QStringLiteral("Avg viewed %"), QStringLiteral("Shares"), QStringLiteral("Subs gained"),
+					  QStringLiteral("After 24 hours"), QStringLiteral("After 7 days")});
+	table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+	table->setSelectionBehavior(QAbstractItemView::SelectRows);
+	table->setSelectionMode(QAbstractItemView::SingleSelection);
+	table->verticalHeader()->setVisible(false);
+	table->horizontalHeader()->setStretchLastSection(false);
+	table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
+	for (int c = 1; c < 10; c++)
+		table->horizontalHeader()->setSectionResizeMode(c, QHeaderView::ResizeToContents);
+	table->setSortingEnabled(true);
+	auto *row = new QHBoxLayout();
+	auto *refreshB = new QPushButton(QStringLiteral("Refresh"), dlg);
+	refreshB->setObjectName(QStringLiteral("growthRefresh"));
+	refreshB->setToolTip(QStringLiteral("Read your numbers from YouTube again. Allowed once an hour."));
+	auto *forceB = new QPushButton(QStringLiteral("Refresh now"), dlg);
+	forceB->setObjectName(QStringLiteral("growthForce"));
+	forceB->setToolTip(QStringLiteral("Read again even if it was read less than an hour ago. Uses a little of YouTube's daily allowance."));
+	forceB->setVisible(false);
+	auto *closeB = new QPushButton(QStringLiteral("Close"), dlg);
+	row->addWidget(refreshB);
+	row->addWidget(forceB);
+	row->addStretch(1);
+	row->addWidget(closeB);
+	v->addWidget(info);
+	v->addWidget(fetched);
+	v->addWidget(table, 1);
+	v->addLayout(row);
+	connect(closeB, &QPushButton::clicked, dlg, &QDialog::close);
+
+	struct State {
+		bool busy = false, signedIn = false, on = true;
+		QString nextAt, note; // note: the result line of the last Refresh, shown once the list is re-read
+	};
+	auto st = std::make_shared<State>();
+	QPointer<QDialog> guard(dlg);
+	const auto local = [](const QString &iso, const QString &fmt) {
+		const QDateTime t = QDateTime::fromString(iso, Qt::ISODateWithMs);
+		return t.isValid() ? t.toLocalTime().toString(fmt) : QString();
+	};
+	const auto kindName = [](const QString &k) {
+		if (k == QStringLiteral("montage"))
+			return QStringLiteral("Montage");
+		if (k == QStringLiteral("won-reel"))
+			return QStringLiteral("Won-round reel");
+		if (k == QStringLiteral("impact-play"))
+			return QStringLiteral("Impact play");
+		if (k == QStringLiteral("clip") || k == QStringLiteral("short"))
+			return QStringLiteral("Clip");
+		return k.isEmpty() ? QStringLiteral("-") : k;
+	};
+	// A number (sorts as a number) or "-" when YouTube has not given it yet.
+	const auto numItem = [](const QJsonValue &x, int decimals = 0) {
+		auto *it = new QTableWidgetItem();
+		if (x.isDouble()) {
+			it->setData(Qt::DisplayRole, decimals ? QVariant(QString::number(x.toDouble(), 'f', decimals).toDouble()) : QVariant(qlonglong(x.toDouble())));
+		} else {
+			it->setText(QStringLiteral("-"));
+			it->setData(Qt::UserRole, -1);
+		}
+		it->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+		return it;
+	};
+	const auto checkpoint = [](const QJsonValue &c) {
+		const QJsonObject o = c.toObject();
+		if (o.isEmpty())
+			return QStringLiteral("not reached yet");
+		const auto n = [&](const char *k, int d = 0) {
+			const QJsonValue x = o.value(QLatin1String(k));
+			return x.isDouble() ? QString::number(x.toDouble(), 'f', d) : QStringLiteral("-");
+		};
+		return QStringLiteral("%1 views, %2 likes, %3% viewed, +%4 subs").arg(n("views"), n("likes"), n("avgViewedPct", 1), n("subs"));
+	};
+	const auto setBusy = [=](bool b) {
+		st->busy = b;
+		refreshB->setEnabled(!b && st->signedIn && st->on);
+		forceB->setEnabled(!b && st->signedIn && st->on);
+	};
+	const auto fail = [=](const QString &err) {
+		if (err.contains(QStringLiteral("growth-off")))
+			return QStringLiteral("Growth numbers are switched off. Switch on \"Growth numbers\" in Settings > Posting & growth and click Save.");
+		if (err.contains(QStringLiteral("analytics-scope-missing")))
+			return QStringLiteral("YouTube is signed in but does not yet allow reading statistics. Sign in again so it asks for that permission (steps: Settings > Posting & growth, and docs/plan/2026-11-12-growth-setup-notes.md).");
+		if (err.contains(QStringLiteral("youtube-not-signed-in")) || err.contains(QStringLiteral("youtube-no-client")))
+			return QStringLiteral("Not signed in to YouTube. Set up the sign-in first (Settings > Posting & growth, and docs/plan/2026-11-12-growth-setup-notes.md).");
+		if (err.contains(QStringLiteral("refresh-in-progress")))
+			return QStringLiteral("A read is already running.");
+		return QStringLiteral("Could not read your numbers (%1). Nothing was changed.").arg(err);
+	};
+	const auto load = std::make_shared<std::function<void()>>();
+	*load = [=]() {
+		api_->get(QStringLiteral("ui/api/growth"), [=](bool ok, const QJsonObject &r, const QString &err) {
+			if (!guard)
+				return;
+			st->on = !(!ok && err.contains(QStringLiteral("growth-off")));
+			if (!ok) {
+				table->setRowCount(0);
+				fetched->clear();
+				st->signedIn = false;
+				info->setText(fail(err));
+				st->note.clear();
+				setBusy(false);
+				return;
+			}
+			st->signedIn = r.value(QStringLiteral("signedIn")).toBool();
+			st->nextAt = r.value(QStringLiteral("nextAllowedAt")).toString();
+			const QJsonArray vids = r.value(QStringLiteral("videos")).toArray();
+			const QString last = r.value(QStringLiteral("lastFetchAt")).toString();
+			fetched->setText(last.isEmpty() ? QStringLiteral("Not read from YouTube yet.")
+							: QStringLiteral("Last read from YouTube: %1.").arg(local(last, QStringLiteral("d MMM yyyy HH:mm"))) +
+								  (st->nextAt.isEmpty() ? QString() : QStringLiteral(" Refresh is allowed again at %1.").arg(local(st->nextAt, QStringLiteral("HH:mm")))));
+			if (!st->signedIn)
+				info->setText(QStringLiteral("Not signed in to YouTube, so numbers cannot be read yet. Set up the sign-in (Settings > Posting & growth, and docs/plan/2026-11-12-growth-setup-notes.md)."
+							     "%1").arg(vids.isEmpty() ? QString() : QStringLiteral(" The numbers below are from the last read.")));
+			else if (vids.isEmpty())
+				info->setText(QStringLiteral("No posted videos yet. Upload a clip to YouTube from the Posts window, then click Refresh. YouTube shows the full statistics a day or two after a video goes public."));
+			else
+				info->setText(QStringLiteral("%1 posted video(s). Read only: nothing is posted or changed on YouTube. Click a column to sort.").arg(vids.size()));
+			if (!st->note.isEmpty()) {
+				info->setText(st->note);
+				st->note.clear();
+			}
+			table->setSortingEnabled(false);
+			table->setRowCount(0);
+			for (const auto &x : vids) {
+				const QJsonObject o = x.toObject();
+				const QJsonObject lt = o.value(QStringLiteral("latest")).toObject();
+				const int i = table->rowCount();
+				table->insertRow(i);
+				table->setItem(i, 0, new QTableWidgetItem(o.value(QStringLiteral("title")).toString(o.value(QStringLiteral("videoId")).toString())));
+				table->setItem(i, 1, new QTableWidgetItem(kindName(o.value(QStringLiteral("kind")).toString())));
+				const QString pub = o.value(QStringLiteral("publicAt")).toString();
+				table->setItem(i, 2, new QTableWidgetItem(pub.isEmpty() ? QStringLiteral("not public yet") : local(pub, QStringLiteral("d MMM yyyy HH:mm"))));
+				table->setItem(i, 3, numItem(lt.value(QStringLiteral("views"))));
+				table->setItem(i, 4, numItem(lt.value(QStringLiteral("likes"))));
+				table->setItem(i, 5, numItem(lt.value(QStringLiteral("avgViewedPct")), 1));
+				table->setItem(i, 6, numItem(lt.value(QStringLiteral("shares"))));
+				table->setItem(i, 7, numItem(lt.value(QStringLiteral("subs"))));
+				table->setItem(i, 8, new QTableWidgetItem(checkpoint(o.value(QStringLiteral("at24h")))));
+				table->setItem(i, 9, new QTableWidgetItem(checkpoint(o.value(QStringLiteral("at7d")))));
+			}
+			table->setSortingEnabled(true);
+			setBusy(r.value(QStringLiteral("busy")).toBool());
+		});
+	};
+	const auto refresh = [=](bool force) {
+		if (st->busy)
+			return;
+		setBusy(true);
+		info->setText(QStringLiteral("Reading your numbers from YouTube..."));
+		QJsonObject b;
+		if (force)
+			b.insert(QStringLiteral("force"), true);
+		api_->post(QStringLiteral("ui/api/growth/refresh"), b, [=](bool ok, const QJsonObject &r, const QString &err) {
+			if (!guard)
+				return;
+			setBusy(false);
+			if (!ok)
+				st->note = fail(err);
+			else if (r.value(QStringLiteral("skipped")).isString()) {
+				forceB->setVisible(true);
+				st->note = QStringLiteral("Read less than an hour ago, so nothing new was fetched. Use \"Refresh now\" to read again anyway.");
+			} else
+				st->note = QStringLiteral("Done: %1 video(s) read, %2 public%3.")
+					      .arg(r.value(QStringLiteral("snapshots")).toInt())
+					      .arg(r.value(QStringLiteral("public")).toInt())
+					      .arg(r.value(QStringLiteral("analyticsMissing")).toInt() > 0
+							   ? QStringLiteral(", %1 without statistics yet (YouTube fills them a day or two late)").arg(r.value(QStringLiteral("analyticsMissing")).toInt())
+							   : QString());
+			(*load)();
+		});
+	};
+	connect(refreshB, &QPushButton::clicked, dlg, [=]() { refresh(false); });
+	connect(forceB, &QPushButton::clicked, dlg, [=]() { refresh(true); });
+	setBusy(true);
+	(*load)();
+}
+
 void MainWindow::openReview()
 {
 	if (reviewDlg_) {
@@ -3284,7 +3499,7 @@ QString plainStructureError(const QString &code)
 {
 	static const QHash<QString, QString> words = {
 		{QStringLiteral("live-locked"), QStringLiteral("Not while live.")},
-		{QStringLiteral("scene-edit-off"), QStringLiteral("Turn on scene editing in Settings > Advanced first.")},
+		{QStringLiteral("scene-edit-off"), QStringLiteral("Turn on scene editing in Settings > Editing first.")},
 		{QStringLiteral("scene-active"), QStringLiteral("That scene is the one the project starts with; make another scene the start scene first.")},
 		{QStringLiteral("last-scene"), QStringLiteral("The last scene cannot be deleted.")},
 		{QStringLiteral("layer-copied"), QStringLiteral("Another layer shows this one; delete that copy first.")},
@@ -3390,7 +3605,7 @@ QMenu *MainWindow::buildSceneMenu(QWidget *parent, const QString &sceneId, bool 
 	menu->addSeparator();
 	QString delTip = lockTip;
 	if (delTip.isEmpty() && !sceneEditOn_)
-		delTip = QStringLiteral("Turn on scene editing in Settings > Advanced");
+		delTip = QStringLiteral("Turn on scene editing in Settings > Editing");
 	else if (delTip.isEmpty() && active)
 		delTip = QStringLiteral("Switch to another scene first");
 	add("delete", QStringLiteral("Delete…"), QStringLiteral("Del"), has && !live_ && sceneEditOn_ && !active, delTip, [this, sceneId]() { sceneDelete(sceneId); });
@@ -3583,7 +3798,7 @@ void MainWindow::sceneDelete(const QString &id)
 	if (live_)
 		return note(QStringLiteral("Not while live."));
 	if (!sceneEditOn_)
-		return note(QStringLiteral("Turn on scene editing in Settings > Advanced to delete scenes."));
+		return note(QStringLiteral("Turn on scene editing in Settings > Editing to delete scenes."));
 	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("scene.remove")}, {QStringLiteral("scene"), id}});
 }
 
@@ -3913,8 +4128,17 @@ void MainWindow::saveSettings(const QJsonObject &body, bool retried)
 	});
 }
 
-// Settings (D284, D290, D293): sections on the left (Clips, Folders, Layer effects, Appearance, Advanced), the page on the right. The
-// feature flags are switch rows in Advanced, built fresh each time (D332, N2). Every page is a draft: Save applies it
+// A Settings nav entry by its page title. Group headings (GENERAL, LIVE, ...) carry no page and never match.
+static QListWidgetItem *settingsNavItem(QListWidget *nav, const QString &title)
+{
+	for (int i = 0; i < nav->count(); i++)
+		if (nav->item(i)->data(Qt::UserRole).isValid() && nav->item(i)->text() == title)
+			return nav->item(i);
+	return nullptr;
+}
+
+// Settings (D284, D290, D293): sections on the left in groups (General, Live, Studio, Clips, Advanced), the page on the right. Each
+// feature flag is a switch row in the FEATURES card of the page it belongs to, built fresh each time (D332, N2). Every page is a draft: Save applies it
 // (flags included, on and off), Cancel or the X with edits asks Save changes / Discard / Cancel.
 void MainWindow::openSettings(bool firstRun, const QString &startPage)
 {
@@ -3962,21 +4186,117 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		nav->setObjectName(QStringLiteral("settingsNav"));
 		nav->setFixedWidth(170);
 		auto *pages = new QStackedWidget(dlg);
+		QHash<QString, int> pageIndex; // page title -> index in pages
 		main->addWidget(nav);
 		main->addWidget(pages, 1);
 		outer->addLayout(main, 1);
-		// A page: a title and its cards in a column.
-		auto page = [&](const QString &title) {
+		// A page: a title and its cards in a column. It scrolls as a whole (pages that scroll themselves pass scroll = false).
+		// The nav entries are added at the end, in groups, and point at their page by item data (not by row).
+		auto page = [&](const QString &title, bool scroll = true) {
 			auto *w = new QWidget(pages);
 			auto *v = new QVBoxLayout(w);
-			v->setContentsMargins(0, 0, 0, 0);
+			v->setContentsMargins(0, 0, scroll ? 8 : 0, 0);
 			theme::space(v, 12);
 			auto *t = new QLabel(title, w);
 			t->setObjectName(QStringLiteral("sectionTitle"));
 			v->addWidget(t);
-			pages->addWidget(w);
-			nav->addItem(title);
+			if (scroll) {
+				auto *sa = new QScrollArea(pages);
+				sa->setWidgetResizable(true);
+				sa->setFrameShape(QFrame::NoFrame);
+				sa->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+				sa->setWidget(w);
+				pages->addWidget(sa);
+			} else {
+				pages->addWidget(w);
+			}
+			pageIndex.insert(title, pages->count() - 1);
 			return v;
+		};
+		// The flags as the server last said (flags_); the switches change a draft that Save applies.
+		QHash<QString, bool> flagStart;
+		for (const auto &x : flags_)
+			flagStart.insert(x.toObject().value(QStringLiteral("id")).toString(), x.toObject().value(QStringLiteral("on")).toBool());
+		auto flagDraft = std::make_shared<QHash<QString, bool>>(flagStart);
+		auto flagOn = [&flagStart](const char *id) { return flagStart.value(QLatin1String(id), false); };
+		auto flagLabel = [this](const char *id) {
+			for (const auto &x : flags_)
+				if (x.toObject().value(QStringLiteral("id")).toString() == QLatin1String(id))
+					return x.toObject().value(QStringLiteral("label")).toString(QString::fromLatin1(id));
+			return QString::fromLatin1(id);
+		};
+		auto mutedNote = [dlg](const QString &text) {
+			auto *l = new QLabel(text, dlg);
+			l->setWordWrap(true);
+			l->setObjectName(QStringLiteral("muted"));
+			return l;
+		};
+		// The FEATURES card of a page: the flags whose page it is, A-Z by their plain name. A flag the server did not list never
+		// shows. Built fresh inside the dialog (no widget with a native handle is moved in: the 2026-11-10 offset bug). The row
+		// shows the plain summary; the full developer description is its tooltip.
+		const QStringList knownPages{QStringLiteral("clips"), QStringLiteral("posting"), QStringLiteral("stream"), QStringLiteral("transitions"), QStringLiteral("connections"),
+					     QStringLiteral("chat"), QStringLiteral("editing"), QStringLiteral("preview"), QStringLiteral("appearance"), QStringLiteral("advanced")};
+		auto featuresCard = [&, this](QVBoxLayout *pv, const QString &pageId) {
+			struct Row {
+				QString id, label, summary, tip;
+			};
+			QList<Row> rows;
+			for (const auto &x : flags_) {
+				const QJsonObject fo = x.toObject();
+				const QString id = fo.value(QStringLiteral("id")).toString();
+				QString pg = fo.value(QStringLiteral("page")).toString();
+				if (!knownPages.contains(pg))
+					pg = QStringLiteral("advanced");
+				if (pg != pageId)
+					continue;
+				const QString desc = fo.value(QStringLiteral("description")).toString();
+				rows.append({id, fo.value(QStringLiteral("label")).toString(id), fo.value(QStringLiteral("summary")).toString(desc), desc + QStringLiteral("\n(flag: ") + id + QLatin1Char(')')});
+			}
+			if (rows.isEmpty())
+				return;
+			std::sort(rows.begin(), rows.end(), [](const Row &a, const Row &b) { return QString::compare(a.label, b.label, Qt::CaseInsensitive) < 0; });
+			auto *card = new QGroupBox(QStringLiteral("FEATURES"), dlg);
+			card->setObjectName(QStringLiteral("featuresCard"));
+			card->setProperty("page", pageId);
+			auto *cv = new QVBoxLayout(card);
+			theme::space(cv, 12);
+			for (const Row &r : rows) {
+				auto *row = new QWidget(card);
+				row->setObjectName(QStringLiteral("flagRow"));
+				row->setProperty("flag", r.id);
+				row->setToolTip(r.tip);
+				auto *rh = new QHBoxLayout(row);
+				rh->setContentsMargins(0, 0, 0, 0);
+				theme::space(rh, 12);
+				auto *sw = new Switch(row);
+				sw->setObjectName(QStringLiteral("flagSwitch"));
+				sw->setProperty("flag", r.id);
+				sw->setAccessibleName(r.label);
+				sw->setChecked(flagStart.value(r.id, false));
+				auto *words = new QVBoxLayout();
+				theme::space(words, 2);
+				auto *name = new QLabel(r.label, row);
+				name->setObjectName(QStringLiteral("flagName"));
+				auto *desc = new QLabel(r.summary, row);
+				desc->setObjectName(QStringLiteral("muted"));
+				desc->setProperty("flagDesc", true);
+				desc->setWordWrap(true);
+				words->addWidget(name);
+				words->addWidget(desc);
+				if (r.id == QStringLiteral("layer-effects")) { // the effects only change when the scenes are rebuilt
+					auto *fxHint = new QLabel(QStringLiteral("The effects appear the next time the scenes are built (start Ujwalam with the rebuild option). "
+										 "To change the look of one layer, select it and use the Look panel in the inspector; that needs no setting."), row);
+					fxHint->setObjectName(QStringLiteral("muted"));
+					fxHint->setWordWrap(true);
+					words->addWidget(fxHint);
+				}
+				rh->addWidget(sw, 0, Qt::AlignTop);
+				rh->addLayout(words, 1);
+				cv->addWidget(row);
+				const QString id = r.id;
+				connect(sw, &QAbstractButton::toggled, dlg, [flagDraft, id](bool on) { flagDraft->insert(id, on); });
+			}
+			pv->addWidget(card);
 		};
 
 		// Clips
@@ -4208,6 +4528,69 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			});
 			pc->addWidget(hookBox);
 		}
+		// Reel transition (RP1): the join between the pieces of a reel, Cut or Cross fade with its length. Used while
+		// the reel-transitions flag is on (data/clip/transitions.json holds the kinds and the length range).
+		QComboBox *transKind = nullptr;
+		QSpinBox *transMs = nullptr;
+		QString transKindStart;
+		int transMsStart = 0;
+		const QJsonObject transInfo = b.value(QStringLiteral("reelTransition")).toObject();
+		if (!transInfo.value(QStringLiteral("kinds")).toArray().isEmpty()) {
+			auto *trBox = new QGroupBox(QStringLiteral("REEL TRANSITION"), dlg);
+			auto *tv = new QVBoxLayout(trBox);
+			theme::space(tv, 8);
+			auto *trNote = new QLabel(QStringLiteral("How one piece of a reel joins the next. A cross fade overlaps the two pieces, so each join makes the reel that much shorter. A reel with burned-in captions keeps the cut. Works while the Reel transitions switch (reel-transitions) is on."), trBox);
+			trNote->setObjectName(QStringLiteral("muted"));
+			trNote->setWordWrap(true);
+			tv->addWidget(trNote);
+			auto *tf = new QFormLayout();
+			tf->setVerticalSpacing(10);
+			transKind = new QComboBox(trBox);
+			transKind->setObjectName(QStringLiteral("settingsTransKind"));
+			transKind->setAccessibleName(QStringLiteral("Transition between pieces"));
+			transMs = new QSpinBox(trBox);
+			transMs->setObjectName(QStringLiteral("settingsTransMs"));
+			transMs->setAccessibleName(QStringLiteral("Transition length"));
+			transMs->setSuffix(QStringLiteral(" ms"));
+			transMs->setSingleStep(50);
+			for (const QJsonValue &kv : transInfo.value(QStringLiteral("kinds")).toArray()) {
+				const QJsonObject k = kv.toObject();
+				transKind->addItem(k.value(QStringLiteral("label")).toString(), k.value(QStringLiteral("id")).toString());
+				transKind->setItemData(transKind->count() - 1, k.value(QStringLiteral("about")).toString(), Qt::ToolTipRole);
+				transKind->setItemData(transKind->count() - 1, k.value(QStringLiteral("ms")).toObject(), Qt::UserRole + 1);
+			}
+			transKindStart = transInfo.value(QStringLiteral("kind")).toString();
+			transMsStart = transInfo.value(QStringLiteral("ms")).toInt();
+			// the length box follows the kind: its range, or greyed out for a kind without a length (Cut)
+			const auto applyKind = [transKind, transMs]() {
+				const QJsonObject r = transKind->currentData(Qt::UserRole + 1).toJsonObject();
+				transMs->setEnabled(!r.isEmpty());
+				if (!r.isEmpty())
+					transMs->setRange(r.value(QStringLiteral("min")).toInt(), r.value(QStringLiteral("max")).toInt());
+			};
+			transKind->setCurrentIndex(std::max(0, transKind->findData(transKindStart)));
+			applyKind();
+			if (transMs->isEnabled())
+				transMs->setValue(transMsStart);
+			connect(transKind, &QComboBox::currentIndexChanged, dlg, [transKind, transMs, applyKind]() {
+				applyKind();
+				const QJsonObject r = transKind->currentData(Qt::UserRole + 1).toJsonObject();
+				if (!r.isEmpty())
+					transMs->setValue(r.value(QStringLiteral("default")).toInt());
+			});
+			auto *trRow = new QWidget(trBox);
+			auto *trh = new QHBoxLayout(trRow);
+			trh->setContentsMargins(0, 0, 0, 0);
+			theme::space(trh, 8);
+			trh->addWidget(transKind);
+			trh->addWidget(new QLabel(QStringLiteral("Length"), trRow));
+			trh->addWidget(transMs);
+			trh->addStretch(1);
+			tf->addRow(QStringLiteral("Transition between pieces"), trRow);
+			tv->addLayout(tf);
+			pc->addWidget(trBox);
+		}
+		featuresCard(pc, QStringLiteral("clips"));
 		pc->addStretch(1);
 
 		// Folders
@@ -4245,55 +4628,59 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		pf->addWidget(dirBox);
 		pf->addStretch(1);
 
-		// D327: Stream, Transitions and Integrations pages, each behind its flag (stream_pages.h).
-		// The flags as the server last said (flags_); the Advanced switches change a draft that Save applies.
-		QHash<QString, bool> flagStart;
-		for (const auto &x : flags_)
-			flagStart.insert(x.toObject().value(QStringLiteral("id")).toString(), x.toObject().value(QStringLiteral("on")).toBool());
-		auto flagDraft = std::make_shared<QHash<QString, bool>>(flagStart);
-		auto flagOn = [&flagStart](const char *id) { return flagStart.value(QLatin1String(id), false); };
-		auto scrolled = [dlg](QWidget *w) {
-			auto *sa = new QScrollArea(dlg);
-			sa->setWidgetResizable(true);
-			sa->setFrameShape(QFrame::NoFrame);
-			sa->setWidget(w);
-			return sa;
-		};
-		if (flagOn("stream-settings"))
-			page(QStringLiteral("Stream"))->addWidget(scrolled(new streampages::StreamPage(api_, dlg)), 1);
-		if (flagOn("stream-settings") && flagOn("transitions"))
-			page(QStringLiteral("Transitions"))->addWidget(scrolled(new streampages::TransitionsPage(api_, live_, dlg)), 1);
-		if (flagOn("integrations"))
-			page(QStringLiteral("Integrations"))->addWidget(scrolled(new streampages::IntegrationsPage(api_, dlg)), 1);
+		// Posting & growth: only its features (the Posts window itself is in the More menu).
+		auto *ppost = page(QStringLiteral("Posting & growth"));
+		ppost->addWidget(mutedNote(QStringLiteral("Posts are reviewed in the Posts window, in the More menu, once Posts window is switched on below.")));
+		if (flagOn("posting")) // D375: the auto-post rules and schedule (the routes exist only while posting is on)
+			ppost->addWidget(new autopost::Card(api_, dlg));
+		featuresCard(ppost, QStringLiteral("posting"));
+		ppost->addStretch(1);
 
-		// Layer effects: the scene's own effects (rounded game frame, shadows, the video buttons) are a feature flag
-		// underneath; this is its plain on/off. The Look panel in the inspector needs no setting.
-		auto *pl = page(QStringLiteral("Layer effects"));
-		auto *fxBox = new QGroupBox(QStringLiteral("EFFECTS THAT COME WITH THE SCENES"), dlg);
-		auto *fv = new QVBoxLayout(fxBox);
-		theme::space(fv, 8);
-		const auto fxParts = switchRow(QStringLiteral("Show layer effects from the scene (rounded corners, shadows, video buttons)"), fxBox);
-		QWidget *fxRow = std::get<0>(fxParts);
-		Switch *fxOn = std::get<1>(fxParts);
-		QLabel *fxText = std::get<2>(fxParts);
-		fxOn->setObjectName(QStringLiteral("settingsLayerEffects"));
-		fxText->setObjectName(QStringLiteral("settingsLayerEffectsText"));
-		const bool fxKnown = flagStart.contains(QStringLiteral("layer-effects"));
-		fxOn->setChecked(flagStart.value(QStringLiteral("layer-effects"), false));
-		fxOn->setEnabled(fxKnown);
-		auto *fxHint = new QLabel(QStringLiteral("This is the layer-effects flag; it changes when you click Save. The effects appear the next time the scenes are built (start Ujwalam with the rebuild option). "
-							 "To change the look of one layer, select it and use the Look panel in the inspector; that needs no setting."), fxBox);
-		fxHint->setWordWrap(true);
-		fxHint->setObjectName(QStringLiteral("muted"));
-		fv->addWidget(fxRow);
-		fv->addWidget(fxHint);
-		pl->addWidget(fxBox);
-		pl->addStretch(1);
+		// D327: the Stream, Transitions and Chat & bots pages always exist; their settings show only while their flag is on
+		// (stream_pages.h), otherwise a note says which switch below turns them on.
+		auto *pst = page(QStringLiteral("Stream"));
+		if (flagOn("stream-settings"))
+			pst->addWidget(new streampages::StreamPage(api_, dlg));
+		else
+			pst->addWidget(mutedNote(QStringLiteral("Switch on %1 below and click Save to use these settings.").arg(flagLabel("stream-settings"))));
+		featuresCard(pst, QStringLiteral("stream"));
+		pst->addStretch(1);
+
+		auto *ptr = page(QStringLiteral("Transitions"));
+		if (flagOn("stream-settings") && flagOn("transitions"))
+			ptr->addWidget(new streampages::TransitionsPage(api_, live_, dlg));
+		else if (!flagOn("transitions"))
+			ptr->addWidget(mutedNote(QStringLiteral("Switch on %1 below and click Save to use these settings.").arg(flagLabel("transitions"))));
+		else
+			ptr->addWidget(mutedNote(QStringLiteral("These settings also need %1: switch it on in Settings > Stream and click Save.").arg(flagLabel("stream-settings"))));
+		featuresCard(ptr, QStringLiteral("transitions"));
+		ptr->addStretch(1);
+
+		// Connections (D327, flag platform-connect): sign in to YouTube / Twitch or paste keys per stream output. The page
+		// talks to the studio UI server itself; each write acts on the click there and then (D332).
+		auto *pcn = page(QStringLiteral("Connections"));
+		pcn->addWidget(new connections::Page(api_, dlg));
+		featuresCard(pcn, QStringLiteral("connections"));
+		pcn->addStretch(1);
+
+		auto *pch = page(QStringLiteral("Chat & bots"));
+		if (flagOn("integrations"))
+			pch->addWidget(new streampages::IntegrationsPage(api_, dlg));
+		else
+			pch->addWidget(mutedNote(QStringLiteral("Switch on %1 below and click Save to use these settings.").arg(flagLabel("integrations"))));
+		featuresCard(pch, QStringLiteral("chat"));
+		pch->addStretch(1);
+
+		// Editing: the scene, layer, effect and mixer features. The Look panel in the inspector needs no setting.
+		auto *ped = page(QStringLiteral("Editing"));
+		featuresCard(ped, QStringLiteral("editing"));
+		ped->addStretch(1);
 
 		// Appearance (D293): theme cards, reduce effects, animations
-		auto *pap = page(QStringLiteral("Appearance"));
+		auto *pap = page(QStringLiteral("Appearance"), false); // the page scrolls itself
 		auto *appear = new appearance::Page(theme::currentId(), theme::effects(), motionNow, dlg);
 		pap->addWidget(appear, 1);
+		featuresCard(pap, QStringLiteral("appearance"));
 
 		// Preview (D335 F10): snapping while dragging layers with the mouse; off unless the user turns it on.
 		auto *ppv = page(QStringLiteral("Preview"));
@@ -4314,101 +4701,77 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		sv->addWidget(std::get<0>(snapParts));
 		sv->addWidget(snapHint);
 		ppv->addWidget(snapBox);
+		featuresCard(ppv, QStringLiteral("preview"));
 		ppv->addStretch(1);
-
-		// Connections (D327, flag platform-connect): sign in to YouTube / Twitch or paste keys per stream output. The page
-		// talks to the studio UI server itself; each write acts on the click there and then (D332).
-		page(QStringLiteral("Connections"))->addWidget(new connections::Page(api_, dlg), 1);
 
 		// Help & tips (D294 proposed): tips on/off, reset "Don't show again", replay the welcome tour
 		guide_->fillSettingsPage(page(QStringLiteral("Help & tips")), dlg);
 
-		// Advanced: the developer feature flags
+		// Advanced: the developer feature flags. Every other switch is on its own page.
 		auto *pa = page(QStringLiteral("Advanced"));
-		auto *flagBox = new QGroupBox(QStringLiteral("FEATURE FLAGS (FOR TESTING NEW FEATURES)"), dlg);
-		auto *flv = new QVBoxLayout(flagBox);
-		auto *flagHint = new QLabel(QStringLiteral("New features ship switched off. A switch changes when you click Save."), flagBox);
-		flagHint->setWordWrap(true);
-		flagHint->setObjectName(QStringLiteral("muted"));
-		flv->addWidget(flagHint);
-		// One row per flag (N2): the switch, the flag's name and its plain description, always shown. Built fresh here,
-		// inside the dialog, so no widget with a native handle is moved in (2026-11-10 offset bug).
-		auto *flagScroll = new QScrollArea(flagBox);
-		flagScroll->setObjectName(QStringLiteral("settingsFlagScroll"));
-		flagScroll->setWidgetResizable(true);
-		flagScroll->setFrameShape(QFrame::NoFrame);
-		flagScroll->setMinimumHeight(220);
-		auto *flagRows = new QWidget(flagScroll);
-		flagRows->setObjectName(QStringLiteral("settingsFlagRows"));
-		auto *frv = new QVBoxLayout(flagRows);
-		theme::margins(frv, 0, 0, 8, 0);
-		theme::space(frv, 12);
-		Switch *fxFlagSw = nullptr;
-		for (const auto &x : flags_) {
-			const QJsonObject fo = x.toObject();
-			const QString id = fo.value(QStringLiteral("id")).toString();
-			auto *row = new QWidget(flagRows);
-			row->setObjectName(QStringLiteral("flagRow"));
-			row->setProperty("flag", id);
-			auto *rh = new QHBoxLayout(row);
-			rh->setContentsMargins(0, 0, 0, 0);
-			theme::space(rh, 12);
-			auto *sw = new Switch(row);
-			sw->setObjectName(QStringLiteral("flagSwitch"));
-			sw->setProperty("flag", id);
-			sw->setAccessibleName(id);
-			sw->setChecked(flagStart.value(id, false));
-			auto *words = new QVBoxLayout();
-			theme::space(words, 2);
-			auto *name = new QLabel(id, row);
-			name->setObjectName(QStringLiteral("flagName"));
-			auto *desc = new QLabel(fo.value(QStringLiteral("description")).toString(), row);
-			desc->setObjectName(QStringLiteral("muted"));
-			desc->setProperty("flagDesc", true);
-			desc->setWordWrap(true);
-			words->addWidget(name);
-			words->addWidget(desc);
-			rh->addWidget(sw, 0, Qt::AlignTop);
-			rh->addLayout(words, 1);
-			frv->addWidget(row);
-			if (id == QStringLiteral("layer-effects"))
-				fxFlagSw = sw;
-			connect(sw, &QAbstractButton::toggled, dlg, [flagDraft, id](bool on) { flagDraft->insert(id, on); });
-		}
+		featuresCard(pa, QStringLiteral("advanced"));
+		pa->addWidget(mutedNote(QStringLiteral("Every other feature switch is on its page. A switch changes when you click Save.")));
 		if (flags_.isEmpty())
-			frv->addWidget(new QLabel(QStringLiteral("The flags are not loaded yet. Open Settings again in a moment."), flagRows));
-		frv->addStretch(1);
-		flagScroll->setWidget(flagRows);
-		flv->addWidget(flagScroll, 1);
-		pa->addWidget(flagBox, 1);
-		// The Layer effects switch and the layer-effects flag row are one setting: each follows the other.
-		connect(fxOn, &QAbstractButton::toggled, dlg, [flagDraft, fxFlagSw](bool on) {
-			flagDraft->insert(QStringLiteral("layer-effects"), on);
-			if (fxFlagSw)
-				fxFlagSw->setCheckedSilently(on);
+			pa->addWidget(mutedNote(QStringLiteral("The flags are not loaded yet. Open Settings again in a moment.")));
+		pa->addStretch(1);
+
+		// The nav: group headings (muted, small caps, never a page) and the pages in them, each pointing at its page by item data.
+		{
+			const QList<std::pair<QString, QStringList>> navLayout{
+				{QStringLiteral("General"), {QStringLiteral("Appearance"), QStringLiteral("Help & tips")}},
+				{QStringLiteral("Live"), {QStringLiteral("Stream"), QStringLiteral("Transitions"), QStringLiteral("Connections"), QStringLiteral("Chat & bots")}},
+				{QStringLiteral("Studio"), {QStringLiteral("Editing"), QStringLiteral("Preview")}},
+				{QStringLiteral("Clips"), {QStringLiteral("Clips"), QStringLiteral("Posting & growth"), QStringLiteral("Folders")}},
+				{QString(), {QStringLiteral("Advanced")}}};
+			for (const auto &g : navLayout) {
+				if (!g.first.isEmpty()) {
+					auto *h = new QListWidgetItem(g.first.toUpper(), nav);
+					h->setFlags(Qt::NoItemFlags);
+					QFont hf = nav->font();
+					hf.setPointSizeF(std::max(7.0, hf.pointSizeF() * 0.8));
+					hf.setBold(true);
+					hf.setLetterSpacing(QFont::PercentageSpacing, 112);
+					h->setFont(hf);
+					h->setForeground(nav->palette().color(QPalette::Disabled, QPalette::Text));
+					h->setTextAlignment(Qt::AlignLeft | Qt::AlignBottom);
+					h->setSizeHint(QSize(0, 30));
+				}
+				for (const QString &t : g.second) {
+					auto *it = new QListWidgetItem(t, nav);
+					it->setData(Qt::UserRole, pageIndex.value(t, 0));
+				}
+			}
+		}
+		connect(nav, &QListWidget::currentItemChanged, pages, [pages](QListWidgetItem *cur) {
+			if (cur && cur->data(Qt::UserRole).isValid())
+				pages->setCurrentIndex(cur->data(Qt::UserRole).toInt());
 		});
-		if (fxFlagSw)
-			connect(fxFlagSw, &QAbstractButton::toggled, dlg, [fxOn](bool on) { fxOn->setCheckedSilently(on); });
-		connect(nav, &QListWidget::currentRowChanged, pages, &QStackedWidget::setCurrentIndex);
-		nav->setCurrentRow(0);
+		nav->setCurrentItem(settingsNavItem(nav, QStringLiteral("Clips")));
 		if (!startPage.isEmpty())
-			if (const auto found = nav->findItems(startPage, Qt::MatchExactly); !found.isEmpty())
-				nav->setCurrentItem(found.first());
+			if (auto *found = settingsNavItem(nav, startPage))
+				nav->setCurrentItem(found);
 		auto *bb = new QDialogButtonBox(QDialogButtonBox::Save | QDialogButtonBox::Cancel, dlg);
-		dlg->save = [this, dlg, nav, reelRows, hookRows]() {
+		dlg->save = [this, dlg, nav, reelRows, hookRows, transKind, transMs, transKindStart, transMsStart]() {
 			for (const ReelRow &r : *reelRows)
 				if (r.lo->value() > r.hi->value()) {
-					if (const auto found = nav->findItems(QStringLiteral("Clips"), Qt::MatchExactly); !found.isEmpty())
-						nav->setCurrentItem(found.first());
+					if (auto *found = settingsNavItem(nav, QStringLiteral("Clips")))
+						nav->setCurrentItem(found);
 					note(QStringLiteral("Not saved: Settings > Clips has a reel whose shortest length is longer than its longest."));
 					return;
 				}
 			// D327: a Stream page change over a platform limit keeps Settings open on that page (problems shown there).
 			for (auto *sp : dlg->findChildren<streampages::StreamPage *>())
 				if (sp->blocksSave()) {
-					if (const auto found = nav->findItems(QStringLiteral("Stream"), Qt::MatchExactly); !found.isEmpty())
-						nav->setCurrentItem(found.first());
+					if (auto *found = settingsNavItem(nav, QStringLiteral("Stream")))
+						nav->setCurrentItem(found);
 					note(QStringLiteral("Not saved: Settings > Stream has a value over a platform limit (shown in red)."));
+					return;
+				}
+			for (auto *ap : dlg->findChildren<autopost::Card *>())
+				if (ap->blocksSave()) {
+					if (auto *found = settingsNavItem(nav, QStringLiteral("Posting & growth")))
+						nav->setCurrentItem(found);
+					note(QStringLiteral("Not saved: Settings > Posting & growth > Auto-post needs at least one kind of clip."));
 					return;
 				}
 			dlg->accept();
@@ -4449,10 +4812,13 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			for (auto *ip : dlg->findChildren<streampages::IntegrationsPage *>())
 				if (ip->dirty())
 					return true;
+			for (auto *ap : dlg->findChildren<autopost::Card *>())
+				if (ap->dirty())
+					return true;
 			return false;
 		};
 		outer->addWidget(bb);
-		dlg->resize(860, std::max(560, dlg->sizeHint().height()));
+		dlg->resize(860, std::max(720, dlg->sizeHint().height()));
 
 		connect(dlg, &QDialog::finished, this, [=](int result) {
 			settingsDlg_.clear();
@@ -4470,6 +4836,8 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				tp->save(pageNote);
 			for (auto *ip : dlg->findChildren<streampages::IntegrationsPage *>())
 				ip->save(pageNote);
+			for (auto *ap : dlg->findChildren<autopost::Card *>())
+				ap->save(pageNote);
 			const auto dir = [](QLineEdit *e) { return e->text().trimmed().isEmpty() ? QJsonValue() : QJsonValue(e->text().trimmed()); };
 			QJsonObject body;
 			QJsonObject clipsBody{{QStringLiteral("recording"), rec->currentData().toString()}, {QStringLiteral("live"), liv->currentData().toString()}};
@@ -4490,6 +4858,12 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 					hookBody.insert(r.id, QJsonObject{{QStringLiteral("on"), r.on->isChecked()}, {QStringLiteral("teaserSec"), r.sec->value()}});
 			if (!hookBody.isEmpty())
 				clipsBody.insert(QStringLiteral("reelHooks"), hookBody);
+			if (transKind) { // RP1: sent only when it changed (an older server refuses the key)
+				const QString k = transKind->currentData().toString();
+				const int ms = transMs->isEnabled() ? transMs->value() : 0;
+				if (k != transKindStart || ms != (transMs->isEnabled() ? transMsStart : 0))
+					clipsBody.insert(QStringLiteral("reelTransition"), QJsonObject{{QStringLiteral("kind"), k}, {QStringLiteral("ms"), ms}});
+			}
 			body.insert(QStringLiteral("clips"), clipsBody);
 			body.insert(QStringLiteral("folders"), QJsonObject{{QStringLiteral("recordings"), dir(recRow.second)}, {QStringLiteral("clips"), dir(clipRow.second)}});
 			const QString motionNew = appear->motion();
@@ -4609,6 +4983,23 @@ QJsonObject MainWindow::probe() const
 	QJsonObject o;
 	o.insert(QStringLiteral("flags"), flags);
 	o.insert(QStringLiteral("shown"), shown);
+	o.insert(QStringLiteral("growthMenu"), growthAct_->isVisible()); // AN1b (D372): Growth numbers in the More menu
+	if (growthDlg_) { // the open Growth window: rows, the info line and the buttons
+		auto *gt = growthDlg_->findChild<QTableWidget *>(QStringLiteral("growthTable"));
+		auto *gi = growthDlg_->findChild<QLabel *>(QStringLiteral("growthInfo"));
+		auto *gf = growthDlg_->findChild<QLabel *>(QStringLiteral("growthFetched"));
+		auto *gr = growthDlg_->findChild<QPushButton *>(QStringLiteral("growthRefresh"));
+		QJsonArray cells;
+		for (int r = 0; gt && r < gt->rowCount(); r++) {
+			QJsonArray c;
+			for (int k = 0; k < gt->columnCount(); k++)
+				c.append(gt->item(r, k) ? gt->item(r, k)->text() : QString());
+			cells.append(c);
+		}
+		o.insert(QStringLiteral("growth"), QJsonObject{{QStringLiteral("rows"), gt ? gt->rowCount() : -1}, {QStringLiteral("cells"), cells},
+							       {QStringLiteral("info"), gi ? gi->text() : QString()}, {QStringLiteral("fetched"), gf ? gf->text() : QString()},
+							       {QStringLiteral("refreshEnabled"), gr && gr->isEnabled()}});
+	}
 	if (reviewDlg_) { // LL3 (D340): the open Review reads window
 		auto *rl = reviewDlg_->findChild<QListWidget *>(QStringLiteral("reviewList"));
 		auto *ra = reviewDlg_->findChild<QComboBox *>(QStringLiteral("reviewAnswer"));
@@ -4688,7 +5079,7 @@ QJsonObject MainWindow::probe() const
 	o.insert(QStringLiteral("controls"), QJsonObject{{QStringLiteral("stream"), streamBtn_->accessibleName()}, {QStringLiteral("record"), recordBtn_->accessibleName()},
 							{QStringLiteral("clip"), clipBtn_->accessibleName()}, {QStringLiteral("mark"), markBtn_->accessibleName()},
 							{QStringLiteral("streamIcon"), streamBtn_->property("iconState").toString()}});
-	o.insert(QStringLiteral("flagsInSettings"), settingsDlg_ && settingsDlg_->findChild<QWidget *>(QStringLiteral("settingsFlagRows")) != nullptr); // Advanced holds the rows (D290, N2)
+	o.insert(QStringLiteral("flagsInSettings"), settingsDlg_ && settingsDlg_->findChild<QWidget *>(QStringLiteral("flagRow")) != nullptr); // each page holds its own flag rows (FEATURES card)
 	if (auto *cb = findChild<QMessageBox *>(QStringLiteral("confirmBox")))
 		o.insert(QStringLiteral("confirmBox"), QJsonObject{{QStringLiteral("title"), cb->windowTitle()}, {QStringLiteral("text"), cb->text()},
 								    {QStringLiteral("ok"), cb->findChild<QPushButton *>(QStringLiteral("confirmOk"))->text()}});
@@ -4702,18 +5093,17 @@ QJsonObject MainWindow::probe() const
 			o.insert(QStringLiteral("transitionsPage"), trp->probe());
 		if (auto *ip = settingsDlg_->findChild<streampages::IntegrationsPage *>())
 			o.insert(QStringLiteral("integrationsPage"), ip->probe());
+		if (auto *ap = settingsDlg_->findChild<autopost::Card *>())
+			o.insert(QStringLiteral("autopostCard"), ap->probe());
 	}
 	if (settingsDlg_) {
-		QJsonArray sections;
+		QJsonArray sections, navGroups; // sections: the pages in nav order; navGroups: the group headings in nav order
 		if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")))
 			for (int i = 0; i < nav->count(); i++)
-				sections.append(nav->item(i)->text());
-		auto *fx = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsLayerEffects"));
-		auto *fxText = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsLayerEffectsText"));
+				(nav->item(i)->data(Qt::UserRole).isValid() ? sections : navGroups).append(nav->item(i)->text());
 		auto *mo = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsMotion"));
 		auto *sd = static_cast<SettingsDialog *>(settingsDlg_.data());
-		QJsonObject s{{QStringLiteral("sections"), sections}, {QStringLiteral("layerEffects"), fx ? QJsonValue(fx->isChecked()) : QJsonValue()},
-			      {QStringLiteral("layerEffectsText"), fxText ? fxText->text() : QString()}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
+		QJsonObject s{{QStringLiteral("sections"), sections}, {QStringLiteral("navGroups"), navGroups}, {QStringLiteral("motion"), mo ? mo->currentData().toString() : QString()},
 			      {QStringLiteral("motionChoices"), mo ? mo->count() : 0}, {QStringLiteral("dirty"), sd->dirty ? sd->dirty() : false},
 			      {QStringLiteral("unsavedAsked"), settingsDlg_->findChild<QMessageBox *>(QStringLiteral("settingsUnsaved")) != nullptr}};
 		if (auto *rl = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsRecordLive"))) { // LC2
@@ -4754,34 +5144,56 @@ QJsonObject MainWindow::probe() const
 			if (!hooks.isEmpty())
 				s.insert(QStringLiteral("reelHooks"), hooks);
 		}
+		if (auto *tk = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsTransKind"))) { // RP1
+			auto *tm = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("settingsTransMs"));
+			s.insert(QStringLiteral("reelTransition"), QJsonObject{{QStringLiteral("kind"), tk->currentData().toString()}, {QStringLiteral("label"), tk->currentText()},
+									      {QStringLiteral("ms"), tm ? tm->value() : -1}, {QStringLiteral("msEnabled"), tm && tm->isEnabled()},
+									      {QStringLiteral("min"), tm ? tm->minimum() : -1}, {QStringLiteral("max"), tm ? tm->maximum() : -1}});
+		}
 		if (auto *sn = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsSnap"))) { // D335 F10
 			auto *snText = settingsDlg_->findChild<QLabel *>(QStringLiteral("settingsSnapText"));
 			s.insert(QStringLiteral("snap"), sn->isChecked());
 			s.insert(QStringLiteral("snapText"), snText ? snText->text() : QString());
 		}
-		// Advanced page (N2): one row per flag, switch state and description; geometry for the 2026-11-10 offset bug:
-		// where the rows sit in their box and in the dialog, and whether they carry their own native window handle.
-		if (auto *rows = settingsDlg_->findChild<QWidget *>(QStringLiteral("settingsFlagRows"))) {
+		// FEATURES cards (N2): one row per flag on its page, with switch state, plain summary and full description (the tooltip);
+		// geometry for the 2026-11-10 offset bug: where the Advanced rows sit in their card and in the dialog, and whether they
+		// carry their own native window handle.
+		{
 			QJsonArray fr;
-			for (auto *sw : rows->findChildren<QAbstractButton *>(QStringLiteral("flagSwitch"))) {
-				QString desc;
+			for (auto *sw : settingsDlg_->findChildren<QAbstractButton *>(QStringLiteral("flagSwitch"))) {
+				QString desc, label, pg;
 				for (auto *l : sw->parentWidget()->findChildren<QLabel *>())
 					if (l->property("flagDesc").toBool())
 						desc = l->text();
-				fr.append(QJsonObject{{QStringLiteral("id"), sw->property("flag").toString()}, {QStringLiteral("on"), sw->isChecked()},
-						      {QStringLiteral("description"), desc}, {QStringLiteral("visible"), sw->parentWidget()->isVisibleTo(settingsDlg_.data())}});
+				if (auto *nm = sw->parentWidget()->findChild<QLabel *>(QStringLiteral("flagName")))
+					label = nm->text();
+				for (QWidget *w = sw->parentWidget(); w && pg.isEmpty(); w = w->parentWidget())
+					pg = w->property("page").toString();
+				fr.append(QJsonObject{{QStringLiteral("id"), sw->property("flag").toString()}, {QStringLiteral("on"), sw->isChecked()}, {QStringLiteral("label"), label},
+						      {QStringLiteral("page"), pg}, {QStringLiteral("description"), sw->parentWidget()->toolTip()}, {QStringLiteral("summary"), desc},
+						      {QStringLiteral("visible"), sw->parentWidget()->isVisibleTo(settingsDlg_.data())}});
 			}
 			s.insert(QStringLiteral("flagRows"), fr);
-			auto *scroll = settingsDlg_->findChild<QScrollArea *>(QStringLiteral("settingsFlagScroll"));
-			QWidget *box = scroll ? scroll->parentWidget() : nullptr;
-			if (scroll && box) {
-				const QRect g = scroll->geometry(), inDlg(scroll->mapTo(settingsDlg_.data(), QPoint(0, 0)), scroll->size());
-				s.insert(QStringLiteral("flagList"), QJsonObject{{QStringLiteral("native"), rows->internalWinId() != 0 || scroll->internalWinId() != 0},
-										 {QStringLiteral("nativeAttr"), rows->testAttribute(Qt::WA_NativeWindow) || scroll->testAttribute(Qt::WA_NativeWindow)},
+			QGroupBox *box = nullptr;
+			for (auto *g : settingsDlg_->findChildren<QGroupBox *>(QStringLiteral("featuresCard")))
+				if (g->property("page").toString() == QStringLiteral("advanced"))
+					box = g;
+			QWidget *row = box ? box->findChild<QWidget *>(QStringLiteral("flagRow")) : nullptr;
+			if (box && row) {
+				QScrollArea *scroll = nullptr;
+				for (QWidget *w = box->parentWidget(); w && !scroll; w = w->parentWidget())
+					scroll = qobject_cast<QScrollArea *>(w);
+				const QRect g = box->geometry(), inDlg(box->mapTo(settingsDlg_.data(), QPoint(0, 0)), box->size());
+				s.insert(QStringLiteral("flagList"), QJsonObject{{QStringLiteral("native"), box->internalWinId() != 0 || row->internalWinId() != 0},
+										 {QStringLiteral("nativeAttr"), box->testAttribute(Qt::WA_NativeWindow) || row->testAttribute(Qt::WA_NativeWindow)},
 										 {QStringLiteral("x"), g.x()}, {QStringLiteral("y"), g.y()}, {QStringLiteral("w"), g.width()}, {QStringLiteral("h"), g.height()},
+										 {QStringLiteral("rowX"), row->geometry().x()}, {QStringLiteral("rowY"), row->geometry().y()},
+										 {QStringLiteral("rowW"), row->geometry().width()}, {QStringLiteral("rowH"), row->geometry().height()},
 										 {QStringLiteral("dlgX"), inDlg.x()}, {QStringLiteral("dlgY"), inDlg.y()},
-										 {QStringLiteral("insideBox"), box->contentsRect().contains(g)}, {QStringLiteral("scrollY"), scroll->verticalScrollBar()->value()},
-										 {QStringLiteral("scrollX"), scroll->horizontalScrollBar()->value()}});
+										 {QStringLiteral("insideBox"), box->contentsRect().contains(row->geometry())},
+										 {QStringLiteral("insideDialog"), settingsDlg_->rect().contains(inDlg)},
+										 {QStringLiteral("scrollY"), scroll ? scroll->verticalScrollBar()->value() : -1},
+										 {QStringLiteral("scrollX"), scroll ? scroll->horizontalScrollBar()->value() : -1}});
 			}
 		}
 		o.insert(QStringLiteral("settings"), s);
@@ -4944,6 +5356,27 @@ bool MainWindow::probeAction(const QString &action)
 		b->click();
 		return true;
 	}
+	if (p.size() == 1 && p[0] == QStringLiteral("growth-open")) { // AN1b (D372): the Growth numbers window
+		openGrowth();
+		return true;
+	}
+	if (p.size() == 1 && p[0] == QStringLiteral("growth-refresh") && growthDlg_) {
+		auto *b = growthDlg_->findChild<QPushButton *>(QStringLiteral("growthRefresh"));
+		if (!b || !b->isEnabled())
+			return false;
+		b->click();
+		return true;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("growth-shot") && growthDlg_) { // a picture of the Growth window into $UJWALAM_STUDIO_SETTINGS_SHOT_DIR/<name>.png (evidence only)
+		const QString dir = qEnvironmentVariable("UJWALAM_STUDIO_SETTINGS_SHOT_DIR");
+		if (dir.isEmpty())
+			return false;
+		for (int pass = 0; pass < 2; pass++) {
+			QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+			growthDlg_->layout()->activate();
+		}
+		return growthDlg_->grab().save(QDir(dir).filePath(p[1] + QStringLiteral(".png")), "PNG");
+	}
 	if (p.size() == 1 && p[0] == QStringLiteral("posts-open")) { // the Posts window (for the theme pictures, 2026-11-10)
 		openPosts();
 		return true;
@@ -4952,7 +5385,7 @@ bool MainWindow::probeAction(const QString &action)
 		openSettings(false);
 		return true;
 	}
-	// D327: output-toggle:<id>:<on|off> clicks the Outputs panel switch; stream-*, tr-*, int-* go to the Settings pages.
+	// D327: output-toggle:<id>:<on|off> clicks the Outputs panel switch; stream-*, tr-*, int-* (and ap-*, D375) go to the Settings pages.
 	if (p.size() == 3 && p[0] == QStringLiteral("output-toggle"))
 		return outputsPanel_->probeToggle(p[1], p[2] == QStringLiteral("on"));
 	if (p.size() == 1 && p[0] == QStringLiteral("outputs-add")) {
@@ -4962,23 +5395,25 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		return false;
 	}
-	if (settingsDlg_ && (p[0].startsWith(QStringLiteral("stream-")) || p[0].startsWith(QStringLiteral("tr-")) || p[0].startsWith(QStringLiteral("int-")))) {
+	if (settingsDlg_ && (p[0].startsWith(QStringLiteral("stream-")) || p[0].startsWith(QStringLiteral("tr-")) || p[0].startsWith(QStringLiteral("int-")) || p[0].startsWith(QStringLiteral("ap-")))) {
 		if (auto *sp = settingsDlg_->findChild<streampages::StreamPage *>(); sp && p[0].startsWith(QStringLiteral("stream-")))
 			return sp->probeAction(p);
 		if (auto *tp = settingsDlg_->findChild<streampages::TransitionsPage *>(); tp && p[0].startsWith(QStringLiteral("tr-")))
 			return tp->probeAction(p);
 		if (auto *ip = settingsDlg_->findChild<streampages::IntegrationsPage *>(); ip && p[0].startsWith(QStringLiteral("int-")))
 			return ip->probeAction(p);
+		if (auto *ap = settingsDlg_->findChild<autopost::Card *>(); ap && p[0].startsWith(QStringLiteral("ap-")))
+			return ap->probeAction(p);
 		return false;
 	}
 	if (p.size() == 2 && p[0] == QStringLiteral("settings-section")) { // show a section by its title (for the picture)
 		if (!settingsDlg_)
 			return false;
 		auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav"));
-		const auto found = nav ? nav->findItems(QUrl::fromPercentEncoding(p[1].toUtf8()), Qt::MatchExactly) : QList<QListWidgetItem *>();
-		if (found.isEmpty())
+		auto *found = nav ? settingsNavItem(nav, QUrl::fromPercentEncoding(p[1].toUtf8())) : nullptr;
+		if (!found)
 			return false;
-		nav->setCurrentItem(found.first());
+		nav->setCurrentItem(found);
 		return true;
 	}
 	if (p.size() >= 1 && p[0].startsWith(QStringLiteral("settings-")) && p[0] != QStringLiteral("settings-open")) {
@@ -4998,18 +5433,37 @@ bool MainWindow::probeAction(const QString &action)
 			delete settingsDlg_.data();
 			return true;
 		}
-		if (p.size() == 2 && p[0] == QStringLiteral("settings-page")) { // show a section (for the picture)
-			if (auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav")); nav && p[1].toInt() >= 0 && p[1].toInt() < nav->count()) {
-				nav->setCurrentRow(p[1].toInt());
-				return true;
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-shot")) { // a picture of the Settings dialog into $UJWALAM_STUDIO_SETTINGS_SHOT_DIR/<name>.png (evidence only)
+			const QString dir = qEnvironmentVariable("UJWALAM_STUDIO_SETTINGS_SHOT_DIR");
+			if (dir.isEmpty())
+				return false;
+			settingsDlg_->resize(860, 720);
+			for (int pass = 0; pass < 2; pass++) {
+				QCoreApplication::sendPostedEvents(nullptr, QEvent::LayoutRequest);
+				for (QWidget *w : settingsDlg_->findChildren<QWidget *>())
+					if (w->layout())
+						w->layout()->activate();
+				settingsDlg_->layout()->activate();
 			}
+			settingsDlg_->grab();
+			return settingsDlg_->grab().save(QDir(dir).filePath(p[1] + QStringLiteral(".png")), "PNG");
 		}
-		if (p.size() == 2 && p[0] == QStringLiteral("settings-layer-effects")) {
-			if (auto *fx = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsLayerEffects")); fx && fx->isEnabled()) {
-				if (fx->isChecked() != (p[1] == QStringLiteral("on")))
-					fx->click(); // a click on the switch
-				return true;
-			}
+		if (p.size() == 2 && p[0] == QStringLiteral("settings-page")) { // show a page by its title (percent-encoded) or by its page index
+			auto *nav = settingsDlg_->findChild<QListWidget *>(QStringLiteral("settingsNav"));
+			if (!nav)
+				return false;
+			const QString arg = QUrl::fromPercentEncoding(p[1].toUtf8());
+			bool isIndex = false;
+			const int idx = arg.toInt(&isIndex);
+			QListWidgetItem *found = isIndex ? nullptr : settingsNavItem(nav, arg);
+			if (isIndex)
+				for (int i = 0; i < nav->count() && !found; i++)
+					if (nav->item(i)->data(Qt::UserRole).isValid() && nav->item(i)->data(Qt::UserRole).toInt() == idx)
+						found = nav->item(i);
+			if (!found)
+				return false;
+			nav->setCurrentItem(found);
+			return true;
 		}
 		if (p.size() == 2 && p[0] == QStringLiteral("settings-record-live")) { // LC2: a click on the Record while live switch
 			if (auto *rl = settingsDlg_->findChild<QAbstractButton *>(QStringLiteral("settingsRecordLive"))) {
@@ -5025,7 +5479,7 @@ bool MainWindow::probeAction(const QString &action)
 				return true;
 			}
 		}
-		if (p.size() == 3 && p[0] == QStringLiteral("settings-flag")) { // N2: a click on one flag's switch in Advanced
+		if (p.size() == 3 && p[0] == QStringLiteral("settings-flag")) { // N2: a click on one flag's switch (on whichever page's FEATURES card it sits)
 			for (auto *sw : settingsDlg_->findChildren<QAbstractButton *>(QStringLiteral("flagSwitch")))
 				if (sw->property("flag").toString() == p[1]) {
 					if (sw->isChecked() != (p[2] == QStringLiteral("on")))
@@ -5078,6 +5532,16 @@ bool MainWindow::probeAction(const QString &action)
 			if (on && sec) {
 				on->setChecked(p[2] == QStringLiteral("1"));
 				sec->setValue(p[3].toInt());
+				return true;
+			}
+		}
+		if (p.size() == 3 && p[0] == QStringLiteral("settings-transition")) { // RP1: settings-transition:<kind>:<ms>
+			auto *kind = settingsDlg_->findChild<QComboBox *>(QStringLiteral("settingsTransKind"));
+			auto *ms = settingsDlg_->findChild<QSpinBox *>(QStringLiteral("settingsTransMs"));
+			if (kind && ms && kind->findData(p[1]) >= 0) {
+				kind->setCurrentIndex(kind->findData(p[1]));
+				if (ms->isEnabled())
+					ms->setValue(p[2].toInt());
 				return true;
 			}
 		}

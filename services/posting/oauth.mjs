@@ -31,6 +31,12 @@ export const SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
 // Requested only when that flag is on (opts.scope = SCHEDULE_SCOPES); without it the default stays upload-only.
 export const READONLY_SCOPE = 'https://www.googleapis.com/auth/youtube.readonly';
 export const SCHEDULE_SCOPES = `${SCOPE} ${READONLY_SCOPE}`;
+// Optional, for the Growth section (flag growth, AN1, D371): read the channel's YouTube Analytics (views, watch time,
+// retention, likes, shares, subscribers per video) and, with READONLY_SCOPE, each video's public state and counts.
+// Read only: neither scope can upload, change or delete anything.
+export const ANALYTICS_SCOPE = 'https://www.googleapis.com/auth/yt-analytics.readonly';
+/** One space-separated scope string, each scope once, in the order given (falsy entries skipped). */
+export const joinScopes = (...scopes) => [...new Set(scopes.flatMap((s) => (typeof s === 'string' ? s.split(/\s+/) : [])).filter(Boolean))].join(' ');
 export const REFRESH_TARGET = 'Ujwalam/posting/youtube-refresh';
 export const CLIENT_ID_TARGET = 'Ujwalam/posting/youtube-client-id';
 export const CLIENT_SECRET_TARGET = 'Ujwalam/posting/youtube-client-secret';
@@ -135,7 +141,11 @@ export function createYoutubeAuth(opts = {}) {
   const endpoints = { authUrl: opts.endpoints?.authUrl ?? GOOGLE_AUTH_URL, tokenUrl: opts.endpoints?.tokenUrl ?? GOOGLE_TOKEN_URL };
   let access = null; // { token, expiresAt } — memory only, never persisted
   let granted = null; // the scopes Google says the token carries (token response `scope`), memory only
-  const scope = typeof opts.scope === 'string' && opts.scope ? opts.scope : SCOPE;
+  // opts.scope: a string, or a function returning one (read at each sign-in, so a flag switched on later counts)
+  const scopeNow = () => {
+    const s = typeof opts.scope === 'function' ? opts.scope() : opts.scope;
+    return typeof s === 'string' && s ? s : SCOPE;
+  };
   const noteScope = (tok) => { granted = typeof tok?.scope === 'string' && tok.scope.trim() ? tok.scope.trim().split(/\s+/) : null; };
 
   async function clientCreds() {
@@ -150,6 +160,7 @@ export function createYoutubeAuth(opts = {}) {
     if (signal?.aborted) throw new OAuthError('oauth-cancelled', 'sign-in cancelled');
     const { port, redirectUri, result } = await loopbackListener({ signal });
     const { verifier, challenge, state } = makePkce();
+    const scope = scopeNow();
     const url = authUrl({ clientId, redirectUri, challenge, state, scope, base: endpoints.authUrl });
     if (typeof opts.browserOpen !== 'function') throw new OAuthError('oauth-no-browser-opener', 'opts.browserOpen is required');
     await opts.browserOpen(url);

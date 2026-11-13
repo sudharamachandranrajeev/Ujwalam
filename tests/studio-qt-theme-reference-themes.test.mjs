@@ -78,7 +78,7 @@ describe('Qt studio reference themes T2-T5 (D344, headless probe)', { skip }, ()
 
   for (const t of THEMES) {
     test(`${t.id}: loads with the flag on, ships its components block, applies ${t.font}, no stylesheet errors`, async () => {
-      const p = await probe({ actions: 'settings-open,settings-page:3,settings-specimen', env: { UJWALAM_THEME: t.id } });
+      const p = await probe({ actions: 'settings-open,settings-page:Appearance,settings-specimen', env: { UJWALAM_THEME: t.id } });
       assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
       assert.equal(p.theme.id, t.id);
       assert.equal(p.theme.componentsOn, true);
@@ -111,7 +111,7 @@ describe('Qt studio reference themes T2-T5 (D344, headless probe)', { skip }, ()
       const dir = EVIDENCE ?? tmp('ujw-qtr-shot-');
       mkdirSync(dir, { recursive: true });
       const shot = path.join(dir, `${t.id}-${Number(scale) * 100}.png`);
-      const p = await probe({ actions: 'settings-open,settings-page:3,settings-specimen', shot, env: { UJWALAM_THEME: t.id, QT_SCALE_FACTOR: scale } });
+      const p = await probe({ actions: 'settings-open,settings-page:Appearance,settings-specimen', shot, env: { UJWALAM_THEME: t.id, QT_SCALE_FACTOR: scale } });
       assert.ok(p.actions.every((a) => a.done), JSON.stringify(p.actions));
       assert.equal(p.specimenShot, true);
       const file = shot.replace(/\.png$/, '-specimen.png');

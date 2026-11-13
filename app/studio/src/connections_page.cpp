@@ -168,7 +168,7 @@ void Page::reload(bool fresh)
 			  if (!ok) {
 				  p->poll_->stop();
 				  if (b.value(QStringLiteral("error")).toString() == QStringLiteral("platform-connect-off"))
-					  return p->say(QStringLiteral("Switch on the feature flag platform-connect (Advanced) to connect platforms here."));
+					  return p->say(QStringLiteral("Switch on the feature flag platform-connect (Platform sign-in, at the bottom of this page) to connect platforms here."));
 				  return p->say(QStringLiteral("Connections not available: ") + err);
 			  }
 			  p->render(b);

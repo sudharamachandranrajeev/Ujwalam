@@ -1747,3 +1747,142 @@ Growth plan ED2. Decided:
   ids only.
 - **Close.** With tasks running and not live, the QML window asks: stop them and close, or do not close. Keeping them
   in the tray comes with Q4.
+
+## D361 — Montage story structure: fast cut, title, one match as a story (user, 2026-11-11 evening)
+
+- **User's words.** "before the title intro can be fast cut of kills from any matches, after title try to create a continuity like story and if not enough can use from other match as well, but don't re use that section in other videos if possible."
+- **Decision.** Replaces "pieces of different matches may be joined" (2026-11-07/08) for the body of a montage: part 1 (before the title) is a short fast cut from any match (the D352 hook); part 2 is one match in time order, topped up from other matches of the session only when it has too few kills; a used section is recorded and not reused in another video when there is another choice. No result screen of another match inside a montage. Plan RP2 in `2026-11-12-reel-polish-music-learning.md`.
+
+## D362 — Reel title card over a blurred background, music fading with it (user, 2026-11-11 evening)
+
+- **Decision.** The streamer title (from the local profile, never committed) fades in and out over a blurred copy of the video, about 1.2–1.8 s; the music bed fades out as the title ends; the reel's end gets a few seconds of music fade. Flag `reel-title`, off by default. Plan RP4.
+
+## D363 — Reel music from a local AI model, chosen after a licence and fit check (user, 2026-11-11 evening)
+
+- **Decision.** The user chose a local AI music model over a built-in synthesizer. Before any install the agent reports the candidates (licence for monetised posting, disk, VRAM at 6 GB, speed, Windows wheels) and the user approves the pick and the install. Runs only after a stream, one model at a time. Plan RP3, RP3a.
+
+## D364 — Self-learning applies changes on its own, inside limits the user approves (user, 2026-11-11 evening)
+
+- **Decision.** Changes AN2 ("proposals only, never applies itself") to "auto within limits": the learning loop shifts the mix of reel kinds and edit choices toward what performs better, with a minimum share per kind, at most 15 points of change per week, every change logged with its numbers, a one-click undo and a weekly report. Kill rules, detector weights, privacy and posting targets stay changes the user approves. Plan RP5; waits for AN1 and auto-posting.
+
+## D365 — BR kills from the own HUD text, knocks shown, a 30 s BR chain gap; live clips re-cut after the stream (agent, 2026-11-12, proposed)
+
+- **Decision.** Fix for the user's report on the 2026-11-11 Battle Royale short (triage F2, plan CL2). Montage settings (`data/clip/montage.json`): the own-kill HUD text B2 "ELIMINATED" counts as an own kill (the BR kill feed B1 cannot read the own name in the V cutout), B2 "KNOCKED DOWN" is an action (shown in the cut, not counted as a kill), and kills in Battle Royale chain over up to 30 s (12 s stays for every other mode). After the stream, each live clip is re-cut from the recording's detector hits: every kill and knock of the chain its medal belongs to, the dead time between them cut, padded to the 20 s minimum from the build-up before the first kill; a chain seen by two clips goes to the clip whose save file holds most of it, and the other clip joins it.
+- **Why.** The live window starts 17 s before the medal; in BR the medal's kills spanned 27 s, so the earlier kills were outside and 13 s of running stayed inside.
+- **Status.** Values proposed from one session's footage (evidence `docs/evidence/2026-11-12-cl2-br-short-recut.md`); the user approves them after watching the re-cut.
+
+## D366 — Each reel opens on one edited thumbnail frame, made locally (user, 2026-11-12)
+
+- **Decision.** Every reel (short, montage, match reel) starts with one frame that acts as its thumbnail and is edited to show what the reel is about: the strongest moment of the reel as the picture, a short title from the reel's own facts (kind, kill count, medal), cleanly cropped for the platform frame. Made on the laptop only (ffmpeg plus the existing local OCR/detector data; no cloud service, no paid API). Plan RP6.
+- **Why.** The user: "for each reel, there needs be a start frame which will need to act as the thumbnail, just 1 frame, this should be edited in a way to showcase what's the reel is about".
+
+## D367 — Reel transitions: Cut or a 250 ms cross fade, captions keep the cut (agent, 2026-11-12)
+
+- **Decision.** The join between the pieces of a reel is a setting (Settings > Clips, `clips.reelTransition`): Cut, or Cross fade (ffmpeg `xfade=fade` with `acrossfade`), default 250 ms, range 150–500 ms, never more than half the shortest piece. A reel with burned-in captions keeps the cut for now (the caption times follow the sum of the pieces). Behind flag `reel-transitions`, off by default. Plan RP1.
+- **Why.** The user asked for a subtle cross fade as the first transition (2026-11-11); 250 ms is short enough to stay subtle and long enough to see. Each join makes the reel shorter by the overlap, which is recorded (`end`, `belowMin`).
+- **Status.** Length proposed; evidence `docs/evidence/2026-11-12-rp1-reel-transitions.md`; the user confirms after watching reels made with the flag on.
+
+## D368 — Reel start frame as thumbnail (RP6, 2026-11-12)
+
+- **Decision.** Flag `reel-thumbnail` is ON by default (the user asked, 2026-11-12; it can be switched off in Settings > Advanced). Every reel opens on one edited frame (1/60 s) that acts as its cover: the picture of the reel's strongest moment (0.4 s after the heaviest medal, else the densest kills), colour lifted, a title (medal or result, kill count, mode) and the streamer brand from the local profile, all made locally with ffmpeg and a bundled font. Posting takes the cover from frame 0.
+- **Why.** The user asked (2026-11-12) for a one-frame thumbnail per reel showing what the reel is about, processed locally.
+- **Status.** Look, sizes, position and wording proposed (`data/clip/thumbnail.json`); evidence `docs/evidence/2026-11-12-rp6-thumbnail-start-frame.md`; the user confirms after watching reels made with the flag on.
+
+## D369 — Reel title card (RP4, 2026-11-12)
+
+- **Decision.** Behind flag `reel-title` (off), a reel shows the streamer title (the brand from the local profile) for 1.6 s right after its teaser (part 1 of a montage, the payoff-first hook of other reels), else at its start: a Gaussian-blurred copy of the reel, darkened to 55 %, with the title centred in the safe width, fading in over 450 ms and out over 350 ms (overlay rule). It is drawn inside the reel's own ffmpeg render; the length does not change; captions stay on top; Captions again keeps it. No brand in the profile, or a reel under 4 s: no title. Silent until RP3 adds the music bed.
+- **Why.** The user asked (2026-11-11) for a streamer title fade over a blurred background after the fast-cut part of a montage. `boxblur` is not in the LGPL ffmpeg build, so the blur is `gblur`.
+- **Status.** Durations, blur, darkness, size and position proposed (`data/clip/title.json`); evidence `docs/evidence/2026-11-12-rp4-title-card.md`; the user confirms after watching reels made with the flag on.
+
+## D370 — Reel music beds: procedural first, ACE-Step later (RP3, 2026-11-12)
+
+- **Decision.** Behind flag `reel-music` (off), a calm lofi bed plays under the start of a reel (ending with the RP4 title, else after 3 s) and its last 4 s. It is synthesised on this PC in plain Python (no model, no download), seeded per reel, at −20 dBFS peak, mixed under audio track 1 only, ducked by the game sound with a sidechain compressor; the length never changes. ACE-Step 1.5 (MIT weights, commercial use allowed per its model card) is the first AI generator to add later, after the user approves its install (Python 3.12 venv) and a benchmark here. MusicGen is ruled out (CC-BY-NC weights).
+- **Why.** The user chose "procedural now, ACE-Step later" (2026-11-12) after the RP3a comparison; beds made by own code carry no licence risk on monetised channels and need no install.
+- **Status.** Sound and levels proposed (`data/clip/music.json`); evidence `docs/evidence/2026-11-12-rp3-music-beds.md`; the user confirms after listening to reels made with the flag on.
+
+## D371 — Growth data from YouTube, read only, local (AN1a, 2026-11-12)
+
+- **Decision.** Behind flag `growth` (off), Ujwalam reads the user's own numbers for the videos it posted: the Data API (public state, views, likes, comments; `youtube.readonly`) and the Analytics API (minutes watched, average view duration and viewed %, likes, shares, subscribers gained; `yt-analytics.readonly`). The scopes are asked for only with the flag on, by both sign-in paths; a fetch fails closed without them. Numbers go to a local SQLite file `<data>/analytics/analytics.db` as snapshots with their age since the video went public; 24 h and 7 d are read from the first snapshot at or past that age. At most one fetch an hour unless forced. Nothing is posted or changed.
+- **Why.** The user said yes to analytics (2026-11-11); RP5's learning needs results per posted reel (D364). Both scopes are read only; the data stays on the PC.
+- **Status.** Built and tested with a faked Google; waiting for the user's Google setup and a real fetch. Evidence `docs/evidence/2026-11-12-an1a-growth-youtube-data.md`.
+
+## D372 — Growth numbers window in the studio (AN1b, 2026-11-12)
+
+- **Decision.** Behind the same flag `growth` (off), the Qt studio has a "Growth numbers..." window in the More menu (shown only with the flag on). It lists each posted video with its title, kind (montage, won-round reel, impact play, clip), time it went public, latest views, likes, average viewed %, shares and subscribers gained, and the 24 hour and 7 day checkpoints, in a sortable table. The studio reads through the Studio UI server (`GET /ui/api/growth`), which owns `analytics.db` (one SQLite owner per process); `POST /ui/api/growth/refresh` runs the AN1a collect (once an hour unless `force`; a second "Refresh now" button forces). Both fail closed with 404 `growth-off`. Not signed in, missing statistics permission and nothing posted each show a plain note pointing to Settings > Posting & growth and the setup notes. Read only: nothing is posted or changed on YouTube; the window is never needed while live or recording. No charts and no Instagram in this step.
+- **Why.** AN1 asks for a Growth section as its own window; the numbers are what AN2's learning loop will use.
+- **Status.** Built and tested with a seeded store and a faked Google; a real fetch stays UNVERIFIED until the user's Google setup is done. Evidence `docs/evidence/2026-11-12-an1b-growth-window.md`.
+
+## D373 — Self-learning mix: Thompson sampling over reel choices, inside data-file limits (RP5 / AN2, 2026-11-13, agent, proposed)
+
+- **Decision.** Behind flag `self-learning` (off), on top of `growth`, Ujwalam learns a mix of reel choices from the AN1 numbers and applies it on its own inside the D364 limits. Choices: reel kind (short, montage, won-reel, impact-play), montage length band (short < 30 s, mid 30-45 s, long >= 45 s), transition (cut, fade), title card (off, on), music bed (off, on), posting time (night, morning, afternoon, evening, local time the video went public). Each posted video is linked to the choices it was made with: `clipper.py publish` writes `choices` on each reel row of `uploads.json` (from the render record), packaging copies it into `post.json` `source.choices`, the learner joins the analytics rows to the posts by post id. Older posts without the record count only for kind, length and time.
+- **Reward (per video, 0..1).** `r = 0.5 * min(avgViewedPct, 150) / 150 + 0.5 * views / (views + median views of the same platform at the same checkpoint)`, from the 7 day checkpoint when it has statistics, else the 24 hour one; a missing part counts as 0.5. Weights, cap and checkpoint rule in `data/clip/learning-mix.json` (`reward`). No number is invented: a video without a statistics checkpoint is left out.
+- **Bandit.** Per choice Beta(1 + sum r, 1 + sum (1 - r)); the target share of a choice is how often its draw is highest in 4000 seeded draws (seed per week). The limits then apply (`data/clip/learning-mix.json` `limits`, D364 defaults): every choice keeps at least 10 %, a share moves at most 15 points, at most one change per 7 days; kill rules, detector weights, privacy, posting targets and daily caps, and feature flags never change.
+- **Where it acts.** Montage planner (`services/clip/learning_mix.py`): per reel the transition, title card and music bed are drawn from the shares (seeded by reel id, recording and mix time) and can only be switched OFF for a reel, never on (a feature whose own flag or setting is off stays off); one length band per run sets the montage target length inside the user's min and max. Auto-post (`planAuto` `kindShares`): only the order inside each rule's daily cap follows the kind shares; the count and targets do not change. Posting time is learned and reported only; the publish schedule (D310, D314) is not changed.
+- **Cold start.** Fewer than 8 posted videos with a statistics checkpoint: nothing changes, nothing is written, and the view and report say "N of 8 posted videos have their 24 hour numbers". A choice with fewer than 4 known videos keeps its shares. Before the first change, and after undoing it, the mix is not in use (`applied: false`) and planner and auto-post behave exactly as before.
+- **Log and undo.** `<data>/learning/mix.json` (the mix in use) and `<data>/learning/mix-log.jsonl` (each change with the shares before and after, per-choice count, mean reward, Beta parameters and win probability, video count, formula and limits) in the app data, never committed. Undo = one call (`POST /ui/api/growth/mix/undo`, or `node services/learning/mix-cli.mjs undo`) restores the mix before the newest change still in effect. The weekly change runs after a successful Growth refresh (`POST /ui/api/growth/refresh`) or `mix-cli.mjs step`; `mix-cli.mjs report` prints the weekly report in plain English; `GET /ui/api/growth/mix` returns the mix, log and report text.
+- **Review fixes (Codex, 2026-11-13).** The floor and the weekly cap hold together; when they cannot (a share below the floor by more than one step), that choice keeps its shares and the log says so. The state file is written first (temp + rename) and carries the log entry, so a failed log append is repaired on the next step or undo and a failed state write logs nothing (no lost undo). A record cut off by a failed append is dropped on read and the next append starts on a new line. Undo restores the earlier `changedAt`, so the planner's seeded picks are those of before. Only the last 64 KiB of the log are read.
+- **Why.** D364 asked for auto-within-limits learning; Thompson sampling explores without a hand-tuned rate, the floor keeps every choice measurable, and the cap keeps a week of noise from swinging the output.
+- **Status.** Proposed: the formula, cap of 150 %, minimum 8 videos, bands and draws are agent values. Tested with faked analytics only; no real YouTube numbers exist yet (the user's Google setup is pending). Evidence `docs/evidence/2026-11-13-rp5-self-learning.md`.
+
+## D374 — Host watchdog: a frozen host is stopped and restarted; GPU device-loss and driver-reset report (2026-11-13)
+
+- **Decision.**
+  - The host reports graphics stalls and GPU device losses. It never restarts itself. The report lives in `gfx_watch.h`, `host.status.graphics` and the lock-free `host.alive`.
+  - The launcher asks `host.alive` every 5 s. It calls the host stale after 30 s with no answer, or after 30 s with no video frame.
+  - A stale host is always logged once. With flag `host-watchdog` on (off by default), the launcher kills the host's process tree. The existing crash path then restarts it: the same restart policy, project reload, and recording in a new file.
+  - Once per incident, the launcher writes one task-bar entry and reads the Windows System log for an NVIDIA driver reset ("the graphics driver reset at HH:MM").
+  - All numbers are in `data/live/host-watch.json` (status proposed).
+- **Streams.** The watchdog never starts a stream itself. After its restart, the streams that were live come back only through the D303 stream-recovery rules: flag `stream-recovery`, this launcher's go-live authority, and the `data/live/recovery.json` gap limit. This counts as recovery of the user's own live session, not going live on its own:
+  - The user had clicked Start for exactly those sinks.
+  - The freeze, not the user, ended them.
+  - With either flag off, nothing is restarted.
+  - A stream that was not live is never started.
+- **Why.**
+  - On 2026-11-12 the graphics thread froze for about 3 hours unnoticed (19:03).
+  - During a live stream the NVIDIA driver reset (21:42). The host crashed and stayed down until a manual restart at 22:00.
+  - libobs rebuilds its D3D11 device only from `Present` with a preview swap chain. It never rebuilds encoders, and calls bcrash if the rebuild fails. A whole-host restart is therefore the reliable recovery.
+- **Status.** Built; tested with a fake host and with a real host using a simulated stall. A real driver reset is UNVERIFIED. Evidence `docs/evidence/2026-11-13-gpu-reset-recovery.md`.
+- **Review fixes (Codex, 2026-11-13).**
+  - All elapsed times use a monotonic clock.
+  - The liveness window starts when a restore has finished, not when the host starts.
+  - In the host, `host.alive` reads atomics only; the checker logs without holding a lock.
+  - The stall report is read as one consistent snapshot: a single-writer seqlock, still lock-free for `host.alive`. A stress test showed 0 torn reads (re-review). A read that runs out of retries reports `"snapshot": "busy"` with no stall fields, never mixed values.
+  - The task-bar write is retried when the file is open elsewhere, and an older state never overwrites a newer one.
+
+## D376 — Soft theme and ClearType text in the Qt studio (2026-11-13, agent)
+
+- **Why.** The user said the themes look dated and the text does not look like ClearType, and asked for a redesign
+  after a reference picture: soft raised plates, gentle shadows, a warm amber glow for what is on.
+- **ClearType finding.** The studio already renders ClearType on screen (Qt DirectWrite follows the Windows setting).
+  The offscreen test platform renders greyscale, so probe screenshots are no evidence of text quality; use the hidden
+  native probe or the real screen. What looked soft is the bundled web fonts with default hinting at 9–10 pt.
+- **Soft pack** (`data/themes/soft.json`):
+  - Font Segoe UI, a Windows system font used at runtime only (no Microsoft font file is bundled).
+  - New `typography.hinting` (`default | full | vertical | none`); Soft uses `full` (`QFont::PreferFullHinting`).
+  - New `componentsAlways`: a pack built only from components uses its components block with flag `theme-components`
+    off. The flag stays off by default; other packs are unchanged.
+  - New `surface` block (faces, edges, wells, warm and glow colours, shadow layers, radii, room for the shadow),
+    read only with the `soft` card variant. New variants: button `raised`, input `soft`, switch `knob`, card `soft`.
+- **Painting.** `app/studio/src/soft.cpp` paints cards, small cards, rows with a switch, pills and round controls
+  from an event filter behind the widget's own paint. No `QGraphicsEffect`: text always lands on an opaque face.
+  Shadows are blurred once per kind, radius, tone and device pixel ratio and drawn as 9-slice pictures. Hover and press
+  fade in the theme's fast time (≤ 150 ms). Reduced effects: no shadows; High performance: flat faces.
+- **Appearance.** Soft is listed first. The default stays Violet Night: a new look is off until the user picks it.
+- **Status.** Built and tested headless and with the hidden native probe; one real on-screen capture. Other display
+  scales and a machine with ClearType off are UNVERIFIED. Evidence `docs/evidence/2026-11-13-soft-theme-cleartype.md`.
+
+## D375 — Auto-post goes up scheduled, around the channel's own schedule, from the clips folder (2026-11-13, user request; agent values proposed)
+
+- **Decision.** Every automatic YouTube upload goes up as a scheduled post (private with `status.publishAt`; YouTube Studio shows "Scheduled"). An automatic upload without a publish time never happens: with flag `post-schedule` off, or no free slot, the clip waits (`schedule-off`, `schedule-beyond-cap`, ...). `node services/posting/cli.mjs auto --run` no longer uploads; the chain does. User 2026-11-13: "upload the post as scheduled (not as private) ... check the already scheduled posts in youtube and schedule the posts according to work around the existing schedule. don't double post at the same time", then "build a posting schedule every one hour for the next 2 months", "use ~6/day and request more", "the schedule of posting should be able to be customised from within Ujwalam itself".
+- **Slot rule (placement `fill-gaps`, default).** floor = now + minLeadHours + marginMinutes, rounded up to the `alignMinutes` grid (60 = whole hours, UTC). Taken times = every future scheduled post on the channel, channel videos that went public in the last 2 days, every time in the upload queue (uploaded, open session, failed, queued) and every slot given earlier in the same pass. A clip gets the earliest grid time >= floor that is at least `intervalHours` from every taken time; past `maxAheadDays` it waits. D314 retries use the same rule; other queued clips keep their times (no re-chain). `placement: after-last` keeps the D310 rule (latest taken + gap). `minGapMinutes` is retired. A sorted array with binary search gives 1440 hourly slots in a few ms.
+- **Channel read.** Uploads list newest first; stops (complete) at the first page whose items were all added (`snippet.publishedAt`) more than `lookbackDays` (120) ago; fails closed on a read error or when `maxPages` (40 x 50) is hit first. Risk: a video uploaded more than 120 days ago but scheduled further ahead is not seen.
+- **Values.** `data/posting/schedule.json`: gap 1 h, 60 days ahead, fill-gaps (user); alignMinutes 60, lookbackDays 120, maxPages 40 (agent). User overrides (gap 1..48 h, days ahead 1..730, placement, quota) in `<data>/posting/schedule.json`, applied on the next pass.
+- **Default rules (no user rules file yet).** autoUpload on, all kinds (short, montage, won-reel, impact-play), minimum score = the ranker's own floor (`data/clip/ranking.json` minScore, 3) so every clip the clipper publishes qualifies and the oldest go first, uploads a day = what the quota fits: floor((10000 - 100) / (1600 + 50)) = 6 (`data/posting/quota.json`). Why: the user asked for all clips to post on a schedule within the quota; the quota, not a score, is the limit. A global `maxUploadsPerDay` counts across rules.
+- **Source.** The clips folder (Settings > Folders > Finished clips, `<folder>/<YYYY-MM-DD>/`), oldest first by the clip's own time in its name; files with no package are packaged (`packageUploads`). A short from the folder has no score: it passes a rule whose minScore is not above the ranker floor.
+- **Delete after posting (flag `post-delete-uploaded`, off, label "Delete posted clips forever").** The uploaded file is deleted permanently (no Recycle Bin) only when: the upload finished, `videos.list` says `uploadStatus: processed`, the ledger has this video id and sha256 as uploaded with the same publishAt as sent, the file is the post's source file, a regular file inside the clips folder by its real path (no link or junction), and its sha256 matches. Any doubt keeps it (failed, rejected, still processing, read error, mismatch). Each deletion: one line in `<data>/posting/deleted.jsonl` (file name, video id, time) and one task bar line per batch. Nothing while live.
+- **Card.** Settings > Posting & growth > Auto-post (Qt, `app/studio/src/autopost_card.cpp`): upload on/off, kinds, minimum score, uploads a day (with "About N uploads a day fit"), gap, days ahead, placement, quota; "Next posting times" in local time (queue, channel, next free, "Scheduled"), Move and Remove for queued clips. Saved with Settings Save (one click, D332). Routes: `GET/POST /ui/api/posts/auto/settings`, `GET /ui/api/posts/auto/schedule[?fresh=1]`, `POST /ui/api/posts/auto/queue/move|remove`; the logic is in `services/posting/auto-settings.mjs`.
+- **Codex review of f253771 (2026-11-13).** (1) The delete hashes the file through one open handle and records its device, file id, size and modified time from that handle; right before the unlink the path is looked up again (lstat) and its folder's real path resolved again; any change, a folder that no longer resolves inside the clips folder, or a UNC / `\\?\` / `\\.\` path keeps the file. Node cannot unlink by handle, so a swap in the microseconds between that last check and the unlink remains (residual risk, evidence doc). (2) A queued slot with no session is re-checked before its upload starts: a due item triggers a fresh channel read, and a slot now within the gap of a channel post or an earlier kept slot gets a new one by the same rule; a failed read keeps it waiting. (3) The page that ends the lookback scan is still status-checked (videos.list). (4)+(6) Persisted daily budget `<data>/posting/quota-day.json` (`services/posting/quota-budget.mjs`): every upload start or resume counts against `maxUploadsPerDay` (UTC day) and insert + thumbnail units (Pacific day, Google's reset); every Data API read (schedule reads, delete status checks, the card's fresh read) counts 1 unit; over budget the items wait ('daily-cap-reached' / 'quota-day-used'), no attempt used. The quota fit may be 0; the card then says no upload fits until the quota is raised. (5) Concurrent fresh reads from the card share one in-flight read.
+- **Codex re-review of 3c8fd62 (2026-11-13).** (1) The verified clip is moved by one atomic rename under a random name into `<clips folder>/.ujwalam-deleting/`, checked again there by its own handle (file id, size, time, sha256) and only then unlinked; on a mismatch it goes back to its path if that is free, else stays in the holding folder (never overwritten or deleted). Residual: a writer of the holding folder guessing the random name within microseconds; a crash leaves the verified file in the holding folder. (2) Every counter change runs under an exclusive lock file (`wx`, stale after 30 s, busy after 3 s = blocked); check and charge are one step. (3) Reads are reserved before sending (a schedule read reserves 1 + 2 x maxPages and gives back the rest; other reads 1 each). (4) A malformed counter file blocks; only a valid counter from another day resets. (5) An absent user settings file uses the shipped quota; an unreadable or invalid one blocks the budget (the card still loads to fix it). (6) Upload admission keeps the read reserve (units + one upload <= quota - reserve), so a fit of 0 never uploads.
+- **Codex 3rd review of bb4b11c (2026-11-13).** (1)+(4) The lock file and its stale takeover are removed. The counters live in `<data>/posting/quota-day.sqlite` (`node:sqlite`, stdlib): one row per kind and day, STRICT table with CHECK constraints, the same row check on every read. Every check-and-charge, refund and read is one `BEGIN IMMEDIATE ... COMMIT` with a 3 s busy timeout (busy = blocked); the OS releases SQLite's lock when the holder dies; every exception path rolls back and closes. The old `quota-day.json` is carried over once when valid; an invalid one blocks until fixed or removed. (2) A read reservation keeps its Pacific day: refunds go to that day only; a scan request sent after midnight Pacific reserves 1 unit on the new day first. (3) A held clip is put back with `fs.linkSync` (fails if the path is taken, never replaces), then the holding name is removed; if the link fails it stays in the holding folder.
+- **Follow-up, not built.** Changing the time of a clip already uploaded (videos.update) — needs a full snippet round trip and a quota of 50 units per change.
+- **Status.** Proposed. Fakes only (no upload, no real channel read). Evidence `docs/evidence/2026-11-13-auto-post-scheduled.md`.

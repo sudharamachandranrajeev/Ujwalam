@@ -10,12 +10,14 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dataDirNote, resolveCliDataDir } from '../event-core/config.mjs';
 import { createFlags } from '../flags/index.mjs';
+import { MIX_FLAG, appliedKindShares } from '../learning/mix.mjs';
 import { LEDGER_NAME, POSTING_FLAG, PostingError, createPostStore, packageRun } from './index.mjs';
-import { READONLY_SCOPE, SCHEDULE_SCOPES, SCOPE, createYoutubeAuth } from './oauth.mjs';
+import { ANALYTICS_SCOPE, READONLY_SCOPE, SCOPE, createYoutubeAuth, joinScopes } from './oauth.mjs';
 import { uploadPost, UploadError } from './youtube.mjs';
 import { SCHEDULE_FLAG } from './schedule.mjs';
+import { GROWTH_FLAG } from '../analytics/index.mjs';
 import { streamOnly } from './auto-chain.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, initUserRules, loadRules, planAuto, rulesFileFor, runAuto } from './auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, AutoPostError, createAutoLog, describeMode, initUserRules, loadRules, planAuto, rankerMinScore, rulesFileFor, runAuto } from './auto-post.mjs';
 import { formatPreview, previewRules } from './preview.mjs';
 import { HostClient } from '../../app/host/lib/client.mjs';
 import { resolveConfig as resolveHostConfig } from '../../app/host/lib/config.mjs';
@@ -151,24 +153,24 @@ async function autoMain(a, out, err, deps) {
       return 0;
     }
     if (a.run !== true) {
-      const plan = planAuto({ posts: store.list(), rules: rules.rules, autoUpload: rules.autoUpload, log: createAutoLog(logFile).list(), now: (deps.now ?? (() => new Date()))() });
-      out(`auto-post (dry run): ${mode.enabled ? 'on' : 'off'} (flags posting+auto-post: ${flagOn}), ${mode.ruleCount} rule(s), autoUpload ${mode.autoUpload}, privacy private`);
+      const plan = planAuto({ posts: store.list(), rules: rules.rules, autoUpload: rules.autoUpload, log: createAutoLog(logFile).list(), now: (deps.now ?? (() => new Date()))(), maxUploadsPerDay: rules.maxUploadsPerDay ?? null, unscoredFloor: rankerMinScore() });
+      out(`auto-post (dry run): ${mode.enabled ? 'on' : 'off'} (flags posting+auto-post: ${flagOn}), ${mode.ruleCount} rule(s), autoUpload ${mode.autoUpload}, uploads scheduled`);
       out(`rules file: ${rulesFile}`);
       for (const s of plan) out(`  ${s.action} ${s.id} rule ${s.ruleId}: ${s.reason}`);
       return 0;
     }
     if (!flagOn) { err(`auto-post: the '${POSTING_FLAG}' and '${AUTO_FLAG}' feature flags must both be on`); return EXIT_FLAG_OFF; }
     if (!rules.rules.length) { out('auto-post: no rules; nothing to do'); return 0; }
-    // post-schedule on: this command only approves; the background queue uploads with a publish time (D310 proposed),
-    // so nothing goes up here without a slot.
-    const scheduled = flags.isOn(SCHEDULE_FLAG);
-    if (scheduled && rules.autoUpload) out('auto-post: scheduled posting is on; approved clips are uploaded by the studio queue with a publish time');
-    const auth = rules.autoUpload && !scheduled ? (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen }) : null;
+    // D375: this command only approves. Automatic uploads always go up with a publish time, and only the studio's
+    // background queue gives one out (post-schedule), so nothing is uploaded here.
+    if (rules.autoUpload) out(flags.isOn(SCHEDULE_FLAG) ? 'auto-post: approved clips are uploaded by the studio queue, each with a publish time'
+      : 'auto-post: approved clips wait for scheduled posting (flag post-schedule); automatic uploads always have a publish time');
     // D300: only stream sinks block (a local recording does not); an unreadable state still refuses.
     const outputsStatus = streamOnly(deps.outputsStatus ?? outputsStatusFor(dataDir));
+    let kindShares = null; // RP5 (D373): the learned kind order only with the flag self-learning on and a mix in use
+    if (flags.isOn(MIX_FLAG)) { try { kindShares = appliedKindShares(dataDir); } catch { kindShares = null; } }
     const r = await runAuto({
-      store, rules, outputsStatus, logFile, now: deps.now,
-      upload: auth ? (id) => (deps.upload ?? uploadPost)({ id, store, auth, outputsStatus, fetchImpl: deps.fetchImpl }) : undefined,
+      store, rules, outputsStatus, logFile, now: deps.now, kindShares, unscoredFloor: rankerMinScore(),
     });
     if (r.refused) { err(`auto-post: refused (${r.refused}); nothing approved or uploaded`); return 1; }
     const n = {}; for (const e of r.done) n[e.action] = (n[e.action] ?? 0) + 1;
@@ -187,13 +189,17 @@ async function youtubeMain(a, out, err, deps) {
   if (!flags.isOn(POSTING_FLAG)) { err(`posting: the '${POSTING_FLAG}' feature flag is off (switch it on from the control page)`); return EXIT_FLAG_OFF; }
   // post-schedule on: also ask for read access, to see the channel's scheduled posts (D310 proposed).
   const scheduled = flags.isOn(SCHEDULE_FLAG);
-  const auth = (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen, scope: scheduled ? SCHEDULE_SCOPES : SCOPE });
+  // growth on: also ask to read the channel's analytics and each video's public state (AN1, D371).
+  const growth = flags.isOn(GROWTH_FLAG);
+  const scope = joinScopes(SCOPE, (scheduled || growth) && READONLY_SCOPE, growth && ANALYTICS_SCOPE);
+  const auth = (deps.createYoutubeAuth ?? createYoutubeAuth)({ browserOpen: deps.browserOpen ?? defaultBrowserOpen, scope });
   const sub = a._[1];
   try {
     if (sub === 'signin') {
       const r = await auth.signIn();
       out(`youtube: signed in (scope: ${r.scope})`);
       if (scheduled && !String(r.scope ?? '').split(/\s+/).includes(READONLY_SCOPE)) out('youtube: reading scheduled posts was not allowed, so scheduled posting waits; sign in again and allow it');
+      if (growth && !String(r.scope ?? '').split(/\s+/).includes(ANALYTICS_SCOPE)) out('youtube: reading statistics was not allowed, so the Growth section waits; sign in again and allow it');
       return 0;
     }
     if (sub === 'status') { const s = await auth.status(); out(`youtube: signed in: ${s.signedIn}, OAuth client set: ${s.hasClient}`); return 0; }

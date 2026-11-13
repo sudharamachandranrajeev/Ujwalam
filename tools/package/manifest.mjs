@@ -27,6 +27,7 @@ export const HELPER_EXES = Object.freeze(['obs-ffmpeg-mux.exe', 'obs-nvenc-test.
 // Repo -> package (same relative paths, so the code's own REPO-relative lookups keep working in the install dir).
 export const REPO_DIRS = Object.freeze([
   'app/host/lib', 'app/host/overlay',
+  'services/analytics', // studio-ui's Growth API imports it (AN1b, D372)
   'services/bots', 'services/common', 'services/event-core', 'services/flags', 'services/learning', 'services/outputs', 'services/overlay-server', 'services/platform-connect', 'services/posting', 'services/project', 'services/studio-ui',
   'services/supervisor', // launch.mjs imports the LU3 swap fronts and slots (D337)
   'ui', 'registry', 'tools/diag',
@@ -67,7 +68,8 @@ export const REPO_FILES = Object.freeze([
   'data/outputs/alpha-live.json', 'data/outputs/alpha-practice.json', 'data/outputs/guard/live-test-budget.json', 'data/outputs/addons/instagram-live.json',
   'data/posting/templates.json', 'data/posting/limits.json',
   // read at run time by shipped services; missing before alpha.23 (dataRefProblems below now catches this)
-  'data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json',
+  'data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/posting/quota.json', 'data/clip/targets.json', 'data/stream/stream-options.json',
+  'data/clip/learning-mix.json', // RP5 self-learning limits (services/learning/mix.mjs, D373)
   'data/schemas/project.schema.json',
   'data/profile.example.json', 'data/profile.schema.json',
   ...Object.keys(OFL_FONTS), ...OFL_FONT_LICENCES, // bundled theme fonts, the studio loads them from data/fonts (D344)

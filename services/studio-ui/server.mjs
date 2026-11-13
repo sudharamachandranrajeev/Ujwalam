@@ -35,10 +35,15 @@ import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
 import { QUEUE_NAME, createUploadQueue, readQueueSummary, reasonText, shownPublishAt, streamOnly } from '../posting/auto-chain.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, createRulesSource, describeMode, liveBlock, planAuto } from '../posting/auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, createRulesSource, describeMode, liveBlock, planAuto, rankerMinScore } from '../posting/auto-post.mjs';
 import { previewRules } from '../posting/preview.mjs';
+import { moveQueueItem, readAutoPostSettings, readChannelForPreview, removeQueueItem, saveAutoPostSettings, schedulePreview } from '../posting/auto-settings.mjs';
+import { DELETE_FLAG } from '../posting/delete-uploaded.mjs';
 import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
+import { GROWTH_FLAG, DB_NAME as GROWTH_DB, collect as growthCollect, openStore as openGrowthStore, view as growthView } from '../analytics/index.mjs';
+import { MIX_FLAG, step as mixStep, undo as mixUndo, view as mixView, weeklyReport as mixReport } from '../learning/mix.mjs';
+import { AnalyticsError } from '../analytics/youtube.mjs';
 import { createFeedback } from './feedback.mjs';
 import { createLearningStore } from '../learning/store.mjs';
 import { createReview } from '../learning/review.mjs';
@@ -48,7 +53,7 @@ import { listAssets } from './assets.mjs';
 import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
 import { countsOnly, importSession, resolveSessionFile } from './import.mjs';
-import { clipsFolder, guideOnly, readSettings, reelHookInfo, reelLengthInfo, settingsProblems, writeSettings } from './user-settings.mjs';
+import { clipsFolder, guideOnly, readSettings, reelHookInfo, reelLengthInfo, reelTransitionInfo, settingsProblems, writeSettings } from './user-settings.mjs';
 import { TASKS_CONFIG, createTasks, loadTaskConfig, parseTaskConfig, writeTaskFile } from './tasks.mjs';
 import { createDataNotifier, createDataSource, parseJsonText } from '../common/data-reload.mjs';
 import { READINESS_FLAG, createReadiness, diskFreeBytes, lastCiPass, listProcessNames, loadReadinessConfig, logOverride, planTargets, readinessSummary } from './readiness.mjs';
@@ -381,6 +386,11 @@ export function createStudioServer(opts) {
   let ytAuth = opts.youtube?.auth ?? null;
   const youtubeAuth = () => (ytAuth ??= createYoutubeAuth({ browserOpen: async () => { throw new Error('sign-in runs from the command line'); } }));
   const uploading = new Set();
+  // D375 Auto-post card: a fresh channel read for "Next posting times" at most every 10 minutes (quota), else the saved one.
+  const CHANNEL_READ_EVERY_MS = 10 * 60 * 1000;
+  // { at, promise } -> { channel } | { error }. The promise is stored before it is awaited, so requests that arrive while a
+  // read runs share it (one read, one set of quota units; Codex review 2026-11-13).
+  let channelRead = null;
   // Live check, fail closed: outputs.status (any stream sink running), falling back to host.status.live; both failing = refuse.
   async function ytOutputsStatus() {
     if (opts.youtube?.outputsStatus) return opts.youtube.outputsStatus();
@@ -396,6 +406,14 @@ export function createStudioServer(opts) {
   const bots = opts.bots ?? (typeof opts.dataDir === 'string' ? createBots({ dataDir: opts.dataDir }) : null);
   const botsOn = () => !!bots && !!flags && flags.isOn(BOT_FLAG);
   const postingOn = () => !!posting && !!flags && flags.isOn(POSTING_FLAG);
+  // Growth window (AN1b, flag `growth`, D372): reads <dataDir>/analytics/analytics.db; Refresh runs services/analytics collect.
+  // Read only towards YouTube. opts.growth = { auth, fetchImpl, now } are test seams.
+  const growthOn = () => typeof opts.dataDir === 'string' && !!flags && flags.isOn(GROWTH_FLAG);
+  let growthBusy = false;
+  // RP5 self-learning (flag `self-learning` on top of `growth`, D373): the learned mix and its log, one-call undo; the weekly
+  // change runs after a successful Growth refresh. opts.learning = { cfg, rows, posts, now, hourOf } are test seams.
+  const mixOn = () => growthOn() && flags.isOn(MIX_FLAG);
+  const mixIo = () => ({ dataDir: opts.dataDir, ...(opts.learning ?? {}), now: opts.learning?.now ?? now() });
   // Report button (flag `report-button`, D199): builds a prefilled GitHub new-issue link; the page opens it. No network here.
   const reporter = opts.reporter ?? createReporter({ profileFile: opts.profileFile, releaseFile: opts.releaseFile });
   const reportOn = () => !!flags && flags.isOn(REPORT_FLAG);
@@ -1223,7 +1241,7 @@ export function createStudioServer(opts) {
       if (!readinessOn()) return json(res, 404, { error: 'readiness-off' });
       try { return json(res, 200, publicReadiness(await readiness().run({ maxAgeMs: 0 }))); } catch { return json(res, 500, { error: 'readiness-failed' }); }
     }
-    if (req.method === 'GET' && route === '/ui/api/settings') return json(res, 200, typeof opts.dataDir === 'string' ? { settings: readSettings(opts.dataDir), clips: clipStatus(), reelLengths: reelLengthInfo(opts.dataDir), reelHooks: reelHookInfo(opts.dataDir) } : { settings: null });
+    if (req.method === 'GET' && route === '/ui/api/settings') return json(res, 200, typeof opts.dataDir === 'string' ? { settings: readSettings(opts.dataDir), clips: clipStatus(), reelLengths: reelLengthInfo(opts.dataDir), reelHooks: reelHookInfo(opts.dataDir), reelTransition: reelTransitionInfo(opts.dataDir) } : { settings: null });
     if (req.method === 'GET' && route === '/ui/api/edits') return json(res, 200, history.state());
     if (req.method === 'GET' && route === '/ui/api/project/structure') return structureChoices(res);
     if (req.method === 'GET' && route === '/ui/api/project/transitions') return transitionChoices(res);
@@ -1240,6 +1258,7 @@ export function createStudioServer(opts) {
       // Presence, scheme and last 4 characters only; never a key, token, address or account name.
       try { const c = connect(); return json(res, 200, { ...(await c.status({ fresh: url.searchParams.get('fresh') === '1' })), job: c.currentJob() }); } catch (e) { return connectFail(res, e); }
     }
+    if (route.startsWith('/ui/api/growth') && !growthOn()) return json(res, 404, { error: 'growth-off' });
     if (route.startsWith('/ui/api/posts') && !postingOn()) return json(res, 404, { error: 'posting-off' });
     if (route.startsWith('/ui/api/bots') && !botsOn()) return json(res, 404, { error: 'bot-manager-off' });
     if (req.method === 'GET' && route === '/ui/api/bots') {
@@ -1277,6 +1296,31 @@ export function createStudioServer(opts) {
         return json(res, 200, await previewRules({ dataDir: opts.dataDir, rules, rulesFile, profile, log, flagOn: !!flags && flags.isOn(AUTO_FLAG), now: () => new Date(now()), outputsStatus: streamOnly(ytOutputsStatus), scheduleOn: !!flags && flags.isOn(SCHEDULE_FLAG), scheduleFile: opts.scheduleFile }));
       } catch { return json(res, 200, { error: 'preview-unavailable', queued: [], skipped: [] }); }
     }
+    if (req.method === 'GET' && route === '/ui/api/posts/auto/settings') {
+      // D375 Settings > Posting & growth > Auto-post: the card's values, defaults, limits and quota fit. Read only.
+      if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+      try {
+        const on = (id) => !!flags && flags.isOn(id);
+        return json(res, 200, { ...readAutoPostSettings(opts.dataDir), flags: { autoPost: on(AUTO_FLAG), schedule: on(SCHEDULE_FLAG), deleteUploaded: on(DELETE_FLAG) } });
+      } catch { return json(res, 500, { error: 'settings-unreadable' }); }
+    }
+    if (req.method === 'GET' && route === '/ui/api/posts/auto/schedule') {
+      // D375 "Next posting times": the channel's scheduled posts, the queue's times and the next free slots. fresh=1 reads
+      // the channel again (read-only scope, at most every 10 minutes); otherwise the times saved at the chain's last read.
+      if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+      const t = now();
+      let channel = null; let liveError = null;
+      if (url.searchParams.get('fresh') === '1') {
+        if (!channelRead || t - channelRead.at >= CHANNEL_READ_EVERY_MS) {
+          channelRead = { at: t, promise: (async () => readChannelForPreview({ dataDir: opts.dataDir, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl ?? fetch, nowMs: t }))()
+            .then((c) => ({ channel: c }), (e) => ({ error: String(e?.code ?? 'schedule-read-failed').slice(0, 40) })) };
+        }
+        const r = await channelRead.promise;
+        channel = r.channel ?? null; liveError = r.error ?? null;
+      }
+      const count = Number(url.searchParams.get('count') ?? 10);
+      try { return json(res, 200, { ...schedulePreview(opts.dataDir, { nowMs: t, count: Number.isFinite(count) ? count : 10, channel }), liveError }); } catch { return json(res, 500, { error: 'schedule-unavailable' }); }
+    }
     if (req.method === 'GET' && route === '/ui/api/posts/auto') {
       // Read-only: the auto-post mode and what a run would do now. Enabling stays a flag; nothing is changed here.
       const rulesFile = rulesSrc.file();
@@ -1284,8 +1328,20 @@ export function createStudioServer(opts) {
         const rules = rulesSrc.get();
         const mode = describeMode({ flagOn: !!flags && flags.isOn(AUTO_FLAG), rules });
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
-        return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
+        return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()), maxUploadsPerDay: rules.maxUploadsPerDay ?? null, unscoredFloor: rankerMinScore() }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
       } catch { return json(res, 200, { mode: { enabled: false, flagOn: false, autoUpload: false, ruleCount: 0, privacy: 'private', error: 'rules-unreadable' }, rulesFile, plan: [] }); }
+    }
+    if (route.startsWith('/ui/api/growth/mix') && !mixOn()) return json(res, 404, { error: 'self-learning-off' });
+    if (req.method === 'GET' && route === '/ui/api/growth/mix') {
+      // Read only: the mix in use, why it is (not) applied, the numbers behind it, the change log and the weekly report text.
+      try { const v = await mixView(mixIo()); return json(res, 200, { ...v, report: mixReport(v, opts.learning?.cfg) }); } catch { return json(res, 500, { error: 'mix-failed' }); }
+    }
+    if (req.method === 'GET' && route === '/ui/api/growth') {
+      // Numbers per posted video + the sign-in state. Never a token; the store is opened per call and closed again.
+      let st = { signedIn: false, hasClient: false };
+      try { st = await (opts.growth?.auth ?? youtubeAuth()).status?.() ?? st; } catch { /* shown as not signed in */ }
+      const store = openGrowthStore(path.join(opts.dataDir, GROWTH_DB));
+      try { return json(res, 200, { ...growthView(store, now()), signedIn: st.signedIn === true, hasClient: st.hasClient === true, busy: growthBusy }); } catch { return json(res, 500, { error: 'growth-failed' }); } finally { store.close(); }
     }
     if (req.method === 'GET' && route === '/ui/api/posts/media') return postMedia(req, res, url);
     if (req.method === 'GET' && route === '/ui/api/posts/youtube/status') {
@@ -1481,6 +1537,54 @@ export function createStudioServer(opts) {
         ut.done();
         return json(res, 200, { videoId: r.videoId, uploadStatus: r.uploadStatus, thumbnailOk: r.thumbnailOk, privacy: 'private' });
       } catch (e) { ut.fail('The upload did not finish'); return fail(e); } finally { uploading.delete(body.id); }
+    }
+    if (route === '/ui/api/growth/refresh') {
+      // Reads the user's own numbers from YouTube (read only; nothing is posted or changed). One run at a time; a run within
+      // the hour of the last one is skipped unless `force` is true. Not tied to live: it is never needed while live, only allowed.
+      if (Object.keys(body).some((k) => k !== 'force') || (body.force !== undefined && typeof body.force !== 'boolean')) return json(res, 400, { error: 'bad-params' });
+      if (growthBusy) return json(res, 409, { error: 'refresh-in-progress' });
+      growthBusy = true;
+      try {
+        const a = opts.growth?.auth ?? youtubeAuth();
+        const r = await growthCollect({ dataDir: opts.dataDir, auth: a, fetchImpl: opts.growth?.fetchImpl ?? opts.youtube?.fetchImpl ?? fetch, now: opts.growth?.now ?? now, force: body.force === true });
+        // RP5 (D373): the weekly change of the learned mix, on its own (at most once a week, inside the limits)
+        let mix;
+        if (mixOn()) { try { const m = await mixStep(mixIo()); mix = { changed: m.changed, reason: m.reason }; } catch { mix = { changed: false, reason: 'mix-failed' }; } }
+        return json(res, 200, { ok: true, ...r, ...(mix ? { mix } : {}) });
+      } catch (e) {
+        if (e instanceof AnalyticsError) return json(res, e.code === 'analytics-scope-missing' ? 401 : 502, { error: e.code });
+        if (e?.code === 'oauth-no-client' || e?.code === 'oauth-reauth-needed') return json(res, 401, { error: e.code === 'oauth-no-client' ? 'youtube-no-client' : 'youtube-not-signed-in' });
+        return json(res, 502, { error: 'growth-failed' });
+      } finally { growthBusy = false; }
+    }
+    if (route === '/ui/api/growth/mix/undo') {
+      // RP5 one-click undo (D364): the newest change still in effect goes back to the mix before it. Local file only.
+      if (Object.keys(body).length) return json(res, 400, { error: 'bad-params' });
+      try {
+        const u = mixUndo(mixIo());
+        if (!u.undone) return json(res, 409, { error: 'nothing-to-undo' });
+        const v = await mixView(mixIo());
+        return json(res, 200, { ok: true, undoes: u.entry.undoes, ...v });
+      } catch { return json(res, 500, { error: 'mix-failed' }); }
+    }
+    if (route === '/ui/api/posts/auto/settings') {
+      // D375: one click saves the card (D332, no confirm). Every value is checked first; nothing is written on a problem.
+      // The rules and the schedule settings go to the user's files in the data dir; the next pass uses them (no restart).
+      if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+      if (Object.keys(body).some((k) => k !== 'card' && k !== 'doc') || (body.card === undefined) === (body.doc === undefined)) return json(res, 400, { error: 'bad-params' });
+      let r;
+      try { r = saveAutoPostSettings(opts.dataDir, body); } catch { return json(res, 500, { error: 'save-failed' }); }
+      return r.ok ? json(res, 200, { ok: true, ...r.settings }) : json(res, 400, { error: 'invalid', problems: r.problems });
+    }
+    if (route === '/ui/api/posts/auto/queue/move' || route === '/ui/api/posts/auto/queue/remove') {
+      // D375: move a queued clip to another free time, or take it out of the queue. Local file only; nothing is sent.
+      const move = route.endsWith('/move');
+      const keys = move ? ['id', 'at'] : ['id'];
+      if (typeof opts.dataDir !== 'string' || typeof body.id !== 'string' || body.id.length > 64 || (move && (typeof body.at !== 'string' || body.at.length > 40))
+        || Object.keys(body).some((k) => !keys.includes(k))) return json(res, 400, { error: 'bad-params' });
+      const r = move ? moveQueueItem(opts.dataDir, body.id, body.at, { nowMs: now() }) : removeQueueItem(opts.dataDir, body.id);
+      return r.ok ? json(res, 200, { ok: true, state: r.item.state, publishAt: r.item.publishAt ?? null, queue: readQueueSummary(opts.dataDir, flags) })
+        : json(res, r.code === 'unknown' ? 404 : 409, { error: r.code, text: r.text });
     }
     if (route === '/ui/api/posts/queue/retry') {
       // D301 "Retry now": puts a failed (or waiting) item back in the upload queue at once; the chain's next tick uploads it.

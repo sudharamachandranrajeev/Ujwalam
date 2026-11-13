@@ -33,7 +33,9 @@ import { fileURLToPath } from 'node:url';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createCredentialStore } from '../event-core/streamerbot/credential.mjs';
 import { systemTool } from '../event-core/config.mjs';
-import { createYoutubeAuth, CLIENT_ID_TARGET, CLIENT_SECRET_TARGET } from '../posting/oauth.mjs';
+import { ANALYTICS_SCOPE, createYoutubeAuth, joinScopes, CLIENT_ID_TARGET, CLIENT_SECRET_TARGET } from '../posting/oauth.mjs';
+import { createFlags } from '../flags/index.mjs';
+import { GROWTH_FLAG } from '../analytics/index.mjs';
 import { keyFreshness, noteKeySaved } from '../outputs/instagram.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -238,7 +240,8 @@ export function createConnect(opts = {}) {
   };
   const ytAuth = createYoutubeAuth({
     clientIdStore: store(CLIENT_ID_TARGET), clientSecretStore: store(CLIENT_SECRET_TARGET), refreshStore: ytRefreshGuarded,
-    scope: YOUTUBE_SCOPE, browserOpen: (u) => browserOpen(u), now, endpoints: { authUrl: ep.googleAuth, tokenUrl: ep.googleToken }, request: formPost,
+    // growth on (AN1, D371): also the read-only statistics permission, so this sign-in keeps the Growth section working
+    scope: () => (createFlags({ dataDir: opts.dataDir }).isOn(GROWTH_FLAG) ? joinScopes(YOUTUBE_SCOPE, ANALYTICS_SCOPE) : YOUTUBE_SCOPE), browserOpen: (u) => browserOpen(u), now, endpoints: { authUrl: ep.googleAuth, tokenUrl: ep.googleToken }, request: formPost,
   });
 
   // Serial sections: one chain per name. 'creds' covers every output key / server write (read state, write, re-check);

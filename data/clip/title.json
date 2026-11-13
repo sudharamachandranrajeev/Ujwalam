@@ -1,0 +1,21 @@
+{
+  "$comment": "RP4 title card (D362, user 2026-11-11: 'streamer title fade over a blurred background'). A short title (the streamer brand from data/profile.local.json, never committed) fades in and out over a blurred, darkened copy of the reel behind it. Read by services/clip/reel_title.py. Placed right after the teaser (part 1 of a montage; the payoff-first hook of a reel), else at the very start of the reel. Behind the flag reel-title (off by default). No music yet (RP3 adds the bed that fades out as the title ends). Entrance under 600 ms, exit under 400 ms (overlay rule).",
+  "version": "1.0.0",
+  "status": "proposed",
+  "approved": "user 2026-11-11 chose the feature; durations, blur, darkness, size and position are the agent's proposal (plan RP4)",
+  "checked": "2026-11-12",
+  "flag": "reel-title",
+  "fontFile": "Exo2-Bold.ttf",
+  "durationSec": { "value": 1.6, "min": 1.2, "max": 1.8 },
+  "fadeInMs": 450,
+  "fadeOutMs": 350,
+  "blur": { "sigma": 18, "steps": 2 },
+  "darken": 0.55,
+  "sizeOfHeight": 0.07,
+  "colour": "#FFFFFF",
+  "borderOfSize": 0.08,
+  "maxChars": 24,
+  "glyphWidthOfSize": 0.62,
+  "minReelSec": 4.0,
+  "why": "1.6 s sits inside the 1.2-1.8 s the user named; the entrance and exit are under the overlay limits (600/400 ms). The blurred layer is a Gaussian blur (ffmpeg gblur, in the LGPL builds; boxblur is not) of the reel itself, darkened to 55 % so a white title reads on any scene. The title is centred in the safe width and the middle of the frame. A reel shorter than minReelSec gets no title."
+}

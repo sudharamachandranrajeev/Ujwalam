@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { LAPTOP_ONLY, QUICK, STEPS, isCloud, notRunLine, planSteps, runSteps, selectSteps, summaryLines } from '../tools/ci.mjs';
+import { LAPTOP_ONLY, QUICK, gpuGuard, STEPS, isCloud, notRunLine, planSteps, runSteps, selectSteps, summaryLines } from '../tools/ci.mjs';
 import { checkPush, hasPass, recordPass, worktreeTree } from '../tools/ci-stamp.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -276,4 +276,18 @@ test('CLI cloud mode: a failing step that ran still exits 1', () => {
   const r = spawnSync(process.execPath, [ci, '--only', 'lint'], { encoding: 'utf8', windowsHide: true, env: { ...process.env, UJWALAM_CI_ROOT: root, GITHUB_ACTIONS: 'true' } });
   assert.equal(r.status, 1);
   assert.match(r.stdout, /FAILED: lint/);
+});
+
+test('GPU steps are refused while an installed Ujwalam runs (2026-11-12 GPU reset)', () => {
+  const busy = () => [{ pid: 42, name: 'ujwalam-host.exe' }];
+  const none = () => [];
+  const msg = gpuGuard(STEPS, false, busy);
+  assert.match(msg, /refused/);
+  assert.match(msg, /test-host/);
+  assert.match(msg, /pid 42/);
+  assert.equal(gpuGuard(STEPS, false, none), null);
+  assert.equal(gpuGuard(STEPS, true, busy), null, 'cloud runs have no GPU steps');
+  assert.equal(gpuGuard(STEPS, false, busy, { UJWALAM_CI_ALLOW_GPU: '1' }), null, 'the user override');
+  assert.match(gpuGuard(STEPS, false, () => null, {}), /could not check/, 'a failed check is never read as free');
+  assert.equal(gpuGuard(selectSteps(STEPS, 'lint,test-py'), false, busy), null, 'CPU-only steps still run');
 });

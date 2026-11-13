@@ -549,7 +549,7 @@
     var readyOn = (list || []).some(function (f) { return f.id === 'readiness' && f.on; }); // D299
     $('readiness').hidden = !readyOn;
     if (!readyOn) { clear($('ready-list')); setText($('ready-summary'), ''); }
-    (list || []).forEach(function (f) {
+    (list || []).slice().sort(function (a, b) { return String(a.label || a.id).toLowerCase() < String(b.label || b.id).toLowerCase() ? -1 : 1; }).forEach(function (f) {
       var cb = el('input', { type: 'checkbox', id: 'flag-' + f.id, 'aria-label': f.id });
       cb.checked = !!f.on;
       cb.addEventListener('change', function () {
@@ -559,9 +559,10 @@
           if (r.flags) renderFlags(r.flags);
         }));
       });
-      var name = [el('span', { class: 'name', text: f.id })];
+      var name = [el('span', { class: 'name', text: f.label || f.id })];
+      if (f.summary) name.push(el('span', { class: 'muted', text: ' - ' + f.summary }));
       if (f.note) name.push(el('span', { class: 'muted', text: ' (' + f.note + ')' })); // e.g. instagram-live: applies at next start
-      ul.appendChild(el('li', { class: 'row flag-row', title: f.description }, name.concat([el('label', null, [cb])])));
+      ul.appendChild(el('li', { class: 'row flag-row', title: f.description + ' (flag: ' + f.id + ')' }, name.concat([el('label', null, [cb])])));
     });
     if (!list || !list.length) setText($('flag-note'), 'No feature flags defined.');
     else setText($('flag-note'), 'A flag switches on or off when you tick it.');
@@ -787,7 +788,7 @@
     var ul = $('posts-preview'); clear(ul); setText($('posts-preview-sum'), 'Checking...');
     Api.postsAutoPreview().then(function (r) {
       if (r.error) { setText($('posts-preview-sum'), 'Preview unavailable.'); return; }
-      var sch = r.schedule && r.schedule.on ? (r.schedule.error === 'schedule-read-incomplete' ? ' Scheduled posting is on, but the channel has more uploads than are checked (raise maxPages in data/posting/schedule.json): nothing would upload.' : r.schedule.error ? ' Scheduled posting is on, but its settings file is not valid: nothing would upload.' : ' Scheduled posting is on (every ' + r.schedule.intervalHours + ' h); the public times are estimates, set for real when a clip is queued.' + (r.schedule.retries ? ' ' + r.schedule.retries + ' queued clip(s) came within ' + r.schedule.minLeadHours + ' h of their time: they get a new time about ' + r.schedule.minLeadHours + ' h from now, and ' + r.schedule.rechained + ' queued clip(s) move to ' + r.schedule.intervalHours + ' h apart after it.' : '')) : '';
+      var sch = r.schedule && r.schedule.on ? (r.schedule.error === 'schedule-read-incomplete' ? ' Scheduled posting is on, but the channel read did not reach back far enough to see every scheduled post (raise maxPages in data/posting/schedule.json): nothing would upload.' : r.schedule.error ? ' Scheduled posting is on, but its settings are not valid: nothing would upload.' : ' Scheduled posting is on (at least ' + r.schedule.intervalHours + ' h apart, around the posts already scheduled); the public times are estimates, set for real when a clip is queued.' + (r.schedule.retries ? ' ' + r.schedule.retries + ' queued clip(s) came within ' + r.schedule.minLeadHours + ' h of their time: they get the next free time.' : '')) : (r.schedule ? ' Scheduled posting is off: automatic uploads wait until it is on.' : '');
       setText($('posts-preview-sum'), 'Dry run: ' + r.queued.length + ' would be queued, ' + r.skipped.length + ' skipped. Nothing is written or sent.' + (r.blocked ? ' A stream looks live (' + r.blocked + '): a run would be refused.' : '') + sch);
       r.queued.forEach(function (q) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'would ' + q.actions.join(' + ') + ': ' + q.kind + ' to ' + q.target + ' | ' + q.title }), el('span', { class: 'muted', text: 'rule ' + q.ruleId + (q.score !== null ? ', score ' + q.score : '') + (q.publishAt ? ', goes public about ' + whenText(q.publishAt) : q.publishNote === 'beyond-cap' ? ', waits: its public time would be more than ' + r.schedule.maxAheadDays + ' days ahead' : '') })])); });
       r.skipped.forEach(function (s) { ul.appendChild(el('li', { class: 'row' }, [el('span', { class: 'name', text: 'skip ' + (s.kind || '?') + ' ' + (s.target || '-') + (s.title ? ' | ' + s.title : '') }), el('span', { class: 'muted', text: s.reason + (s.detail ? ' (' + s.detail + ')' : '') })])); });

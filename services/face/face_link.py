@@ -228,6 +228,10 @@ class Link:
     def _put(self, fmt, off, v):
         struct.pack_into(fmt, self.mv, off, v)
 
+    def host_age_ms(self):
+        """Milliseconds since the host's last heartbeat (negative: a heartbeat from the future), for the log."""
+        return now_ms() - self._get("<q", 64)
+
     def host_alive(self, max_age_ms=3000):
         age = now_ms() - self._get("<q", 64)
         return -1000 <= age <= max_age_ms  # a heartbeat from the future is not a live host

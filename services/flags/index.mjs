@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Feature flags (alpha plan Part B, D149). Node stdlib only.
-//   defaults: data/flags.json (committed): { flags: [{ id, description, default, since }] }
+//   defaults: data/flags.json (committed): { flags: [{ id, description, default, since, label, page, summary }] }
 //   local state: <dataDir>/flags.local.json (gitignored): { flags: { <id>: true|false } }, written atomically.
 // The studio-ui server owns writes (flags.set). Other services import createFlags() and read: isOn() re-reads the local
 // file when its mtime changes, so a flip made on the control page is seen without a restart. LU2 (D324): both files
@@ -15,6 +15,8 @@ import { createDataSource, parseJsonText } from '../common/data-reload.mjs';
 
 export const FLAG_ID = /^[a-z][a-z0-9-]{0,47}$/;
 export const DEFAULT_FLAGS_FILE = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'flags.json');
+/** The Settings pages a flag's switch can live on (the studio shows each flag in a FEATURES card on its page). */
+export const FLAG_PAGES = ['clips', 'posting', 'stream', 'transitions', 'connections', 'chat', 'editing', 'preview', 'appearance', 'advanced'];
 export const LOCAL_NAME = 'flags.local.json';
 
 /** The definitions as data: throws a plain-words error on a malformed document. */
@@ -26,7 +28,9 @@ export function parseDefinitions(j) {
     if (seen.has(f.id)) throw new Error(`flags: duplicate id ${f.id}`);
     seen.add(f.id);
     if (typeof f.description !== 'string' || typeof f.default !== 'boolean' || typeof f.since !== 'string') throw new Error(`flags: bad entry ${f.id}`);
-    return { id: f.id, description: f.description, default: f.default, since: f.since };
+    for (const k of ['label', 'summary']) if (typeof f[k] !== 'string' || !f[k].trim()) throw new Error(`flags: bad entry ${f.id} (${k})`);
+    if (!FLAG_PAGES.includes(f.page)) throw new Error(`flags: bad entry ${f.id} (page)`);
+    return { id: f.id, description: f.description, default: f.default, since: f.since, label: f.label, page: f.page, summary: f.summary };
   });
 }
 

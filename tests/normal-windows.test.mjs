@@ -61,15 +61,21 @@ test('host log line and launcher message name the main display, not a second dis
 test('studio window: shown and activated normally, no second-display move (D316 replaces D219)', () => {
   const m = src('app/studio/src/main.cpp');
   assert.doesNotMatch(m, /screens\.at\(1\)/);
-  // WA_ShowWithoutActivating is kept only in the two headless test modes: the offscreen probe
-  // (UJWALAM_STUDIO_PROBE_SHOW) and the hidden native window of the studio swap tests (UJWALAM_STUDIO_HIDDEN,
-  // laid out with WA_DontShowOnScreen, LU4/D346). Neither reaches the screen.
+  // WA_ShowWithoutActivating is kept only in the headless test modes: the offscreen probe (UJWALAM_STUDIO_PROBE_SHOW),
+  // the hidden native window of the studio swap tests and its HiddenWindows filter (UJWALAM_STUDIO_HIDDEN, laid out
+  // with WA_DontShowOnScreen, LU4/D346, D376), and the hidden probe's screen-shot action (D376, only with
+  // UJWALAM_STUDIO_SETTINGS_SHOT_DIR set; evidence pictures, never in the user's studio).
   const lines = m.split('\n');
   const uses = lines.map((l, i) => (l.includes('WA_ShowWithoutActivating') ? i : -1)).filter((i) => i >= 0);
-  assert.equal(uses.length, 2);
+  assert.equal(uses.length, 4);
   const probe = m.indexOf('UJWALAM_STUDIO_PROBE_SHOW');
-  assert.ok(probe >= 0 && m.indexOf('WA_ShowWithoutActivating') > probe, 'first use inside the headless probe');
-  assert.match(lines[uses[1] - 1], /WA_DontShowOnScreen/, 'second use only with WA_DontShowOnScreen (hidden test window)');
+  assert.ok(probe >= 0 && lines[uses[2] - 1].includes('UJWALAM_STUDIO_PROBE_SHOW'), 'one use inside the headless probe');
+  for (const i of [uses[0], uses[3]])
+    assert.match(lines[i - 1], /WA_DontShowOnScreen, true/, 'hidden-window uses only with WA_DontShowOnScreen');
+  const shot = body(m, 'static bool screenShot(MainWindow &win, const QString &name)');
+  assert.match(shot, /UJWALAM_STUDIO_SETTINGS_SHOT_DIR/);
+  assert.match(shot, /UJWALAM_STUDIO_HIDDEN/);
+  assert.ok(shot.includes('WA_ShowWithoutActivating'), 'the screen-shot use sits inside the hidden-probe action');
   assert.match(m, /win\.show\(\);[^\n]*\n\s*win\.raise\(\);\s*\n\s*win\.activateWindow\(\);/);
   const leave = body(src('app/studio/src/main_window.cpp'), 'void MainWindow::leaveTray()');
   assert.doesNotMatch(leave, /WA_ShowWithoutActivating/);

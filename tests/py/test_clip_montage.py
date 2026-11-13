@@ -37,6 +37,17 @@ def streak(t0, n=3, step=5):
     return hs + [medal(t0 + 2 * step + 0.5)]
 
 
+def b2(t, label):
+    return {"t": float(t), "detector": "B2", "label": label, "signal": True, "role": "positive", "mode": "br"}
+
+
+def br_chain():
+    """The BR hits of the 2026-11-11 session around its 3X short (triage F2), seconds into the recording."""
+    return [b2(555, "KNOCKED DOWN"), b2(560, "ELIMINATED"), b2(561, "KNOCKED DOWN"), b2(580, "KNOCKED DOWN"),
+            b2(581, "ELIMINATED"),
+            {"t": 582.0, "detector": "X1", "label": "3X MULTI-KILL", "signal": True, "role": "positive", "mode": "br"}]
+
+
 class MontageTests(unittest.TestCase):
     def test_config_user_values(self):
         self.assertEqual((CFG["preSec"], CFG["postSec"], CFG["audioFadeMs"]), (3.0, 1.5, 80))
@@ -132,6 +143,42 @@ class MontageTests(unittest.TestCase):
         sts, _ = mont.streaks(hits, RANKING, CFG)
         self.assertEqual(len(sts[0]["kills"]), 4)
 
+    def test_br_own_hud_kills_and_knocks_chain_into_one_group(self):
+        # CL2 (triage F2): the 2026-11-11 BR short. B1 read no own kill; B2 (own HUD) read the knocks and kills; the
+        # 3X medal's kills spanned 555-582 s, more than the 12 s MP chain gap
+        gs, _ = mont.groups(br_chain(), RANKING, CFG)
+        self.assertEqual(len(gs), 1)
+        self.assertEqual(gs[0]["kills"], [560.0, 581.0], "ELIMINATED counts, the medal is covered by the 581 kill")
+        self.assertEqual(gs[0]["actions"], [555.0, 561.0, 580.0], "knocks are shown, not counted")
+        self.assertTrue(gs[0]["streak"])
+
+    def test_br_gap_does_not_change_multiplayer(self):
+        hits = [dict(kill(100), mode="mp"), dict(kill(120), mode="mp")]  # 20 s apart: two groups in MP
+        self.assertEqual(len(mont.groups(hits, RANKING, CFG)[0]), 2)
+
+    def test_a_knock_alone_is_no_kill_group(self):
+        self.assertEqual(mont.groups([b2(300, "KNOCKED DOWN")], RANKING, CFG)[0], [])
+
+    def test_live_clip_recut_keeps_the_earlier_kills_and_cuts_the_running(self):
+        # the live window was 567-587 s (17 s before the medal): it missed 555-561 and kept 567-580 of running
+        gs, deaths = mont.groups(br_chain(), RANKING, CFG)
+        ps = mont.live_clip_pieces(mont.groups_in(gs, 567.0, 587.0), deaths, RANKING, CFG, 20.0, lo=538.0, hi=598.0)
+        # knock 555 + kill 560 + knock 561 = 552-562.5; knock 580 + kill 581 = 577-582.5; 16 s, so 4 s earlier
+        self.assertEqual([(p["start"], p["end"]) for p in ps], [(548.0, 562.5), (577.0, 582.5)])
+        self.assertEqual(sum(p["kills"] for p in ps), 2)
+        self.assertAlmostEqual(sum(p["end"] - p["start"] for p in ps), 20.0)
+
+    def test_live_clip_recut_stays_inside_the_save_and_before_a_death(self):
+        gs, deaths = mont.groups(br_chain() + [death(590.0)], RANKING, CFG)
+        ps = mont.live_clip_pieces(mont.groups_in(gs, 567.0, 587.0), deaths, RANKING, CFG, 40.0, lo=552.0, hi=598.0)
+        self.assertEqual(ps[0]["start"], 552.0, "never before the save file starts")
+        self.assertLessEqual(ps[-1]["end"], 590.0 - RANKING["death"]["endBeforeSec"])
+
+    def test_live_clip_without_a_group_keeps_its_window(self):
+        gs, deaths = mont.groups(br_chain(), RANKING, CFG)
+        self.assertEqual(mont.groups_in(gs, 900.0, 920.0), [])
+        self.assertEqual(mont.live_clip_pieces([], deaths, RANKING, CFG, 20.0), [])
+
     def test_render_argv_keeps_every_audio_track(self):
         pieces = [{"start": 10.0, "end": 14.5, "kills": 1}, {"start": 30.0, "end": 34.5, "kills": 1}]
         argv = mont.render_argv("ffmpeg", "v.mkv", pieces, {"width": 1080, "height": 1920}, ["-c:v", "x"],
@@ -197,6 +244,140 @@ class MatchReelTests(unittest.TestCase):
     def test_reel_ends_at_the_recording_end(self):
         r = reels([kill(355), result(358)], {358: 1}, duration=359.0)[0]
         self.assertEqual(r["pieces"], [{"start": 352.0, "end": 356.5, "kills": 1}, {"start": 357.5, "end": 359.0, "kills": 0}])
+
+class LiveRecutTests(unittest.TestCase):
+    """CL2 in live-review (clipper._retime_live_clips): the recording's hits re-cut the live clips."""
+
+    def test_live_clips_are_recut_and_two_clips_of_one_chain_become_one(self):
+        import json
+        import tempfile
+        from types import SimpleNamespace
+        import clipper
+        with tempfile.TemporaryDirectory() as d:
+            rec = os.path.join(d, "rec.mkv")
+            open(rec, "wb").close()
+            with open(os.path.join(d, "detector-hits.jsonl"), "w", encoding="utf-8") as f:
+                f.write("".join(json.dumps(h) + "\n" for h in br_chain()))
+            with open(os.path.join(d, "detector-pass.json"), "w", encoding="utf-8") as f:
+                json.dump({"recording": "rec.mkv", "duration": 3000}, f)
+            mpath = os.path.join(d, "matches.json")
+            with open(mpath, "w", encoding="utf-8") as f:
+                json.dump({"recordStartUtc": "2026-11-11T21:10:46.000Z", "duration": 3000, "matches": []}, f)
+            t0 = 1794431446.0  # 2026-11-11T21:10:46Z
+            clips = [  # the 3X save (window 567-587 s) and a later save whose window holds the same chain's end
+                {"id": "L01", "file": "v1", "start": 29.23, "end": 49.23, "wallStart": t0 + 567.2, "labels": ["3X MULTI-KILL"],
+                 "reasons": ["a"], "score": 5, "anchor": 44.0},
+                {"id": "L02", "file": "v2", "start": 10.0, "end": 25.0, "wallStart": t0 + 575.0, "labels": ["Other"],
+                 "reasons": ["b"], "score": 3},
+            ]
+            a = SimpleNamespace(recording=rec, out=d, ranking=None, montage_config=None)
+            self.assertEqual(clipper._retime_live_clips(a, clips, mpath, {"v1": 60.0, "v2": 60.0}), 1)
+            self.assertEqual([c["id"] for c in clips], ["L01"], "the same kills are not cut twice")
+            (c,) = clips
+            off = 567.2 - 29.23
+            self.assertEqual([(round(p["start"] + off, 2), round(p["end"] + off, 2)) for p in c["pieces"]],
+                             [(548.0, 562.5), (577.0, 582.5)])
+            self.assertEqual(c["labels"], ["3X MULTI-KILL", "Other"])
+            self.assertTrue(c["retimed"])
+            self.assertTrue(c["start"] <= c["anchor"] <= c["end"])
+            # the earlier save ends at 570 s (before the chain's last kill): the later save that holds it all wins
+            clips = [
+                {"id": "L01", "file": "v1", "start": 20.0, "end": 29.0, "wallStart": t0 + 560.0, "labels": ["A"],
+                 "reasons": ["a"], "score": 5},
+                {"id": "L02", "file": "v2", "start": 30.0, "end": 45.0, "wallStart": t0 + 575.0, "labels": ["B"],
+                 "reasons": ["b"], "score": 3},
+            ]
+            self.assertEqual(clipper._retime_live_clips(a, clips, mpath, {"v1": 30.0, "v2": 60.0}), 1)
+            (c,) = clips
+            self.assertEqual((c["id"], c["labels"]), ("L02", ["B", "A"]))
+            self.assertEqual([(round(p["start"] + 545.0, 2), round(p["end"] + 545.0, 2)) for p in c["pieces"]],
+                             [(548.0, 562.5), (577.0, 582.5)])
+
+def match(i, start, end, end_screen=None, qualifies=False, result=None, mode="mp"):
+    return {"index": i, "start": float(start), "end": float(end), "mode": mode, "result": result,
+            "endScreenAt": end_screen, "resultAt": end_screen if result else None, "reel": {"qualifies": qualifies}}
+
+
+class StoryMontageTests(unittest.TestCase):
+    """RP2 (D361) story montages and the end-screen fix (triage F1)."""
+
+    def test_kills_read_on_end_screens_never_reach_a_montage(self):
+        # 2026-11-11: kill-feed and medal reads after VICTORY put result screens of several matches into one montage
+        ms = [match(1, 0, 400, end_screen=300, qualifies=True, result="VICTORY")]
+        hits = [kill(100 + 25 * i) for i in range(8)] + [kill(305), kill(320), medal(321, "Fury Kill")]
+        for m in mont.plan_montages(hits, RANKING, CFG, 1000, ms):
+            for p in m["pieces"]:
+                self.assertLessEqual(p["end"], 300.0, p)
+        hits = [kill(299)] + [kill(100 + 25 * i) for i in range(7)]
+        (m,) = mont.plan_montages(hits, RANKING, CFG, 1000, ms)
+        self.assertEqual(max(p["end"] for p in m["pieces"]), 300.0, "the last kill's piece stops at the end screen")
+
+    def test_one_match_told_in_order_after_a_fast_cut_then_its_own_result(self):
+        ms = [match(1, 0, 400, end_screen=380, qualifies=True, result="VICTORY"), match(2, 400, 800, end_screen=780)]
+        hits = [kill(50 + 40 * i) for i in range(8)] + streak(600, n=3, step=10)
+        (m, *_rest) = mont.plan_story_montages(hits, RANKING, CFG, 1000, ms)
+        st = m["story"]
+        self.assertEqual(st["match"], 1)
+        hook = [p for p in m["pieces"] if p.get("hook")]
+        body = [p for p in m["pieces"] if not p.get("hook") and not p.get("result")]
+        self.assertEqual(len(hook), CFG["story"]["hookCuts"])
+        self.assertEqual(m["pieces"][:len(hook)], hook, "the fast cut comes first")
+        self.assertAlmostEqual(st["titleAt"], sum(p["end"] - p["start"] for p in hook))
+        self.assertLessEqual(st["titleAt"], CFG["story"]["hookMaxSec"])
+        self.assertTrue(all(0 <= p["start"] < 400 for p in body), "the story is one match")
+        self.assertEqual([p["start"] for p in body], sorted(p["start"] for p in body), "in time order")
+        self.assertTrue(m["pieces"][-1].get("result"), "its own result screen ends it")
+        self.assertEqual(st["result"], "VICTORY")
+        self.assertEqual(st["topUps"], [])
+        self.assertTrue(CFG["minSec"] <= m["seconds"] <= CFG["maxSec"])
+
+    def test_a_short_match_is_topped_up_after_the_story_and_shows_no_result(self):
+        ms = [match(1, 0, 400, end_screen=380, qualifies=True, result="VICTORY"), match(2, 400, 800, end_screen=780,
+                                                                                   qualifies=True, result="VICTORY")]
+        hits = [kill(50 + 40 * i) for i in range(4)] + [kill(450 + 40 * i) for i in range(3)]
+        (m,) = mont.plan_story_montages(hits, RANKING, CFG, 1000, ms)
+        self.assertEqual((m["story"]["match"], m["story"]["topUps"]), (1, [2]))
+        body = [p for p in m["pieces"] if not p.get("hook")]
+        self.assertFalse(any(p.get("result") for p in body), "no result screen when another match follows")
+        first2 = next(i for i, p in enumerate(body) if p["start"] >= 400)
+        self.assertTrue(all(p["start"] < 400 for p in body[:first2]) and all(p["start"] >= 400 for p in body[first2:]),
+                        "the story match first, the top-up after it")
+
+    def test_kills_in_live_clips_are_left_out_when_possible_and_no_kill_is_used_twice(self):
+        ms = [match(1, 0, 400, end_screen=380), match(2, 400, 800, end_screen=780), match(3, 800, 1200, end_screen=1180)]
+        hits = ([kill(50 + 40 * i) for i in range(7)] + [kill(450 + 40 * i) for i in range(7)]
+                + [kill(850 + 40 * i) for i in range(7)])
+        ms_out = mont.plan_story_montages(hits, RANKING, CFG, 2000, ms, avoid=[(0.0, 400.0)])
+        self.assertEqual(sorted(m["story"]["match"] for m in ms_out[:2]), [2, 3], "the live-clip match is not a story first")
+        seen = []
+        for m in ms_out:
+            for p in m["pieces"]:
+                if not p.get("hook"):
+                    self.assertNotIn((p["start"], p["end"]), seen)
+                    seen.append((p["start"], p["end"]))
+        opens = [t for m in ms_out for t in m["story"]["hookMoments"]]
+        self.assertEqual(len(opens), len(set(opens)), "a moment opens one montage only")
+
+    def test_pieces_stay_inside_their_match_gameplay(self):
+        # Codex review: a group spanning a match boundary, and the pre-roll of a match's first kill
+        ms = [match(1, 0, 200, end_screen=190), match(2, 200, 400, end_screen=390)]
+        hits = [kill(188), kill(201)] + [kill(230 + 25 * i) for i in range(6)]
+        gs, _ = mont.groups(mont.drop_end_screens(hits, ms), RANKING, CFG, mont._bounds(ms))
+        self.assertFalse(any(min(g["kills"]) < 200 <= max(g["kills"]) for g in gs), "no group spans two matches")
+        for u in mont._units(gs, [], RANKING, CFG, 1000, ms):
+            a, b = u["span"]
+            for p in u["pieces"]:
+                self.assertTrue(a <= p["start"] and p["end"] <= b, (p, a, b))
+
+    def test_a_match_without_result_times_does_not_crash(self):
+        mt = {"index": 1, "start": 0.0, "end": 100.0, "resultAt": None, "endScreenAt": None}
+        self.assertEqual(mont._result_piece(mt, CFG, 1000)["end"], 100.0)
+
+    def test_story_needs_the_flag_and_is_off_by_default(self):
+        import json
+        with open(os.path.join(os.path.dirname(__file__), "..", "..", "data", "flags.json"), encoding="utf-8") as f:
+            flags = {x["id"]: x for x in json.load(f)["flags"]}
+        self.assertIs(flags[CFG["story"]["flag"]]["default"], False)
 
 
 if __name__ == "__main__":

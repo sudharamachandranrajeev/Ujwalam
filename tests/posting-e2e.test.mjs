@@ -4,7 +4,7 @@
 // The only seams used: fetchImpl (rewrites the googleapis host to the local server) and a fake token provider (auth).
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
@@ -13,6 +13,8 @@ import { createPostStore } from '../services/posting/index.mjs';
 import { checkPostStatus } from '../services/posting/youtube.mjs';
 import { tasksDir } from '../services/studio-ui/tasks.mjs';
 import { READONLY_SCOPE, SCOPE } from '../services/posting/oauth.mjs';
+import { DELETE_FLAG } from '../services/posting/delete-uploaded.mjs';
+import { createQuotaBudget } from '../services/posting/quota-budget.mjs';
 
 const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-e2e-post-')); tmp.push(d); return d; };
@@ -24,7 +26,12 @@ const PROFILE = { handles: { youtube: '@example-channel', twitch: 'example-chann
 const T0 = Date.parse('2026-11-09T10:00:00Z');
 const IDLE = { sinks: [{ id: 'yt', kind: 'stream', state: 'stopped' }, { id: 'rec', kind: 'record', state: 'stopped' }] };
 const LIVE = { sinks: [{ id: 'yt', kind: 'stream', state: 'live' }] };
-const authOk = { status: async () => ({ signedIn: true, hasClient: true }), accessToken: async () => 'fake-access' };
+const authOk = { status: async () => ({ signedIn: true, hasClient: true }), accessToken: async () => 'fake-access', grantedScopes: async () => [SCOPE, READONLY_SCOPE] };
+// D375: automatic uploads always go up scheduled. The tests use a 6 h gap on a 1-minute grid (the repo default is 1 h on whole
+// hours) so the times below stay easy to read; the delete flag stays off unless a test turns it on.
+const TEST_SCHEDULE = { intervalHours: 6, placement: 'fill-gaps', alignMinutes: 1, lookbackDays: 120, minLeadHours: 1, marginMinutes: 15,
+  chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 20, pageSize: 50, maxAheadDays: 730 };
+const CHAIN_FLAGS = { isOn: (id) => id !== DELETE_FLAG };
 
 /** Fake Google: resumable insert sessions, chunk PUTs, progress query, videos.list. `opt` switches inject faults. */
 async function fakeGoogle() {
@@ -103,7 +110,7 @@ async function fakeGoogle() {
         if (url.searchParams.get('playlistId') !== 'UUfake') return send(404, {});
         const size = Number(url.searchParams.get('maxResults')); const from = Number(url.searchParams.get('pageToken') ?? 0);
         const list = all(); const page = list.slice(from, from + size);
-        return send(200, { items: page.map((v) => ({ contentDetails: { videoId: v.id } })), ...(from + size < list.length ? { nextPageToken: String(from + size) } : {}) });
+        return send(200, { items: page.map((v) => ({ snippet: { publishedAt: v.addedAt ?? '2026-11-09T09:00:00.000Z' }, contentDetails: { videoId: v.id } })), ...(from + size < list.length ? { nextPageToken: String(from + size) } : {}) });
       }
       return send(404, {});
     });
@@ -146,8 +153,9 @@ function setup(rows = ROWS) {
   const ledgerFile = path.join(dataDir, 'posting', 'ledger.json');
   const runDir = path.join(dataDir, 'clips', 'runs', 'run1');
   const clock = { t: T0 };
-  const chain = (g, extra = {}) => createPostChain({ dataDir, flags: { isOn: (id) => id !== 'post-schedule' }, rulesFile, auth: authOk, fetchImpl: g.fetchImpl, now: () => clock.t,
-    tickEveryMs: 0, profileFile, ffmpeg: FFMPEG, chunkSize: 16, ...extra });
+  const scheduleFile = path.join(dataDir, 'schedule.json'); writeFileSync(scheduleFile, JSON.stringify(TEST_SCHEDULE));
+  const chain = (g, extra = {}) => createPostChain({ dataDir, flags: CHAIN_FLAGS, rulesFile, auth: authOk, fetchImpl: g.fetchImpl, now: () => clock.t,
+    tickEveryMs: 0, profileFile, ffmpeg: FFMPEG, chunkSize: 16, scheduleFile, ...extra });
   const uploads = () => JSON.parse(readFileSync(path.join(dataDir, 'clips', 'uploads.json'), 'utf8')).files;
   const queue = () => createUploadQueue(path.join(dataDir, 'posting', 'upload-queue.json'), () => clock.t);
   return { dataDir, runDir, ledgerFile, clock, chain, uploads, queue, store: () => createPostStore({ ledgerFile }) };
@@ -266,10 +274,10 @@ describe('auto post e2e against a local fake YouTube', () => {
 // ---------------------------------------------------------------- scheduled posting (flag post-schedule, D310 proposed)
 const HOUR = 3600 * 1000;
 const MIN = 60 * 1000;
-const FIRST = T0 + HOUR + 15 * MIN; // empty channel: now + minLeadHours (1) + marginMinutes (15), data/posting/schedule.json
+const FIRST = T0 + HOUR + 15 * MIN; // empty channel: now + minLeadHours (1) + marginMinutes (15) on the 1-minute grid (TEST_SCHEDULE)
 const iso = (t) => new Date(t).toISOString();
-const SCHED_ON = { isOn: () => true };
-const SCHED_OFF = { isOn: (id) => id !== 'post-schedule' };
+const SCHED_ON = CHAIN_FLAGS;
+const SCHED_OFF = { isOn: (id) => id !== 'post-schedule' && id !== DELETE_FLAG };
 const authSched = { ...authOk, grantedScopes: async () => [SCOPE, READONLY_SCOPE] };
 const vid = (id, privacyStatus, publishAt) => ({ id, status: { privacyStatus, uploadStatus: 'processed', ...(publishAt ? { publishAt } : {}) } });
 /** The clip maker publishes one more finished video into uploads.json (same run). */
@@ -289,7 +297,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
   /** A settings file in the test's data folder: the repo defaults with `over` applied. */
   const schedFile = (e, over) => {
     const p = path.join(e.dataDir, 'schedule.json');
-    writeFileSync(p, JSON.stringify({ intervalHours: 6, minLeadHours: 1, marginMinutes: 15, chunkDeadlineSeconds: 120, fallbackKbps: 1000, maxPages: 20, pageSize: 50, maxAheadDays: 730, minGapMinutes: 60, ...over }));
+    writeFileSync(p, JSON.stringify({ ...TEST_SCHEDULE, ...over }));
     return p;
   };
 
@@ -340,7 +348,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.equal(e.queue().items()[1].publishAt, iso(FIRST + 6 * HOUR));
   });
 
-  test('retries never re-slot while the time is still far enough ahead: same time, no new channel read, one video', async () => {
+  test('retries never re-slot while the time is still far enough ahead: same time (re-checked by a fresh read), one video', async () => {
     const g = await fakeGoogle(); const e = setup([ROWS[0]]); const c = schedChain(e, g);
     g.opt.initFailures = 1;
     await c.afterRun(e.runDir, IDLE);
@@ -349,11 +357,73 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     e.clock.t += 5 * MIN + 1000; await c.tick(IDLE); // 70 min before the slot: still >= the 1 h lead
     assert.equal(g.videos.length, 1);
     assert.deepEqual(sent(g), [slot]); assert.equal(e.queue().items()[0].publishAt, slot);
-    assert.equal(g.count('channels'), 1);
+    // The retry re-checks its slot against a fresh channel read before it starts (Codex review); the slot is still free.
+    assert.equal(g.count('channels'), 2);
+  });
+
+  test('Codex review: a queued slot that a new channel post now clashes with is re-slotted before its upload starts', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]); g.opt.hideOwnUploads = true; const c = schedChain(e, g);
+    g.opt.initFailures = 1; // the first try gets slot FIRST, then its session start fails (no session, backing off)
+    await c.afterRun(e.runDir, IDLE);
+    assert.equal(e.queue().items()[0].publishAt, iso(FIRST)); assert.equal(g.videos.length, 0);
+    g.opt.channel = [vid('new', 'private', iso(FIRST + 30 * MIN))]; // scheduled by hand in YouTube Studio meanwhile
+    e.clock.t += 5 * MIN + 1000; await c.tick(IDLE);
+    assert.deepEqual(sent(g), [iso(FIRST + 30 * MIN + 6 * HOUR)], 'never within the gap of the new post');
+    assert.equal(g.count('channels'), 2);
+    // Both tries (start and retry) count in today's budget.
+    assert.equal(createQuotaBudget({ dataDir: e.dataDir, nowMs: () => e.clock.t }).state().uploads.n, 2);
+  });
+
+  test('Codex review: the gap grew while two clips waited: the earlier keeps its slot, the later gets one by the new gap', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0], ROWS[2]]); g.opt.hideOwnUploads = true; const c = schedChain(e, g);
+    g.opt.initFailures = 2;
+    await c.afterRun(e.runDir, IDLE);
+    assert.deepEqual(e.queue().items().map((i) => i.publishAt), [iso(FIRST), iso(FIRST + 6 * HOUR)]);
+    schedFile(e, { intervalHours: 8 });
+    e.clock.t += 5 * MIN + 1000; await c.tick(IDLE);
+    assert.deepEqual(sent(g), [iso(FIRST), iso(FIRST + 8 * HOUR)]);
+  });
+
+  test('Codex review: the daily budget stops uploads from earlier approvals (cap and quota), no channel read, no attempt used', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]); g.opt.hideOwnUploads = true;
+    const rules = JSON.parse(readFileSync(path.join(e.dataDir, 'rules.json'), 'utf8'));
+    writeFileSync(path.join(e.dataDir, 'rules.json'), JSON.stringify({ ...rules, maxUploadsPerDay: 2 }));
+    const budget = createQuotaBudget({ dataDir: e.dataDir, nowMs: () => e.clock.t });
+    budget.chargeUpload(); budget.chargeUpload(); // two uploads already started today (earlier approvals, retries)
+    const c = schedChain(e, g);
+    await c.afterRun(e.runDir, IDLE);
+    let it = e.queue().items()[0];
+    assert.equal(g.videos.length, 0); assert.equal(g.count('init'), 0); assert.equal(g.count('channels'), 0);
+    assert.equal(it.state, 'queued'); assert.equal(it.reason, 'daily-cap-reached'); assert.equal(it.attempts, 0);
+    assert.match(readQueueSummary(e.dataDir).message, /uploads per day are used up/);
+    // Next UTC day, but the quota units of the Pacific day (until 08:00 UTC) are nearly used up: still waits.
+    e.clock.t = Date.parse('2026-11-10T01:00:00Z');
+    budget.chargeRead(10000 - 3300 - 1000);
+    await c.tick(IDLE);
+    it = e.queue().items()[0];
+    assert.equal(it.reason, 'quota-day-used'); assert.equal(g.videos.length, 0);
+    // A new Pacific day: it goes up, scheduled.
+    e.clock.t = Date.parse('2026-11-10T09:00:00Z');
+    await c.tick(IDLE);
+    assert.equal(g.videos.length, 1); assert.ok(g.videos[0].status.publishAt);
+  });
+
+  test('Codex re-review: a quota that fits no upload (read reserve kept) never uploads; a broken settings file blocks too', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]); g.opt.hideOwnUploads = true;
+    mkdirSync(path.join(e.dataDir, 'posting'), { recursive: true });
+    const own = path.join(e.dataDir, 'posting', 'schedule.json');
+    writeFileSync(own, JSON.stringify({ quotaUnitsPerDay: 1700 })); // 1700 - 100 reserve < 1650 per upload
+    const c = schedChain(e, g);
+    await c.afterRun(e.runDir, IDLE);
+    assert.equal(g.count('init'), 0); assert.equal(e.queue().items()[0].reason, 'quota-day-used');
+    writeFileSync(own, '{ broken');
+    e.clock.t += 31 * MIN; await c.tick(IDLE);
+    assert.equal(g.count('init'), 0); assert.equal(e.queue().items()[0].reason, 'quota-unreadable');
   });
 
   test('missing readonly scope fails closed: no request to Google, no slot, no upload, no attempt used, plain message', async () => {
-    for (const auth of [{ ...authOk, grantedScopes: async () => [SCOPE] }, { ...authOk, grantedScopes: async () => null }, authOk]) {
+    const { grantedScopes: _unused, ...noScopes } = authOk;
+    for (const auth of [{ ...authOk, grantedScopes: async () => [SCOPE] }, { ...authOk, grantedScopes: async () => null }, noScopes]) {
       const g = await fakeGoogle(); const e = setup([ROWS[0]]);
       await schedChain(e, g, { auth }).afterRun(e.runDir, IDLE);
       assert.equal(g.log.length, 0);
@@ -435,10 +505,25 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.deepEqual(sent(g2), [iso(T0 + 11 * HOUR + 15 * MIN)]); assert.equal(g2.count('init'), 2);
   });
 
-  test('an unscheduled session from before the flag was on is not finished as if scheduled: new session with the slot', async () => {
+  // Before D375 an automatic upload could start with no publish time (flag post-schedule off). Such a session can still be in
+  // a queue file from then: it is made here by clearing the times of an open session.
+  const makeLegacy = (e) => { const it = e.queue().items()[0]; e.queue().patch(it.id, { sessionPublishAt: null, publishAt: null }); };
+
+  test('post-schedule off: an automatic upload waits (never goes up without a publish time); on: it goes up scheduled', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]);
+    await e.chain(g, { flags: SCHED_OFF }).afterRun(e.runDir, IDLE);
+    assert.equal(g.log.length, 0, 'no request to Google at all');
+    const it = e.queue().items()[0];
+    assert.equal(it.state, 'queued'); assert.equal(it.reason, 'schedule-off'); assert.equal(it.attempts, 0); assert.equal(it.publishAt ?? null, null);
+    e.clock.t += 31 * MIN; await schedChain(e, g).tick(IDLE);
+    assert.equal(g.videos.length, 1); assert.deepEqual(sent(g), [iso(e.clock.t + HOUR + 15 * MIN)]);
+  });
+
+  test('an unscheduled session from before D375 is not finished as if scheduled: new session with the slot', async () => {
     const g = await fakeGoogle(); const e = setup([ROWS[0]]);
     g.opt.chunkFailOnce = true;
-    await e.chain(g, { flags: SCHED_OFF }).afterRun(e.runDir, IDLE);
+    await schedChain(e, g).afterRun(e.runDir, IDLE);
+    makeLegacy(e);
     assert.ok(e.queue().items()[0].session); assert.equal(e.queue().items()[0].sessionPublishAt, null);
     e.clock.t += 6 * MIN;
     await schedChain(e, g).tick(IDLE);
@@ -450,7 +535,8 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
   test('a FINISHED unscheduled session is recorded with no publish time (never a schedule that was not sent)', async () => {
     const g = await fakeGoogle(); const e = setup([ROWS[0]]);
     g.opt.dropFinalAnswer = true; g.opt.queryAfterComplete = 'error';
-    await e.chain(g, { flags: SCHED_OFF }).afterRun(e.runDir, IDLE);
+    await schedChain(e, g).afterRun(e.runDir, IDLE);
+    makeLegacy(e);
     assert.equal(g.videos.length, 1); assert.equal(e.queue().items()[0].state, 'queued');
     g.opt.queryAfterComplete = 'resource'; e.clock.t += 6 * MIN;
     await schedChain(e, g).tick(IDLE);
@@ -542,7 +628,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
   test('a slot 30 days ahead (beyond the setTimeout limit of about 24.8 days) uploads normally with no abort', async () => {
     const g = await fakeGoogle(); const e = setup([ROWS[0]]);
     g.opt.channel = [vid('far', 'private', iso(T0 + 30 * 24 * HOUR - 6 * HOUR))];
-    await schedChain(e, g).afterRun(e.runDir, IDLE);
+    await schedChain(e, g, { scheduleFile: schedFile(e, { placement: 'after-last' }) }).afterRun(e.runDir, IDLE);
     const it = e.queue().items()[0];
     assert.equal(it.state, 'done'); assert.equal(it.reason, null);
     assert.deepEqual(sent(g), [iso(T0 + 30 * 24 * HOUR)]);
@@ -564,35 +650,37 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
       scheduleFile: schedFile(e2, { marginMinutes: 1, chunkDeadlineSeconds: 59.5, fallbackKbps: 1000 }) }).afterRun(e2.runDir, IDLE);
     assert.deepEqual(sent(g2), [iso(SLOT)]);
   });
-  // D314 (user 2026-11-09): a retry less than 1 h from its time gets now + lead + margin; later queued clips re-chain 6 h apart.
-  test('D314: a retry 45 min from its time gets now + 1 h 15 and the later queued clips re-chain 6 h apart from it', async () => {
-    const g = await fakeGoogle(); const e = setup(); const c = schedChain(e, g);
+  // D314 (user 2026-11-09) with D375 gap filling: a retry less than 1 h from its time gets the earliest free time from
+  // now + lead + margin, at least 6 h from every other time; the other queued clips keep their times.
+  test('D314: a retry 45 min from its time gets the next free time; the other queued clips keep theirs', async () => {
+    const g = await fakeGoogle(); const e = setup();
+    // Six upload attempts in one day (3 failed starts + 3 uploads) need more than the shipped 10000-unit quota leaves
+    // after its read reserve: this test is about slots, so it gets a larger quota.
+    const c = schedChain(e, g, { budget: createQuotaBudget({ dataDir: e.dataDir, nowMs: () => e.clock.t, quota: () => ({ quotaUnitsPerDay: 100000, perUploadUnits: 1650, readReserveUnits: 100 }) }) });
     g.opt.initFailures = 3; // every session start fails once: three queued clips with slots, no session, backing off
     await c.afterRun(e.runDir, IDLE);
     assert.equal(g.videos.length, 0);
     assert.deepEqual(e.queue().items().map((i) => [i.publishAt, i.session ?? null]), [[iso(FIRST), null], [iso(FIRST + 6 * HOUR), null], [iso(FIRST + 12 * HOUR), null]]);
     e.clock.t = T0 + 30 * MIN; // the first slot (T0 + 1 h 15) is now 45 min away: less than the 1 h lead
     await c.tick(IDLE);
-    const now = T0 + 30 * MIN; const R = now + HOUR + 15 * MIN;
-    assert.deepEqual(sent(g), [iso(R), iso(R + 6 * HOUR), iso(R + 12 * HOUR)]);
+    const now = T0 + 30 * MIN; const R = FIRST + 18 * HOUR; // 11:45 is too close to 17:15, and 23:15 is taken: the next free time
+    assert.deepEqual(sent(g), [iso(R), iso(FIRST + 6 * HOUR), iso(FIRST + 12 * HOUR)]);
     assert.deepEqual(e.queue().items().map((i) => i.state), ['done', 'done', 'done']);
     assert.ok(e.queue().items().every((i) => !i.reslot));
-    assert.equal(readQueueSummary(e.dataDir, null, now).nextPublishAt, iso(R), 'the control page shows the new time');
+    assert.equal(readQueueSummary(e.dataDir, null, now).lastPublishAt, iso(R), 'the control page shows the new time');
   });
 
-  test('D314: uploaded clips keep their times; a new later clip goes 6 h after the latest uploaded one, not after the retry', async () => {
+  test('D314: uploaded clips keep their times; the retry and a new clip take the next free times, 6 h from every other', async () => {
     const g = await fakeGoogle(); const e = setup(); const c = schedChain(e, g);
     g.opt.initFailures = 1; // the first clip's session start fails; the other two upload at FIRST + 6 h and FIRST + 12 h
     await c.afterRun(e.runDir, IDLE);
     assert.deepEqual(sent(g), [iso(FIRST + 6 * HOUR), iso(FIRST + 12 * HOUR)]);
     e.clock.t = T0 + 30 * MIN; addRow(e, { name: 'codm_montage_20261109-100000_kills-7_03_v.mp4', kind: 'montage', seconds: 45 });
     await c.afterRun(e.runDir, IDLE);
-    const R = T0 + 30 * MIN + HOUR + 15 * MIN;
     const items = e.queue().items();
     assert.equal(items[1].sentPublishAt, iso(FIRST + 6 * HOUR)); assert.equal(items[2].sentPublishAt, iso(FIRST + 12 * HOUR));
-    assert.equal(items[0].sentPublishAt, iso(R), 'the retry: now + 1 h 15');
-    // the later clip: never earlier than the channel's latest scheduled post (the uploaded FIRST + 12 h) + 6 h
-    assert.equal(items[3].sentPublishAt, iso(FIRST + 18 * HOUR));
+    assert.equal(items[0].sentPublishAt, iso(FIRST + 18 * HOUR), 'the retry: 11:45 is within 6 h of 17:15, so after 23:15');
+    assert.equal(items[3].sentPublishAt, iso(FIRST + 24 * HOUR), 'the new clip: the next free time after the retry');
   });
 
   test('D314: a clip with an open session keeps its time (Google applies the session time); only the retry moves', async () => {
@@ -603,30 +691,69 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.equal(before[0].session ?? null, null); assert.ok(before[1].session); assert.equal(before[1].sessionPublishAt, iso(FIRST + 6 * HOUR));
     e.clock.t = T0 + 30 * MIN;
     await c.tick(IDLE);
-    const R = T0 + 30 * MIN + HOUR + 15 * MIN;
+    const R = FIRST + 12 * HOUR; // 11:45 is within 6 h of the open session's 17:15
     assert.deepEqual(e.queue().items().map((i) => i.sentPublishAt), [iso(R), iso(FIRST + 6 * HOUR)]);
     assert.equal(g.videos.length, 2); assert.equal(g.count('init'), 3, 'clip 2 resumed its session, no new one');
   });
 
-  test('D314 gap: a retry whose floor equals a channel post goes 1 h after it (read from the fake channel)', async () => {
+  test('D314 gap: a retry whose floor equals a channel post goes the gap (6 h) after it (read from the fake channel)', async () => {
     const g = await fakeGoogle(); const e = setup([ROWS[0]]); const c = schedChain(e, g);
     g.opt.initFailures = 1;
     await c.afterRun(e.runDir, IDLE);
     g.opt.channel = [vid('p1', 'private', iso(T0 + HOUR + 45 * MIN))]; // exactly the retry floor at now = T0 + 30 min
     e.clock.t = T0 + 30 * MIN; await c.tick(IDLE);
-    assert.deepEqual(sent(g), [iso(T0 + 2 * HOUR + 45 * MIN)]);
+    assert.deepEqual(sent(g), [iso(T0 + 7 * HOUR + 45 * MIN)]);
     assert.deepEqual(qfile(e).schedule.channelTimes, [iso(T0 + HOUR + 45 * MIN)]);
+  });
+
+  test('D375 delete flag on: the clip file is deleted only once YouTube says processed; log line and one task bar line', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]);
+    const file = e.uploads()[0].file; const folder = path.dirname(file);
+    const c = e.chain(g, { flags: { isOn: () => true }, clipsFolder: folder });
+    await c.afterRun(e.runDir, IDLE);
+    assert.equal(g.videos.length, 1); assert.equal(e.queue().items()[0].state, 'done');
+    assert.ok(existsSync(file), 'still processing at YouTube: kept');
+    assert.equal(e.queue().items()[0].deleteReason, 'still-processing');
+    g.videos[0].status.uploadStatus = 'processed';
+    await c.tick(IDLE);
+    assert.ok(existsSync(file), 'not asked again before the 15 min wait');
+    e.clock.t += 16 * MIN; await c.tick(IDLE);
+    assert.equal(existsSync(file), false);
+    const it = e.queue().items()[0];
+    assert.equal(it.deleteState, 'deleted'); assert.equal(it.lastStatus.uploadStatus, 'processed');
+    const log = readFileSync(path.join(e.dataDir, 'posting', 'deleted.jsonl'), 'utf8').trim().split(/\r?\n/).map((l) => JSON.parse(l));
+    assert.deepEqual(log.map((l) => [l.file, l.videoId]), [[path.basename(file), g.videos[0].id]]);
+    const tasks = readdirSync(tasksDir(e.dataDir)).filter((n) => n.startsWith('post-deleted-'));
+    assert.equal(tasks.length, 1);
+    e.clock.t += 16 * MIN; await c.tick(IDLE);
+    assert.equal(readdirSync(tasksDir(e.dataDir)).filter((n) => n.startsWith('post-deleted-')).length, 1, 'never checked again');
+  });
+
+  test('D375 delete flag on, but the upload failed or the file changed: the file is kept for good', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]);
+    const file = e.uploads()[0].file;
+    const c = e.chain(g, { flags: { isOn: () => true }, clipsFolder: path.dirname(file) });
+    await c.afterRun(e.runDir, IDLE);
+    writeFileSync(file, 'edited after the upload');
+    g.videos[0].status.uploadStatus = 'processed'; e.clock.t += 16 * MIN; await c.tick(IDLE);
+    assert.ok(existsSync(file)); assert.equal(e.queue().items()[0].deleteState, 'kept'); assert.equal(e.queue().items()[0].deleteReason, 'sha-mismatch');
+    const g2 = await fakeGoogle(); const e2 = setup([ROWS[0]]);
+    const file2 = e2.uploads()[0].file;
+    const c2 = e2.chain(g2, { flags: { isOn: () => true }, clipsFolder: path.dirname(file2) });
+    await c2.afterRun(e2.runDir, IDLE);
+    g2.videos[0].status.uploadStatus = 'failed'; e2.clock.t += 16 * MIN; await c2.tick(IDLE);
+    assert.ok(existsSync(file2)); assert.equal(e2.queue().items()[0].deleteReason, 'upload-failed');
   });
 
   test('D314 cap: a slot more than maxAheadDays ahead is not given; the clip waits (plain reason, no attempt) and goes up later', async () => {
     const g = await fakeGoogle(); const e = setup([ROWS[0]]);
     g.opt.channel = [vid('s1', 'private', iso(T0 + 20 * HOUR))]; // next slot T0 + 26 h, past a 1-day cap
-    const c = schedChain(e, g, { scheduleFile: schedFile(e, { maxAheadDays: 1 }) });
+    const c = schedChain(e, g, { scheduleFile: schedFile(e, { maxAheadDays: 1, placement: 'after-last' }) });
     await c.afterRun(e.runDir, IDLE);
     let it = e.queue().items()[0];
     assert.equal(g.count('init'), 0); assert.equal(it.state, 'queued'); assert.equal(it.publishAt, null);
     assert.equal(it.reason, 'schedule-beyond-cap'); assert.equal(it.attempts, 0);
-    assert.match(readQueueSummary(e.dataDir, null, T0).message, /more than the allowed time ahead \(maxAheadDays/);
+    assert.match(readQueueSummary(e.dataDir, null, T0).message, /further ahead than the schedule allows \(days ahead/);
     const reads = g.count('channels');
     e.clock.t = T0 + HOUR; await c.tick(IDLE);
     assert.equal(g.count('channels'), reads, 'a capped clip does not re-read the channel before its wait ends');

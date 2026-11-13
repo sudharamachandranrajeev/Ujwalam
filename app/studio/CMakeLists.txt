@@ -27,6 +27,8 @@ add_executable(ujwalam-studio WIN32
 	src/interaction.h
 	src/api_client.cpp
 	src/api_client.h
+	src/autopost_card.cpp
+	src/autopost_card.h
 	src/coach.cpp
 	src/coach.h
 	src/connections_page.cpp
@@ -51,6 +53,8 @@ add_executable(ujwalam-studio WIN32
 	src/qml_studio.h
 	src/motion.cpp
 	src/motion.h
+	src/soft.cpp
+	src/soft.h
 	src/stats_cards.cpp
 	src/stats_cards.h
 	src/stream_pages.cpp

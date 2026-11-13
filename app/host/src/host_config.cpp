@@ -53,8 +53,23 @@ bool int_in(const json::Value *v, int64_t lo, int64_t hi, int64_t &dst, const ch
 
 bool parse_host_config(const json::Value &doc, HostConfig &cfg, std::string &err)
 {
-	if (!only(doc, {"$comment", "replay", "hotkeys", "feedbackDir", "markersDir", "eventCore", "monitoringDevice", "audio", "audioHealth"}, "host config", err))
+	if (!only(doc, {"$comment", "replay", "hotkeys", "feedbackDir", "markersDir", "eventCore", "monitoringDevice", "audio", "audioHealth", "graphicsWatch"}, "host config", err))
 		return false;
+	if (const json::Value *g = doc.find("graphicsWatch")) {
+		// Both required: the values come from the data file (data/live/host-watch.json), the host has none built in.
+		if (!only(*g, {"stallMs", "checkIntervalMs"}, "graphicsWatch", err))
+			return false;
+		if (!g->find("stallMs") || !g->find("checkIntervalMs")) {
+			err = "graphicsWatch needs stallMs and checkIntervalMs";
+			return false;
+		}
+		int64_t st = 0, ci = 0;
+		if (!int_in(g->find("stallMs"), 500, 600000, st, "graphicsWatch.stallMs", err) ||
+		    !int_in(g->find("checkIntervalMs"), 100, 60000, ci, "graphicsWatch.checkIntervalMs", err))
+			return false;
+		cfg.graphics_watch.stall_ms = (uint32_t)st;
+		cfg.graphics_watch.check_interval_ms = (uint32_t)ci;
+	}
 	if (const json::Value *h = doc.find("audioHealth")) {
 		if (!only(*h, {"enabled", "noDataMs", "checkIntervalMs", "maxRecreates", "maxParked", "shutdownGuardMs"}, "audioHealth", err))
 			return false;

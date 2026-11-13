@@ -103,8 +103,8 @@ describe('Qt studio themes (headless probe)', { skip }, () => {
     assert.equal(p.theme.depthEligible, 0);
   });
   test('Settings > Appearance: sections, a theme card click previews it, Save stores ui.theme and ui.effects', async () => {
-    const p = await probe({ ms: 9000, actions: 'settings-open,settings-page:3,settings-theme:retro-wave,settings-reduce-effects:on,settings-save' });
-    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:3', true], ['settings-theme:retro-wave', true], ['settings-reduce-effects:on', true], ['settings-save', true]]);
+    const p = await probe({ ms: 9000, actions: 'settings-open,settings-page:Appearance,settings-theme:retro-wave,settings-reduce-effects:on,settings-save' });
+    assert.deepEqual(p.actions.map((a) => [a.action, a.done]), [['settings-open', true], ['settings-page:Appearance', true], ['settings-theme:retro-wave', true], ['settings-reduce-effects:on', true], ['settings-save', true]]);
     assert.equal(p.theme.id, 'retro-wave');
     const saved = JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8'));
     assert.equal(saved.ui.theme, 'retro-wave');
@@ -150,16 +150,16 @@ describe('Qt studio themes (headless probe)', { skip }, () => {
     assert.ok(quick.theme.hoverOverlays >= 0.9 * full.theme.hoverOverlays,`every shown control has its overlay again: ${quick.theme.hoverOverlays} vs ${full.theme.hoverOverlays}`);
   });
   test('Settings > Appearance: turning High performance off gives back the Reduce effects choice the user had', async () => {
-    const off = await probe({ ms: 9000, actions: 'settings-open,settings-page:3,settings-performance:on,settings-performance:off,settings-save' });
+    const off = await probe({ ms: 9000, actions: 'settings-open,settings-page:Appearance,settings-performance:on,settings-performance:off,settings-save' });
     assert.ok(off.actions.every((a) => a.done), JSON.stringify(off.actions));
     assert.equal(off.theme.effects, 'full', 'Reduce was off before');
     assert.equal(JSON.parse(readFileSync(path.join(off.dataDir, 'settings.json'), 'utf8')).ui?.effects, undefined, 'back where it started: nothing to save (the bug saved "reduced")');
-    const on = await probe({ ms: 10000, actions: 'settings-open,settings-page:3,settings-reduce-effects:on,settings-performance:on,settings-performance:off,settings-save' });
+    const on = await probe({ ms: 10000, actions: 'settings-open,settings-page:Appearance,settings-reduce-effects:on,settings-performance:on,settings-performance:off,settings-save' });
     assert.ok(on.actions.every((a) => a.done), JSON.stringify(on.actions));
     assert.equal(JSON.parse(readFileSync(path.join(on.dataDir, 'settings.json'), 'utf8')).ui.effects, 'reduced', 'Reduce was on before');
   });
   test('Settings > Appearance: the High performance switch saves ui.effects "performance"; it is applied at the next start', async () => {
-    const p = await probe({ ms: 9000, actions: 'settings-open,settings-page:3,settings-theme:daylight-blue,settings-performance:on,settings-save' });
+    const p = await probe({ ms: 9000, actions: 'settings-open,settings-page:Appearance,settings-theme:daylight-blue,settings-performance:on,settings-save' });
     assert.deepEqual(p.actions.map((a) => a.done), [true, true, true, true, true]);
     const saved = JSON.parse(readFileSync(path.join(p.dataDir, 'settings.json'), 'utf8'));
     assert.deepEqual([saved.ui.theme, saved.ui.effects], ['daylight-blue', 'performance']);
@@ -189,7 +189,7 @@ describe('Qt studio themes: evidence pictures', { skip: skip || (EVIDENCE ? fals
     const { port } = await srv.listen();
     try {
       mkdirSync(EVIDENCE, { recursive: true });
-      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: '7000', UJWALAM_STUDIO_PROBE_ACTIONS: 'settings-open,settings-page:3', UJWALAM_STUDIO_PROBE_SHOT: path.join(EVIDENCE, 'appearance.png') });
+      const r = await runShell({ UJWALAM_UI_URL: `http://127.0.0.1:${port}/`, UJWALAM_UI_LAUNCH_KEY: key, UJWALAM_STUDIO_PROBE_MS: '7000', UJWALAM_STUDIO_PROBE_ACTIONS: 'settings-open,settings-page:Appearance', UJWALAM_STUDIO_PROBE_SHOT: path.join(EVIDENCE, 'appearance.png') });
       assert.equal(r.code, 0, r.err);
       assert.ok(existsSync(path.join(EVIDENCE, 'appearance-settings.png')));
     } finally { srv.close(); rmSync(dataDir, { recursive: true, force: true }); }

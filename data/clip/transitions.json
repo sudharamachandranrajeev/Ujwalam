@@ -1,0 +1,14 @@
+{
+  "$comment": "RP1 reel transitions (user 2026-11-11: 'option to choose animations between the transitions of the reel needs to be in the settings. to start with a cross fade animation between transitions. (subtle)'). The join between two pieces of a short, montage, match reel or impact-play reel. Read by services/clip/reel_transition.py and services/studio-ui/user-settings.mjs (Settings > Clips). The user's choice is settings.json clips.reelTransition {kind, ms}. Behind the flag reel-transitions (off by default). More kinds: add a row with an ffmpeg xfade transition name; no code change.",
+  "version": "1.0.0",
+  "status": "proposed",
+  "approved": "user 2026-11-11 chose the feature and a subtle cross fade to start; the length range and default are the agent's proposal (plan RP1)",
+  "checked": "2026-11-12",
+  "flag": "reel-transitions",
+  "default": "fade",
+  "kinds": [
+    { "id": "cut", "label": "Cut", "xfade": null, "about": "Hard cut with a short audio fade (as before)." },
+    { "id": "fade", "label": "Cross fade", "xfade": "fade", "ms": { "min": 150, "max": 500, "default": 250 },
+      "about": "The next piece fades in over the last moment of the one before; the sound crossfades. Each join makes the reel this much shorter." }
+  ]
+}

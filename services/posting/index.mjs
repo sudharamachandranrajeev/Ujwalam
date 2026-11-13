@@ -206,12 +206,15 @@ export function createLedger(file) {
       e.status = status; e.updatedAt = at;
       writeJsonAtomic(file, j);
     },
-    /** Adds plain string fields (e.g. videoId) to one entry. Fresh read, atomic write. */
+    /** Adds plain string fields (videoId; publishAt, the UTC time Google got with the upload, D375) to one entry. Fresh read, atomic write. */
     annotate(sha, target, fields) {
       const j = read();
       const e = j.entries[key(sha, target)];
       if (!e) throw new PostingError('unknown-post', 'ledger: unknown entry');
-      for (const [k, v] of Object.entries(fields)) if (k === 'videoId' && typeof v === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(v)) e[k] = v;
+      for (const [k, v] of Object.entries(fields)) {
+        if (k === 'videoId' && typeof v === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(v)) e[k] = v;
+        if (k === 'publishAt' && typeof v === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{3})?Z$/.test(v)) e[k] = v;
+      }
       writeJsonAtomic(file, j);
     },
   };
@@ -232,6 +235,13 @@ export function findFfmpeg(explicit) {
 }
 
 /** Extracts one JPEG frame at `atSec`. CPU only, one thread, below-normal priority. Resolves true on success. */
+/** Where the cover of a finished video (uploads.json row) is taken, in seconds. RP6 (D366): a reel that opens on its
+ *  edited start frame (row.thumbnail) uses that frame; otherwise 2 s in, or the middle of a short video. */
+export function uploadCoverAt(row, seconds) {
+  if (row?.thumbnail === true) return 0;
+  return Number.isFinite(seconds) && seconds > 0.4 ? Math.min(2, seconds / 2) : 0;
+}
+
 export function extractCover(ffmpeg, video, atSec, out) {
   return new Promise((resolve) => {
     const args = ['-v', 'error', '-nostdin', '-y', '-threads', '1', '-ss', atSec.toFixed(3), '-i', video, '-frames:v', '1', '-q:v', '2', out];
@@ -337,6 +347,12 @@ export const UPLOAD_KINDS = Object.freeze(['short', 'montage', 'won-reel', 'impa
 export const KIND_FLAGS = Object.freeze({ 'impact-play': 'impact-play-reels' });
 export const CANVAS_TAIL = /_(\d{2})_(v(?:-[a-z0-9-]+)?|h)\.[a-z0-9]+$/i;
 export const NAME_DATE =/_(\d{4})(\d{2})(\d{2})-\d{6}_/;
+const NAME_STAMP = /_(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})_/;
+/** The clip's first moment from its file name (clip_names.py: local wall time) as 'YYYY-MM-DDTHH:MM:SS' (no zone), or null. */
+export function madeAtOf(name) {
+  const m = NAME_STAMP.exec(String(name ?? ''));
+  return m ? `${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}` : null;
+}
 
 /** Target for one finished video, from data/posting/limits.json (never hardcoded): vertical and not longer than the
  *  Shorts limit -> the target that carries `video`; anything else -> `youtube-video`. */
@@ -347,6 +363,16 @@ export function pickYoutubeTarget({ seconds, vertical }, limits) {
   return isShort ? 'youtube-shorts' : 'youtube-video';
 }
 
+/** RP5 (D373): the edit choices a reel was made with (uploads.json row `choices`, written by clipper.py publish):
+ *  { transition: cut|fade, title: on|off, music: on|off, mixAt?: ISO } -> a clean copy, or null. Short words only. */
+export function cleanChoices(c) {
+  if (!isPlain(c)) return null;
+  const out = {};
+  for (const k of ['transition', 'title', 'music']) if (typeof c[k] === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(c[k])) out[k] = c[k];
+  if (typeof c.mixAt === 'string' && !Number.isNaN(Date.parse(c.mixAt)) && c.mixAt.length <= 40) out.mixAt = c.mixAt;
+  return Object.keys(out).length ? out : null;
+}
+
 /** opts: { dataDir, ledgerFile, profile?, ffmpeg?, templates?, limits?, run?, now?, flags? }
  *  Packages every validated, published video in <dataDir>/clips/uploads.json that is not posted and not packaged yet
  *  (kinds short | montage | won-reel | impact-play; impact-play only while the flag impact-play-reels is on, read
@@ -355,7 +381,8 @@ export function pickYoutubeTarget({ seconds, vertical }, limits) {
 export async function packageUploads(opts) {
   const templates = opts.templates ?? loadTemplates();
   const limits = opts.limits ?? loadLimits();
-  const doc = readJson(path.join(opts.dataDir, 'clips', 'uploads.json'));
+  // D375: opts.rows (from the clips folder scan, clips-source.mjs) replaces the uploads.json rows when given.
+  const doc = Array.isArray(opts.rows) ? { files: opts.rows } : readJson(path.join(opts.dataDir, 'clips', 'uploads.json'));
   const packaged = []; const skipped = [];
   if (!isPlain(doc) || !Array.isArray(doc.files)) return { packaged, skipped };
   const now = opts.now ?? (() => new Date());
@@ -404,7 +431,7 @@ export async function packageUploads(opts) {
       hashtags: tpl.hashtags.map((t) => renderText(t, ctx, missing)),
       target,
     };
-    const at = Number.isFinite(seconds) && seconds > 0.4 ? Math.min(2, seconds / 2) : 0;
+    const at = uploadCoverAt(row, seconds);
     const coverOk = await extractCover(ffmpeg, dst, at, path.join(dir, 'cover.jpg'));
     const stamp = now().toISOString();
     const clipId = `${row.kind}-${sha.slice(0, 12)}`;
@@ -413,7 +440,11 @@ export async function packageUploads(opts) {
       ...post,
       privacy: 'private',
       status: 'draft',
-      source: { run: runName, clipId, kind: row.kind, layout: tail ? tail[2].toLowerCase() : 'unknown', startSec: 0, endSec: Number.isFinite(seconds) ? seconds : null, score: null, sha256: sha },
+      source: { run: runName, clipId, kind: row.kind, layout: tail ? tail[2].toLowerCase() : 'unknown', startSec: 0, endSec: Number.isFinite(seconds) ? seconds : null, score: null, sha256: sha,
+        ...(cleanChoices(row.choices) ? { choices: cleanChoices(row.choices) } : {}), // RP5: the reel's edit choices
+        // D375: when the clip was made (from its name; posting order is oldest first) and the clips-folder file it came
+        // from (the file the flag post-delete-uploaded may remove after a confirmed upload). Local data only.
+        ...(madeAtOf(path.basename(file)) ? { madeAt: madeAtOf(path.basename(file)) } : {}), file: path.resolve(file) },
       video: { file: videoName, bytes: statSync(dst).size },
       cover: coverOk ? { file: 'cover.jpg', atSec: Number(at.toFixed(3)) } : null,
       captions: null,
@@ -453,6 +484,8 @@ export function createPostStore(opts) {
   const find = (id) => (typeof id === 'string' && POST_ID.test(id) ? entries().find((e) => postId(e) === id) ?? null : null);
   const view = (e, p) => ({
     id: postId(e), target: p.target, clipId: p.source.clipId, kind: typeof p.source.kind === 'string' ? p.source.kind : 'short', layout: p.source.layout, score: Number.isFinite(p.source.score) ? p.source.score : null, startSec: p.source.startSec, endSec: p.source.endSec,
+    choices: cleanChoices(p.source.choices),
+    madeAt: typeof p.source.madeAt === 'string' ? p.source.madeAt : (typeof p.createdAt === 'string' ? p.createdAt.slice(0, 19) : null), // D375: posting order
     status: e.status, videoId: e.videoId ?? null, privacy: 'private', title: p.title, description: p.description, tags: p.tags, hashtags: p.hashtags,
     limits: p.limits, unresolved: p.unresolved ?? [], hasCover: !!p.cover, hasCaptions: !!p.captions, videoBytes: p.video?.bytes ?? null, updatedAt: p.updatedAt,
   });

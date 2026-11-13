@@ -82,7 +82,7 @@ describe('Qt studio: Edit output > Connect (D327)', { skip }, () => {
     assert.ok(b, JSON.stringify(r.p.streamPage));
     assert.equal(b.enabled, false);
     assert.match(b.tooltip, /feature flag platform-connect/);
-    assert.match(b.tooltip, /Settings > Advanced/);
+    assert.match(b.tooltip, /Settings > Connections/);
     assert.equal(r.p.streamPage.connectOn, false);
     assert.deepEqual(r.p.streamPage.rowStatus, []);
     assert.equal(r.p.streamPage.connectFlow, undefined);

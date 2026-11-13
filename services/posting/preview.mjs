@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Auto-post rules dry-run preview. READ-ONLY: reads uploads.json, the ledger, the auto log, rules, templates and limits;
+// Auto-post rules dry-run preview. READ-ONLY: reads uploads.json and the clips folder (D375), the ledger, the auto log, rules, templates and limits;
 // writes nothing, makes no network request, never touches a credential. Answers "what WOULD these rules queue?" so the
 // user can approve the rules before any run. The queue decision itself is planAuto() (single source of truth).
 //   previewRules({ dataDir, rules, templates?, limits?, profile?, log?, outputsStatus?, flagOn?, now?, hash? })
@@ -8,12 +8,13 @@
 // skipped item: { id, source, kind, target, reason, detail?, title?, description? }
 import { readFileSync, statSync } from 'node:fs';
 import path from 'node:path';
-import { UPLOAD_TARGETS, describeMode, liveBlock, planAuto } from './auto-post.mjs';
+import { UPLOAD_TARGETS, describeMode, liveBlock, planAuto, rankerMinScore } from './auto-post.mjs';
+import { scanClipsFolder } from './clips-source.mjs';
 import {
   CANVAS_TAIL, LEDGER_NAME, NAME_DATE, UPLOAD_KINDS, checkLimits, cleanProfile, createLedger, createPostStore, loadLimits,
-  loadTemplates, pickYoutubeTarget, renderText, sha256File, unresolvedKeys,
+  loadTemplates, madeAtOf, pickYoutubeTarget, renderText, sha256File, unresolvedKeys,
 } from './index.mjs';
-import { isRetry, loadScheduleConfig, planQueueSlots, savedChannelLast, savedChannelTimes, toIso } from './schedule.mjs';
+import { DEFAULT_SCHEDULE, isRetry, loadScheduleConfig, planQueueSlots, savedChannelTimes, toIso, userScheduleFile } from './schedule.mjs';
 
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const isFile = (f) => { try { return statSync(f).isFile(); } catch { return false; } };
@@ -71,8 +72,17 @@ export async function previewRules(opts) {
   const virtual = [];
   const doc = readJson(path.join(opts.dataDir, 'clips', 'uploads.json'));
   const skipRow = (file, kind, reason) => skipped.push({ id: `upload:${file}`, source: 'uploads', kind, target: null, reason });
-  if (isPlain(doc) && Array.isArray(doc.files)) {
-    for (const row of doc.files) {
+  // D375: the uploads.json rows and every video in the clips folder (the chain packages both); one row per file.
+  const rows = isPlain(doc) && Array.isArray(doc.files) ? [...doc.files] : [];
+  const listed = new Set(rows.filter((r) => isPlain(r) && typeof r.file === 'string').map((r) => path.resolve(r.file).toLowerCase()));
+  if (opts.scanFolder !== false) {
+    try {
+      const scan = scanClipsFolder({ dataDir: opts.dataDir, ...(opts.clipsFolder ? { folder: opts.clipsFolder } : {}), ...(opts.probeSeconds ? { probeSeconds: opts.probeSeconds } : {}) });
+      for (const r of scan.rows) if (!listed.has(path.resolve(r.file).toLowerCase())) rows.push(r);
+    } catch { /* the uploads.json rows still show */ }
+  }
+  {
+    for (const row of rows) {
       const file = isPlain(row) && typeof row.file === 'string' ? row.file : null;
       const base = file ? path.basename(file) : '?';
       if (!file || !UPLOAD_KINDS.includes(row.kind)) { skipRow(base, null, 'unknown-kind'); continue; }
@@ -90,7 +100,7 @@ export async function previewRules(opts) {
       const n = tail ? Number(tail[1]) : 1;
       const r = renderUploadPost({ templates, target, kind: row.kind, profile: opts.profile, n, date });
       virtual.push({
-        id: `upload:${base}`, target, kind: row.kind, layout: tail ? tail[2].toLowerCase() : 'unknown', score: null, status: 'draft',
+        id: `upload:${base}`, target, kind: row.kind, layout: tail ? tail[2].toLowerCase() : 'unknown', score: null, status: 'draft', madeAt: madeAtOf(base),
         title: r.title, description: r.description, tags: r.tags, hashtags: r.hashtags, limits: checkLimits(r, limits), unresolved: r.unresolved,
         seconds: Number.isFinite(seconds) ? seconds : null, source: 'uploads',
       });
@@ -98,7 +108,7 @@ export async function previewRules(opts) {
   }
 
   const all = [...store.list().map((p) => ({ ...p, source: 'package' })), ...virtual];
-  const plan = planAuto({ posts: all, rules: rulesDoc.rules, autoUpload: rulesDoc.autoUpload, log: opts.log ?? [], now });
+  const plan = planAuto({ posts: all, rules: rulesDoc.rules, autoUpload: rulesDoc.autoUpload, log: opts.log ?? [], now, maxUploadsPerDay: rulesDoc.maxUploadsPerDay ?? null, unscoredFloor: rankerMinScore() });
   const byId = new Map(all.map((p) => [p.id, p]));
   const seen = new Set();
   const text = (p) => ({ title: p.title, description: [p.description, (p.hashtags ?? []).join(' ')].filter(Boolean).join('\n\n'), tags: p.tags ?? [], hashtags: p.hashtags ?? [] });
@@ -135,42 +145,42 @@ export async function previewRules(opts) {
  *  is queued, after a fresh read of the channel, so it can be later than this estimate. */
 function estimateSlots({ dataDir, queued, nowMs, file }) {
   let cfg;
-  try { cfg = file ? loadScheduleConfig(file) : loadScheduleConfig(); } catch { return { on: true, error: 'schedule-config-bad' }; }
+  try { cfg = loadScheduleConfig(file ?? DEFAULT_SCHEDULE, { userFile: userScheduleFile(dataDir) }); } catch { return { on: true, error: 'schedule-config-bad' }; }
   const qdoc = readJson(path.join(dataDir, 'posting', 'upload-queue.json'));
   if (qdoc?.schedule?.truncated === true) return { on: true, error: 'schedule-read-incomplete' }; // same as the queue: no time is guessed
   const items = isPlain(qdoc?.items) ? Object.values(qdoc.items) : [];
-  const channelLast = savedChannelLast(qdoc, nowMs);
-  // Same plan as the queue (D310 + D314 retry and re-chain): the would-queue clips are appended after the queue's own items.
+  // Same plan as the queue (D375 gap filling, D314 retry): the would-queue clips are appended after the queue's own items.
   const known = new Set(items.map((i) => i.id));
   const ups = queued.filter((q) => q.actions.includes('upload') && UPLOAD_TARGETS.includes(q.target) && !known.has(q.id));
   const virtual = ups.map((q) => ({ id: q.id, state: 'queued', publishAt: null, session: null }));
   const retries = items.filter((i) => isRetry(i, nowMs, cfg)).length;
-  const plan = new Map(planQueueSlots({ items: [...items, ...virtual], channelLast, channelTimes: savedChannelTimes(qdoc, nowMs), nowMs, cfg }).map((p) => [p.id, p]));
-  const rechained = [...plan.values()].filter((p) => known.has(p.id) && p.rechain).length;
+  const plan = new Map(planQueueSlots({ items: [...items, ...virtual], channelTimes: savedChannelTimes(qdoc, nowMs), nowMs, cfg }).map((p) => [p.id, p]));
   for (const q of ups) {
     const p = plan.get(q.id);
     if (p?.at) q.publishAt = toIso(p.at);
     else if (p) { q.publishAt = null; q.publishNote = 'beyond-cap'; }
   }
-  return { on: true, intervalHours: cfg.intervalHours, minLeadHours: cfg.minLeadHours, maxAheadDays: cfg.maxAheadDays, retries, rechained, channelReadAt: typeof qdoc?.schedule?.readAt === 'string' ? qdoc.schedule.readAt : null, estimate: true };
+  return { on: true, intervalHours: cfg.intervalHours, placement: cfg.placement, minLeadHours: cfg.minLeadHours, maxAheadDays: cfg.maxAheadDays, retries, channelReadAt: typeof qdoc?.schedule?.readAt === 'string' ? qdoc.schedule.readAt : null, estimate: true };
 }
 
 /** Plain-text report for the CLI. */
 export function formatPreview(r) {
   const L = [];
-  L.push(`auto-post preview (dry run, nothing written or sent): ${r.mode.enabled ? 'on' : 'off'}, ${r.mode.ruleCount} rule(s), autoUpload ${r.mode.autoUpload}, privacy private`);
+  L.push(`auto-post preview (dry run, nothing written or sent): ${r.mode.enabled ? 'on' : 'off'}, ${r.mode.ruleCount} rule(s), autoUpload ${r.mode.autoUpload}, uploads go up scheduled (private until their publish time)`);
   if (r.rulesFile) L.push(`rules file: ${r.rulesFile}`);
   if (r.blocked) L.push(`LIVE CHECK: a run would be refused now (${r.blocked}); everything below would be held`);
   L.push(`would queue: ${r.queued.length}`);
   if (r.schedule?.on) {
-    L.push(r.schedule.error === 'schedule-read-incomplete' ? 'scheduled posting: on, but the channel has more uploads than are checked (raise maxPages in data/posting/schedule.json); nothing would upload'
-      : r.schedule.error ? 'scheduled posting: on, but the settings file data/posting/schedule.json is not valid (nothing would upload)'
-      : `scheduled posting: on, every ${r.schedule.intervalHours} h; publish times below are estimates (UTC)${r.schedule.channelReadAt ? `, channel last read ${r.schedule.channelReadAt}` : ', channel not read yet'}; the real time is set when the clip is queued${r.schedule.retries ? `; ${r.schedule.retries} queued clip(s) came within ${r.schedule.minLeadHours} h of their time and would get a new time about ${r.schedule.minLeadHours} h from now, ${r.schedule.rechained} queued clip(s) re-timed ${r.schedule.intervalHours} h apart after it` : ''}`);
+    L.push(r.schedule.error === 'schedule-read-incomplete' ? 'scheduled posting: on, but the channel read did not reach back far enough to see every scheduled post (raise maxPages in data/posting/schedule.json); nothing would upload'
+      : r.schedule.error ? 'scheduled posting: on, but the schedule settings are not valid (nothing would upload)'
+      : `scheduled posting: on, at least ${r.schedule.intervalHours} h apart (${r.schedule.placement}); publish times below are estimates (UTC)${r.schedule.channelReadAt ? `, channel last read ${r.schedule.channelReadAt}` : ', channel not read yet'}; the real time is set when the clip is queued${r.schedule.retries ? `; ${r.schedule.retries} queued clip(s) came within ${r.schedule.minLeadHours} h of their time and would get the next free time` : ''}`);
+  } else if (r.schedule) {
+    L.push('scheduled posting: off; automatic uploads wait until it is on (they always go up with a publish time)');
   }
   for (const q of r.queued) {
     L.push(`  [${q.actions.join('+')}] ${q.kind} -> ${q.target} (rule ${q.ruleId}${q.score !== null ? `, score ${q.score}` : ''}) ${q.id}${q.note ? ` | ${q.note}` : ''}`);
     if (q.publishAt) L.push(`      goes public: ${q.publishAt} (estimate)`);
-    else if (q.publishNote === 'beyond-cap') L.push(`      waits: its public time would be more than ${r.schedule.maxAheadDays} days ahead (maxAheadDays)`);
+    else if (q.publishNote === 'beyond-cap') L.push(`      waits: its public time would be more than ${r.schedule.maxAheadDays} days ahead (days ahead)`);
     L.push(`      title: ${q.title}`);
     for (const line of String(q.description).split('\n')) L.push(`      | ${line}`);
   }

@@ -143,6 +143,8 @@ json::Value host_status_json(App &a)
 		}
 	r.set("sinks", std::move(sinks));
 	r.set("uptimeMs", (int64_t)(GetTickCount64() - a.start_tick));
+	// D374: last video frame age, stalls and GPU device losses (gfx_watch.h); the launcher's host watchdog reads it.
+	r.set("graphics", a.gfx_watch ? a.gfx_watch->status() : json::Value());
 	json::Value rp = json::Value::object();
 	rp.set("H", a.outputs->replay_running("H"));
 	rp.set("V", a.outputs->replay_running("V"));
@@ -283,6 +285,16 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		return host_status_json(a);
 	});
 	m["host.status"].clips = true; // the live clipper's health check
+	// host.alive {}: the launcher's liveness probe (D374, services/studio-ui/host-watch.mjs). Takes no studio or output
+	// lock (a long project load never makes it wait), so "no answer" means the host itself is stuck.
+	add("host.alive", [&a](const json::Value &p) {
+		(void)Params(p, {});
+		json::Value r = json::Value::object();
+		r.set("pid", (int64_t)GetCurrentProcessId());
+		r.set("uptimeMs", (int64_t)(GetTickCount64() - a.start_tick));
+		r.set("graphics", a.gfx_watch ? a.gfx_watch->status() : json::Value());
+		return r;
+	});
 	add("face.status", [&a](const json::Value &p) { // face AI link (face.h, D295 proposed); read-only
 		(void)Params(p, {});
 		if (!a.face) {
@@ -690,6 +702,49 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		if (!a.test_hooks)
 			throw Error(rpc::FORBIDDEN, "audio.testStall needs a host started with --test-hooks");
 		return a.studio->test_audio_stall(q.str("id", 64), q.bool_or("stall", true));
+	});
+	// graphics.testStall {ms}: the next video frame's tick blocks the graphics thread for ms (a stuck GPU), for the
+	// graphics watchdog test (gfx_watch.h, D374). --test-hooks only.
+	add("graphics.testStall", [&a](const json::Value &p) {
+		Params q(p, {"ms"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "graphics.testStall needs a host started with --test-hooks");
+		if (!a.gfx_watch)
+			throw Error(rpc::INTERNAL, "the graphics watchdog is not running");
+		const int64_t ms = q.integer("ms", 1, 30000);
+		a.gfx_watch->test_stall((uint32_t)ms);
+		json::Value r = json::Value::object();
+		r.set("ms", ms);
+		return r;
+	});
+	// graphics.testSnapshot {writes, reads}: stress the lock-free stall snapshot (gfx_watch.h Published, the seqlock
+	// host.alive reads) with a writer thread against this reader; torn must be 0. --test-hooks only.
+	add("graphics.testSnapshot", [&a](const json::Value &p) {
+		Params q(p, {"writes", "reads"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "graphics.testSnapshot needs a host started with --test-hooks");
+		const auto pr = gfxwatch::seqlock_probe((uint64_t)q.integer("writes", 1, 20000000), (uint64_t)q.integer("reads", 1, 20000000));
+		json::Value r = json::Value::object();
+		r.set("writes", (int64_t)pr.writes);
+		r.set("reads", (int64_t)pr.reads);
+		r.set("torn", (int64_t)pr.torn);
+		r.set("retriedOut", (int64_t)pr.retried_out);
+		r.set("changes", (int64_t)pr.changes);
+		return r;
+	});
+	// graphics.testSnapshotBusy {busy}: host.status / host.alive act as if the stall snapshot read ran out of retries
+	// (the stall fields are then left out, "snapshot": "busy"). --test-hooks only.
+	add("graphics.testSnapshotBusy", [&a](const json::Value &p) {
+		Params q(p, {"busy"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "graphics.testSnapshotBusy needs a host started with --test-hooks");
+		if (!a.gfx_watch)
+			throw Error(rpc::INTERNAL, "the graphics watchdog is not running");
+		const bool busy = q.boolean("busy");
+		a.gfx_watch->test_snapshot_busy(busy);
+		json::Value r = json::Value::object();
+		r.set("busy", busy);
+		return r;
 	});
 	// audio.testHangDestroy {id}: that fake source's destroy never returns (a stuck libobs destruction thread at
 	// shutdown, as a WASAPI source on a dead work queue); proves the shutdown guard ends the host. --test-hooks only.

@@ -8,7 +8,8 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { createPostChain, createUploadQueue } from '../services/posting/auto-chain.mjs';
 import { loadRules, planAuto, validateRules } from '../services/posting/auto-post.mjs';
-import { createPostStore, loadLimits, loadTemplates, packageUploads, pickYoutubeTarget } from '../services/posting/index.mjs';
+import { createPostStore, loadLimits, loadTemplates, packageUploads, pickYoutubeTarget, uploadCoverAt } from '../services/posting/index.mjs';
+import { READONLY_SCOPE } from '../services/posting/oauth.mjs';
 
 const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-d301-')); tmp.push(d); return d; };
@@ -56,6 +57,16 @@ describe('target by length and aspect (from limits.json, not code)', () => {
     const t = loadTemplates();
     for (const target of ['youtube-shorts', 'youtube-video']) for (const k of ['montage', 'won-reel']) assert.ok(t.targets[target].kinds[k].title, `${target}/${k}`);
     assert.ok(limits.targets['youtube-video'].fields.title);
+  });
+});
+
+describe('cover frame', () => {
+  test('RP6: a reel with its edited start frame takes the cover from frame 0; others 2 s in or the middle', () => {
+    assert.equal(uploadCoverAt({ thumbnail: true }, 45), 0);
+    assert.equal(uploadCoverAt({ thumbnail: 'yes' }, 45), 2, 'only a real true counts');
+    assert.equal(uploadCoverAt({}, 45), 2);
+    assert.equal(uploadCoverAt({}, 3), 1.5);
+    assert.equal(uploadCoverAt({}, NaN), 0);
   });
 });
 
@@ -157,10 +168,13 @@ describe('rules: kinds', () => {
 });
 
 describe('chain: finished videos reach the queue', () => {
-  const authOk = { status: async () => ({ signedIn: true, hasClient: true }), accessToken: async () => 'fake-access' };
+  const authOk = { status: async () => ({ signedIn: true, hasClient: true }), accessToken: async () => 'fake-access', grantedScopes: async () => [READONLY_SCOPE] };
   function fakeYt() {
     const inits = []; let n = 0;
     const fetchImpl = async (url, o = {}) => {
+      // D375: automatic uploads are scheduled; the channel read sees an empty channel.
+      const api = /youtube\/v3\/(channels|playlistItems)\?/.exec(String(url));
+      if (api) return { ok: true, status: 200, json: async () => (api[1] === 'channels' ? { items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU1' } } }] } : { items: [] }) };
       const cr = o.headers?.['Content-Range'] ?? '';
       if (String(url).includes('uploadType=resumable')) { inits.push(JSON.parse(o.body)); return { ok: true, status: 200, headers: new Map([['location', `https://fake.invalid/s${inits.length}`]]) }; }
       const m = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(cr);
@@ -169,7 +183,7 @@ describe('chain: finished videos reach the queue', () => {
     };
     return { fetchImpl, inits };
   }
-  test('montage-only run (no candidates.json): packaged from uploads.json, approved by a kinds rule, uploaded private to the chosen target', async () => {
+  test('montage-only run (no candidates.json): packaged from uploads.json, approved by a kinds rule, uploaded scheduled to the chosen target', async () => {
     const e = setup([ROWS[0], ROWS[1], ROWS[2]]);
     const runDir = path.join(e.dataDir, 'clips', 'runs', 'run1'); mkdirSync(runDir, { recursive: true });
     const rulesFile = path.join(e.dataDir, 'rules.json');
@@ -178,12 +192,13 @@ describe('chain: finished videos reach the queue', () => {
       { id: 'ml', target: 'youtube-video', minScore: 0, kinds: ['montage'], maxPerDay: 5 }] }));
     const pf = path.join(e.dataDir, 'profile.json'); writeFileSync(pf, JSON.stringify(PROFILE));
     const yt = fakeYt(); const logs = [];
-    const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: (id) => id !== 'post-schedule' }, rulesFile, auth: authOk, fetchImpl: yt.fetchImpl, now: () => Date.parse('2026-11-08T10:00:00Z'),
+    const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: (id) => id !== 'post-delete-uploaded' }, rulesFile, auth: authOk, fetchImpl: yt.fetchImpl, now: () => Date.parse('2026-11-08T10:00:00Z'),
       tickEveryMs: 0, profileFile: pf, ffmpeg: FFMPEG, log: (m) => logs.push(m) });
     const r = await c.afterRun(runDir, { sinks: [{ id: 'yt', kind: 'stream', state: 'stopped' }] });
     assert.equal(r.packaged, 3, JSON.stringify(logs));
     assert.equal(yt.inits.length, 2, 'both montages uploaded; the short (no score, kind short) stays a draft');
-    assert.ok(yt.inits.every((b) => b.status.privacyStatus === 'private'));
+    assert.ok(yt.inits.every((b) => b.status.privacyStatus === 'private' && typeof b.status.publishAt === 'string'), 'scheduled: private with a publish time');
+    assert.deepEqual(yt.inits.map((b) => b.status.publishAt).sort(), ['2026-11-08T12:00:00Z', '2026-11-08T13:00:00Z'].map((t) => t.replace('Z', '.000Z')), 'one hour apart');
     const store = createPostStore({ ledgerFile: e.ledgerFile });
     assert.deepEqual(store.list().map((p) => `${p.kind}:${p.target}:${p.status}`).sort(), ['montage:youtube-shorts:uploaded', 'montage:youtube-video:uploaded', 'short:youtube-shorts:draft']);
     const rows = JSON.parse(readFileSync(path.join(e.dataDir, 'clips', 'uploads.json'), 'utf8')).files;

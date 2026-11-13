@@ -1,0 +1,31 @@
+{
+  "$comment": "RP6 thumbnail start frame (D366, user 2026-11-12: 'for each reel, there needs be a start frame which will need to act as the thumbnail, just 1 frame, this should be edited in a way to showcase what's the reel is about'). Read by services/clip/reel_thumbnail.py. One frame at the very start of a montage, match reel, impact-play reel or live clip (V canvas): the reel's strongest moment as the picture, a short title from the reel's own facts (game text read by the detectors, kill count, result, mode; never chat), the streamer brand from data/profile.local.json (never committed). Also kept as thumbnail.png in the reel's folder; posting uses the first frame as the cover. Made locally with ffmpeg and the bundled fonts (data/fonts), no model. Behind the flag reel-thumbnail (off by default). Sizes are fractions of the frame height; positions stay inside the targets' safe area.",
+  "version": "1.0.0",
+  "status": "proposed",
+  "approved": "user 2026-11-12 chose the feature (one edited start frame per reel, made locally); the look, sizes and title wording are the agent's proposal (plan RP6)",
+  "checked": "2026-11-12",
+  "flag": "reel-thumbnail",
+  "fontFile": "Exo2-Bold.ttf",
+  "moment": {
+    "medalLeadSec": 0.4,
+    "killLeadSec": 0.3,
+    "windowSec": 3.0,
+    "why": "The frame is taken just after the strongest medal appears (its card is then on screen), else just after the densest run of kills; windowSec is the same 3 s as the payoff-first hook (data/clip/reel-hook.json)."
+  },
+  "picture": { "saturation": 1.25, "brightness": -0.5, "sharpen": 0.6, "vignette": true, "why": "ffmpeg hue (s = saturation, b = brightness on its -10..10 scale) and unsharp (luma amount), both in the LGPL ffmpeg builds; a little more colour, a little darker so the white title reads, a light sharpen, a soft vignette." },
+  "lines": [
+    { "id": "main", "sizeOfHeight": 0.068, "colour": "#FFFFFF", "borderOfSize": 0.09, "maxChars": 18 },
+    { "id": "sub", "sizeOfHeight": 0.040, "colour": "#FFD84A", "borderOfSize": 0.10, "maxChars": 24 },
+    { "id": "brand", "sizeOfHeight": 0.030, "colour": "#FFFFFF", "borderOfSize": 0.12, "maxChars": 24 }
+  ],
+  "topOfHeight": 0.06,
+  "gapOfHeight": 0.012,
+  "glyphWidthOfSize": 0.62,
+  "text": {
+    "$comment": "Per reel type, the first template whose fields are all known is used. Fields: {medal} the strongest medal's name, {killsText} the own kill count (1 KILL, 3 KILLS), {result} the match result, {mode} MP or BR. A sub line equal to the main line is left out.",
+    "montage": { "main": ["{medal}", "{killsText}"], "sub": ["{killsText} · {mode}", "{killsText}", "{mode}"] },
+    "match-reel": { "main": ["{result}", "{killsText}"], "sub": ["{killsText} · {mode}", "{killsText}", "{medal}"] },
+    "impact-play": { "main": ["IMPACT PLAY"], "sub": ["{result}", "{mode}"] },
+    "live-clip": { "main": ["{medal}", "{killsText}", "HIGHLIGHT"], "sub": ["{killsText}", "{mode}"] }
+  }
+}
