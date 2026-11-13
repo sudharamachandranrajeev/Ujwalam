@@ -28,6 +28,34 @@ You already have a Google Cloud project with an OAuth client for uploads (P16b).
 
 If step 6 says "reading statistics is not allowed yet", step 3 or 5 was missed: add the scope, then sign in again.
 
+## YouTube upload quota: use about 6 a day, then ask Google for more (D375, 2026-11-13)
+
+Automatic posting (Settings > Posting & growth > Auto-post) uploads at most as many clips a day as the YouTube Data
+API quota allows. With the default quota of 10,000 units a day, about 6 uploads fit: each upload is counted as 1,600
+units plus 50 for its thumbnail, and 100 units stay free for reading the channel's schedule and the upload status.
+The card shows "About N uploads a day fit in the quota" and sets "Uploads at most" to that number at first.
+
+Google's quota page (fetched 2026-11-13) says uploads now have their own count of 100 a day. If your project's
+Quotas page shows that, uploads no longer use the 10,000 units and more fit; this is UNVERIFIED for your project, so
+the card keeps the safe count until you check.
+
+To ask Google for more (one time; Google decides, it can take days or weeks; the menu and form names below are
+UNVERIFIED, Google renames them now and then):
+
+1. Open Google Cloud Console and pick the project you made for Ujwalam uploads.
+2. APIs & Services > Enabled APIs & services > YouTube Data API v3 > **Quotas & System Limits**. Note the "Queries
+   per day" limit and how much you use.
+3. Open the quota extension form: on that page use **Edit quota** / **Apply for higher quota**, or go to the YouTube
+   API Services audit and quota extension form (linked from Google's "Quota and Compliance Audits" help page).
+4. Fill it in: the project number (Cloud Console home), your channel, what the app does ("uploads my own game clips
+   from my own PC to my own channel as scheduled posts, about N a day"), and the daily units you ask for (for example
+   30,000 for about 18 uploads a day). Google may ask for a screen recording of the upload flow and to check the app
+   against the YouTube API Services Terms; answer from your own account only.
+5. When Google grants the new number: Settings > Posting & growth > Auto-post > **YouTube quota**, type the new daily
+   units, click Save. The card then shows how many uploads fit; raise "Uploads at most" if you want more a day.
+
+Nothing in Ujwalam sends this form or changes the Cloud project for you.
+
 ## Instagram (not built yet; for a later AN1 step)
 
 Instagram insights come through the Instagram Graph API, which needs a Creator or Business account linked to a Facebook

@@ -3,8 +3,9 @@
 //   loadRules(file)                  -> { autoUpload, rules } (validated; any problem throws AutoPostError)
 //   planAuto({ posts, rules, autoUpload, log, now }) -> [{ id, ruleId, action: 'approve'|'upload'|'skip', reason }]  (pure)
 //   runAuto({ store, rules, outputsStatus, upload, logFile, now }) -> { refused, done: [...] }
-// Safety: private only (uploadVideo hardcodes it); refuses everything while any output is active/starting or the output
-// state cannot be read (fail closed); a post is auto-approved/auto-uploaded at most once; per-rule max per UTC day;
+// Safety: private only (uploadVideo hardcodes it; the chain adds a publish time, D375, so YouTube shows it as Scheduled); refuses everything while any output is active/starting or the output
+// state cannot be read (fail closed); a post is auto-approved/auto-uploaded at most once; per-rule max per UTC day and,
+// when the rules set maxUploadsPerDay (D375), one cap per UTC day across all rules; oldest clip first (madeAt);
 // only posts that AUTO approved are ever auto-uploaded (a post you approved by hand stays yours to upload);
 // every auto action is appended to <dataDir>/posting/auto-log.json with its reason (ids and rule ids only, no text).
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -15,13 +16,16 @@ import { createDataSource, parseJsonText } from '../common/data-reload.mjs';
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const AUTO_FLAG = 'auto-post';
 export const DEFAULT_RULES = path.join(REPO, 'data', 'posting', 'auto-post-rules.json');
+export const DEFAULT_RANKING = path.join(REPO, 'data', 'clip', 'ranking.json');
 export const RULES_NAME = 'auto-post-rules.json';
 export const AUTO_LOG_NAME = 'auto-log.json';
 export const UPLOAD_TARGET = 'youtube-shorts';
 /** Targets the auto chain may upload (private YouTube). youtube-video is for finished videos that are not Shorts (D301). */
 export const UPLOAD_TARGETS = Object.freeze(['youtube-shorts', 'youtube-video']);
-export const RULE_KINDS = Object.freeze(['short', 'montage', 'won-reel']);
-export const MAX_PER_DAY = 10;
+export const RULE_KINDS = Object.freeze(['short', 'montage', 'won-reel', 'impact-play']);
+/** Highest allowed uploads per day (a rule's or the global cap): YouTube's own videos.insert limit per project is
+ *  100 a day (developers.google.com/youtube/v3/determine_quota_cost, fetched 2026-11-13); the quota fit is lower (quota.json). */
+export const MAX_PER_DAY = 100;
 const ID = /^[a-z][a-z0-9-]{0,31}$/;
 const ACTIVE = new Set(['starting', 'live', 'retrying', 'active', 'running']);
 
@@ -33,6 +37,7 @@ const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 export function validateRules(j) {
   if (!isPlain(j) || !Array.isArray(j.rules)) throw new AutoPostError('bad-rules', 'rules file: missing rules list');
   if (j.autoUpload !== undefined && typeof j.autoUpload !== 'boolean') throw new AutoPostError('bad-rules', 'rules file: autoUpload must be true or false');
+  if (j.maxUploadsPerDay !== undefined && !(Number.isInteger(j.maxUploadsPerDay) && j.maxUploadsPerDay >= 1 && j.maxUploadsPerDay <= MAX_PER_DAY)) throw new AutoPostError('bad-rules', `rules file: maxUploadsPerDay must be an integer 1..${MAX_PER_DAY}`);
   const seen = new Set();
   const rules = j.rules.map((r, i) => {
     if (!isPlain(r) || !ID.test(String(r.id)) || seen.has(r.id)) throw new AutoPostError('bad-rules', `rule ${i}: bad or duplicate id`);
@@ -44,7 +49,7 @@ export function validateRules(j) {
     if (r.kinds !== undefined && !(Array.isArray(r.kinds) && r.kinds.length && r.kinds.every((k) => RULE_KINDS.includes(k)))) throw new AutoPostError('bad-rules', `rule ${r.id}: kinds must be a non-empty list of ${RULE_KINDS.join(', ')}`);
     return { id: r.id, target: r.target, minScore: r.minScore, layouts: r.layouts ?? null, kinds: r.kinds ?? ['short'], maxPerDay: r.maxPerDay };
   });
-  return { autoUpload: j.autoUpload === true, rules };
+  return { autoUpload: j.autoUpload === true, rules, ...(j.maxUploadsPerDay !== undefined ? { maxUploadsPerDay: j.maxUploadsPerDay } : {}) };
 }
 
 /** Where the user's own rules live: <dataDir>/posting/auto-post-rules.json (survives app updates). */
@@ -156,23 +161,46 @@ export function mixOrder(posts, kindShares) {
   return out;
 }
 
-/** Pure. posts = store.list() views. Returns what a run would do, highest score first, caps applied.
- *  kindShares (RP5, only while the flag self-learning is on and a learned mix is in use): the order follows mixOrder. */
-export function planAuto({ posts, rules, autoUpload, log, now, kindShares = null }) {
+/** The smallest score the clip ranker keeps (data/clip/ranking.json minScore: a Triple Kill streak, user 2026-11-07).
+ *  The clipper publishes only clips at or above it, so a short in the clips folder without its own score has at least it. */
+export function rankerMinScore(file = DEFAULT_RANKING) {
+  try { const v = JSON.parse(readFileSync(file, 'utf8'))?.minScore; return Number.isFinite(v) ? v : null; } catch { return null; }
+}
+
+/** Posting order (D375, user 2026-11-13: oldest first): by madeAt (from the clip's file name), then the higher score,
+ *  then the id (stable). A post without madeAt goes last. Pure. */
+export function oldestFirst(posts) {
+  const key = (p) => (typeof p.madeAt === 'string' ? p.madeAt : '￿');
+  return [...posts].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0) || ((b.score ?? -Infinity) - (a.score ?? -Infinity)) || String(a.id).localeCompare(String(b.id)));
+}
+
+/** Pure. posts = store.list() views. Returns what a run would do, oldest first (D375), caps applied.
+ *  kindShares (RP5, only while the flag self-learning is on and a learned mix is in use): the order follows mixOrder.
+ *  maxUploadsPerDay (D375, optional): one daily cap for approvals and for uploads across all rules.
+ *  unscoredFloor (D375, optional; the chain passes rankerMinScore()): a short from the clips folder has no score of its
+ *  own, but the clipper only publishes clips at or above that floor; such a short passes a rule whose minScore is not
+ *  above the floor, and is skipped ('no-score') by a stricter rule. Without it, a short with no score is always skipped. */
+export function planAuto({ posts, rules, autoUpload, log, now, kindShares = null, maxUploadsPerDay = null, unscoredFloor = null }) {
   const today = dayOf(now);
   const plan = [];
   const count = (ruleId, action) => log.filter((e) => e.ruleId === ruleId && e.action === action && String(e.at).slice(0, 10) === today).length;
   const autoApproved = new Set(log.filter((e) => e.action === 'approve').map((e) => e.id));
   const autoUploaded = new Set(log.filter((e) => e.action === 'upload' || e.action === 'upload-failed').map((e) => e.id));
   const used = new Map();
+  const countAll = (action) => log.filter((e) => e.action === action && String(e.at).slice(0, 10) === today).length;
   const take = (ruleId, action, cap) => {
     const k = `${ruleId}:${action}`; const n = used.get(k) ?? count(ruleId, action);
     if (n >= cap) return false;
+    if (Number.isInteger(maxUploadsPerDay)) {
+      const g = `*:${action}`; const m = used.get(g) ?? countAll(action);
+      if (m >= maxUploadsPerDay) return false;
+      used.set(g, m + 1);
+    }
     used.set(k, n + 1); return true;
   };
   const claimed = new Set();
-  const byScore = [...posts].sort((a, b) => (b.score ?? -Infinity) - (a.score ?? -Infinity));
-  const sorted = kindShares ? mixOrder(byScore, kindShares) : byScore;
+  const ordered = oldestFirst(posts);
+  const sorted = kindShares ? mixOrder(ordered, kindShares) : ordered;
   for (const rule of rules) {
     const canUpload = autoUpload && UPLOAD_TARGETS.includes(rule.target);
     for (const p of sorted) {
@@ -185,19 +213,20 @@ export function planAuto({ posts, rules, autoUpload, log, now, kindShares = null
         if (autoApproved.has(p.id)) { skip('already-auto-approved'); continue; }
         // minScore ranks clips only; a montage or won reel has no clip score, so listing its kind in a rule is the opt-in.
         if (kind === 'short') {
-          if (!Number.isFinite(p.score)) { skip('no-score'); continue; }
-          if (p.score < rule.minScore) continue;
+          if (!Number.isFinite(p.score)) {
+            if (!(Number.isFinite(unscoredFloor) && rule.minScore <= unscoredFloor)) { skip('no-score'); continue; }
+          } else if (p.score < rule.minScore) continue;
         }
         if (p.limits && p.limits.ok === false) { skip('over-limit'); continue; }
         if (p.unresolved && p.unresolved.length) { skip('unresolved-placeholders'); continue; }
         if (!take(rule.id, 'approve', rule.maxPerDay)) { skip('max-per-day'); continue; }
         claimed.add(p.id);
-        plan.push({ id: p.id, ruleId: rule.id, action: 'approve', reason: `score ${p.score} >= ${rule.minScore}` });
-        if (canUpload && take(rule.id, 'upload', rule.maxPerDay)) plan.push({ id: p.id, ruleId: rule.id, action: 'upload', reason: 'autoUpload on, private' });
+        plan.push({ id: p.id, ruleId: rule.id, action: 'approve', reason: Number.isFinite(p.score) ? `score ${p.score} >= ${rule.minScore}` : `published by the clipper (score >= ${unscoredFloor})` });
+        if (canUpload && take(rule.id, 'upload', rule.maxPerDay)) plan.push({ id: p.id, ruleId: rule.id, action: 'upload', reason: 'autoUpload on, scheduled' });
       } else if (p.status === 'approved' && canUpload && autoApproved.has(p.id) && !autoUploaded.has(p.id)) {
         claimed.add(p.id);
         if (!take(rule.id, 'upload', rule.maxPerDay)) { plan.push({ id: p.id, ruleId: rule.id, action: 'skip', reason: 'max-per-day' }); continue; }
-        plan.push({ id: p.id, ruleId: rule.id, action: 'upload', reason: 'auto-approved earlier, autoUpload on, private' });
+        plan.push({ id: p.id, ruleId: rule.id, action: 'upload', reason: 'auto-approved earlier, autoUpload on, scheduled' });
       }
     }
   }
@@ -207,7 +236,7 @@ export function planAuto({ posts, rules, autoUpload, log, now, kindShares = null
 // ---------------------------------------------------------------- run
 
 /**
- * opts: { store, rules: {autoUpload, rules}, outputsStatus, upload?(id) -> Promise, logFile, now?, kindShares? (RP5) }
+ * opts: { store, rules: {autoUpload, rules, maxUploadsPerDay?}, outputsStatus, upload?(id) -> Promise, logFile, now?, kindShares? (RP5), unscoredFloor? (D375) }
  * `upload` is injected (CLI passes uploadPost with real auth; tests pass a fake). Without it: approvals only.
  */
 export async function runAuto(opts) {
@@ -215,7 +244,7 @@ export async function runAuto(opts) {
   const log = createAutoLog(opts.logFile);
   const blocked = await liveBlock(opts.outputsStatus);
   if (blocked) return { refused: blocked, done: [] };
-  const plan = planAuto({ posts: opts.store.list(), rules: opts.rules.rules, autoUpload: opts.rules.autoUpload && typeof opts.upload === 'function', log: log.list(), now: nowFn(), kindShares: opts.kindShares ?? null });
+  const plan = planAuto({ posts: opts.store.list(), rules: opts.rules.rules, autoUpload: opts.rules.autoUpload && typeof opts.upload === 'function', log: log.list(), now: nowFn(), kindShares: opts.kindShares ?? null, maxUploadsPerDay: opts.rules.maxUploadsPerDay ?? null, unscoredFloor: opts.unscoredFloor ?? null });
   const done = []; let uploadsStopped = false;
   const record = (e) => { const entry = { at: nowFn().toISOString(), ...e }; log.append(entry); done.push(entry); };
   for (const step of plan) {

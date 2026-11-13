@@ -192,7 +192,7 @@ describe('owners', () => {
     assert.throws(() => s.get(), (e) => e.code === 'bad-rules', 'no good version yet: fail closed');
     writeFileSync(file, JSON.stringify({ rules: [{ id: 'one', target: 'youtube-shorts', minScore: 1, maxPerDay: 2 }] })); old(file);
     assert.equal(s.get().rules.length, 1);
-    writeFileSync(file, JSON.stringify({ rules: [{ id: 'one', target: 'youtube-shorts', minScore: 1, maxPerDay: 99 }] })); old(file);
+    writeFileSync(file, JSON.stringify({ rules: [{ id: 'one', target: 'youtube-shorts', minScore: 1, maxPerDay: 101 }] })); old(file);
     assert.equal(s.get().rules[0].maxPerDay, 2, 'kept');
     assert.match(s.status().rejected.why, /maxPerDay/);
     writeFileSync(file, JSON.stringify({ rules: [{ id: 'one', target: 'youtube-shorts', minScore: 1, maxPerDay: 3 }, { id: 'two', target: 'youtube-shorts', minScore: 2, maxPerDay: 1 }] })); old(file);

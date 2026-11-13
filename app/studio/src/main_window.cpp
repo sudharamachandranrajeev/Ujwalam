@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "main_window.h"
 #include "guide.h"
+#include "autopost_card.h"
 #include "connections_page.h"
 #include "icons.h"
 #include "add_dialogs.h"
@@ -4630,6 +4631,8 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 		// Posting & growth: only its features (the Posts window itself is in the More menu).
 		auto *ppost = page(QStringLiteral("Posting & growth"));
 		ppost->addWidget(mutedNote(QStringLiteral("Posts are reviewed in the Posts window, in the More menu, once Posts window is switched on below.")));
+		if (flagOn("posting")) // D375: the auto-post rules and schedule (the routes exist only while posting is on)
+			ppost->addWidget(new autopost::Card(api_, dlg));
 		featuresCard(ppost, QStringLiteral("posting"));
 		ppost->addStretch(1);
 
@@ -4764,6 +4767,13 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 					note(QStringLiteral("Not saved: Settings > Stream has a value over a platform limit (shown in red)."));
 					return;
 				}
+			for (auto *ap : dlg->findChildren<autopost::Card *>())
+				if (ap->blocksSave()) {
+					if (auto *found = settingsNavItem(nav, QStringLiteral("Posting & growth")))
+						nav->setCurrentItem(found);
+					note(QStringLiteral("Not saved: Settings > Posting & growth > Auto-post needs at least one kind of clip."));
+					return;
+				}
 			dlg->accept();
 		};
 		connect(bb, &QDialogButtonBox::accepted, dlg, [dlg]() { dlg->save(); });
@@ -4802,6 +4812,9 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 			for (auto *ip : dlg->findChildren<streampages::IntegrationsPage *>())
 				if (ip->dirty())
 					return true;
+			for (auto *ap : dlg->findChildren<autopost::Card *>())
+				if (ap->dirty())
+					return true;
 			return false;
 		};
 		outer->addWidget(bb);
@@ -4823,6 +4836,8 @@ void MainWindow::openSettings(bool firstRun, const QString &startPage)
 				tp->save(pageNote);
 			for (auto *ip : dlg->findChildren<streampages::IntegrationsPage *>())
 				ip->save(pageNote);
+			for (auto *ap : dlg->findChildren<autopost::Card *>())
+				ap->save(pageNote);
 			const auto dir = [](QLineEdit *e) { return e->text().trimmed().isEmpty() ? QJsonValue() : QJsonValue(e->text().trimmed()); };
 			QJsonObject body;
 			QJsonObject clipsBody{{QStringLiteral("recording"), rec->currentData().toString()}, {QStringLiteral("live"), liv->currentData().toString()}};
@@ -5078,6 +5093,8 @@ QJsonObject MainWindow::probe() const
 			o.insert(QStringLiteral("transitionsPage"), trp->probe());
 		if (auto *ip = settingsDlg_->findChild<streampages::IntegrationsPage *>())
 			o.insert(QStringLiteral("integrationsPage"), ip->probe());
+		if (auto *ap = settingsDlg_->findChild<autopost::Card *>())
+			o.insert(QStringLiteral("autopostCard"), ap->probe());
 	}
 	if (settingsDlg_) {
 		QJsonArray sections, navGroups; // sections: the pages in nav order; navGroups: the group headings in nav order
@@ -5368,7 +5385,7 @@ bool MainWindow::probeAction(const QString &action)
 		openSettings(false);
 		return true;
 	}
-	// D327: output-toggle:<id>:<on|off> clicks the Outputs panel switch; stream-*, tr-*, int-* go to the Settings pages.
+	// D327: output-toggle:<id>:<on|off> clicks the Outputs panel switch; stream-*, tr-*, int-* (and ap-*, D375) go to the Settings pages.
 	if (p.size() == 3 && p[0] == QStringLiteral("output-toggle"))
 		return outputsPanel_->probeToggle(p[1], p[2] == QStringLiteral("on"));
 	if (p.size() == 1 && p[0] == QStringLiteral("outputs-add")) {
@@ -5378,13 +5395,15 @@ bool MainWindow::probeAction(const QString &action)
 		}
 		return false;
 	}
-	if (settingsDlg_ && (p[0].startsWith(QStringLiteral("stream-")) || p[0].startsWith(QStringLiteral("tr-")) || p[0].startsWith(QStringLiteral("int-")))) {
+	if (settingsDlg_ && (p[0].startsWith(QStringLiteral("stream-")) || p[0].startsWith(QStringLiteral("tr-")) || p[0].startsWith(QStringLiteral("int-")) || p[0].startsWith(QStringLiteral("ap-")))) {
 		if (auto *sp = settingsDlg_->findChild<streampages::StreamPage *>(); sp && p[0].startsWith(QStringLiteral("stream-")))
 			return sp->probeAction(p);
 		if (auto *tp = settingsDlg_->findChild<streampages::TransitionsPage *>(); tp && p[0].startsWith(QStringLiteral("tr-")))
 			return tp->probeAction(p);
 		if (auto *ip = settingsDlg_->findChild<streampages::IntegrationsPage *>(); ip && p[0].startsWith(QStringLiteral("int-")))
 			return ip->probeAction(p);
+		if (auto *ap = settingsDlg_->findChild<autopost::Card *>(); ap && p[0].startsWith(QStringLiteral("ap-")))
+			return ap->probeAction(p);
 		return false;
 	}
 	if (p.size() == 2 && p[0] == QStringLiteral("settings-section")) { // show a section by its title (for the picture)
