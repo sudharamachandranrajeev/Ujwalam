@@ -2,6 +2,11 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.28 — 2026-11-13
+
+- Ujwalam opens again. With Instagram Live switched on but no Instagram server address stored, the studio did not open at all. Now Instagram is left out of that start and the other outputs are ready. If the stream setup cannot be used at all, the studio opens for recording only, and the reason is in the log.
+- The host watchdog, the audience counters and the reel length, hook and transition limits now ship in the install. They were missing from alpha.27, so the watchdog was off and the counters did not start.
+- Settings > Stream > Edit output: Bitrate shows what the output really sends. Before, an output without its own bitrate showed 6000 kbps, although it streamed at the main canvas bitrate (17000 kbps on YouTube).
 ## 0.1.0-alpha.27 — 2026-11-13
 
 - Battle Royale shorts: kills are read from your own on-screen kill text, knocks show in the short, and a chain of kills may be up to 30 s apart. After the stream, each live clip is cut again from the recording: every kill of its chain is in, and the running between kills is cut out.
