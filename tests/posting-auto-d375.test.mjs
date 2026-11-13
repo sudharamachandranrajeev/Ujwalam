@@ -5,9 +5,10 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { after, describe, test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 import { MAX_PER_DAY, RULE_KINDS, oldestFirst, planAuto, rankerMinScore, userRulesFile } from '../services/posting/auto-post.mjs';
@@ -16,7 +17,7 @@ import { QUEUE_NAME, createUploadQueue } from '../services/posting/auto-chain.mj
 import { FOLDER_RUN, scanClipsFolder } from '../services/posting/clips-source.mjs';
 import { DELETE_FLAG, FINAL_KEEP, HOLD_DIR_NAME, checkInFolder, holdingDir, deleteUploadedFile, hashWithIdentity, sameFileStill, statusVerdict } from '../services/posting/delete-uploaded.mjs';
 import { DEFAULT_SCHEDULE, loadScheduleConfig, planQueueSlots, userScheduleFile } from '../services/posting/schedule.mjs';
-import { QUOTA_DAY_NAME, createQuotaBudget, pacificDay, utcDay } from '../services/posting/quota-budget.mjs';
+import { LEGACY_DAY_NAME, QUOTA_DAY_NAME, createQuotaBudget, pacificDay, utcDay } from '../services/posting/quota-budget.mjs';
 import { readChannelSchedule } from '../services/posting/schedule-read.mjs';
 
 const tmp = [];
@@ -391,7 +392,7 @@ describe('Codex review: delete race, slot re-check, daily budget', () => {
     assert.equal(utcDay(T0), '2026-11-13'); assert.equal(pacificDay(Date.parse('2026-11-13T07:00:00Z')), '2026-11-12');
   });
 
-  test('budget: an unreadable counter file or quota file blocks uploads and reads (fail closed)', () => {
+  test('budget: a counter database that is not a database, or a bad quota file, blocks uploads and reads (fail closed)', () => {
     const dataDir = mk();
     mkdirSync(path.join(dataDir, 'posting'), { recursive: true });
     writeFileSync(path.join(dataDir, 'posting', QUOTA_DAY_NAME), '{ not json');
@@ -458,6 +459,21 @@ describe('Codex re-review: holding-folder delete, locked budget, reserved reads,
     assert.equal(readFileSync(f.file, 'utf8'), 'new clip'); assert.equal(readdirSync(f.hold).length, 1);
   });
 
+  test('delete: putBack is an atomic no-replace link: a free path gets the same file back; a taken path (file or folder) keeps it held', async () => {
+    const changed = Buffer.from('changed bytes '.repeat(20));
+    const free = delFixture(); let ino = null;
+    const r1 = await deleteUploadedFile({ ...free.base, beforeDelete: (held) => { writeFileSync(held, changed); ino = statSync(held, { bigint: true }).ino; } });
+    assert.equal(r1.reason, 'file-changed');
+    assert.equal(statSync(free.file, { bigint: true }).ino, ino, 'the same file is back at its path'); assert.deepEqual(readdirSync(free.hold), []);
+    for (const take of [(p) => writeFileSync(p, 'new clip'), (p) => mkdirSync(p)]) {
+      const f = delFixture(); let heldName = null;
+      const r = await deleteUploadedFile({ ...f.base, beforeDelete: (held) => { heldName = held; writeFileSync(held, changed); take(f.file); } });
+      assert.equal(r.reason, 'held-in-holding-folder');
+      assert.deepEqual(readFileSync(heldName), changed, 'the held file is intact in the holding folder');
+      assert.notDeepEqual(statSync(f.file, { bigint: true }).ino, statSync(heldName, { bigint: true }).ino, 'what took the path was not replaced');
+    }
+  });
+
   test('delete: a holding folder that is a junction is refused before anything moves', async (t) => {
     const f = delFixture();
     try { symlinkSync(mk(), f.hold, 'junction'); } catch { t.skip('cannot create a junction here'); return; }
@@ -466,28 +482,62 @@ describe('Codex re-review: holding-folder delete, locked budget, reserved reads,
     assert.throws(() => holdingDir(f.folder));
   });
 
-  test('budget: four processes charging at once lose no charge (exclusive lock file)', async () => {
+  test('budget: four processes charging at once lose no charge (SQLite BEGIN IMMEDIATE)', async () => {
     const dataDir = mk();
     const mod = pathToFileURL(path.join(import.meta.dirname, '..', 'services', 'posting', 'quota-budget.mjs')).href;
     const code = `const { createQuotaBudget } = await import(${JSON.stringify(mod)});
-      const b = createQuotaBudget({ dataDir: process.argv[1], quota: () => ({ quotaUnitsPerDay: 100000, perUploadUnits: 1650, readReserveUnits: 0 }), lockWaitMs: 20000 });
+      const b = createQuotaBudget({ dataDir: process.argv[1], quota: () => ({ quotaUnitsPerDay: 100000, perUploadUnits: 1650, readReserveUnits: 0 }), busyWaitMs: 20000 });
       for (let i = 0; i < 25; i++) if (b.reserveRead(1) !== null) process.exit(3);`;
     const run = () => new Promise((resolve) => { const c = spawn(process.execPath, ['--input-type=module', '-e', code, dataDir], { windowsHide: true, stdio: 'ignore' }); c.on('close', resolve); });
     const codes = await Promise.all([run(), run(), run(), run()]);
     assert.deepEqual(codes, [0, 0, 0, 0]);
     const s = createQuotaBudget({ dataDir, quota: QUOTA() }).state();
     assert.equal(s.units.n, 100, 'every charge counted');
-    assert.equal(existsSync(path.join(dataDir, 'posting', `${QUOTA_DAY_NAME}.lock`)), false);
+    assert.deepEqual(readdirSync(path.join(dataDir, 'posting')), [QUOTA_DAY_NAME], 'no lock file, no journal left behind');
   });
 
-  test('budget: a lock held by a live writer blocks (fail closed); a stale one (its holder died) is taken over', () => {
-    const dataDir = mk(); mkdirSync(path.join(dataDir, 'posting'), { recursive: true });
-    const lock = path.join(dataDir, 'posting', `${QUOTA_DAY_NAME}.lock`);
-    writeFileSync(lock, 'other');
-    const b = createQuotaBudget({ dataDir, nowMs: () => T0, quota: QUOTA(), lockWaitMs: 50 });
-    assert.equal(b.reserveRead(1), 'quota-busy'); assert.equal(b.reserveUpload(null), 'quota-busy');
-    const old = new Date(Date.now() - 5 * 60 * 1000); utimesSync(lock, old, old);
-    assert.equal(b.reserveRead(1), null); assert.equal(b.state().units.n, 1); assert.equal(existsSync(lock), false);
+  test('budget: a transaction held by a live process blocks (fail closed); when that process is killed the lock is gone', async () => {
+    const dataDir = mk();
+    const b = createQuotaBudget({ dataDir, nowMs: () => T0, quota: QUOTA(), busyWaitMs: 50 });
+    assert.equal(b.reserveRead(1), null, 'creates the database');
+    const code = `const { DatabaseSync } = await import('node:sqlite');
+      const db = new DatabaseSync(process.argv[1]); db.exec('BEGIN IMMEDIATE'); process.stdout.write('held\\n'); setInterval(() => {}, 1000);`;
+    const child = spawn(process.execPath, ['--input-type=module', '-e', code, b.file], { windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    try {
+      await new Promise((resolve, reject) => { child.stdout.on('data', (d) => { if (String(d).includes('held')) resolve(); }); child.on('exit', () => reject(new Error('holder exited early'))); });
+      assert.equal(b.reserveRead(1), 'quota-busy'); assert.equal(b.reserveUpload(null), 'quota-busy'); assert.equal(b.uploadBlock(null), 'quota-busy');
+    } finally {
+      const gone = new Promise((resolve) => child.on('exit', resolve));
+      child.kill('SIGKILL'); await gone;
+    }
+    assert.equal(b.reserveRead(1), null, 'the OS released the killed holder\'s lock'); assert.equal(b.state().units.n, 2);
+  });
+
+  test('budget: a refund goes to the day it was reserved on; a scan read after midnight Pacific reserves on the new day first', async () => {
+    const dataDir = mk(); let sent = 0;
+    const clock = { t: Date.parse('2026-11-14T07:59:00Z') }; // 23:59 Pacific, 2026-11-13
+    const b = createQuotaBudget({ dataDir, nowMs: () => clock.t, quota: QUOTA({ quotaUnitsPerDay: 2000 }) });
+    const f = async () => { sent++; return { ok: true }; };
+    const scan = b.reserveScan(81, f);
+    assert.equal(scan.day, '2026-11-13');
+    await scan.fetch('https://www.googleapis.com/youtube/v3/channels?mine=true');
+    clock.t = Date.parse('2026-11-14T08:01:00Z'); // 00:01 Pacific, 2026-11-14
+    assert.equal(b.state().units.n, 0, 'the new day starts at 0');
+    await scan.fetch('https://www.googleapis.com/youtube/v3/playlistItems?x=1');
+    assert.equal(b.state().units.n, 1, 'charged on the new day before it was sent'); assert.equal(sent, 2);
+    scan.done();
+    assert.equal(b.state().units.n, 1, 'the refund did not touch the new day');
+    clock.t = Date.parse('2026-11-14T07:59:00Z');
+    assert.equal(b.state().units.n, 1, 'the old day kept the one read it sent; the 80 unused went back to it');
+    // A direct refund is bound to its day too; one without a day refunds nothing.
+    clock.t = Date.parse('2026-11-14T08:01:00Z');
+    assert.equal(b.refundRead(5, '2026-11-13'), null); assert.equal(b.state().units.n, 1);
+    assert.equal(b.refundRead(1), 'quota-unreadable'); assert.equal(b.state().units.n, 1);
+    // Over budget on the new day: the after-midnight read is refused and nothing is sent.
+    const late = (() => { clock.t = Date.parse('2026-11-14T07:59:00Z'); return b.reserveScan(2, f); })();
+    clock.t = Date.parse('2026-11-14T08:01:00Z'); b.chargeRead(2000 - 1); sent = 0;
+    await assert.rejects(late.fetch('https://www.googleapis.com/youtube/v3/videos?id=a'), { code: 'quota-day-used' });
+    assert.equal(sent, 0); late.done();
   });
 
   test('budget: the limit check and the charge are one step: the last upload of the day is given out once', () => {
@@ -521,10 +571,27 @@ describe('Codex re-review: holding-folder delete, locked budget, reserved reads,
     assert.equal(sent, 0, 'refused before sending'); assert.equal(b.state().units.n, 2000);
   });
 
-  test('budget: a malformed counter blocks (fail closed); only a valid counter from another day starts again at 0', () => {
+  test('budget: counter rows outside the shape block (CHECK constraints, and the same check on read)', () => {
+    const dataDir = mk();
+    const b = createQuotaBudget({ dataDir, nowMs: () => T0, quota: QUOTA() });
+    assert.equal(b.reserveRead(1), null);
+    const db = new DatabaseSync(b.file);
+    try {
+      for (const sql of ["UPDATE counter SET n = -1", "UPDATE counter SET n = 'five'", "UPDATE counter SET n = 1.5", "UPDATE counter SET n = NULL", "UPDATE counter SET day = 'today'", "UPDATE counter SET kind = 'other'"]) {
+        assert.throws(() => db.exec(sql), /constraint|cannot store/i, sql);
+      }
+      // A replaced file without the constraints: the read check still blocks.
+      db.exec('DROP TABLE counter; CREATE TABLE counter (kind TEXT, day TEXT, n, PRIMARY KEY (kind, day))');
+      db.exec("INSERT INTO counter VALUES ('units', '2026-11-13', '5')");
+    } finally { db.close(); }
+    assert.deepEqual([b.uploadBlock(null), b.reserveRead(1), b.reserveUpload(null)], ['quota-unreadable', 'quota-unreadable', 'quota-unreadable']);
+    assert.throws(() => b.state(), { code: 'quota-unreadable' });
+  });
+
+  test('budget: the old quota-day.json is carried over once when valid; malformed blocks (fail closed); another day starts at 0', () => {
     const t = (doc) => {
       const dataDir = mk(); mkdirSync(path.join(dataDir, 'posting'), { recursive: true });
-      if (doc !== undefined) writeFileSync(path.join(dataDir, 'posting', QUOTA_DAY_NAME), typeof doc === 'string' ? doc : JSON.stringify(doc));
+      if (doc !== undefined) writeFileSync(path.join(dataDir, 'posting', LEGACY_DAY_NAME), typeof doc === 'string' ? doc : JSON.stringify(doc));
       const b = createQuotaBudget({ dataDir, nowMs: () => T0, quota: QUOTA() });
       return [b.uploadBlock(null), b.reserveRead(1)];
     };
@@ -536,8 +603,10 @@ describe('Codex re-review: holding-folder delete, locked budget, reserved reads,
     assert.deepEqual(t(undefined), [null, null], 'no file yet: the first day');
     assert.deepEqual(t({ uploads: { day: '2026-11-01', n: 9 }, units: { day: '2026-11-01', n: 9999 } }), [null, null], 'another day: 0');
     const dataDir = mk(); mkdirSync(path.join(dataDir, 'posting'), { recursive: true });
-    writeFileSync(path.join(dataDir, 'posting', QUOTA_DAY_NAME), JSON.stringify(D));
+    writeFileSync(path.join(dataDir, 'posting', LEGACY_DAY_NAME), JSON.stringify(D));
     assert.deepEqual(createQuotaBudget({ dataDir, nowMs: () => T0, quota: QUOTA() }).state(), { uploads: { day: '2026-11-13', n: 1 }, units: { day: '2026-11-13', n: 5 } });
+    writeFileSync(path.join(dataDir, 'posting', LEGACY_DAY_NAME), '{ changed later');
+    assert.equal(createQuotaBudget({ dataDir, nowMs: () => T0, quota: QUOTA() }).state().units.n, 5, 'read once: never again after the carry-over');
   });
 
   test('settings: an absent user file uses the shipped quota; an unreadable or invalid one blocks the budget (the card still loads)', () => {

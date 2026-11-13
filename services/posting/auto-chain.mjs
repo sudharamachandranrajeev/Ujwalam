@@ -158,7 +158,7 @@ const REASON_TEXT = {
   'stopped-by-user': 'Stopped by you; tried again at the next start',
   'daily-cap-reached': "Waiting: today's uploads per day are used up (Settings > Posting & growth > Auto-post); continues tomorrow (UTC)",
   'quota-day-used': "Waiting: today's YouTube quota is used up; continues after midnight Pacific time (ask Google for more: docs/plan/2026-11-12-growth-setup-notes.md)",
-  'quota-unreadable': "Waiting: the YouTube quota settings or today's count could not be read (data/posting/quota.json, Settings > Posting & growth > Auto-post, posting/quota-day.json)",
+  'quota-unreadable': "Waiting: the YouTube quota settings or today's count could not be read (data/posting/quota.json, Settings > Posting & growth > Auto-post, posting/quota-day.sqlite)",
   'quota-busy': "Waiting: today's YouTube quota count was busy; tried again shortly",
 };
 

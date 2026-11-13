@@ -1,35 +1,42 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// D375 daily YouTube budget (Codex reviews 2026-11-13). Two persisted counters in <data>/posting/quota-day.json:
-//   uploads: upload attempts in the current UTC day (every upload start or resume counts), checked against the rules'
+// D375 daily YouTube budget (Codex reviews 2026-11-13). Counters in the SQLite file <data>/posting/quota-day.sqlite
+// (node:sqlite, stdlib), one row per (kind, day):
+//   uploads: upload attempts in a UTC day (every upload start or resume counts), checked against the rules'
 //            maxUploadsPerDay; the approvals cap (planAuto) uses the same UTC day.
-//   units:   quota units used in the current Pacific day (Google resets the quota at midnight Pacific time): an upload
-//            attempt counts insert + thumbnail units (quota.json), every API read (schedule reads, status checks for the
+//   units:   quota units used in a Pacific day (Google resets the quota at midnight Pacific time): an upload attempt
+//            counts insert + thumbnail units (quota.json), every API read (schedule reads, status checks for the
 //            delete) 1 unit.
 // Admission: an upload may start only while units + one upload <= quotaUnitsPerDay - readReserveUnits (the same sum as
 // the "uploads a day fit" number, so a fit of 0 never uploads); reads may use the whole quota.
-// Every check and its charge happen in ONE step under an exclusive lock file (<file>.lock, created with 'wx'), so the
-// chain and the studio server never lose a charge or both pass the same last slot. A lock older than LOCK_STALE_MS is
-// taken over (its holder died); a lock that stays busy for LOCK_WAIT_MS blocks (fail closed).
+// Every check and its charge run in ONE transaction (BEGIN IMMEDIATE ... COMMIT, busy timeout BUSY_WAIT_MS), so the
+// chain and the studio server never lose a charge or both pass the same last slot. SQLite's file lock is held by the OS
+// and released when the holding process ends in any way (no stale lock file to take over). Every exception path rolls
+// back and closes the connection. Busy past BUSY_WAIT_MS blocks ('quota-busy', fail closed).
 // Reads are reserved BEFORE they are sent: meter() reserves 1 unit per request; reserveScan() reserves a whole schedule
-// read up front and gives back what it did not use.
-// Fail closed: a bad quota file, an unreadable or invalid user schedule file, and a counter file that is not exactly
-// the expected shape (both counters, a YYYY-MM-DD day, a whole n >= 0) block uploads and reads. Only a valid counter
-// from another day starts again at 0; a missing counter file is the first day.
+// read up front on its Pacific day and gives back what it did not use TO THAT DAY; a request sent after midnight Pacific
+// reserves 1 unit on the new day first.
+// Fail closed: a bad quota file, an unreadable or invalid user schedule file, a database that cannot be opened, and any
+// counter row that breaks the shape (CHECK constraints in the table, and the same check on every read) block uploads
+// and reads. The old counter file quota-day.json (bb4b11c) is read once when the database is new: a valid one carries
+// today's counts over; an invalid or unreadable one blocks until it is fixed or removed. It is left in place.
 //   loadQuota(dataDir, file?) -> { quotaUnitsPerDay, perUploadUnits, readReserveUnits, uploadsPerDayFit, userSet }
-//   createQuotaBudget({ dataDir, nowMs?, quota? }) -> { state(), uploadBlock(maxPerDay), reserveUpload(maxPerDay),
-//     readBlock(units), reserveRead(units), refundRead(units), reserveScan(units, fetchImpl), meter(fetchImpl),
-//     chargeUpload(), chargeRead(units) }
-import { closeSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs';
+//   createQuotaBudget({ dataDir, nowMs?, quota?, busyWaitMs? }) -> { state(), uploadBlock(maxPerDay),
+//     reserveUpload(maxPerDay), readBlock(units), reserveRead(units), refundRead(units, day), reserveScan(units, fetchImpl),
+//     meter(fetchImpl), chargeUpload(), chargeRead(units) }
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import { MAX_PER_DAY } from './auto-post.mjs';
 import { checkUserSchedule, userScheduleFile } from './schedule.mjs';
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const DEFAULT_QUOTA = path.join(REPO, 'data', 'posting', 'quota.json');
-export const QUOTA_DAY_NAME = 'quota-day.json';
-export const LOCK_STALE_MS = 30 * 1000;
-export const LOCK_WAIT_MS = 3 * 1000;
+export const QUOTA_DAY_NAME = 'quota-day.sqlite';
+export const LEGACY_DAY_NAME = 'quota-day.json';
+export const BUSY_WAIT_MS = 3 * 1000;
+/** Rows older than this many days are dropped (only today's rows count; a few days are kept for diagnosis). */
+const KEEP_DAYS = 8;
 const isPlain = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const readJson = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')); } catch { return null; } };
 
@@ -86,85 +93,110 @@ export const isApiRead = (url, init) => {
 };
 
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const KINDS = new Set(['uploads', 'units']);
 const validCounter = (c) => isPlain(c) && typeof c.day === 'string' && DAY_RE.test(c.day) && Number.isSafeInteger(c.n) && c.n >= 0;
 
-/** Parses a counter file's text. Throws QuotaError('quota-unreadable') unless it is exactly the expected shape. */
+/** Parses the OLD counter file's text (quota-day.json). Throws QuotaError('quota-unreadable') unless it is exactly the
+ *  expected shape; a valid counter from another day counts 0. */
 export function parseCounters(raw, { utc, pacific }) {
   let j;
-  try { j = JSON.parse(raw); } catch { throw new QuotaError('quota-unreadable', 'the quota counter file is not valid JSON'); }
-  if (!isPlain(j) || !validCounter(j.uploads) || !validCounter(j.units)) throw new QuotaError('quota-unreadable', 'the quota counter file is not valid');
+  try { j = JSON.parse(raw); } catch { throw new QuotaError('quota-unreadable', 'the old quota counter file (quota-day.json) is not valid JSON'); }
+  if (!isPlain(j) || !validCounter(j.uploads) || !validCounter(j.units)) throw new QuotaError('quota-unreadable', 'the old quota counter file (quota-day.json) is not valid');
   return { uploads: { day: utc, n: j.uploads.day === utc ? j.uploads.n : 0 }, units: { day: pacific, n: j.units.day === pacific ? j.units.n : 0 } };
 }
 
-const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-const BUSY = new Set(['EEXIST', 'EPERM', 'EACCES', 'EBUSY']);
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS counter (
+  kind TEXT NOT NULL CHECK (kind IN ('uploads', 'units')),
+  day TEXT NOT NULL CHECK (length(day) = 10 AND day GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'),
+  n INTEGER NOT NULL CHECK (n >= 0),
+  PRIMARY KEY (kind, day)
+) STRICT;
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL) STRICT;`;
 
-export function createQuotaBudget({ dataDir, nowMs = () => Date.now(), quota = null, lockWaitMs = LOCK_WAIT_MS, lockStaleMs = LOCK_STALE_MS }) {
+/** SQLite busy/locked (primary result codes 5 and 6, also inside extended codes). */
+const isBusy = (e) => [5, 6].includes(Number(e?.errcode) & 0xff) || /database is locked|database table is locked/i.test(String(e?.message));
+const asQuotaError = (e) => (e instanceof QuotaError ? e
+  : isBusy(e) ? new QuotaError('quota-busy', 'the quota counter stayed locked')
+  : new QuotaError('quota-unreadable', `the quota counter database could not be used: ${e?.message ?? e}`));
+
+export function createQuotaBudget({ dataDir, nowMs = () => Date.now(), quota = null, busyWaitMs = BUSY_WAIT_MS }) {
   const file = path.join(dataDir, 'posting', QUOTA_DAY_NAME);
-  const lockFile = `${file}.lock`;
+  const legacyFile = path.join(dataDir, 'posting', LEGACY_DAY_NAME);
   const getQuota = quota ?? (() => loadQuota(dataDir));
 
-  /** Today's counters. Throws QuotaError when the file exists but is not a valid counter file (fail closed). */
-  function state() {
-    const t = nowMs(); const days = { utc: utcDay(t), pacific: pacificDay(t) };
-    let raw;
-    for (let n = 0; raw === undefined; n++) {
-      try { raw = readFileSync(file, 'utf8'); } catch (e) {
-        if (e?.code === 'ENOENT') return { uploads: { day: days.utc, n: 0 }, units: { day: days.pacific, n: 0 } };
-        // Windows: the file is being replaced this moment (EPERM/EBUSY); read again briefly.
-        if (!BUSY.has(e?.code) || n >= 100) throw new QuotaError('quota-unreadable', 'the quota counter file could not be read');
-        pause(5);
+  /** Every counter row must have the table's shape (the CHECK constraints may be missing from a replaced file). */
+  function checkRows(db) {
+    for (const r of db.prepare('SELECT kind, day, n, typeof(n) AS t FROM counter').all()) {
+      if (!KINDS.has(r.kind) || typeof r.day !== 'string' || !DAY_RE.test(r.day) || r.t !== 'integer' || !Number.isSafeInteger(r.n) || r.n < 0) {
+        throw new QuotaError('quota-unreadable', 'the quota counter database has a row that is not valid');
       }
     }
-    return parseCounters(raw, days);
+  }
+  const count = (db, kind, day) => db.prepare('SELECT n FROM counter WHERE kind = ? AND day = ?').get(kind, day)?.n ?? 0;
+  const add = (db, kind, day, n) => {
+    if (n > 0) db.prepare('INSERT INTO counter (kind, day, n) VALUES (?, ?, ?) ON CONFLICT (kind, day) DO UPDATE SET n = n + excluded.n').run(kind, day, n);
+  };
+
+  /** Once per database: carries a valid old quota-day.json over; an invalid or unreadable one throws (fail closed). */
+  function migrateLegacy(db, days) {
+    if (db.prepare("SELECT value FROM meta WHERE key = 'legacy-json'").get()) return;
+    let raw = null;
+    try { raw = readFileSync(legacyFile, 'utf8'); } catch (e) {
+      if (e?.code !== 'ENOENT') throw new QuotaError('quota-unreadable', 'the old quota counter file (quota-day.json) could not be read');
+    }
+    if (raw !== null) {
+      const old = parseCounters(raw, days);
+      add(db, 'uploads', old.uploads.day, old.uploads.n);
+      add(db, 'units', old.units.day, old.units.n);
+    }
+    db.prepare("INSERT INTO meta (key, value) VALUES ('legacy-json', ?)").run(raw === null ? 'none' : 'carried-over');
   }
 
-  /** Runs fn() holding the lock file (real wall clock for the lock times, never the test clock). */
-  function locked(fn) {
-    mkdirSync(path.dirname(file), { recursive: true });
-    const until = Date.now() + lockWaitMs;
-    for (;;) {
-      let fd = null;
-      // EPERM/EACCES/EBUSY on Windows: the previous lock is still being deleted (delete pending) or briefly open in
-      // another process; that is "busy", not an error.
-      try { fd = openSync(lockFile, 'wx'); } catch (e) { if (!BUSY.has(e?.code)) throw new QuotaError('quota-unreadable', 'the quota lock could not be made'); }
-      if (fd !== null) {
-        try { writeSync(fd, `${process.pid} ${new Date().toISOString()}\n`); } finally { closeSync(fd); }
-        try { return fn(); } finally { try { unlinkSync(lockFile); } catch { /* already taken over as stale */ } }
-      }
-      // Busy: take over a stale lock (its holder died). It is renamed away first, so only one taker wins; a lock that
-      // turns out fresh after the rename is put back.
-      try {
-        if (Date.now() - statSync(lockFile).mtimeMs > lockStaleMs) {
-          const aside = `${lockFile}.${process.pid}.${Date.now()}.stale`;
-          renameSync(lockFile, aside);
-          if (Date.now() - statSync(aside).mtimeMs > lockStaleMs) unlinkSync(aside); else renameSync(aside, lockFile);
-          continue;
-        }
-      } catch { /* the lock went away meanwhile: try again */ }
-      if (Date.now() >= until) throw new QuotaError('quota-busy', 'the quota counter stayed locked');
-      pause(5);
-    }
-  }
-  function write(s) {
-    const tmp = `${file}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(s)}\n`);
-    // A reader without the lock (uploadBlock/readBlock) may have the file open for a moment: Windows then refuses the
-    // replace (EPERM); it is tried again briefly (still under the lock).
-    for (let n = 0; ; n++) {
-      try { renameSync(tmp, file); return; } catch (e) { if (!BUSY.has(e?.code) || n >= 200) throw e; pause(5); }
-    }
-  }
-  /** One locked step: read, decide, write. decide(s, q) -> reason (nothing written) | null (s is written). */
-  const step = (decide) => {
+  /**
+   * Runs fn(db, days) inside BEGIN IMMEDIATE ... COMMIT on a fresh connection. Any throw (open, busy, schema, row check,
+   * fn, commit) rolls back and closes, and comes out as a QuotaError ('quota-busy' or 'quota-unreadable').
+   */
+  function tx(fn) {
+    let db = null;
     try {
-      return locked(() => {
-        const q = getQuota(); const s = state();
+      mkdirSync(path.dirname(file), { recursive: true });
+      db = new DatabaseSync(file, { timeout: busyWaitMs });
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const t = nowMs(); const days = { utc: utcDay(t), pacific: pacificDay(t) };
+        db.exec(SCHEMA);
+        migrateLegacy(db, days);
+        checkRows(db);
+        db.prepare('DELETE FROM counter WHERE day < ?').run(utcDay(t - KEEP_DAYS * 86400000));
+        const r = fn(db, days);
+        db.exec('COMMIT');
+        return r;
+      } catch (e) {
+        try { db.exec('ROLLBACK'); } catch { /* no transaction left (SQLite rolled it back itself) */ }
+        throw e;
+      }
+    } catch (e) {
+      throw asQuotaError(e);
+    } finally {
+      try { db?.close(); } catch { /* already closed */ }
+    }
+  }
+  const snapshot = (db, d) => ({ uploads: { day: d.utc, n: count(db, 'uploads', d.utc) }, units: { day: d.pacific, n: count(db, 'units', d.pacific) } });
+
+  /** Today's counters. Throws QuotaError when the database cannot be used or holds a row that is not valid. */
+  const state = () => tx(snapshot);
+
+  /** One transaction: getQuota, today's counters, decide(s, q) -> reason (nothing charged) | null (charge(db, d, q) runs). */
+  const step = (decide, charge) => {
+    try {
+      return tx((db, d) => {
+        const q = getQuota(); const s = snapshot(db, d);
         const why = decide(s, q);
-        if (!why) write(s);
+        if (!why) charge(db, d, q);
         return why;
       });
-    } catch (e) { return e instanceof QuotaError && e.code === 'quota-busy' ? 'quota-busy' : 'quota-unreadable'; }
+    } catch (e) { return e.code === 'quota-busy' ? 'quota-busy' : 'quota-unreadable'; }
   };
   const uploadWhy = (s, q, maxPerDay) => {
     if (Number.isInteger(maxPerDay) && s.uploads.n >= maxPerDay) return 'daily-cap-reached';
@@ -172,44 +204,67 @@ export function createQuotaBudget({ dataDir, nowMs = () => Date.now(), quota = n
     return null;
   };
   const readWhy = (s, q, units) => (s.units.n + units > q.quotaUnitsPerDay ? 'quota-day-used' : null);
-  const peek = (fn) => { try { return fn(getQuota(), state()); } catch { return 'quota-unreadable'; } };
+  const peek = (decide) => step(decide, () => {});
   const refuse = (why) => { throw Object.assign(new Error(why), { code: why }); };
+  const chargeUploadRow = (db, d, q) => { add(db, 'uploads', d.utc, 1); add(db, 'units', d.pacific, q.perUploadUnits); };
+  /** Reserves `units` of reads on the current Pacific day. -> { why, day } (day = the day charged, null when refused). */
+  const reserveReadOn = (units) => {
+    let day = null;
+    const why = step((s, q) => readWhy(s, q, units), (db, d) => { add(db, 'units', d.pacific, units); day = d.pacific; });
+    return { why, day };
+  };
 
   const budget = {
     file,
     state,
     /** Read-only check: null (an upload could start now) or why not. Nothing is charged. */
-    uploadBlock: (maxPerDay = null) => peek((q, s) => uploadWhy(s, q, maxPerDay)),
-    /** Check and charge one upload attempt in one locked step: null (charged, go) or why not (nothing charged). */
-    reserveUpload: (maxPerDay = null) => step((s, q) => uploadWhy(s, q, maxPerDay) ?? (s.uploads.n += 1, s.units.n += q.perUploadUnits, null)),
+    uploadBlock: (maxPerDay = null) => peek((s, q) => uploadWhy(s, q, maxPerDay)),
+    /** Check and charge one upload attempt in one transaction: null (charged, go) or why not (nothing charged). */
+    reserveUpload: (maxPerDay = null) => step((s, q) => uploadWhy(s, q, maxPerDay), chargeUploadRow),
     /** Read-only check for `units` of reads. */
-    readBlock: (units = 1) => peek((q, s) => readWhy(s, q, units)),
-    /** Check and charge `units` of reads in one locked step: null (charged) or why not (nothing charged). */
-    reserveRead: (units = 1) => step((s, q) => readWhy(s, q, units) ?? (s.units.n += units, null)),
-    /** Gives back reserved read units that were not used (never below 0). */
-    refundRead: (units) => (units > 0 ? step((s) => { s.units.n = Math.max(0, s.units.n - units); return null; }) : null),
+    readBlock: (units = 1) => peek((s, q) => readWhy(s, q, units)),
+    /** Check and charge `units` of reads in one transaction: null (charged) or why not (nothing charged). */
+    reserveRead: (units = 1) => reserveReadOn(units).why,
+    /** Gives back `units` reserved on Pacific day `day` and not used: to that day only (never below 0). A missing or
+     *  malformed day refunds nothing ('quota-unreadable'): an unbound refund could free units on the wrong day. */
+    refundRead(units, day) {
+      if (!(units > 0)) return null;
+      if (typeof day !== 'string' || !DAY_RE.test(day)) return 'quota-unreadable';
+      return step(() => null, (db) => {
+        db.prepare("UPDATE counter SET n = max(0, n - ?) WHERE kind = 'units' AND day = ?").run(units, day);
+      });
+    },
     /** fetch that reserves 1 unit before each Data API read is sent; refused (rejects, nothing sent) over budget. */
     meter: (fetchImpl) => async (url, init) => {
       if (isApiRead(url, init)) { const why = budget.reserveRead(1); if (why) refuse(why); }
       return fetchImpl(url, init);
     },
-    /** Reserves `units` up front for one multi-call read. -> { fetch, done() }: fetch spends the reservation (refuses
-     *  past it, nothing sent); done() gives back what was not used. Throws (code = reason) when it does not fit. */
+    /** Reserves `units` up front on the current Pacific day for one multi-call read. -> { fetch, done() }: fetch spends
+     *  the reservation (at most `units` reads; refuses past it, nothing sent). A read sent after midnight Pacific
+     *  reserves 1 unit on the new day before it is sent. done() gives back the unused part to the reservation's day.
+     *  Throws (code = reason) when it does not fit. */
     reserveScan(units, fetchImpl) {
-      const why = budget.reserveRead(units);
-      if (why) refuse(why);
-      let left = units; let closed = false;
+      const r = reserveReadOn(units);
+      if (r.why) refuse(r.why);
+      const day = r.day;
+      let calls = 0; let usedOnDay = 0; let closed = false;
       return {
+        day,
         fetch: async (url, init) => {
-          if (isApiRead(url, init)) { if (closed || left <= 0) refuse('quota-day-used'); left -= 1; }
+          if (isApiRead(url, init)) {
+            if (closed || calls >= units) refuse('quota-day-used');
+            if (pacificDay(nowMs()) === day) usedOnDay += 1;
+            else { const why = budget.reserveRead(1); if (why) refuse(why); }
+            calls += 1;
+          }
           return fetchImpl(url, init);
         },
-        done() { if (!closed) { closed = true; budget.refundRead(left); } },
+        done() { if (!closed) { closed = true; budget.refundRead(units - usedOnDay, day); } },
       };
     },
-    /** Unconditional charges (tests and repairs); locked. Throw on an unreadable counter. */
-    chargeUpload() { const why = step((s, q) => { s.uploads.n += 1; s.units.n += q.perUploadUnits; return null; }); if (why) refuse(why); },
-    chargeRead(units = 1) { const why = step((s) => { s.units.n += units; return null; }); if (why) refuse(why); },
+    /** Unconditional charges (tests and repairs). Throw on an unusable counter database. */
+    chargeUpload() { const why = step(() => null, chargeUploadRow); if (why) refuse(why); },
+    chargeRead(units = 1) { const why = step(() => null, (db, d) => add(db, 'units', d.pacific, units)); if (why) refuse(why); },
   };
   return budget;
 }

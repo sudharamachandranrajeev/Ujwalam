@@ -93,6 +93,7 @@ one channel read, 3 units counted), `tests/studio-qt-autopost.test.mjs` (fit 0 t
    (`reserveUpload`, `reserveRead`). A lock older than 30 s is renamed away and removed (its holder died); a lock busy
    for 3 s gives `quota-busy` (nothing uploads or reads). Windows "delete pending" (`EPERM`) on the lock and a busy
    replace of the counter file are retried, not errors. Tested with four processes charging at once (no charge lost).
+   Replaced by SQLite transactions in the 3rd review (below); items 2 and 4 describe bb4b11c.
 3. **Reads reserved before sending (P1).** The chain's and the card's schedule reads reserve 1 + 2 x maxPages units up
    front (`reserveScan`) and give back what they did not use; a request past the reservation is refused unsent. Other
    reads (status checks for the delete) reserve 1 unit each before sending (`meter`); over budget nothing is sent.
@@ -113,13 +114,46 @@ settings absent / broken / invalid; fit 0 with the reserve), `tests/posting-e2e.
 file: nothing uploads). The D314 retry e2e test now gets a larger quota: its six attempts in one day no longer fit the
 shipped quota once the read reserve is kept.
 
+## Codex 3rd review of bb4b11c (2026-11-13): fixes
+
+1. **OS-backed lock (High).** The lock file and its age-based stale takeover are gone (a rename-aside race and a
+   paused holder that resumed could break mutual exclusion). The counters now live in `<data>/posting/quota-day.sqlite`
+   (`node:sqlite`, stdlib): table `counter (kind, day, n)` with one row per kind and day, `STRICT`, CHECK constraints
+   (kind `uploads|units`, day `YYYY-MM-DD`, n an integer >= 0). Every check-and-charge, refund and read runs in one
+   `BEGIN IMMEDIATE ... COMMIT` on a fresh connection with a 3 s busy timeout; busy past that gives `quota-busy`.
+   SQLite's file lock is held by the OS and released when the holder process ends in any way. The same row check runs
+   on every read (a replaced file without the constraints still blocks). Rows older than 8 days are dropped.
+   The old `quota-day.json` (bb4b11c) is read once when the database is new: a valid one carries today's counts over;
+   an invalid or unreadable one blocks (`quota-unreadable`) until it is fixed or removed. It is left in place and
+   never read again.
+2. **Refunds bound to their Pacific day (High).** A read reservation records its Pacific day; `refundRead(units, day)`
+   gives units back to that day only (a refund without a valid day gives nothing back). A schedule read whose request
+   goes out after midnight Pacific reserves 1 unit on the new day before it is sent (refused unsent when the new day
+   is full); the unused part of the old reservation goes back to the old day.
+3. **No-replace put-back (High).** `delete-uploaded.mjs` puts a held file back with `fs.linkSync(held, original)`,
+   which fails with `EEXIST` when the path is taken (no check-then-rename gap), then removes the holding name. If the
+   link fails for any reason (path taken by a file or folder, a volume without hard links) the file stays in the
+   holding folder (`held-in-holding-folder`).
+4. **Lock leak on a throw (Medium).** Gone with the lock file. Every exception path (open, `BEGIN`, schema, migration,
+   row check, the decision, `COMMIT`) rolls back and closes the connection (`try/catch` + `finally`).
+
+Tests (`tests/posting-auto-d375.test.mjs`, now 46): four processes x 25 charges under SQLite, 100 counted, no lock or
+journal file left (repeated 3 more times, all pass); a child process holding `BEGIN IMMEDIATE` blocks charges and
+peeks (`quota-busy`), and after it is killed a charge goes through; a scan across midnight Pacific (the after-midnight
+read is charged on the new day before it is sent, the refund goes to the old day, a day-less refund gives nothing back,
+a full new day refuses unsent); CHECK constraints reject a negative, text, fractional, NULL n, a bad day and a bad
+kind, and a table without the constraints holding a bad row blocks; the old JSON carried over once, every malformed
+one blocks; put-back to a free path restores the same file (same file id), a path taken by a file or a folder keeps
+the held file intact. `tests/posting-e2e.test.mjs` and `tests/studio-ui-posting-auto.test.mjs` read the counters through
+`createQuotaBudget().state()` instead of the JSON file.
+
 ## Tests
 
 ```
 node --test tests/posting*.test.mjs tests/studio-ui-posting*.test.mjs tests/flags.test.mjs tests/learning-mix.test.mjs \
   tests/data-reload.test.mjs tests/guide.test.mjs tests/package-alpha.test.mjs tests/studio-ui-flags-feedback.test.mjs \
   tests/studio-ui-growth.test.mjs tests/studio-qt-autopost.test.mjs
-ℹ tests 362   ℹ pass 360   ℹ fail 0   ℹ skipped 2   (after the Codex re-review fixes; 3c8fd62: 350 / 348; f253771: 334 / 332)
+ℹ tests 365   ℹ pass 363   ℹ fail 0   ℹ skipped 2   (after the Codex 3rd review fixes; bb4b11c: 362 / 360; 3c8fd62: 350 / 348; f253771: 334 / 332)
 ```
 
 (The 2 skipped: the Auto-post screenshot test without `AUTOPOST_SHOT_DIR`, and one existing skip in
@@ -129,7 +163,7 @@ New or rewritten files:
 
 - `tests/posting-schedule.test.mjs` (28): schedule math, gap filling, the 27-post example, 1440 hourly slots, DST,
   retries, after-last, cap, preview estimates.
-- `tests/posting-auto-d375.test.mjs` (43): lookback with 2500 uploads (stops after 11 pages, not truncated), clips
+- `tests/posting-auto-d375.test.mjs` (46): lookback with 2500 uploads (stops after 11 pages, not truncated), clips
   folder scan, oldest first, global daily cap, unscored shorts, card defaults and save (checked, nothing written on a
   problem), move and remove, every delete refusal (flag off, failed, rejected, still processing, not found, read
   error, ledger or publish time mismatch, sha256 mismatch, outside the folder, `..` path, folder, junction leading out).

@@ -11,6 +11,7 @@ import { after, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { QUEUE_NAME, createUploadQueue } from '../services/posting/auto-chain.mjs';
 import { userRulesFile } from '../services/posting/auto-post.mjs';
+import { createQuotaBudget } from '../services/posting/quota-budget.mjs';
 import { READONLY_SCOPE, SCOPE } from '../services/posting/oauth.mjs';
 import { userScheduleFile } from '../services/posting/schedule.mjs';
 import { createFakeHost } from '../services/studio-ui/backends.mjs';
@@ -142,7 +143,7 @@ describe('auto-post settings routes (D375)', () => {
     const js = (await all).map((r) => r.json());
     assert.equal(reads, 1, 'one read for three requests');
     assert.ok(js.every((j) => j.source === 'live' && j.channel[0] === '2026-11-13T14:00:00.000Z'));
-    const day = JSON.parse(readFileSync(path.join(t.dataDir, 'posting', 'quota-day.json'), 'utf8'));
+    const day = createQuotaBudget({ dataDir: t.dataDir, nowMs: () => T0 }).state();
     assert.equal(day.units.n, 3, 'channels + playlistItems + videos'); assert.equal(day.uploads.n, 0);
   });
 

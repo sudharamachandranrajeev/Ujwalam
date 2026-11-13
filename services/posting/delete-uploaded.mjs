@@ -18,12 +18,13 @@
 // check and the unlink is still possible (residual risk, documented in docs/evidence/2026-11-13-auto-post-scheduled.md).
 // Codex re-review: that last step no longer unlinks the clip's own path. The file is moved by one atomic rename (same
 // volume) under a random name into <clips folder>/.ujwalam-deleting/, checked again there through its own handle (same
-// file id, size, modified time and sha256) and only then unlinked; on any mismatch it is moved back (only to a free
-// path, never over a file) or, if that is not possible, left in the holding folder (never deleted). What remains: a
+// file id, size, modified time and sha256) and only then unlinked; on any mismatch it is put back by a hard link that
+// fails if the path is taken (atomic no-replace, Codex 3rd review) or, if that is not possible, left in the holding
+// folder (never deleted). What remains: a
 // program that writes the holding folder and guesses the random name within microseconds; and a crash between the
 // rename and the unlink leaves the verified file in the holding folder (nothing is lost).
 import { createHash, randomBytes } from 'node:crypto';
-import { appendFileSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
+import { appendFileSync, linkSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -109,11 +110,14 @@ export function holdingDir(folder) {
 
 const sameIdentity = (a, b) => !!a && !!b && a.ino !== 0n && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs;
 
-/** A held file that failed its check goes back to its own path when that is still free; otherwise it stays in the
- *  holding folder (never overwrites anything, never deleted). -> the keep reason. */
+/** A held file that failed its check goes back to its own path only when that is still free, in one atomic step that
+ *  never replaces anything (Codex 3rd review): a hard link held -> file fails with EEXIST when the path is taken (no
+ *  check-then-rename gap); then the holding name is removed. If the link fails for any reason (path taken, a volume
+ *  without hard links) the file stays in the holding folder (never deleted). -> the keep reason. */
 function putBack(held, file, reason) {
-  try { lstatSync(file); return 'held-in-holding-folder'; } catch (e) { if (e?.code !== 'ENOENT') return 'held-in-holding-folder'; }
-  try { renameSync(held, file); return reason; } catch { return 'held-in-holding-folder'; }
+  try { linkSync(held, file); } catch { return 'held-in-holding-folder'; }
+  try { unlinkSync(held); } catch { /* both names are the same file: it is back at its path either way */ }
+  return reason;
 }
 
 export async function deleteUploadedFile({ flagOn, status, item, ledgerEntry, file, folder, logFile, nowMs = Date.now(), beforeUnlink = null, beforeDelete = null }) {

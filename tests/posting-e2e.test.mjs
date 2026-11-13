@@ -371,7 +371,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.deepEqual(sent(g), [iso(FIRST + 30 * MIN + 6 * HOUR)], 'never within the gap of the new post');
     assert.equal(g.count('channels'), 2);
     // Both tries (start and retry) count in today's budget.
-    assert.equal(JSON.parse(readFileSync(path.join(e.dataDir, 'posting', 'quota-day.json'), 'utf8')).uploads.n, 2);
+    assert.equal(createQuotaBudget({ dataDir: e.dataDir, nowMs: () => e.clock.t }).state().uploads.n, 2);
   });
 
   test('Codex review: the gap grew while two clips waited: the earlier keeps its slot, the later gets one by the new gap', async () => {
