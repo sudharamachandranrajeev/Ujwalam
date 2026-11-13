@@ -2,6 +2,18 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.27 — 2026-11-13
+
+- Battle Royale shorts: kills are read from your own on-screen kill text, knocks show in the short, and a chain of kills may be up to 30 s apart. After the stream, each live clip is cut again from the recording: every kill of its chain is in, and the running between kills is cut out.
+- Montages no longer mix the victory or defeat screens of different matches. Montage story (switch "montage-story", off): a fast best-of intro, the title, then one match told in order.
+- Reels open on one edited cover frame with a title, used as the thumbnail (switch "reel-thumbnail", on). New switches, all off: reel transitions (short cross fade between pieces), reel title card over a blurred copy, a calm music bed made on this PC, and self-learning, which shifts the mix of reel styles toward what gets more views, within limits.
+- Auto-post now uploads every clip as a scheduled YouTube post from your clips folder, oldest first, placed around the posts already scheduled on your channel and never two at the same time (about 6 a day fit the free YouTube quota). Turn on "post-schedule" together with "auto-post": without it, clips wait and nothing is uploaded. Settings > Posting & growth > Auto-post sets the gap, how far ahead, and shows the next posting times. "Delete posted clips forever" (off) deletes a clip file only after YouTube has processed its upload.
+- Growth numbers (switch "growth", off): your own YouTube view and subscriber numbers in a read-only window, stored on this PC.
+- Host watchdog (switch "host-watchdog", off): if the video engine freezes (for example after a graphics driver reset), Ujwalam restarts it, keeps recording in a new file and, with stream recovery on, brings back the streams that were live.
+- Clip renders that stall are retried on the processor, and a montage continues where it stopped.
+- Settings: each group of switches has its own page with plain names, sorted A to Z.
+- Soft theme (Settings > Appearance): raised plates, gentle shadows and a warm glow for what is on, with sharper text.
+
 ## 0.1.0-alpha.26 — 2026-11-11
 
 - Mixer volume, mute and CUE (headphones) are now saved in your project and kept after a restart. Before, a lowered Game volume came back at full on the next start. Set it once again after installing.
