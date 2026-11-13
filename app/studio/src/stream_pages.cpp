@@ -75,13 +75,15 @@ QString problemsText(const QJsonArray &problems)
 // ui/api/connect (empty: the connection service does not know the output yet, e.g. not saved) }.
 class OutputDialog : public QDialog {
 public:
-	OutputDialog(ApiClient *api, const QJsonObject &options, const QJsonObject &out, const QJsonObject &conn, bool multi, QWidget *parent)
-		: QDialog(parent), out_(out), api_(api)
+	// shared: the canvas encoders this output uses unless it has its own: {kbps (main), pkbps (portrait), output (main
+	// resolution id)}, as Settings > Stream VIDEO shows them now.
+	OutputDialog(ApiClient *api, const QJsonObject &options, const QJsonObject &out, const QJsonObject &conn, bool multi, const QJsonObject &shared, QWidget *parent)
+		: QDialog(parent), out_(out), shared_(shared), api_(api)
 	{
 		const bool adding = out.isEmpty();
 		setWindowTitle(adding ? QStringLiteral("Add output") : QStringLiteral("Edit output"));
 		auto *v = new QVBoxLayout(this);
-		auto *f = new QFormLayout();
+		auto *f = form_ = new QFormLayout();
 		platform_ = new QComboBox(this);
 		for (const auto &x : options.value(QStringLiteral("platforms")).toArray())
 			platform_->addItem(s(x.toObject(), "label"), s(x.toObject(), "id"));
@@ -91,7 +93,9 @@ public:
 		name_->setMaxLength(60);
 		canvas_ = new QComboBox(this);
 		own_ = new QCheckBox(QStringLiteral("Its own bitrate (an extra encoder, from the main canvas)"), this);
+		own_->setObjectName(QStringLiteral("outputOwnBitrate"));
 		ownKbps_ = new QSpinBox(this);
+		ownKbps_->setObjectName(QStringLiteral("outputBitrate"));
 		const QJsonObject vb = options.value(QStringLiteral("videoBitrateKbps")).toObject();
 		ownKbps_->setRange(vb.value(QStringLiteral("min")).toInt(500), vb.value(QStringLiteral("max")).toInt(100000));
 		ownKbps_->setSingleStep(vb.value(QStringLiteral("step")).toInt(500));
@@ -99,16 +103,30 @@ public:
 		ownRes_ = new QComboBox(this);
 		for (const auto &x : options.value(QStringLiteral("resolutions")).toArray())
 			ownRes_->addItem(s(x.toObject(), "label"), s(x.toObject(), "id"));
+		// Its own values when it has them; otherwise the shared ones are where ticking the box starts (never a made-up
+		// default: the box once showed 6000 for an output that streams at the main canvas bitrate).
 		const QJsonObject ov = out.value(QStringLiteral("video")).toObject();
 		own_->setChecked(!ov.isEmpty());
-		ownKbps_->setValue(ov.value(QStringLiteral("bitrateKbps")).toInt(6000));
-		ownRes_->setCurrentIndex(std::max(0, ownRes_->findData(s(ov, "output", QStringLiteral("1080p")))));
+		mineKbps_ = ov.value(QStringLiteral("bitrateKbps")).toInt(shared_.value(QStringLiteral("kbps")).toInt(6000));
+		mineRes_ = s(ov, "output", s(shared_, "output", QStringLiteral("1080p")));
+		bitrateNote_ = muted(QString(), this);
+		bitrateNote_->setObjectName(QStringLiteral("outputBitrateNote"));
+		bitrateNote_->setWordWrap(true);
 		f->addRow(QStringLiteral("Platform"), platform_);
 		f->addRow(QStringLiteral("Name"), name_);
 		f->addRow(QStringLiteral("Canvas"), canvas_);
 		f->addRow(own_);
 		f->addRow(QStringLiteral("Resolution"), ownRes_);
 		f->addRow(QStringLiteral("Bitrate"), ownKbps_);
+		f->addRow(bitrateNote_);
+		connect(ownKbps_, &QSpinBox::valueChanged, this, [this](int v) {
+			if (own_->isChecked() && ownKbps_->isEnabled())
+				mineKbps_ = v;
+		});
+		connect(ownRes_, &QComboBox::currentIndexChanged, this, [this]() {
+			if (own_->isChecked() && ownRes_->isEnabled())
+				mineRes_ = ownRes_->currentData().toString();
+		});
 		v->addLayout(f);
 		// Connect (D327 PC hook): platform sign-in and the key live in Windows Credential Manager, set elsewhere.
 		auto *connectBox = new QGroupBox(QStringLiteral("ACCOUNT"), this);
@@ -161,24 +179,34 @@ public:
 			canvas_->setCurrentIndex(std::max(0, canvas_->findData(was)));
 			if (name_->text().isEmpty() || !out_.contains(QStringLiteral("name")))
 				name_->setText(s(p, "label"));
-			const bool h = canvas_->currentData().toString() == QStringLiteral("H");
-			own_->setEnabled(h);
-			ownKbps_->setEnabled(h && own_->isChecked());
-			ownRes_->setEnabled(h && own_->isChecked());
+			syncBitrate();
 			keyRef_->setText(QStringLiteral("Key name: Ujwalam/stream/%1").arg(out_.contains(QStringLiteral("id")) ? s(out_, "id") : QStringLiteral("<new id>")));
 		};
 		connect(platform_, &QComboBox::currentIndexChanged, this, refresh);
-		connect(canvas_, &QComboBox::currentIndexChanged, this, [this]() {
-			const bool h = canvas_->currentData().toString() == QStringLiteral("H");
-			own_->setEnabled(h);
-			ownKbps_->setEnabled(h && own_->isChecked());
-			ownRes_->setEnabled(h && own_->isChecked());
-		});
-		connect(own_, &QCheckBox::toggled, this, [this](bool on) {
-			ownKbps_->setEnabled(on && own_->isEnabled());
-			ownRes_->setEnabled(on && own_->isEnabled());
-		});
+		connect(canvas_, &QComboBox::currentIndexChanged, this, [this]() { syncBitrate(); });
+		connect(own_, &QCheckBox::toggled, this, [this]() { syncBitrate(); });
 		refresh();
+	}
+	// Resolution and Bitrate show what this output really sends: its own values when "Its own bitrate" is on, else the
+	// canvas encoder it shares (greyed out), with a line that says so.
+	void syncBitrate()
+	{
+		const bool h = canvas_->currentData().toString() == QStringLiteral("H");
+		const bool mine = h && own_->isChecked();
+		own_->setEnabled(h);
+		ownKbps_->setEnabled(mine);
+		ownRes_->setEnabled(mine);
+		const int sharedKbps = shared_.value(h ? QStringLiteral("kbps") : QStringLiteral("pkbps")).toInt();
+		const QSignalBlocker b1(ownKbps_), b2(ownRes_);
+		ownKbps_->setValue(mine ? mineKbps_ : sharedKbps);
+		ownRes_->setCurrentIndex(std::max(0, ownRes_->findData(mine ? mineRes_ : s(shared_, "output", mineRes_))));
+		form_->setRowVisible(ownRes_, h); // the portrait canvas has its own size; this list holds the main canvas sizes
+		if (mine)
+			bitrateNote_->setText(QStringLiteral("This output gets its own encoder at this bitrate (one more encoder session while live)."));
+		else if (h)
+			bitrateNote_->setText(QStringLiteral("Sends the main canvas stream: %1 kbps, set under VIDEO (Main canvas bitrate). Tick \"Its own bitrate\" to give this output a different one.").arg(sharedKbps));
+		else
+			bitrateNote_->setText(QStringLiteral("Sends the portrait canvas stream: %1 kbps, set under VIDEO (Portrait canvas bitrate).").arg(sharedKbps));
 	}
 	// The output as the setup holds it; id stays for an edit, a new one gets one from the caller.
 	QJsonObject value() const
@@ -190,21 +218,24 @@ public:
 		if (!o.contains(QStringLiteral("enabled")))
 			o.insert(QStringLiteral("enabled"), true);
 		if (own_->isChecked() && canvas_->currentData().toString() == QStringLiteral("H"))
-			o.insert(QStringLiteral("video"), QJsonObject{{QStringLiteral("output"), ownRes_->currentData().toString()}, {QStringLiteral("bitrateKbps"), ownKbps_->value()}});
+			o.insert(QStringLiteral("video"), QJsonObject{{QStringLiteral("output"), mineRes_}, {QStringLiteral("bitrateKbps"), mineKbps_}});
 		else
 			o.remove(QStringLiteral("video"));
 		return o;
 	}
 
 private:
-	QJsonObject out_;
+	QJsonObject out_, shared_;
+	QFormLayout *form_;
 	QComboBox *platform_, *canvas_, *ownRes_;
 	QLineEdit *name_;
 	QCheckBox *own_;
 	QSpinBox *ownKbps_;
+	int mineKbps_ = 0;
+	QString mineRes_;
 	ApiClient *api_;
 	QPushButton *connect_;
-	QLabel *keyRef_, *status_;
+	QLabel *keyRef_, *status_, *bitrateNote_;
 };
 
 QString newId(const QJsonArray &outputs, const QString &platform)
@@ -505,7 +536,8 @@ void StreamPage::openEditor(int index, const QJsonObject &conn)
 	if (index >= outs.size())
 		return;
 	const bool multi = mode_->checkedButton() && mode_->checkedButton()->property("mode").toString() == QStringLiteral("multi");
-	OutputDialog d(api_, options_, index >= 0 ? outs.at(index).toObject() : QJsonObject(), conn, multi, this);
+	const QJsonObject shared{{QStringLiteral("kbps"), kbps_->value()}, {QStringLiteral("pkbps"), pkbps_->value()}, {QStringLiteral("output"), res_->currentData().toString()}};
+	OutputDialog d(api_, options_, index >= 0 ? outs.at(index).toObject() : QJsonObject(), conn, multi, shared, this);
 	if (d.exec() != QDialog::Accepted)
 		return;
 	QJsonObject o = d.value();
@@ -561,6 +593,15 @@ QJsonObject StreamPage::probe() const
 				c.insert(QStringLiteral("status"), st->text());
 			o.insert(QStringLiteral("connectButton"), c);
 		}
+		// The Edit output window's bitrate: what the box shows, whether it is the output's own, and the line under it.
+		if (auto *k = dlg->findChild<QSpinBox *>(QStringLiteral("outputBitrate"))) {
+			QJsonObject b{{QStringLiteral("kbps"), k->value()}, {QStringLiteral("enabled"), k->isEnabled()}};
+			if (auto *own = dlg->findChild<QCheckBox *>(QStringLiteral("outputOwnBitrate")))
+				b.insert(QStringLiteral("own"), own->isChecked());
+			if (auto *n = dlg->findChild<QLabel *>(QStringLiteral("outputBitrateNote")))
+				b.insert(QStringLiteral("note"), n->text());
+			o.insert(QStringLiteral("outputBitrate"), b);
+		}
 		if (dlg->objectName() == QStringLiteral("connectionsFlow")) {
 			QJsonObject f{{QStringLiteral("output"), dlg->property("output").toString()}};
 			if (auto *pg = dlg->findChild<connections::Page *>()) {
@@ -614,6 +655,17 @@ bool StreamPage::probeAction(const QStringList &p)
 					if (!b->isEnabled())
 						return false;
 					QTimer::singleShot(0, b, [b]() { b->click(); }); // the flow's window runs its own event loop
+					return true;
+				}
+		return false;
+	}
+	if (p.size() == 2 && p[0] == QStringLiteral("stream-output-own")) { // ticks (1) or clears (0) "Its own bitrate" in the open Edit window
+		for (QWidget *w : QApplication::topLevelWidgets())
+			if (auto *dlg = qobject_cast<QDialog *>(w); dlg && dlg->isVisible())
+				if (auto *c = dlg->findChild<QCheckBox *>(QStringLiteral("outputOwnBitrate"))) {
+					if (!c->isEnabled())
+						return false;
+					c->setChecked(p[1] == QStringLiteral("1"));
 					return true;
 				}
 		return false;
