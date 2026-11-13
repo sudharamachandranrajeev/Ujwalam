@@ -84,6 +84,26 @@ describe('Qt studio D327 pages (headless probe)', { skip }, () => {
     assert.doesNotMatch(r.err, /Could not parse|Unknown property/i);
   });
 
+  test('Edit output: the Bitrate box shows what the output sends (the shared main bitrate unless it has its own), never a made-up 6000', async () => {
+    // Seed: output 0 (YouTube main) shares the main canvas encoder; output 2 (Twitch) has its own re-encode bitrate.
+    const a = await probe({ actions: ['settings-open', 'settings-section:Stream', 'stream-output-edit:0'] });
+    const main = a.p.streamPage.setup.video.bitrateKbps;
+    assert.ok(a.p.streamPage.setup.outputs[0].video === undefined, 'output 0 has no bitrate of its own in the seed');
+    assert.notEqual(main, 6000, 'the seed main bitrate differs from the old default, so the check means something');
+    assert.deepEqual({ ...a.p.streamPage.outputBitrate, note: undefined }, { kbps: main, enabled: false, own: false, note: undefined });
+    assert.match(a.p.streamPage.outputBitrate.note, new RegExp(`main canvas stream: ${main} kbps`));
+    // Ticking "Its own bitrate" starts from the shared value and makes the box editable.
+    const b = await probe({ actions: ['settings-open', 'settings-section:Stream', 'stream-output-edit:0', 'stream-output-own:1'] });
+    assert.equal(done(b.p)['stream-output-own:1'], true, JSON.stringify(b.p.actions));
+    assert.deepEqual({ ...b.p.streamPage.outputBitrate, note: undefined }, { kbps: main, enabled: true, own: true, note: undefined });
+    assert.match(b.p.streamPage.outputBitrate.note, /its own encoder/);
+    // An output with its own bitrate shows that one.
+    const c = await probe({ actions: ['settings-open', 'settings-section:Stream', 'stream-output-edit:2'] });
+    const own = c.p.streamPage.setup.outputs[2].video?.bitrateKbps;
+    assert.ok(own, JSON.stringify(c.p.streamPage.setup.outputs[2]));
+    assert.deepEqual({ ...c.p.streamPage.outputBitrate, note: undefined }, { kbps: own, enabled: true, own: true, note: undefined });
+  });
+
   test('Settings > Stream: a valid change saves', async () => {
     const r = await probe({ actions: ['settings-open', 'settings-section:Stream', 'stream-kbps:12000', 'settings-save'] });
     const setup = JSON.parse(readFileSync(path.join(r.dataDir, 'stream-setup.json'), 'utf8'));
