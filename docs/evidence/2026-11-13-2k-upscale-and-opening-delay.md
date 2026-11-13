@@ -46,4 +46,10 @@
   100 ms, system pipe check 360-410 ms) now starts while the host config and plan are prepared, and stored server
   addresses are read at once. Timing with the fake host, `--mock`, same machine: host spawned at 2647 ms before,
   1382 ms after. Launcher tests (fake host): 165 pass, 0 fail.
+- Taken out again (same day): full CI failed in `tests/stream-recovery.test.mjs` with `host config could not be
+  written owner-only (ACL_FAILED)`. The event core protects the data folder with `icacls /reset /T` (in the service
+  and again in the audit database) while the launcher wrote and protected `host-config.json` in the same folder. The
+  launcher now waits for the event core again before any data-folder write. Kept: stored server addresses read at
+  once, and the host `--defer-outputs`. After the fix: `tests/stream-recovery.test.mjs`, `tests/studio-ui-alpha.test.mjs`,
+  `tests/studio-launch-d327.test.mjs`: 62 pass, 0 fail.
 - Not changed: D3D and libobs module load (about 2.3 s of the host start) are libobs's own.
