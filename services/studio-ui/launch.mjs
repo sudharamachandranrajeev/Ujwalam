@@ -135,6 +135,32 @@ export function livePlanFile({ dataDir, streamSettingsOn, instagramOn = false })
   if (!instagramOn) return base;
   try { return writeInstagramPlan(dataDir, base).file; } catch (e) { throw new Error(`Instagram Live (flag ${INSTAGRAM_FLAG}) cannot be added to the live plan: ${e.message}`); }
 }
+/**
+ * The plan for this start, so that a refused live plan never keeps the studio from opening (2026-11-13: flag
+ * instagram-live on with no Instagram server address stored stopped every start, exit 1, no window). planOnce({
+ * instagramOn }) -> { file, planned } (throws when refused). Live: Instagram Live is an add-on, so without it the rest of
+ * the live plan is tried; a live plan still refused opens the studio with recordPlan() (no stream targets). Each step
+ * is logged with its reason. Not live (an explicit --outputs or the record plan): a refusal throws as before.
+ */
+export async function planForStart({ live, instagramOn, planOnce, recordPlan, log }) {
+  try {
+    return await planOnce({ instagramOn });
+  } catch (e) {
+    if (!live) throw e;
+    log(`WARNING: live plan refused: ${e.message}`);
+    if (instagramOn) {
+      try {
+        const r = await planOnce({ instagramOn: false });
+        log('WARNING: Instagram Live left out of this start (reason above); the other outputs are ready');
+        return r;
+      } catch (e2) { log(`WARNING: live plan without Instagram refused too: ${e2.message}`); }
+    }
+    if (!recordPlan) throw e;
+    log('WARNING: the studio opens without stream outputs (recording only); fix the reason above and restart Ujwalam');
+    return recordPlan();
+  }
+}
+
 function baseLivePlanFile({ dataDir, streamSettingsOn }) {
   if (!streamSettingsOn) return ALPHA_LIVE_PLAN;
   const { exists, setup } = readSetup(dataDir);
@@ -1290,28 +1316,30 @@ export async function main(argv = process.argv.slice(2)) {
     const spec = hostLaunchSpec({ hostCfg, hostDiscovery, args, alpha, corePort, coreApiToken: coreTokens.api, hostConfigFile, coreSystemToken: coreTokens.system, embedded: !!shellPaths });
     for (const n of spec.notes) console.log(`[studio] WARNING: ${n}`);
     const hostArgs = spec.argv;
-    let planPath;
-    try {
-      planPath = args.live === true ? livePlanFile({ dataDir, streamSettingsOn: createFlags({ dataDir }).isOn(STREAM_SETTINGS_FLAG), instagramOn: createFlags({ dataDir }).isOn(INSTAGRAM_FLAG) })
+    const { planFile, readServerSchemes } = await import('../../app/host/lib/outputs-plan.mjs');
+    // One plan attempt: the plan file and its planned graph. Real host + --live: the stored server addresses' schemes
+    // (only the scheme, the value is dropped at once) choose "auto" transports (Twitch: rtmp or rtmps) and check named
+    // ones. A stand-in (script) host reaches no platform, so nothing is read for it and "auto" stays unresolved.
+    const planOnce = async ({ instagramOn }) => {
+      const file = args.live === true ? livePlanFile({ dataDir, streamSettingsOn: createFlags({ dataDir }).isOn(STREAM_SETTINGS_FLAG), instagramOn })
         : typeof args.outputs === 'string' ? path.resolve(args.outputs) : alpha ? ALPHA_RECORD_PLAN : null;
+      if (!file) return { file: null, planned: null };
+      let schemes;
+      if (args.live === true && !/\.m?js$/i.test(hostExe)) {
+        const [{ createCredentialStore }, { credentialFacts }] = await Promise.all([import('../event-core/streamerbot/credential.mjs'), import('./readiness.mjs')]);
+        schemes = await readServerSchemes(file, (ref) => credentialFacts(createCredentialStore(ref), { scheme: true }), lt.select ? { select: lt.select } : {});
+      }
+      return { file, planned: planFile(file, { allowLive: args.live === true, ...(lt.select ? { select: lt.select } : {}), ...(schemes ? { schemes } : {}) }) };
+    };
+    let planPath = null, planned = null;
+    try {
+      ({ file: planPath, planned } = await planForStart({ live: args.live === true, instagramOn: args.live === true && createFlags({ dataDir }).isOn(INSTAGRAM_FLAG), planOnce,
+        recordPlan: alpha ? () => ({ file: ALPHA_RECORD_PLAN, planned: planFile(ALPHA_RECORD_PLAN, { allowLive: false }) }) : null, log: (l) => console.log(`[studio] ${l}`) }));
     } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
-    livePlan = args.live === true ? planPath : null;
+    livePlan = args.live === true && planPath !== ALPHA_RECORD_PLAN ? planPath : null;
     if (planPath) {
       // An O1 plan file (app/host/outputs/*.json): validated against data/platforms, configured at host start, nothing
       // started. Real targets only with --live (alpha-live.json; the host then runs with --allow-live).
-      const { planFile, readServerSchemes } = await import('../../app/host/lib/outputs-plan.mjs');
-      let planned;
-      try {
-        // Real host + --live: the stored server addresses' schemes (only the scheme, the value is dropped at once)
-        // choose "auto" transports (Twitch: rtmp or rtmps) and check named ones. A stand-in (script) host reaches no
-        // platform, so nothing is read for it and "auto" stays unresolved.
-        let schemes;
-        if (args.live === true && !/\.m?js$/i.test(hostExe)) {
-          const [{ createCredentialStore }, { credentialFacts }] = await Promise.all([import('../event-core/streamerbot/credential.mjs'), import('./readiness.mjs')]);
-          schemes = await readServerSchemes(planPath, (ref) => credentialFacts(createCredentialStore(ref), { scheme: true }), lt.select ? { select: lt.select } : {});
-        }
-        planned = planFile(planPath, { allowLive: args.live === true, ...(lt.select ? { select: lt.select } : {}), ...(schemes ? { schemes } : {}) });
-      } catch (e) { console.log(`[studio] outputs plan refused: ${e.message}`); await stopAll(); return 1; }
       const { params, report } = planned;
       instagramLive = args.live === true && params.sinks.some((s) => s.id === instagramAddon().sink.id);
       if (planned.dropped?.length) console.log(`[studio] outputs: ${planned.dropped.join(', ')} left out (optional recording; its stream is not in this start, so it would add an encoder)`);
@@ -1320,7 +1348,7 @@ export async function main(argv = process.argv.slice(2)) {
       const ltp = liveTestPlanProblems(lt, params.sinks);
       if (ltp.length) { for (const p of ltp) console.log(`[studio] ${p}`); await stopAll(); return 2; }
       if (lt.select) console.log(`[studio] LIVE sinks: ${params.sinks.map((s) => s.id).join(', ')} (--sinks)`);
-      if (args.live === true) console.log(`[studio] LIVE plan: ${path.relative(REPO, planPath)} (real targets configured, nothing started; start with Start stream)`);
+      if (livePlan) console.log(`[studio] LIVE plan: ${path.relative(REPO, planPath)} (real targets configured, nothing started; start with Start stream)`);
       else if (planPath === ALPHA_RECORD_PLAN) console.log(`[studio] record plan: ${path.relative(REPO, planPath)} (Record saves H and V .mkv; streaming needs the LIVE start: Ujwalam.cmd --live)`);
       for (const w of report.warnings) console.log(`[studio] outputs plan warning: ${w.code}`);
       const f = path.join(hostCfg.dataDir, 'outputs-params.json');

@@ -69,16 +69,18 @@ test('repo file set: no tests, docs, Python or local files; every relative impor
     try {
       mkdirSync(path.join(d, 'data', 'x'), { recursive: true });
       mkdirSync(path.join(d, 'services'), { recursive: true });
-      for (const f of ['a.json', 'b.json', 'c.json', 'd.json']) writeFileSync(path.join(d, 'data', 'x', f), '{}');
+      for (const f of ['a.json', 'b.json', 'c.json', 'd.json', 'e.json']) writeFileSync(path.join(d, 'data', 'x', f), '{}');
       writeFileSync(path.join(d, 'services', 'm.mjs'), [
         `const A = path.join(REPO, 'data', 'x', 'a.json');`,
         `const B = path.join(REPO_ROOT, "data", "x", "b.json");`,
         `// const C = path.join(REPO, 'data', 'x', 'c.json');`,
         `/* path.join(REPO, 'data', 'x', 'c.json') */`,
         `const D = path.join(dataDir, 'data', 'x', 'd.json');`,
+        // alpha.27 shipped without data/live/host-watch.json: a path climbing from the module's own folder counts too
+        `const E = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'x', 'e.json');`,
       ].join('\n'));
       const p = dataRefProblems(d, ['services/m.mjs']);
-      assert.deepEqual(p.map((x) => x.replace(/^.*reads /, '').replace(/,.*$/, '')), ['data/x/a.json', 'data/x/b.json']);
+      assert.deepEqual(p.map((x) => x.replace(/^.*reads /, '').replace(/,.*$/, '')).sort(), ['data/x/a.json', 'data/x/b.json', 'data/x/e.json']);
     } finally { rmSync(d, { recursive: true, force: true }); }
   }
   assert.deepEqual(allowProblems(files), []);
