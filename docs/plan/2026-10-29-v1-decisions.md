@@ -1911,6 +1911,7 @@ Growth plan ED2. Decided:
 - **Report.** "the opening delay was prominent". Host log 2026-11-13 17:59: start 04.2, ready 07.7, `project.load` 3257 ms, window about 11.5 s after the click. The host built the outputs plan, ran the NVENC probe and started both replay buffers for the throwaway test card, stopped them at the project load (about 1.1 s) and built everything again.
 - **Change.** Host flag `--defer-outputs` (passed by the alpha launcher, whose project load always follows): the `--outputs` plan is kept as the last configure params and the replay buffer is marked wanted, without building; the first `project.load` builds both once. A plan the host refuses is now logged after the load ("outputs not configured after the project load") and the record plan is configured instead, so the studio opens recording-only, never with a silent empty graph (Codex review). Saves about 2 s per start; other start costs (D3D and module load about 2 s) are libobs's own.
 - **Evidence.** `app/host/tests/host-defer-outputs.test.mjs`, `tests/studio-ui-alpha.test.mjs` (alpha argv).
+
 ## D381 — Realism look: a per-pixel grade, not a neural filter (2026-11-13, user request; lead decision)
 
 - **Ask.** A new scene from the default one in which the game capture and its duplicates get a realistic-graphics post-processing shader; can it run locally on this laptop (RTX 4050 Laptop, 6 GB VRAM) while NVENC encodes 2K H, 2K V and the 1080p re-encode?
