@@ -5,15 +5,21 @@
 #include "icons.h"
 #include "interaction.h"
 #include "motion.h"
+#include "soft.h"
 
 #include <QAbstractButton>
 #include <QApplication>
+#include <QGuiApplication>
 #include <QCoreApplication>
 #include <QCryptographicHash>
 #include <QDateTime>
 #include <QFileInfo>
 #include <QFileSystemWatcher>
 #include <QTimer>
+#include <QPainter>
+#include <QPolygonF>
+#include <QTemporaryDir>
+#include <QImage>
 #include <QDir>
 #include <QSet>
 #include <QFile>
@@ -70,6 +76,10 @@ struct Data {
 	QHash<QString, QString> comp; // "button.shape" -> "pill"; booleans as "true" / "false"
 	bool buttonCaps = false, tabCaps = false, headingCaps = false;
 	QHash<QString, qreal> scale; // h1 h2 subtitle body caption button (pt)
+	// D376: the pack's components apply without the flag (a pack built only for them, e.g. Soft); the soft surfaces; hinting.
+	bool componentsAlways = false;
+	Surface surf;
+	QString hinting = QStringLiteral("default");
 	bool valid = false;
 };
 
@@ -319,6 +329,12 @@ QString componentsProblem(const QJsonObject &pack)
 	return {};
 }
 
+// The components block applies: the flag is on, or the pack is built only from components (componentsAlways, D376).
+bool compOn()
+{
+	return g_components || g_cur.componentsAlways;
+}
+
 QHash<QString, QString> readComponents(const QJsonObject &pack)
 {
 	QHash<QString, QString> out;
@@ -346,7 +362,10 @@ Data parse(const QJsonObject &o, const Data *base)
 	Data d = base ? *base : Data();
 	// Schema v2 parts (D336) apply only with the flag on AND a components block in this pack: a pack without one looks
 	// exactly as it does with the flag off, whatever other v2 fields it carries (Codex review of T1).
-	const bool v2 = g_components && o.contains(QStringLiteral("components"));
+	// D376: a pack marked componentsAlways (its look exists only as components, e.g. Soft) uses them with the flag off too.
+	const bool always = boolean(o.value(QStringLiteral("componentsAlways")), false);
+	const bool v2 = (g_components || always) && o.contains(QStringLiteral("components"));
+	d.componentsAlways = always;
 	d.id = str(o.value(QStringLiteral("id")), d.id);
 	d.name = str(o.value(QStringLiteral("name")), d.name.isEmpty() ? d.id : d.name);
 	d.topic = str(o.value(QStringLiteral("topic")), d.topic);
@@ -375,6 +394,8 @@ Data parse(const QJsonObject &o, const Data *base)
 	d.letterSpacing = num(t.value(QStringLiteral("letterSpacing")), d.letterSpacing, -0.5, 2);
 	d.captionSpacing = num(t.value(QStringLiteral("captionLetterSpacing")), d.captionSpacing, 0, 4);
 	d.captionCaps = boolean(t.value(QStringLiteral("captionCaps")), d.captionCaps);
+	// The pack's own hinting, never inherited (D376).
+	d.hinting = str(t.value(QStringLiteral("hinting")), QStringLiteral("default"));
 	const QJsonObject g = o.value(QStringLiteral("geometry")).toObject();
 	const QJsonObject rad = g.value(QStringLiteral("radius")).toObject(), sp = g.value(QStringLiteral("spacing")).toObject();
 	d.rs = inum(rad.value(QStringLiteral("small")), d.rs, 0, 40);
@@ -409,6 +430,7 @@ Data parse(const QJsonObject &o, const Data *base)
 	// Schema v2 (D336): the pack's own parts only (never the default pack's), and only when v2 (above). Otherwise the
 	// v2 patterns draw as the nearest v1 look (blueprint as grid, columns as none).
 	d.comp.clear();
+	d.surf = Surface();
 	d.scale.clear();
 	d.buttonCaps = d.tabCaps = d.headingCaps = false;
 	d.bg.frame = d.bg.frameTicks = false;
@@ -426,6 +448,39 @@ Data parse(const QJsonObject &o, const Data *base)
 			d.base = std::clamp(d.scale.value(QStringLiteral("body")), 8.0, 14.0);
 		if (d.scale.contains(QStringLiteral("caption")))
 			d.captionSize = std::clamp(d.scale.value(QStringLiteral("caption")), 6.0, 12.0);
+		// Soft surfaces (D376): only with the soft card variant and the pack's own surface block.
+		const QJsonObject su = o.value(QStringLiteral("surface")).toObject();
+		if (!su.isEmpty() && d.comp.value(QStringLiteral("card")) == QStringLiteral("soft")) {
+			Surface &x = d.surf;
+			x.on = true;
+			auto sx = [&](const char *k, const QColor &fb) { return col(su.value(QLatin1String(k)), fb); };
+			x.faceTop = sx("faceTop", QColor(0xfb, 0xfb, 0xfd));
+			x.faceBottom = sx("faceBottom", QColor(0xeb, 0xea, 0xf0));
+			x.edgeLight = sx("edgeLight", Qt::white);
+			x.edgeDark = sx("edgeDark", QColor(0xc3, 0xc2, 0xcb));
+			x.wellTop = sx("wellTop", QColor(0xd9, 0xd8, 0xe0));
+			x.wellBottom = sx("wellBottom", QColor(0xef, 0xee, 0xf3));
+			x.warmTop = sx("warmTop", QColor(0xff, 0xfa, 0xf1));
+			x.warmBottom = sx("warmBottom", QColor(0xff, 0xe3, 0xbb));
+			x.warmEdge = sx("warmEdge", QColor(0xe9, 0xa2, 0x4f));
+			x.glowCore = sx("glowCore", QColor(0xff, 0xfb, 0xef));
+			x.glowColor = sx("glowColor", QColor(0xff, 0xad, 0x42));
+			x.glowInk = sx("glowInk", d.colors.value(QStringLiteral("text")));
+			auto sh = [&](const char *k, const QString &fb) {
+				const QJsonValue v = su.value(QLatin1String(k));
+				return v.isObject() ? shadowPart(v.toObject(), fb) : Shadow();
+			};
+			x.shadow = sh("shadow", QStringLiteral("#000000"));
+			x.contact = sh("contact", QStringLiteral("#000000"));
+			x.halo = sh("halo", QStringLiteral("#ffffff"));
+			x.glowHalo = sh("glowHalo", x.glowColor.name());
+			x.cardRadius = inum(su.value(QStringLiteral("cardRadius")), 22, 0, 40);
+			x.plateRadius = inum(su.value(QStringLiteral("plateRadius")), 18, 0, 40);
+			const QJsonObject mg = su.value(QStringLiteral("margin")).toObject();
+			x.marginX = inum(mg.value(QStringLiteral("x")), 8, 0, 24);
+			x.marginTop = inum(mg.value(QStringLiteral("top")), 5, 0, 24);
+			x.marginBottom = inum(mg.value(QStringLiteral("bottom")), 13, 0, 32);
+		}
 		const QJsonObject fr = b.value(QStringLiteral("frame")).toObject();
 		if (!fr.isEmpty()) {
 			d.bg.frame = true;
@@ -666,12 +721,144 @@ QHash<QString, QColor> derived(const Data &d)
 	return x;
 }
 
+// A small chevron for the soft fields' drop-down and spin buttons, in the given colour, saved once per process into a
+// temporary folder (a stylesheet image must be a file; removed when the studio exits). Empty when that fails.
+QString chevron(const QColor &c, bool up)
+{
+	static QTemporaryDir dir;
+	if (!dir.isValid())
+		return {};
+	const QString base = dir.filePath(QStringLiteral("%1-%2").arg(up ? QStringLiteral("up") : QStringLiteral("down"), c.name().mid(1)));
+	if (!QFile::exists(base + QStringLiteral(".png")))
+		for (int scale : {1, 2}) {
+			QImage img(QSize(10, 6) * scale, QImage::Format_ARGB32_Premultiplied);
+			img.fill(Qt::transparent);
+			QPainter p(&img);
+			p.setRenderHint(QPainter::Antialiasing);
+			p.scale(scale, scale);
+			p.setPen(QPen(c, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+			const qreal y0 = up ? 4.6 : 1.4, y1 = up ? 1.4 : 4.6;
+			p.drawPolyline(QPolygonF{QPointF(1.4, y0), QPointF(5, y1), QPointF(8.6, y0)});
+			p.end();
+			img.save(base + (scale == 1 ? QStringLiteral(".png") : QStringLiteral("@2x.png")));
+		}
+	return base + QStringLiteral(".png");
+}
+
+// Soft surfaces (D376): the kinds soft.cpp paints (cards, small cards, pills, round controls) get no fill or border
+// here, only the room for their shadow as margin (soft::room, the same numbers); the rest (fields, lists, menus, tabs,
+// sliders, the settings nav) is drawn by the stylesheet in the same colours: wells for what is sunken, faces for what
+// is raised, warm for what is on. High performance: flat fills.
+QString softQss(const Data &d, QHash<QString, QString> &t, bool flat)
+{
+	const Surface &s = d.surf;
+	const QColor accent = d.colors.value(QStringLiteral("accent")), accentHi = d.colors.value(QStringLiteral("accentHi"));
+	const QList<QPair<const char *, QColor>> c{{"sFaceTop", s.faceTop},   {"sFaceBottom", s.faceBottom}, {"sEdgeLight", s.edgeLight}, {"sEdgeDark", s.edgeDark},
+						    {"sWellTop", s.wellTop},   {"sWellBottom", s.wellBottom}, {"sWarmTop", s.warmTop},     {"sWarmBottom", s.warmBottom},
+						    {"sWarmEdge", s.warmEdge}, {"sGlowColor", s.glowColor},   {"sGlowInk", s.glowInk}};
+	for (const auto &kv : c)
+		t[QLatin1String(kv.first)] = kv.second.name();
+	const auto vgrad = [flat](const QColor &a, const QColor &b) {
+		return flat ? b.name() : QStringLiteral("qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 %1, stop:1 %2)").arg(a.name(), b.name());
+	};
+	t[QStringLiteral("sFace")] = vgrad(s.faceTop, s.faceBottom);
+	t[QStringLiteral("sWell")] = vgrad(s.wellTop, s.wellBottom);
+	t[QStringLiteral("sWarm")] = vgrad(s.warmTop, s.warmBottom);
+	t[QStringLiteral("sAccent")] = vgrad(accent, accentHi);
+	t[QStringLiteral("sAmber")] = flat ? s.warmEdge.name()
+					   : QStringLiteral("qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 %1, stop:1 %2)").arg(s.warmEdge.name(), s.glowColor.name());
+	auto m = [](const QMargins &x) { return QStringLiteral("%1px %2px %3px %4px").arg(x.top()).arg(x.right()).arg(x.bottom()).arg(x.left()); };
+	// soft::room reads the shown look; buildQss runs for g_cur only, so these are the same numbers soft.cpp paints with.
+	t[QStringLiteral("mCard")] = m(soft::room(soft::Kind::Card));
+	t[QStringLiteral("mSmall")] = m(soft::room(soft::Kind::Small));
+	t[QStringLiteral("mPill")] = m(soft::room(soft::Kind::Pill));
+	t[QStringLiteral("mRound")] = m(soft::room(soft::Kind::Round));
+	const QColor muted = d.colors.value(QStringLiteral("muted"));
+	t[QStringLiteral("chevDown")] = QStringLiteral("url(%1)").arg(chevron(muted, false));
+	t[QStringLiteral("chevUp")] = QStringLiteral("url(%1)").arg(chevron(muted, true));
+	return QStringLiteral(R"(
+QGroupBox { background: transparent; border: none; margin: @mCard; padding: 38px 18px 12px 18px; }
+QGroupBox::title { subcontrol-origin: padding; subcontrol-position: top left; left: 18px; top: 13px; padding: 0; color: @text; font-size: 11pt; font-weight: @hw; }
+QFrame#card { background: transparent; border: none; margin: @mCard; }
+QFrame#strip, QFrame#statCard, QFrame#lookCard { background: transparent; border: none; margin: @mSmall; }
+QPushButton, QPushButton:hover, QPushButton:pressed, QPushButton:focus, QPushButton:checked, QPushButton:disabled,
+QPushButton[role="primary"], QPushButton[role="primary"]:hover, QPushButton[role="primary"]:disabled,
+QPushButton[role="danger"], QPushButton[role="danger"]:checked, QPushButton[role="danger"]:disabled { background: transparent; border: none; }
+QPushButton { margin: @mPill; padding: @padY @padX; color: @text; }
+QPushButton:focus { padding: @padY @padX; }
+QPushButton:checked { color: @sGlowInk; }
+QPushButton[role="primary"] { color: @onAccent; }
+QPushButton[role="danger"] { color: @danger; }
+QPushButton[role="danger"]:checked { color: @sGlowInk; }
+QPushButton:disabled, QPushButton[role="primary"]:disabled, QPushButton[role="danger"]:disabled { color: @disabled; }
+QPushButton#tb { margin: 0; }
+QPushButton#round, QPushButton#round:hover, QPushButton#round:pressed, QPushButton#round:disabled, QPushButton#round[role="primary"],
+QPushButton#round[role="primary"][active="true"], QPushButton#round[role="primary"]:disabled, QPushButton#round[role="danger"],
+QPushButton#round[role="danger"][active="true"], QPushButton#round[role="danger"]:disabled { background: transparent; border: none; }
+QPushButton#round { margin: @mRound; }
+QToolButton { background: @sFace; border: 1px solid @sEdgeDark; border-top-color: @sEdgeLight; border-radius: 12px; }
+QToolButton:hover { border-color: @sWarmEdge; }
+QToolButton:pressed { background: @sWell; }
+QLineEdit, QSpinBox, QDoubleSpinBox, QComboBox { background: @sWell; border: 1px solid @sWellBottom; border-top-color: @sEdgeDark; border-bottom-color: @sEdgeLight;
+  border-radius: 12px; padding: 5px 12px; color: @text; selection-background-color: @sWarmBottom; selection-color: @sGlowInk; }
+QLineEdit:hover, QSpinBox:hover, QDoubleSpinBox:hover, QComboBox:hover { border-top-color: @disabled; }
+QLineEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus, QComboBox:focus { border: 2px solid @accent; padding: 4px 11px; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: center right; width: 22px; border: none; background: transparent; }
+QComboBox::down-arrow { image: @chevDown; width: 10px; height: 6px; }
+QSpinBox::up-button, QDoubleSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 22px; border: none; background: transparent; }
+QSpinBox::down-button, QDoubleSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 22px; border: none; background: transparent; }
+QSpinBox::up-arrow, QDoubleSpinBox::up-arrow { image: @chevUp; width: 10px; height: 6px; }
+QSpinBox::down-arrow, QDoubleSpinBox::down-arrow { image: @chevDown; width: 10px; height: 6px; }
+QComboBox QAbstractItemView { background: @sFaceTop; border: 1px solid @sEdgeDark; selection-background-color: @sWarmBottom; selection-color: @sGlowInk; outline: none; }
+QListWidget, QTreeWidget, QTableWidget, QPlainTextEdit, QTextEdit { background: @sFaceTop; border: 1px solid @sEdgeDark; border-top-color: @sEdgeLight; border-radius: 16px; padding: 6px; }
+QListWidget::item, QTreeWidget::item { padding: 6px 10px; border-radius: 10px; }
+QListWidget::item:selected, QTreeWidget::item:selected, QTableWidget::item:selected { background: @sWarm; color: @sGlowInk; }
+QListWidget::item:hover:!selected, QTreeWidget::item:hover:!selected { background: @sFaceBottom; }
+QHeaderView, QTableCornerButton::section { background: transparent; border: none; }
+QHeaderView::section { background: transparent; color: @muted; border: none; border-bottom: 1px solid @sEdgeDark; padding: 6px 8px; font-weight: @hw; }
+QTableWidget { gridline-color: @sFaceBottom; }
+QListWidget#settingsNav::item { padding: 10px 16px; border-radius: 19px; color: @muted; border: 1px solid transparent; }
+QListWidget#settingsNav::item:selected { background: @sWarm; color: @sGlowInk; border: 1px solid @sWarmEdge; }
+QListWidget#settingsNav::item:hover:!selected { background: @sFaceTop; color: @text; }
+QTabBar::tab { background: @sWellBottom; color: @muted; border: none; padding: 6px 16px; margin-right: 0; }
+QTabBar::tab:first { border-top-left-radius: 14px; border-bottom-left-radius: 14px; }
+QTabBar::tab:last { border-top-right-radius: 14px; border-bottom-right-radius: 14px; }
+QTabBar::tab:only-one { border-radius: 14px; }
+QTabBar::tab:selected { background: @sFace; color: @text; border: 1px solid @sEdgeDark; border-top-color: @sEdgeLight; }
+QTabBar::tab:hover:!selected { color: @text; }
+QMenu { background: @sFaceTop; border: 1px solid @sEdgeDark; border-radius: 12px; padding: 6px; }
+QMenu::item { padding: 7px 22px 7px 14px; border-radius: 9px; color: @text; }
+QMenu::item:selected { background: @sWarm; color: @sGlowInk; }
+QMenu::item:disabled { color: @disabled; }
+QMenu::separator { background: @sEdgeDark; }
+QToolTip { background: @sFaceTop; color: @text; border: 1px solid @sEdgeDark; border-radius: 8px; padding: 5px 8px; }
+QCheckBox::indicator, QListWidget::indicator { width: 16px; height: 16px; border-radius: 5px; border: 1px solid @sEdgeDark; background: @sWell; }
+QCheckBox::indicator:hover { border-color: @sWarmEdge; }
+QCheckBox::indicator:checked, QListWidget::indicator:checked { background: @sAccent; border-color: @accentHi; }
+QSlider::groove:horizontal { height: 6px; background: @sWell; border: none; border-radius: 3px; }
+QSlider::sub-page:horizontal { background: @sAmber; border-radius: 3px; }
+QSlider::handle:horizontal { background: @sFace; border: 1px solid @sEdgeDark; width: 16px; height: 16px; margin: -6px 0; border-radius: 9px; }
+QSlider::handle:horizontal:hover { border-color: @sWarmEdge; }
+QProgressBar { background: @sWell; border: none; border-radius: 7px; text-align: center; color: @text; }
+QProgressBar::chunk { background: @sAmber; border-radius: 7px; }
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal { background: @sEdgeDark; border-radius: 4px; }
+QScrollBar::handle:vertical:hover, QScrollBar::handle:horizontal:hover { background: @disabled; }
+QLabel#sectionTitle { color: @text; font-weight: 700; }
+QLabel#flagName { color: @text; font-weight: @hw; }
+QLabel#pill { background: @sFaceTop; border: 1px solid @sEdgeDark; border-radius: 11px; }
+QFrame#toast { background: @sFaceTop; border: 1px solid @sEdgeDark; border-radius: 16px; }
+QFrame#taskPanel { background: @sFaceTop; border: 1px solid @sEdgeDark; border-radius: 18px; }
+QFrame#taskRow { background: @sWell; border: none; border-radius: 14px; }
+QWidget#taskChip { background: @sFaceTop; border: 1px solid @sWarmEdge; }
+)");
+}
+
 // The variant stylesheet fragments (D336): appended after the base stylesheet, so a fragment rule wins over the base
 // rule of the same weight. A component the pack leaves out adds nothing (the base look). Tokens as in kQss plus the
 // derived colours above and the sizes set here.
 QString componentQss(const Data &d, QHash<QString, QString> &t, bool flat)
 {
-	if (!g_components)
+	if (!g_components && !d.componentsAlways)
 		return {};
 	// Rules every pack gets with the flag on, for things that exist only with it: the error state of fields (the
 	// specimen shows it; no studio field sets the property yet) and the slider's value bubble.
@@ -835,6 +1022,8 @@ QString componentQss(const Data &d, QHash<QString, QString> &t, bool flat)
 		q += QStringLiteral("QGroupBox::title { font-size: %1; }\n").arg(pt("subtitle"));
 	if (d.scale.contains(QStringLiteral("button")))
 		q += QStringLiteral("QPushButton { font-size: %1; }\n").arg(pt("button"));
+	if (d.surf.on)
+		q += softQss(d, t, flat);
 	return q;
 }
 
@@ -918,6 +1107,11 @@ void applyFont(QApplication &app, const Data &d)
 	f.setFamilies(fam);
 	f.setPointSizeF(d.base);
 	f.setLetterSpacing(QFont::AbsoluteSpacing, d.letterSpacing);
+	// D376: "full" keeps stems on the pixel grid (DirectWrite GDI-classic ClearType at any display scale).
+	f.setHintingPreference(d.hinting == QStringLiteral("full")       ? QFont::PreferFullHinting
+			       : d.hinting == QStringLiteral("vertical") ? QFont::PreferVerticalHinting
+			       : d.hinting == QStringLiteral("none")     ? QFont::PreferNoHinting
+									 : QFont::PreferDefaultHinting);
 	app.setFont(f);
 }
 
@@ -1049,6 +1243,7 @@ void applyAll(QApplication &app)
 	relayoutDensity();
 	interaction::refresh(); // captions, backgrounds
 	depth::refreshAll();
+	soft::refreshAll(); // D376: painters for the soft kinds (or plates given back their margins)
 	refreshIcons();
 	for (QWidget *w : QApplication::allWidgets())
 		w->update();
@@ -1116,18 +1311,18 @@ const QList<QPair<QString, QStringList>> &componentVariants()
 	static const QList<QPair<QString, QStringList>> v = {
 		{QStringLiteral("button.shape"), {QStringLiteral("rounded"), QStringLiteral("pill"), QStringLiteral("sharp")}},
 		{QStringLiteral("button.style"),
-		 {QStringLiteral("solid"), QStringLiteral("soft"), QStringLiteral("metal"), QStringLiteral("bezel"), QStringLiteral("neumorph")}},
+		 {QStringLiteral("solid"), QStringLiteral("soft"), QStringLiteral("metal"), QStringLiteral("bezel"), QStringLiteral("neumorph"), QStringLiteral("raised")}},
 		{QStringLiteral("button.secondary"), {QStringLiteral("outline"), QStringLiteral("tinted"), QStringLiteral("ghost")}},
 		{QStringLiteral("button.caps"), kBool},
 		{QStringLiteral("tabs"), {QStringLiteral("pill"), QStringLiteral("underline"), QStringLiteral("segmented"), QStringLiteral("boxed")}},
-		{QStringLiteral("input"), {QStringLiteral("outline"), QStringLiteral("filled"), QStringLiteral("inset"), QStringLiteral("underline")}},
+		{QStringLiteral("input"), {QStringLiteral("outline"), QStringLiteral("filled"), QStringLiteral("inset"), QStringLiteral("underline"), QStringLiteral("soft")}},
 		{QStringLiteral("focus"), {QStringLiteral("border"), QStringLiteral("ring"), QStringLiteral("glow")}},
-		{QStringLiteral("switch"), {QStringLiteral("plain"), QStringLiteral("labelled"), QStringLiteral("bezel")}},
+		{QStringLiteral("switch"), {QStringLiteral("plain"), QStringLiteral("labelled"), QStringLiteral("bezel"), QStringLiteral("knob")}},
 		{QStringLiteral("slider.track"), {QStringLiteral("thin"), QStringLiteral("thick"), QStringLiteral("inset")}},
 		{QStringLiteral("slider.handle"), {QStringLiteral("round"), QStringLiteral("sphere"), QStringLiteral("bar")}},
 		{QStringLiteral("slider.valueBubble"), kBool},
 		{QStringLiteral("sectionHeader"), {QStringLiteral("plain"), QStringLiteral("rule"), QStringLiteral("caps"), QStringLiteral("bracket")}},
-		{QStringLiteral("card"), {QStringLiteral("flat"), QStringLiteral("raised"), QStringLiteral("neumorph"), QStringLiteral("framed")}},
+		{QStringLiteral("card"), {QStringLiteral("flat"), QStringLiteral("raised"), QStringLiteral("neumorph"), QStringLiteral("framed"), QStringLiteral("soft")}},
 		{QStringLiteral("list"), {QStringLiteral("plain"), QStringLiteral("plates")}},
 		{QStringLiteral("chip"), {QStringLiteral("pill"), QStringLiteral("bracket")}},
 		{QStringLiteral("density"), {QStringLiteral("compact"), QStringLiteral("normal"), QStringLiteral("airy")}},
@@ -1157,7 +1352,7 @@ bool componentsOn()
 
 QString component(const QString &key)
 {
-	return g_components ? g_cur.comp.value(key) : QString();
+	return compOn() ? g_cur.comp.value(key) : QString();
 }
 
 bool componentFlag(const QString &key)
@@ -1168,7 +1363,7 @@ bool componentFlag(const QString &key)
 Caps caps()
 {
 	Caps c;
-	if (!g_components)
+	if (!compOn())
 		return c;
 	c.button = g_cur.buttonCaps || componentFlag(QStringLiteral("button.caps"));
 	c.tab = g_cur.tabCaps;
@@ -1241,6 +1436,7 @@ void setEffects(const QString &mode)
 		qobject_cast<QApplication *>(QCoreApplication::instance())->setStyleSheet(buildQss(g_cur));
 	motion::dropHover(m == QStringLiteral("performance")); // hover overlays go (and come back) with High performance
 	depth::refreshAll();
+	soft::refreshAll(); // D376: the cached shadows are per mode
 	for (QWidget *w : QApplication::allWidgets())
 		w->update();
 	emit notifier()->changed();
@@ -1270,10 +1466,13 @@ QList<Info> available()
 		for (const QString &f : QDir(dir).entryList({QStringLiteral("*.json")}))
 			if (!f.endsWith(QStringLiteral(".schema.json")) && !ids.contains(f.left(f.size() - 5)))
 				ids << f.left(f.size() - 5);
-	// Violet Night first, then the embedded ones in name order, then custom packs.
+	// Soft first (D376: the newest look, shown first in Appearance), then Violet Night (the default), then the rest in
+	// name order.
 	ids.sort();
 	ids.removeAll(kDefaultId);
 	ids.prepend(kDefaultId);
+	if (ids.removeAll(QStringLiteral("soft")))
+		ids.prepend(QStringLiteral("soft"));
 	QList<Info> out;
 	for (const QString &id : ids) {
 		const Data d = load(id);
@@ -1404,6 +1603,16 @@ Background background()
 	return b;
 }
 
+Surface surface()
+{
+	return g_cur.surf;
+}
+
+QString hinting()
+{
+	return g_cur.hinting;
+}
+
 Caption caption()
 {
 	return {g_cur.captionSize, g_cur.captionSpacing, g_cur.captionCaps, g_cur.headingWeight};
@@ -1412,6 +1621,38 @@ Caption caption()
 void depth(QWidget *w, const QString &cls)
 {
 	depth::attach(w, cls);
+}
+
+// D376: how the app font really renders here: a line of text drawn into an opaque picture (as the window's backing store
+// is) in the pack's text and panel colours; the share of its edge pixels whose red, green and blue parts clearly differ
+// (ClearType: subpixel colour fringes; greyscale smoothing keeps the channels together). The offscreen test platform
+// renders greyscale (0); the native platform with ClearType on fringes most of them (0.8 to 0.95 on the dev laptop).
+static QJsonObject clearTypeCheck()
+{
+	const QColor bg = g_cur.surf.on ? g_cur.surf.faceTop : g_cur.colors.value(QStringLiteral("panel"));
+	QImage img(260, 40, QImage::Format_RGB32);
+	img.fill(bg);
+	{
+		QPainter p(&img);
+		p.setFont(QApplication::font());
+		p.setPen(g_cur.colors.value(QStringLiteral("text")));
+		p.drawText(img.rect().adjusted(4, 0, 0, 0), Qt::AlignVCenter, QStringLiteral("Record while live 0123 Mm"));
+	}
+	const auto spread = [](QRgb c) { return std::max({qRed(c), qGreen(c), qBlue(c)}) - std::min({qRed(c), qGreen(c), qBlue(c)}); };
+	const int base = spread(bg.rgb());
+	int edge = 0, fringed = 0;
+	for (int y = 0; y < img.height(); y++) {
+		const QRgb *row = reinterpret_cast<const QRgb *>(img.constScanLine(y));
+		for (int x = 0; x < img.width(); x++) {
+			const QRgb c = row[x];
+			if (std::abs(qRed(c) - bg.red()) + std::abs(qGreen(c) - bg.green()) + std::abs(qBlue(c) - bg.blue()) < 24)
+				continue;
+			edge++;
+			if (spread(c) - base > 24)
+				fringed++;
+		}
+	}
+	return {{QStringLiteral("edgePixels"), edge}, {QStringLiteral("fringed"), fringed}, {QStringLiteral("share"), edge ? double(fringed) / edge : 0.0}};
 }
 
 QJsonObject probe()
@@ -1458,6 +1699,15 @@ QJsonObject probe()
 		if (ds.highlight.enabled || ds.inset.enabled || ds.rim.enabled)
 			v2Depth++;
 	o.insert(QStringLiteral("depthV2Classes"), v2Depth);
+	// D376: soft surfaces and text hinting
+	o.insert(QStringLiteral("componentsAlways"), g_cur.componentsAlways);
+	o.insert(QStringLiteral("surfaceOn"), g_cur.surf.on);
+	o.insert(QStringLiteral("softWidgets"), soft::count());
+	o.insert(QStringLiteral("softCached"), soft::cached());
+	o.insert(QStringLiteral("hinting"), g_cur.hinting);
+	o.insert(QStringLiteral("appliedHinting"), int(QApplication::font().hintingPreference()));
+	o.insert(QStringLiteral("clearType"), clearTypeCheck());
+	o.insert(QStringLiteral("platform"), QGuiApplication::platformName());
 	return o;
 }
 

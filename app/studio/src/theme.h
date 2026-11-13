@@ -130,6 +130,28 @@ struct Background {
 };
 Background background();
 
+// Soft surfaces (D376, pack block "surface", used by the variants card "soft", button.style "raised", switch "knob",
+// input "soft"): raised plates painted by soft.cpp from cached pictures (no QGraphicsEffect), sunken wells, and the warm
+// glow of active controls. on is false when the pack has no surface block or its card variant is not "soft".
+struct Surface {
+	bool on = false;
+	QColor faceTop, faceBottom;   // the face of a raised plate: top and bottom of its gradient
+	QColor edgeLight, edgeDark;   // 1 px light edge along the top, darker edge (the plate's thickness) along the bottom
+	QColor wellTop, wellBottom;   // sunken wells: switch tracks, fields, pressed faces
+	QColor warmTop, warmBottom, warmEdge; // an active (checked) control's face: lit from inside
+	QColor glowCore, glowColor;   // the warm glow: its bright centre and its amber body
+	QColor glowInk;               // text and marks on a warm face
+	Shadow shadow, contact, halo; // wide soft shadow below, tight contact shadow, light halo up-left
+	Shadow glowHalo;              // the warm light an active control throws past its edge
+	int cardRadius = 22, plateRadius = 18;
+	int marginX = 8, marginTop = 5, marginBottom = 13; // room around a card for its shadow (the stylesheet's margin)
+};
+Surface surface();
+
+// Text hinting from the pack (typography.hinting: default | none | vertical | full, D376). "full" keeps the glyph
+// stems on the pixel grid (DirectWrite GDI-classic ClearType) at every display scale.
+QString hinting();
+
 // Caption text (headings, stat names, control captions): size, spacing and caps from the pack.
 struct Caption {
 	qreal pointSize = 8, spacing = 0;

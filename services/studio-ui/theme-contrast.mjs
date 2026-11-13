@@ -69,6 +69,10 @@ export function basePairs(p) {
   ];
 }
 
+// The soft variants (D376) paint from the pack's surface block; without it they fail the check (the studio needs it).
+const needsSurface = [['normal', 'soft variant without a surface block', '#000000', ['#000000'], TEXT]];
+const sf = (p, fn) => (p.surface ? fn(p.surface) : needsSurface);
+
 // The variant fragments (theme.cpp componentQss) and the painted Switch: the pairs each variant adds.
 export const VARIANTS = {
   'button.shape': { rounded: () => [], pill: () => [], sharp: () => [] },
@@ -78,6 +82,9 @@ export const VARIANTS = {
     metal: (p, x) => [['normal', 'metal button label', p.colors.text, [x.metalHi, p.colors.field, x.metalLo], TEXT], ['normal', 'metal primary label', p.colors.onAccent, [x.accentTop, x.accentBot], TEXT]],
     bezel: (p) => [['normal', 'bezel primary rim against the window', p.colors.accentHi, surfaces(p), CTRL]],
     neumorph: (p) => [['normal', 'neumorph button label', p.colors.text, [p.colors.bg], TEXT]],
+    raised: (p) => sf(p, (s) => [['normal', 'raised button label', p.colors.text, [s.faceTop, s.faceBottom], TEXT], ['hover', 'raised button label', p.colors.text, ['#ffffff', s.faceBottom], TEXT],
+      ['pressed', 'pressed raised button label', p.colors.text, [s.wellTop, s.wellBottom], TEXT], ['checked', 'checked (warm) button label', s.glowInk, [s.warmTop, s.warmBottom], TEXT],
+      ['normal', 'raised danger button label', p.colors.danger, [s.faceTop, s.faceBottom], TEXT]]),
   },
   'button.secondary': {
     outline: (p, x) => [['normal', 'outline button label', p.colors.accentHi, surfaces(p), TEXT], ['hover', 'outline button label', p.colors.accentHi, [x.tint], TEXT], ['normal', 'outline button edge', p.colors.accent, surfaces(p), CTRL]],
@@ -96,6 +103,7 @@ export const VARIANTS = {
     filled: (p) => [['normal', 'filled field text', p.colors.text, [p.colors.field], TEXT], ['normal', 'filled field underline', p.colors.muted, [p.colors.field], CTRL]],
     inset: (p, x) => [['normal', 'inset field text', p.colors.text, [x.well], TEXT]],
     underline: (p) => [['normal', 'underline field text', p.colors.text, surfaces(p), TEXT], ['normal', 'underline field line', p.colors.muted, surfaces(p), CTRL]],
+    soft: (p) => sf(p, (s) => [['normal', 'soft well text', p.colors.text, [s.wellTop, s.wellBottom], TEXT], ['focus', 'soft well focus ring', p.colors.accent, [s.wellTop, s.wellBottom], CTRL]]),
   },
   focus: {
     border: (p) => [['focus', 'focus border', p.colors.accent, [p.colors.field], CTRL]],
@@ -110,6 +118,9 @@ export const VARIANTS = {
       ['checked', 'switch track on against the window', p.colors.accent, surfaces(p), CTRL]],
     bezel: (p) => [['checked', 'switch ON label', p.colors.onAccent, [p.colors.accent], TEXT], ['normal', 'switch OFF label', p.colors.text, [p.colors.border], TEXT],
       ['checked', 'switch track on against the window', p.colors.accent, surfaces(p), CTRL]],
+    // painted (switch_widget.cpp paintKnob): ON in glowInk on the warm track, OFF in muted on the well; the knob moves
+    knob: (p) => sf(p, (s) => [['checked', 'switch ON label', s.glowInk, [s.warmTop, s.warmBottom], TEXT], ['normal', 'switch OFF label', p.colors.muted, [s.wellTop, s.wellBottom], TEXT],
+      ['checked', 'warm track edge against the window', s.warmEdge, [s.wellTop], 1.4]]),
   },
   'slider.track': {
     thin: (p) => [['normal', 'slider value part', p.colors.accent, surfaces(p), CTRL]],
@@ -134,6 +145,8 @@ export const VARIANTS = {
     raised: () => [],
     neumorph: (p) => [['normal', 'text on a neumorph card', p.colors.text, [p.colors.bg], TEXT]],
     framed: (p) => [['normal', 'text in a framed card', p.colors.text, surfaces(p), TEXT]],
+    soft: (p) => sf(p, (s) => [['normal', 'text on a soft plate', p.colors.text, [s.faceTop, s.faceBottom], TEXT], ['normal', 'muted text on a soft plate', p.colors.muted, [s.faceTop, s.faceBottom], TEXT],
+      ['checked', 'muted text where a plate glows', p.colors.muted, [s.warmTop, s.warmBottom], TEXT], ['normal', 'error text on a soft plate', p.colors.danger, [s.faceTop, s.faceBottom], TEXT]]),
   },
   list: { plain: () => [], plates: (p) => [['normal', 'list plate text', p.colors.text, [p.colors.field], TEXT]] },
   chip: { pill: () => [], bracket: (p) => [['normal', 'bracket chip text', p.colors.text, surfaces(p), TEXT], ['normal', 'quiet bracket chip text', p.colors.muted, surfaces(p), TEXT]] },

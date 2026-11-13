@@ -26,9 +26,16 @@
 #include "specimen.h"
 #include "studio_log.h"
 #include "theme.h"
+#include "soft.h"
 
 #include <QApplication>
 #include <QDialog>
+#include <QDir>
+#include <QElapsedTimer>
+#include <QEnterEvent>
+#include <QMouseEvent>
+#include <QPushButton>
+#include <QEventLoop>
 #include <QIcon>
 #include <QLayout>
 #include <QWidget>
@@ -126,6 +133,85 @@ static void startControlReader(QApplication *app, std::function<void(const QStri
 }
 #endif
 
+// UJWALAM_HEADLESS=1 + UJWALAM_STUDIO_HIDDEN=1: every window is laid out and painted on the native platform (the real
+// Windows font engine, so the probe's pictures show the text as the screen does, ClearType included, D376) but none is
+// put on the screen and none takes focus. The one exception is the screen-shot probe action below, which shows one
+// dialog for a moment without activating it.
+class HiddenWindows : public QObject {
+public:
+	using QObject::QObject;
+	bool eventFilter(QObject *o, QEvent *e) override
+	{
+		if (e->type() == QEvent::Show)
+			if (auto *w = qobject_cast<QWidget *>(o); w && w->isWindow() && !w->property("probeOnScreen").toBool()) {
+				w->setAttribute(Qt::WA_DontShowOnScreen, true);
+				w->setAttribute(Qt::WA_ShowWithoutActivating, true);
+			}
+		return false;
+	}
+};
+
+// Probe action screen-shot:<name> (hidden probe only, D376): the open Settings window (else the open Growth window) is
+// put on the screen for about a second at the bottom right, without taking focus, and the screen pixels under it are
+// saved to $UJWALAM_STUDIO_SETTINGS_SHOT_DIR/<name>.png: what Windows really composed, unlike grab(). Then it is hidden.
+static bool screenShot(MainWindow &win, const QString &name)
+{
+	const QString dir = qEnvironmentVariable("UJWALAM_STUDIO_SETTINGS_SHOT_DIR");
+	if (dir.isEmpty() || qEnvironmentVariable("UJWALAM_STUDIO_HIDDEN") != QStringLiteral("1"))
+		return false;
+	QWidget *dlg = win.settingsWindow();
+	if (!dlg)
+		for (QWidget *tl : QApplication::topLevelWidgets())
+			if (qobject_cast<QDialog *>(tl) && tl->isVisible())
+				dlg = tl;
+	QScreen *screen = QGuiApplication::primaryScreen();
+	if (!dlg || !screen)
+		return false;
+	const QRect avail = screen->availableGeometry();
+	dlg->hide();
+	dlg->setProperty("probeOnScreen", true);
+	dlg->setAttribute(Qt::WA_DontShowOnScreen, false);
+	dlg->setAttribute(Qt::WA_ShowWithoutActivating, true);
+	dlg->resize(std::min(860, avail.width() - 40), std::min(720, avail.height() - 40));
+	dlg->move(avail.right() - dlg->width() - 20, avail.bottom() - dlg->height() - 20);
+	dlg->show();
+	QEventLoop loop; // painted, composed by Windows, and any open fade finished
+	QTimer::singleShot(900, &loop, &QEventLoop::quit);
+	loop.exec();
+	const QRect g = dlg->geometry();
+	const QPixmap pm = screen->grabWindow(0, g.x() - screen->geometry().x(), g.y() - screen->geometry().y(), g.width(), g.height());
+	dlg->hide();
+	dlg->setProperty("probeOnScreen", false);
+	dlg->setAttribute(Qt::WA_DontShowOnScreen, true);
+	return !pm.isNull() && pm.save(QDir(dir).filePath(name + QStringLiteral(".png")), "PNG");
+}
+
+// Probe actions soft-hover:<label> / soft-press:<label> (D376, pictures of the states): the pointer enters (or presses on)
+// the first push button with that text in the open Settings window, else the main window. Nothing else happens: the
+// press is never released, so no click runs.
+static bool softState(MainWindow &win, const QString &action)
+{
+	const bool press = action.startsWith(QStringLiteral("soft-press:"));
+	const QString label = action.mid(11); // both prefixes are 11 characters
+	QList<QPushButton *> all;
+	if (QWidget *sw = win.settingsWindow())
+		all << sw->findChildren<QPushButton *>();
+	all << win.findChildren<QPushButton *>();
+	for (QPushButton *b : all)
+		if (b->text() == label) {
+			const QPointF c = QRectF(b->rect()).center();
+			QEnterEvent enter(c, b->mapTo(b->window(), c), b->mapToGlobal(c));
+			QCoreApplication::sendEvent(b, &enter);
+			if (press) { // the painter's press state only; the button never sees the press (no click)
+				QMouseEvent down(QEvent::MouseButtonPress, c, b->mapToGlobal(c), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+				for (QObject *f : b->children())
+					f->eventFilter(b, &down);
+			}
+			return true;
+		}
+	return false;
+}
+
 int main(int argc, char **argv)
 {
 	const bool headless = qEnvironmentVariable("UJWALAM_HEADLESS") == QStringLiteral("1");
@@ -220,7 +306,9 @@ int main(int argc, char **argv)
 				QTimer::singleShot(2500 + 700 * i, &app, [&win, actions, a = todo[i].trimmed()]() {
 					QJsonObject o;
 					o.insert(QStringLiteral("action"), a);
-					o.insert(QStringLiteral("done"), win.probeAction(a));
+					o.insert(QStringLiteral("done"), a.startsWith(QStringLiteral("screen-shot:")) ? screenShot(win, a.mid(12))
+									  : a.startsWith(QStringLiteral("soft-"))     ? softState(win, a)
+															  : win.probeAction(a));
 					actions->append(o);
 				});
 			QTimer::singleShot(std::min(probeMs, 60000), &app, [&, actions]() {
@@ -292,6 +380,23 @@ int main(int argc, char **argv)
 					bench.insert(QStringLiteral("hoverOverlays"), motion::hoverCount());
 					bench.insert(QStringLiteral("paintMs"), depth::measurePaint(&win, 100, false));
 					bench.insert(QStringLiteral("paintWorstMs"), depth::measurePaint(&win, 100, true));
+					if (QWidget *sw = win.settingsWindow()) { // D376: an open Settings window: its repaint, warm and with the soft cache dropped
+						sw->resize(860, 720);
+						for (QWidget *w : sw->findChildren<QWidget *>())
+							if (w->layout())
+								w->layout()->activate();
+						sw->layout()->activate();
+						bench.insert(QStringLiteral("settingsPaintMs"), depth::measurePaint(sw, 100, false));
+						QElapsedTimer cold;
+						cold.start();
+						for (int i = 0; i < 20; i++) {
+							soft::dropCache();
+							depth::measurePaint(sw, 1, true);
+						}
+						bench.insert(QStringLiteral("settingsPaintColdMs"), cold.nsecsElapsed() / 1e6 / 20);
+						bench.insert(QStringLiteral("softWidgets"), soft::count());
+						bench.insert(QStringLiteral("softCached"), soft::cached());
+					}
 					bench.insert(QStringLiteral("mem"), processMemory());
 					bench.insert(QStringLiteral("unit"), QStringLiteral("ms per full-window paint at 1600x900 (paintWorstMs: effect caches dropped before each paint); mem in MiB after the paints"));
 					o.insert(QStringLiteral("bench"), bench);
@@ -343,6 +448,8 @@ int main(int argc, char **argv)
 		std::fflush(stdout);
 		});
 	});
+	if (hidden) // the probe on the native platform (D376): no window it opens (Settings, Growth, menus) ever reaches the screen
+		app.installEventFilter(new HiddenWindows(&app));
 	const int r = app.exec();
 	qInfo("studio exiting with code %d", code ? code : r);
 	return code ? code : r;

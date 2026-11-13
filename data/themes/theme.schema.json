@@ -56,6 +56,7 @@
         "letterSpacing": { "type": "number", "minimum": -0.5, "maximum": 2, "description": "pixels added between letters (QFont absolute spacing)" },
         "captionLetterSpacing": { "type": "number", "minimum": 0, "maximum": 4 },
         "captionCaps": { "type": "boolean" },
+        "hinting": { "enum": ["default", "none", "vertical", "full"], "description": "optional (D376): glyph hinting. full keeps stems on the pixel grid (ClearType GDI-classic) at every display scale; default lets Qt choose" },
         "buttonCaps": { "type": "boolean", "description": "optional (v2): button labels in capitals" },
         "tabCaps": { "type": "boolean", "description": "optional (v2): tab labels in capitals" },
         "headingCaps": { "type": "boolean", "description": "optional (v2): section titles and headings in capitals" },
@@ -146,15 +147,15 @@
           "type": "object", "additionalProperties": false,
           "properties": {
             "shape": { "enum": ["rounded", "pill", "sharp"] },
-            "style": { "enum": ["solid", "soft", "metal", "bezel", "neumorph"], "description": "fill and edge of buttons and round controls" },
+            "style": { "enum": ["solid", "soft", "metal", "bezel", "neumorph", "raised"], "description": "fill and edge of buttons and round controls; raised (D376): soft raised pills painted from the surface block, the warm face when checked" },
             "secondary": { "enum": ["outline", "tinted", "ghost"], "description": "plain (not primary) buttons; left out: they follow style" },
             "caps": { "type": "boolean", "description": "button labels in capitals" }
           }
         },
         "tabs": { "enum": ["pill", "underline", "segmented", "boxed"] },
-        "input": { "enum": ["outline", "filled", "inset", "underline"] },
+        "input": { "enum": ["outline", "filled", "inset", "underline", "soft"], "description": "soft (D376): a sunken well in the surface block's well colours" },
         "focus": { "enum": ["border", "ring", "glow"] },
-        "switch": { "enum": ["plain", "labelled", "bezel"], "description": "the painted on/off switch; labelled (ON / OFF in the track) is the base look" },
+        "switch": { "enum": ["plain", "labelled", "bezel", "knob"], "description": "the painted on/off switch; labelled (ON / OFF in the track) is the base look; knob (D376): a raised round knob in a sunken track that glows warm when on" },
         "slider": {
           "type": "object", "additionalProperties": false,
           "properties": {
@@ -164,10 +165,28 @@
           }
         },
         "sectionHeader": { "enum": ["plain", "rule", "caps", "bracket"] },
-        "card": { "enum": ["flat", "raised", "neumorph", "framed"] },
+        "card": { "enum": ["flat", "raised", "neumorph", "framed", "soft"], "description": "soft (D376): raised plates painted from the surface block (needs it)" },
         "list": { "enum": ["plain", "plates"] },
         "chip": { "enum": ["pill", "bracket"] },
         "density": { "enum": ["compact", "normal", "airy"], "description": "layout spacing: compact x0.75, normal x1, airy x1.25 of the built-in spacing" }
+      }
+    },
+    "componentsAlways": { "type": "boolean", "description": "optional (D376): the components block and the other v2 parts apply whether the flag theme-components is on or not. For a pack whose look depends on them (Soft): choosing the theme is the opt-in." },
+    "surface": {
+      "type": "object", "additionalProperties": false,
+      "required": ["faceTop", "faceBottom", "edgeLight", "edgeDark", "wellTop", "wellBottom", "warmTop", "warmBottom", "warmEdge", "glowCore", "glowColor", "glowInk", "shadow", "contact", "halo", "glowHalo", "cardRadius", "plateRadius", "margin"],
+      "description": "Optional (D376, with components.card soft): raised plates painted by the studio from cached pictures (no per-widget effect): a face gradient with a light top edge and a darker bottom edge, a wide soft shadow, a tight contact shadow and a light halo up-left; sunken wells; and the warm glow of active controls. Read with the other v2 parts.",
+      "properties": {
+        "faceTop": { "$ref": "#/$defs/hex" }, "faceBottom": { "$ref": "#/$defs/hex" }, "edgeLight": { "$ref": "#/$defs/hex" }, "edgeDark": { "$ref": "#/$defs/hex" },
+        "wellTop": { "$ref": "#/$defs/hex" }, "wellBottom": { "$ref": "#/$defs/hex" }, "warmTop": { "$ref": "#/$defs/hex" }, "warmBottom": { "$ref": "#/$defs/hex" }, "warmEdge": { "$ref": "#/$defs/hex" },
+        "glowCore": { "$ref": "#/$defs/hex" }, "glowColor": { "$ref": "#/$defs/hex" }, "glowInk": { "$ref": "#/$defs/hex", "description": "text and marks on a warm face" },
+        "shadow": { "$ref": "#/$defs/shadowPart" }, "contact": { "$ref": "#/$defs/shadowPart" }, "halo": { "$ref": "#/$defs/shadowPart" }, "glowHalo": { "$ref": "#/$defs/shadowPart" },
+        "cardRadius": { "$ref": "#/$defs/px" }, "plateRadius": { "$ref": "#/$defs/px" },
+        "margin": {
+          "type": "object", "additionalProperties": false, "required": ["x", "top", "bottom"],
+          "description": "room around a card for its shadow, in px",
+          "properties": { "x": { "type": "integer", "minimum": 0, "maximum": 24 }, "top": { "type": "integer", "minimum": 0, "maximum": 24 }, "bottom": { "type": "integer", "minimum": 0, "maximum": 32 } }
+        }
       }
     },
     "icons": {
