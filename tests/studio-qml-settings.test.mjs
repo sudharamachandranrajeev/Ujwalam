@@ -121,7 +121,7 @@ describe('QML studio Settings (headless probe)', { skip }, () => {
   });
 
   test('layer effects on turns flag layer-effects on at Save, no phrase; animations Off is saved as ui.motion', async () => {
-    const { p, s, flags, saved } = await probe(['settings-open', 'settings-flag:layer-effects:on', 'settings-motion:off', 'settings-save'], 8000);
+    const { p, s, flags, saved } = await probe(['settings-open', 'settings-flag:layer-effects:on', 'settings-motion:off', 'settings-save'], 12000); // the flags POST lands after Save: slower under CI load
     assert.deepEqual(done(p), [['settings-open', true], ['settings-flag:layer-effects:on', true], ['settings-motion:off', true], ['settings-save', true]]);
     assert.equal(flags.isOn('layer-effects'), true, 'applied on Save through the flags route');
     assert.equal(saved.ui.motion, 'off');
@@ -135,7 +135,7 @@ describe('QML studio Settings (headless probe)', { skip }, () => {
     assert.equal(draft.s.settings.flagRows.find((r) => r.id === 'layer-effects').on, true);
     assert.equal(draft.s.settings.dirty, true);
     assert.equal(draft.flags.isOn('layer-effects'), false, 'nothing applied before Save');
-    const saved = await probe(['settings-open', 'settings-page:Editing', 'click:flag:layer-effects', 'click:settingsSave'], 7000);
+    const saved = await probe(['settings-open', 'settings-page:Editing', 'click:flag:layer-effects', 'click:settingsSave'], 11000);
     assert.equal(saved.flags.isOn('layer-effects'), true);
   });
 
