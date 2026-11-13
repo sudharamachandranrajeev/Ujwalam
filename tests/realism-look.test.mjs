@@ -194,6 +194,7 @@ test('server: scene.realism needs flag realism-look (not scene-edit), refused wh
   const state = { live: false, fail: false };
   const host = { describe: () => ({ kind: 'host', available: true }), call: async (m, p) => {
     if (m === 'host.status') return { live: state.live };
+    if (m === 'outputs.status') return {}; // the server's own status poll can land at any time under load: not a write
     if (state.fail) throw new Error('host says no');
     calls.push([m, p.scene?.id ?? p.scene, p.layer, p.scene?.canvas]);
     return {};
