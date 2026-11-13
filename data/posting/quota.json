@@ -1,0 +1,10 @@
+{
+  "$comment": "YouTube Data API quota for automatic posting (D375). uploads a day that fit = floor((quotaUnitsPerDay - readReserveUnits) / (insertUnits + thumbnailUnits)); with these values (10000 - 100) / 1650 = 6. The default 'uploads per day' of the Auto-post card is that number. quotaUnitsPerDay is the project's daily quota in Google Cloud Console (APIs & Services > YouTube Data API v3 > Quotas); after Google raises it, change the number in Settings > Posting & growth > Auto-post (saved in <data dir>/posting/schedule.json as quotaUnitsPerDay) and the card shows how many uploads fit. Reads: channels.list, playlistItems.list and videos.list cost 1 unit each (a schedule read is 1 + up to 2 per page of 50 uploads; a status check 1). Read by services/posting/auto-settings.mjs; never hardcoded.",
+  "quotaUnitsPerDay": 10000,
+  "insertUnits": 1600,
+  "thumbnailUnits": 50,
+  "readReserveUnits": 100,
+  "source": "quotaUnitsPerDay 10000 (default allocation), thumbnailUnits 50, read calls 1 unit: https://developers.google.com/youtube/v3/determine_quota_cost (fetched 2026-11-13). insertUnits 1600: docs/plan/2026-11-03-p16b-youtube-private-upload-plan.md and the user's choice 2026-11-13 ('use ~6/day and request more'). The same Google page fetched 2026-11-13 says videos.insert now has its own bucket (100 calls a day, 1 unit each); if Cloud Console shows that for this project, set insertUnits to 0 (UNVERIFIED for this project). readReserveUnits 100: agent 2026-11-13, not a user instruction.",
+  "checked": "2026-11-13",
+  "status": "unverified"
+}

@@ -25,6 +25,8 @@ add_executable(ujwalam-studio WIN32
 	src/interaction.h
 	src/api_client.cpp
 	src/api_client.h
+	src/autopost_card.cpp
+	src/autopost_card.h
 	src/coach.cpp
 	src/coach.h
 	src/connections_page.cpp

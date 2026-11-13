@@ -1,40 +1,31 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Scheduled posting (flag `post-schedule`, off by default; D310 proposed). PURE: slot math and settings only. No network,
-// no auth, no writes (the channel read is services/posting/schedule-read.mjs; the queue writes are auto-chain.mjs), so the
-// read-only preview can import this file.
+// Scheduled posting (flag `post-schedule`, off by default; D310, D314, D375). PURE: slot math and settings only. No network,
+// no auth, no writes (the channel read is services/posting/schedule-read.mjs; the queue writes are auto-chain.mjs; the
+// user's settings file is written by auto-settings.mjs), so the read-only preview can import this file.
 //
-// Slot rule (settings in data/posting/schedule.json, never hardcoded):
-//   anchor = the later of (a) the latest FUTURE publish time already scheduled on the channel (YouTube Studio) and
-//            (b) the latest slot Ujwalam itself already gave out (queue items in any state, past or future);
-//   floor  = now + minLeadHours + marginMinutes;
-//   slot   = anchor + intervalHours, but never earlier than the floor; with no anchor at all, the floor.
-//   The result is rounded UP to the whole minute and is always UTC (RFC 3339 'Z'), so time zones and DST never matter.
-// Slots are given out one by one in queue order; each new slot becomes the next anchor, so two clips never share a slot.
+// Slot rule (D375, user 2026-11-13: "schedule the post with a gap of 6 hours ... work around the existing schedule ...
+// don't double post at the same time"; settings in data/posting/schedule.json, never hardcoded):
+//   floor  = now + minLeadHours + marginMinutes, rounded UP to alignMinutes (60 = whole hours). A D314 retry that is
+//            backing off after an error counts from its nextAt instead of now (it cannot start sooner).
+//   taken  = every time a post already has: each scheduled post read from the channel (YouTube Studio's "Scheduled"),
+//            each channel video that went public recently, every fixed queue time (uploaded, open upload session, failed
+//            slot, queued with a usable slot) and every slot given out earlier in the same pass.
+//   slot   = the earliest time >= floor, on the alignMinutes grid, that is at least intervalHours (6 h) away from EVERY
+//            taken time. So new posts fill the free gaps around the existing schedule (e.g. 06:00, 12:00 and 18:00 on days
+//            that only have a 00:00 post) and no two posts are ever less than intervalHours apart.
+//   placement "after-last" (the D310 rule) instead starts the search at the latest taken time + intervalHours.
+//   The result is always UTC (RFC 3339 'Z'), so time zones and DST never matter.
+// Who gets a new slot in a pass: a queued item with no slot, and a D314 retry (a queued item with no upload session whose
+// time is less than minLeadHours away, or whose too-close time was already dropped). Every other time stays as it is.
+// Cap: a slot more than maxAheadDays (730 = 2 years) ahead is not given out; the item waits ('schedule-beyond-cap').
 // Check before an upload session starts or resumes: publishAt >= now + minLeadHours (leadOk). The margin in the floor
 // is what lets a slot given out now pass that check when its upload starts a little later in the same batch.
 // Check before every chunk: publishAt >= now + marginMinutes, so an upload never finishes with a past time.
 // Bound on every chunk (youtube.mjs): the request is aborted at publishAt - chunkDeadlineSeconds, and the final chunk
 // only starts when its estimated transfer (slowest measured chunk speed, else fallbackKbps) fits before that deadline.
-//
-// Retry close to its time (D314, user 2026-11-09; planQueueSlots below):
-//   A queued clip with no open upload session whose time is less than minLeadHours away (or whose too-close time was
-//   already dropped: `reslot`) is a RETRY. The first retry in queue order gets the floor again: now + minLeadHours +
-//   marginMinutes, rounded up to the minute (1 h 15 min with the defaults). The user asked for "1 hour away"; exactly
-//   1 h cannot pass the session check (>= now + minLeadHours when the upload session starts, a moment later), so the
-//   closest safe value is the existing floor. If the clip is backing off after an error (nextAt later than now), the
-//   floor counts from nextAt, because it cannot start sooner. The retry ignores the other anchors (the user's rule).
-//   Every LATER queued clip in queue order that has no session yet is re-chained intervalHours apart from that time.
-//   FIXED times never move: the channel's latest future scheduled post (channelLast), clips already uploaded, clips
-//   with an open session (its publishAt is what Google will apply), failed clips (a failed slot stays a gap, D310) and
-//   queued clips before the first retry in queue order. Each re-chained slot after the retry is at least intervalHours
-//   after the previous chain slot AND after the latest fixed time, so a re-chain never moves a slot earlier than the
-//   channel's latest scheduled post + intervalHours, and never into the gap after an uploaded clip.
-//   Gap (Codex review 2026-11-09): the retry never lands within minGapMinutes (1 h) of a TAKEN time: every future
-//   scheduled post read from the channel (channelTimes), every fixed queue time and every slot given to a new item in the
-//   same pass. If the floor is taken it moves to the first free time after it (taken time + gap, rounded up). The later
-//   chain slots are intervalHours after the latest of all of these, so they cannot collide either.
-//   Cap: a slot more than maxAheadDays (730 = 2 years) ahead is not assigned; the clip waits ('schedule-beyond-cap').
-import { readFileSync } from 'node:fs';
+// The user's own settings (Settings > Posting & growth > Auto-post) live in <data dir>/posting/schedule.json and replace
+// the shipped intervalHours, maxAheadDays and placement (and hold quotaUnitsPerDay, read by quota-budget.mjs).
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,15 +40,51 @@ export class ScheduleError extends Error {
   constructor(code, message) { super(message ?? code); this.name = 'ScheduleError'; this.code = code; }
 }
 
-/** Reads and checks data/posting/schedule.json. Throws ScheduleError('schedule-config-bad') on any bad value. */
-export function loadScheduleConfig(file = DEFAULT_SCHEDULE) {
+export const USER_SCHEDULE_NAME = 'schedule.json';
+/** The user's own schedule settings (Settings > Posting & growth > Auto-post): <dataDir>/posting/schedule.json. Only the
+ *  keys in USER_KEYS are read from it; each replaces the shipped value. It survives app updates (data dir, not repo). */
+export const userScheduleFile = (dataDir) => path.join(dataDir, 'posting', USER_SCHEDULE_NAME);
+export const PLACEMENTS = Object.freeze(['fill-gaps', 'after-last']);
+/** What the user may set, and the allowed whole-number ranges (2 days is the widest gap that is still a schedule;
+ *  maxAheadDays 730 = the user's 2-year cap, D314; quota from 1,000 units up to a raised Google quota). */
+export const USER_LIMITS = Object.freeze({
+  intervalHours: { min: 1, max: 48 },
+  maxAheadDays: { min: 1, max: 730 },
+  quotaUnitsPerDay: { min: 1000, max: 10000000 },
+});
+export const USER_KEYS = Object.freeze(['intervalHours', 'maxAheadDays', 'placement', 'quotaUnitsPerDay']);
+
+/** Checks a user settings object (only USER_KEYS; any may be missing). -> { values, problems: [{ key, text }] }. Pure. */
+export function checkUserSchedule(j) {
+  const values = {}; const problems = [];
+  if (j === null || typeof j !== 'object' || Array.isArray(j)) return { values, problems: [{ key: null, text: 'not a settings object' }] };
+  for (const [k, lim] of Object.entries(USER_LIMITS)) {
+    if (j[k] === undefined) continue;
+    if (!Number.isInteger(j[k]) || j[k] < lim.min || j[k] > lim.max) problems.push({ key: k, text: `${k} must be a whole number from ${lim.min} to ${lim.max}` });
+    else values[k] = j[k];
+  }
+  if (j.placement !== undefined) { if (PLACEMENTS.includes(j.placement)) values.placement = j.placement; else problems.push({ key: 'placement', text: `placement must be one of ${PLACEMENTS.join(', ')}` }); }
+  return { values, problems };
+}
+const ALIGN_STEPS = [1, 2, 3, 4, 5, 6, 10, 12, 15, 20, 30, 60];
+
+/**
+ * Reads and checks data/posting/schedule.json. Throws ScheduleError('schedule-config-bad') on any bad value.
+ * opts.userFile: the user's <data>/posting/schedule.json; when it exists its intervalHours, maxAheadDays and placement
+ * replace the shipped ones (a bad or unreadable user file is refused, never ignored: fail closed). cfg.userKeys lists them.
+ */
+export function loadScheduleConfig(file = DEFAULT_SCHEDULE, { userFile = null } = {}) {
   let j;
   try { j = JSON.parse(readFileSync(file, 'utf8')); } catch { throw new ScheduleError('schedule-config-bad', 'the schedule settings file could not be read'); }
-  const num = (k, min, max) => {
-    const v = j?.[k];
+  const num = (k, min, max, src = j) => {
+    const v = src?.[k];
     if (typeof v !== 'number' || !Number.isFinite(v) || v < min || v > max) throw new ScheduleError('schedule-config-bad', `schedule setting ${k} must be a number from ${min} to ${max}`);
     return v;
   };
+  const placement = j?.placement ?? 'fill-gaps';
+  if (!PLACEMENTS.includes(placement)) throw new ScheduleError('schedule-config-bad', `schedule setting placement must be one of ${PLACEMENTS.join(', ')}`);
+  const alignMinutes = num('alignMinutes', 1, 60);
+  if (!ALIGN_STEPS.includes(alignMinutes)) throw new ScheduleError('schedule-config-bad', `schedule setting alignMinutes must divide an hour (${ALIGN_STEPS.join(', ')})`);
   const cfg = {
     intervalHours: num('intervalHours', 0.25, 24 * 30),
     minLeadHours: num('minLeadHours', 0.25, 24 * 30),
@@ -67,10 +94,18 @@ export function loadScheduleConfig(file = DEFAULT_SCHEDULE) {
     maxPages: Math.floor(num('maxPages', 1, 100)),
     pageSize: Math.floor(num('pageSize', 1, 50)),
     maxAheadDays: num('maxAheadDays', 1, 3650),
-    minGapMinutes: num('minGapMinutes', 1, 24 * 60),
+    lookbackDays: num('lookbackDays', 1, 3650),
+    alignMinutes,
+    placement,
   };
-  // The D314 retry keeps minGapMinutes from every taken time; the chain itself keeps intervalHours, which must not be smaller.
-  if (cfg.minGapMinutes > cfg.intervalHours * 60) throw new ScheduleError('schedule-config-bad', 'schedule setting minGapMinutes must not be more than intervalHours');
+  cfg.userKeys = [];
+  if (typeof userFile === 'string' && userFile && existsSync(userFile)) {
+    let u;
+    try { u = JSON.parse(readFileSync(userFile, 'utf8')); } catch { throw new ScheduleError('schedule-config-bad', 'your schedule settings file (posting/schedule.json in the data folder) could not be read'); }
+    const { values, problems } = checkUserSchedule(u);
+    if (problems.length) throw new ScheduleError('schedule-config-bad', `your schedule settings: ${problems.map((p) => p.text).join('; ')}`);
+    for (const k of ['intervalHours', 'maxAheadDays', 'placement']) if (values[k] !== undefined) { cfg[k] = values[k]; cfg.userKeys.push(k); }
+  }
   // A chunk may only start with at least marginMinutes left, and must end chunkDeadlineSeconds before the time:
   // a deadline at or past the margin would stop every final chunk.
   if (cfg.chunkDeadlineSeconds >= cfg.marginMinutes * 60) throw new ScheduleError('schedule-config-bad', 'schedule setting chunkDeadlineSeconds must be less than marginMinutes');
@@ -79,32 +114,43 @@ export function loadScheduleConfig(file = DEFAULT_SCHEDULE) {
 
 const ms = (iso) => { const t = typeof iso === 'string' ? Date.parse(iso) : NaN; return Number.isFinite(t) ? t : null; };
 export const toIso = (t) => new Date(t).toISOString(); // always UTC with 'Z'
+/** Rounded UP to the alignMinutes grid (UTC; 60 = whole hours). */
+export const alignUp = (t, cfg) => { const a = (cfg.alignMinutes ?? 1) * MINUTE_MS; return Math.ceil(t / a) * a; };
+/** The earliest a new slot may be: from + minLeadHours + marginMinutes, on the grid. */
+export const floorFrom = (fromMs, cfg) => alignUp(fromMs + cfg.minLeadHours * HOUR_MS + cfg.marginMinutes * MINUTE_MS, cfg);
 
-/** The next slot (ms since epoch) from the anchors. channelLast/ownLast: ms or null. Pure. */
-export function nextSlot({ channelLast = null, ownLast = null, nowMs, cfg }) {
-  const floor = nowMs + cfg.minLeadHours * HOUR_MS + cfg.marginMinutes * MINUTE_MS;
-  const anchors = [channelLast, ownLast].filter((v) => Number.isFinite(v));
-  const t = anchors.length ? Math.max(Math.max(...anchors) + cfg.intervalHours * HOUR_MS, floor) : floor;
-  return Math.ceil(t / MINUTE_MS) * MINUTE_MS;
+/**
+ * Taken times kept sorted (ms), with the free-slot search. Each search step finds the taken times within the gap of the
+ * candidate by binary search and jumps to the latest of them + gap: every time skipped is within the gap of that one,
+ * so the answer is the first free one. Steps move strictly later and the list is finite, so it always ends.
+ * free() remembers, per floor, where the last search ended: times before it were all taken then and taken times only
+ * ever get added, so the next search with the same floor starts there. A pass over ~1500 new items (hourly slots for
+ * two months) is then O(n log n), not O(n^2) or worse.
+ */
+export function createSlotter(times, cfg) {
+  const gap = cfg.intervalHours * HOUR_MS;
+  const list = (times ?? []).filter((t) => Number.isFinite(t)).sort((x, y) => x - y);
+  const cursor = new Map();
+  const lowerBound = (v) => { let lo = 0; let hi = list.length; while (lo < hi) { const m = (lo + hi) >> 1; if (list[m] < v) lo = m + 1; else hi = m; } return lo; };
+  /** The latest taken time t with |at - t| < gap, or null. */
+  const conflict = (at) => { const k = lowerBound(at + gap) - 1; return k >= 0 && list[k] > at - gap ? list[k] : null; };
+  return {
+    add(t) { list.splice(lowerBound(t), 0, t); },
+    /** The latest taken time within the gap of `at`, or null (free). */
+    conflict,
+    times: () => list.slice(),
+    latest: () => (list.length ? list[list.length - 1] : null),
+    free(floor) {
+      let at = alignUp(Math.max(floor, cursor.get(floor) ?? floor), cfg);
+      for (let t = conflict(at); t !== null; t = conflict(at)) at = alignUp(t + gap, cfg);
+      cursor.set(floor, at);
+      return at;
+    },
+  };
 }
 
-/** Slots for `count` clips in order, starting from the anchors. Pure. */
-export function planSlots({ count, channelLast = null, ownLast = null, nowMs, cfg }) {
-  const out = []; let own = ownLast;
-  for (let i = 0; i < count; i++) { const s = nextSlot({ channelLast, ownLast: own, nowMs, cfg }); out.push(s); own = s; }
-  return out;
-}
-
-/** Latest publish time (ms) Ujwalam already gave out, over queue items in any state; `except` = ids to leave out. */
-export function ownLastSlot(items, except = new Set()) {
-  let last = null;
-  for (const it of items ?? []) {
-    if (!isPlain(it) || except.has(it.id)) continue;
-    const t = ms(it.publishAt);
-    if (t !== null && (last === null || t > last)) last = t;
-  }
-  return last;
-}
+/** The earliest time >= s (on the grid) that is at least intervalHours from every taken time (ms). Pure. */
+export const earliestFree = (s, taken, cfg) => createSlotter(taken, cfg).free(s);
 
 /** Latest future publish time among YouTube video resources (privacy private + publishAt after now). Past ones are ignored. */
 export function latestFutureSchedule(videos, nowMs) {
@@ -149,69 +195,71 @@ export const maxAheadMs = (nowMs, cfg) => nowMs + cfg.maxAheadDays * 24 * HOUR_M
 export const isRetry = (i, nowMs, cfg) => isPlain(i) && i.state === 'queued' && !i.session
   && (typeof i.publishAt === 'string' && i.publishAt ? slotTooClose(i.publishAt, nowMs, cfg) : (i.reslot === true || i.reason === 'slot-passed'));
 
+/** Every time a queue item already holds (planned, sent to Google, or its open session's), in ms. */
+export function itemTimes(i) {
+  const out = [];
+  for (const k of ['publishAt', 'sentPublishAt', 'sessionPublishAt']) { const v = ms(i?.[k]); if (v !== null && !out.includes(v)) out.push(v); }
+  return out;
+}
+
 /**
- * The slots to give out now over a whole queue (items in queue order, any state; see the D314 rule at the top). Pure.
- * Returns [{ id, at: ms | null, retry, rechain }] for every item that gets a new slot or must wait: `at` null = beyond
+ * The slots to give out now over a whole queue (items in queue order, any state; rule at the top). Pure.
+ * channelTimes: the channel's scheduled posts and recently published videos (ms). channelLast: optional extra time.
+ * Revalidation (Codex review 2026-11-13): a queued item that already has a slot but no upload session yet keeps it only
+ * while it is still at least the current gap from every channel time and every other kept time (checked earliest
+ * first, so of two clashing slots the earlier one stays). The channel may have gained a post at that time, or the gap
+ * may have grown; then the item gets a new slot by the same rule as a new one (reval: true).
+ * Returns [{ id, at: ms | null, retry, reval }] for every item that gets a new slot or must wait: `at` null = beyond
  * maxAheadDays (the item waits without a slot). Items not listed keep what they have.
- *   - new items (queued, no slot) before the first retry: the D310 rule (after the latest slot anywhere, after the channel).
- *   - the first retry: the floor (counted from its nextAt when that is later than now).
- *   - every later queued item with no session (retries, slotted, new): previous chain slot + interval, but never before
- *     the latest fixed time + interval.
  */
 export function planQueueSlots({ items, channelLast = null, channelTimes = [], nowMs, cfg }) {
   const list = (items ?? []).filter(isPlain);
-  const queued = list.filter((i) => i.state === 'queued');
-  const first = queued.findIndex((i) => isRetry(i, nowMs, cfg));
-  const chain = first >= 0 ? queued.slice(first).filter((i) => !i.session) : [];
-  const inChain = new Set(chain.map((i) => i.id));
-  const fresh = queued.filter((i) => !inChain.has(i.id) && !i.publishAt);
-  const moving = new Set([...inChain, ...fresh.map((i) => i.id)]);
-  const cap = maxAheadMs(nowMs, cfg);
-  const out = [];
-  // taken = every time the retry must keep minGapMinutes from (channel posts, fixed queue times, new slots below)
+  const needs = (i) => i.state === 'queued' && (!i.publishAt || isRetry(i, nowMs, cfg));
+  const held = (i) => i.state === 'queued' && !i.session && !needs(i) && ms(i.publishAt) !== null;
   const taken = [...(channelTimes ?? []), channelLast].filter((v) => Number.isFinite(v));
-  for (const i of list) {
-    if (moving.has(i.id)) continue;
-    for (const k of ['publishAt', 'sentPublishAt', 'sessionPublishAt']) { const v = ms(i[k]); if (v !== null) taken.push(v); }
+  for (const i of list) if (!needs(i) && !held(i)) taken.push(...itemTimes(i));
+  const slots = createSlotter(taken, cfg);
+  const reval = new Set();
+  for (const i of list.filter(held).sort((a, b) => ms(a.publishAt) - ms(b.publishAt))) {
+    const t = ms(i.publishAt);
+    if (slots.conflict(t) === null) { for (const x of itemTimes(i)) slots.add(x); continue; }
+    reval.add(i.id);
+    // Its other times (an old sent or session time) still count as taken.
+    for (const x of itemTimes(i)) if (x !== t) slots.add(x);
   }
-  // fixed = every time that stays (D310 anchors: any state, past or future; the floor makes the past ones irrelevant)
-  let own = ownLastSlot(list, moving);
-  for (const i of fresh) {
-    const s = nextSlot({ channelLast, ownLast: own, nowMs, cfg });
-    if (s > cap) { out.push({ id: i.id, at: null, retry: false, rechain: false }); continue; }
-    out.push({ id: i.id, at: s, retry: false, rechain: false }); own = s; taken.push(s);
-  }
-  let prev = null;
-  for (const i of chain) {
-    let s;
-    if (prev === null) {
-      const next = typeof i.nextAt === 'string' ? Date.parse(i.nextAt) : NaN;
-      s = clearOfTaken(nextSlot({ nowMs: Number.isFinite(next) && next > nowMs ? next : nowMs, cfg }), taken, cfg);
-    } else {
-      s = nextSlot({ channelLast, ownLast: own === null ? prev : Math.max(own, prev), nowMs, cfg });
-    }
-    // prev advances even past the cap, so every later item is past it too (and none becomes a second 'first').
-    out.push({ id: i.id, at: s > cap ? null : s, retry: isRetry(i, nowMs, cfg), rechain: true }); prev = s;
+  const moving = list.filter((i) => needs(i) || reval.has(i.id));
+  const cap = maxAheadMs(nowMs, cfg);
+  const gap = cfg.intervalHours * HOUR_MS;
+  const out = [];
+  for (const i of moving) {
+    const retry = isRetry(i, nowMs, cfg);
+    const next = retry && typeof i.nextAt === 'string' ? Date.parse(i.nextAt) : NaN;
+    let floor = floorFrom(Number.isFinite(next) && next > nowMs ? next : nowMs, cfg);
+    if (cfg.placement === 'after-last' && slots.latest() !== null) floor = Math.max(floor, alignUp(slots.latest() + gap, cfg));
+    const at = slots.free(floor);
+    const r = reval.has(i.id);
+    if (at > cap) { out.push({ id: i.id, at: null, retry, reval: r }); continue; }
+    out.push({ id: i.id, at, retry, reval: r }); slots.add(at);
   }
   return out;
 }
 
-/** The first time at or after s that is at least minGapMinutes from every taken time (rounded up to the minute). */
-export function clearOfTaken(s, taken, cfg) {
-  const gap = cfg.minGapMinutes * MINUTE_MS;
-  for (const t of [...taken].sort((a, b) => a - b)) if (Math.abs(s - t) < gap) s = Math.ceil((t + gap) / MINUTE_MS) * MINUTE_MS;
-  return s;
+/** The next `count` slots a new item would get after the queue's own (for the schedule preview). Pure. */
+export function nextFreeSlots({ items = [], channelTimes = [], count, nowMs, cfg }) {
+  const virtual = Array.from({ length: count }, (_, n) => ({ id: `next:${n}`, state: 'queued', publishAt: null, session: null }));
+  const plan = planQueueSlots({ items: [...items, ...virtual], channelTimes, nowMs, cfg });
+  const byId = new Map(plan.map((p) => [p.id, p.at]));
+  return virtual.map((v) => byId.get(v.id) ?? null);
 }
 
-/** Future channel post times saved by the chain's last read (for the preview); falls back to the saved latest one. */
+/** Channel post times saved by the chain's last read (for the preview): future scheduled posts and recently published
+ *  ones (recentTimes, kept so a new post is never within the gap of one that just went public). */
 export function savedChannelTimes(queueDoc, nowMs) {
-  const a = Array.isArray(queueDoc?.schedule?.channelTimes) ? queueDoc.schedule.channelTimes.map(ms).filter((t) => t !== null && t > nowMs) : [];
-  const last = savedChannelLast(queueDoc, nowMs);
-  return last !== null && !a.includes(last) ? [...a, last] : a;
-}
-
-/** The channel's last known schedule as saved by the chain (for the preview's estimate); null when unknown or past. */
-export function savedChannelLast(queueDoc, nowMs) {
-  const t = ms(queueDoc?.schedule?.channelLast);
-  return t !== null && t > nowMs ? t : null;
+  const s = queueDoc?.schedule;
+  const fut = Array.isArray(s?.channelTimes) ? s.channelTimes.map(ms).filter((t) => t !== null && t > nowMs) : [];
+  const recent = Array.isArray(s?.recentTimes) ? s.recentTimes.map(ms).filter((t) => t !== null) : [];
+  const last = ms(s?.channelLast);
+  const out = [...fut, ...recent];
+  if (last !== null && last > nowMs && !out.includes(last)) out.push(last);
+  return out.sort((x, y) => x - y);
 }

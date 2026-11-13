@@ -68,7 +68,7 @@ export const REPO_FILES = Object.freeze([
   'data/outputs/alpha-live.json', 'data/outputs/alpha-practice.json', 'data/outputs/guard/live-test-budget.json', 'data/outputs/addons/instagram-live.json',
   'data/posting/templates.json', 'data/posting/limits.json',
   // read at run time by shipped services; missing before alpha.23 (dataRefProblems below now catches this)
-  'data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json',
+  'data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/posting/quota.json', 'data/clip/targets.json', 'data/stream/stream-options.json',
   'data/clip/learning-mix.json', // RP5 self-learning limits (services/learning/mix.mjs, D373)
   'data/schemas/project.schema.json',
   'data/profile.example.json', 'data/profile.schema.json',

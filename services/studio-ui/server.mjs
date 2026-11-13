@@ -35,8 +35,10 @@ import { createFlags } from '../flags/index.mjs';
 import { LEDGER_NAME, POSTING_FLAG, createPostStore } from '../posting/index.mjs';
 import { createYoutubeAuth } from '../posting/oauth.mjs';
 import { QUEUE_NAME, createUploadQueue, readQueueSummary, reasonText, shownPublishAt, streamOnly } from '../posting/auto-chain.mjs';
-import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, createRulesSource, describeMode, liveBlock, planAuto } from '../posting/auto-post.mjs';
+import { AUTO_FLAG, AUTO_LOG_NAME, createAutoLog, createRulesSource, describeMode, liveBlock, planAuto, rankerMinScore } from '../posting/auto-post.mjs';
 import { previewRules } from '../posting/preview.mjs';
+import { moveQueueItem, readAutoPostSettings, readChannelForPreview, removeQueueItem, saveAutoPostSettings, schedulePreview } from '../posting/auto-settings.mjs';
+import { DELETE_FLAG } from '../posting/delete-uploaded.mjs';
 import { SCHEDULE_FLAG } from '../posting/schedule.mjs';
 import { UploadError, checkPostStatus, uploadPost } from '../posting/youtube.mjs';
 import { GROWTH_FLAG, DB_NAME as GROWTH_DB, collect as growthCollect, openStore as openGrowthStore, view as growthView } from '../analytics/index.mjs';
@@ -363,6 +365,11 @@ export function createStudioServer(opts) {
   let ytAuth = opts.youtube?.auth ?? null;
   const youtubeAuth = () => (ytAuth ??= createYoutubeAuth({ browserOpen: async () => { throw new Error('sign-in runs from the command line'); } }));
   const uploading = new Set();
+  // D375 Auto-post card: a fresh channel read for "Next posting times" at most every 10 minutes (quota), else the saved one.
+  const CHANNEL_READ_EVERY_MS = 10 * 60 * 1000;
+  // { at, promise } -> { channel } | { error }. The promise is stored before it is awaited, so requests that arrive while a
+  // read runs share it (one read, one set of quota units; Codex review 2026-11-13).
+  let channelRead = null;
   // Live check, fail closed: outputs.status (any stream sink running), falling back to host.status.live; both failing = refuse.
   async function ytOutputsStatus() {
     if (opts.youtube?.outputsStatus) return opts.youtube.outputsStatus();
@@ -1262,6 +1269,31 @@ export function createStudioServer(opts) {
         return json(res, 200, await previewRules({ dataDir: opts.dataDir, rules, rulesFile, profile, log, flagOn: !!flags && flags.isOn(AUTO_FLAG), now: () => new Date(now()), outputsStatus: streamOnly(ytOutputsStatus), scheduleOn: !!flags && flags.isOn(SCHEDULE_FLAG), scheduleFile: opts.scheduleFile }));
       } catch { return json(res, 200, { error: 'preview-unavailable', queued: [], skipped: [] }); }
     }
+    if (req.method === 'GET' && route === '/ui/api/posts/auto/settings') {
+      // D375 Settings > Posting & growth > Auto-post: the card's values, defaults, limits and quota fit. Read only.
+      if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+      try {
+        const on = (id) => !!flags && flags.isOn(id);
+        return json(res, 200, { ...readAutoPostSettings(opts.dataDir), flags: { autoPost: on(AUTO_FLAG), schedule: on(SCHEDULE_FLAG), deleteUploaded: on(DELETE_FLAG) } });
+      } catch { return json(res, 500, { error: 'settings-unreadable' }); }
+    }
+    if (req.method === 'GET' && route === '/ui/api/posts/auto/schedule') {
+      // D375 "Next posting times": the channel's scheduled posts, the queue's times and the next free slots. fresh=1 reads
+      // the channel again (read-only scope, at most every 10 minutes); otherwise the times saved at the chain's last read.
+      if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+      const t = now();
+      let channel = null; let liveError = null;
+      if (url.searchParams.get('fresh') === '1') {
+        if (!channelRead || t - channelRead.at >= CHANNEL_READ_EVERY_MS) {
+          channelRead = { at: t, promise: (async () => readChannelForPreview({ dataDir: opts.dataDir, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl ?? fetch, nowMs: t }))()
+            .then((c) => ({ channel: c }), (e) => ({ error: String(e?.code ?? 'schedule-read-failed').slice(0, 40) })) };
+        }
+        const r = await channelRead.promise;
+        channel = r.channel ?? null; liveError = r.error ?? null;
+      }
+      const count = Number(url.searchParams.get('count') ?? 10);
+      try { return json(res, 200, { ...schedulePreview(opts.dataDir, { nowMs: t, count: Number.isFinite(count) ? count : 10, channel }), liveError }); } catch { return json(res, 500, { error: 'schedule-unavailable' }); }
+    }
     if (req.method === 'GET' && route === '/ui/api/posts/auto') {
       // Read-only: the auto-post mode and what a run would do now. Enabling stays a flag; nothing is changed here.
       const rulesFile = rulesSrc.file();
@@ -1269,7 +1301,7 @@ export function createStudioServer(opts) {
         const rules = rulesSrc.get();
         const mode = describeMode({ flagOn: !!flags && flags.isOn(AUTO_FLAG), rules });
         const log = typeof opts.dataDir === 'string' ? createAutoLog(path.join(opts.dataDir, 'posting', AUTO_LOG_NAME)).list() : [];
-        return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()) }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
+        return json(res, 200, { mode, rulesFile, plan: planAuto({ posts: posting.list(), rules: rules.rules, autoUpload: rules.autoUpload, log, now: new Date(now()), maxUploadsPerDay: rules.maxUploadsPerDay ?? null, unscoredFloor: rankerMinScore() }).filter((x) => x.action !== 'skip' || x.reason === 'max-per-day') });
       } catch { return json(res, 200, { mode: { enabled: false, flagOn: false, autoUpload: false, ruleCount: 0, privacy: 'private', error: 'rules-unreadable' }, rulesFile, plan: [] }); }
     }
     if (route.startsWith('/ui/api/growth/mix') && !mixOn()) return json(res, 404, { error: 'self-learning-off' });
@@ -1507,6 +1539,25 @@ export function createStudioServer(opts) {
         const v = await mixView(mixIo());
         return json(res, 200, { ok: true, undoes: u.entry.undoes, ...v });
       } catch { return json(res, 500, { error: 'mix-failed' }); }
+    }
+    if (route === '/ui/api/posts/auto/settings') {
+      // D375: one click saves the card (D332, no confirm). Every value is checked first; nothing is written on a problem.
+      // The rules and the schedule settings go to the user's files in the data dir; the next pass uses them (no restart).
+      if (typeof opts.dataDir !== 'string') return json(res, 404, { error: 'no-data-dir' });
+      if (Object.keys(body).some((k) => k !== 'card' && k !== 'doc') || (body.card === undefined) === (body.doc === undefined)) return json(res, 400, { error: 'bad-params' });
+      let r;
+      try { r = saveAutoPostSettings(opts.dataDir, body); } catch { return json(res, 500, { error: 'save-failed' }); }
+      return r.ok ? json(res, 200, { ok: true, ...r.settings }) : json(res, 400, { error: 'invalid', problems: r.problems });
+    }
+    if (route === '/ui/api/posts/auto/queue/move' || route === '/ui/api/posts/auto/queue/remove') {
+      // D375: move a queued clip to another free time, or take it out of the queue. Local file only; nothing is sent.
+      const move = route.endsWith('/move');
+      const keys = move ? ['id', 'at'] : ['id'];
+      if (typeof opts.dataDir !== 'string' || typeof body.id !== 'string' || body.id.length > 64 || (move && (typeof body.at !== 'string' || body.at.length > 40))
+        || Object.keys(body).some((k) => !keys.includes(k))) return json(res, 400, { error: 'bad-params' });
+      const r = move ? moveQueueItem(opts.dataDir, body.id, body.at, { nowMs: now() }) : removeQueueItem(opts.dataDir, body.id);
+      return r.ok ? json(res, 200, { ok: true, state: r.item.state, publishAt: r.item.publishAt ?? null, queue: readQueueSummary(opts.dataDir, flags) })
+        : json(res, r.code === 'unknown' ? 404 : 409, { error: r.code, text: r.text });
     }
     if (route === '/ui/api/posts/queue/retry') {
       // D301 "Retry now": puts a failed (or waiting) item back in the upload queue at once; the chain's next tick uploads it.

@@ -8,6 +8,7 @@ import path from 'node:path';
 import { after, describe, test } from 'node:test';
 import { BASE_DELAY_MS, MAX_ATTEMPTS, MAX_DELAY_MS, backoffMs, createPostChain, createUploadQueue, readQueueSummary, streamOnly } from '../services/posting/auto-chain.mjs';
 import { createPostStore, postId } from '../services/posting/index.mjs';
+import { READONLY_SCOPE } from '../services/posting/oauth.mjs';
 import { tasksDir } from '../services/studio-ui/tasks.mjs';
 
 const tmp = [];
@@ -56,6 +57,9 @@ const RECORDING = { sinks: [{ id: 'yt', kind: 'stream', state: 'stopped' }, { id
 function fakeYt({ initStatus = 200 } = {}) {
   const calls = []; const received = {};
   const fetchImpl = async (url, o = {}) => {
+    // D375: every automatic upload is scheduled, so the chain reads the channel first: an empty channel here.
+    const api = /youtube\/v3\/(channels|playlistItems)\?/.exec(String(url));
+    if (api) { calls.push({ url: api[1] }); return { ok: true, status: 200, json: async () => (api[1] === 'channels' ? { items: [{ contentDetails: { relatedPlaylists: { uploads: 'UU1' } } }] } : { items: [] }) }; }
     const cr = o.headers?.['Content-Range'] ?? '';
     const isInit = String(url).includes('uploadType=resumable');
     calls.push({ url: isInit ? 'init' : cr.startsWith('bytes */') ? 'query' : 'chunk', cr });
@@ -68,11 +72,11 @@ function fakeYt({ initStatus = 200 } = {}) {
   };
   return { fetchImpl, calls, count: (k) => calls.filter((c) => c.url === k).length };
 }
-const authOk = { status: async () => ({ signedIn: true, hasClient: true }), accessToken: async () => 'fake-access' };
+const authOk = { status: async () => ({ signedIn: true, hasClient: true }), accessToken: async () => 'fake-access', grantedScopes: async () => [READONLY_SCOPE] };
 
 function chain(e, { yt, auth = authOk, flagsOn = true, time, chunkSize } = {}) {
   const clock = time ?? { t: T0 };
-  const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: (id) => flagsOn && id !== 'post-schedule' }, rulesFile: e.rulesFile, auth, fetchImpl: yt?.fetchImpl, now: () => clock.t, tickEveryMs: 0, chunkSize,
+  const c = createPostChain({ dataDir: e.dataDir, flags: { isOn: (id) => flagsOn && id !== 'post-delete-uploaded' }, rulesFile: e.rulesFile, auth, fetchImpl: yt?.fetchImpl, now: () => clock.t, tickEveryMs: 0, chunkSize,
     profileFile: path.join(e.dataDir, 'none.json'), packageImpl: async () => ({ packaged: [], skipped: [] }) });
   return { c, clock };
 }
@@ -104,14 +108,15 @@ describe('chain', () => {
     assert.equal(q.state, 'done'); assert.equal(q.videoId, 'vid1');
     const [row] = e.uploads();
     assert.equal(row.posted.length, 1);
-    assert.deepEqual({ ...row.posted[0], at: 'T' }, { platform: 'youtube', target: 'youtube-shorts', id: e.ids.a, videoId: 'vid1', url: 'https://youtu.be/vid1', at: 'T', privacy: 'private' });
+    // D375: always scheduled: the first free whole hour at least 1 h 15 min ahead (empty channel), private until then.
+    assert.deepEqual({ ...row.posted[0], at: 'T' }, { platform: 'youtube', target: 'youtube-shorts', id: e.ids.a, videoId: 'vid1', url: 'https://youtu.be/vid1', at: 'T', privacy: 'private', publishAt: '2026-11-08T12:00:00.000Z' });
     for (const f of ['posting/upload-queue.json', 'clips/uploads.json', 'posting/auto-log.json']) assert.ok(!/fake-access/.test(readFileSync(path.join(e.dataDir, f), 'utf8')), f);
-    assert.match(readQueueSummary(e.dataDir).message, /uploaded to YouTube \(private\)/);
+    assert.match(readQueueSummary(e.dataDir).message, /uploaded to YouTube \(scheduled\)/);
     // D311 proposed: the upload was a task in the task bar and the tray; it ends "done" with its time.
     const tdir = tasksDir(e.dataDir);
     const tasks = readdirSync(tdir).map((n) => JSON.parse(readFileSync(path.join(tdir, n), 'utf8')));
     assert.equal(tasks.length, 1);
-    assert.deepEqual([tasks[0].kind, tasks[0].state, tasks[0].title], ['upload', 'done', 'Uploading a clip to YouTube (private)']);
+    assert.deepEqual([tasks[0].kind, tasks[0].state, tasks[0].title], ['upload', 'done', 'Uploading a clip to YouTube (scheduled)']);
     assert.ok(Number.isFinite(tasks[0].startedAt));
   });
 
@@ -126,7 +131,7 @@ describe('chain', () => {
     // stream goes live between approval and upload
     const e3 = env(); const y3 = fakeYt();
     let st = { signedIn: false, hasClient: true };
-    const { c: c3 } = chain(e3, { yt: y3, auth: { status: async () => st, accessToken: async () => 'fake-access' } });
+    const { c: c3 } = chain(e3, { yt: y3, auth: { status: async () => st, accessToken: async () => 'fake-access', grantedScopes: async () => [READONLY_SCOPE] } });
     await c3.tick(IDLE); // approved + queued, waits for sign-in
     assert.equal(readQueueSummary(e3.dataDir).queued, 1);
     st = { signedIn: true, hasClient: true };
@@ -236,7 +241,7 @@ describe('chain', () => {
   test('not signed in / no OAuth client: the item is kept, says why, costs no attempts, uploads once signed in', async () => {
     const e = env(); const yt = fakeYt(); const clock = { t: T0 };
     let st = { signedIn: false, hasClient: false };
-    const { c } = chain(e, { yt, time: clock, auth: { status: async () => st, accessToken: async () => 'fake-access' } });
+    const { c } = chain(e, { yt, time: clock, auth: { status: async () => st, accessToken: async () => 'fake-access', grantedScopes: async () => [READONLY_SCOPE] } });
     await c.afterRun('x', IDLE);
     assert.equal(yt.calls.length, 0);
     const s = readQueueSummary(e.dataDir);

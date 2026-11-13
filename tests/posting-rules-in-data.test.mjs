@@ -34,7 +34,7 @@ describe('rulesFileFor', () => {
     const d = mk(); const u = put(d, '{ not json');
     assert.equal(rulesFileFor(d), u);
     assert.throws(() => loadRules(rulesFileFor(d)), { code: 'bad-rules' });
-    put(d, JSON.stringify({ rules: [{ ...RULE, maxPerDay: 99 }] }));
+    put(d, JSON.stringify({ rules: [{ ...RULE, maxPerDay: 101 }] }));
     assert.throws(() => loadRules(rulesFileFor(d)), { code: 'bad-rules' });
   });
 });
