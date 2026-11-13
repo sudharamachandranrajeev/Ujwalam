@@ -17,7 +17,8 @@ Dialog {
     property string kind: ""
     property string pick: ""
     property string message: ""
-    popupType: Popup.Window
+    // Hidden test mode (never on screen): drawn inside the never-shown window, not as a window of its own.
+    popupType: studioHidden ? Popup.Item : Popup.Window
     modal: true
     anchors.centerIn: parent
     width: 660

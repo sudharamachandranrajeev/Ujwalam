@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // LU4 studio window swap under a loopback stream (D346). Node stdlib + repo modules.
 //
-//   node tools/soak/studio-swap-soak.mjs [--swaps 20] [--work-dir DIR] [--wait]
+//   node tools/soak/studio-swap-soak.mjs [--swaps 20] [--work-dir DIR] [--wait] [--qml]
 //
 // What runs: the headless alpha stack (stack.mjs, swap: true) streaming to its loopback RTMP listeners, and the real
 // Qt studio (UJWALAM_HEADLESS=1 + UJWALAM_STUDIO_HIDDEN=1: the window is laid out but never on screen) behind the
@@ -32,10 +32,11 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export const PREVIEW_BACK_MS = 3000; // plan row LU4: previews back within 3 s
 
 export function parseStudioSwapArgs(argv) {
-  const a = { swaps: 20, workDir: null, wait: false };
+  const a = { swaps: 20, workDir: null, wait: false, qml: false };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === '--wait') a.wait = true;
+    else if (k === '--qml') a.qml = true; // the Qt Quick studio window (D355, flag studio-qml) instead of the widget one
     else if (k === '--swaps') { a.swaps = Number(argv[++i]); if (!Number.isInteger(a.swaps) || a.swaps < 1 || a.swaps > 200) throw new Error('--swaps takes 1..200'); }
     else if (k === '--work-dir') { a.workDir = argv[++i]; if (!a.workDir) throw new Error('--work-dir needs a folder'); }
     else throw new Error(`unknown argument ${k}`);
@@ -69,7 +70,7 @@ export async function main(argv = process.argv.slice(2)) {
   const feedbackDir = path.join(workDir, 'media', 'feedback');
   const studioLogs = path.join(runDir, 'studio-logs');
   for (const d of [coreDir, hostData, recvDir, recordingsDir, feedbackDir, studioLogs]) mkdirSync(d, { recursive: true });
-  const result = { startedAt: started.toISOString(), swaps: a.swaps, previewBackMs: PREVIEW_BACK_MS, checks: [], rounds: [], notes: [] };
+  const result = { startedAt: started.toISOString(), ui: a.qml ? 'qml' : 'widgets', swaps: a.swaps, previewBackMs: PREVIEW_BACK_MS, checks: [], rounds: [], notes: [] };
   const check = (name, pass, detail) => { result.checks.push({ name, pass: !!pass, ...(detail === undefined ? {} : { detail }) }); log(pass ? 'PASS' : 'FAIL', name, detail === undefined ? '' : JSON.stringify(detail)); };
   const finish = (code) => { writeFileSync(path.join(workDir, 'studio-swap-soak.json'), `${JSON.stringify(result, null, 2)}\n`); log(`result: ${path.join(workDir, 'studio-swap-soak.json')}`); return code; };
   if (!preflight({ log, check })) return finish(4);
@@ -84,7 +85,7 @@ export async function main(argv = process.argv.slice(2)) {
   const unplanned = [];
   const studio = createStudioSlot({
     spawn: (root, key) => {
-      const p = track(spawnStudio({ root, key, uiPort: st.uiPort, logsDir: studioLogs, env: { ...process.env, UJWALAM_HEADLESS: '1', UJWALAM_STUDIO_HIDDEN: '1' } }));
+      const p = track(spawnStudio({ root, key, uiPort: st.uiPort, logsDir: studioLogs, qml: a.qml, env: { ...process.env, UJWALAM_HEADLESS: '1', UJWALAM_STUDIO_HIDDEN: '1' } }));
       p.once('spawn', () => setBelow(p.pid));
       p.once('exit', (code) => { if (!studio.isPlanned(p)) unplanned.push(code); });
       return p;

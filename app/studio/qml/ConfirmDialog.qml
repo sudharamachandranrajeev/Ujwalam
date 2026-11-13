@@ -13,7 +13,8 @@ Dialog {
     required property var store
     property var pending: ({})
     readonly property bool anyway: !!pending.readiness && pending.readiness.ok === false
-    popupType: Popup.Window
+    // Hidden test mode (never on screen): drawn inside the never-shown window, not as a window of its own.
+    popupType: studioHidden ? Popup.Item : Popup.Window
     modal: true
     anchors.centerIn: parent
     width: Math.min(560, parent ? parent.width - 80 : 560)

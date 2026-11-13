@@ -91,7 +91,7 @@ Rectangle {
             text: bar.store.recording ? "Stop recording" : "Record"
             iconName: bar.store.recording ? "stop" : "record"
             kind: bar.store.recording ? "danger" : "normal"
-            enabled: bar.store.canRecord
+            enabled: bar.store.canRecord && !bar.store.actionBusy
             tip: enabled ? (bar.store.recording ? "Stop recording." : "Start recording to a file.") : "No recording output is set up in this start."
             onClicked: bar.store.toggleRecord()
         }
@@ -100,7 +100,7 @@ Rectangle {
             text: bar.store.live ? "End stream" : "Go live"
             iconName: bar.store.live ? "stop" : "play"
             kind: bar.store.live ? "danger" : "primary"
-            enabled: bar.store.canStream
+            enabled: bar.store.canStream && !bar.store.actionBusy
             // Say why the button is off (D281): no stream target unless Ujwalam was started for live.
             tip: enabled ? (bar.store.live ? "Stop the stream." : "Go live.")
                          : "Streaming needs the LIVE start: the \"Ujwalam (alpha)\" shortcut (not the practice one), or Ujwalam.cmd --live."

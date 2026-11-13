@@ -87,7 +87,7 @@ ApplicationWindow {
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; leftMargin: win.pad + 6; rightMargin: win.pad + 6 }
         height: 28
         // The shared tooltip opens as its own window (Qt 6.8), so a preview never covers it.
-        Component.onCompleted: ToolTip.toolTip.popupType = Popup.Window
+        Component.onCompleted: ToolTip.toolTip.popupType = studioHidden ? Popup.Item : Popup.Window // hidden mode: nothing on screen
         Text {
             objectName: "note"
             anchors { left: parent.left; right: health.left; rightMargin: 16; verticalCenter: parent.verticalCenter }

@@ -125,9 +125,15 @@ QtObject {
     }
 
     // ---- layers ----
+    // Only the newest layers.list answer counts (Codex review of Q2): an older one for another scene or canvas that
+    // arrives last is dropped, so layer ids always belong to the scene and canvas the next call sends.
+    property int pLayersGen: 0
     function loadLayers() {
+        const gen = ++pLayersGen;
         if (!activeScene) { layers = []; return; }
+        const want = activeScene + "/" + canvas;
         Api.host("layers.list", layerArgs(), (ok, b, err) => {
+            if (gen !== pLayersGen || want !== activeScene + "/" + canvas) return;
             if (!ok) return say("Layers: " + err);
             layers = unwrap(b, "layers");
             if (selected && !layers.some(l => l.id === selected)) selected = "";
@@ -302,12 +308,17 @@ QtObject {
     function toggleStream() { hostAction(live ? "stream.stop" : "stream.start") }
     function toggleRecord() { hostAction(recording ? "record.stop" : "record.start") }
 
+    // One stream or record action at a time (Codex review of Q2): the buttons stay off from the click until the action
+    // answered and a status poll after it came back, so a second quick click can never stop what the first started.
+    property bool actionBusy: false
     function hostAction(method) {
+        if (actionBusy) return;
+        actionBusy = true;
         Api.host(method, {}, (ok, b, err) => {
-            if (!ok) return say("Not done: " + err);
-            if (b.verdict === "confirm" || b.verdict === "readiness-failed") return confirmNeeded(b.pending);
+            if (!ok) { actionBusy = false; return say("Not done: " + err); }
+            if (b.verdict === "confirm" || b.verdict === "readiness-failed") { actionBusy = false; return confirmNeeded(b.pending); }
             if (b.warning) say(b.warning);
-            pollStatus();
+            pollStatus(() => { actionBusy = false; });
         });
     }
 
@@ -316,20 +327,25 @@ QtObject {
             Api.post("ui/api/cancel", { pendingId: pendingId }, () => {});
             return say("Cancelled.");
         }
+        if (actionBusy) return;
+        actionBusy = true;
         Api.post("ui/api/confirm", { pendingId: pendingId }, (ok, r, err) => {
-            if (!ok) return say("Not done: " + err);
-            if (r.verdict === "confirm" || r.verdict === "readiness-failed") return confirmNeeded(r.pending);
+            if (!ok) { actionBusy = false; return say("Not done: " + err); }
+            if (r.verdict === "confirm" || r.verdict === "readiness-failed") { actionBusy = false; return confirmNeeded(r.pending); }
             say(r.verdict === "allow" ? "Done." : "Result: " + r.verdict);
             if (r.warning) say(r.warning);
-            pollStatus();
+            pollStatus(() => { actionBusy = false; });
             loadScenes();
         });
     }
 
     // ---- status, every 2 s ----
-    function pollStatus() {
+    // then (optional) runs once this poll has answered, whether it worked or not.
+    function pollStatus(then) {
         Api.get("ui/api/status", (ok, s, err) => {
-            if (!ok) { hostUp = false; return say("Status: " + err); }
+            if (then) then();
+            // No status: no stream or record click on a state that may be stale.
+            if (!ok) { hostUp = false; canStream = false; canRecord = false; return say("Status: " + err); }
             const h = s.host || {}, c = s.core || {};
             live = h.live === true;
             recording = h.recording === true;

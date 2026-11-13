@@ -191,6 +191,10 @@ void PreviewView::itemChange(ItemChange change, const ItemChangeData &value)
 		place();
 	} else if (change == ItemVisibleHasChanged) {
 		place();
+	} else if (change == ItemDevicePixelRatioHasChanged) {
+		// Moved to a display with another scale (Codex review of Q2): the same logical rectangle is a new pixel size,
+		// so embed() sends preview.open again (it compares the pixel size it last sent).
+		schedule();
 	}
 }
 

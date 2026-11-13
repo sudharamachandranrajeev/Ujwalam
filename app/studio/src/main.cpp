@@ -343,7 +343,11 @@ int main(int argc, char **argv)
 		}
 	}
 #endif
-	if (headless && !hidden)
+	// A QML probe "shows" its window so bindings and layouts run: always on the offscreen platform, never on a screen
+	// (the native hidden platform of D376 is for the widget probe, which keeps its windows off screen itself).
+	const bool qmlProbe = headless && qEnvironmentVariable("UJWALAM_STUDIO_QML") == QStringLiteral("1") &&
+			      qEnvironmentVariableIntValue("UJWALAM_STUDIO_PROBE_MS") > 0;
+	if (headless && (!hidden || qmlProbe))
 		qputenv("QT_QPA_PLATFORM", "offscreen");
 	QApplication app(argc, argv);
 	if (logs.crash && !studiolog::reassert())
