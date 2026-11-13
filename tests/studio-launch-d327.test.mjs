@@ -6,7 +6,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, test } from 'node:test';
-import { ALPHA_LIVE_PLAN, coreServeArgs, livePlanFile } from '../services/studio-ui/launch.mjs';
+import { ALPHA_LIVE_PLAN, coreServeArgs, livePlanFile, planForStart } from '../services/studio-ui/launch.mjs';
 import { botUrl, integrationsInEffect, writeIntegrations } from '../services/studio-ui/integrations.mjs';
 import { seedSetup, writeSetup } from '../services/studio-ui/stream-setup.mjs';
 import { planTargets } from '../services/studio-ui/readiness.mjs';
@@ -14,6 +14,32 @@ import { planTargets } from '../services/studio-ui/readiness.mjs';
 const dirs = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-d327-')); dirs.push(d); return d; };
 after(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
+
+test('planForStart: a refused live plan never keeps the studio from opening (2026-11-13 Instagram server address missing)', async () => {
+  const igRefused = new Error('sink "instagram": no server address is stored in Windows Credential Manager target Ujwalam/stream/instagram-server');
+  const record = () => ({ file: 'record', planned: 'R' });
+  // Instagram on, its address missing: the rest of the live plan, with the reason logged.
+  let logs = [];
+  const r = await planForStart({ live: true, instagramOn: true, recordPlan: record, log: (l) => logs.push(l),
+    planOnce: async ({ instagramOn }) => { if (instagramOn) throw igRefused; return { file: 'live', planned: 'L' }; } });
+  assert.deepEqual(r, { file: 'live', planned: 'L' });
+  assert.match(logs[0], /instagram-server/);
+  assert.match(logs[1], /Instagram Live left out/);
+  // The live plan refused with or without Instagram: the record plan (the window still opens).
+  logs = [];
+  const r2 = await planForStart({ live: true, instagramOn: true, recordPlan: record, log: (l) => logs.push(l), planOnce: async () => { throw new Error('twitch: no key'); } });
+  assert.deepEqual(r2, { file: 'record', planned: 'R' });
+  assert.match(logs.at(-1), /opens without stream outputs/);
+  // Instagram off: no second try, straight to the record plan.
+  let tries = 0;
+  const r3 = await planForStart({ live: true, instagramOn: false, recordPlan: record, log: () => {}, planOnce: async () => { tries++; throw new Error('x'); } });
+  assert.equal(tries, 1);
+  assert.equal(r3.file, 'record');
+  // Not live (an explicit --outputs plan): a refusal still stops the start.
+  await assert.rejects(planForStart({ live: false, instagramOn: false, recordPlan: record, log: () => {}, planOnce: async () => { throw new Error('bad plan'); } }), /bad plan/);
+  // A good plan is used as it is.
+  assert.deepEqual(await planForStart({ live: true, instagramOn: true, recordPlan: record, log: () => {}, planOnce: async () => ({ file: 'live', planned: 'L' }) }), { file: 'live', planned: 'L' });
+});
 
 test('livePlanFile: alpha-live.json with the flag off or no saved setup; the generated plan otherwise', () => {
   const d = mk();

@@ -83,6 +83,9 @@ export const REPO_FILES = Object.freeze([
   'data/live/test-kit.json', 'tools/collect-stream-feedback.mjs',
   // Pre-stream readiness (D299) and stream recovery (D303) limits: read at run time, missing from the package before
   'data/live/readiness.json', 'data/live/recovery.json',
+  // missing from the package until alpha.28 (the data check did not see paths built from import.meta.url): the host
+  // watchdog (D374), the audience counters (F7) and the reel length, hook and transition limits (Settings > Clips)
+  'data/live/host-watch.json', 'data/counters.json', 'data/clip/reel-length.json', 'data/clip/reel-hook.json', 'data/clip/transitions.json',
 ]);
 export const REPO_GLOB_DIRS = Object.freeze([['data/platforms', /\.json$/], ['data/outputs/presets', /\.json$/]]);
 
@@ -144,6 +147,10 @@ export function importProblems(repo, rels) {
 // The base must be the repo root by name (REPO, REPO_ROOT, ROOT): a join on another folder (a cache, the data dir) names
 // a file the app writes, not a shipped one. Either quote style. Comments are stripped first (Codex review).
 const DATA_REF_RE = /path\.(?:join|resolve)\(\s*(?:REPO|REPO_ROOT|ROOT)\s*,\s*((?:(?:'[^'\n]+'|"[^"\n]+")\s*,?\s*)+)\)/g;
+// The same parts after any base that climbs to the repo root from the module's own folder, e.g.
+// path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'live', 'host-watch.json') (missed until
+// alpha.27, which shipped without data/live/host-watch.json: the host watchdog was off in the install).
+const DATA_REF_UP_RE = /path\.(?:join|resolve)\([^;]*?,\s*(?:(?:'\.\.'|"\.\.")\s*,\s*)+((?:'data'|"data")\s*,\s*(?:(?:'[^'\n]+'|"[^"\n]+")\s*,?\s*)+)\)/g;
 const stripComments = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"\\])\/\/.*$/gm, '$1');
 // Local-only files (gitignored, the user's own): never shipped, never a problem.
 const LOCAL_ONLY_DATA = /\.local\./;
@@ -155,7 +162,7 @@ export function dataRefProblems(repo, rels) {
   for (const rel of rels) {
     if (!/\.m?js$/.test(rel) || rel.startsWith('ui/')) continue;
     const text = stripComments(readFileSync(path.join(repo, rel), 'utf8'));
-    for (const m of text.matchAll(DATA_REF_RE)) {
+    for (const m of [...text.matchAll(DATA_REF_RE), ...text.matchAll(DATA_REF_UP_RE)]) {
       const target = [...m[1].matchAll(/'([^']+)'|"([^"]+)"/g)].map((x) => x[1] ?? x[2]).join('/');
       if (!target.startsWith('data/') || !/\.json$/.test(target) || LOCAL_ONLY_DATA.test(target)) continue;
       if (!existsSync(path.join(repo, target))) continue; // a file the user or the app writes, not a shipped one
