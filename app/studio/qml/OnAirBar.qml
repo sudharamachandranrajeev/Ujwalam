@@ -87,6 +87,12 @@ Rectangle {
         anchors { right: parent.right; rightMargin: 12; verticalCenter: parent.verticalCenter }
         spacing: 8
         UButton {
+            objectName: "settingsBtn"
+            text: "Settings"
+            iconName: "gear"
+            onClicked: bar.store.settingsWanted("")
+        }
+        UButton {
             objectName: "recordBtn"
             text: bar.store.recording ? "Stop recording" : "Record"
             iconName: bar.store.recording ? "stop" : "record"

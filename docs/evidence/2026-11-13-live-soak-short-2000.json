@@ -1,0 +1,1107 @@
+{
+  "id": "2026-11-13-live-soak-short-2000",
+  "mode": "short",
+  "minutes": 3,
+  "sampleS": 10,
+  "record": true,
+  "config": "data/outputs/presets/youtube-1440p60-4kv-upscale.json",
+  "startedAt": "2026-11-13T20:00:21.034Z",
+  "checks": [
+    {
+      "name": "obs-nvenc.dll patched (build-obs-nvenc --check)",
+      "pass": true
+    },
+    {
+      "name": "host: devices off, real targets off",
+      "pass": true
+    },
+    {
+      "name": "every stream sink is a loopback target",
+      "pass": true,
+      "detail": [
+        "youtube-h:stream:loopback",
+        "youtube-v:stream:loopback",
+        "twitch:stream:loopback",
+        "kick:stream:loopback",
+        "record:record:mkv",
+        "record-v:record:mkv"
+      ]
+    },
+    {
+      "name": "UI server up and one-time login works",
+      "pass": true
+    },
+    {
+      "name": "event core subscribed to the mock Streamer.bot",
+      "pass": true
+    },
+    {
+      "name": "a colour scene to switch to on every canvas",
+      "pass": true,
+      "detail": {
+        "canvases": [
+          "H",
+          "V"
+        ]
+      }
+    },
+    {
+      "name": "the plan has every required stream (youtube-h, youtube-v, twitch, kick)",
+      "pass": true,
+      "detail": {
+        "missing": []
+      }
+    },
+    {
+      "name": "stream start accepted",
+      "pass": true,
+      "detail": "ok"
+    },
+    {
+      "name": "recording start accepted",
+      "pass": true,
+      "detail": {
+        "start": "ok",
+        "sinks": [
+          "record",
+          "record-v"
+        ]
+      }
+    },
+    {
+      "name": "every required stream and the recording live within 20 s",
+      "pass": true,
+      "detail": [
+        "youtube-h",
+        "youtube-v",
+        "twitch",
+        "kick",
+        "record",
+        "record-v"
+      ]
+    },
+    {
+      "name": "a quiet machine: no Meld Studio, installed Ujwalam or detector job started during the run",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "name": "no process exited during the run (host, event core, UI server)",
+      "pass": true,
+      "detail": {
+        "host": null,
+        "core": null,
+        "ui": null
+      }
+    },
+    {
+      "name": "host stopped cleanly on shutdown (exit 0)",
+      "pass": true,
+      "detail": {
+        "exit": 0
+      }
+    },
+    {
+      "name": "0 dropped frames (host)",
+      "pass": true,
+      "detail": {
+        "max": 0
+      }
+    },
+    {
+      "name": "0 render-lagged frames",
+      "pass": false,
+      "detail": {
+        "max": 1
+      }
+    },
+    {
+      "name": "0 encode-skipped frames",
+      "pass": true,
+      "detail": {
+        "max": 0
+      }
+    },
+    {
+      "name": "0 dropped frames on every sink",
+      "pass": true,
+      "detail": {
+        "youtube-h": {
+          "dropped": 0,
+          "total": 10911
+        },
+        "youtube-v": {
+          "dropped": 0,
+          "total": 8228
+        },
+        "twitch": {
+          "dropped": 0,
+          "total": 11066
+        },
+        "kick": {
+          "dropped": 0,
+          "total": 11066
+        },
+        "record": {
+          "dropped": 0,
+          "total": 10911
+        },
+        "record-v": {
+          "dropped": 0,
+          "total": 8228
+        }
+      }
+    },
+    {
+      "name": "every required stream and the recording live in every sample",
+      "pass": true,
+      "detail": {
+        "samplesNotLive": {
+          "youtube-h": 0,
+          "youtube-v": 0,
+          "twitch": 0,
+          "kick": 0,
+          "record": 0,
+          "record-v": 0
+        },
+        "otherStreamsNotLive": 0,
+        "samplesWithError": 0
+      }
+    },
+    {
+      "name": "overlay server: no restart, no failure",
+      "pass": true
+    },
+    {
+      "name": "chat reached the event core",
+      "pass": true,
+      "detail": {
+        "sent": 133,
+        "noClient": 0
+      }
+    },
+    {
+      "name": "scene switches all applied",
+      "pass": true,
+      "detail": {
+        "ok": 16,
+        "failed": 0
+      }
+    },
+    {
+      "name": "effects fired and some played",
+      "pass": true,
+      "detail": {
+        "fired": 34,
+        "delivered": 3
+      }
+    },
+    {
+      "name": "clip saves all ok",
+      "pass": true,
+      "detail": [
+        true,
+        true
+      ]
+    },
+    {
+      "name": "one hot-reload of every data kind ran",
+      "pass": true,
+      "detail": {
+        "missing": []
+      }
+    },
+    {
+      "name": "reload flags-local: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 317,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload flags-definitions: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 310,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload posting-rules: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 7,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload studio-tasks: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 305,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload guide-tour: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 308,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload guide-hints: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 307,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload effect-guards: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 311,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "reload flash-measurements: valid change applied while live, broken file kept the last good version with a notice, fix cleared it",
+      "pass": true,
+      "detail": {
+        "applyMs": 306,
+        "applied": true,
+        "brokenKept": true,
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true
+      }
+    },
+    {
+      "name": "every required loopback listener received the whole run",
+      "pass": false,
+      "detail": {
+        "youtube-h": 183,
+        "youtube-v": 167,
+        "twitch": 185,
+        "kick": 185
+      }
+    },
+    {
+      "name": "0 video timestamp gaps in what the listeners received (ffprobe, planned fps)",
+      "pass": true,
+      "detail": {
+        "youtube-h": {
+          "gaps": 0,
+          "missingFrames": 0,
+          "endGaps": 0
+        },
+        "youtube-v": {
+          "gaps": 0,
+          "missingFrames": 0,
+          "endGaps": 0
+        },
+        "twitch": {
+          "gaps": 0,
+          "missingFrames": 0,
+          "endGaps": 0
+        },
+        "kick": {
+          "gaps": 0,
+          "missingFrames": 0,
+          "endGaps": 0
+        }
+      }
+    },
+    {
+      "name": "the recording record: started, live throughout, covers the whole run with 0 video timestamp gaps (ffprobe, planned fps)",
+      "pass": true,
+      "detail": {
+        "spanSec": 184,
+        "packets": 11013,
+        "endGaps": 0
+      }
+    },
+    {
+      "name": "the recording record-v: started, live throughout, covers the whole run with 0 video timestamp gaps (ffprobe, planned fps)",
+      "pass": true,
+      "detail": {
+        "spanSec": 172,
+        "packets": 10329,
+        "endGaps": 0
+      }
+    },
+    {
+      "name": "no crash report",
+      "pass": true,
+      "detail": []
+    },
+    {
+      "name": "no error-level log line (host, overlay child, event core, UI server)",
+      "pass": true,
+      "detail": {
+        "count": 0
+      }
+    },
+    {
+      "name": "no process left after the run",
+      "pass": true,
+      "detail": {
+        "host": 0,
+        "node": 0
+      }
+    }
+  ],
+  "notes": [],
+  "host": {
+    "obsVersion": "32.1.2",
+    "adapter": "NVIDIA GeForce RTX 4050 Laptop GPU"
+  },
+  "streamStart": "ok",
+  "recordStart": "ok",
+  "durationS": 184,
+  "streamStop": "ok",
+  "recordStop": "ok",
+  "hostExitAfterShutdown": 0,
+  "actions": {
+    "chat": {
+      "sent": 133,
+      "noClient": 0
+    },
+    "scenes": {
+      "ok": 16,
+      "failed": 0
+    },
+    "effects": {
+      "fired": 34,
+      "delivered": 3,
+      "refused": {
+        "busy": 11,
+        "cooldown": 1,
+        "region-busy": 2,
+        "budget": 17
+      }
+    },
+    "clips": [
+      {
+        "at": 82,
+        "ok": true,
+        "files": 1
+      },
+      {
+        "at": 164,
+        "ok": true,
+        "files": 1
+      }
+    ],
+    "reloads": [
+      {
+        "kind": "flags-local",
+        "owners": [
+          "ui",
+          "overlay"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 317,
+        "brokenKept": true,
+        "why": "not valid JSON",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1267
+      },
+      {
+        "kind": "flags-definitions",
+        "owners": [
+          "ui",
+          "overlay"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 310,
+        "brokenKept": true,
+        "why": "not valid JSON (line 230)",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1228
+      },
+      {
+        "kind": "posting-rules",
+        "owners": [
+          "ui"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 7,
+        "brokenKept": true,
+        "why": "rules file: not valid JSON",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 323
+      },
+      {
+        "kind": "studio-tasks",
+        "owners": [
+          "ui"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 305,
+        "brokenKept": true,
+        "why": "not valid JSON",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1217
+      },
+      {
+        "kind": "guide-tour",
+        "owners": [
+          "ui"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 308,
+        "brokenKept": true,
+        "why": "not valid JSON (line 85)",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1224
+      },
+      {
+        "kind": "guide-hints",
+        "owners": [
+          "ui"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 307,
+        "brokenKept": true,
+        "why": "not valid JSON (line 24)",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1222
+      },
+      {
+        "kind": "effect-guards",
+        "owners": [
+          "overlay"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 311,
+        "brokenKept": true,
+        "why": "not valid JSON",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1228
+      },
+      {
+        "kind": "flash-measurements",
+        "owners": [
+          "overlay"
+        ],
+        "loadedBefore": true,
+        "applied": true,
+        "applyMs": 306,
+        "brokenKept": true,
+        "why": "not valid JSON (line 93)",
+        "notice": true,
+        "fixed": true,
+        "noticeCleared": true,
+        "ms": 1224
+      }
+    ]
+  },
+  "samples": 19,
+  "end": {
+    "t": 184,
+    "sysCpuPct": 14.4,
+    "gpu": {
+      "sessions": 3,
+      "encFps": 106,
+      "memMB": 2362,
+      "gpuPct": 28,
+      "encPct": 100
+    },
+    "cpu": {
+      "treePct": 4.2,
+      "otherPct": 8.7,
+      "treeTop": [
+        [
+          "ujwalam-host.exe",
+          3
+        ],
+        [
+          "obs-browser-page.exe",
+          0.5
+        ],
+        [
+          "ffmpeg.exe",
+          0.3
+        ],
+        [
+          "node.exe",
+          0.2
+        ]
+      ],
+      "otherTop": [
+        [
+          "Browser Shell.exe",
+          5.3
+        ],
+        [
+          "System",
+          0.7
+        ],
+        [
+          "dwm.exe",
+          0.4
+        ]
+      ]
+    },
+    "hostCpuPct": 3.613798023117306,
+    "hostGpuPct": 33,
+    "fps": 60.0000024000001,
+    "dropped": 0,
+    "lagged": 1,
+    "skipped": 0,
+    "overlayRestarts": 0,
+    "overlayFailures": 0,
+    "sinks": [
+      {
+        "id": "youtube-h",
+        "state": "live",
+        "dropped": 0,
+        "total": 10911
+      },
+      {
+        "id": "youtube-v",
+        "state": "live",
+        "dropped": 0,
+        "total": 8228
+      },
+      {
+        "id": "twitch",
+        "state": "live",
+        "dropped": 0,
+        "total": 11066
+      },
+      {
+        "id": "kick",
+        "state": "live",
+        "dropped": 0,
+        "total": 11066
+      },
+      {
+        "id": "record",
+        "state": "live",
+        "dropped": 0,
+        "total": 10911
+      },
+      {
+        "id": "record-v",
+        "state": "live",
+        "dropped": 0,
+        "total": 8228
+      }
+    ]
+  },
+  "lagEvents": [
+    {
+      "t": 1,
+      "lagged": 1,
+      "skipped": 0,
+      "dropped": 0,
+      "before": [],
+      "sysCpuPct": 100,
+      "gpuPct": 25,
+      "encPct": 100,
+      "treeCpuPct": null,
+      "otherCpuPct": null,
+      "otherTop": null,
+      "treeTop": null
+    }
+  ],
+  "timeline": [
+    [
+      20,
+      "scene colour H"
+    ],
+    [
+      20,
+      "scene colour V"
+    ],
+    [
+      27,
+      "reload flags-local: valid"
+    ],
+    [
+      27.3,
+      "reload flags-local: broken"
+    ],
+    [
+      28,
+      "reload flags-local: fixed"
+    ],
+    [
+      30.3,
+      "reload flags-definitions: valid"
+    ],
+    [
+      30.6,
+      "reload flags-definitions: broken"
+    ],
+    [
+      31.2,
+      "reload flags-definitions: fixed"
+    ],
+    [
+      33.5,
+      "reload posting-rules: valid"
+    ],
+    [
+      33.5,
+      "reload posting-rules: broken"
+    ],
+    [
+      33.8,
+      "reload posting-rules: fixed"
+    ],
+    [
+      35.8,
+      "reload studio-tasks: valid"
+    ],
+    [
+      36.1,
+      "reload studio-tasks: broken"
+    ],
+    [
+      36.7,
+      "reload studio-tasks: fixed"
+    ],
+    [
+      39,
+      "reload guide-tour: valid"
+    ],
+    [
+      39.3,
+      "reload guide-tour: broken"
+    ],
+    [
+      40,
+      "reload guide-tour: fixed"
+    ],
+    [
+      40,
+      "effect burst"
+    ],
+    [
+      40,
+      "scene home H"
+    ],
+    [
+      40,
+      "scene home V"
+    ],
+    [
+      42.3,
+      "reload guide-hints: valid"
+    ],
+    [
+      42.6,
+      "reload guide-hints: broken"
+    ],
+    [
+      43.2,
+      "reload guide-hints: fixed"
+    ],
+    [
+      45,
+      "chat burst (15 messages)"
+    ],
+    [
+      45.5,
+      "reload effect-guards: valid"
+    ],
+    [
+      45.8,
+      "reload effect-guards: broken"
+    ],
+    [
+      46.4,
+      "reload effect-guards: fixed"
+    ],
+    [
+      48.7,
+      "reload flash-measurements: valid"
+    ],
+    [
+      49,
+      "reload flash-measurements: broken"
+    ],
+    [
+      49.6,
+      "reload flash-measurements: fixed"
+    ],
+    [
+      60,
+      "scene colour H"
+    ],
+    [
+      60,
+      "scene colour V"
+    ],
+    [
+      70,
+      "clip save"
+    ],
+    [
+      80,
+      "scene home H"
+    ],
+    [
+      80,
+      "scene home V"
+    ],
+    [
+      100,
+      "scene colour H"
+    ],
+    [
+      100,
+      "scene colour V"
+    ],
+    [
+      120,
+      "effect burst"
+    ],
+    [
+      120,
+      "scene home H"
+    ],
+    [
+      120,
+      "scene home V"
+    ],
+    [
+      140,
+      "scene colour H"
+    ],
+    [
+      140,
+      "scene colour V"
+    ],
+    [
+      150,
+      "clip save"
+    ],
+    [
+      160,
+      "scene home H"
+    ],
+    [
+      160,
+      "scene home V"
+    ]
+  ],
+  "hostWarnings": [
+    [
+      220,
+      "[host] sink record-v did not stop in 5000 ms; forcing"
+    ]
+  ],
+  "load": {
+    "sysCpuPctMax": 100,
+    "stackCpuPctMax": 10.8,
+    "otherCpuPctMax": 10.8,
+    "gpuPctMax": 30,
+    "encPctMax": 100,
+    "vramMBMax": 2377,
+    "nvencSessionsMax": 3
+  },
+  "disturbed": [],
+  "received": {
+    "kick-1-000.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "kick-1-001.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "kick-1-002.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "kick-1-003.mkv": {
+      "sizeMB": 3,
+      "packets": 283,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 4.7
+    },
+    "twitch-1-000.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "twitch-1-001.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "twitch-1-002.mkv": {
+      "sizeMB": 43,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "twitch-1-003.mkv": {
+      "sizeMB": 3,
+      "packets": 283,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 4.7
+    },
+    "youtube-h-1-000.mkv": {
+      "sizeMB": 172,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "youtube-h-1-001.mkv": {
+      "sizeMB": 172,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "youtube-h-1-002.mkv": {
+      "sizeMB": 172,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "youtube-h-1-003.mkv": {
+      "sizeMB": 10,
+      "packets": 213,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 3.53
+    },
+    "youtube-v-1-000.mkv": {
+      "sizeMB": 250,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "youtube-v-1-001.mkv": {
+      "sizeMB": 250,
+      "packets": 3600,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 59.98
+    },
+    "youtube-v-1-002.mkv": {
+      "sizeMB": 195,
+      "packets": 2802,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 46.68
+    }
+  },
+  "receivedBySink": {
+    "kick": {
+      "spanSec": 184.64,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "segments": 4
+    },
+    "twitch": {
+      "spanSec": 184.64,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "segments": 4
+    },
+    "youtube-h": {
+      "spanSec": 183.47,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "segments": 4
+    },
+    "youtube-v": {
+      "spanSec": 166.64,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "segments": 3
+    }
+  },
+  "recordings": {
+    "record": {
+      "file": "alpha-20261113-200029.mkv",
+      "sizeMB": 525,
+      "packets": 11013,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 183.53
+    },
+    "record-v": {
+      "file": "alpha-v-20261113-200029.mkv",
+      "sizeMB": 718,
+      "packets": 10329,
+      "gaps": 0,
+      "endGaps": 0,
+      "missingFrames": 0,
+      "maxStepMs": 17,
+      "stepMs": 17,
+      "expectedStepMs": 16.67,
+      "spanSec": 172.13
+    }
+  },
+  "logLines": {
+    "host": {
+      "lines": 601,
+      "errors": 0,
+      "benign": {
+        "libobs plugin probe (no OBS frontend in the host); logged at load, no effect": 1
+      }
+    },
+    "core": {
+      "lines": 6,
+      "errors": 0,
+      "benign": {}
+    },
+    "ui": {
+      "lines": 19,
+      "errors": 0,
+      "benign": {}
+    }
+  },
+  "errorLines": [],
+  "strays": 0,
+  "leftHostOrBrowser": 0,
+  "pass": false,
+  "endedAt": "2026-11-13T20:04:19.628Z"
+}

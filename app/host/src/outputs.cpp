@@ -792,6 +792,14 @@ bool Outputs::release_for_reload()
 	return true;
 }
 
+void Outputs::defer_configure(const json::Value &params)
+{
+	std::lock_guard<std::mutex> op(op_m_);
+	if (!params.is_object())
+		throw Error(rpc::INVALID_PARAMS, "outputs.configure: params must be an object");
+	config_ = params; // checked and built by reconfigure() after the project load
+}
+
 json::Value Outputs::reconfigure()
 {
 	std::lock_guard<std::mutex> op(op_m_);
@@ -849,7 +857,7 @@ json::Value Outputs::build(const json::Value &params)
 	std::vector<std::string> warnings;
 	std::set<std::string> ids;
 	for (auto &rv : rungs->as_array()) {
-		only_keys(rv, {"id", "canvas", "codec", "encoder", "rc", "w", "h", "fps", "bitrate", "gopSec", "options"}, "rung");
+		only_keys(rv, {"id", "canvas", "codec", "encoder", "rc", "w", "h", "fps", "bitrate", "gopSec", "options", "upscale"}, "rung");
 		auto r = std::make_unique<Rung>();
 		r->id = req_id(rv, "id", "rung");
 		std::string what = "rung " + r->id;
@@ -870,8 +878,17 @@ json::Value Outputs::build(const json::Value &params)
 		r->fps = (uint32_t)opt_int(rv, "fps", cfps, 1, 240, what);
 		r->bitrate = (uint32_t)req_int(rv, "bitrate", 100, 200000, what);
 		r->gop = (double)req_int(rv, "gopSec", 1, 10, what);
-		if (r->w > cw || r->h > ch)
+		// A rung is never larger than its canvas unless the plan asks for it ("upscale": true, flag stream-upscale, D378):
+		// the same GPU scaler (Lanczos) then scales up, e.g. a 1080p canvas sent as 1440p so YouTube gives it its
+		// higher-quality encode. The aspect ratio must stay the canvas's (no stretching).
+		const json::Value *up = rv.find("upscale");
+		if (up && !up->is_bool())
+			throw Error(rpc::INVALID_PARAMS, what + ": upscale must be true or false");
+		const bool upscale = up && up->as_bool();
+		if ((r->w > cw || r->h > ch) && !upscale)
 			throw Error(rpc::INVALID_PARAMS, what + ": larger than canvas " + r->canvas + " (no upscaling)");
+		if ((r->w > cw || r->h > ch) && (uint64_t)r->w * ch != (uint64_t)r->h * cw)
+			throw Error(rpc::INVALID_PARAMS, what + ": an upscaled rung keeps the canvas aspect ratio (" + std::to_string(cw) + "x" + std::to_string(ch) + ")");
 		if ((r->w & 1) || (r->h & 1))
 			throw Error(rpc::INVALID_PARAMS, what + ": width and height must be even");
 		if (r->fps > cfps || cfps % r->fps != 0)

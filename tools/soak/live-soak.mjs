@@ -64,7 +64,11 @@ export function parseSoakArgs(argv) {
   if (!(minutes >= 1 && minutes <= 600)) throw new Error('--minutes must be 1..600');
   const sampleS = Number(o['sample-s'] ?? 10);
   if (!(sampleS >= 2 && sampleS <= 120)) throw new Error('--sample-s must be 2..120');
-  return { minutes, short: minutes <= 5, sampleS, workDir: o['work-dir'] ?? null, outDir: o['out-dir'] ?? path.join(REPO, 'docs', 'evidence'), keepMedia: !!o['keep-media'], record: !o['no-record'], wait: !!o.wait };
+  // --config: an output preset (repo-relative, data/outputs/presets/*.json) in place of the live plan's own, e.g. the
+  // 2K load test (D378). Same sinks and loopback targets.
+  const config = o.config ?? null;
+  if (config !== null && !/^data\/outputs\/presets\/[a-z0-9-]+\.json$/.test(config)) throw new Error('--config must be data/outputs/presets/<name>.json');
+  return { minutes, short: minutes <= 5, sampleS, workDir: o['work-dir'] ?? null, outDir: o['out-dir'] ?? path.join(REPO, 'docs', 'evidence'), keepMedia: !!o['keep-media'], record: !o['no-record'], wait: !!o.wait, config };
 }
 
 /** The stream sinks the gate requires: every one must be in the plan, live in every sample, and received in full. */
@@ -229,7 +233,7 @@ export async function main(argv = process.argv.slice(2)) {
   const recordingsDir = path.join(workDir, 'media', 'recordings');
   const feedbackDir = path.join(workDir, 'media', 'feedback');
   for (const d of [coreDir, hostData, recvDir, recordingsDir, feedbackDir]) mkdirSync(d, { recursive: true });
-  const result = { id: stamp, mode, minutes: a.minutes, sampleS: a.sampleS, record: a.record, startedAt: started.toISOString(), checks: [], notes: [] };
+  const result = { id: stamp, mode, minutes: a.minutes, sampleS: a.sampleS, record: a.record, ...(a.config ? { config: a.config } : {}), startedAt: started.toISOString(), checks: [], notes: [] };
   const check = (name, pass, detail) => { result.checks.push({ name, pass: !!pass, ...(detail === undefined ? {} : { detail }) }); log(pass ? 'PASS' : 'FAIL', name, detail === undefined ? '' : JSON.stringify(detail)); };
   if (!preflight({ log, check })) return 4;
 
@@ -239,7 +243,7 @@ export async function main(argv = process.argv.slice(2)) {
   for (const id of SOAK_FLAGS) flags.set(id, true);
   initUserRules(coreDir);
 
-  const st = await startStack({ runDir, coreDir, hostData, recvDir, recordingsDir, feedbackDir, log, check, root: stage.root, profile: path.join(REPO, 'data', 'profile.local.json'), segmentSec: 60, segmentWrap: 0 });
+  const st = await startStack({ runDir, coreDir, hostData, recvDir, recordingsDir, feedbackDir, log, check, root: stage.root, profile: path.join(REPO, 'data', 'profile.local.json'), segmentSec: 60, segmentWrap: 0, config: a.config });
   if (!st) { result.notes.push('the stack did not start'); return finish(1); }
   if (!st.uiPort || !st.cookie) { result.notes.push('the UI server did not start; see run/ui.log in the work dir'); await st.teardown(); return finish(1); }
   const { c, mock } = st;

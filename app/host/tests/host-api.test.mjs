@@ -301,6 +301,11 @@ test('outputs.configure accepts loopback targets only', async () => {
   }
   assert.equal((await rpcErr('outputs.configure', { rungs: [RUNG], audio: { bitrate: 128, sampleRate: 44100 }, sinks: [sink({ transport: 'file', name: 'a.mkv' }, { proto: 'file', platform: 'local' })] })).code, -32602, 'sample rate must match the studio');
   assert.equal((await rpcErr('outputs.configure', { rungs: [{ ...RUNG, w: 3840, h: 2160 }], audio: AUDIO, sinks: [sink({ transport: 'file', name: 'a.mkv' }, { proto: 'file', platform: 'local' })] })).code, -32602, 'no upscaling');
+  // D378: larger than the canvas only when the rung asks (upscale: true) and keeps the canvas aspect ratio (16:9 here).
+  assert.equal((await rpcErr('outputs.configure', { rungs: [{ ...RUNG, w: 3840, h: 2160, upscale: 'yes' }], audio: AUDIO, sinks: [sink({ transport: 'file', name: 'a.mkv' }, { proto: 'file', platform: 'local' })] })).code, -32602, 'upscale must be a boolean');
+  assert.equal((await rpcErr('outputs.configure', { rungs: [{ ...RUNG, w: 3840, h: 1600, upscale: true }], audio: AUDIO, sinks: [sink({ transport: 'file', name: 'a.mkv' }, { proto: 'file', platform: 'local' })] })).code, -32602, 'an upscaled rung keeps the canvas aspect ratio');
+  const up = await c.call('outputs.configure', { rungs: [{ ...RUNG, w: 3840, h: 2160, upscale: true }], audio: AUDIO, sinks: [sink({ transport: 'file', name: 'a.mkv' }, { proto: 'file', platform: 'local' })] });
+  assert.ok(up, 'upscale: true with the canvas aspect ratio is accepted');
   assert.equal((await rpcErr('outputs.configure', { rungs: [{ ...RUNG, fps: 25 }], audio: AUDIO, sinks: [sink({ transport: 'file', name: 'a.mkv' }, { proto: 'file', platform: 'local' })] })).code, -32602, 'fps must divide the canvas fps');
 });
 

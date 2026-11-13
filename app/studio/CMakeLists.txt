@@ -108,7 +108,18 @@ qt_add_qml_module(ujwalam-studio
 		qml/UPanel.qml
 		qml/UChip.qml
 		qml/UToggle.qml
-		qml/USlider.qml)
+		qml/USlider.qml
+		qml/USwitch.qml
+		qml/USpin.qml
+		qml/UCombo.qml
+		qml/UCard.qml
+		qml/FeaturesCard.qml
+		qml/SettingsPage.qml
+		qml/SettingsClips.qml
+		qml/SettingsAppearance.qml
+		qml/SettingsStream.qml
+		qml/OutputDialog.qml
+		qml/SettingsDialog.qml)
 if(WIN32)
 	target_sources(ujwalam-studio PRIVATE res/ujwalam.rc)
 endif()

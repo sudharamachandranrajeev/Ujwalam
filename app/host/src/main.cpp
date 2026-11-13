@@ -7,7 +7,7 @@
 //   ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>] [--recordings <dir>]
 //                [--port <n>] [--project <file.json>] [--outputs <configure-params.json>] [--preview h,v]
 //                [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live] [--twitch-bandwidth-test]
-//                [--host-config <file.json>] [--test-hooks] [--headless]
+//                [--defer-outputs] [--host-config <file.json>] [--test-hooks] [--headless]
 //                [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]
 //                 [--overlay-feed-port <n>] [--overlay-events-url http://127.0.0.1:<p>/<path>]]
 // With --allow-browser and --overlay-root the host supervises the overlay server child (overlay.h): static pages
@@ -143,7 +143,7 @@ const char *kDefaultProject = R"({"format":"ujwalam-host-test","version":1,"name
 void usage()
 {
 	fprintf(stderr, "usage: ujwalam-host --runtime <obs runtime dir> [--data-dir <dir>] [--discovery <file>]\n"
-			"         [--recordings <dir>] [--port <n>] [--project <file.json>] [--outputs <file.json>]\n"
+			"         [--recordings <dir>] [--port <n>] [--project <file.json>] [--outputs <file.json>] [--defer-outputs]\n"
 			"         [--preview h,v] [--adapter <n>] [--allow-devices] [--allow-browser] [--allow-live]\n"
 			"         [--twitch-bandwidth-test] [--host-config <file.json>] [--test-hooks [--test-crash <kind>]] [--headless]\n"
 			"         [--overlay-root <dir> --overlay-script <child.mjs> [--node <node.exe>] [--overlay-port <n>]\n"
@@ -167,6 +167,7 @@ int wmain(int argc, wchar_t **wargv)
 	Overlay::Config ov;
 	std::string ov_port_s = "0", ov_feed_s = "0";
 	bool headless = false;
+	bool defer_outputs = false;
 	std::string test_crash;
 	for (size_t i = 0; i < args.size(); i++) {
 		const std::string &a = args[i];
@@ -191,6 +192,8 @@ int wmain(int argc, wchar_t **wargv)
 			next(project_path);
 		else if (a == "--outputs")
 			next(outputs_path);
+		else if (a == "--defer-outputs") // the --outputs plan and the replay buffer wait for the first project.load
+			defer_outputs = true;
 		else if (a == "--preview")
 			next(preview);
 		else if (a == "--adapter")
@@ -602,7 +605,10 @@ int wmain(int argc, wchar_t **wargv)
 				rc = 4;
 			} else {
 				try {
-					app.outputs->configure(op);
+					if (defer_outputs)
+						app.outputs->defer_configure(op); // built once, by project.load (opening delay, 2026-11-13)
+					else
+						app.outputs->configure(op);
 				} catch (const std::exception &e) {
 					hlog::error("outputs configure failed: %s", e.what());
 					rc = 4;
@@ -627,7 +633,10 @@ int wmain(int argc, wchar_t **wargv)
 
 		if (!rc && app.config.replay_autostart) {
 			try {
-				app.outputs->replay_start(0);
+				if (defer_outputs)
+					app.outputs->replay_defer();
+				else
+					app.outputs->replay_start(0);
 			} catch (const std::exception &e) {
 				hlog::warn("replay buffer: %s", e.what());
 			}

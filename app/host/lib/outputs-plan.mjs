@@ -184,6 +184,7 @@ export function plan(config, targets, { platformsDir = PLATFORMS_DIR, policy, al
         w: r.w, h: r.h, fps: r.fps, bitrate: r.bitrate, gopSec: r.gop_sec
       };
       if (r.encoderOptions) o.options = r.encoderOptions;
+      if (r.upscale === true) o.upscale = true;
       return o;
     }),
     audio: { bitrate: tracks[0].bitrate, sampleRate: tracks[0].sampleRate },
@@ -247,14 +248,15 @@ export async function readServerSchemes(file, readFacts, { select } = {}) {
     if (Array.isArray(select) && !select.includes(id)) continue;
     refs.add(t.serverRef);
   }
+  // All at once (opening delay, D380): each read starts one Windows PowerShell (about 0.4 s); one by one they added up.
   const out = {};
-  for (const ref of refs) {
+  await Promise.all([...refs].map(async (ref) => {
     try {
       const f = await readFacts(ref);
       out[ref] = { present: f?.present === true, scheme: f?.present === true && typeof f.scheme === 'string' ? f.scheme : null };
     } catch {
       out[ref] = { error: true };
     }
-  }
+  }));
   return out;
 }

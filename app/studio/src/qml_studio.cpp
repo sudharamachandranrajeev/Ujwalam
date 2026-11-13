@@ -139,16 +139,24 @@ void collect(const QObject *o, QJsonArray &out, QSet<const QObject *> &seen)
 	}
 }
 
-QObject *findNamed(QObject *root, const QString &name)
+// Each object once, as in collect(): a popup and its item reach each other, so a walk without the set never ends.
+QObject *findNamed(QObject *root, const QString &name, QSet<const QObject *> &seen)
 {
-	if (!root)
+	if (!root || seen.contains(root))
 		return nullptr;
+	seen.insert(root);
 	if (root->objectName() == name)
 		return root;
 	for (QObject *c : kids(root))
-		if (QObject *f = findNamed(c, name))
+		if (QObject *f = findNamed(c, name, seen))
 			return f;
 	return nullptr;
+}
+
+QObject *findNamed(QObject *root, const QString &name)
+{
+	QSet<const QObject *> seen;
+	return findNamed(root, name, seen);
 }
 } // namespace
 
@@ -179,8 +187,11 @@ bool QmlStudio::probeAction(const QString &action)
 		QObject *t = eq > 5 ? findNamed(win_, action.mid(5, eq - 5)) : nullptr;
 		return t && t->property("enabled").toBool() && t->setProperty("text", action.mid(eq + 1));
 	}
-	if (!action.startsWith(QStringLiteral("click:")))
-		return false;
+	if (!action.startsWith(QStringLiteral("click:"))) {
+		// settings-* and other window actions live in Main.qml (probeAction), named as on the widget studio.
+		QVariant done;
+		return win_ && QMetaObject::invokeMethod(win_, "probeAction", Q_RETURN_ARG(QVariant, done), Q_ARG(QVariant, action)) && done.toBool();
+	}
 	QObject *t = findNamed(win_, action.mid(6));
 	if (!t || !t->property("enabled").toBool())
 		return false;

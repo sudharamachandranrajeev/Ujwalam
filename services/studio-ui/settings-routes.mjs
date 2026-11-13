@@ -21,7 +21,7 @@ import path from 'node:path';
 import { BOTS, BOT_LABELS, tcpAnswers as realTcpAnswers } from '../bots/index.mjs';
 import { lanAddresses } from '../common/lan-remote.mjs';
 import { BOT_ADDRESS, readIntegrations, writeIntegrations } from './integrations.mjs';
-import { outputSummary, readOptions, readSetup, setupProblems, toPlan, writeSetup } from './stream-setup.mjs';
+import { outputSummary, readOptions, readSetup, setupProblems, STREAM_UPSCALE_FLAG, toPlan, writeSetup } from './stream-setup.mjs';
 
 export const STREAM_SETTINGS_FLAG = 'stream-settings';
 export const OUTPUTS_PANEL_FLAG = 'outputs-panel';
@@ -45,6 +45,8 @@ export function createSettingsRoutes(opts) {
   let options = null;
   const opt = () => (options ??= readOptions());
   const canvases = () => { try { return opts.canvases?.(); } catch { return undefined; } };
+  // Every setup check and plan sees the project's canvas sizes and whether a rung may be scaled up (D378).
+  const planOpts = () => ({ options: opt(), canvases: canvases(), upscale: on(STREAM_UPSCALE_FLAG) });
 
   async function sinkStates() {
     try {
@@ -66,7 +68,7 @@ export function createSettingsRoutes(opts) {
     const { exists, setup } = readSetup(dataDir);
     if (!exists) return null;
     const states = await sinkStates();
-    const included = new Set(toPlan(setup, { options: opt(), canvases: canvases(), recordName: null }).included);
+    const included = new Set(toPlan(setup, { ...planOpts(), recordName: null }).included);
     return setup.outputs.filter((o) => o.enabled && included.has(o.id) && (!states || states.has(o.id))).map((o) => o.id);
   }
 
@@ -78,13 +80,13 @@ export function createSettingsRoutes(opts) {
       if (method === 'GET' && route === '/ui/api/stream/setup') {
         let r;
         try { r = readSetup(dataDir, { options: opt() }); } catch { return json(res, 409, { error: 'setup-unreadable' }), true; }
-        return json(res, 200, { exists: r.exists, setup: r.setup, options: opt(), canvases: canvases() ?? null,
+        return json(res, 200, { exists: r.exists, setup: r.setup, options: opt(), canvases: canvases() ?? null, upscale: on(STREAM_UPSCALE_FLAG),
           summaries: Object.fromEntries(r.setup.outputs.map((o) => [o.id, outputSummary(r.setup, o, opt())])),
-          problems: setupProblems(r.setup, { options: opt(), canvases: canvases() }) }), true;
+          problems: setupProblems(r.setup, planOpts()) }), true;
       }
       if (method !== 'POST' || !isPlain(body) || Object.keys(body).some((k) => k !== 'setup')) return json(res, 400, { error: 'bad-params' }), true;
-      if (route === '/ui/api/stream/check') return json(res, 200, { problems: setupProblems(body.setup, { options: opt(), canvases: canvases() }) }), true;
-      const w = writeSetup(dataDir, body.setup, { options: opt(), canvases: canvases() });
+      if (route === '/ui/api/stream/check') return json(res, 200, { problems: setupProblems(body.setup, planOpts()) }), true;
+      const w = writeSetup(dataDir, body.setup, planOpts());
       if (!w.ok) return json(res, 422, { error: 'refused', problems: w.problems }), true;
       return json(res, 200, { ok: true, setup: w.setup, appliesAt: 'next-start',
         summaries: Object.fromEntries(w.setup.outputs.map((o) => [o.id, outputSummary(w.setup, o, opt())])) }), true;
@@ -99,7 +101,7 @@ export function createSettingsRoutes(opts) {
       if (method === 'GET' && route === '/ui/api/outputs/panel') {
         const states = await sinkStates();
         const live = await hostLive();
-        const included = new Set(toPlan(r.setup, { options: opt(), canvases: canvases(), recordName: null }).included);
+        const included = new Set(toPlan(r.setup, { ...planOpts(), recordName: null }).included);
         return json(res, 200, { live: live === true, virtualCamera: VIRTUAL_CAMERA, canvasMode: r.setup.canvasMode,
           outputs: r.setup.outputs.map((o) => ({ id: o.id, name: o.name, platform: o.platform, canvas: o.canvas, enabled: o.enabled,
             summary: outputSummary(r.setup, o, opt()), inPlan: included.has(o.id), state: states?.get(o.id) ?? null })) }), true;
@@ -112,7 +114,7 @@ export function createSettingsRoutes(opts) {
       if (!live) {
         // Offline: the switch chooses what Start stream starts. Saved like any setup change.
         const next = { ...r.setup, outputs: r.setup.outputs.map((x) => (x.id === o.id ? { ...x, enabled: body.on } : x)) };
-        const w = writeSetup(dataDir, next, { options: opt(), canvases: canvases() });
+        const w = writeSetup(dataDir, next, planOpts());
         if (!w.ok) return json(res, 422, { error: 'refused', problems: w.problems }), true;
         return json(res, 200, { ok: true, id: o.id, enabled: body.on, live: false }), true;
       }
@@ -211,7 +213,7 @@ export function createSettingsRoutes(opts) {
     // Remember the choice for the next start too (best effort; the live switch already happened).
     try {
       const { exists, setup } = readSetup(dataDir);
-      if (exists) writeSetup(dataDir, { ...setup, outputs: setup.outputs.map((x) => (x.id === p.outputId ? { ...x, enabled: p.on } : x)) }, { options: opt(), canvases: canvases() });
+      if (exists) writeSetup(dataDir, { ...setup, outputs: setup.outputs.map((x) => (x.id === p.outputId ? { ...x, enabled: p.on } : x)) }, planOpts());
     } catch { /* keep the live result */ }
     return json(res, 200, { verdict: 'allow', id: p.outputId, on: p.on });
   }

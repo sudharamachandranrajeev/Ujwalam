@@ -191,7 +191,7 @@ export async function startStack(opts) {
 
   // ---- loopback listeners
   const live = JSON.parse(readFileSync(path.join(root, 'data', 'outputs', 'alpha-live.json'), 'utf8'));
-  const plan = loopbackPlan(live);
+  const plan = loopbackPlan(opts.config ? { ...live, config: opts.config } : live);
   const planPath = path.join(runDir, 'plan.json');
   writeFileSync(planPath, JSON.stringify(plan, null, 2));
   const { params, report } = planFile(planPath);

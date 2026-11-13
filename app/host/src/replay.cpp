@@ -307,6 +307,12 @@ json::Value Outputs::replay_start(int seconds)
 	return replay_status();
 }
 
+void Outputs::replay_defer()
+{
+	std::lock_guard<std::mutex> op(op_m_);
+	replay_want_ = true; // replay_attach_locked() runs at the next reconfigure()
+}
+
 json::Value Outputs::replay_stop()
 {
 	std::lock_guard<std::mutex> op(op_m_);

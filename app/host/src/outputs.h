@@ -60,6 +60,9 @@ public:
 	// before Studio::load and reconfigure() after it: the graph is rebuilt from the last configure params.
 	bool release_for_reload(); // false if active (caller refuses the load)
 	json::Value reconfigure(); // null if nothing was configured; throws rpc::Error on failure
+	// --defer-outputs (opening delay, 2026-11-13): the boot plan is kept as the last configure params without building a
+	// graph (no NVENC probe, no encoders) for the throwaway test card; the project.load that follows builds it once.
+	void defer_configure(const json::Value &params);
 	json::Value start(const std::vector<std::string> &sinks, const std::string &kind); // kind: "", "stream", "record"
 	json::Value stop(const std::vector<std::string> &sinks, const std::string &kind);
 	json::Value status() const;
@@ -85,6 +88,7 @@ public:
 	};
 	void set_replay_config(const ReplayConfig &c); // before replay_start; seconds can also come with replay_start
 	json::Value replay_start(int seconds);          // 0 = keep the configured length
+	void replay_defer(); // --defer-outputs: the replay buffer is wanted; it attaches at the next graph change (project.load)
 	json::Value replay_stop();
 	void replay_resume(); // re-attaches after a failed project load (no-op unless wanted)
 	json::Value replay_status() const;
