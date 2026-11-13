@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXE as STUDIO_EXE, START_EXE } from '../app/studio/tools/build.mjs';
-import { changelogExcerpt, releaseInfo } from '../tools/package/build-alpha.mjs';
+import { changelogExcerpt, releaseInfo, studioQmlFiles } from '../tools/package/build-alpha.mjs';
 import { OFL_FONTS, OFL_FONT_LICENCES, OFL_FONT_LICENCE_SHA, allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles } from '../tools/package/manifest.mjs';
 import { peInfo } from '../tools/package/pe.mjs';
 import { clipMakerNote, installedSpec, nodeOk, pruneLaunchLogs } from '../tools/package/run-installed.mjs';
@@ -100,6 +100,30 @@ test('forbidden paths: legacy, local files, Microsoft fonts, any font, private e
   for (const p of ['ui/corbel-colours.css']) assert.deepEqual(forbiddenProblems([p], { fontNames }), [], 'a css file that merely starts with the name is not a font');
   assert.deepEqual(allowProblems(['bin/ujwalam-host.exe', 'studio/ujwalam-studio.exe', 'studio/Qt6Core.dll', 'studio/Qt6Network.dll', 'studio/platforms/qwindows.dll', 'studio/platforms/qoffscreen.dll', 'obs/bin/64bit/obs.dll', 'obs/obs-plugins/64bit/locales/en-US.pak', 'notices/GPL-2.0.txt', 'Install-Ujwalam.ps1']), []);
   assert.equal(allowProblems(['tests/x.test.mjs', 'random.txt', 'bin/other.exe', 'obs/cef/x.dll', 'obs/bin/64bit/platforms/qminimal.dll', 'obs/bin/64bit/imageformats/qjpeg.dll', 'obs/bin/64bit/platforms/qwindows.dll', 'bin/ujwalam-studio.exe', 'studio/Qt6Svg.dll', 'studio/platforms/qminimal.dll']).length, 10);
+  // D360: Qt Quick for the QML studio window, its imports under studio/qml (QtQml and QtQuick only)
+  assert.deepEqual(allowProblems(['studio/Qt6Quick.dll', 'studio/Qt6QuickControls2Basic.dll', 'studio/qml/QtQuick/qmldir', 'studio/qml/QtQuick/qtquick2plugin.dll',
+    'studio/qml/QtQuick/Controls/Basic/Button.qml', 'studio/qml/QtQuick/Controls/Basic/impl/qmldir', 'studio/qml/QtQml/Models/plugins.qmltypes']), []);
+  assert.equal(allowProblems(['studio/Qt6Quick3D.dll', 'studio/qml/QtWebEngine/qmldir', 'studio/qml/QtQuick/x.exe', 'studio/qml/qmldir']).length, 4);
+});
+
+test('studioQmlFiles: the listed QML folders, subfolders only where asked, no debug builds or symbols (D360)', () => {
+  const kit = path.join(os.tmpdir(), 'kit');
+  const f = (name) => ({ name, isFile: () => true, isDirectory: () => false });
+  const d = (name) => ({ name, isFile: () => false, isDirectory: () => true });
+  const tree = {
+    QtQml: [f('qmldir'), f('qmlplugin.dll'), f('qmlplugind.dll'), f('qmlplugin.pdb'), d('Models'), d('XmlListModel')],
+    'QtQml/Models': [f('qmldir'), f('modelsplugin.dll')], 'QtQml/WorkerScript': [f('qmldir')],
+    QtQuick: [f('qmldir'), d('Controls'), d('Particles')], 'QtQuick/Window': [f('qmldir')], 'QtQuick/Templates': [f('qmldir')],
+    'QtQuick/Controls': [f('qmldir'), d('Basic'), d('Material')], 'QtQuick/Controls/impl': [f('qmldir')],
+    'QtQuick/Controls/Basic': [f('Button.qml'), d('impl')], 'QtQuick/Controls/Basic/impl': [f('qmldir')],
+  };
+  const list = (dir) => tree[path.relative(path.join(kit, 'qml'), dir).split(path.sep).join('/')] ?? assert.fail(`read ${dir}`);
+
+  const files = studioQmlFiles(kit, { list }).map(([dest]) => dest);
+  assert.deepEqual(files.sort(), ['studio/qml/QtQml/Models/modelsplugin.dll', 'studio/qml/QtQml/Models/qmldir', 'studio/qml/QtQml/WorkerScript/qmldir', 'studio/qml/QtQml/qmldir',
+    'studio/qml/QtQml/qmlplugin.dll', 'studio/qml/QtQuick/Controls/Basic/Button.qml', 'studio/qml/QtQuick/Controls/Basic/impl/qmldir', 'studio/qml/QtQuick/Controls/impl/qmldir',
+    'studio/qml/QtQuick/Controls/qmldir', 'studio/qml/QtQuick/Templates/qmldir', 'studio/qml/QtQuick/Window/qmldir', 'studio/qml/QtQuick/qmldir']);
+  assert.deepEqual(allowProblems(files), [], 'every file it picks may ship');
 });
 
 test('release info and changelog excerpt for the current alpha and alpha.1; node version check', () => {

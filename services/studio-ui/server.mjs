@@ -160,7 +160,28 @@ export const HOST_CALLS = Object.freeze({
   'record.stop': { schema: {}, confirm: 'live', summary: 'Stop recording' },
 });
 
-export const DEFAULT_FEEDBACK_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'feedback');
+/** The on-air summary for the studio's bar (D355 Q2; pure, tested): from an outputs.status answer, how long the
+ *  streams and the recording have run (the longest live sink of each kind), the summed stream bitrate, and per stream
+ *  sink its platform, state and bitrate. Numbers and short ids only: never a URL, key, path or error text. */
+export function onAirSummary(st) {
+  const sinks = Array.isArray(st?.sinks) ? st.sinks.filter((s) => s && typeof s === 'object') : [];
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null);
+  const longest = (kind) => sinks.filter((s) => s.kind === kind && s.state === 'live').reduce((m, s) => Math.max(m, num(s.liveForMs) ?? -1), -1);
+  const streams = sinks.filter((s) => s.kind === 'stream');
+  const live = streams.filter((s) => s.state === 'live');
+  const out = {
+    liveForMs: longest('stream') >= 0 ? longest('stream') : null,
+    recordForMs: longest('record') >= 0 ? longest('record') : null,
+    kbps: live.length ? Math.round(live.reduce((a, s) => a + (num(s.kbps) ?? 0), 0)) : null,
+    sinks: streams.slice(0, 12).map((s) => ({
+      id: String(s.id).slice(0, 64), platform: typeof s.platform === 'string' ? s.platform.slice(0, 32) : null,
+      state: String(s.state).slice(0, 16), kbps: num(s.kbps) === null ? null : Math.round(s.kbps),
+    })),
+  };
+  return out;
+}
+
+export const DEFAULT_FEEDBACK_DIR =path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'feedback');
 const FLAG_SET_SCHEMA = { id: { type: 'string', pattern: /^[a-z][a-z0-9-]{0,47}$/, required: true }, on: { type: 'bool', required: true } };
 const NOTE_KEYS = ['id', 'text', 'tag', 'severity'];
 
@@ -795,6 +816,11 @@ export function createStudioServer(opts) {
     if (hs) await transitionSync(hs);
     const dev = hs ? devicesInfo(hs) : null;
     if (dev) devicesSync(dev);
+    // The on-air bar's timers and bitrate (D355 Q2), read only while something runs.
+    let onAir = null;
+    if (hs && (hs.live === true || hs.recording === true)) {
+      try { onAir = onAirSummary(await host.call('outputs.status', {})); } catch { onAir = null; }
+    }
     const pick = (o, ks) => Object.fromEntries(ks.filter((k) => o && Object.hasOwn(o, k)).map((k) => [k, o[k]]));
     const snap = {
       at: now(),
@@ -803,6 +829,7 @@ export function createStudioServer(opts) {
         ...(hs && hs.audioHealth ? { audioHealth: audioReadiness(hs.audioHealth) } : {}),
         ...(previewLast ? { previewEdit: previewLast } : {}),
         ...(dev ? { devices: { seq: dev.seq, waiting: dev.waiting } } : {}),
+        ...(onAir ? { onAir } : {}),
         effectEditing: !!flags && flags.isOn('effect-editor') },
       clips: clipStatus(),
       recovery: typeof opts.dataDir === 'string' ? readRecoveryStatus(opts.dataDir, liveSession) : null,

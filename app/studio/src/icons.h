@@ -8,8 +8,11 @@
 
 namespace icons {
 
-// name: play | stop | record | clip | flag | undo | redo | folder | gear | plus | more | sliders | trash. Unknown names give an empty icon.
+// name: play | stop | record | clip | flag | undo | redo | folder | gear | plus | more | sliders | trash | eye | eye-off |
+// help | headphones | speaker | speaker-off. Unknown names give an empty icon.
 // The icon has a normal and a dimmed (disabled) pixmap, 2x for sharp edges on high-DPI screens.
 QIcon make(const QString &name, const QColor &colour, int px = 20, const QColor &disabled = QColor());
+// One picture of the icon at 2x (the QML studio's image provider, D355).
+QPixmap picture(const QString &name, const QColor &colour, int px);
 
 } // namespace icons

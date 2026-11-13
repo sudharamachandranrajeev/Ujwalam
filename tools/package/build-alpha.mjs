@@ -36,7 +36,35 @@ export const STUDIO_QT = Object.freeze([
   ['studio/Qt6Core.dll', 'bin/Qt6Core.dll'], ['studio/Qt6Gui.dll', 'bin/Qt6Gui.dll'],
   ['studio/Qt6Widgets.dll', 'bin/Qt6Widgets.dll'], ['studio/Qt6Network.dll', 'bin/Qt6Network.dll'],
   ['studio/platforms/qwindows.dll', 'plugins/platforms/qwindows.dll'], ['studio/platforms/qoffscreen.dll', 'plugins/platforms/qoffscreen.dll'],
+  // Qt Quick (D360): the exe links it for the QML studio window (flag studio-qml), so both windows need these.
+  ...['Qml', 'QmlModels', 'QmlMeta', 'QmlWorkerScript', 'Quick', 'QuickControls2', 'QuickControls2Basic', 'QuickControls2BasicStyleImpl',
+    'QuickControls2Impl', 'QuickTemplates2', 'OpenGL'].map((m) => [`studio/Qt6${m}.dll`, `bin/Qt6${m}.dll`]),
 ]);
+// The Qt Quick imports the QML window loads (D360), copied from the kit's qml/ into studio/qml/ (qml_studio.cpp adds
+// that folder to the import path). [folder under qml/, with its subfolders]. Debug builds (*d.dll) and .pdb files stay out.
+export const STUDIO_QML = Object.freeze([
+  ['QtQml', false], ['QtQml/Models', true], ['QtQml/WorkerScript', true],
+  ['QtQuick', false], ['QtQuick/Window', true], ['QtQuick/Templates', true],
+  ['QtQuick/Controls', false], ['QtQuick/Controls/impl', true], ['QtQuick/Controls/Basic', true],
+]);
+
+/** [package path, source] of every STUDIO_QML file in the kit (pure apart from the directory reads; tested). */
+export function studioQmlFiles(kit, { list = (d) => readdirSync(d, { withFileTypes: true }) } = {}) {
+  const out = [];
+  const walk = (rel, deep) => {
+    const dir = path.join(kit, 'qml', ...rel.split('/'));
+    const entries = list(dir);
+    const names = new Set(entries.filter((e) => e.isFile()).map((e) => e.name.toLowerCase()));
+    for (const e of entries) {
+      if (e.isDirectory()) { if (deep) walk(`${rel}/${e.name}`, true); continue; }
+      const n = e.name.toLowerCase();
+      if (n.endsWith('.pdb') || (n.endsWith('d.dll') && names.has(n.replace(/d\.dll$/, '.dll')))) continue;
+      out.push([`studio/qml/${rel}/${e.name}`, path.join(dir, e.name)]);
+    }
+  };
+  for (const [rel, deep] of STUDIO_QML) walk(rel, deep);
+  return out;
+}
 import {
   OFL_FONTS, OFL_FONT_LICENCE_SHA, allowProblems, dataRefProblems, disabledModules, fontNamesFromLicenceDoc, forbiddenProblems, importProblems, repoFiles, selectObsRuntime,
 } from './manifest.mjs';
@@ -89,6 +117,7 @@ const COMPONENTS = [
   [/^obs-browser-page\.exe$/i, 'OBS Studio 32.1.2 (obs-browser)', 'GPL-2.0-or-later'],
   [/^(avcodec|avdevice|avfilter|avformat|avutil|swresample|swscale)-\d+\.dll$/i, 'FFmpeg (OBS build)', 'GPL-3.0-or-later (verified 2026-11-05: build string has --enable-gpl --enable-version3, no --enable-nonfree; docs/evidence/2026-11-05-licence-verification.md)'],
   [/^libx264-\d+\.dll$/i, 'x264', 'GPL-2.0-or-later'],
+  [/^[a-z0-9]+plugin\.dll$/i,'Qt 6.8.3 Qt Quick import plugins (studio shell, studio/qml/)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
   [/^q(windows|offscreen)\.dll$/i, 'Qt 6.8.3 platform plugins (studio shell, studio/platforms/)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
   [/^Qt6[A-Za-z]+\.dll$/i, 'Qt 6.8.3 (obs/: OBS build, imported by obs-browser and obs-frontend-api; studio/: Qt kit build for the studio shell)', 'LGPL-3.0-only; relinking note docs/notices-qt-relinking.md, texts docs/licenses/{LGPL,GPL}-3.0.txt'],
   [/^(libcef\.dll|chrome_elf\.dll|.*\.pak|icudtl\.dat|v8_context_snapshot\.bin)$/i, 'Chromium Embedded Framework (CEF) and Chromium', 'BSD-3-Clause (CEF) plus Chromium third-party licences: UNVERIFIED, credits file not in the runtime'],
@@ -208,6 +237,7 @@ export async function buildAlpha(opts = {}) {
   const studioQt = STUDIO_QT.map(([dest, rel]) => ({ dest, src: qtKit ? path.join(qtKit, ...rel.split('/')) : null }));
   const noQt = studioQt.filter((f) => !f.src || !existsSync(f.src)).map((f) => f.dest);
   if (noQt.length) throw new Error(`studio Qt files not found in the Qt kit (--qt-dir, UJWALAM_QT_DIR or app/studio/studio.local.json qtDir): ${noQt.join(', ')}`);
+  for (const [dest, src] of studioQmlFiles(qtKit)) studioQt.push({ dest, src });
   const profile = path.resolve(opts.profile ?? path.join(REPO, 'data', 'profile.local.json'));
   if (!existsSync(profile)) throw new Error('private-term scan needs a profile (--profile or data/profile.local.json); failing closed');
   const outDir = path.resolve(opts.outDir ?? path.join(REPO, 'out', 'dist'));

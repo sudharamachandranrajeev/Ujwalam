@@ -11,7 +11,9 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
-find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network)
+find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets Network Qml Quick QuickControls2)
+# QML modules in the exe's resources under :/qt/qml (QTP0001), the path loadFromModule looks in.
+qt_policy(SET QTP0001 NEW)
 
 add_executable(ujwalam-studio WIN32
 	src/main.cpp
@@ -43,6 +45,10 @@ add_executable(ujwalam-studio WIN32
 	src/look_panel.h
 	src/main_window.cpp
 	src/main_window.h
+	src/qml_bridge.cpp
+	src/qml_bridge.h
+	src/qml_studio.cpp
+	src/qml_studio.h
 	src/motion.cpp
 	src/motion.h
 	src/stats_cards.cpp
@@ -74,7 +80,31 @@ qt_add_resources(ujwalam-studio themes PREFIX "/themes" BASE "${CMAKE_CURRENT_SO
 # App icon: PNG sizes embedded for the window icon (QIcon needs no imageformats plugin); the .rc embeds the .ico in the exes.
 file(GLOB UJW_ICON_PNGS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/res/png/ujwalam-*.png")
 qt_add_resources(ujwalam-studio appicon PREFIX "/icon" BASE "${CMAKE_CURRENT_SOURCE_DIR}/res/png" FILES ${UJW_ICON_PNGS})
-target_link_libraries(ujwalam-studio PRIVATE Qt6::Widgets Qt6::Network)
+target_link_libraries(ujwalam-studio PRIVATE Qt6::Widgets Qt6::Network Qt6::Qml Qt6::Quick Qt6::QuickControls2)
+# The Qt Quick studio (D355, flag studio-qml): its screens, compiled into the exe. Api, Theme and PreviewView come from
+# C++ (qml_studio.cpp registers them as module Ujwalam.Core).
+qt_add_qml_module(ujwalam-studio
+	URI Ujwalam.Studio
+	VERSION 1.0
+	QML_FILES
+		qml/Main.qml
+		qml/Store.qml
+		qml/OnAirBar.qml
+		qml/ScenesPanel.qml
+		qml/LayersPanel.qml
+		qml/MixerPanel.qml
+		qml/PreviewArea.qml
+		qml/ConfirmDialog.qml
+		qml/CloseDialog.qml
+		qml/AddLayerDialog.qml
+		qml/AddSceneDialog.qml
+		qml/UButton.qml
+		qml/UField.qml
+		qml/UIconButton.qml
+		qml/UPanel.qml
+		qml/UChip.qml
+		qml/UToggle.qml
+		qml/USlider.qml)
 if(WIN32)
 	target_sources(ujwalam-studio PRIVATE res/ujwalam.rc)
 endif()

@@ -121,6 +121,54 @@ void draw(QPainter &p, const QString &n, const QColor &c)
 		p.drawPath(b);
 		p.drawLine(QPointF(10.5, 10), QPointF(10.5, 16.5));
 		p.drawLine(QPointF(13.5, 10), QPointF(13.5, 16.5));
+	} else if (n == QLatin1String("eye") || n == QLatin1String("eye-off")) { // layer shown / hidden (QML studio, D355)
+		QPainterPath e;
+		e.moveTo(3, 12);
+		e.quadTo(12, 3.5, 21, 12);
+		e.quadTo(12, 20.5, 3, 12);
+		p.drawPath(e);
+		p.drawEllipse(QPointF(12, 12), 3, 3);
+		if (n == QLatin1String("eye-off"))
+			p.drawLine(QPointF(4.5, 19.5), QPointF(19.5, 4.5));
+	} else if (n == QLatin1String("help")) { // a question mark in a circle
+		p.drawEllipse(QPointF(12, 12), 8.5, 8.5);
+		QPainterPath q;
+		q.moveTo(9.5, 9.8);
+		q.cubicTo(9.5, 6.8, 14.5, 6.8, 14.5, 9.8);
+		q.cubicTo(14.5, 11.8, 12, 11.8, 12, 13.8);
+		p.drawPath(q);
+		p.setPen(Qt::NoPen);
+		p.setBrush(c);
+		p.drawEllipse(QPointF(12, 16.8), 1.1, 1.1);
+	} else if (n == QLatin1String("headphones")) { // CUE: hear this sound in the headphones
+		QPainterPath a;
+		a.moveTo(5, 15);
+		a.lineTo(5, 12);
+		a.cubicTo(5, 4, 19, 4, 19, 12);
+		a.lineTo(19, 15);
+		p.drawPath(a);
+		p.setBrush(c);
+		p.drawRoundedRect(QRectF(4, 13.5, 4, 6), 1.5, 1.5);
+		p.drawRoundedRect(QRectF(16, 13.5, 4, 6), 1.5, 1.5);
+	} else if (n == QLatin1String("speaker") || n == QLatin1String("speaker-off")) { // mute off / on
+		QPainterPath s;
+		s.moveTo(4, 9.5);
+		s.lineTo(7.5, 9.5);
+		s.lineTo(12, 5.5);
+		s.lineTo(12, 18.5);
+		s.lineTo(7.5, 14.5);
+		s.lineTo(4, 14.5);
+		s.closeSubpath();
+		p.drawPath(s);
+		if (n == QLatin1String("speaker-off")) {
+			p.drawLine(QPointF(15, 9.5), QPointF(20, 14.5));
+			p.drawLine(QPointF(20, 9.5), QPointF(15, 14.5));
+		} else {
+			QPainterPath w;
+			w.moveTo(15, 9);
+			w.quadTo(17.5, 12, 15, 15);
+			p.drawPath(w);
+		}
 	}
 }
 
@@ -138,6 +186,11 @@ QPixmap pixmap(const QString &name, const QColor &c, int px)
 }
 
 } // namespace
+
+QPixmap picture(const QString &name, const QColor &colour, int px)
+{
+	return pixmap(name, colour, px);
+}
 
 QIcon make(const QString &name, const QColor &colour, int px, const QColor &disabled)
 {
