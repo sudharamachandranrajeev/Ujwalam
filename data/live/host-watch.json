@@ -1,0 +1,22 @@
+{
+  "$comment": "Host watchdog (services/studio-ui/host-watch.mjs, flag 'host-watchdog', D374 proposed; docs/evidence/2026-11-13-gpu-reset-recovery.md). Every limit the launcher's liveness check and the host's graphics stall report use lives here, never in code. status 'proposed' = agent values derived as noted in source, not yet approved by the user or seen on a real stream.",
+  "version": "0.1.0",
+  "status": "proposed",
+  "checked": "2026-11-13",
+  "host": { "stallMs": 5000, "checkIntervalMs": 1000 },
+  "checkMs": 5000,
+  "rpcTimeoutMs": 10000,
+  "noAnswerMs": 30000,
+  "graphicsStallMs": 30000,
+  "killWaitMs": 15000,
+  "driverLookbackMs": 600000,
+  "source": {
+    "host": "the host's own stall report (gfx_watch.h; report only, one log line per stall). 5 s: libobs renders at 60 fps, so 5 s without a single frame is 300 missed frames, far beyond the frame drops of a busy moment, and still short enough that the host log dates the start of a freeze closely. Checked every second (the log line is at most 1 s late).",
+    "checkMs": "how often the launcher asks the host host.alive (a lock-free answer with the age of the last video frame). 5 s: six looks inside noAnswerMs.",
+    "rpcTimeoutMs": "one host.alive call that takes longer than this counts as no answer. The method takes no lock, so a healthy host answers in milliseconds; 10 s leaves room for a PC under full load.",
+    "noAnswerMs": "the host has answered nothing for this long (counted from its last answer, or from its start) -> it is stopped and restarted. 30 s: the user's ask (about 30 s, 2026-11-12). Detection 30 s + stop up to killWaitMs + restart backoff 2 s + a host start of a few seconds stays inside data/live/recovery.json maxGapMs (90 s), so streams that were live can still come back (flag stream-recovery).",
+    "graphicsStallMs": "the host answers but its graphics thread has produced no video frame for this long -> stopped and restarted. 30 s, same reasoning as noAnswerMs. Evidence: 2026-11-12 19:03, frames stopped and stayed stopped for 3 hours (face link heartbeat stale, frames.grab -32004); no normal operation (project load, shader compile, encoder start) blocks the graphics thread for more than a few seconds (UNVERIFIED by measurement; the host's own 5 s stall report will show any that do).",
+    "killWaitMs": "after the tree kill (taskkill /T /F), how long the launcher waits for the host to exit before it reports that the host could not be stopped. A process stuck inside the graphics driver can refuse to end; a second host is never started next to it.",
+    "driverLookbackMs": "when the host stops or is stopped, the Windows System log is read for NVIDIA driver resets (nvlddmkm events 14, 153, 4101; the same query as tools/ci.mjs gpuResetsSince) in this window before it, so the message can say 'the graphics driver reset at HH:MM'. 10 min: the 2026-11-12 reset (21:42:02) came within seconds of the crash."
+  }
+}

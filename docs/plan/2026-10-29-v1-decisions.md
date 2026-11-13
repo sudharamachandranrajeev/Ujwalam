@@ -1803,3 +1803,28 @@ Growth plan ED2. Decided:
 - **Review fixes (Codex, 2026-11-13).** The floor and the weekly cap hold together; when they cannot (a share below the floor by more than one step), that choice keeps its shares and the log says so. The state file is written first (temp + rename) and carries the log entry, so a failed log append is repaired on the next step or undo and a failed state write logs nothing (no lost undo). A record cut off by a failed append is dropped on read and the next append starts on a new line. Undo restores the earlier `changedAt`, so the planner's seeded picks are those of before. Only the last 64 KiB of the log are read.
 - **Why.** D364 asked for auto-within-limits learning; Thompson sampling explores without a hand-tuned rate, the floor keeps every choice measurable, and the cap keeps a week of noise from swinging the output.
 - **Status.** Proposed: the formula, cap of 150 %, minimum 8 videos, bands and draws are agent values. Tested with faked analytics only; no real YouTube numbers exist yet (the user's Google setup is pending). Evidence `docs/evidence/2026-11-13-rp5-self-learning.md`.
+
+## D374 — Host watchdog: a frozen host is stopped and restarted; GPU device-loss and driver-reset report (2026-11-13)
+
+- **Decision.**
+  - The host reports graphics stalls and GPU device losses. It never restarts itself. The report lives in `gfx_watch.h`, `host.status.graphics` and the lock-free `host.alive`.
+  - The launcher asks `host.alive` every 5 s. It calls the host stale after 30 s with no answer, or after 30 s with no video frame.
+  - A stale host is always logged once. With flag `host-watchdog` on (off by default), the launcher kills the host's process tree. The existing crash path then restarts it: the same restart policy, project reload, and recording in a new file.
+  - Once per incident, the launcher writes one task-bar entry and reads the Windows System log for an NVIDIA driver reset ("the graphics driver reset at HH:MM").
+  - All numbers are in `data/live/host-watch.json` (status proposed).
+- **Streams.** The watchdog never starts a stream itself. After its restart, the streams that were live come back only through the D303 stream-recovery rules: flag `stream-recovery`, this launcher's go-live authority, and the `data/live/recovery.json` gap limit. This counts as recovery of the user's own live session, not going live on its own:
+  - The user had clicked Start for exactly those sinks.
+  - The freeze, not the user, ended them.
+  - With either flag off, nothing is restarted.
+  - A stream that was not live is never started.
+- **Why.**
+  - On 2026-11-12 the graphics thread froze for about 3 hours unnoticed (19:03).
+  - During a live stream the NVIDIA driver reset (21:42). The host crashed and stayed down until a manual restart at 22:00.
+  - libobs rebuilds its D3D11 device only from `Present` with a preview swap chain. It never rebuilds encoders, and calls bcrash if the rebuild fails. A whole-host restart is therefore the reliable recovery.
+- **Status.** Built; tested with a fake host and with a real host using a simulated stall. A real driver reset is UNVERIFIED. Evidence `docs/evidence/2026-11-13-gpu-reset-recovery.md`.
+- **Review fixes (Codex, 2026-11-13).**
+  - All elapsed times use a monotonic clock.
+  - The liveness window starts when a restore has finished, not when the host starts.
+  - In the host, `host.alive` reads atomics only; the checker logs without holding a lock.
+  - The stall report is read as one consistent snapshot: a single-writer seqlock, still lock-free for `host.alive`. A stress test showed 0 torn reads (re-review). A read that runs out of retries reports `"snapshot": "busy"` with no stall fields, never mixed values.
+  - The task-bar write is retried when the file is open elsewhere, and an older state never overwrites a newer one.

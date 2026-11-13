@@ -108,6 +108,7 @@ add_executable(ujwalam-host
   src/moments.cpp
   src/crash.cpp
   src/audio_health.cpp
+  src/gfx_watch.cpp
   src/ujwalam-host.rc
   src/ujwalam-host.manifest)
 set_target_properties(ujwalam-host PROPERTIES CXX_STANDARD 17 CXX_STANDARD_REQUIRED ON)

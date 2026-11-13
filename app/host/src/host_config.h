@@ -10,6 +10,8 @@
 //     "audioHealth": { "enabled": true, "noDataMs": 5000, "checkIntervalMs": 1000, "maxRecreates": 3,
 //                      "maxParked": 12, "shutdownGuardMs": 20000 },   audio health watchdog (audio_health.h); the launcher copies the
 //                                                    values from data/audio/health.json. Absent: watchdog and guard off.
+//     "graphicsWatch": { "stallMs": 5000, "checkIntervalMs": 1000 },   graphics stall report (gfx_watch.h); the launcher
+//                                                    copies the values from data/live/host-watch.json. Absent: no stall check.
 //     "monitoringDevice": "<Windows output name>" }   friendly name as devices.list shows it; default: the
 //                                                     Windows default output. Applied only with --allow-devices (it opens an output).
 //
@@ -42,6 +44,10 @@ struct HostConfig {
 		uint32_t max_parked = 0;       // replaced sources parked per process (all loads); then no more restarts
 		uint32_t shutdown_guard_ms = 0; // obs_runtime.h shutdown guard; 0 = off
 	} audio_health;
+	struct GraphicsWatch {
+		uint32_t stall_ms = 0;          // no video frame for this long = stalled (reported); 0 = no stall check
+		uint32_t check_interval_ms = 0;
+	} graphics_watch;
 };
 
 // Fills cfg from a parsed config document. false + err on any unknown key or bad value.
