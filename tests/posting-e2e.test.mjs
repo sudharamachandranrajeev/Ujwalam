@@ -14,6 +14,7 @@ import { checkPostStatus } from '../services/posting/youtube.mjs';
 import { tasksDir } from '../services/studio-ui/tasks.mjs';
 import { READONLY_SCOPE, SCOPE } from '../services/posting/oauth.mjs';
 import { DELETE_FLAG } from '../services/posting/delete-uploaded.mjs';
+import { createQuotaBudget } from '../services/posting/quota-budget.mjs';
 
 const tmp = [];
 const mk = () => { const d = mkdtempSync(path.join(os.tmpdir(), 'ujw-e2e-post-')); tmp.push(d); return d; };
@@ -347,7 +348,7 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.equal(e.queue().items()[1].publishAt, iso(FIRST + 6 * HOUR));
   });
 
-  test('retries never re-slot while the time is still far enough ahead: same time, no new channel read, one video', async () => {
+  test('retries never re-slot while the time is still far enough ahead: same time (re-checked by a fresh read), one video', async () => {
     const g = await fakeGoogle(); const e = setup([ROWS[0]]); const c = schedChain(e, g);
     g.opt.initFailures = 1;
     await c.afterRun(e.runDir, IDLE);
@@ -356,7 +357,55 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     e.clock.t += 5 * MIN + 1000; await c.tick(IDLE); // 70 min before the slot: still >= the 1 h lead
     assert.equal(g.videos.length, 1);
     assert.deepEqual(sent(g), [slot]); assert.equal(e.queue().items()[0].publishAt, slot);
-    assert.equal(g.count('channels'), 1);
+    // The retry re-checks its slot against a fresh channel read before it starts (Codex review); the slot is still free.
+    assert.equal(g.count('channels'), 2);
+  });
+
+  test('Codex review: a queued slot that a new channel post now clashes with is re-slotted before its upload starts', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]); g.opt.hideOwnUploads = true; const c = schedChain(e, g);
+    g.opt.initFailures = 1; // the first try gets slot FIRST, then its session start fails (no session, backing off)
+    await c.afterRun(e.runDir, IDLE);
+    assert.equal(e.queue().items()[0].publishAt, iso(FIRST)); assert.equal(g.videos.length, 0);
+    g.opt.channel = [vid('new', 'private', iso(FIRST + 30 * MIN))]; // scheduled by hand in YouTube Studio meanwhile
+    e.clock.t += 5 * MIN + 1000; await c.tick(IDLE);
+    assert.deepEqual(sent(g), [iso(FIRST + 30 * MIN + 6 * HOUR)], 'never within the gap of the new post');
+    assert.equal(g.count('channels'), 2);
+    // Both tries (start and retry) count in today's budget.
+    assert.equal(JSON.parse(readFileSync(path.join(e.dataDir, 'posting', 'quota-day.json'), 'utf8')).uploads.n, 2);
+  });
+
+  test('Codex review: the gap grew while two clips waited: the earlier keeps its slot, the later gets one by the new gap', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0], ROWS[2]]); g.opt.hideOwnUploads = true; const c = schedChain(e, g);
+    g.opt.initFailures = 2;
+    await c.afterRun(e.runDir, IDLE);
+    assert.deepEqual(e.queue().items().map((i) => i.publishAt), [iso(FIRST), iso(FIRST + 6 * HOUR)]);
+    schedFile(e, { intervalHours: 8 });
+    e.clock.t += 5 * MIN + 1000; await c.tick(IDLE);
+    assert.deepEqual(sent(g), [iso(FIRST), iso(FIRST + 8 * HOUR)]);
+  });
+
+  test('Codex review: the daily budget stops uploads from earlier approvals (cap and quota), no channel read, no attempt used', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]); g.opt.hideOwnUploads = true;
+    const rules = JSON.parse(readFileSync(path.join(e.dataDir, 'rules.json'), 'utf8'));
+    writeFileSync(path.join(e.dataDir, 'rules.json'), JSON.stringify({ ...rules, maxUploadsPerDay: 2 }));
+    const budget = createQuotaBudget({ dataDir: e.dataDir, nowMs: () => e.clock.t });
+    budget.chargeUpload(); budget.chargeUpload(); // two uploads already started today (earlier approvals, retries)
+    const c = schedChain(e, g);
+    await c.afterRun(e.runDir, IDLE);
+    let it = e.queue().items()[0];
+    assert.equal(g.videos.length, 0); assert.equal(g.count('init'), 0); assert.equal(g.count('channels'), 0);
+    assert.equal(it.state, 'queued'); assert.equal(it.reason, 'daily-cap-reached'); assert.equal(it.attempts, 0);
+    assert.match(readQueueSummary(e.dataDir).message, /uploads per day are used up/);
+    // Next UTC day, but the quota units of the Pacific day (until 08:00 UTC) are nearly used up: still waits.
+    e.clock.t = Date.parse('2026-11-10T01:00:00Z');
+    budget.chargeRead(10000 - 3300 - 1000);
+    await c.tick(IDLE);
+    it = e.queue().items()[0];
+    assert.equal(it.reason, 'quota-day-used'); assert.equal(g.videos.length, 0);
+    // A new Pacific day: it goes up, scheduled.
+    e.clock.t = Date.parse('2026-11-10T09:00:00Z');
+    await c.tick(IDLE);
+    assert.equal(g.videos.length, 1); assert.ok(g.videos[0].status.publishAt);
   });
 
   test('missing readonly scope fails closed: no request to Google, no slot, no upload, no attempt used, plain message', async () => {

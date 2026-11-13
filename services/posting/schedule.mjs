@@ -24,7 +24,7 @@
 // Bound on every chunk (youtube.mjs): the request is aborted at publishAt - chunkDeadlineSeconds, and the final chunk
 // only starts when its estimated transfer (slowest measured chunk speed, else fallbackKbps) fits before that deadline.
 // The user's own settings (Settings > Posting & growth > Auto-post) live in <data dir>/posting/schedule.json and replace
-// the shipped intervalHours, maxAheadDays and placement (and hold quotaUnitsPerDay, read by auto-settings.mjs).
+// the shipped intervalHours, maxAheadDays and placement (and hold quotaUnitsPerDay, read by quota-budget.mjs).
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -136,6 +136,8 @@ export function createSlotter(times, cfg) {
   const conflict = (at) => { const k = lowerBound(at + gap) - 1; return k >= 0 && list[k] > at - gap ? list[k] : null; };
   return {
     add(t) { list.splice(lowerBound(t), 0, t); },
+    /** The latest taken time within the gap of `at`, or null (free). */
+    conflict,
     times: () => list.slice(),
     latest: () => (list.length ? list[list.length - 1] : null),
     free(floor) {
@@ -203,16 +205,29 @@ export function itemTimes(i) {
 /**
  * The slots to give out now over a whole queue (items in queue order, any state; rule at the top). Pure.
  * channelTimes: the channel's scheduled posts and recently published videos (ms). channelLast: optional extra time.
- * Returns [{ id, at: ms | null, retry }] for every item that gets a new slot or must wait: `at` null = beyond
+ * Revalidation (Codex review 2026-11-13): a queued item that already has a slot but no upload session yet keeps it only
+ * while it is still at least the current gap from every channel time and every other kept time (checked earliest
+ * first, so of two clashing slots the earlier one stays). The channel may have gained a post at that time, or the gap
+ * may have grown; then the item gets a new slot by the same rule as a new one (reval: true).
+ * Returns [{ id, at: ms | null, retry, reval }] for every item that gets a new slot or must wait: `at` null = beyond
  * maxAheadDays (the item waits without a slot). Items not listed keep what they have.
  */
 export function planQueueSlots({ items, channelLast = null, channelTimes = [], nowMs, cfg }) {
   const list = (items ?? []).filter(isPlain);
-  const moving = list.filter((i) => i.state === 'queued' && (!i.publishAt || isRetry(i, nowMs, cfg)));
-  const ids = new Set(moving.map((i) => i.id));
+  const needs = (i) => i.state === 'queued' && (!i.publishAt || isRetry(i, nowMs, cfg));
+  const held = (i) => i.state === 'queued' && !i.session && !needs(i) && ms(i.publishAt) !== null;
   const taken = [...(channelTimes ?? []), channelLast].filter((v) => Number.isFinite(v));
-  for (const i of list) if (!ids.has(i.id)) taken.push(...itemTimes(i));
+  for (const i of list) if (!needs(i) && !held(i)) taken.push(...itemTimes(i));
   const slots = createSlotter(taken, cfg);
+  const reval = new Set();
+  for (const i of list.filter(held).sort((a, b) => ms(a.publishAt) - ms(b.publishAt))) {
+    const t = ms(i.publishAt);
+    if (slots.conflict(t) === null) { for (const x of itemTimes(i)) slots.add(x); continue; }
+    reval.add(i.id);
+    // Its other times (an old sent or session time) still count as taken.
+    for (const x of itemTimes(i)) if (x !== t) slots.add(x);
+  }
+  const moving = list.filter((i) => needs(i) || reval.has(i.id));
   const cap = maxAheadMs(nowMs, cfg);
   const gap = cfg.intervalHours * HOUR_MS;
   const out = [];
@@ -222,8 +237,9 @@ export function planQueueSlots({ items, channelLast = null, channelTimes = [], n
     let floor = floorFrom(Number.isFinite(next) && next > nowMs ? next : nowMs, cfg);
     if (cfg.placement === 'after-last' && slots.latest() !== null) floor = Math.max(floor, alignUp(slots.latest() + gap, cfg));
     const at = slots.free(floor);
-    if (at > cap) { out.push({ id: i.id, at: null, retry }); continue; }
-    out.push({ id: i.id, at, retry }); slots.add(at);
+    const r = reval.has(i.id);
+    if (at > cap) { out.push({ id: i.id, at: null, retry, reval: r }); continue; }
+    out.push({ id: i.id, at, retry, reval: r }); slots.add(at);
   }
   return out;
 }

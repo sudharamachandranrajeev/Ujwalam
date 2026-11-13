@@ -99,8 +99,9 @@ describe('auto-post settings routes (D375)', () => {
     assert.deepEqual(readdirSync(path.dirname(userRulesFile(t.dataDir))).filter((n) => n.endsWith('.tmp')), []);
     const s = (await t.get('/ui/api/posts/auto/schedule?count=3')).json();
     assert.equal(s.intervalHours, 2);
-    // 12:00 and 13:00 are taken: 2 h from both, so 15:00 first
-    assert.deepEqual(s.next, ['2026-11-13T15:00:00.000Z', '2026-11-13T17:00:00.000Z', '2026-11-13T19:00:00.000Z']);
+    // The gap grew to 2 h: queued 'a' at 12:00 is now within 2 h of the uploaded 13:00, so it is re-slotted to 15:00
+    // (Codex review: a queued slot is re-checked); new clips come after it.
+    assert.deepEqual(s.next, ['2026-11-13T17:00:00.000Z', '2026-11-13T19:00:00.000Z', '2026-11-13T21:00:00.000Z']);
   });
 
   test('next posting times: saved by default; fresh=1 reads the channel (read-only scope) at most every 10 minutes', async () => {
@@ -122,6 +123,27 @@ describe('auto-post settings routes (D375)', () => {
     assert.deepEqual(live.next, ['2026-11-13T15:00:00.000Z', '2026-11-13T16:00:00.000Z']);
     await t.get('/ui/api/posts/auto/schedule?fresh=1');
     assert.equal(reads, 1, 'throttled');
+  });
+
+  test('fresh reads that arrive together share one channel read (Codex review); its calls count in the daily quota', async () => {
+    let reads = 0; let open; const gate = new Promise((r) => { open = r; });
+    const fetchImpl = async (u) => {
+      const url = new URL(u); const ok = (b) => ({ ok: true, status: 200, json: async () => b });
+      if (url.pathname.endsWith('/channels')) { reads++; await gate; return ok({ items: [{ contentDetails: { relatedPlaylists: { uploads: 'UUx' } } }] }); }
+      if (url.pathname.endsWith('/playlistItems')) return ok({ items: [{ snippet: { publishedAt: '2026-11-12T00:00:00Z' }, contentDetails: { videoId: 'c1' } }] });
+      if (url.pathname.endsWith('/videos')) return ok({ items: [{ id: 'c1', status: { privacyStatus: 'private', publishAt: '2026-11-13T14:00:00Z' } }] });
+      return { ok: false, status: 404, json: async () => ({}) };
+    };
+    const auth = { status: async () => ({ signedIn: true, hasClient: true }), accessToken: async () => 'x', grantedScopes: async () => [SCOPE, READONLY_SCOPE] };
+    const t = await boot({ auth, fetchImpl });
+    const all = Promise.all([1, 2, 3].map(() => t.get('/ui/api/posts/auto/schedule?count=1&fresh=1')));
+    await new Promise((r) => setTimeout(r, 100));
+    open();
+    const js = (await all).map((r) => r.json());
+    assert.equal(reads, 1, 'one read for three requests');
+    assert.ok(js.every((j) => j.source === 'live' && j.channel[0] === '2026-11-13T14:00:00.000Z'));
+    const day = JSON.parse(readFileSync(path.join(t.dataDir, 'posting', 'quota-day.json'), 'utf8'));
+    assert.equal(day.units.n, 3, 'channels + playlistItems + videos'); assert.equal(day.uploads.n, 0);
   });
 
   test('fresh read without the readonly scope: a plain error, the saved times still show', async () => {

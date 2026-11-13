@@ -9,10 +9,11 @@
 // (snippet.publishedAt) and when it went public (contentDetails.videoPublishedAt); videos.list part=status -> privacyStatus
 // + publishAt. Only these parts are read (no titles or descriptions). Nothing is written; tokens never leave memory.
 // Big channels (D375): the uploads list comes newest first, so the scan stops at the first page whose items were ALL
-// added more than cfg.lookbackDays ago (no videos.list call for that page). Such a scan is complete (not truncated).
-// Only reaching maxPages first is truncated; the caller then gives out no slot (fail closed). Risk: a video uploaded
-// before the lookback but scheduled to go public later is not seen (UNVERIFIED that the uploads list is ordered by
-// the time a video was added; a page with an unreadable time never ends the scan).
+// added more than cfg.lookbackDays ago. The statuses of every item on that last page are still read (videos.list, Codex
+// review 2026-11-13), so a post on the page that ends the scan is never missed. Such a scan is complete (not truncated).
+// Only reaching maxPages first is truncated; the caller then gives out no slot (fail closed). Residual risk: a video
+// uploaded before the lookback, on a later page, but scheduled to go public later is not seen (UNVERIFIED that the
+// uploads list is ordered by the time a video was added; a page with an unreadable time never ends the scan).
 // Any failure throws ScheduleError: 'schedule-scope-missing' (403 insufficient permissions / 401) or 'schedule-read-failed'.
 // The caller never guesses a slot when this throws.
 import { ScheduleError, futureScheduleTimes, latestFutureSchedule } from './schedule.mjs';
@@ -52,7 +53,7 @@ export async function readChannelSchedule({ accessToken, fetchImpl = fetch, nowM
     const items = Array.isArray(page?.items) ? page.items : [];
     pageToken = typeof page?.nextPageToken === 'string' && page.nextPageToken ? page.nextPageToken : null;
     const added = items.map((i) => msOf(i?.snippet?.publishedAt));
-    if (items.length && added.every((t) => t !== null && t < cutoff)) { reachedLookback = true; pageToken = null; break; }
+    const stop = items.length > 0 && added.every((t) => t !== null && t < cutoff);
     const ids = [];
     for (const i of items) {
       const id = i?.contentDetails?.videoId;
@@ -66,6 +67,7 @@ export async function readChannelSchedule({ accessToken, fetchImpl = fetch, nowM
       const v = await getJson(fetchImpl, `${API}/videos?part=status&id=${ids.map(encodeURIComponent).join(',')}`, accessToken);
       if (Array.isArray(v?.items)) videos.push(...v.items);
     }
+    if (stop) { reachedLookback = true; pageToken = null; break; }
   } while (pageToken && pages < cfg.maxPages);
   const { last, count } = latestFutureSchedule(videos, nowMs);
   const recent = [];

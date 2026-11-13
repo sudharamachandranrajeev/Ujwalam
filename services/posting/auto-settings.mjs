@@ -10,15 +10,15 @@
 //   The card: { autoUpload, kinds[], minScore, maxPerDay, intervalHours, maxAheadDays, placement, quotaUnitsPerDay }.
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { AutoPostError, MAX_PER_DAY, RULE_KINDS, rankerMinScore, userRulesFile, validateRules } from './auto-post.mjs';
 import { DEFAULT_SCHEDULE, HOUR_MS, PLACEMENTS, USER_LIMITS, ScheduleError, alignUp, checkUserSchedule, floorFrom, itemTimes, loadScheduleConfig, maxAheadMs, nextFreeSlots, savedChannelTimes, toIso, userScheduleFile } from './schedule.mjs';
 import { QUEUE_NAME, createUploadQueue } from './auto-chain.mjs';
 import { READONLY_SCOPE } from './oauth.mjs';
 import { readChannelSchedule } from './schedule-read.mjs';
+import { DEFAULT_QUOTA, createQuotaBudget, loadQuota } from './quota-budget.mjs';
 
-const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const DEFAULT_QUOTA = path.join(REPO, 'data', 'posting', 'quota.json');
+export { DEFAULT_QUOTA, loadQuota };
+
 /** The two rules the card writes: one per YouTube target (the target is chosen by length and aspect, limits.json). */
 export const CARD_RULES = Object.freeze([{ id: 'auto-shorts', target: 'youtube-shorts' }, { id: 'auto-videos', target: 'youtube-video' }]);
 export const KIND_LABELS = Object.freeze({ short: 'Short clips', montage: 'Montages', 'won-reel': 'Won-round reels', 'impact-play': 'Impact plays' });
@@ -38,28 +38,14 @@ export function readUserSchedule(dataDir) {
   return isPlain(j) ? checkUserSchedule(j).values : {};
 }
 
-/**
- * The quota numbers (data/posting/quota.json, quotaUnitsPerDay from the user's schedule settings when set) and how many
- * uploads a day fit: floor((quota - read reserve) / (insert + thumbnail)), at least 1. Throws when the data file is bad.
- */
-export function loadQuota(dataDir, file = DEFAULT_QUOTA) {
-  const j = readJson(file);
-  const n = (k) => { const v = j?.[k]; if (!Number.isFinite(v) || v < 0) throw new Error(`quota setting ${k} is not valid`); return v; };
-  const user = typeof dataDir === 'string' ? readUserSchedule(dataDir) : {};
-  const quota = user.quotaUnitsPerDay ?? n('quotaUnitsPerDay');
-  const perUpload = n('insertUnits') + n('thumbnailUnits');
-  const reserve = n('readReserveUnits');
-  const fit = Math.max(1, perUpload > 0 ? Math.floor((quota - reserve) / perUpload) : MAX_PER_DAY);
-  return { quotaUnitsPerDay: quota, perUploadUnits: perUpload, readReserveUnits: reserve, uploadsPerDayFit: Math.min(fit, MAX_PER_DAY), userSet: user.quotaUnitsPerDay !== undefined };
-}
-
 /** What the card shows when the user has no rules file yet (D375): upload on, every kind, the ranker's own floor as the
- *  minimum score (every clip the ranker keeps; the best go first inside the daily cap), as many a day as the quota fits. */
+ *  minimum score (every clip the ranker keeps; the best go first inside the daily cap), as many a day as the quota fits
+ *  (at least 1 in the field: with a quota that fits none, the daily budget still stops every upload, quota-budget.mjs). */
 export function defaultCard(dataDir) {
   const q = loadQuota(dataDir);
   let cfg; // a broken user file is reported by readAutoPostSettings; the defaults still come from the shipped one
   try { cfg = scheduleConfigFor(dataDir); } catch { cfg = loadScheduleConfig(DEFAULT_SCHEDULE); }
-  return { autoUpload: true, kinds: [...RULE_KINDS], minScore: rankerMinScore() ?? 0, maxPerDay: q.uploadsPerDayFit,
+  return { autoUpload: true, kinds: [...RULE_KINDS], minScore: rankerMinScore() ?? 0, maxPerDay: Math.max(1, q.uploadsPerDayFit),
     intervalHours: cfg.intervalHours, maxAheadDays: cfg.maxAheadDays, placement: cfg.placement, quotaUnitsPerDay: q.quotaUnitsPerDay };
 }
 
@@ -229,12 +215,16 @@ export function removeQueueItem(dataDir, id) {
   return { ok: true, item: q.patch(id, { state: 'removed', publishAt: null, session: null, sessionPublishAt: null, reslot: null, nextAt: null, reason: 'removed-by-user' }) };
 }
 
-/** A fresh read of the channel's schedule for the card (read-only; needs the readonly sign-in scope). Throws
- *  ScheduleError ('schedule-scope-missing', 'schedule-read-failed', ...) or the auth error. -> the schedulePreview channel. */
+/** A fresh read of the channel's schedule for the card (read-only; needs the readonly sign-in scope). Its calls count
+ *  in the daily quota budget (quota-budget.mjs); a read that may not fit is not made. Throws ScheduleError
+ *  ('schedule-scope-missing', 'schedule-read-failed', 'quota-day-used', ...) or the auth error. -> the schedulePreview channel. */
 export async function readChannelForPreview({ dataDir, auth, fetchImpl = fetch, nowMs = Date.now() }) {
   const cfg = scheduleConfigFor(dataDir);
+  const budget = createQuotaBudget({ dataDir, nowMs: () => nowMs });
+  const why = budget.readBlock(1 + 2 * cfg.maxPages);
+  if (why) throw new ScheduleError(why, "today's YouTube quota does not leave room for a schedule read");
   const scopes = typeof auth.grantedScopes === 'function' ? await auth.grantedScopes() : null;
   if (!Array.isArray(scopes) || !scopes.includes(READONLY_SCOPE)) throw new ScheduleError('schedule-scope-missing', 'sign in again to allow reading scheduled posts');
-  const read = await readChannelSchedule({ accessToken: await auth.accessToken(), fetchImpl, nowMs, cfg });
+  const read = await readChannelSchedule({ accessToken: await auth.accessToken(), fetchImpl: budget.meter(fetchImpl), nowMs, cfg });
   return { times: read.times ?? [], recent: read.recent ?? [], truncated: read.truncated === true, readAt: toIso(nowMs) };
 }

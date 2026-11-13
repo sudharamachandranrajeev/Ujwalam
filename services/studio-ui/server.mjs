@@ -367,7 +367,9 @@ export function createStudioServer(opts) {
   const uploading = new Set();
   // D375 Auto-post card: a fresh channel read for "Next posting times" at most every 10 minutes (quota), else the saved one.
   const CHANNEL_READ_EVERY_MS = 10 * 60 * 1000;
-  let channelRead = null; // { at, channel } | { at, error }
+  // { at, promise } -> { channel } | { error }. The promise is stored before it is awaited, so requests that arrive while a
+  // read runs share it (one read, one set of quota units; Codex review 2026-11-13).
+  let channelRead = null;
   // Live check, fail closed: outputs.status (any stream sink running), falling back to host.status.live; both failing = refuse.
   async function ytOutputsStatus() {
     if (opts.youtube?.outputsStatus) return opts.youtube.outputsStatus();
@@ -1283,11 +1285,11 @@ export function createStudioServer(opts) {
       let channel = null; let liveError = null;
       if (url.searchParams.get('fresh') === '1') {
         if (!channelRead || t - channelRead.at >= CHANNEL_READ_EVERY_MS) {
-          try { channelRead = { at: t, channel: await readChannelForPreview({ dataDir: opts.dataDir, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl ?? fetch, nowMs: t }) }; } catch (e) {
-            channelRead = { at: t, error: String(e?.code ?? 'schedule-read-failed').slice(0, 40) };
-          }
+          channelRead = { at: t, promise: (async () => readChannelForPreview({ dataDir: opts.dataDir, auth: youtubeAuth(), fetchImpl: opts.youtube?.fetchImpl ?? fetch, nowMs: t }))()
+            .then((c) => ({ channel: c }), (e) => ({ error: String(e?.code ?? 'schedule-read-failed').slice(0, 40) })) };
         }
-        channel = channelRead.channel ?? null; liveError = channelRead.error ?? null;
+        const r = await channelRead.promise;
+        channel = r.channel ?? null; liveError = r.error ?? null;
       }
       const count = Number(url.searchParams.get('count') ?? 10);
       try { return json(res, 200, { ...schedulePreview(opts.dataDir, { nowMs: t, count: Number.isFinite(count) ? count : 10, channel }), liveError }); } catch { return json(res, 500, { error: 'schedule-unavailable' }); }

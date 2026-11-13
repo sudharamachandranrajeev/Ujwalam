@@ -239,12 +239,17 @@ QString Card::localProblem() const
 
 void Card::updateFit()
 {
-	// Same sum as the server (auto-settings.mjs loadQuota): (quota - read reserve) / (upload + thumbnail units).
+	// Same sum as the server (quota-budget.mjs loadQuota): (quota - read reserve) / (upload + thumbnail units); 0 is
+	// possible and is said plainly (the daily budget then stops every upload).
 	const int per = quota_.value(QStringLiteral("perUploadUnits")).toInt(0);
 	const int reserve = quota_.value(QStringLiteral("readReserveUnits")).toInt(0);
-	const int fit = per > 0 ? std::max(1, (quotaUnits_->value() - reserve) / per) : perDay_->maximum();
+	const int fit = per > 0 ? std::max(0, (quotaUnits_->value() - reserve) / per) : perDay_->maximum();
 	QString t = QStringLiteral("About %1 uploads a day fit in the quota.").arg(fit);
-	if (perDay_->value() > fit)
+	if (fit == 0)
+		t = QStringLiteral("No upload fits in a quota of %1 units a day (one upload needs %2): nothing uploads until the quota is raised.")
+				.arg(quotaUnits_->value())
+				.arg(per + reserve);
+	else if (perDay_->value() > fit)
 		t += QStringLiteral(" More than that a day stop at the quota and wait for the next day.");
 	fit_->setText(t);
 	const QString p = localProblem();

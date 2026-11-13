@@ -4,7 +4,7 @@
 // Fakes only: temp dirs and fake fetch functions. No network, no real channel, nothing outside the temp dirs.
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { after, describe, test } from 'node:test';
@@ -12,8 +12,9 @@ import { MAX_PER_DAY, RULE_KINDS, oldestFirst, planAuto, rankerMinScore, userRul
 import { CARD_RULES, checkCard, defaultCard, loadQuota, moveQueueItem, readAutoPostSettings, removeQueueItem, rulesFromCard, saveAutoPostSettings, schedulePreview } from '../services/posting/auto-settings.mjs';
 import { QUEUE_NAME, createUploadQueue } from '../services/posting/auto-chain.mjs';
 import { FOLDER_RUN, scanClipsFolder } from '../services/posting/clips-source.mjs';
-import { DELETE_FLAG, checkInFolder, deleteUploadedFile, statusVerdict } from '../services/posting/delete-uploaded.mjs';
-import { DEFAULT_SCHEDULE, loadScheduleConfig, userScheduleFile } from '../services/posting/schedule.mjs';
+import { DELETE_FLAG, FINAL_KEEP, checkInFolder, deleteUploadedFile, hashWithIdentity, sameFileStill, statusVerdict } from '../services/posting/delete-uploaded.mjs';
+import { DEFAULT_SCHEDULE, loadScheduleConfig, planQueueSlots, userScheduleFile } from '../services/posting/schedule.mjs';
+import { QUOTA_DAY_NAME, createQuotaBudget, pacificDay, utcDay } from '../services/posting/quota-budget.mjs';
 import { readChannelSchedule } from '../services/posting/schedule-read.mjs';
 
 const tmp = [];
@@ -27,9 +28,9 @@ const sha = (buf) => createHash('sha256').update(buf).digest('hex');
 describe('channel read: lookback (D375)', () => {
   // 2500 uploads, one every 6 h, newest first; three scheduled ones among the newest. The shipped settings check at most
   // 40 pages of 50 (2000 uploads): without the lookback this channel would hit the cap and nothing would upload.
-  function fakeChannel(total) {
+  function fakeChannel(total, extra = []) {
     const ups = Array.from({ length: total }, (_, i) => ({ id: `v${i}`, added: T0 - i * 6 * HOUR }));
-    const sched = new Map([['v0', T0 + 5 * HOUR], ['v1', T0 + 30 * HOUR], ['v3', T0 + 3 * DAY]]);
+    const sched = new Map([['v0', T0 + 5 * HOUR], ['v1', T0 + 30 * HOUR], ['v3', T0 + 3 * DAY], ...extra]);
     const calls = { channels: 0, playlist: 0, videos: 0 };
     const fetchImpl = async (u) => {
       const url = new URL(u); const ok = (b) => ({ ok: true, status: 200, json: async () => b });
@@ -57,9 +58,18 @@ describe('channel read: lookback (D375)', () => {
     const r = await readChannelSchedule({ accessToken: 'x', fetchImpl: f.fetchImpl, nowMs: T0, cfg });
     assert.equal(r.truncated, false); assert.equal(r.reachedLookback, true);
     // 120 days at 4 uploads a day = 480 uploads = 10 pages, then the 11th page is all older: 11 pages, never 40
-    assert.equal(r.pages, 11); assert.equal(f.calls.playlist, 11); assert.equal(f.calls.videos, 10, 'no status read for the old page');
+    assert.equal(r.pages, 11); assert.equal(f.calls.playlist, 11); assert.equal(f.calls.videos, 11, 'the page that ends the scan is still status-checked');
     assert.ok(r.scanned >= 480 && r.scanned < 1000);
     assert.deepEqual(r.times.map(iso), [T0 + 5 * HOUR, T0 + 30 * HOUR, T0 + 3 * DAY].map(iso));
+  });
+
+  test('a post on the page that ends the scan (uploaded long ago, scheduled ahead) is still seen (Codex review)', async () => {
+    const cfg = loadScheduleConfig(DEFAULT_SCHEDULE);
+    // v500 sits on the 11th page (items 500..549), all added more than 120 days back; it goes public in 2 days.
+    const f = fakeChannel(2500, [['v500', T0 + 2 * DAY]]);
+    const r = await readChannelSchedule({ accessToken: 'x', fetchImpl: f.fetchImpl, nowMs: T0, cfg });
+    assert.equal(r.reachedLookback, true); assert.equal(r.pages, 11);
+    assert.ok(r.times.includes(T0 + 2 * DAY), 'the cutoff page post counts as a taken time');
   });
 
   test('a page with an item that has no added date is never treated as past the lookback (keeps reading, fail closed)', async () => {
@@ -286,5 +296,126 @@ describe('permanent delete after a processed upload (delete-uploaded.mjs)', () =
     assert.equal(r.deleted, false); assert.ok(['outside-folder', 'link'].includes(r.reason), r.reason);
     assert.ok(existsSync(victim));
     assert.equal(checkInFolder(path.join(j, path.basename(f.file)), f.folder) !== null, true);
+  });
+});
+
+// ---------------------------------------------------------------- Codex review of f253771 (2026-11-13)
+
+describe('Codex review: delete race, slot re-check, daily budget', () => {
+  function delFixture() {
+    const folder = mk(); const day = path.join(folder, '2026-11-09'); mkdirSync(day);
+    const buf = Buffer.from('clip bytes '.repeat(20)); const file = path.join(day, 'codm_short_20261109-100000_x_01_v.mp4');
+    writeFileSync(file, buf);
+    const item = { id: 'p1', videoId: 'VID1', sha: sha(buf), sentPublishAt: '2026-11-14T12:00:00.000Z' };
+    const ledgerEntry = { status: 'uploaded', videoId: 'VID1', sha256: sha(buf), publishAt: '2026-11-14T12:00:00.000Z' };
+    const logFile = path.join(mk(), 'posting', 'deleted.jsonl');
+    return { folder, day, file, buf, logFile, base: { flagOn: true, status: { found: true, uploadStatus: 'processed' }, item, ledgerEntry, file, folder, logFile, nowMs: T0 } };
+  }
+
+  test('delete: the file is swapped for another with the same bytes between the hash and the unlink: kept, nothing logged', async () => {
+    const f = delFixture();
+    const r = await deleteUploadedFile({ ...f.base, beforeUnlink: () => { rmSync(f.file); writeFileSync(f.file, f.buf); } });
+    assert.equal(r.deleted, false); assert.equal(r.reason, 'file-changed');
+    assert.ok(existsSync(f.file)); assert.equal(existsSync(f.logFile), false);
+    assert.equal(FINAL_KEEP.has('file-changed'), false, 'checked again on a later pass (from the start)');
+  });
+
+  test('delete: the file is written to (same size) between the hash and the unlink: kept', async () => {
+    const f = delFixture();
+    const r = await deleteUploadedFile({ ...f.base, beforeUnlink: () => { writeFileSync(f.file, Buffer.from(f.buf.toString().toUpperCase())); utimesSync(f.file, new Date(T0 + DAY), new Date(T0 + DAY)); } });
+    assert.equal(r.reason, 'file-changed'); assert.ok(existsSync(f.file));
+  });
+
+  test('delete: the day folder is swapped for a junction that leads out between the hash and the unlink: the file outside is kept', async (t) => {
+    const f = delFixture();
+    const elsewhere = mk(); const victim = path.join(elsewhere, path.basename(f.file)); writeFileSync(victim, f.buf);
+    let made = false;
+    const r = await deleteUploadedFile({ ...f.base, beforeUnlink: () => {
+      renameSync(f.day, `${f.day}-moved`);
+      try { symlinkSync(elsewhere, f.day, 'junction'); made = true; } catch { /* checked below */ }
+    } });
+    if (!made) { t.skip('cannot create a junction here'); return; }
+    assert.equal(r.deleted, false); assert.ok(['outside-folder', 'link', 'file-changed'].includes(r.reason), r.reason);
+    assert.ok(existsSync(victim)); assert.ok(existsSync(path.join(`${f.day}-moved`, path.basename(f.file))));
+  });
+
+  test('delete: UNC, device and long-path forms are refused before anything is read', async () => {
+    const f = delFixture();
+    for (const p of ['\\\\server\\share\\clips\\a.mp4', '\\\\?\\C:\\clips\\a.mp4', '\\\\.\\C:\\clips\\a.mp4', '//server/share/a.mp4']) {
+      assert.equal(checkInFolder(p, f.folder), 'unc-path', p);
+    }
+    assert.equal(checkInFolder(f.file, '\\\\server\\share'), 'unc-path');
+    assert.equal((await deleteUploadedFile({ ...f.base, file: `\\\\?\\${f.file}` })).reason, 'unc-path');
+    assert.ok(existsSync(f.file));
+    const id = (await hashWithIdentity(f.file)).id;
+    assert.equal(sameFileStill(f.file, f.folder, id), null, 'unchanged file: allowed');
+  });
+
+  const CFG = { ...loadScheduleConfig(DEFAULT_SCHEDULE), intervalHours: 1, alignMinutes: 60, placement: 'fill-gaps' };
+  const at = (h) => T0 + h * HOUR;
+  test('slots: a queued slot (no session) that a new channel post now clashes with gets a new slot; a free one stays', () => {
+    const items = [
+      { id: 'a', state: 'queued', publishAt: iso(at(5)) },
+      { id: 'b', state: 'queued', publishAt: iso(at(8)) },
+      { id: 's', state: 'queued', publishAt: iso(at(10)), session: 'https://example.invalid/s' },
+    ];
+    const plan = planQueueSlots({ items, channelTimes: [at(5) + 30 * 60 * 1000, at(10)], nowMs: T0, cfg: CFG });
+    assert.deepEqual(plan.map((p) => [p.id, p.at === null ? null : iso(p.at), p.reval]), [['a', iso(at(2)), true]],
+      'a moves to the first free hour (now + lead + margin, on the hour); b is still free; s has a session and is never moved');
+    assert.deepEqual(planQueueSlots({ items, channelTimes: [], nowMs: T0, cfg: CFG }), [], 'nothing clashes: nothing moves');
+  });
+
+  test('slots: the gap grew: of two queued slots now too close, the earlier one stays and the later one moves', () => {
+    const items = [{ id: 'a', state: 'queued', publishAt: iso(at(4)) }, { id: 'b', state: 'queued', publishAt: iso(at(5)) }, { id: 'c', state: 'done', sentPublishAt: iso(at(7)) }];
+    const plan = planQueueSlots({ items, channelTimes: [], nowMs: T0, cfg: { ...CFG, intervalHours: 2 } });
+    assert.deepEqual(plan.map((p) => [p.id, iso(p.at), p.reval]), [['b', iso(at(2)), true]], 'b fills the first free gap: 2 h before a');
+  });
+
+  test('budget: uploads per UTC day and quota units persist across restarts; a new day starts again at 0', () => {
+    const dataDir = mk(); const clock = { t: T0 };
+    const quota = () => ({ quotaUnitsPerDay: 4900, perUploadUnits: 1650 });
+    const b = () => createQuotaBudget({ dataDir, nowMs: () => clock.t, quota });
+    assert.equal(b().uploadBlock(2), null);
+    b().chargeUpload();
+    assert.equal(b().uploadBlock(1), 'daily-cap-reached');
+    assert.equal(b().uploadBlock(5), null);
+    b().chargeUpload();
+    assert.equal(b().state().units.n, 3300);
+    assert.equal(b().uploadBlock(5), 'quota-day-used', '3300 + 1650 > 4900');
+    b().chargeRead(1700);
+    assert.equal(b().readBlock(1), 'quota-day-used');
+    clock.t += DAY;
+    assert.deepEqual([b().state().uploads.n, b().state().units.n], [0, 0]);
+    assert.equal(utcDay(T0), '2026-11-13'); assert.equal(pacificDay(Date.parse('2026-11-13T07:00:00Z')), '2026-11-12');
+  });
+
+  test('budget: an unreadable counter file or quota file blocks uploads and reads (fail closed)', () => {
+    const dataDir = mk();
+    mkdirSync(path.join(dataDir, 'posting'), { recursive: true });
+    writeFileSync(path.join(dataDir, 'posting', QUOTA_DAY_NAME), '{ not json');
+    const b = createQuotaBudget({ dataDir, nowMs: () => T0, quota: () => ({ quotaUnitsPerDay: 10000, perUploadUnits: 1650 }) });
+    assert.equal(b.uploadBlock(null), 'quota-unreadable'); assert.equal(b.readBlock(1), 'quota-unreadable');
+    const bad = createQuotaBudget({ dataDir: mk(), nowMs: () => T0, quota: () => { throw new Error('bad'); } });
+    assert.equal(bad.uploadBlock(null), 'quota-unreadable');
+  });
+
+  test('budget: the metered fetch counts each Data API read (1 unit), never an upload request', async () => {
+    const dataDir = mk(); const seen = [];
+    const b = createQuotaBudget({ dataDir, nowMs: () => T0, quota: () => ({ quotaUnitsPerDay: 10000, perUploadUnits: 1650 }) });
+    const f = b.meter(async (u) => { seen.push(u); return { ok: true }; });
+    await f('https://www.googleapis.com/youtube/v3/videos?part=status&id=x', { method: 'GET' });
+    await f('https://www.googleapis.com/youtube/v3/channels?part=contentDetails&mine=true');
+    await f('https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable', { method: 'POST' });
+    await f('https://example.invalid/session', { method: 'PUT' });
+    assert.equal(seen.length, 4); assert.equal(b.state().units.n, 2);
+  });
+
+  test('quota fit may be 0: a quota below one upload fits none (the card says so); the card field still starts at 1', () => {
+    const dataDir = mk();
+    mkdirSync(path.dirname(userScheduleFile(dataDir)), { recursive: true });
+    writeFileSync(userScheduleFile(dataDir), JSON.stringify({ quotaUnitsPerDay: 1000 }));
+    const q = loadQuota(dataDir);
+    assert.equal(q.uploadsPerDayFit, 0); assert.equal(q.quotaUnitsPerDay, 1000);
+    assert.equal(defaultCard(dataDir).maxPerDay, 1);
   });
 });

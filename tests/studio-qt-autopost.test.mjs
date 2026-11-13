@@ -102,6 +102,12 @@ describe('Qt studio: Settings > Posting & growth > Auto-post (D375)', { skip }, 
     assert.match(c.fit, /More than that a day stop at the quota/);
   });
 
+  test('a quota below one upload: the card says plainly that nothing uploads (fit 0, Codex review)', async () => {
+    const { p } = await probe({ actions: ['settings-open', PAGE, 'ap-quota:1000'] });
+    assert.ok(Object.values(done(p)).every(Boolean), JSON.stringify(p.actions));
+    assert.match(p.autopostCard.fit, /No upload fits in a quota of 1,?000 units a day \(one upload needs 1,?750\): nothing uploads until the quota is raised/);
+  });
+
   test('Save writes the user files in the data folder (one click, no question)', async () => {
     const { p, dataDir } = await probe({ actions: ['settings-open', PAGE, 'ap-gap:6', 'ap-kind:impact-play:off', 'ap-placement:after-last', 'settings-save'] });
     assert.ok(Object.values(done(p)).every(Boolean), JSON.stringify(p.actions));

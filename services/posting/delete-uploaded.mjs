@@ -11,22 +11,31 @@
 //      inside the clips folder by its real path (a junction or link that leads out is refused), never a folder, and its
 //      sha256 equals the uploaded video's;
 // then it is unlinked and one line { file (name only), videoId, at } is appended to <data>/posting/deleted.jsonl.
+// Race (Codex review 2026-11-13): the file is opened once and hashed through that handle; its identity (device, file id,
+// size, modified time) is taken from the same handle. Right before the unlink the path is looked up again (lstat) and
+// its folder's real path resolved again; the unlink happens only if the identity is unchanged and the folder still
+// resolves inside the clips folder. Node has no unlink-by-handle, so a swap in the few microseconds between that last
+// check and the unlink is still possible (residual risk, documented in docs/evidence/2026-11-13-auto-post-scheduled.md).
+import { createHash } from 'node:crypto';
 import { appendFileSync, lstatSync, mkdirSync, realpathSync, unlinkSync } from 'node:fs';
+import { open } from 'node:fs/promises';
 import path from 'node:path';
-import { sha256File } from './index.mjs';
 
 export const DELETE_FLAG = 'post-delete-uploaded';
 export const DELETED_LOG_NAME = 'deleted.jsonl';
 /** Reasons that will not change by waiting: the file is kept and not checked again. Every other reason is checked again. */
-export const FINAL_KEEP = new Set(['upload-failed', 'upload-rejected', 'not-in-folder', 'outside-folder', 'link', 'not-a-file', 'sha-mismatch', 'no-source-file', 'file-gone']);
+export const FINAL_KEEP = new Set(['upload-failed', 'upload-rejected', 'not-in-folder', 'outside-folder', 'link', 'not-a-file', 'sha-mismatch', 'no-source-file', 'file-gone', 'unc-path']);
 
 const lower = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
 const inside = (child, parent) => { const rel = path.relative(parent, child); return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
+/** A UNC, device or long-path form (\\server\share, \\?\, \\.\, //x): never used for a delete. */
+const uncLike = (p) => /^[\\/]{2}/.test(p);
 
 /** Is `file` a regular file inside `folder`, reached without any link? -> null (yes) or the reason it is not. */
 export function checkInFolder(file, folder) {
   if (typeof file !== 'string' || !file || !path.isAbsolute(file)) return 'no-source-file';
   if (typeof folder !== 'string' || !folder) return 'not-in-folder';
+  if (uncLike(file) || uncLike(folder)) return 'unc-path';
   const lexical = path.resolve(file);
   if (!inside(lower(lexical), lower(path.resolve(folder)))) return 'not-in-folder';
   let st;
@@ -41,6 +50,35 @@ export function checkInFolder(file, folder) {
   return null;
 }
 
+/** sha256 and identity of the file, both through one open handle. -> { sha, id: { dev, ino, size, mtimeNs } }. */
+export async function hashWithIdentity(file) {
+  const fh = await open(file, 'r');
+  try {
+    const st = await fh.stat({ bigint: true });
+    const h = createHash('sha256'); const buf = Buffer.allocUnsafe(1 << 20);
+    for (let n; (n = (await fh.read(buf, 0, buf.length, null)).bytesRead) > 0;) h.update(n === buf.length ? buf : buf.subarray(0, n));
+    const after = await fh.stat({ bigint: true });
+    if (after.size !== st.size || after.mtimeNs !== st.mtimeNs) throw Object.assign(new Error('changed while hashed'), { code: 'file-changed' });
+    return { sha: h.digest('hex'), id: { dev: st.dev, ino: st.ino, size: st.size, mtimeNs: st.mtimeNs } };
+  } finally { await fh.close(); }
+}
+
+/** Right before the unlink: the path still names the same file (lstat: same device, file id, size, modified time, not
+ *  a link) and its folder still resolves inside the clips folder. -> null (go) or the reason to keep it. */
+export function sameFileStill(file, folder, id) {
+  let st;
+  try { st = lstatSync(file, { bigint: true }); } catch (e) { return e?.code === 'ENOENT' ? 'file-gone' : 'file-unreadable'; }
+  if (st.isSymbolicLink() || !st.isFile()) return 'file-changed';
+  if (!id || id.ino === 0n || st.dev !== id.dev || st.ino !== id.ino || st.size !== id.size || st.mtimeNs !== id.mtimeNs) return 'file-changed';
+  let realDir; let realFolder;
+  try { realDir = realpathSync.native(path.dirname(path.resolve(file))); realFolder = realpathSync.native(path.resolve(folder)); } catch { return 'file-unreadable'; }
+  if (uncLike(realDir) !== uncLike(realFolder)) return 'unc-path';
+  const dirRel = lower(path.relative(realFolder, realDir));
+  if (dirRel.startsWith('..') || path.isAbsolute(dirRel)) return 'outside-folder';
+  if (dirRel !== lower(path.relative(path.resolve(folder), path.dirname(path.resolve(file))))) return 'link';
+  return null;
+}
+
 /** The status check's verdict: 'processed' (may delete), 'final' (failed/rejected: keep for good), else null (ask again). */
 export function statusVerdict(status) {
   if (!status || status.found !== true) return null;
@@ -49,7 +87,7 @@ export function statusVerdict(status) {
   return null;
 }
 
-export async function deleteUploadedFile({ flagOn, status, item, ledgerEntry, file, folder, logFile, nowMs = Date.now() }) {
+export async function deleteUploadedFile({ flagOn, status, item, ledgerEntry, file, folder, logFile, nowMs = Date.now(), beforeUnlink = null }) {
   const keep = (reason) => ({ deleted: false, reason });
   if (flagOn !== true) return keep('flag-off');
   const v = statusVerdict(status);
@@ -61,11 +99,13 @@ export async function deleteUploadedFile({ flagOn, status, item, ledgerEntry, fi
   if (ledgerEntry.publishAt !== item.sentPublishAt) return keep('no-publish-time');
   const where = checkInFolder(file, folder);
   if (where) return keep(where);
-  let sha;
-  try { sha = await sha256File(file); } catch { return keep('file-unreadable'); }
-  if (sha !== item.sha) return keep('sha-mismatch');
-  // Checked again right before the unlink: the file must still be the same regular file in the folder.
-  const again = checkInFolder(file, folder);
+  let hashed;
+  try { hashed = await hashWithIdentity(file); } catch (e) { return keep(e?.code === 'file-changed' ? 'file-changed' : 'file-unreadable'); }
+  if (hashed.sha !== item.sha) return keep('sha-mismatch');
+  if (typeof beforeUnlink === 'function') await beforeUnlink(); // test seam: what another program could do meanwhile
+  // Checked again right before the unlink: the same file (by its id) at the same path, in a folder that still resolves
+  // inside the clips folder.
+  const again = checkInFolder(file, folder) ?? sameFileStill(file, folder, hashed.id);
   if (again) return keep(again);
   try { unlinkSync(file); } catch (e) { return keep(e?.code === 'ENOENT' ? 'file-gone' : 'delete-failed'); }
   const at = new Date(nowMs).toISOString();
