@@ -123,9 +123,11 @@ Dialog {
         if (busy) return;
         busy = true;
         streamPg.reset();
+        transPg.reset();
         Api.get("ui/api/flags", (fok, fb) => {
             if (fok && Array.isArray(fb.flags)) store.takeFlags(fb.flags);
             if (store.flags["stream-settings"] === true) streamPg.load(); // in step with the settings, not after them
+            if (store.flags["stream-settings"] === true && store.flags["transitions"] === true) transPg.load();
             Api.get("ui/api/settings", (ok, b, err) => {
                 busy = false;
                 if (!ok) return store.say("Settings not available: " + err);
@@ -213,7 +215,7 @@ Dialog {
         if (transMsNow(d) !== (kindRange(d.transKind) ? s.transMs : 0)) return true;
         if (d.recDir.trim() !== s.recDir.trim() || d.clipDir.trim() !== s.clipDir.trim()) return true;
         for (const id in flagDraft) if ((flagStart[id] === true) !== flagDraft[id]) return true;
-        return streamPg.dirty;
+        return streamPg.dirty || transPg.dirty;
     }
     function body() {
         const d = draft, s = start, out = {};
@@ -259,6 +261,7 @@ Dialog {
         const b = body(), d = draft, s = start;
         const flagChanges = [];
         for (const id in flagDraft) if ((flagStart[id] === true) !== flagDraft[id]) flagChanges.push([id, flagDraft[id], flagLabel(id)]);
+        transPg.save(); // its own routes, like the Stream page
         streamPg.save(); // its own route; the server checks every value again (before the window closes: closing resets the page)
         saving = true;
         unsaved.close();
@@ -501,7 +504,8 @@ Dialog {
                 pageId: "transitions"
                 lead: !dlg.flagOn("transitions") ? "Switch on " + dlg.flagLabel("transitions") + " below and click Save to use these settings."
                     : !dlg.flagOn("stream-settings") ? "These settings also need " + dlg.flagLabel("stream-settings") + ": switch it on in Settings > Stream and click Save."
-                    : "This window does not show the transition settings yet. Use Settings in the classic studio window for now."
+                    : ""
+                SettingsTransitions { id: transPg; box: dlg }
             }
 
             SettingsPage {
@@ -740,6 +744,7 @@ Dialog {
             recordLive: { on: draft.recordLive, text: "Record while live", visible: page === "Clips",
                 hint: "Records the stream (H and V) to your recordings folder so reels can be made after it ends. Uses about 10 GB per hour." },
             snap: draft.snap, unsavedOpen: unsaved.opened, guide: guide, streamPage: streamPg.active ? streamPg.probe() : null,
+            transitionsPage: transPg.active ? transPg.probe() : null,
             size: [width, height]
         };
     }
@@ -766,6 +771,7 @@ Dialog {
         }
         if (!opened) return false;
         if (p[0].startsWith("stream-")) return streamPg.active && streamPg.probeAction(p);
+        if (p[0].startsWith("tr-")) return transPg.active && transPg.probeAction(p);
         switch (p[0]) {
         case "settings-shot": { // settings-shot:<png path>: a picture of the Settings window (it is its own window)
             const file = a.slice("settings-shot:".length);

@@ -32,7 +32,7 @@ ApplicationWindow {
     }
     // Probe actions the C++ side does not know (settings-*): the same names as the widget studio's probe.
     function probeAction(action) {
-        if (String(action).startsWith("settings-") || String(action).startsWith("stream-")) return settingsDlg.probeAction(String(action));
+        if (String(action).startsWith("settings-") || String(action).startsWith("stream-") || String(action).startsWith("tr-")) return settingsDlg.probeAction(String(action));
         return false;
     }
 
