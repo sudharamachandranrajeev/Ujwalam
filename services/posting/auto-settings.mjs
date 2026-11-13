@@ -38,11 +38,17 @@ export function readUserSchedule(dataDir) {
   return isPlain(j) ? checkUserSchedule(j).values : {};
 }
 
+/** The quota for the card: the user's own when it can be read; with a broken user settings file the shipped numbers plus
+ *  `error` (the card shows it and can save a fix; the chain's budget blocks every upload and read meanwhile). */
+export function cardQuota(dataDir) {
+  try { return { ...loadQuota(dataDir), error: null }; } catch (e) { return { ...loadQuota(null), error: e?.message ?? 'quota settings could not be read' }; }
+}
+
 /** What the card shows when the user has no rules file yet (D375): upload on, every kind, the ranker's own floor as the
  *  minimum score (every clip the ranker keeps; the best go first inside the daily cap), as many a day as the quota fits
  *  (at least 1 in the field: with a quota that fits none, the daily budget still stops every upload, quota-budget.mjs). */
 export function defaultCard(dataDir) {
-  const q = loadQuota(dataDir);
+  const q = cardQuota(dataDir);
   let cfg; // a broken user file is reported by readAutoPostSettings; the defaults still come from the shipped one
   try { cfg = scheduleConfigFor(dataDir); } catch { cfg = loadScheduleConfig(DEFAULT_SCHEDULE); }
   return { autoUpload: true, kinds: [...RULE_KINDS], minScore: rankerMinScore() ?? 0, maxPerDay: Math.max(1, q.uploadsPerDayFit),
@@ -107,7 +113,7 @@ export function readAutoPostSettings(dataDir) {
   }
   let scheduleError = null;
   try { scheduleConfigFor(dataDir); } catch (e) { scheduleError = e instanceof ScheduleError ? e.message : 'schedule settings could not be read'; }
-  const quota = loadQuota(dataDir);
+  const quota = cardQuota(dataDir);
   return {
     exists, custom, error, scheduleError, card, defaults,
     kinds: RULE_KINDS.map((id) => ({ id, label: KIND_LABELS[id] ?? id })),
@@ -221,10 +227,15 @@ export function removeQueueItem(dataDir, id) {
 export async function readChannelForPreview({ dataDir, auth, fetchImpl = fetch, nowMs = Date.now() }) {
   const cfg = scheduleConfigFor(dataDir);
   const budget = createQuotaBudget({ dataDir, nowMs: () => nowMs });
-  const why = budget.readBlock(1 + 2 * cfg.maxPages);
-  if (why) throw new ScheduleError(why, "today's YouTube quota does not leave room for a schedule read");
   const scopes = typeof auth.grantedScopes === 'function' ? await auth.grantedScopes() : null;
   if (!Array.isArray(scopes) || !scopes.includes(READONLY_SCOPE)) throw new ScheduleError('schedule-scope-missing', 'sign in again to allow reading scheduled posts');
-  const read = await readChannelSchedule({ accessToken: await auth.accessToken(), fetchImpl: budget.meter(fetchImpl), nowMs, cfg });
+  const accessToken = await auth.accessToken();
+  // The whole read's units are reserved before the first request; unused ones are given back.
+  let scan;
+  try { scan = budget.reserveScan(1 + 2 * cfg.maxPages, fetchImpl); } catch (e) {
+    throw new ScheduleError(String(e?.code ?? 'quota-unreadable'), "today's YouTube quota does not leave room for a schedule read");
+  }
+  let read;
+  try { read = await readChannelSchedule({ accessToken, fetchImpl: scan.fetch, nowMs, cfg }); } finally { scan.done(); }
   return { times: read.times ?? [], recent: read.recent ?? [], truncated: read.truncated === true, readAt: toIso(nowMs) };
 }

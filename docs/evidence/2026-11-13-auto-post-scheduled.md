@@ -75,13 +75,51 @@ and unlink, UNC forms, slot re-check unit cases, budget counters, day roll-over,
 approvals, then the next UTC and Pacific days), `tests/studio-ui-posting-auto.test.mjs` (three concurrent fresh reads,
 one channel read, 3 units counted), `tests/studio-qt-autopost.test.mjs` (fit 0 text).
 
+## Codex re-review of 3c8fd62 (2026-11-13): fixes
+
+1. **Delete through a holding folder (P1).** After the checks above, the clip is no longer unlinked at its own path.
+   It is moved by one atomic `rename` (same volume) under a random name into `<clips folder>/.ujwalam-deleting/`
+   (made if missing; refused when it is a link or junction or resolves elsewhere: `hold-unsafe`). There it is checked
+   again through its own handle: a regular file with the same device, file id, size, modified time and sha256. Only
+   then is it unlinked. On any mismatch it is moved back to its path when that path is still free (`file-changed`,
+   checked again later); if the path was taken meanwhile it stays in the holding folder (`held-in-holding-folder`,
+   final: never overwritten, never deleted). The clips scan reads only `YYYY-MM-DD` folders, so it never sees the
+   holding folder. No stronger stdlib way exists: Node has no delete-by-handle and no `renameat`/`O_TMPFILE`.
+   **What remains:** a program that can write the holding folder and guesses the random 16-hex-digit name within the
+   microseconds between the last check and the unlink; and a crash between the rename and the unlink leaves the
+   verified file in the holding folder (nothing lost; the user can delete or move it).
+2. **Locked counters (P1).** `quota-budget.mjs`: every change (charge, reservation, refund) runs under an exclusive lock
+   file `quota-day.json.lock` (created with `wx`); the limit check and the charge are one locked step
+   (`reserveUpload`, `reserveRead`). A lock older than 30 s is renamed away and removed (its holder died); a lock busy
+   for 3 s gives `quota-busy` (nothing uploads or reads). Windows "delete pending" (`EPERM`) on the lock and a busy
+   replace of the counter file are retried, not errors. Tested with four processes charging at once (no charge lost).
+3. **Reads reserved before sending (P1).** The chain's and the card's schedule reads reserve 1 + 2 x maxPages units up
+   front (`reserveScan`) and give back what they did not use; a request past the reservation is refused unsent. Other
+   reads (status checks for the delete) reserve 1 unit each before sending (`meter`); over budget nothing is sent.
+4. **Strict counter file (P1).** The file must be an object with both counters, each `{ day: YYYY-MM-DD, n: whole
+   number >= 0 }`. Anything else (string, negative or fractional n, a missing counter or day, not JSON) blocks uploads
+   and reads (`quota-unreadable`). Only a valid counter from another day starts again at 0; a missing file is day one.
+5. **Strict user settings (P1).** An absent `<data>/posting/schedule.json` uses the shipped quota; an existing file that
+   cannot be read, is not JSON, or has any invalid value blocks uploads and reads. The card still loads (shipped
+   numbers plus the reason) so the user can save a fix.
+6. **Read reserve in admission (P2).** An upload may start only while used units + one upload <= quotaUnitsPerDay -
+   readReserveUnits, the same sum as the "uploads a day fit" number: a fit of 0 never uploads. Reads may use the whole
+   quota.
+
+Tests for each: `tests/posting-auto-d375.test.mjs` (holding folder used and left empty; a swap there moved back; a taken
+path keeps it in the holding folder; a junction holding folder refused; four processes, no charge lost; busy and stale
+locks; check-and-charge in one step; reads reserved, refused unsent, unused given back; every malformed counter; user
+settings absent / broken / invalid; fit 0 with the reserve), `tests/posting-e2e.test.mjs` (fit 0 and a broken settings
+file: nothing uploads). The D314 retry e2e test now gets a larger quota: its six attempts in one day no longer fit the
+shipped quota once the read reserve is kept.
+
 ## Tests
 
 ```
 node --test tests/posting*.test.mjs tests/studio-ui-posting*.test.mjs tests/flags.test.mjs tests/learning-mix.test.mjs \
   tests/data-reload.test.mjs tests/guide.test.mjs tests/package-alpha.test.mjs tests/studio-ui-flags-feedback.test.mjs \
   tests/studio-ui-growth.test.mjs tests/studio-qt-autopost.test.mjs
-ℹ tests 350   ℹ pass 348   ℹ fail 0   ℹ skipped 2   (after the Codex fixes; f253771: 334 / 332)
+ℹ tests 362   ℹ pass 360   ℹ fail 0   ℹ skipped 2   (after the Codex re-review fixes; 3c8fd62: 350 / 348; f253771: 334 / 332)
 ```
 
 (The 2 skipped: the Auto-post screenshot test without `AUTOPOST_SHOT_DIR`, and one existing skip in
@@ -91,11 +129,11 @@ New or rewritten files:
 
 - `tests/posting-schedule.test.mjs` (28): schedule math, gap filling, the 27-post example, 1440 hourly slots, DST,
   retries, after-last, cap, preview estimates.
-- `tests/posting-auto-d375.test.mjs` (32): lookback with 2500 uploads (stops after 11 pages, not truncated), clips
+- `tests/posting-auto-d375.test.mjs` (43): lookback with 2500 uploads (stops after 11 pages, not truncated), clips
   folder scan, oldest first, global daily cap, unscored shorts, card defaults and save (checked, nothing written on a
   problem), move and remove, every delete refusal (flag off, failed, rejected, still processing, not found, read
   error, ledger or publish time mismatch, sha256 mismatch, outside the folder, `..` path, folder, junction leading out).
-- `tests/posting-e2e.test.mjs` (37, local fake YouTube): every upload scheduled; flag off waits; D314 retries take
+- `tests/posting-e2e.test.mjs` (38, local fake YouTube): every upload scheduled; flag off waits; D314 retries take
   the next free time; delete flag on deletes only after `processed` (log line, one task file, never checked again);
   a changed file or failed upload is kept.
 - `tests/studio-ui-posting-auto.test.mjs` (8): routes need the session; POST needs CSRF and same Origin; exact params;

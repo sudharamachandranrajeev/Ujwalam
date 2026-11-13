@@ -16,15 +16,23 @@
 // its folder's real path resolved again; the unlink happens only if the identity is unchanged and the folder still
 // resolves inside the clips folder. Node has no unlink-by-handle, so a swap in the few microseconds between that last
 // check and the unlink is still possible (residual risk, documented in docs/evidence/2026-11-13-auto-post-scheduled.md).
-import { createHash } from 'node:crypto';
-import { appendFileSync, lstatSync, mkdirSync, realpathSync, unlinkSync } from 'node:fs';
+// Codex re-review: that last step no longer unlinks the clip's own path. The file is moved by one atomic rename (same
+// volume) under a random name into <clips folder>/.ujwalam-deleting/, checked again there through its own handle (same
+// file id, size, modified time and sha256) and only then unlinked; on any mismatch it is moved back (only to a free
+// path, never over a file) or, if that is not possible, left in the holding folder (never deleted). What remains: a
+// program that writes the holding folder and guesses the random name within microseconds; and a crash between the
+// rename and the unlink leaves the verified file in the holding folder (nothing is lost).
+import { createHash, randomBytes } from 'node:crypto';
+import { appendFileSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import path from 'node:path';
 
 export const DELETE_FLAG = 'post-delete-uploaded';
 export const DELETED_LOG_NAME = 'deleted.jsonl';
+/** The holding folder inside the clips folder (not a YYYY-MM-DD folder, so the clips scan never reads it). */
+export const HOLD_DIR_NAME = '.ujwalam-deleting';
 /** Reasons that will not change by waiting: the file is kept and not checked again. Every other reason is checked again. */
-export const FINAL_KEEP = new Set(['upload-failed', 'upload-rejected', 'not-in-folder', 'outside-folder', 'link', 'not-a-file', 'sha-mismatch', 'no-source-file', 'file-gone', 'unc-path']);
+export const FINAL_KEEP = new Set(['upload-failed', 'upload-rejected', 'not-in-folder', 'outside-folder', 'link', 'not-a-file', 'sha-mismatch', 'no-source-file', 'file-gone', 'unc-path', 'held-in-holding-folder']);
 
 const lower = (p) => (process.platform === 'win32' ? p.toLowerCase() : p);
 const inside = (child, parent) => { const rel = path.relative(parent, child); return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel); };
@@ -87,7 +95,28 @@ export function statusVerdict(status) {
   return null;
 }
 
-export async function deleteUploadedFile({ flagOn, status, item, ledgerEntry, file, folder, logFile, nowMs = Date.now(), beforeUnlink = null }) {
+/** The holding folder <clips folder real path>/.ujwalam-deleting: made if missing; must be a real folder (no link or
+ *  junction) that resolves to itself inside the clips folder. Throws otherwise. */
+export function holdingDir(folder) {
+  const realFolder = realpathSync.native(path.resolve(folder));
+  const dir = path.join(realFolder, HOLD_DIR_NAME);
+  try { mkdirSync(dir); } catch (e) { if (e?.code !== 'EEXIST') throw e; }
+  const st = lstatSync(dir);
+  if (st.isSymbolicLink() || !st.isDirectory()) throw new Error('holding folder is not a plain folder');
+  if (lower(realpathSync.native(dir)) !== lower(dir)) throw new Error('holding folder resolves elsewhere');
+  return dir;
+}
+
+const sameIdentity = (a, b) => !!a && !!b && a.ino !== 0n && a.dev === b.dev && a.ino === b.ino && a.size === b.size && a.mtimeNs === b.mtimeNs;
+
+/** A held file that failed its check goes back to its own path when that is still free; otherwise it stays in the
+ *  holding folder (never overwrites anything, never deleted). -> the keep reason. */
+function putBack(held, file, reason) {
+  try { lstatSync(file); return 'held-in-holding-folder'; } catch (e) { if (e?.code !== 'ENOENT') return 'held-in-holding-folder'; }
+  try { renameSync(held, file); return reason; } catch { return 'held-in-holding-folder'; }
+}
+
+export async function deleteUploadedFile({ flagOn, status, item, ledgerEntry, file, folder, logFile, nowMs = Date.now(), beforeUnlink = null, beforeDelete = null }) {
   const keep = (reason) => ({ deleted: false, reason });
   if (flagOn !== true) return keep('flag-off');
   const v = statusVerdict(status);
@@ -107,7 +136,22 @@ export async function deleteUploadedFile({ flagOn, status, item, ledgerEntry, fi
   // inside the clips folder.
   const again = checkInFolder(file, folder) ?? sameFileStill(file, folder, hashed.id);
   if (again) return keep(again);
-  try { unlinkSync(file); } catch (e) { return keep(e?.code === 'ENOENT' ? 'file-gone' : 'delete-failed'); }
+  // Codex re-review: the file is first moved (one atomic rename, same volume) under a random name into the holding
+  // folder inside the clips folder, checked again there by its own handle (same file id, size, time and sha256), and
+  // only then unlinked. Anything else found there is moved back and kept.
+  let dir;
+  try { dir = holdingDir(folder); } catch { return keep('hold-unsafe'); }
+  const held = path.join(dir, `${process.pid}-${randomBytes(8).toString('hex')}-${path.basename(file)}`);
+  try { renameSync(file, held); } catch (e) { return keep(e?.code === 'ENOENT' ? 'file-gone' : 'delete-failed'); }
+  if (typeof beforeDelete === 'function') await beforeDelete(held); // test seam
+  let bad = null;
+  try {
+    const st = lstatSync(held, { bigint: true });
+    if (st.isSymbolicLink() || !st.isFile()) bad = 'file-changed';
+    else { const h = await hashWithIdentity(held); if (h.sha !== item.sha || !sameIdentity(h.id, hashed.id)) bad = 'file-changed'; }
+  } catch { bad = 'file-changed'; }
+  if (bad) return keep(putBack(held, file, bad));
+  try { unlinkSync(held); } catch { return keep(putBack(held, file, 'delete-failed')); }
   const at = new Date(nowMs).toISOString();
   try {
     mkdirSync(path.dirname(logFile), { recursive: true });

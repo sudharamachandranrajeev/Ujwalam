@@ -408,6 +408,19 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
     assert.equal(g.videos.length, 1); assert.ok(g.videos[0].status.publishAt);
   });
 
+  test('Codex re-review: a quota that fits no upload (read reserve kept) never uploads; a broken settings file blocks too', async () => {
+    const g = await fakeGoogle(); const e = setup([ROWS[0]]); g.opt.hideOwnUploads = true;
+    mkdirSync(path.join(e.dataDir, 'posting'), { recursive: true });
+    const own = path.join(e.dataDir, 'posting', 'schedule.json');
+    writeFileSync(own, JSON.stringify({ quotaUnitsPerDay: 1700 })); // 1700 - 100 reserve < 1650 per upload
+    const c = schedChain(e, g);
+    await c.afterRun(e.runDir, IDLE);
+    assert.equal(g.count('init'), 0); assert.equal(e.queue().items()[0].reason, 'quota-day-used');
+    writeFileSync(own, '{ broken');
+    e.clock.t += 31 * MIN; await c.tick(IDLE);
+    assert.equal(g.count('init'), 0); assert.equal(e.queue().items()[0].reason, 'quota-unreadable');
+  });
+
   test('missing readonly scope fails closed: no request to Google, no slot, no upload, no attempt used, plain message', async () => {
     const { grantedScopes: _unused, ...noScopes } = authOk;
     for (const auth of [{ ...authOk, grantedScopes: async () => [SCOPE] }, { ...authOk, grantedScopes: async () => null }, noScopes]) {
@@ -640,7 +653,10 @@ describe('scheduled posting (post-schedule) against the local fake YouTube', () 
   // D314 (user 2026-11-09) with D375 gap filling: a retry less than 1 h from its time gets the earliest free time from
   // now + lead + margin, at least 6 h from every other time; the other queued clips keep their times.
   test('D314: a retry 45 min from its time gets the next free time; the other queued clips keep theirs', async () => {
-    const g = await fakeGoogle(); const e = setup(); const c = schedChain(e, g);
+    const g = await fakeGoogle(); const e = setup();
+    // Six upload attempts in one day (3 failed starts + 3 uploads) need more than the shipped 10000-unit quota leaves
+    // after its read reserve: this test is about slots, so it gets a larger quota.
+    const c = schedChain(e, g, { budget: createQuotaBudget({ dataDir: e.dataDir, nowMs: () => e.clock.t, quota: () => ({ quotaUnitsPerDay: 100000, perUploadUnits: 1650, readReserveUnits: 100 }) }) });
     g.opt.initFailures = 3; // every session start fails once: three queued clips with slots, no session, backing off
     await c.afterRun(e.runDir, IDLE);
     assert.equal(g.videos.length, 0);

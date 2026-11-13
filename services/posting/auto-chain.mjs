@@ -158,7 +158,8 @@ const REASON_TEXT = {
   'stopped-by-user': 'Stopped by you; tried again at the next start',
   'daily-cap-reached': "Waiting: today's uploads per day are used up (Settings > Posting & growth > Auto-post); continues tomorrow (UTC)",
   'quota-day-used': "Waiting: today's YouTube quota is used up; continues after midnight Pacific time (ask Google for more: docs/plan/2026-11-12-growth-setup-notes.md)",
-  'quota-unreadable': "Waiting: the YouTube quota settings or today's count could not be read (data/posting/quota.json)",
+  'quota-unreadable': "Waiting: the YouTube quota settings or today's count could not be read (data/posting/quota.json, Settings > Posting & growth > Auto-post, posting/quota-day.json)",
+  'quota-busy': "Waiting: today's YouTube quota count was busy; tried again shortly",
 };
 
 /** Plain words for a queue reason code (or a failure code). */
@@ -283,7 +284,7 @@ export function createPostChain(opts) {
       for (const i of recheck) queue.patch(i.id, { reason: code, nextAt: new Date(t + delay).toISOString() });
       log(`posting: ${REASON_TEXT[code] ?? code}; ${need.length + recheck.length} clip(s) wait for a checked publish time`);
     };
-    // The read costs 1 unit per call: channels.list + 2 per page at most.
+    // The read costs 1 unit per call: channels.list + 2 per page at most (a quick look first; reserved below).
     const readWhy = budget.readBlock(1 + 2 * cfg.maxPages);
     if (readWhy) { wait(readWhy, SIGNIN_WAIT_MS); return cfg; }
     let accessToken;
@@ -293,11 +294,14 @@ export function createPostChain(opts) {
       accessToken = await auth.accessToken();
     } catch (e) { wait(e?.code === 'oauth-no-client' ? 'no-oauth-client' : 'not-signed-in', SIGNIN_WAIT_MS); return cfg; }
     let read;
-    try { read = await readChannelSchedule({ accessToken, fetchImpl: apiFetch, nowMs: t, cfg }); } catch (e) {
+    // The whole read's units are reserved before the first request (locked check + charge); unused ones are given back.
+    let scan;
+    try { scan = budget.reserveScan(1 + 2 * cfg.maxPages, opts.fetchImpl ?? fetch); } catch (e) { wait(String(e?.code ?? 'quota-unreadable'), SIGNIN_WAIT_MS); return cfg; }
+    try { read = await readChannelSchedule({ accessToken, fetchImpl: scan.fetch, nowMs: t, cfg }); } catch (e) {
       const code = e instanceof ScheduleError ? e.code : 'schedule-read-failed';
       wait(code, code === 'schedule-scope-missing' ? SIGNIN_WAIT_MS : BASE_DELAY_MS);
       return cfg;
-    }
+    } finally { scan.done(); }
     queue.setSchedule({ channelLast: read.last !== null ? toIso(read.last) : null, channelTimes: (read.times ?? []).map(toIso), recentTimes: (read.recent ?? []).map(toIso),
       count: read.count, scanned: read.scanned, truncated: read.truncated, readAt: toIso(t) });
     // Page cap hit: an older scheduled post could be past the pages read, so no slot is given out (never a guess).
@@ -380,10 +384,9 @@ export function createPostChain(opts) {
       }
       // A slot that was due for its re-check but could not be checked (or was moved later) waits for its turn.
       if (cur.nextAt && Date.parse(cur.nextAt) > nowMs()) continue;
-      // Every upload start or resume counts against today's budget (checked and counted right before it).
-      const why = budget.uploadBlock(capOf);
+      // Every upload start or resume counts against today's budget: checked and charged in one locked step right before it.
+      const why = budget.reserveUpload(capOf);
       if (why) { overBudget(due.slice(n).filter((i) => queue.get(i.id)?.state === 'queued'), why); return; }
-      try { budget.chargeUpload(); } catch { overBudget([item], 'quota-unreadable'); return; }
       queue.patch(item.id, { state: 'uploading', reason: null, nextAt: null });
       // Task bar and tray (D311 proposed): an upload in progress is a task with its own progress (MB sent of MB).
       const task = { id: `upload-${String(item.id).replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 60)}`, kind: 'upload', title: 'Uploading a clip to YouTube (scheduled)', startedAt: nowMs(),
