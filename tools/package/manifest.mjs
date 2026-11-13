@@ -69,6 +69,7 @@ export const REPO_FILES = Object.freeze([
   'data/posting/templates.json', 'data/posting/limits.json',
   // read at run time by shipped services; missing before alpha.23 (dataRefProblems below now catches this)
   'data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json',
+  'data/clip/learning-mix.json', // RP5 self-learning limits (services/learning/mix.mjs, D373)
   'data/schemas/project.schema.json',
   'data/profile.example.json', 'data/profile.schema.json',
   ...Object.keys(OFL_FONTS), ...OFL_FONT_LICENCES, // bundled theme fonts, the studio loads them from data/fonts (D344)

@@ -92,6 +92,7 @@ import clip_signals as sig  # noqa: E402
 import clip_validate as val  # noqa: E402
 import game_pack  # noqa: E402
 import learning_capture as lcap  # noqa: E402
+import learning_mix as lmix  # noqa: E402
 import match_gate as mg  # noqa: E402
 from clip_common import (  # noqa: E402
     CLIP_DATA, EXIT_FLAG_OFF, FLAG, PROFILE_FILE, ClipError, check_out_dir, clips_allowed, contain_children, corpus_dir, end_tree_when_parent_gone, eprint, find_tool, flag_on, load_config,
@@ -1070,6 +1071,12 @@ def cmd_montage(a):
     lim = rl.effective_limits(resolve_data_dir(a.data_dir))  # CL1 (D350): the user's length per reel type
     ex = _reel_extras(a, resolve_data_dir(a.data_dir))  # ED1 hook, ED2 captions (D352, D353)
     cfg = dict(cfg, minSec=lim["montage"]["minSec"], maxSec=lim["montage"]["maxSec"])
+    # RP5 (D373): the learned mix, only with the flag self-learning on and a mix in use; None = plan exactly as before
+    mix = lmix.load_mix(resolve_data_dir(a.data_dir))
+    cfg = lmix.length_target(cfg, lim["montage"], mix, vrec)
+    if mix:
+        print(f"montage: learned mix in use (changed {mix.get('changedAt')}); montage length band "
+              f"{cfg.get('learningBand', 'unchanged')}")
     matches, reel_doc = _reel_matches(a, hits_path, info["duration"])
     story_on = flag_on(resolve_data_dir(a.data_dir), cfg["story"]["flag"])  # RP2 (D361)
     if story_on:
@@ -1128,12 +1135,13 @@ def cmd_montage(a):
         os.makedirs(wd, exist_ok=True)
         typ = KIND_TYPE[cid[:1]]
         ass, fdir, cinfo = _caption_reel(ffmpeg, vrec, m["pieces"], frame, wd, ex, m["seconds"])
+        exr = lmix.reel_choices(ex, mix, cid, vrec)  # RP5: this reel's transition/title/music (ex as is without a mix)
         # RP1: captions keep the hard cut (their timeline is the sum of the pieces); each cross-faded join shortens the reel
-        tr = None if ass else ex["transition"]
+        tr = None if ass else exr["transition"]
         xd = mont.crossfade_sec(m["pieces"], tr)
         thumb, trec = _thumbnail(ffmpeg, vrec, m, typ, frame, wd, ex, matches)  # RP6
-        ttl, tirec = _title(wd, m["pieces"], xd, frame, ex)  # RP4
-        mus, murec = _music(wd, m["pieces"], xd, tirec, ex, cid, os.path.basename(vrec))  # RP3
+        ttl, tirec = _title(wd, m["pieces"], xd, frame, exr)  # RP4
+        mus, murec = _music(wd, m["pieces"], xd, tirec, exr, cid, os.path.basename(vrec))  # RP3
         def mk(enc, m=m, ass=ass, fdir=fdir, tr=tr, thumb=thumb, ttl=ttl, mus=mus, typ=typ):
             return mont.render_argv(ffmpeg, vrec, m["pieces"], frame, rnd.ENCODERS[enc], rnd.AUDIO,
                                     int(cfg["audioFadeMs"]), "montage-v.mp4.part",
@@ -1191,6 +1199,7 @@ def cmd_montage(a):
                      "trimmed": m.get("trimmed"), "belowMin": m.get("belowMin") or (out_sec < lim[typ]["minSec"]) or None, "kills": m.get("kills"), "streakKills": m.get("streakKills"),
                      "singleKills": m.get("singleKills"), "captions": cinfo, "hook": hook,
                      **({"story": m["story"]} if m.get("story") else {}),
+                     **({"learning": exr["learning"]} if exr.get("learning") else {}),
                      "files": files, "errors": errors})
     write_json_atomic(os.path.join(out, RENDER), {
         "tool": "clipper.montage", "toolVersion": TOOL_VERSION, "createdAt": _now(),
@@ -1204,6 +1213,8 @@ def cmd_montage(a):
         "reelTitle": {"flag": rti.FLAG, "on": bool(ex["title"]), "version": (ex["title"] or {}).get("version")},
         "reelThumbnail": {"flag": rth.FLAG, "on": bool(ex["thumb"]),
                           "version": (ex["thumb"] or {}).get("version")},
+        "learningMix": {"flag": lmix.FLAG, "on": bool(mix), "changedAt": (mix or {}).get("changedAt"),
+                        "lengthBand": cfg.get("learningBand")},
         "frame": frame, "montageVersion": cfg.get("version"), "montageStatus": cfg.get("status"),
         "game": _game(a), "failed": failed, "reelLength": lim, "clips": rows,
         "matchReels": {"file": MATCH_REELS, "matches": len(matches),

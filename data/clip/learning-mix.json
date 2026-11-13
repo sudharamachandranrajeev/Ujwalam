@@ -1,0 +1,82 @@
+{
+  "$comment": "RP5 / AN2 self-learning within limits (D364, D373). Behind the flag self-learning (off by default). services/learning/mix.mjs reads the AN1 numbers of every posted video (services/analytics), links each video to its edit choices (the post's source.choices, written at publish time from the reel's render record) and, at most once per periodDays, moves the share of each choice with Thompson sampling toward what scores better. The limits below bound every change; they are data, never code. The mix it writes (<data>/learning/mix.json, local) is read by the montage planner (services/clip/learning_mix.py: transition, title card, music bed per reel, the montage length band per run) and the auto-post rules (services/posting/auto-post.mjs: which kind goes first inside each rule's daily cap). With the flag off, or before the first change (cold start), nothing reads it and behaviour is exactly as before. Every change is logged in <data>/learning/mix-log.jsonl with the numbers behind it and can be undone with one call.",
+  "version": "1.0.0",
+  "status": "proposed",
+  "approved": "D364 (user 2026-11-11 evening): auto within limits, defaults: each kind keeps at least 10 %, a share moves at most 15 points per week, kill rules, detector weights, privacy and posting targets never change. The reward formula, minVideos, viewedPctCap, bands and draws are the agent's proposal (D373), not user values.",
+  "checked": "2026-11-13",
+  "flag": "self-learning",
+  "limits": {
+    "minShare": 0.10,
+    "maxStepPoints": 15,
+    "periodDays": 7,
+    "never": ["kill rules (data/clip/ranking.json, montage.json killDetectors)", "detector weights", "privacy (uploads stay private)", "posting targets and daily caps (auto-post rules)", "feature flags (a choice is only varied when its own flag and setting are on)"]
+  },
+  "coldStart": {
+    "minVideos": 8,
+    "minPerDimension": 4,
+    "note": "Fewer than minVideos posted videos with a 24 h (or 7 d) checkpoint that has statistics: the mix stays at today's defaults and says why. A dimension with fewer than minPerDimension videos whose choice is known keeps its shares."
+  },
+  "reward": {
+    "formula": "r = wViewed * min(avgViewedPct, viewedPctCap) / viewedPctCap + wViews * views / (views + median views of the same platform at the same checkpoint)",
+    "checkpoint": "at7d when it has statistics, else at24h",
+    "wViewed": 0.5,
+    "wViews": 0.5,
+    "viewedPctCap": 150,
+    "note": "Both parts are 0..1, so r is 0..1. viewedPctCap: Shorts that loop can show more than 100 % viewed; 150 is the agent's cap (unverified). A video at the channel's median views scores 0.5 on the views part."
+  },
+  "bandit": {
+    "prior": 1,
+    "draws": 4000,
+    "note": "Each choice is Beta(prior + sum r, prior + sum (1 - r)); the target share of a choice is how often its draw is the highest in `draws` draws (seeded). The limits then cap the move from the current shares."
+  },
+  "dimensions": [
+    {
+      "id": "kind",
+      "label": "Reel kind",
+      "arms": ["short", "montage", "won-reel", "impact-play"],
+      "defaults": { "short": 0.25, "montage": 0.25, "won-reel": 0.25, "impact-play": 0.25 },
+      "applies": "auto-post: inside each rule's daily cap, kinds are taken in these shares (score order within a kind); the count per day never changes"
+    },
+    {
+      "id": "lengthBand",
+      "label": "Length",
+      "arms": ["short", "mid", "long"],
+      "bands": { "short": { "minSec": 0, "maxSec": 30 }, "mid": { "minSec": 30, "maxSec": 45 }, "long": { "minSec": 45, "maxSec": null } },
+      "kinds": ["montage"],
+      "defaults": { "short": 0.15, "mid": 0.7, "long": 0.15 },
+      "applies": "montage planner: one band per run sets the montage target length, inside the user's min and max for montages (Settings > Clips)"
+    },
+    {
+      "id": "transition",
+      "label": "Transition",
+      "arms": ["cut", "fade"],
+      "kinds": ["montage", "won-reel", "impact-play"],
+      "defaults": { "cut": 0.1, "fade": 0.9 },
+      "applies": "montage planner, per reel: fade keeps the user's transition; cut joins with the hard cut. Only varied while the reel-transitions flag is on and the user's transition is not Cut"
+    },
+    {
+      "id": "title",
+      "label": "Title card",
+      "arms": ["off", "on"],
+      "kinds": ["montage", "won-reel", "impact-play"],
+      "defaults": { "off": 0.1, "on": 0.9 },
+      "applies": "montage planner, per reel; only varied while the reel-title flag is on"
+    },
+    {
+      "id": "music",
+      "label": "Music bed",
+      "arms": ["off", "on"],
+      "kinds": ["montage", "won-reel", "impact-play"],
+      "defaults": { "off": 0.1, "on": 0.9 },
+      "applies": "montage planner, per reel; only varied while the reel-music flag is on"
+    },
+    {
+      "id": "hour",
+      "label": "Posting time",
+      "arms": ["night", "morning", "afternoon", "evening"],
+      "hours": { "night": [0, 6], "morning": [6, 12], "afternoon": [12, 18], "evening": [18, 24] },
+      "defaults": { "night": 0.25, "morning": 0.25, "afternoon": 0.25, "evening": 0.25 },
+      "applies": "report only: learned from the time each video went public (local time); the publish schedule (data/posting/schedule.json, D310/D314) is not changed"
+    }
+  ]
+}

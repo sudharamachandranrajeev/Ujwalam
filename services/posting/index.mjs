@@ -354,6 +354,16 @@ export function pickYoutubeTarget({ seconds, vertical }, limits) {
   return isShort ? 'youtube-shorts' : 'youtube-video';
 }
 
+/** RP5 (D373): the edit choices a reel was made with (uploads.json row `choices`, written by clipper.py publish):
+ *  { transition: cut|fade, title: on|off, music: on|off, mixAt?: ISO } -> a clean copy, or null. Short words only. */
+export function cleanChoices(c) {
+  if (!isPlain(c)) return null;
+  const out = {};
+  for (const k of ['transition', 'title', 'music']) if (typeof c[k] === 'string' && /^[a-z][a-z0-9-]{0,31}$/.test(c[k])) out[k] = c[k];
+  if (typeof c.mixAt === 'string' && !Number.isNaN(Date.parse(c.mixAt)) && c.mixAt.length <= 40) out.mixAt = c.mixAt;
+  return Object.keys(out).length ? out : null;
+}
+
 /** opts: { dataDir, ledgerFile, profile?, ffmpeg?, templates?, limits?, run?, now?, flags? }
  *  Packages every validated, published video in <dataDir>/clips/uploads.json that is not posted and not packaged yet
  *  (kinds short | montage | won-reel | impact-play; impact-play only while the flag impact-play-reels is on, read
@@ -420,7 +430,8 @@ export async function packageUploads(opts) {
       ...post,
       privacy: 'private',
       status: 'draft',
-      source: { run: runName, clipId, kind: row.kind, layout: tail ? tail[2].toLowerCase() : 'unknown', startSec: 0, endSec: Number.isFinite(seconds) ? seconds : null, score: null, sha256: sha },
+      source: { run: runName, clipId, kind: row.kind, layout: tail ? tail[2].toLowerCase() : 'unknown', startSec: 0, endSec: Number.isFinite(seconds) ? seconds : null, score: null, sha256: sha,
+        ...(cleanChoices(row.choices) ? { choices: cleanChoices(row.choices) } : {}) }, // RP5: the reel's edit choices
       video: { file: videoName, bytes: statSync(dst).size },
       cover: coverOk ? { file: 'cover.jpg', atSec: Number(at.toFixed(3)) } : null,
       captions: null,
@@ -460,6 +471,7 @@ export function createPostStore(opts) {
   const find = (id) => (typeof id === 'string' && POST_ID.test(id) ? entries().find((e) => postId(e) === id) ?? null : null);
   const view = (e, p) => ({
     id: postId(e), target: p.target, clipId: p.source.clipId, kind: typeof p.source.kind === 'string' ? p.source.kind : 'short', layout: p.source.layout, score: Number.isFinite(p.source.score) ? p.source.score : null, startSec: p.source.startSec, endSec: p.source.endSec,
+    choices: cleanChoices(p.source.choices),
     status: e.status, videoId: e.videoId ?? null, privacy: 'private', title: p.title, description: p.description, tags: p.tags, hashtags: p.hashtags,
     limits: p.limits, unresolved: p.unresolved ?? [], hasCover: !!p.cover, hasCaptions: !!p.captions, videoBytes: p.video?.bytes ?? null, updatedAt: p.updatedAt,
   });
