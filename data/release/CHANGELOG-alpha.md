@@ -2,6 +2,13 @@
 
 One section per alpha build (`0.1.0-alpha.N`, D133). The packager copies the section for the build into the zip as `CHANGELOG-alpha.md`.
 
+## 0.1.0-alpha.29 — 2026-11-13
+
+- YouTube in 2K: both YouTube outputs can now stream at 2560x1440 (landscape) and 1440x2560 (portrait) from the 1080p canvases, scaled up on the graphics card. Switch on "Stream above the canvas size" (Settings > Stream, FEATURES), then pick the sizes in Settings > Stream ("Output resolution", "Portrait output resolution"). Tested on this laptop at 24000 kbps each with Twitch and Kick at 1080p: no dropped or skipped frames. 4K portrait is in the list but too much for this laptop's video encoder together with the other outputs.
+- Faster opening: the outputs and the replay buffer are now built once at the start instead of twice. About 2 seconds less from click to window.
+- Realism scene (switch "Realism scene", off by default): right-click a scene, "Make realism scene". It makes a copy of the scene in which the game picture gets a film-style colour grade, light sharpening and a soft vignette. The original scene and the facecam stay as they are.
+- New studio window (switch "New studio window"): Settings > Stream is now there too.
+
 ## 0.1.0-alpha.28 — 2026-11-13
 
 - Ujwalam opens again. With Instagram Live switched on but no Instagram server address stored, the studio did not open at all. Now Instagram is left out of that start and the other outputs are ready. If the stream setup cannot be used at all, the studio opens for recording only, and the reason is in the log.
