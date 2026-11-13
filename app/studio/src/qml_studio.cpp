@@ -201,6 +201,8 @@ bool QmlStudio::probeAction(const QString &action)
 	return t->metaObject()->indexOfSignal("clicked()") >= 0 && QMetaObject::invokeMethod(t, "clicked");
 }
 
+bool QmlStudio::probeIdle() const { return !qapi_ || qapi_->inFlight() == 0; }
+
 bool QmlStudio::shot(const QString &png) const
 {
 	return win_ && win_->grabWindow().save(png, "PNG");

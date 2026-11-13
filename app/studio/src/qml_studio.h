@@ -35,6 +35,8 @@ public:
 	QJsonObject probe() const;
 	bool probeAction(const QString &action);
 	bool shot(const QString &png) const;
+	// Tests: no API request of the screens is on the way (QmlApi::inFlight() == 0).
+	bool probeIdle() const;
 
 private:
 	ApiClient *api_;

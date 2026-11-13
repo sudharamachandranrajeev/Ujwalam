@@ -182,16 +182,40 @@ static int runQml(QApplication &app, ApiClient &api, const QString &key, bool he
 			return;
 		}
 		if (mode == QmlStudio::Mode::Probe) {
-			// Actions: one every 700 ms from 2.5 s (after the first loads and a status poll), as the widget probe.
-			auto actions = std::make_shared<QJsonArray>();
-			const QStringList todo = qEnvironmentVariable("UJWALAM_STUDIO_PROBE_ACTIONS").split(QLatin1Char(','), Qt::SkipEmptyParts);
-			for (int i = 0; i < todo.size() && i < 20; i++)
-				QTimer::singleShot(2500 + 700 * i, &app, [&studio, actions, a = todo[i].trimmed()]() {
-					actions->append(QJsonObject{{QStringLiteral("action"), a}, {QStringLiteral("done"), studio.probeAction(a)}});
-				});
-			QTimer::singleShot(std::min(probeMs, 60000), &app, [&app, &studio, actions]() {
+			// Actions: the first at 2.5 s (after the first loads and a status poll), then 700 ms apart, as the widget probe.
+			// Each one also waits until no API request of the screens is on the way, and the probe is read at
+			// UJWALAM_STUDIO_PROBE_MS or later, once every action ran (700 ms after the last) and the requests settled. Fixed
+			// times alone raced under load (full CI, 2026-11-13): a page's first load or a Save's write was still on the way.
+			// Read at the latest 15 s after UJWALAM_STUDIO_PROBE_MS (the tests stop the shell at 40 s), never after 60 s.
+			struct Run {
+				QStringList todo;
+				QJsonArray actions;
+				qint64 nextAt = 2500;
+			};
+			auto run = std::make_shared<Run>();
+			for (const QString &a : qEnvironmentVariable("UJWALAM_STUDIO_PROBE_ACTIONS").split(QLatin1Char(','), Qt::SkipEmptyParts).mid(0, 20))
+				run->todo.append(a.trimmed());
+			const qint64 readAt = std::min(probeMs, 60000), lastAt = std::min<qint64>(readAt + 15000, 60000);
+			auto clock = std::make_shared<QElapsedTimer>();
+			clock->start();
+			auto *tick = new QTimer(&app);
+			tick->setInterval(50);
+			QObject::connect(tick, &QTimer::timeout, &app, [&app, &studio, run, clock, tick, readAt, lastAt]() {
+				const qint64 now = clock->elapsed();
+				const bool idle = studio.probeIdle();
+				if (!run->todo.isEmpty() && now < lastAt) {
+					if (now >= run->nextAt && idle) {
+						const QString a = run->todo.takeFirst();
+						run->actions.append(QJsonObject{{QStringLiteral("action"), a}, {QStringLiteral("done"), studio.probeAction(a)}});
+						run->nextAt = clock->elapsed() + 700;
+					}
+					return;
+				}
+				if (now < lastAt && (now < readAt || now < run->nextAt || !idle))
+					return;
+				tick->stop();
 				QJsonObject o = studio.probe();
-				o.insert(QStringLiteral("actions"), *actions);
+				o.insert(QStringLiteral("actions"), run->actions);
 				const QString shot = qEnvironmentVariable("UJWALAM_STUDIO_PROBE_SHOT");
 				if (shot.endsWith(QStringLiteral(".png"), Qt::CaseInsensitive))
 					o.insert(QStringLiteral("shot"), studio.shot(shot));
@@ -199,6 +223,7 @@ static int runQml(QApplication &app, ApiClient &api, const QString &key, bool he
 				std::fflush(stdout);
 				app.exit(0);
 			});
+			tick->start();
 			return;
 		}
 		if (mode == QmlStudio::Mode::Hidden) {

@@ -28,11 +28,14 @@ public:
 	Q_INVOKABLE void log(const QString &line);
 	// Settings > Folders "Choose...": the Windows folder picker (no Qt Quick Dialogs module to ship). "" when cancelled.
 	Q_INVOKABLE QString chooseFolder(const QString &title, const QString &start) const;
+	// Requests sent and not answered yet (the headless probe waits for 0 before its next action and before it reads).
+	int inFlight() const { return inFlight_; }
 
 private:
 	void reply(QJSValue done, bool ok, const QJsonObject &body, const QString &err);
 	ApiClient *api_;
 	QJSEngine *engine_;
+	int inFlight_ = 0;
 };
 
 // Theme: the current pack's tokens, read through theme.h (so a pack that leaves a part out falls back the same way).
