@@ -15,7 +15,7 @@
 //     placeholders (scene-preset.mjs, D112). A bound mic becomes an audio source on track 1, the bound game capture
 //     layer's own audio too; monitoring off.
 //   alphaBases({ profile, overlayRoot }) -> pathRef bases for project.load (profile: image files of the presets;
-//     media: the user's stream assets folder, streamAssetsDir, when it exists, D241).
+//     media: the user's stream assets folder, streamAssetsDir, when it exists, D241; luts: the shipped data/luts, D381).
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -38,12 +38,15 @@ export function readProfile(file) {
 // Image layers in the presets use base "profile": paths.profile_assets from the local profile when it is an
 // absolute directory, else the overlay root (legacy/: overlays/, brand/, kit/). Missing -> no base (the host then
 // lists the image layers as unavailable).
-export function alphaBases({ profile = {}, overlayRoot, assetsDefault } = {}) {
+// luts (D381): the app's own shipped LUTs, <app root>/data/luts (read only; the host keeps every file inside it).
+export const LUTS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'data', 'luts');
+export function alphaBases({ profile = {}, overlayRoot, assetsDefault, lutsDir = LUTS_DIR } = {}) {
   const pa = profile?.paths?.profile_assets;
   const dir = typeof pa === 'string' && path.isAbsolute(pa) ? pa : overlayRoot;
   const out = dir && path.isAbsolute(dir) && existsSync(dir) ? { profile: path.resolve(dir) } : {};
   const media = streamAssetsDir(profile, assetsDefault);
   if (media) out.media = media;
+  try { if (lutsDir && path.isAbsolute(lutsDir) && statSync(lutsDir).isDirectory()) out.luts = path.resolve(lutsDir); } catch { /* no LUT folder: lut effects on base luts are listed unavailable */ }
   return out;
 }
 

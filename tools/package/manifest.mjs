@@ -87,7 +87,8 @@ export const REPO_FILES = Object.freeze([
   // watchdog (D374), the audience counters (F7) and the reel length, hook and transition limits (Settings > Clips)
   'data/live/host-watch.json', 'data/counters.json', 'data/clip/reel-length.json', 'data/clip/reel-hook.json', 'data/clip/transitions.json',
 ]);
-export const REPO_GLOB_DIRS = Object.freeze([['data/platforms', /\.json$/], ['data/outputs/presets', /\.json$/]]);
+// data/luts: the app's own .cube LUTs, base "luts" of the alpha load (D381; services/studio-ui/alpha.mjs LUTS_DIR)
+export const REPO_GLOB_DIRS = Object.freeze([['data/platforms', /\.json$/], ['data/outputs/presets', /\.json$/], ['data/luts', /\.cube$/]]);
 
 const SKIP_IN_DIRS = [/\.test\.m?js$/i, /(^|\/)(tests?|fixtures|__pycache__|node_modules)\//i, /\.py$/i, /\.md$/i, /\.local\./i, /(^|\/)\./];
 

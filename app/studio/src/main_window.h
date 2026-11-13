@@ -153,6 +153,7 @@ private:
 	void lookFocus();
 	void sceneRename(const QString &id);
 	void sceneDuplicate(const QString &id);
+	void sceneRealism(const QString &id); // D381, flag realism-look: a copy with the realism grade on its game layers
 	void sceneDelete(const QString &id);
 	QString sceneKeyId() const; // the scene the scene list's current row names
 	void loadTransitions();
@@ -223,6 +224,7 @@ private:
 	QListWidget *layerList_ = nullptr;
 	QJsonArray flags_; // ui/api/flags as last read: [{id, on, description}]
 	bool sceneEditOn_ = false, transitionsOn_ = false, botsOn_ = false;
+	bool realismOn_ = false; // flag realism-look (D381): Make realism scene in the scene menu
 	int botPoll_ = 0; // bot status reads the process list: every 5th status poll (10 s), and after each action
 	QGroupBox *botBox_ = nullptr;
 	streampages::OutputsPanel *outputsPanel_ = nullptr; // D327 OS3

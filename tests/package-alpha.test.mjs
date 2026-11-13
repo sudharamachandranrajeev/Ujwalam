@@ -62,6 +62,7 @@ test('repo file set: no tests, docs, Python or local files; every relative impor
   // alpha.22 shipped without data/posting/auto-post-rules.json (and three more): the task panel said "file missing"
   assert.deepEqual(dataRefProblems(REPO, files), []);
   for (const f of ['data/posting/auto-post-rules.json', 'data/posting/schedule.json', 'data/clip/targets.json', 'data/stream/stream-options.json']) assert.ok(files.includes(f), f);
+  assert.ok(files.includes('data/luts/realism-filmic.cube'), 'the shipped LUTs (base luts, D381)');
   assert.deepEqual(dataRefProblems(REPO, files.filter((f) => f !== 'data/posting/auto-post-rules.json')).length, 1, 'the check sees a missing file');
   {
     // Codex review: either quote style counts; comments and joins on another folder (the data dir) do not

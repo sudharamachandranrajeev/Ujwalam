@@ -2294,6 +2294,8 @@ void MainWindow::loadFlags()
 				se = f.value(QStringLiteral("on")).toBool();
 			else if (f.value(QStringLiteral("id")).toString() == QStringLiteral("transitions"))
 				tr = f.value(QStringLiteral("on")).toBool();
+			else if (f.value(QStringLiteral("id")).toString() == QStringLiteral("realism-look"))
+				realismOn_ = f.value(QStringLiteral("on")).toBool(); // read when the scene menu opens
 		}
 		if (se != sceneEditOn_) {
 			sceneEditOn_ = se;
@@ -3509,6 +3511,9 @@ QString plainStructureError(const QString &code)
 		{QStringLiteral("too-many-layers"), QStringLiteral("This scene has the most layers it can hold.")},
 		{QStringLiteral("too-many-scenes"), QStringLiteral("The project has the most scenes it can hold.")},
 		{QStringLiteral("host-unavailable"), QStringLiteral("The studio host is not reachable.")},
+		{QStringLiteral("realism-look-off"), QStringLiteral("Turn on Realism scene in Settings > Editing first.")},
+		{QStringLiteral("no-game-capture"), QStringLiteral("This scene shows no game capture, so there is nothing to grade.")},
+		{QStringLiteral("too-many-effects"), QStringLiteral("A game layer already has too many effects for the realism grade (6 at most).")},
 	};
 	return words.value(code, code);
 }
@@ -3602,6 +3607,8 @@ QMenu *MainWindow::buildSceneMenu(QWidget *parent, const QString &sceneId, bool 
 	menu->addSeparator();
 	add("rename", QStringLiteral("Rename…"), QStringLiteral("F2"), has && !live_, lockTip, [this, sceneId]() { sceneRename(sceneId); });
 	add("duplicate", QStringLiteral("Duplicate scene"), QString(), has && !live_, lockTip, [this, sceneId]() { sceneDuplicate(sceneId); });
+	if (realismOn_) // D381: only while flag realism-look is on
+		add("realism", QStringLiteral("Make realism scene"), QString(), has && !live_, lockTip, [this, sceneId]() { sceneRealism(sceneId); });
 	menu->addSeparator();
 	QString delTip = lockTip;
 	if (delTip.isEmpty() && !sceneEditOn_)
@@ -3793,6 +3800,14 @@ void MainWindow::sceneDuplicate(const QString &id)
 	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("scene.duplicate")}, {QStringLiteral("scene"), id}});
 }
 
+// D381: one click, no question (D332). The server copies the scene and grades its game layers; the original stays as it is.
+void MainWindow::sceneRealism(const QString &id)
+{
+	if (live_)
+		return note(QStringLiteral("Not while live."));
+	structureEdit(QJsonObject{{QStringLiteral("op"), QStringLiteral("scene.realism")}, {QStringLiteral("scene"), id}});
+}
+
 void MainWindow::sceneDelete(const QString &id)
 {
 	if (live_)
@@ -3818,7 +3833,11 @@ void MainWindow::structureEdit(const QJsonObject &body)
 			if (b.value(QStringLiteral("op")).toString() == QStringLiteral("layer.duplicate") || b.value(QStringLiteral("op")).toString() == QStringLiteral("layer.add"))
 				selected_ = b.value(QStringLiteral("layer")).toObject().value(QStringLiteral("id")).toString(); // select the new layer
 			const QString waiting = b.value(QStringLiteral("waiting")).toString(); // capture layer added without its device
-			note((waiting.isEmpty() ? QStringLiteral("Done: ") + b.value(QStringLiteral("op")).toString() : QStringLiteral("Layer added. ") + waiting) +
+			const bool realism = b.value(QStringLiteral("op")).toString() == QStringLiteral("scene.realism");
+			const QString done = realism ? QStringLiteral("Realism scene made: ") + b.value(QStringLiteral("scene")).toObject().value(QStringLiteral("name")).toString() +
+							       QStringLiteral(" (") + QString::number(b.value(QStringLiteral("graded")).toInt()) + QStringLiteral(" game layer(s) graded)")
+						     : QStringLiteral("Done: ") + b.value(QStringLiteral("op")).toString();
+			note((waiting.isEmpty() ? done : QStringLiteral("Layer added. ") + waiting) +
 			     (b.value(QStringLiteral("saved")).toBool() ? QString() : QStringLiteral(". Not saved to the project file: the change is live only.")));
 			addText_->clear();
 		}

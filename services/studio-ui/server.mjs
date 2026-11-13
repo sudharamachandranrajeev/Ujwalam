@@ -48,7 +48,7 @@ import { createFeedback } from './feedback.mjs';
 import { createLearningStore } from '../learning/store.mjs';
 import { createReview } from '../learning/review.mjs';
 import { UNDOABLE, afterOf, beforeOf, createEditHistory, paramsOf } from './edit-history.mjs';
-import { addLayer, addScene, duplicateLayer, duplicateScene, moveLayer, removeLayer, removeScene, renameLayer, renameScene } from '../project/structure.mjs';
+import { addLayer, addScene, duplicateLayer, duplicateScene, moveLayer, realismScene, removeLayer, removeScene, renameLayer, renameScene } from '../project/structure.mjs';
 import { listAssets } from './assets.mjs';
 import { loadProject, saveProject } from '../project/store.mjs';
 import { MAX_NOTE, MAX_TITLE, REPORT_FLAG, createReporter } from './report.mjs';
@@ -202,12 +202,15 @@ export const SCENE_EDIT_FLAG = 'scene-edit';
 // D292 (proposed): adding, duplicating and renaming lose nothing, so they work without the scene-edit flag (still
 // refused while live). D330 (user request 2026-11-10): deleting a layer (the studio asks first) and the saved layer
 // order (Move up/down, drag in the layer list) need no flag either. Removing a scene stays behind the flag.
-const FREE_STRUCTURE_OPS = ['scene.add', 'layer.add', 'layer.duplicate', 'layer.rename', 'scene.duplicate', 'scene.rename', 'layer.remove', 'layer.move'];
+// D381: scene.realism (a copy of a scene with the realism grade on its game layers) loses nothing either; it needs flag
+// realism-look instead.
+export const REALISM_FLAG = 'realism-look';
+const FREE_STRUCTURE_OPS = ['scene.add', 'layer.add', 'layer.duplicate', 'layer.rename', 'scene.duplicate', 'scene.rename', 'layer.remove', 'layer.move', 'scene.realism'];
 const STRUCTURE_OPS = ['scene.add', 'scene.remove', 'layer.add', 'layer.remove', 'layer.move', ...FREE_STRUCTURE_OPS];
 /** Host calls that start a stream or a recording: refused while Ujwalam is closing (closing lock, D311 proposed). */
 const START_METHODS = new Set(['stream.start', 'record.start']);
 const STRUCTURE_KEYS = { 'scene.add': ['name'], 'scene.remove': ['scene'], 'layer.add': ['scene', 'kind', 'of', 'color', 'text', 'device', 'overlay', 'file'], 'layer.remove': ['scene', 'layer'], 'layer.move': ['scene', 'layer', 'canvas', 'direction', 'target', 'place'],
-  'layer.duplicate': ['scene', 'layer'], 'layer.rename': ['scene', 'layer', 'name'], 'scene.duplicate': ['scene'], 'scene.rename': ['scene', 'name'] };
+  'layer.duplicate': ['scene', 'layer'], 'layer.rename': ['scene', 'layer', 'name'], 'scene.duplicate': ['scene'], 'scene.rename': ['scene', 'name'], 'scene.realism': ['scene'] };
 const BOT_SCHEMA = { bot: { type: 'enum', values: BOTS, required: true } };
 const POST_ERR = { 'unknown-post': 404, 'over-limit': 409, 'unresolved-placeholders': 409, 'empty-title': 409, 'video-changed': 409, 'already-uploaded': 409 };
 const YT_ERR = { 'unknown-post': 404, 'not-approved': 409, 'video-changed': 409, 'over-limit': 409, 'unresolved-placeholders': 409, 'already-uploaded': 409, 'stream-active': 409, 'not-uploaded': 409, 'video-missing': 409, 'status-not-permitted': 403 };
@@ -1073,6 +1076,7 @@ export function createStudioServer(opts) {
   async function structureEdit(res, body) {
     if (!isPlain(body) || !STRUCTURE_OPS.includes(body.op)) return json(res, 400, { error: 'bad-params' });
     if (!FREE_STRUCTURE_OPS.includes(body.op) && (!flags || !flags.isOn(SCENE_EDIT_FLAG))) return json(res, 404, { error: 'scene-edit-off' });
+    if (body.op === 'scene.realism' && (!flags || !flags.isOn(REALISM_FLAG))) return json(res, 404, { error: 'realism-look-off' });
     const file = projectSync?.status?.().file;
     if (typeof file !== 'string') return json(res, 409, { error: 'no-project-file' });
     if (!isPlain(body) || !STRUCTURE_OPS.includes(body.op) || Object.keys(body).some((k) => k !== 'op' && !STRUCTURE_KEYS[body.op].includes(k))) return json(res, 400, { error: 'bad-params' });
@@ -1094,7 +1098,8 @@ export function createStudioServer(opts) {
     const r = op === 'scene.add' ? addScene(doc, body) : op === 'scene.remove' ? removeScene(doc, body)
       : op === 'layer.add' ? addLayer(doc, body) : op === 'layer.move' ? moveLayer(doc, body)
       : op === 'layer.duplicate' ? duplicateLayer(doc, body) : op === 'layer.rename' ? renameLayer(doc, body)
-      : op === 'scene.duplicate' ? duplicateScene(doc, body) : op === 'scene.rename' ? renameScene(doc, body) : removeLayer(doc, body);
+      : op === 'scene.duplicate' ? duplicateScene(doc, body) : op === 'scene.rename' ? renameScene(doc, body)
+      : op === 'scene.realism' ? realismScene(doc, body) : removeLayer(doc, body);
     if (r.error) return json(res, 409, { error: r.error, ...(r.errors ? { detail: r.errors.map((e) => `${e.path}: ${e.message}`).join('; ').slice(0, 300) } : {}) });
     const canvases = doc.canvases.map((c) => c.id.toUpperCase());
     let waiting = null; // a capture layer added while its device is not connected: the host's plain sentence (D329)
@@ -1109,7 +1114,7 @@ export function createStudioServer(opts) {
       else if (op === 'layer.duplicate') {
         await host.call('layers.addFromProject', { project: r.project, scene: body.scene, layer: r.layer.id });
         await host.call('layers.orderFromProject', { project: r.project, scene: body.scene }); // the copy lands just above its source
-      } else if (op === 'scene.duplicate') {
+      } else if (op === 'scene.duplicate' || op === 'scene.realism') {
         for (const canvas of canvases) await host.call('scenes.create', { scene: { id: r.scene.id, canvas, name: r.scene.name } });
         for (const l of r.layers) await host.call('layers.addFromProject', { project: r.project, scene: r.scene.id, layer: l.id }); // bottom first
       } else if (op === 'layer.rename' || op === 'scene.rename') {
@@ -1126,7 +1131,7 @@ export function createStudioServer(opts) {
     history.clear();
     broadcast('edits', history.state());
     broadcast('layers', { source: 'structure', edit: { op, scene: r.scene?.id ?? body.scene, layer: r.layer?.id ?? body.layer ?? null } });
-    return json(res, 200, { ok: true, op, ...(r.scene ? { scene: { id: r.scene.id, name: r.scene.name } } : {}), ...(r.layer ? { layer: { id: r.layer.id, name: r.layer.name, type: r.layer.type } } : {}), ...(waiting ? { waiting } : {}), saved });
+    return json(res, 200, { ok: true, op, ...(r.scene ? { scene: { id: r.scene.id, name: r.scene.name } } : {}), ...(r.layer ? { layer: { id: r.layer.id, name: r.layer.name, type: r.layer.type } } : {}), ...(waiting ? { waiting } : {}), ...(r.graded ? { graded: r.graded.length } : {}), saved });
   }
   function withRenames(method, result) {
     if (!renamed.size || !isPlain(result)) return result;

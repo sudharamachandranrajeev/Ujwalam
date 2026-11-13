@@ -115,7 +115,8 @@ std::string resolve_file(const json::Value &ref, const Options &o, const std::st
 	chk::require(ref, {"base", "rel"}, what + ".file");
 	std::string base = chk::get_str(ref, "base", "", 16, what + ".file");
 	std::string rel = chk::get_str(ref, "rel", "", 260, what + ".file");
-	static const std::set<std::string> bases = {"data", "media", "overlays", "profile"};
+	// luts (D381): the app's own shipped LUTs (<app>/data/luts), read only like every base
+	static const std::set<std::string> bases = {"data", "luts", "media", "overlays", "profile"};
 	if (!bases.count(base))
 		throw Error(rpc::INVALID_PARAMS, what + ".file: bad base");
 	check_rel(rel, what + ".file");

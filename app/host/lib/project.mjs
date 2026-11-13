@@ -6,7 +6,7 @@
 //   planInHost(client, project, { bases })                      -> project.plan result (dry run, creates nothing)
 //   loadFileIntoHost(client, file, opts)                        -> reads, migrates and validates with
 //                                                                  services/project/store.mjs, then loads
-// bases: { data, media, overlays, profile } -> absolute directories that pathRefs resolve against. Callers pass
+// bases: { data, luts, media, overlays, profile } -> absolute directories that pathRefs resolve against. Callers pass
 // them (from config or the profile); nothing here builds a path from the environment.
 // Overlay browser layers (source.overlay): when the project has any, the host's overlay server ports are read with
 // overlay.status and each layer gets http://127.0.0.1:<static>/overlays/<rel>?<layer query>&<feedQuery(feed, scope)>
@@ -34,7 +34,7 @@ function checkBases(bases) {
   if (bases == null) return undefined;
   const out = {};
   for (const [k, v] of Object.entries(bases)) {
-    if (!['data', 'media', 'overlays', 'profile'].includes(k)) throw new TypeError(`unknown pathRef base "${k}"`);
+    if (!['data', 'luts', 'media', 'overlays', 'profile'].includes(k)) throw new TypeError(`unknown pathRef base "${k}"`);
     if (typeof v !== 'string' || !path.isAbsolute(v)) throw new TypeError(`base "${k}" must be an absolute directory`);
     out[k] = path.resolve(v);
   }

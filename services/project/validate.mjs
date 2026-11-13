@@ -13,7 +13,7 @@ const CANVAS_IDS = ['h', 'v'];
 const DEVICE_KINDS = ['capture-card', 'camera', 'microphone', 'audio-output'];
 const LAYER_TYPES = ['capture', 'browser', 'image', 'media', 'text', 'color', 'duplicate'];
 const MONITORING = ['off', 'monitor-only', 'monitor-and-output'];
-const PATH_BASES = ['data', 'media', 'overlays', 'profile'];
+const PATH_BASES = ['data', 'luts', 'media', 'overlays', 'profile']; // luts: the app's shipped LUTs (D381)
 // D291 layer effects: key -> [min, max] or [min, max, 'int'], 'color' (#RRGGBB), 'file' (pathRef), 'bool', or
 // [[allowed values]]. All keys are required. Same ranges as app/host/src/model.cpp and data/schemas/project.schema.json.
 const BLEND = ['blendAdd', 'blendSubtract', 'blendMultiply', 'blendScreen', 'blendLighten', 'blendDarken'];

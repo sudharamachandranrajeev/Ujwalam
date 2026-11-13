@@ -1,0 +1,37 @@
+{
+  "id": "fx-realism-grade",
+  "version": "0.1.0",
+  "function": "layer-lut",
+  "functionVersion": "^0.1.0",
+  "name": "Realism grade (filmic LUT)",
+  "params": {
+    "effect": {
+      "type": "lut",
+      "file": {
+        "base": "luts",
+        "rel": "realism-filmic.cube"
+      },
+      "amount": 0.85
+    }
+  },
+  "themeOverrides": {},
+  "family": "layer-filters",
+  "tags": {
+    "motion": "none",
+    "intensity": "low",
+    "mood": "calm",
+    "colourUse": "multi",
+    "flashes": "none"
+  },
+  "canvases": [
+    "H",
+    "V"
+  ],
+  "status": "in-progress",
+  "parity": "none",
+  "similar": [
+    "fx-lut-look",
+    "fx-sharpen-light",
+    "fx-soft-vignette"
+  ]
+}
