@@ -1,0 +1,130 @@
+# 2026-11-13 — GPU reset recovery: host graphics watchdog and launcher liveness check (D373, flag `host-watchdog`)
+
+Status: built and tested with a fake host and a real host on this PC. A real NVIDIA driver reset was NOT reproduced (UNVERIFIED, see the end).
+
+## Why
+
+On 2026-11-12 the host (libobs) failed twice and nothing recovered it:
+
+- **19:03:** the host's graphics thread stopped producing frames for about 3 hours. The process kept running, so nothing noticed.
+- **21:42, while live:** the NVIDIA driver reset (System log nvlddmkm event 153). The host crashed with 0xC0000005. Streams and replay buffers stayed down until a manual restart at 22:00.
+
+The launcher (`services/studio-ui/launch.mjs`, `superviseHost`) restarted the host only when its process exited. A host that is alive but frozen was never restarted.
+
+## What libobs already does (read from `C:/AI/Claude/_vendor/obs-32.1.2/src`, libobs-d3d11)
+
+- `gs_device::RebuildDevice` rebuilds the D3D11 device. It runs only from `device_present`, when `IDXGISwapChain::Present` returns `DXGI_ERROR_DEVICE_REMOVED` or `DXGI_ERROR_DEVICE_RESET`. That needs a swap chain, so it only happens while a preview window is presenting. A headless host with no preview never calls it.
+- The rebuild recreates textures, shaders, buffers and swap chains. It does not recreate encoders, so NVENC sessions are not rebuilt. If the rebuild fails, libobs calls `bcrash` and the process ends.
+- `gs_register_loss_callbacks` / `gs_unregister_loss_callbacks` are exported (`device_loss_release` before the rebuild, `device_loss_rebuild` after). No plugin in the tree uses them.
+- Conclusion: libobs can survive some device resets while a preview presents, but a live encode does not recover by itself. A restart of the whole host is the reliable recovery.
+
+## What was added
+
+### Host (report only; the host never restarts itself)
+
+- `app/host/src/gfx_watch.h`, `gfx_watch.cpp`:
+  - A tick callback (`obs_add_tick_callback`, graphics thread, start of every frame) stamps the time of the last video frame.
+  - A checker thread ("ujw: graphics watchdog") reports a stall when no frame came for `stallMs`. It logs once per stall ("graphics stalled: no video frame for N ms ...") and once on recovery, never per frame.
+  - Device-loss callbacks (`gs_register_loss_callbacks`) count losses and rebuilds, and log them.
+  - The report is in `host.status.graphics` and in the new lock-free `host.alive` method: `watch`, `stallMs`, `lastFrameAgeMs`, `frames`, `stalled`, `stalledMs`, `stalls`, `longestStallMs`, `lastStallAt`, `deviceLosses`, `deviceRebuilds`, `lastDeviceLossAt`, `lastDeviceRebuildAt`.
+  - `host.alive` takes no studio lock, so it answers while a project load holds the lock or the graphics thread is blocked. `host.status` takes the studio lock.
+  - `graphics.testStall {ms}` (`--test-hooks` only) blocks the next frame tick, to simulate a stuck GPU in tests.
+- Host config key `graphicsWatch: {stallMs, checkIntervalMs}` (`host_config.h/.cpp`). The launcher copies it from `data/live/host-watch.json`. Without the key the host does no stall check (`watch: false`); the device-loss counters still run.
+
+### Launcher (`services/studio-ui/host-watch.mjs`, `launch.mjs superviseHost`)
+
+- Every `checkMs` the launcher calls `host.alive` with a `rpcTimeoutMs` timeout. No checks run while a restart or project load is in progress, or when the host has already exited.
+- The host is **stale** when either:
+  - it gave no answer for `noAnswerMs` (counted from its last answer, or from its start), or
+  - it answers, but `lastFrameAgeMs >= graphicsStallMs`.
+- A host from before D373 (no `host.alive`, "method not found") counts as answering; only the no-answer rule applies to it.
+- The first stale look of an incident is logged once, with the flag on or off:
+  - `[studio] HOST NOT RESPONDING: it did not answer for 30 s; the host watchdog stops and restarts it`
+  - Flag off: `... (flag host-watchdog is off: not restarting it; restart Ujwalam by hand)`, and nothing else happens.
+- With the flag on, once per incident:
+  1. A crash-log entry `hung` (reason, streams that were live) goes to `logs/host-crashes.jsonl`. A task-bar entry ("The video engine froze; restarting it") is written.
+  2. The host's process tree is killed (`taskkill /T /F`). It is never asked to `host.shutdown`: a clean exit code 0 would end the session.
+  3. If it has not exited after `killWaitMs`, a warning and a `hung-kill-failed` entry are logged, and the task shows "could not be restarted".
+  4. The existing crash path then runs unchanged:
+     - The restart policy: backoff 2, 5 and 10 s, at most 3 restarts in 5 minutes, then it stops. There is no restart storm.
+     - The project is reloaded, and the recording is restarted in a new file.
+     - The streams that were live are started again only under the stream-recovery rules (D303: flag `stream-recovery`, this launcher's go-live authority, `data/live/recovery.json` limits). The watchdog never starts a stream itself. A stream that was not live is never started.
+  5. The task-bar entry ends in "done" with what came back ("Recording restarted: yes, in a new file; streams restarted: YouTube H, Twitch"), or in "failed" when the policy gave up.
+- A host that crashes (exits) while the flag is on also gets one task-bar entry per incident.
+- **Driver reset report:** once per incident, the launcher reads the Windows System log (nvlddmkm / Display events 14, 153, 4101 in the last `driverLookbackMs`, async PowerShell, hidden window). A hit is logged, written to the crash log as `gpu-reset`, and added to the task: "Cause: the graphics driver reset at 21:42".
+
+### Thresholds (all in `data/live/host-watch.json`, status `proposed`, each with a source note)
+
+| key | value | meaning |
+|---|---|---|
+| `host.stallMs` | 5000 | host reports and logs a graphics stall after 5 s without a frame |
+| `host.checkIntervalMs` | 1000 | host checker period |
+| `checkMs` | 5000 | launcher liveness look period |
+| `rpcTimeoutMs` | 10000 | one `host.alive` call times out |
+| `noAnswerMs` | 30000 | no answer this long = stale |
+| `graphicsStallMs` | 30000 | no video frame this long = stale |
+| `killWaitMs` | 15000 | wait for the killed host to exit |
+| `driverLookbackMs` | 600000 | how far back the System log is read |
+
+Worst case: about 35 s to detect, up to 15 s to kill, 2 s backoff, then the start. That fits inside stream recovery's `maxGapMs` of 90 s, so the live streams can still be restored. `UJWALAM_HOST_WATCH_CONFIG` names another file (tests only).
+
+### Flag
+
+`host-watchdog` in `data/flags.json`: off by default, page "stream", label "Host watchdog". The flag is re-read at every look, so it switches live.
+
+## Tests
+
+| command | result |
+|---|---|
+| `node --test tests/host-watch.test.mjs` | 12 / 12 pass |
+| `node --test tests/host-watch.test.mjs tests/studio-ui-alpha.test.mjs tests/stream-recovery.test.mjs tests/studio-ui-crash-recovery.test.mjs` | 72 / 72 pass |
+| `node --test app/host/tests/host-gfx-watch.test.mjs` (real host, installed app not running) | 3 / 3 pass |
+| `npm run test:host` (installed app not running) | 173 tests: 162 pass, 0 fail, 11 skipped (opt-in benches; face tests need `.venv-gpu`, absent in this worktree). The first run had a failure in `host-live-plan-record.test.mjs` (EPIPE on a loopback stream write) and one other failing assertion. A full rerun with no other load passed. Treated as load flakiness, not this change: that test does not use the watchdog. |
+| `node tools/lint.mjs` | 0 findings |
+
+`tests/host-watch.test.mjs` covers:
+
+- **Config:** the shipped file loads, and bad files are refused.
+- **Flag and host config:** the flag exists and is off by default; `graphicsWatch` is copied into the host config.
+- **Stale decision (fake clock):** no answer; graphics stalled; one incident per freeze; a healthy answer ends the incident; a reset for a new host; an old host without frame data.
+- **Watch loop:**
+  - Flag off: one log line and no action.
+  - Flag switched on during an incident: it acts once.
+  - Another check that runs mid-restart, or a probe still in flight, is not doubled.
+  - An answer from a replaced host is dropped.
+  - "Method not found" counts as an answer.
+- **Driver reset lookup:** a fake PowerShell, a failure, a non-Windows system, and the "reset at HH:MM" text.
+- **Task-bar entries:** they pass `cleanTask`.
+- **End to end with the fake host (`tests/fixtures/studio-ui/fake-host.mjs`, `UJWALAM_FAKE_HOST_HANG_*`):**
+  1. RPC freeze while live (watchdog and stream recovery on): one log line, kill, one restart, `record.start` in the new host, `stream.start` of exactly the sinks that were live, crash-log `hung` / `restart` / `restarted`, and one task in state "done".
+  2. Graphics freeze with stream recovery off: restart and recording, no `stream.start`, the "NOT running" line.
+  3. Flag off: one log line, no kill, no restart, no task.
+
+`app/host/tests/host-gfx-watch.test.mjs` (real libobs host, headless, test card) covers:
+
+- Frames are counted.
+- `graphics.testStall` is reported as stalled, and logged once over several checks.
+- `host.alive` answers within 1 s while the graphics thread is blocked.
+- The recovery is reported and logged.
+- Parameter checks; FORBIDDEN without `--test-hooks`; `watch: false` without the config key.
+
+The test skips itself while the installed Ujwalam runs (`tools/ci.mjs installedUjwalamProcesses()`).
+
+## UNVERIFIED
+
+- **A real driver reset.** It cannot be forced in a test, so these are unverified:
+  - What libobs does on the reset.
+  - Whether the host freezes, crashes or carries on.
+  - Whether the device-loss callbacks fire.
+  - Whether the System log lookup finds the event at the time it is needed.
+
+  How to check later:
+  - With the flag on and a test stream (only after the user says "start stream test"), force a TDR with the Windows `dxcap -forcetdr` tool (part of the Graphics Tools optional feature; installing it needs the user's yes).
+  - Or wait for the next natural reset.
+  - Then read `logs/host-crashes.jsonl` (`hung` / `gpu-reset` / `restarted` entries), the host log ("graphics device lost", "graphics stalled") and the task-bar entry.
+- **The 21:42 crash path with the flag on in the real app.** Whether the 0xC0000005 exit then restores the streams within `maxGapMs` is unverified. The fake-host tests prove the sequence; a real stream does not yet.
+- **The thresholds** (30 s / 30 s / 15 s) are reasoned, not measured. Status is `proposed`. Tune them after the first real incident.
+- **Gaps that remain:**
+  - A device loss alone does not trigger a restart; it is only reported. A host that keeps producing frames after a loss is left running.
+  - No checks run while a restart or project load is in progress, so a project load that hangs is not caught by this watchdog.
+  - The kill of a host that does not die after `killWaitMs` is logged, but not retried.

@@ -452,6 +452,13 @@ int wmain(int argc, wchar_t **wargv)
 		return 2;
 	}
 	stats::init();
+	{
+		// Graphics stall + GPU device-loss report (gfx_watch.h, D373): report only; the launcher decides.
+		gfxwatch::Config gc;
+		gc.stall_ms = app.config.graphics_watch.stall_ms;
+		gc.check_interval_ms = app.config.graphics_watch.check_interval_ms;
+		app.gfx_watch = std::make_unique<gfxwatch::Watch>(gc);
+	}
 	Outputs::register_loopback_service();
 	json::Value pref = stats::gpu_preference(app.exe_path);
 	hlog::info("adapter %u: %s; windows graphics preference for this exe: %s", app.adapter,
@@ -723,6 +730,8 @@ int wmain(int argc, wchar_t **wargv)
 		app.hotkeys->stop();
 		if (server)
 			server->stop();
+		if (app.gfx_watch)
+			app.gfx_watch->stop_checker(); // a slow teardown is not a graphics stall
 		if (app.device_watch)
 			app.device_watch->stop(); // no pass runs after this (the studio goes away below)
 		if (app.studio)
@@ -751,6 +760,7 @@ int wmain(int argc, wchar_t **wargv)
 		if (!rc)
 			discovery::remove_if_ours(app.discovery_path, GetCurrentProcessId());
 	}
+	app.gfx_watch.reset(); // tick callback off while libobs runs
 	stats::shutdown();
 	obsrt::shutdown(app.config.audio_health.shutdown_guard_ms);
 	hlog::info("exit %d", rc);

@@ -94,7 +94,7 @@ import { loadProject } from '../project/store.mjs';
 import { alphaBases, alphaFile, buildAlphaProject, prepareAlphaProject, readProfile, stampOf, upgradePresets } from './alpha.mjs';
 import { upgradeScenes } from '../project/scene-upgrades.mjs';
 import { createRecordClips, isLive } from './record-clips.mjs';
-import { killChildTree } from '../common/kill-tree.mjs';
+import { hasExited, killChildTree } from '../common/kill-tree.mjs';
 import { createPostChain } from '../posting/auto-chain.mjs';
 import { createLearningSignals } from '../learning/signals.mjs';
 import { folderProblem, readSettings } from './user-settings.mjs';
@@ -110,6 +110,8 @@ import { acceptHost, createStartGate, createUpdates, hostArgsFor, hostEntryProbl
 import { EXE as STUDIO_EXE, qtDir as studioQtDir } from '../../app/studio/tools/build.mjs';
 import { appendRecoveryEvent, createLiveAuthority, labelsOf, loadRecoveryConfig, recoveryPolicy, RECOVERY_FLAG, serveAuthority, SESSION_ENV, waitStreamsUp, writeAuthorityMirror } from './stream-recovery.mjs';
 import { readSetup, setupProblems, writePlanFile } from './stream-setup.mjs';
+import { createHostWatch, driverResets, driverResetText, HOST_WATCH_FLAG, incidentTask, loadHostWatchConfig, staleText } from './host-watch.mjs';
+import { writeTaskFile } from './tasks.mjs';
 import { INSTAGRAM_FLAG, loadAddon as instagramAddon, writeInstagramPlan } from '../outputs/instagram.mjs';
 import { botUrl, integrationsInEffect } from './integrations.mjs';
 import { INTEGRATIONS_FLAG, STREAM_SETTINGS_FLAG } from './settings-routes.mjs';
@@ -209,8 +211,14 @@ export function loadAudioHealth(file = AUDIO_HEALTH_FILE) {
   return out;
 }
 
+/** data/live/host-watch.json "host" -> the host config's graphicsWatch (D373; report only in the host). null when the
+ *  file cannot be used: the host then runs without its stall report and the launcher says so. */
+export function hostGraphicsWatch(load = loadHostWatchConfig) {
+  try { return load().host; } catch (e) { console.log(`[studio] WARNING: data/live/host-watch.json not usable (${e.message}); no graphics stall report`); return null; }
+}
+
 /** The alpha host config (keys of app/host/src/host_config.cpp; pure; tested). Combos: host defaults unless overridden. */
-export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, hotkeys = {}, monitoringOutput = null, audioHealth = loadAudioHealth() }) {
+export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, hotkeys = {}, monitoringOutput = null, audioHealth = loadAudioHealth(), graphicsWatch = hostGraphicsWatch() }) {
   return {
     $comment: 'Written by services/studio-ui/launch.mjs --alpha at every start (edits are overwritten; use --hotkey-panic/--hotkey-feedback/--hotkey-marker). Host defaults: panic Ctrl+Alt+P, feedback Ctrl+Alt+F, marker Ctrl+Alt+Shift+M.',
     replay: { seconds: ALPHA_REPLAY_SECONDS, autoStart: true },
@@ -221,6 +229,8 @@ export function alphaHostConfig({ dataDir, feedbackDir = DEFAULT_FEEDBACK_DIR, h
     audio: { lowLatency: true },
     // A device audio source that stops delivering (game audio lost 2026-11-08) is reported and restarted.
     audioHealth,
+    // A graphics thread that stops producing frames is reported in host.status / host.alive (D373; report only).
+    ...(graphicsWatch ? { graphicsWatch } : {}),
     // Headphones for monitored sources (profile devices.monitoringOutput.name); absent: the Windows default output.
     ...(typeof monitoringOutput === 'string' && monitoringOutput ? { monitoringDevice: monitoringOutput } : {}),
   };
@@ -849,6 +859,61 @@ function superviseHost(o) {
   void readOutputs();
   writeSnapshot(client, logsDir);
 
+  // Host watchdog (D373 proposed, host-watch.mjs): a host that stops answering or stops producing video frames is
+  // logged once per incident; with flag host-watchdog on it is stopped (tree kill) and the crash path below restarts
+  // it. Everything new here (the stop, the task-bar entry, the driver-reset lookup) happens only with the flag on.
+  let watchCfg = null;
+  try { watchCfg = loadHostWatchConfig(); } catch (e) { console.log(`[studio] WARNING: data/live/host-watch.json not usable (${e.message}); the host watchdog is off`); }
+  const watchOn = () => { try { return createFlags({ dataDir }).isOn(HOST_WATCH_FLAG); } catch { return false; } };
+  const hung = new WeakMap(); // child -> why the watchdog stopped it (the exit is then not a "crash")
+  let incident = null; // { id, at, kind: 'hung' | 'crash', why, cause, state }: one task-bar entry per incident
+  const tell = (state, result = null) => {
+    if (!incident || !watchOn()) return;
+    incident.state = state;
+    writeTaskFile(dataDir, incidentTask({ ...incident, result }));
+  };
+  const lookForDriverReset = (inc) => {
+    if (!watchCfg) return;
+    driverResets(inc.at - watchCfg.driverLookbackMs, Date.now()).then((evs) => {
+      const t = driverResetText(evs);
+      if (!t) return;
+      inc.cause = t;
+      console.log(`[studio] ${t} (Windows System log, NVIDIA driver events ${[...new Set(evs.map((e) => e.id))].join(', ')})`);
+      crashLog({ at: new Date().toISOString(), action: 'gpu-reset', events: evs.map((e) => ({ id: e.id, at: new Date(e.at).toISOString() })) });
+      if (incident === inc) tell(inc.state);
+    }).catch(() => { /* the event log is a hint only */ });
+  };
+  const hostRunning = () => { const ch = getChild(); return !!ch && !hasExited(ch); };
+  async function stopHung(d) {
+    const child = getChild();
+    if (!hostRunning() || busy || isStopping()) return;
+    const at = Date.now();
+    incident = { id: `host-${at}`, at, kind: 'hung', why: `${staleText(d).charAt(0).toUpperCase()}${staleText(d).slice(1)}`, cause: null, state: 'running' };
+    hung.set(child, staleText(d));
+    crashLog({ at: new Date(at).toISOString(), action: 'hung', reason: d.reason, forMs: d.forMs, recording: activeSinks(lastOutputs, 'record'), streams: activeSinks(lastOutputs, 'stream') });
+    tell('running');
+    lookForDriverReset(incident);
+    // Never host.shutdown: its clean exit (code 0) ends the session. The tree kill exits non-zero: the crash path runs.
+    const gone = new Promise((r) => child.once('exit', () => r(true)));
+    killChildTree(child);
+    if (!(await Promise.race([gone, sleep(watchCfg.killWaitMs).then(() => false)]))) {
+      console.log(`[studio] WARNING: the frozen host (pid ${child.pid}) did not end after the kill; no second host is started next to it. If it stays, restart the PC.`);
+      crashLog({ at: new Date().toISOString(), action: 'hung-kill-failed', pid: child.pid });
+      tell('failed', 'The frozen video engine could not be stopped; if it stays, restart the PC');
+    }
+  }
+  const watch = watchCfg ? createHostWatch({
+    cfg: watchCfg,
+    probe: () => new HostClient({ port: client.port, token: hostToken, timeoutMs: watchCfg.rpcTimeoutMs }).call('host.alive'),
+    canCheck: () => !busy && !isStopping() && hostRunning(),
+    flagOn: watchOn,
+    onStale: stopHung,
+    log: (m) => console.log(m),
+  }) : null;
+  const watchTimer = watch ? setInterval(() => { watch.tick().catch((e) => console.log(`[studio] host watchdog: ${e.message}`)); }, watchCfg.checkMs) : null;
+  watchTimer?.unref();
+  const stopTimers = () => { clearInterval(poll); if (watchTimer) clearInterval(watchTimer); };
+
   const arm = (child) => child.once('exit', (code, signal) => { onExit(child, code, signal).catch((e) => console.log(`[studio] crash recovery failed: ${e.message}`)); });
   // LU5 (D343): a host stopped on purpose for an update is not a crash.
   const planned = new WeakSet();
@@ -859,18 +924,26 @@ function superviseHost(o) {
     const recording = activeSinks(lastOutputs, 'record');
     const streams = activeSinks(lastOutputs, 'stream');
     if (streams.length && !carry) carry = { crashAt: at.getTime(), streams, labels: labelsOf(lastOutputs, streams) };
-    const base = { at: at.toISOString(), exit: exitText(code, signal), recording, streams };
+    const base = { at: at.toISOString(), exit: hung.has(child) ? `stopped by the host watchdog: ${hung.get(child)}` : exitText(code, signal), recording, streams };
     if (code === 0 && !signal) {
       console.log('[studio] the host shut itself down (code 0): ending the session');
       crashLog({ ...base, action: 'session-ended' });
-      clearInterval(poll);
+      stopTimers();
       endSession(0);
       return;
+    }
+    if (!incident && watchOn()) {
+      // A crash (not a watchdog stop) starts an incident too: one task-bar entry, and the driver-reset lookup.
+      incident = { id: `host-${at.getTime()}`, at: at.getTime(), kind: 'crash', why: `It exited unexpectedly (${base.exit})`, cause: null, state: 'running' };
+      tell('running');
+      lookForDriverReset(incident);
     }
     const d = policy.onExit(at.getTime());
     if (!d.restart) {
       crashLog({ ...base, action: 'gave-up', exits: d.exits });
-      clearInterval(poll);
+      stopTimers();
+      tell('failed', `It stopped ${d.exits} times in ${Math.round(d.windowMs / 60000)} min, so Ujwalam closed; start it again`);
+      incident = null;
       if (carry) {
         recoveryEvent({ crashAt: new Date(carry.crashAt).toISOString(), streams: carry.labels, result: 'not-restarted', reason: 'host-gave-up', restarted: [], failed: carry.labels });
         carry = null;
@@ -900,6 +973,7 @@ function superviseHost(o) {
     }
     client = new HostClient({ port: disc.port, token: hostToken });
     onClient(client);
+    watch?.reset();
     console.log(`[studio] host restarted (attempt ${d.attempt})`);
     let projectOk = true;
     try {
@@ -919,6 +993,8 @@ function superviseHost(o) {
     const note = `host restarted after an unexpected exit (${base.exit}); restart ${d.attempt} of ${d.max}; recording resumed: ${resumed.join(', ') || 'none'}; ${sr.restarted.length ? `streams restarted: ${sr.restarted.join(', ')}; ` : ''}streams to restart by hand: ${sr.byHand.join(', ') || 'none'}`;
     try { await client.call('marker.add', { source: 'api', note: note.slice(0, 500) }); } catch (e) { console.log(`[studio] WARNING: restart marker not written: ${e.message}`); }
     crashLog({ at: new Date().toISOString(), action: 'restarted', attempt: d.attempt, resumed, streams, streamsRestarted: sr.restarted, streamsByHand: sr.byHand });
+    tell('done', `Recording restarted: ${resumed.length ? 'yes, in a new file' : 'it was off'}${sr.restarted.length ? `; streams restarted: ${sr.restarted.join(', ')}` : ''}${sr.byHand.length ? `; start these streams by hand: ${sr.byHand.join(', ')}` : ''}`);
+    incident = null;
     if (alpha) await alphaStatus(client);
     await writeSnapshot(client, logsDir);
     busy = false;
@@ -961,6 +1037,7 @@ function superviseHost(o) {
     planned.delete(next); // from here on an exit is a crash again
     client = c;
     onClient(c);
+    watch?.reset();
     try {
       if (alpha) await alphaStatus(c);
       await writeSnapshot(c, logsDir);

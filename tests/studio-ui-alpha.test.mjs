@@ -367,7 +367,7 @@ test('launch spec: alpha mode wires previews, browser layers, overlay child and 
 test('host config: day-2 keys only (hotkeys on, replay 60 s autostart, feedback folder, event-core system file); written owner-only', () => {
   const d = tmp('hcfg');
   const c = alphaHostConfig({ dataDir: d });
-  assert.deepEqual(Object.keys(c).sort(), ['$comment', 'audio', 'audioHealth', 'eventCore', 'feedbackDir', 'hotkeys', 'replay']);
+  assert.deepEqual(Object.keys(c).sort(), ['$comment', 'audio', 'audioHealth', 'eventCore', 'feedbackDir', 'graphicsWatch', 'hotkeys', 'replay']);
   assert.deepEqual(c.replay, { seconds: 60, autoStart: true });
   assert.deepEqual(c.hotkeys, { enabled: true });
   assert.deepEqual(c.audio, { lowLatency: true });
