@@ -87,6 +87,8 @@ public:
 	json::Value status() const;      // host.status "graphics"
 	// --test-hooks only (graphics.testStall): the next tick blocks the graphics thread for ms (a stuck GPU).
 	void test_stall(uint32_t ms) { test_stall_ms_.store(ms); }
+	// --test-hooks only (graphics.testSnapshotBusy): status() acts as if the snapshot read ran out of retries.
+	void test_snapshot_busy(bool on) { test_busy_.store(on); }
 
 private:
 	static void tick_cb(void *param, float seconds);
@@ -96,6 +98,7 @@ private:
 	std::atomic<uint64_t> last_tick_ms_{0}; // GetTickCount64 at the last frame (start time before the first)
 	std::atomic<uint64_t> ticks_{0};
 	std::atomic<uint32_t> test_stall_ms_{0};
+	std::atomic<bool> test_busy_{false};
 	Stall stall_; // the checker thread's own state (one writer, no other reader)
 	// What status() reads, published by the checker without a lock (Codex review: host.alive must never wait on the
 	// checker, which logs), as one consistent snapshot (seqlock, Codex re-review).

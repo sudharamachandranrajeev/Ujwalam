@@ -1826,5 +1826,5 @@ Growth plan ED2. Decided:
   - All elapsed times use a monotonic clock.
   - The liveness window starts when a restore has finished, not when the host starts.
   - In the host, `host.alive` reads atomics only; the checker logs without holding a lock.
-  - The stall report is read as one consistent snapshot: a single-writer seqlock, still lock-free for `host.alive`. A stress test showed 0 torn reads (re-review).
+  - The stall report is read as one consistent snapshot: a single-writer seqlock, still lock-free for `host.alive`. A stress test showed 0 torn reads (re-review). A read that runs out of retries reports `"snapshot": "busy"` with no stall fields, never mixed values.
   - The task-bar write is retried when the file is open elsewhere, and an older state never overwrites a newer one.

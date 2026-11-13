@@ -83,7 +83,8 @@ Worst case: about 35 s to detect, up to 15 s to kill, 2 s backoff, then the star
    - A reader retries while the generation is odd or has changed: spin, then yield, bounded. The fields are relaxed atomics, so a torn attempt is retried and is never a data race. `host.alive` stays lock-free.
    - `graphics.testSnapshot {writes, reads}` (`--test-hooks` only) stresses the same class. A writer thread publishes snapshots whose fields all derive from one counter, against reads in the RPC thread.
    - Three runs of 2,000,000 writes against 2,000,000 reads: 0 torn, 0 out of retries. The reader saw a new write 37,065 to 75,371 times per run while the writer ran, so the two threads did overlap.
-6. **Decision renumbered.** D373 was taken on master by RP5 self-learning, so this decision is D374.
+6. **An unvalidated snapshot is never reported (Codex, third review).** If the reads run out of retries, `status()` leaves out the stall fields (`stalled`, `stalledMs`, `stalls`, `longestStallMs`, `lastStallAt`) and sets `"snapshot": "busy"`. Otherwise it sets `"snapshot": "ok"`. `lastFrameAgeMs` is one atomic and is always reported; it is the only value the launcher decides on. `graphics.testSnapshotBusy {busy}` (`--test-hooks` only) forces that branch in `host-gfx-watch.test.mjs`.
+7. **Decision renumbered.** D373 was taken on master by RP5 self-learning, so this decision is D374.
 
 ## Tests
 

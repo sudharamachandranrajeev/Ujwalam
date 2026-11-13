@@ -732,6 +732,20 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		r.set("changes", (int64_t)pr.changes);
 		return r;
 	});
+	// graphics.testSnapshotBusy {busy}: host.status / host.alive act as if the stall snapshot read ran out of retries
+	// (the stall fields are then left out, "snapshot": "busy"). --test-hooks only.
+	add("graphics.testSnapshotBusy", [&a](const json::Value &p) {
+		Params q(p, {"busy"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "graphics.testSnapshotBusy needs a host started with --test-hooks");
+		if (!a.gfx_watch)
+			throw Error(rpc::INTERNAL, "the graphics watchdog is not running");
+		const bool busy = q.boolean("busy");
+		a.gfx_watch->test_snapshot_busy(busy);
+		json::Value r = json::Value::object();
+		r.set("busy", busy);
+		return r;
+	});
 	// audio.testHangDestroy {id}: that fake source's destroy never returns (a stuck libobs destruction thread at
 	// shutdown, as a WASAPI source on a dead work queue); proves the shutdown guard ends the host. --test-hooks only.
 	add("audio.testHangDestroy", [&a](const json::Value &p) {

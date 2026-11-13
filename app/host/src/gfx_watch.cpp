@@ -258,12 +258,20 @@ json::Value Watch::status() const
 	r.set("lastFrameAgeMs", (int64_t)(now > last ? now - last : 0));
 	r.set("frames", (int64_t)ticks_.load());
 	// Lock-free, consistent snapshot (seqlock): host.alive answers even while the checker is logging.
-	const Snapshot s = pub_.read();
-	r.set("stalled", s.stalled);
-	r.set("stalledMs", s.stalled ? (int64_t)(now > s.since_ms ? now - s.since_ms : 0) : (int64_t)0);
-	r.set("stalls", (int64_t)s.count);
-	r.set("longestStallMs", (int64_t)s.longest_ms);
-	r.set("lastStallAt", iso(s.stall_ft));
+	bool ok = false;
+	const Snapshot s = pub_.read(&ok);
+	// An unvalidated snapshot is never reported (Codex re-review): after the bounded retries the stall fields are left
+	// out and "snapshot" says "busy"; lastFrameAgeMs above (one atomic, what the launcher decides on) is always there.
+	if (!ok || test_busy_.load()) {
+		r.set("snapshot", "busy");
+	} else {
+		r.set("snapshot", "ok");
+		r.set("stalled", s.stalled);
+		r.set("stalledMs", s.stalled ? (int64_t)(now > s.since_ms ? now - s.since_ms : 0) : (int64_t)0);
+		r.set("stalls", (int64_t)s.count);
+		r.set("longestStallMs", (int64_t)s.longest_ms);
+		r.set("lastStallAt", iso(s.stall_ft));
+	}
 	r.set("deviceLosses", (int64_t)g_losses.load());
 	r.set("deviceRebuilds", (int64_t)g_rebuilds.load());
 	r.set("lastDeviceLossAt", iso(g_last_loss_ft.load()));

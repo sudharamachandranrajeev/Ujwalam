@@ -99,6 +99,22 @@ test('the stall snapshot host.alive reads is never torn: seqlock stress, writer 
   }
 });
 
+test('a snapshot read out of retries reports no stall fields, only "busy"; the frame age is always there (Codex re-review)', { skip }, async () => {
+  assert.equal((await h.client.call('host.alive')).graphics.snapshot, 'ok');
+  await h.client.call('graphics.testSnapshotBusy', { busy: true });
+  try {
+    for (const g of [(await h.client.call('host.alive')).graphics, (await h.client.call('host.status')).graphics]) {
+      assert.equal(g.snapshot, 'busy');
+      for (const k of ['stalled', 'stalledMs', 'stalls', 'longestStallMs', 'lastStallAt']) assert.ok(!(k in g), `${k} left out`);
+      assert.ok(Number.isFinite(g.lastFrameAgeMs) && Number.isFinite(g.frames));
+      assert.equal(g.deviceLosses, 0);
+    }
+  } finally { await h.client.call('graphics.testSnapshotBusy', { busy: false }); }
+  const g = (await h.client.call('host.alive')).graphics;
+  assert.equal(g.snapshot, 'ok');
+  assert.equal(typeof g.stalled, 'boolean');
+});
+
 test('graphics.testStall is checked and needs --test-hooks', { skip }, async () => {
   for (const p of [{}, { ms: 0 }, { ms: 30001 }, { ms: 'x' }, { ms: 10, extra: 1 }]) {
     await assert.rejects(h.client.call('graphics.testStall', p), (e) => e.code === -32602, JSON.stringify(p));
@@ -108,6 +124,7 @@ test('graphics.testStall is checked and needs --test-hooks', { skip }, async () 
   try {
     await assert.rejects(h2.client.call('graphics.testStall', { ms: 10 }), (e) => e.code === -32001);
     await assert.rejects(h2.client.call('graphics.testSnapshot', { writes: 1, reads: 1 }), (e) => e.code === -32001);
+    await assert.rejects(h2.client.call('graphics.testSnapshotBusy', { busy: true }), (e) => e.code === -32001);
     const g = (await h2.client.call('host.alive')).graphics;
     assert.equal(g.watch, false, 'no graphicsWatch in the host config: no stall check');
     assert.equal(g.stalled, false);
