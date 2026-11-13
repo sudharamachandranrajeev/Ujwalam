@@ -76,3 +76,6 @@ data/games/*/local/
 
 # The user's own stream assets (media, faces, brand, Meld sessions with local paths): local only, never committed (2026-11-07)
 /data/stream assets/
+
+# Escape file for the local Stop hook .claude/hooks/keep-going.mjs (2026-11-13): present = the agent may stop
+.claude/allow-stop

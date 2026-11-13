@@ -36,6 +36,18 @@ function startTree(opts = {}) {
   });
 }
 const alive = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+/** On a failure only (F3, an intermittent failure in this file): the node process tree around the given pids, so the
+ *  next failure shows which process was left and who its parent is. */
+function treeDump(pids) {
+  let procs;
+  try { procs = listNodeProcesses(); } catch (e) { return `process list failed: ${e.message}`; }
+  const want = new Set(pids.filter(Number.isInteger));
+  const rows = procs.filter((p) => want.has(p.pid) || want.has(p.parentPid) || /clip-tree\.mjs/.test(p.cmd));
+  return [`pids ${[...want].map((p) => `${p}:${alive(p) ? 'alive' : 'gone'}`).join(' ')}; test runner ${process.pid}`,
+    ...rows.map((p) => `  pid ${p.pid} parent ${p.parentPid} started ${p.startedAt ?? '?'} ${String(p.cmd).slice(-120)}`)].join('\n');
+}
+/** assert.ok with the process tree in the message when it fails. */
+function must(v, label, pids) { if (!v) assert.fail(`${label}\n${treeDump(pids)}`); }
 
 test('root cause: a plain kill of the job ends only the parent; its child (ffmpeg in a real job) runs on', { skip: !win && 'Windows behaviour' }, async () => {
   const { parent, childPid } = await startTree();
@@ -43,17 +55,17 @@ test('root cause: a plain kill of the job ends only the parent; its child (ffmpe
     parent.kill();
     await new Promise((r) => parent.once('exit', r));
     await sleep(500);
-    assert.equal(alive(childPid), true, 'the child outlived its parent: the stray the user saw working after close');
+    must(alive(childPid), 'the child outlived its parent: the stray the user saw working after close', [parent.pid, childPid]);
     assert.ok(treeProcs().some((s) => s.pid === childPid), 'tools/stray-procs.mjs lists it');
   } finally { killTree(childPid); }
-  assert.ok(await waitFor(() => !alive(childPid)), 'cleaned up');
+  must(await waitFor(() => !alive(childPid)), 'cleaned up', [childPid]);
 });
 
 test('killChildTree ends the parent and its child; nothing is left for stray-procs to find', async () => {
   const { parent, childPid } = await startTree();
   assert.equal(killChildTree(parent), true);
   await new Promise((r) => (parent.exitCode !== null ? r() : parent.once('exit', r)));
-  assert.ok(await waitFor(() => !alive(childPid)), 'child ended with its parent');
+  must(await waitFor(() => !alive(childPid)), 'child ended with its parent', [parent.pid, childPid]);
   assert.ok(await waitFor(() => treeProcs().length === 0), `strays: ${JSON.stringify(treeProcs())}`);
   assert.equal(killChildTree(parent), true, 'already gone: counts as ended');
 });
@@ -93,9 +105,9 @@ test('record-clips: closing Ujwalam (stop) ends the clip job\'s whole tree; it g
     assert.equal(o.stdio[0], 'pipe', 'stdin is the parent pipe');
     assert.equal(o.env.UJWALAM_PARENT_PIPE, '1');
     const kid = await childOf(c);
-    assert.ok(kid, 'the job started its child');
+    must(kid, 'the job started its child', [c.pid]);
     rc.stop();
-    assert.ok(await waitFor(() => !alive(kid) && !alive(c.pid)), 'parent and child ended');
+    must(await waitFor(() => !alive(kid) && !alive(c.pid)), 'parent and child ended', [c.pid, kid]);
     assert.ok(await waitFor(() => treeProcs().length === 0), `strays: ${JSON.stringify(treeProcs())}`);
   } finally { for (const x of s.spawned) killChildTree(x.c); rmSync(s.d, { recursive: true, force: true }); }
 });
@@ -107,9 +119,9 @@ test('record-clips: a stream that starts pauses the job by ending its whole tree
     rc.feed(s.S('live')); rc.feed(s.S('stopped'));
     const { c } = s.spawned[0];
     const kid = await childOf(c);
-    assert.ok(kid);
+    must(kid, 'the job started its child', [c.pid]);
     rc.feed(s.S('stopped', 'live'));
-    assert.ok(await waitFor(() => !alive(kid) && !alive(c.pid)), 'parent and child ended while live');
+    must(await waitFor(() => !alive(kid) && !alive(c.pid)), 'parent and child ended while live', [c.pid, kid]);
     rc.stop();
     assert.ok(await waitFor(() => treeProcs().length === 0), `strays: ${JSON.stringify(treeProcs())}`);
   } finally { for (const x of s.spawned) killChildTree(x.c); rmSync(s.d, { recursive: true, force: true }); }
@@ -163,10 +175,10 @@ test('record-clips: Stop all while live or recording (D311 proposed) ends the cl
     assert.equal(s.spawned.length, 1, 'the stale request did not stop it');
     const { c } = s.spawned[0];
     const kid = await childOf(c);
-    assert.ok(kid);
+    must(kid, 'the job started its child', [c.pid]);
     writeFileSync(path.join(s.dataDir, 'clips', STOP_TASKS_FILE), JSON.stringify({ atMs: Date.now() }));
     rc.feed(s.S('stopped'));
-    assert.ok(await waitFor(() => !alive(kid) && !alive(c.pid)), 'parent and child ended');
+    must(await waitFor(() => !alive(kid) && !alive(c.pid)), 'parent and child ended', [c.pid, kid]);
     assert.ok(await waitFor(() => treeProcs().length === 0), `strays: ${JSON.stringify(treeProcs())}`);
     const tdir = path.join(s.dataDir, 'tasks');
     const t = readdirSync(tdir).map((n) => JSON.parse(readFileSync(path.join(tdir, n), 'utf8'))).find((x) => x.kind === 'clips');
