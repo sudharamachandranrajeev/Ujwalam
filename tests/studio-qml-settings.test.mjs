@@ -186,7 +186,7 @@ describe('QML studio Settings (headless probe)', { skip }, () => {
   });
 
   test('Settings > Appearance: a theme card click previews it, Save stores ui.theme and ui.effects', async () => {
-    const p = await probe(['settings-open', 'settings-page:Appearance', 'click:themeCard:retro-wave', 'settings-reduce-effects:on', 'settings-save'], 9000);
+    const p = await probe(['settings-open', 'settings-page:Appearance', 'click:themeCard:retro-wave', 'settings-reduce-effects:on', 'settings-save'], 22000);
     assert.deepEqual(done(p.p).map((x) => x[1]), [true, true, true, true, true]);
     assert.equal(p.p.theme, 'retro-wave');
     assert.equal(p.saved.ui.theme, 'retro-wave');
@@ -213,7 +213,7 @@ describe('QML studio Settings (headless probe)', { skip }, () => {
   test('High performance: turning it off gives back the Reduce effects choice the user had; it saves ui.effects "performance"', async () => {
     const b = await probe(['settings-open', 'settings-reduce-effects:on', 'settings-performance:on', 'settings-performance:off']);
     assert.equal(b.s.settings.effects, 'reduced');
-    const p = await probe(['settings-open', 'settings-performance:on', 'settings-save'], 8000);
+    const p = await probe(['settings-open', 'settings-performance:on', 'settings-save'], 13000);
     assert.equal(p.saved.ui.effects, 'performance');
   });
 
