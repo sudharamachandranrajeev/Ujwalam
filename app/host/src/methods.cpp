@@ -717,6 +717,21 @@ std::map<std::string, rpc::Method> make_methods(App &a)
 		r.set("ms", ms);
 		return r;
 	});
+	// graphics.testSnapshot {writes, reads}: stress the lock-free stall snapshot (gfx_watch.h Published, the seqlock
+	// host.alive reads) with a writer thread against this reader; torn must be 0. --test-hooks only.
+	add("graphics.testSnapshot", [&a](const json::Value &p) {
+		Params q(p, {"writes", "reads"});
+		if (!a.test_hooks)
+			throw Error(rpc::FORBIDDEN, "graphics.testSnapshot needs a host started with --test-hooks");
+		const auto pr = gfxwatch::seqlock_probe((uint64_t)q.integer("writes", 1, 20000000), (uint64_t)q.integer("reads", 1, 20000000));
+		json::Value r = json::Value::object();
+		r.set("writes", (int64_t)pr.writes);
+		r.set("reads", (int64_t)pr.reads);
+		r.set("torn", (int64_t)pr.torn);
+		r.set("retriedOut", (int64_t)pr.retried_out);
+		r.set("changes", (int64_t)pr.changes);
+		return r;
+	});
 	// audio.testHangDestroy {id}: that fake source's destroy never returns (a stuck libobs destruction thread at
 	// shutdown, as a WASAPI source on a dead work queue); proves the shutdown guard ends the host. --test-hooks only.
 	add("audio.testHangDestroy", [&a](const json::Value &p) {

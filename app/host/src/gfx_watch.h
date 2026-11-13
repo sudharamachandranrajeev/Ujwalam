@@ -45,6 +45,40 @@ struct Stall {
 	int observe(uint64_t now_ms, uint64_t last_tick_ms);
 };
 
+// The stall report as status() reads it: one consistent set of values.
+struct Snapshot {
+	bool stalled = false;
+	uint64_t since_ms = 0, longest_ms = 0;
+	uint32_t count = 0;
+	uint64_t stall_ft = 0; // FILETIME (UTC) the newest stall was detected (0 = none)
+};
+
+// Single-writer seqlock (Codex re-review): separate atomic loads could mix two stall generations (a recovery published
+// between reading "stalled" and "since"), giving a wrong stalled time. The writer makes gen odd, stores the fields,
+// then makes gen even (release); a reader retries while gen is odd or changed. Lock-free for readers: host.alive never
+// waits. The fields are relaxed atomics, so a torn attempt is a retry, never a data race.
+class Published {
+public:
+	void publish(const Snapshot &s); // the one writer only
+	// Bounded retries (spin, then yield; the writer's window is a few stores, published at most once per check).
+	// After them (never seen in practice) the last attempt is returned with ok=false.
+	Snapshot read(bool *ok = nullptr) const;
+
+private:
+	std::atomic<uint32_t> gen_{0};
+	std::atomic<bool> stalled_{false};
+	std::atomic<uint64_t> since_ms_{0}, longest_ms_{0}, stall_ft_{0};
+	std::atomic<uint32_t> count_{0};
+};
+
+// --test-hooks (graphics.testSnapshot): a writer thread publishes `writes` snapshots whose fields all derive from one
+// counter while this thread reads `reads` times; returns how many reads were inconsistent (must be 0).
+struct SeqlockProbe {
+	uint64_t reads = 0, writes = 0, torn = 0, retried_out = 0;
+	uint64_t changes = 0; // reads during the writes that saw a newer write (proves the threads overlapped)
+};
+SeqlockProbe seqlock_probe(uint64_t writes, uint64_t reads);
+
 class Watch {
 public:
 	explicit Watch(const Config &c); // after libobs started: tick callback, device-loss callbacks, checker thread
@@ -64,11 +98,9 @@ private:
 	std::atomic<uint32_t> test_stall_ms_{0};
 	Stall stall_; // the checker thread's own state (one writer, no other reader)
 	// What status() reads, published by the checker without a lock (Codex review: host.alive must never wait on the
-	// checker, which logs).
-	std::atomic<bool> pub_stalled_{false};
-	std::atomic<uint64_t> pub_since_ms_{0}, pub_longest_ms_{0};
-	std::atomic<uint32_t> pub_count_{0};
-	std::atomic<uint64_t> last_stall_ft_{0}; // FILETIME (UTC) the newest stall was detected (0 = none)
+	// checker, which logs), as one consistent snapshot (seqlock, Codex re-review).
+	Published pub_;
+	uint64_t last_stall_ft_ = 0; // checker thread only
 	void *ev_ = nullptr;        // HANDLE (manual reset; set = stop)
 	std::thread th_;
 };

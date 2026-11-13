@@ -78,7 +78,12 @@ Worst case: about 35 s to detect, up to 15 s to kill, 2 s backoff, then the star
 2. **Window starts after the restore.** No checks run while a restart or update is in progress (`busy`). The observation window is now reset when the restore FINISHES (end of `onExit`, in a `finally`; end of `restartPlanned`), not when the new host starts. A slow project reload or stream restart no longer counts toward `noAnswerMs`. The `finally` also clears `busy` if the last status or snapshot step throws, so the watchdog is not left switched off.
 3. **`host.alive` lock-free in the host.** The checker thread is the only writer of the stall state. It publishes stalled, since, count, longest and the stall, loss and rebuild times (FILETIME) to atomics before it logs, and holds no lock while logging. `status()` (`host.status` / `host.alive`) reads only atomics.
 4. **Task-bar write retried.** `writeTaskFile` renames a temp file over the task file. On Windows that rename fails while a reader has the file open, so an incident's final state could be lost. That happened once in a test run: the task stayed "running". `tell()` now retries up to 10 times, 200 ms apart. An older state's retry never overwrites a newer one. The cause is inferred from the code: the failed write was not observed directly.
-5. **Decision renumbered.** D373 was taken on master by RP5 self-learning, so this decision is D374.
+5. **One consistent snapshot (Codex re-review).** Separate atomic loads could mix two stall generations, for example a recovery published between reading "stalled" and "since", and give a wrong stalled time.
+   - The report is now published through a single-writer seqlock (`gfx_watch.h` `Published`). The writer makes the generation odd, stores the fields, then makes it even with release ordering.
+   - A reader retries while the generation is odd or has changed: spin, then yield, bounded. The fields are relaxed atomics, so a torn attempt is retried and is never a data race. `host.alive` stays lock-free.
+   - `graphics.testSnapshot {writes, reads}` (`--test-hooks` only) stresses the same class. A writer thread publishes snapshots whose fields all derive from one counter, against reads in the RPC thread.
+   - Three runs of 2,000,000 writes against 2,000,000 reads: 0 torn, 0 out of retries. The reader saw a new write 37,065 to 75,371 times per run while the writer ran, so the two threads did overlap.
+6. **Decision renumbered.** D373 was taken on master by RP5 self-learning, so this decision is D374.
 
 ## Tests
 
@@ -87,6 +92,7 @@ Worst case: about 35 s to detect, up to 15 s to kill, 2 s backoff, then the star
 | `node --test tests/host-watch.test.mjs` | 14 / 14 pass (after the review fixes) |
 | `node --test tests/host-watch.test.mjs tests/studio-ui-alpha.test.mjs tests/stream-recovery.test.mjs tests/studio-ui-crash-recovery.test.mjs` | 74 tests: 73 pass, 1 skipped (face worker, no `.venv-gpu` in the worktree) |
 | `node --test app/host/tests/host-gfx-watch.test.mjs app/host/tests/host-api.test.mjs` (real host, installed app not running) | 19 / 19 pass |
+| after the seqlock: `node --test app/host/tests/host-gfx-watch.test.mjs app/host/tests/host-api.test.mjs app/host/tests/host-structure.test.mjs tests/host-watch.test.mjs` | 38 / 38 pass |
 | `npm run test:host` (installed app not running) | 173 tests: 162 pass, 0 fail, 11 skipped (opt-in benches; face tests need `.venv-gpu`, absent in this worktree). The first run had a failure in `host-live-plan-record.test.mjs` (EPIPE on a loopback stream write) and one other failing assertion. A full rerun with no other load passed. Treated as load flakiness, not this change: that test does not use the watchdog. After the review fixes: 173 tests, 162 pass, 0 fail, 11 skipped, first run. |
 | `node tools/lint.mjs` | 0 findings |
 

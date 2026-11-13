@@ -87,6 +87,18 @@ test('a blocked graphics thread is reported once while host.alive keeps answerin
   assert.match(hostLog(), /graphics recovered: video frames are back after \d+ ms/);
 });
 
+test('the stall snapshot host.alive reads is never torn: seqlock stress, writer thread against reader (Codex re-review)', { skip }, async () => {
+  const r = await h.client.call('graphics.testSnapshot', { writes: 2_000_000, reads: 2_000_000 });
+  assert.equal(r.writes, 2_000_000);
+  assert.ok(r.reads >= 2_000_000, `${r.reads} reads`);
+  assert.ok(r.changes >= 100, `the reader ran during the writes (${r.changes} new values seen)`);
+  assert.equal(r.torn, 0, 'no read mixed two writes');
+  assert.equal(r.retriedOut, 0, 'every read got a consistent snapshot within its retries');
+  for (const p of [{}, { writes: 0, reads: 1 }, { writes: 1, reads: 20_000_001 }]) {
+    await assert.rejects(h.client.call('graphics.testSnapshot', p), (e) => e.code === -32602, JSON.stringify(p));
+  }
+});
+
 test('graphics.testStall is checked and needs --test-hooks', { skip }, async () => {
   for (const p of [{}, { ms: 0 }, { ms: 30001 }, { ms: 'x' }, { ms: 10, extra: 1 }]) {
     await assert.rejects(h.client.call('graphics.testStall', p), (e) => e.code === -32602, JSON.stringify(p));
@@ -95,6 +107,7 @@ test('graphics.testStall is checked and needs --test-hooks', { skip }, async () 
   const h2 = await launchHost({ dataDir: d2, project: PROJECT, env: { UJWALAM_HEADLESS: '1' }, timeoutMs: 60000 });
   try {
     await assert.rejects(h2.client.call('graphics.testStall', { ms: 10 }), (e) => e.code === -32001);
+    await assert.rejects(h2.client.call('graphics.testSnapshot', { writes: 1, reads: 1 }), (e) => e.code === -32001);
     const g = (await h2.client.call('host.alive')).graphics;
     assert.equal(g.watch, false, 'no graphicsWatch in the host config: no stall check');
     assert.equal(g.stalled, false);
