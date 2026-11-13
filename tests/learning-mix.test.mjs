@@ -3,7 +3,7 @@
 // no network): the reward, seeded Thompson sampling, the 10 % floor, the 15-point weekly cap, once a week, undo, cold
 // start, the auto-post kind order (flag off = unchanged), the CLI and the studio-ui API (flag gate, CSRF, undo).
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
@@ -120,7 +120,7 @@ describe('sampling and limits', () => {
     assert.equal(k.montage, 0.4);
     for (const v of Object.values(k)) assert.ok(v >= 0.1 - 1e-9);
     assert.ok(Math.abs(Object.values(k).reduce((x, y) => x + y, 0) - 1) < 1e-9);
-    // a share below the floor is lifted to it
+    // a share below the floor is lifted to it when one step can do it (both limits hold)
     assert.ok(limitShares({ a: 0.05, b: 0.95 }, { a: 0, b: 1 }, lim).a >= 0.1);
   });
 });
@@ -201,6 +201,109 @@ describe('weekly step, cold start, undo', () => {
     const m = readMix(dataDir, cfg);
     assert.deepEqual(m.shares.transition, cfg.byId.transition.defaults);
     assert.ok(s.entry.kept.transition);
+  });
+});
+
+describe('Codex review fixes (2026-11-13)', () => {
+  const lim = { minShare: 0.1, maxStepPoints: 15 };
+  test('(1) floor and cap hold together, or the result is null (infeasible)', () => {
+    assert.equal(limitShares({ a: 0, b: 1 }, { a: 0, b: 1 }, { minShare: 0.1, maxStepPoints: 5 }), null);
+    assert.equal(limitShares({ a: 0.02, b: 0.98 }, { a: 1, b: 0 }, { minShare: 0.1, maxStepPoints: 5 }), null);
+    const rng = seededRng('prop');
+    for (let i = 0; i < 2000; i++) {
+      const n = 2 + Math.floor(rng() * 3);
+      const raw = Array.from({ length: n }, () => rng());
+      const tr = Array.from({ length: n }, () => rng());
+      const sum = raw.reduce((x, y) => x + y, 0); const ts = tr.reduce((x, y) => x + y, 0);
+      const cur = Object.fromEntries(raw.map((v, k) => [`a${k}`, v / sum]));
+      const target = Object.fromEntries(tr.map((v, k) => [`a${k}`, v / ts]));
+      const out = limitShares(cur, target, lim);
+      if (out === null) continue;
+      for (const k of Object.keys(cur)) {
+        assert.ok(out[k] >= 0.1 - 1e-9, `floor ${JSON.stringify(cur)}`);
+        assert.ok(Math.abs(out[k] - cur[k]) <= 0.15 + 1e-9, `cap ${JSON.stringify(cur)}`);
+      }
+      assert.ok(Math.abs(Object.values(out).reduce((x, y) => x + y, 0) - 1) < 1e-9);
+    }
+  });
+  test('(1) step keeps a dimension whose limits cannot both hold, and says so', async () => {
+    const dataDir = mk();
+    const sh = defaultShares(cfg);
+    sh.music = { off: 0, on: 1 }; // below the floor by more than one step
+    mkdirSync(path.join(dataDir, MIX_DIR), { recursive: true });
+    writeFileSync(path.join(dataDir, MIX_DIR, MIX_FILE), JSON.stringify({ version: 1, applied: true, shares: sh, changedAt: null }));
+    const small = { ...cfg, limits: { ...cfg.limits, maxStepPoints: 5 } };
+    const s = await step({ dataDir, cfg: small, ...fake(10), now: T0, hourOf: utcHour });
+    assert.equal(s.changed, true);
+    assert.deepEqual(readMix(dataDir, cfg).shares.music, { off: 0, on: 1 });
+    assert.match(s.entry.kept.music, /cannot both hold/);
+  });
+  test('(2) a record cut off by a failed append is dropped and never swallows the next one', async () => {
+    const dataDir = mk();
+    mkdirSync(path.join(dataDir, MIX_DIR), { recursive: true });
+    const logf = path.join(dataDir, MIX_DIR, LOG_FILE);
+    writeFileSync(logf, '{"v":1,"id":"n-1","action":"note"}\n{"v":1,"id":"c-cut","action":"cha');
+    assert.deepEqual(readLog(dataDir).map((e) => e.id), ['n-1']);
+    const s = await step({ dataDir, cfg, ...fake(10), now: T0, hourOf: utcHour });
+    assert.deepEqual(readLog(dataDir).map((e) => e.id), ['n-1', s.entry.id]);
+    assert.ok(readFileSync(logf, 'utf8').endsWith('\n'));
+  });
+  test('(3) a failed state write logs nothing; a failed undo keeps the undo history', async () => {
+    const dataDir = mk();
+    const stateFile = path.join(dataDir, MIX_DIR, MIX_FILE);
+    mkdirSync(stateFile, { recursive: true }); // the state cannot be written over a folder
+    await assert.rejects(step({ dataDir, cfg, ...fake(10), now: T0, hourOf: utcHour }));
+    assert.deepEqual(readLog(dataDir), []);
+    rmSync(stateFile, { recursive: true });
+    const s = await step({ dataDir, cfg, ...fake(10), now: T0, hourOf: utcHour });
+    const state = readFileSync(stateFile, 'utf8');
+    unlinkSync(stateFile); mkdirSync(stateFile);
+    assert.throws(() => undo({ dataDir, cfg, now: T0 + DAY }));
+    assert.deepEqual(readLog(dataDir).map((e) => e.action), ['change']);
+    rmSync(stateFile, { recursive: true }); writeFileSync(stateFile, state);
+    const u = undo({ dataDir, cfg, now: T0 + DAY });
+    assert.equal(u.entry.undoes, s.entry.id);
+  });
+  test('(3) a failed log append after the state write is repaired from the state', async () => {
+    const dataDir = mk();
+    const logf = path.join(dataDir, MIX_DIR, LOG_FILE);
+    mkdirSync(logf, { recursive: true }); // the append fails
+    const s = await step({ dataDir, cfg, ...fake(10), now: T0, hourOf: utcHour });
+    assert.equal(readMix(dataDir, cfg).applied, true);
+    assert.deepEqual(readLog(dataDir).map((e) => e.id), [s.entry.id], 'read back from the state meanwhile');
+    rmSync(logf, { recursive: true });
+    const again = await step({ dataDir, cfg, ...fake(10), now: T0 + DAY, hourOf: utcHour });
+    assert.equal(again.reason, 'too-soon', 'the cooldown still counts the repaired change');
+    assert.equal(readFileSync(logf, 'utf8').trim().split('\n').length, 1, 'the missing line was appended');
+    undo({ dataDir, cfg, now: T0 + DAY });
+    assert.deepEqual(readFileSync(logf, 'utf8').trim().split('\n').map((l) => JSON.parse(l).action), ['change', 'undo']);
+  });
+  test('(4) undo restores the previous changedAt (the planner seed), not a new one', async () => {
+    const dataDir = mk();
+    const data = { ...fake(10), hourOf: utcHour };
+    await step({ dataDir, cfg, ...data, now: T0 });
+    const first = readMix(dataDir, cfg).changedAt;
+    await step({ dataDir, cfg, ...data, now: T0 + 7 * DAY });
+    assert.notEqual(readMix(dataDir, cfg).changedAt, first);
+    undo({ dataDir, cfg, now: T0 + 8 * DAY });
+    assert.equal(readMix(dataDir, cfg).changedAt, first);
+    undo({ dataDir, cfg, now: T0 + 8 * DAY });
+    assert.equal(readMix(dataDir, cfg).changedAt, null);
+    assert.equal(readMix(dataDir, cfg).applied, false);
+  });
+  test('(5) only the tail of the log is read', () => {
+    const dataDir = mk();
+    mkdirSync(path.join(dataDir, MIX_DIR), { recursive: true });
+    const logf = path.join(dataDir, MIX_DIR, LOG_FILE);
+    for (let i = 0; i < 3000; i++) appendFileSync(logf, `${JSON.stringify({ v: 1, id: `n-${i}`, action: 'note', pad: 'x'.repeat(20) })}\n`);
+    const all = readLog(dataDir, { tailBytes: 1e9 });
+    assert.equal(all.length, 3000);
+    const tail = readLog(dataDir);
+    assert.ok(tail.length < 3000 && tail.length > 100);
+    assert.equal(tail.at(-1).id, 'n-2999');
+    const small = readLog(dataDir, { tailBytes: 200 });
+    assert.ok(small.length >= 1 && small.length <= 4);
+    assert.equal(small.at(-1).id, 'n-2999');
   });
 });
 

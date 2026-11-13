@@ -39,7 +39,10 @@ the cold-start threshold and the size of real weekly moves are UNVERIFIED.
 ## Commands and results
 
     node --test --test-reporter=spec tests/learning-mix.test.mjs
-    ... tests 19, pass 19, fail 0
+    ... tests 19, pass 19, fail 0   (first commit)
+    ... tests 26, pass 26, fail 0   (after the Codex review fixes: floor + cap together or null, incl. a 2000-case
+        seeded property check; a cut-off log record dropped and not merged; failed state write logs nothing; failed undo
+        keeps history; failed append repaired from the state; undo restores the earlier changedAt; tail-only log read)
 
     python -I -m unittest discover -s tests/py -t tests/py -p "test_learning_mix.py"
     ... Ran 9 tests, OK

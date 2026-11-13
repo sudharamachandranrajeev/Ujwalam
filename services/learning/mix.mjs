@@ -19,7 +19,7 @@
 //   view({ dataDir, cfg?, rows?, posts?, now? }) -> current mix, cold-start reason, log (for the Growth window)
 //   weeklyReport(view)                        -> plain-English text
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -207,8 +207,9 @@ export function thompson(videos, dim, cfg, rng) {
 // ---------------------------------------------------------------- limits
 
 /**
- * The shares closest to `target` (same shift for every arm, clipped) that keep every arm >= minShare and move no arm by
- * more than maxStepPoints from `cur`, adding up to 1. Pure. An arm below the floor in `cur` is lifted to the floor.
+ * The shares closest to `target` (same shift for every arm, clipped) that keep every arm >= minShare AND move no arm by
+ * more than maxStepPoints from `cur`, adding up to 1. Pure. Both limits hold together or nothing changes: when they
+ * cannot (e.g. an arm below the floor by more than one step), the result is null and the caller keeps `cur`.
  */
 export function limitShares(cur, target, { minShare, maxStepPoints }) {
   const arms = Object.keys(cur);
@@ -217,21 +218,24 @@ export function limitShares(cur, target, { minShare, maxStepPoints }) {
   const lo = {}; const hi = {};
   for (const a of arms) {
     lo[a] = Math.max(minShare, cur[a] - step);
-    hi[a] = Math.max(lo[a], Math.min(top, cur[a] + step));
+    hi[a] = Math.min(top, cur[a] + step);
+    if (lo[a] > hi[a] + 1e-12) return null;
   }
-  const sumAt = (l) => arms.reduce((s, a) => s + Math.min(hi[a], Math.max(lo[a], (target[a] ?? 0) + l)), 0);
-  if (arms.reduce((s, a) => s + lo[a], 0) > 1 + 1e-9 || arms.reduce((s, a) => s + hi[a], 0) < 1 - 1e-9) return { ...cur };
-  let a0 = -1; let b0 = 1;
-  for (let i = 0; i < 100; i++) { const m = (a0 + b0) / 2; if (sumAt(m) < 1) a0 = m; else b0 = m; }
+  if (arms.reduce((s, a) => s + lo[a], 0) > 1 + 1e-9 || arms.reduce((s, a) => s + hi[a], 0) < 1 - 1e-9) return null;
+  const at = (a, l) => Math.min(hi[a], Math.max(lo[a], (target[a] ?? 0) + l));
+  const sumAt = (l) => arms.reduce((s, a) => s + at(a, l), 0);
+  let a0 = -2; let b0 = 2;
+  for (let i = 0; i < 200; i++) { const m = (a0 + b0) / 2; if (sumAt(m) < 1) a0 = m; else b0 = m; }
   const l = (a0 + b0) / 2;
-  const out = Object.fromEntries(arms.map((a) => [a, r4(Math.min(hi[a], Math.max(lo[a], (target[a] ?? 0) + l)))]));
-  // rounding residue goes to the arm with the most room, inside its bounds
-  const res = r4(1 - arms.reduce((s, a) => s + out[a], 0));
-  if (res !== 0) {
-    const fit = arms.filter((a) => (res > 0 ? out[a] + res <= hi[a] + 1e-9 : out[a] + res >= lo[a] - 1e-9)).sort((x, y) => out[y] - out[x])[0];
-    if (fit) out[fit] = r4(out[fit] + res);
+  // 6 decimals, never outside an arm's bounds; the rounding residue goes to an arm with room for it
+  const out = Object.fromEntries(arms.map((a) => [a, Math.min(hi[a], Math.max(lo[a], Math.round(at(a, l) * 1e6) / 1e6))]));
+  const res = 1 - arms.reduce((s, a) => s + out[a], 0);
+  if (Math.abs(res) > 1e-12) {
+    const fit = arms.filter((a) => (res > 0 ? out[a] + res <= hi[a] + 1e-12 : out[a] + res >= lo[a] - 1e-12)).sort((x, y) => out[y] - out[x])[0];
+    if (fit) out[fit] += res;
   }
-  return out;
+  const ok = arms.every((a) => out[a] >= lo[a] - 1e-9 && out[a] <= hi[a] + 1e-9) && Math.abs(arms.reduce((s, a) => s + out[a], 0) - 1) < 1e-9;
+  return ok ? out : null;
 }
 
 // ---------------------------------------------------------------- state and log files
@@ -254,21 +258,74 @@ function validShares(shares, cfg) {
 /** The mix in effect. No file, or a bad one: today's defaults, applied false. */
 export function readMix(dataDir, cfg) {
   const j = readJson(path.join(dirOf(dataDir), MIX_FILE));
-  if (isPlain(j) && j.version === 1 && typeof j.applied === 'boolean' && validShares(j.shares, cfg)) return { applied: j.applied, shares: j.shares, changedAt: j.changedAt ?? null };
-  return { applied: false, shares: defaultShares(cfg), changedAt: null };
+  if (isPlain(j) && j.version === 1 && typeof j.applied === 'boolean' && validShares(j.shares, cfg)) {
+    return { applied: j.applied, shares: j.shares, changedAt: j.changedAt ?? null, lastEntry: isPlain(j.lastEntry) ? j.lastEntry : null };
+  }
+  return { applied: false, shares: defaultShares(cfg), changedAt: null, lastEntry: null };
 }
 
-export function readLog(dataDir) {
+/** Only the tail of the log is read (show, cooldown and undo need the newest entries only). */
+export const LOG_TAIL_BYTES = 64 * 1024;
+
+function readLogFile(dataDir, tailBytes) {
+  const file = path.join(dirOf(dataDir), LOG_FILE);
   let text = '';
-  try { text = readFileSync(path.join(dirOf(dataDir), LOG_FILE), 'utf8'); } catch { return []; }
-  return text.split(/\r?\n/).filter(Boolean).map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(isPlain);
+  let fd = null;
+  try {
+    fd = openSync(file, 'r');
+    const size = fstatSync(fd).size;
+    const start = Math.max(0, size - tailBytes);
+    const buf = Buffer.alloc(size - start);
+    readSync(fd, buf, 0, buf.length, start);
+    text = buf.toString('utf8');
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1); // the first line may be cut by the window
+  } catch { text = ''; } finally { if (fd !== null) closeSync(fd); }
+  const lines = text.split('\n');
+  lines.pop(); // '' after the last newline, or an incomplete record with no newline after it
+  return lines.map((l) => { try { return JSON.parse(l); } catch { return null; } }).filter(isPlain);
+}
+
+const stateEntry = (dataDir) => {
+  const e = readJson(path.join(dirOf(dataDir), MIX_FILE))?.lastEntry;
+  return isPlain(e) && typeof e.id === 'string' ? e : null;
+};
+
+/** The newest complete log entries (at most LOG_TAIL_BYTES of the file). A record cut off by a failed append and a line
+ *  cut by the tail window are dropped. The state file's last entry is added when the log missed it (a failed append
+ *  after the state was written), so log and state always agree. */
+export function readLog(dataDir, { tailBytes = LOG_TAIL_BYTES } = {}) {
+  const log = readLogFile(dataDir, tailBytes);
+  const last = stateEntry(dataDir);
+  if (last && !log.some((e) => e.id === last.id)) log.push(last);
+  return log;
 }
 
 function append(dataDir, entry) {
-  mkdirSync(dirOf(dataDir), { recursive: true });
-  appendFileSync(path.join(dirOf(dataDir), LOG_FILE), `${JSON.stringify(entry)}\n`, 'utf8');
+  const file = path.join(dirOf(dataDir), LOG_FILE);
+  mkdirSync(path.dirname(file), { recursive: true });
+  let lead = '';
+  let fd = null;
+  try { // a record cut off by an earlier failed append must not swallow this one
+    fd = openSync(file, 'r');
+    const size = fstatSync(fd).size;
+    if (size > 0) { const b = Buffer.alloc(1); readSync(fd, b, 0, 1, size - 1); if (b[0] !== 0x0a) lead = '\n'; }
+  } catch { lead = ''; } finally { if (fd !== null) closeSync(fd); }
+  appendFileSync(file, `${lead}${JSON.stringify(entry)}\n`, 'utf8');
 }
-const writeMix = (dataDir, m) => writeJsonAtomic(path.join(dirOf(dataDir), MIX_FILE), { version: 1, applied: m.applied, shares: m.shares, changedAt: m.changedAt });
+
+/** Appends the state file's last entry when the log file does not hold it (repair after a failed append). */
+function repairLog(dataDir) {
+  const last = stateEntry(dataDir);
+  if (last && !readLogFile(dataDir, LOG_TAIL_BYTES).some((e) => e.id === last.id)) append(dataDir, last);
+}
+
+/** State first (atomic temp + rename), then the log line. The state carries the entry, so a failed append is repaired on
+ *  the next step or undo (and read back meanwhile); a failed state write throws before anything is logged, so there is
+ *  never a logged-but-unapplied change and a failed undo uses up no undo history. */
+function commit(dataDir, m, entry) {
+  writeJsonAtomic(path.join(dirOf(dataDir), MIX_FILE), { version: 1, applied: m.applied, shares: m.shares, changedAt: m.changedAt, lastEntry: entry });
+  try { append(dataDir, entry); } catch { /* repaired from the state's lastEntry */ }
+}
 
 /** The kind shares the auto-post rules use: only while applied (cold start and undone-to-start give null). */
 export function appliedKindShares(dataDir, cfg = loadConfig()) {
@@ -316,6 +373,7 @@ const weekSeed = (now) => `mix-${Math.floor(now / (7 * DAY))}`;
  */
 export async function step({ dataDir, cfg = loadConfig(), rows, posts, now = Date.now(), seed, hourOf } = {}) {
   const t = typeof now === 'function' ? now() : now;
+  repairLog(dataDir);
   const log = readLog(dataDir);
   const last = [...log].reverse().find((e) => e.action === 'change');
   if (last && t - Date.parse(last.at) < cfg.limits.periodDays * DAY) {
@@ -325,23 +383,27 @@ export async function step({ dataDir, cfg = loadConfig(), rows, posts, now = Dat
   const a = analyse({ ...inputs, cfg, seed: seed ?? weekSeed(t), hourOf });
   if (a.cold) return { changed: false, reason: 'cold-start', detail: a.reason, videos: a.videos.length };
   const cur = readMix(dataDir, cfg);
-  const shares = {};
-  for (const d of cfg.dimensions) shares[d.id] = a.targets[d.id] ? limitShares(cur.shares[d.id], a.targets[d.id], cfg.limits) : { ...cur.shares[d.id] };
+  const shares = {}; const kept = { ...(a.skipped ?? {}) };
+  for (const d of cfg.dimensions) {
+    const lim = a.targets[d.id] ? limitShares(cur.shares[d.id], a.targets[d.id], cfg.limits) : null;
+    if (a.targets[d.id] && !lim) kept[d.id] = 'the floor and the weekly cap cannot both hold; kept as it was';
+    shares[d.id] = lim ?? { ...cur.shares[d.id] };
+  }
   const at = new Date(t).toISOString();
   const entry = {
     v: 1, id: `c-${at}`, at, action: 'change',
-    from: { applied: cur.applied, shares: cur.shares }, to: { applied: true, shares },
-    videos: a.videos.length, numbers: a.numbers, targets: a.targets, kept: a.skipped,
+    from: { applied: cur.applied, shares: cur.shares, changedAt: cur.changedAt }, to: { applied: true, shares, changedAt: at },
+    videos: a.videos.length, numbers: a.numbers, targets: a.targets, kept,
     formula: cfg.reward.formula, limits: { minShare: cfg.limits.minShare, maxStepPoints: cfg.limits.maxStepPoints, periodDays: cfg.limits.periodDays },
     configVersion: cfg.version,
   };
-  append(dataDir, entry);
-  writeMix(dataDir, { applied: true, shares, changedAt: at });
+  commit(dataDir, { applied: true, shares, changedAt: at }, entry);
   return { changed: true, reason: 'changed', entry };
 }
 
 /** One call undoes the newest change still in effect: the mix goes back to what it was before that change. */
 export function undo({ dataDir, cfg = loadConfig(), now = Date.now() } = {}) {
+  repairLog(dataDir);
   const log = readLog(dataDir);
   const undone = new Set(log.filter((e) => e.action === 'undo').map((e) => e.undoes));
   const target = [...log].reverse().find((e) => e.action === 'change' && !undone.has(e.id));
@@ -349,10 +411,14 @@ export function undo({ dataDir, cfg = loadConfig(), now = Date.now() } = {}) {
   const t = typeof now === 'function' ? now() : now;
   const at = new Date(t).toISOString();
   const cur = readMix(dataDir, cfg);
-  const back = { applied: target.from.applied === true, shares: validShares(target.from.shares, cfg) ? target.from.shares : defaultShares(cfg) };
-  const entry = { v: 1, id: `u-${at}`, at, action: 'undo', undoes: target.id, from: { applied: cur.applied, shares: cur.shares }, to: back };
-  append(dataDir, entry);
-  writeMix(dataDir, { ...back, changedAt: at });
+  // back to the mix before the change, with its own changedAt: the planner's seeded picks are the same as before it
+  const back = {
+    applied: target.from?.applied === true,
+    shares: validShares(target.from?.shares, cfg) ? target.from.shares : defaultShares(cfg),
+    changedAt: typeof target.from?.changedAt === 'string' ? target.from.changedAt : null,
+  };
+  const entry = { v: 1, id: `u-${at}-${target.id}`, at, action: 'undo', undoes: target.id, from: { applied: cur.applied, shares: cur.shares, changedAt: cur.changedAt }, to: back };
+  commit(dataDir, back, entry);
   return { undone: true, entry };
 }
 
