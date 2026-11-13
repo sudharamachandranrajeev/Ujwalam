@@ -20,7 +20,21 @@ ApplicationWindow {
     property bool closeConfirmed: false
 
     function start() { studioStore.start() }
-    function probeState() { return studioStore.probeState() }
+    function probeState() {
+        const s = studioStore.probeState();
+        s.settings = settingsDlg.ready ? settingsDlg.probe() : null;
+        s.flagsInSettings = settingsDlg.opened;
+        s.flags = studioStore.flagList.map(f => ({ id: f.id, on: f.on === true }));
+        s.motionMode = Theme.motionMode();
+        s.motion = Theme.motion;
+        s.effects = Theme.effects();
+        return s;
+    }
+    // Probe actions the C++ side does not know (settings-*): the same names as the widget studio's probe.
+    function probeAction(action) {
+        if (String(action).startsWith("settings-")) return settingsDlg.probeAction(String(action));
+        return false;
+    }
 
     Store {
         id: studioStore
@@ -28,6 +42,7 @@ ApplicationWindow {
         onConfirmNeeded: (pending) => confirm.ask(pending)
         onAddLayerReady: (sceneId, sceneName) => addLayerDlg.ask(sceneId, sceneName)
         onAddSceneReady: (canvases) => addSceneDlg.ask(canvases)
+        onSettingsWanted: (page) => settingsDlg.openAt(page)
     }
 
     // Tasks still running and not live: ask first (the widget closeEvent). Live: the window closes as before.
@@ -113,6 +128,7 @@ ApplicationWindow {
     ConfirmDialog { id: confirm; store: studioStore }
     AddLayerDialog { id: addLayerDlg; store: studioStore }
     AddSceneDialog { id: addSceneDlg; store: studioStore }
+    SettingsDialog { id: settingsDlg; store: studioStore }
 
     CloseDialog {
         id: closeDlg

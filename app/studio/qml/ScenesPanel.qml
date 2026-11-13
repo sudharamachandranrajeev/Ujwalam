@@ -58,7 +58,7 @@ UPanel {
                     // Enabled even when it cannot delete: the click says why in the status line (a disabled button
                     // shows no tooltip).
                     tip: panel.store.live ? "Delete scene (not while live)"
-                       : !panel.store.sceneEdit ? "Delete scene (turn on scene editing in Settings > Advanced first)"
+                       : !panel.store.sceneEdit ? "Delete scene (turn on scene editing in Settings > Editing first)"
                        : "Delete “" + card.modelData.name + "”"
                     onClicked: panel.store.deleteScene(card.modelData.id)
                 }

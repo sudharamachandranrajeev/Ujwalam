@@ -33,6 +33,7 @@ QtObject {
     property var tasks: []
     property bool previewEditing: false
     property var flags: ({})         // flag id -> on (ui/api/flags), read after each status poll as the widget does
+    property var flagList: []        // the same answer in full: {id, label, summary, page, on} for Settings
     readonly property bool routing: flags["mixer-routing"] === true && tracks.length > 0
     readonly property bool sceneEdit: flags["scene-edit"] === true // deleting scenes needs it (D240); adding does not
     property var structure: ({})     // ui/api/project/structure: what a new layer can be made from (devices, overlays, assets)
@@ -48,6 +49,7 @@ QtObject {
     signal hostRestarted()
     signal addLayerReady(string sceneId, string sceneName)
     signal addSceneReady(var canvases)
+    signal settingsWanted(string page) // open Settings, on this page ("" = Clips)
 
     // ---- private ----
     property real pHostUptime: -1
@@ -76,6 +78,7 @@ QtObject {
     }
 
     function start() {
+        loadUiSettings();
         loadScenes();
         pollStatus();
     }
@@ -159,7 +162,7 @@ QtObject {
     function plainStructureError(code) {
         const words = {
             "live-locked": "Not while live.",
-            "scene-edit-off": "Turn on scene editing in Settings > Advanced first.",
+            "scene-edit-off": "Turn on scene editing in Settings > Editing first.",
             "scene-active": "That scene is the one the project starts with; make another scene the start scene first.",
             "last-scene": "The last scene cannot be deleted.",
             "layer-copied": "Another layer shows this one; delete that copy first.",
@@ -204,7 +207,7 @@ QtObject {
 
     function deleteScene(id) {
         if (live) return say("Not while live.");
-        if (!sceneEdit) return say("Turn on scene editing in Settings > Advanced to delete scenes.");
+        if (!sceneEdit) return say("Turn on scene editing in Settings > Editing to delete scenes.");
         structureEdit({ op: "scene.remove", scene: id });
     }
 
@@ -393,10 +396,52 @@ QtObject {
 
     function loadFlags() {
         Api.get("ui/api/flags", (ok, b) => {
-            if (!ok || !Array.isArray(b.flags)) return;
-            const f = {};
-            for (const x of b.flags) f[x.id] = x.on === true;
-            if (JSON.stringify(f) !== JSON.stringify(flags)) flags = f;
+            if (ok && Array.isArray(b.flags)) takeFlags(b.flags);
+        });
+    }
+    function takeFlags(list) {
+        const f = {};
+        for (const x of list) f[x.id] = x.on === true;
+        if (JSON.stringify(f) !== JSON.stringify(flags)) flags = f;
+        if (JSON.stringify(list) !== JSON.stringify(flagList)) flagList = list;
+    }
+
+    // ---- Settings (the widget's saveSettings and setFlag) ----
+    // An older server that does not know the match filter refuses the whole change (400): everything else is saved again
+    // without it, so one new option never blocks the other settings.
+    function saveSettings(body, retried) {
+        Api.post("ui/api/settings", body, (ok, r, err) => {
+            if (!ok) {
+                const c = body.clips || {};
+                if (String(err).startsWith("HTTP 400") && c.matchGate !== undefined && !retried) {
+                    const rest = Object.assign({}, body), cc = Object.assign({}, c);
+                    delete cc.matchGate;
+                    if (Object.keys(cc).length) rest.clips = cc; else delete rest.clips;
+                    if (Object.keys(rest).length) return saveSettings(rest, true);
+                    return say("The match filter was not saved: this version of Ujwalam does not support it yet.");
+                }
+                return say("Settings not saved: " + err);
+            }
+            say(retried ? "Settings saved, except the match filter: this version of Ujwalam does not support it yet." : "Settings saved.");
+            pollStatus();
+        });
+    }
+
+    // A feature switch, on the Save click (D332: no phrase). A held answer waits for the user's click (ConfirmDialog).
+    function setFlag(id, on, label) {
+        Api.post("ui/api/flags/set", { id: id, on: on }, (ok, b, err) => {
+            if (!ok) say("Not changed: " + (label || id) + ": " + err);
+            else if (b.verdict === "confirm") confirmNeeded(b.pending);
+            else { say((label || id) + (on ? ": on." : ": off.")); loadFlags(); }
+            pollStatus();
+        });
+    }
+
+    // The saved animation choice (settings.json ui.motion) applies from the start, as in the widget studio.
+    function loadUiSettings() {
+        Api.get("ui/api/settings", (ok, b) => {
+            const m = ok && b.settings && b.settings.ui ? b.settings.ui.motion : undefined;
+            if (m === "system" || m === "on" || m === "off") Theme.setMotionMode(m);
         });
     }
 

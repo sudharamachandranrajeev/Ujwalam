@@ -26,6 +26,8 @@ public:
 	Q_INVOKABLE void host(const QString &method, const QJSValue &params, const QJSValue &done);
 	// One line on stdout for the launcher and tests (the widget studio's printf lines, same text).
 	Q_INVOKABLE void log(const QString &line);
+	// Settings > Folders "Choose...": the Windows folder picker (no Qt Quick Dialogs module to ship). "" when cancelled.
+	Q_INVOKABLE QString chooseFolder(const QString &title, const QString &start) const;
 
 private:
 	void reply(QJSValue done, bool ok, const QJsonObject &body, const QString &err);
@@ -62,6 +64,12 @@ public:
 	Q_INVOKABLE QString icon(const QString &name, const QString &token, int px = 18) const;
 	Q_INVOKABLE bool setCurrent(const QString &id);
 	Q_INVOKABLE void setEffects(const QString &mode);
+	// Settings > Appearance (Q3): the packs to choose from [{id, name, topic, dark, accent, bg, panel, text}], the
+	// effects level now (full | reduced | performance) and the animation choice (system | on | off, motion.h).
+	Q_INVOKABLE QVariantList themes() const;
+	Q_INVOKABLE QString effects() const;
+	Q_INVOKABLE void setMotionMode(const QString &mode);
+	Q_INVOKABLE QString motionMode() const;
 signals:
 	void changed();
 };

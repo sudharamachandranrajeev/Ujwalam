@@ -2,8 +2,10 @@
 #include "qml_bridge.h"
 #include "api_client.h"
 #include "icons.h"
+#include "motion.h"
 #include "theme.h"
 
+#include <QFileDialog>
 #include <QJSEngine>
 #include <QJsonDocument>
 #include <QPainter>
@@ -53,6 +55,11 @@ void QmlApi::log(const QString &line)
 	std::fflush(stdout);
 }
 
+QString QmlApi::chooseFolder(const QString &title, const QString &start) const
+{
+	return QFileDialog::getExistingDirectory(nullptr, title, start);
+}
+
 // ---- Theme ----
 
 QmlTheme::QmlTheme(QObject *parent) : QObject(parent)
@@ -91,7 +98,9 @@ int QmlTheme::radiusMedium() const { return theme::radius(theme::Radius::Medium)
 int QmlTheme::radiusLarge() const { return theme::radius(theme::Radius::Large); }
 int QmlTheme::fast() const { return theme::duration(QStringLiteral("fast")); }
 int QmlTheme::normal() const { return theme::duration(QStringLiteral("normal")); }
-bool QmlTheme::motion() const { return !theme::performance(); }
+// Animations run unless High performance is on, or the user's choice (Settings > Appearance > Animations), the Windows
+// setting or UJWALAM_REDUCE_MOTION says no (motion::systemAnimations, the widget studio's rule).
+bool QmlTheme::motion() const { return !theme::performance() && motion::systemAnimations(); }
 
 QString QmlTheme::icon(const QString &name, const QString &token, int px) const
 {
@@ -101,6 +110,26 @@ QString QmlTheme::icon(const QString &name, const QString &token, int px) const
 
 bool QmlTheme::setCurrent(const QString &id) { return theme::setCurrent(id); }
 void QmlTheme::setEffects(const QString &mode) { theme::setEffects(mode); }
+
+QVariantList QmlTheme::themes() const
+{
+	QVariantList out;
+	for (const theme::Info &i : theme::available())
+		out.append(QVariantMap{{QStringLiteral("id"), i.id}, {QStringLiteral("name"), i.name}, {QStringLiteral("topic"), i.topic},
+				       {QStringLiteral("dark"), i.dark}, {QStringLiteral("accent"), i.accent.name()}, {QStringLiteral("bg"), i.bg.name()},
+				       {QStringLiteral("panel"), i.panel.name()}, {QStringLiteral("text"), i.text.name()}});
+	return out;
+}
+
+QString QmlTheme::effects() const { return theme::effects(); }
+
+void QmlTheme::setMotionMode(const QString &mode)
+{
+	motion::setMode(mode);
+	emit changed();
+}
+
+QString QmlTheme::motionMode() const { return motion::mode(); }
 
 // ---- Icons ----
 
