@@ -264,10 +264,17 @@ public:
 private:
 	void to(qreal &v, qreal target, QPointer<QVariantAnimation> &slot)
 	{
+		// A running fade may head the other way (enter then leave at once): stop it first, then decide from the value it
+		// reached, so the state always ends at the last target.
+		if (slot) {
+			if (qFuzzyCompare(slot->endValue().toReal() + 1.0, target + 1.0))
+				return;
+			slot->stop(); // stop() emits no finished(): delete it here
+			slot->deleteLater();
+			slot.clear();
+		}
 		if (qFuzzyCompare(v + 1.0, target + 1.0))
 			return;
-		if (slot)
-			slot->stop();
 		qreal *vp = &v;
 		QPointer<QWidget> w(w_);
 		slot = motion::run(w_, v, target, theme::duration(QStringLiteral("fast")), theme::easing(), [vp, w](const QVariant &x) {
@@ -412,6 +419,10 @@ private:
 		p.drawRoundedRect(f.adjusted(1, 1, -1, -1), std::max(0.0, r - 1), std::max(0.0, r - 1));
 	}
 
+public:
+	QPointF state() const { return {hover_, press_}; }
+
+private:
 	QWidget *w_;
 	qreal hover_ = 0, press_ = 0;
 	bool ring_ = false;
@@ -491,6 +502,12 @@ void refreshAll()
 bool owns(const QWidget *w)
 {
 	return w && g_painters.contains(const_cast<QWidget *>(w)) && theme::surface().on;
+}
+
+QPointF state(const QWidget *w)
+{
+	const Painter *p = g_painters.value(const_cast<QWidget *>(w));
+	return p ? p->state() : QPointF(-1, -1);
 }
 
 int count()

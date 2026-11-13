@@ -46,6 +46,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <algorithm>
+#include <functional>
 #include <memory>
 #include <cstdio>
 #include <string>
@@ -189,24 +190,41 @@ static bool screenShot(MainWindow &win, const QString &name)
 // Probe actions soft-hover:<label> / soft-press:<label> (D376, pictures of the states): the pointer enters (or presses on)
 // the first push button with that text in the open Settings window, else the main window. Nothing else happens: the
 // press is never released, so no click runs.
+// soft-flick:<label> (D376 review): enter, press, release and leave at once, while the fades still run; then
+// soft-rest:<label> (a later action) is done only when the painter's hover and press both came back to 0.
 static bool softState(MainWindow &win, const QString &action)
 {
-	const bool press = action.startsWith(QStringLiteral("soft-press:"));
-	const QString label = action.mid(11); // both prefixes are 11 characters
+	const QString kind = action.section(QLatin1Char(':'), 0, 0);
+	const QString label = action.section(QLatin1Char(':'), 1);
 	QList<QPushButton *> all;
 	if (QWidget *sw = win.settingsWindow())
 		all << sw->findChildren<QPushButton *>();
 	all << win.findChildren<QPushButton *>();
 	for (QPushButton *b : all)
 		if (b->text() == label) {
+			if (kind == QStringLiteral("soft-rest"))
+				return soft::state(b) == QPointF(0, 0);
 			const QPointF c = QRectF(b->rect()).center();
-			QEnterEvent enter(c, b->mapTo(b->window(), c), b->mapToGlobal(c));
-			QCoreApplication::sendEvent(b, &enter);
-			if (press) { // the painter's press state only; the button never sees the press (no click)
-				QMouseEvent down(QEvent::MouseButtonPress, c, b->mapToGlobal(c), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+			// The painter's states only; the button never sees the press (no click).
+			const auto toPainter = [b](QEvent *e) {
 				for (QObject *f : b->children())
-					f->eventFilter(b, &down);
+					f->eventFilter(b, e);
+			};
+			QEnterEvent enter(c, b->mapTo(b->window(), c), b->mapToGlobal(c));
+			QMouseEvent down(QEvent::MouseButtonPress, c, b->mapToGlobal(c), Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+			QMouseEvent up(QEvent::MouseButtonRelease, c, b->mapToGlobal(c), Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+			QEvent leave(QEvent::Leave);
+			if (kind == QStringLiteral("soft-flick")) {
+				toPainter(&enter);
+				const qreal h = soft::state(b).x(); // 0 while the fade in runs (1 at once with motion off)
+				toPainter(&down);
+				toPainter(&up);
+				toPainter(&leave);
+				return h >= 0 && h < 1; // done only when the states really fade, so soft-rest proves something
 			}
+			QCoreApplication::sendEvent(b, &enter);
+			if (kind == QStringLiteral("soft-press"))
+				toPainter(&down);
 			return true;
 		}
 	return false;
@@ -299,18 +317,32 @@ int main(int argc, char **argv)
 				win.show();
 			}
 			win.start();
-			// Actions (D275): one every 700 ms from 2.5 s (after the first loads and a status poll), each a real click.
+			// Actions (D275): the first at 2.5 s (after the first loads and a status poll), each a real click, then one after
+			// another, 700 ms from the previous start but never before it returned. A screen-shot waits about a second in
+			// its own event loop; the next action starts only after its capture (D376 review).
 			auto actions = std::make_shared<QJsonArray>();
-			const QStringList todo = qEnvironmentVariable("UJWALAM_STUDIO_PROBE_ACTIONS").split(QLatin1Char(','), Qt::SkipEmptyParts);
-			for (int i = 0; i < todo.size() && i < 20; i++)
-				QTimer::singleShot(2500 + 700 * i, &app, [&win, actions, a = todo[i].trimmed()]() {
-					QJsonObject o;
-					o.insert(QStringLiteral("action"), a);
-					o.insert(QStringLiteral("done"), a.startsWith(QStringLiteral("screen-shot:")) ? screenShot(win, a.mid(12))
-									  : a.startsWith(QStringLiteral("soft-"))     ? softState(win, a)
-															  : win.probeAction(a));
-					actions->append(o);
-				});
+			auto todo = std::make_shared<QStringList>(qEnvironmentVariable("UJWALAM_STUDIO_PROBE_ACTIONS").split(QLatin1Char(','), Qt::SkipEmptyParts).mid(0, 20));
+			auto next = std::make_shared<std::function<void()>>();
+			auto clock = std::make_shared<QElapsedTimer>();
+			clock->start();
+			*next = [&app, &win, actions, todo, clock, w = std::weak_ptr<std::function<void()>>(next)]() {
+				if (todo->isEmpty())
+					return;
+				const QString a = todo->takeFirst().trimmed();
+				QJsonObject o;
+				o.insert(QStringLiteral("action"), a);
+				const qint64 start = clock->elapsed();
+				o.insert(QStringLiteral("startMs"), double(start));
+				o.insert(QStringLiteral("done"), a.startsWith(QStringLiteral("screen-shot:")) ? screenShot(win, a.mid(12))
+								  : a.startsWith(QStringLiteral("soft-"))     ? softState(win, a)
+														  : win.probeAction(a));
+				const qint64 end = clock->elapsed();
+				o.insert(QStringLiteral("endMs"), double(end));
+				actions->append(o);
+				if (auto n = w.lock()) // the same 700 ms beat as before, but never before this action has returned
+					QTimer::singleShot(int(std::max<qint64>(0, 700 - (end - start))), &app, [n]() { (*n)(); });
+			};
+			QTimer::singleShot(2500, &app, [next]() { (*next)(); });
 			QTimer::singleShot(std::min(probeMs, 60000), &app, [&, actions]() {
 				QJsonObject o = win.probe();
 				o.insert(QStringLiteral("actions"), *actions);

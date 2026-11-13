@@ -26,13 +26,17 @@ const QT = qtDir();
 const skip = !existsSync(EXE) || !QT ? 'studio shell not built (npm run build:studio)' : false;
 const read = (f) => JSON.parse(readFileSync(path.join(REPO, 'data', 'themes', f), 'utf8'));
 
-// Windows font smoothing as the user set it: 2 = ClearType (HKCU\Control Panel\Desktop FontSmoothingType).
+// Windows font smoothing as the user set it (HKCU\Control Panel\Desktop, what SPI_GETFONTSMOOTHING and
+// SPI_GETFONTSMOOTHINGTYPE read): smoothing on (FontSmoothing "2") and of the ClearType kind (FontSmoothingType 2).
+// Either missing or different: the native test skips.
 function clearTypeOn() {
   if (process.platform !== 'win32') return false;
-  try {
-    const out = execFileSync('reg', ['query', 'HKCU\\Control Panel\\Desktop', '/v', 'FontSmoothingType'], { windowsHide: true, encoding: 'utf8' });
-    return /FontSmoothingType\s+REG_DWORD\s+0x2\b/.test(out);
-  } catch { return false; }
+  const value = (name) => {
+    try {
+      return execFileSync('reg', ['query', 'HKCU\\Control Panel\\Desktop', '/v', name], { windowsHide: true, encoding: 'utf8' });
+    } catch { return ''; }
+  };
+  return /FontSmoothing\s+REG_SZ\s+2\s*$/m.test(value('FontSmoothing')) && /FontSmoothingType\s+REG_DWORD\s+0x2\b/.test(value('FontSmoothingType'));
 }
 
 function runShell(env) {
@@ -135,6 +139,22 @@ describe('Qt studio: Soft theme and ClearType (D376)', { skip }, () => {
     const back = await probe({ env: { UJWALAM_THEME: 'soft' }, actions: ['effects:reduced', 'effects:full'] });
     assert.ok(back.actions.every((a) => a.done));
     assert.equal(back.theme.gradientsInStyle, true);
+  });
+
+  test('a quick enter-press-release-leave never leaves a button hovered or pressed (fades end at the last target)', async () => {
+    const p = await probe({ env: { UJWALAM_THEME: 'soft' }, actions: ['settings-open', 'settings-page:Clips', 'soft-flick:Cancel', 'soft-rest:Cancel'], ms: 7000 });
+    const [flick, rest] = p.actions.slice(-2);
+    assert.equal(flick.done, true, 'the button was found and its hover fades (motion on)');
+    assert.equal(rest.done, true, 'hover and press back at 0');
+  });
+
+  test('probe actions run one after another: each starts after the previous returned, on a 700 ms beat', async () => {
+    const p = await probe({ env: { UJWALAM_THEME: 'soft' }, actions: ['settings-open', 'settings-page:Clips', 'settings-page:Appearance'], ms: 6000 });
+    assert.deepEqual(p.actions.map((a) => a.action), ['settings-open', 'settings-page:Clips', 'settings-page:Appearance']);
+    for (let i = 1; i < p.actions.length; i++) {
+      const [a, b] = [p.actions[i - 1], p.actions[i]];
+      assert.ok(b.startMs >= a.endMs && b.startMs - a.startMs >= 695, JSON.stringify(p.actions));
+    }
   });
 
   test('offscreen probe text is greyscale (no ClearType): pictures from it are no evidence of how text looks', async () => {

@@ -15,6 +15,7 @@
 #pragma once
 
 #include <QMargins>
+#include <QPointF>
 
 class QWidget;
 
@@ -27,6 +28,7 @@ QMargins room(Kind k);       // logical px around the face for its shadow (from 
 void attach(QWidget *w);     // Polish / theme switch: a painter for w when the pack has surfaces and w is one of the kinds
 void refreshAll();           // after a theme or effects switch: drop the cached pictures, attach, repaint
 bool owns(const QWidget *w); // a soft painter draws w's face now (motion's hover overlay stays out of the way)
+QPointF state(const QWidget *w); // (probe) hover and press of w's painter, 0..1 each; (-1, -1) without a painter
 int count();                 // widgets with a painter while surfaces are on (probe)
 int cached();                // cached shadow pictures (probe)
 void dropCache();            // (bench) forget the cached pictures: the next paints build them again

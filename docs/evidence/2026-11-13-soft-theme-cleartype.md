@@ -112,7 +112,7 @@ screen.
 
 ## 5. Tests
 
-- `node --test tests/studio-qt-soft-theme.test.mjs` (new; 8 tests):
+- `node --test tests/studio-qt-soft-theme.test.mjs` (new; 8 tests at 984a26f, 10 after the review fixes):
   - pack validates against the schema (Ajv 2020) and passes the contrast rules;
   - without its surface block the contrast check fails it;
   - typography Segoe UI, hinting full, no Microsoft font file bundled;
@@ -134,6 +134,26 @@ screen.
   - `studio-theme-contrast`, `studio-themes`, `scene-builder-theme`: 35/35.
 - `npm run lint`: 0 findings.
 - Not run (brief): full `npm run ci`, GPU tests.
+
+## 5a. Review fixes (Codex review of 984a26f)
+
+1. **Hover or press could stay stuck.** `to()` in `soft.cpp` returned early when the value equalled the target, even
+   while a fade ran toward the other target (enter then leave at once). It now stops a running fade first, and skips
+   only when the running fade already heads to the same target. Test: probe action `soft-flick:<label>` sends enter,
+   press, release and leave at once (done only when the hover really fades, so motion is on); a later
+   `soft-rest:<label>` is done only when hover and press are both 0 (`soft::state`).
+2. **Probe actions could overtake a screen-shot.** Actions were fixed timers 700 ms apart, while a screen-shot waits
+   900 ms in a nested loop. They now run one after another: the next starts 700 ms after the previous start, but never
+   before the previous returned. Each action records `startMs` and `endMs`. Test: order and timing of three actions.
+   Checked by hand with the hidden native probe (`settings-open, settings-page:Clips, screen-shot:clips,
+   settings-page:Appearance, screen-shot:appearance`): each shot ended before the next action started (3894–4849 ms,
+   then 4849), and the second picture shows the Appearance page.
+3. **ClearType skip condition.** The native test now also needs font smoothing on (`FontSmoothing` "2", what
+   `SPI_GETFONTSMOOTHING` reads) besides `FontSmoothingType` 2 (ClearType); otherwise it skips.
+
+After the fixes: soft-theme, themes, theme-components, reference-themes, theme-reload, growth, theme-contrast and
+themes (data) together: 105 tests, 104 pass, 0 fail, 1 skipped (the growth picture, only with `GROWTH_SHOT_DIR`).
+Lint 0 findings. The stuck-hover test was not run against the old code (UNVERIFIED that it fails there).
 
 ## 6. UNVERIFIED
 
