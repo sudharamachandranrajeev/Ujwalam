@@ -203,6 +203,11 @@ export function createEventCoreSlot(opts) {
             handed = await control(old, 'swap:handoff', 'handed-off');
             throwIfAborted(signal);
             const act = await control(neu, `swap:activate ${JSON.stringify({ idFloor: handed.lastId ?? undefined, live: handed.live ?? undefined, remotePort: handed.remotePort ?? undefined })}`, 'active');
+            // Never silent: an old stream cut at its hand-off deadline, or a stream too slow to take the replay, can lose
+            // events (that client is told by sse.mjs; the log says it here).
+            const ss = handed.streams;
+            if (ss && ss.clean < ss.streams) st.log(`[swap event-core] warn: ${ss.streams - ss.clean} of ${ss.streams} event stream(s) of the old core did not end cleanly; their unsent events are lost`);
+            if (act?.slowClient) st.log('[swap event-core] warn: a slow event stream did not keep up with the replay; its dropped events are counted and announced to it');
             return act;
           },
         }),

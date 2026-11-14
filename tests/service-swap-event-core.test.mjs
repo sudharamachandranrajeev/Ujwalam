@@ -272,6 +272,75 @@ test('P2: a standby core whose buffer overflowed is never activated', async () =
   } finally { await b.stop(); }
 });
 
+// Found under full-CI load (2026-11-14: "missing 440..449 of 11364"): activation replayed the whole standby buffer in
+// one synchronous loop; the event stream's socket took ~30 events and the rest overran its queue (sseQueueMax 256), so
+// a client reading at full speed lost the oldest as a "slow client". The replay is now paced to the streams.
+function sseIn(port, token, { read = true } = {}) {
+  const st = { seqs: [], comments: [], res: null };
+  const req = http.request({ host: '127.0.0.1', port, path: '/events?kinds=chat.', agent: false, headers: { authorization: `Bearer ${token}` } });
+  const opened = new Promise((resolve) => req.on('response', (res) => {
+    st.res = res;
+    if (!read) { res.pause(); resolve(); return; }
+    res.setEncoding('utf8');
+    let buf = '';
+    res.on('data', (d) => {
+      const r = splitFrames(buf + d); buf = r.rest;
+      for (const f of r.frames) {
+        if (f.text.startsWith(':')) { if (!f.text.startsWith(': connected')) st.comments.push(f.text.trim()); continue; }
+        const m = /^data: (.*)$/m.exec(f.text);
+        const s = m && /^seq-(\d+)$/.exec(JSON.parse(m[1]).platformMessageId ?? '');
+        if (s) st.seqs.push(Number(s[1]));
+      }
+    });
+    resolve();
+  }));
+  req.end();
+  return { st, opened, close: () => req.destroy() };
+}
+const chatIn = (n) => ({ kind: 'chat.message', platform: 'twitch', source: 'mock', platformMessageId: `seq-${n}`, user: { displayName: 'A' }, text: `message ${n} `.padEnd(200, 'x') });
+const until = async (cond, what) => { const t0 = Date.now(); while (!cond()) { if (Date.now() - t0 > 10_000) throw new Error(`no ${what} within 10 s`); await new Promise((r) => setImmediate(r)); } };
+
+test('activation replays a large standby buffer to a reading event stream with nothing dropped, in order, events arriving meanwhile after it', async () => {
+  const dataDir = tmp();
+  const tokens = { UJWALAM_EVENT_CORE_API_TOKEN: hex(), UJWALAM_EVENT_CORE_SYSTEM_TOKEN: hex() };
+  const b = await startSwappableService({ dataDir, env: tokens, noStreamerbot: true, stallTracer: false, systemPipe: false, liveMarkers: false, standby: true });
+  const c = sseIn(b.port, tokens.UJWALAM_EVENT_CORE_API_TOKEN);
+  try {
+    await c.opened;
+    await until(() => b.api.sseClients().length === 1, 'stream');
+    const N = 2000; // far above sseQueueMax (256): the old single loop delivered 285 of these
+    for (let i = 1; i <= N; i++) b.facade.ingest(chatIn(i));
+    const act = b.activate();
+    setImmediate(() => { b.facade.ingest(chatIn(N + 1)); b.facade.ingest(chatIn(N + 2)); }); // during the replay
+    const r = await act;
+    assert.equal(r.replayed, N + 2);
+    assert.equal(r.slowClient, undefined);
+    b.facade.ingest(chatIn(N + 3)); // after activation: straight to the core
+    await until(() => c.st.seqs.length >= N + 3 || c.st.comments.length > 0, 'all events');
+    assert.deepEqual(c.st.comments, [], 'no drop announced');
+    assert.deepEqual(c.st.seqs, Array.from({ length: N + 3 }, (_, i) => i + 1));
+    assert.equal(b.api.sseClients()[0].dropped, 0);
+  } finally { c.close(); await b.stop(); }
+});
+
+test('activation does not wait on a stream that reads nothing: past REPLAY_STALL_MS the replay goes on and that client\'s drops are counted', async () => {
+  const dataDir = tmp();
+  const tokens = { UJWALAM_EVENT_CORE_API_TOKEN: hex(), UJWALAM_EVENT_CORE_SYSTEM_TOKEN: hex() };
+  const b = await startSwappableService({ dataDir, env: tokens, noStreamerbot: true, stallTracer: false, systemPipe: false, liveMarkers: false, standby: true });
+  const c = sseIn(b.port, tokens.UJWALAM_EVENT_CORE_API_TOKEN, { read: false });
+  try {
+    await c.opened;
+    await until(() => b.api.sseClients().length === 1, 'stream');
+    const N = 20_000; // ~5 MB of frames: more than the sockets buffer, so the stream blocks
+    for (let i = 1; i <= N; i++) b.facade.ingest(chatIn(i));
+    const r = await b.activate();
+    assert.equal(r.replayed, N);
+    assert.equal(r.slowClient, true);
+    assert.equal(b.swapStats().replaySlowClients, 1);
+    assert.ok(b.api.sseClients()[0].dropped > 0, 'the slow client\'s loss is counted (and announced to it by sse.mjs)');
+  } finally { c.close(); await b.stop(); }
+});
+
 test('P2: an SSE hand-off whose end never completes settles at its deadline; a closed connection settles at once', async () => {
   const bus = createBus();
   const timers = { setInterval, clearInterval, setTimeout, clearTimeout };

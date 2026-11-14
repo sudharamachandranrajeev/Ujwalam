@@ -41,6 +41,11 @@ import { REMOTE_FILE, STALL_DEFAULTS, STALL_FILE, stallContext, startLiveMarkers
 
 /** Streamer.bot events a standby core keeps until it is activated. Overflow is counted and reported, never silent. */
 export const STANDBY_BUFFER_MAX = 20_000;
+/** Buffered events replayed per step on activation (at most half an event stream's queue, api/server.mjs sseQueueMax). */
+export const REPLAY_CHUNK = 64;
+/** A stream that takes nothing for this long while the replay waits for room is a slow client: the replay stops waiting
+ *  for it and that client gets the usual counted drop (sse.mjs, ": dropped N events (slow client)"). */
+export const REPLAY_STALL_MS = 1000;
 
 export async function startSwappableService(opts = {}) {
   const out = opts.out ?? (() => {});
@@ -58,18 +63,19 @@ export async function startSwappableService(opts = {}) {
   const bus = createBus({ queueLimit: opts.core?.queueLimit });
   const buffer = [];
   const bufferMax = Number.isInteger(opts.standbyBufferMax) && opts.standbyBufferMax > 0 ? opts.standbyBufferMax : STANDBY_BUFFER_MAX; // test seam
-  const counts = { buffered: 0, overflow: 0, replayed: 0, replayDeduped: 0, activations: 0, handoffs: 0 };
+  const counts = { buffered: 0, overflow: 0, replayed: 0, replayDeduped: 0, replaySlowClients: 0, activations: 0, handoffs: 0 };
   // What the API and the connector hold. Standby: buffering ingest, no gate, no audit. activate() copies the real
   // core's members onto it, so every holder sees the real core from then on.
+  const bufferIngest = (input) => {
+    if (buffer.length >= bufferMax) { counts.overflow++; return { status: 'invalid', errors: [{ path: '', message: 'standby buffer full' }] }; }
+    buffer.push(input);
+    counts.buffered++;
+    return { status: 'buffered' };
+  };
   const facade = {
     standby: true, handedOff: false, bus, audit: null, actions: null, moderation: null, ready: Promise.resolve(0),
     pseudoId: () => null,
-    ingest(input) {
-      if (buffer.length >= bufferMax) { counts.overflow++; return { status: 'invalid', errors: [{ path: '', message: 'standby buffer full' }] }; }
-      buffer.push(input);
-      counts.buffered++;
-      return { status: 'buffered' };
-    },
+    ingest: bufferIngest,
     stats: () => ({ standby: true, published: bus.stats().published, buffered: buffer.length, subscribers: bus.stats().subscribers }),
   };
   let lastId = null;
@@ -115,6 +121,41 @@ export async function startSwappableService(opts = {}) {
     sb.start();
   };
 
+  // The buffer is replayed in steps paced to the event streams (found under full-CI load, 2026-11-14): one synchronous
+  // loop published the whole buffer at once, the socket of each event stream took the first ~30 events, and the rest
+  // overran its queue (sseQueueMax 256), so a client that reads at full speed lost the oldest of them as a "slow
+  // client" (a swap that waited long enough lost a block of chat). Each step publishes at most REPLAY_CHUNK events,
+  // yields so the bus queues drain and the writes complete, and waits until every stream has room for the next step.
+  // Events that arrive meanwhile join the end of the buffer (facade.ingest still buffers), so order is kept; the core
+  // takes events directly only once the buffer is empty, in the same synchronous step.
+  async function replay(c) {
+    const qMax = api.limits.sseQueueMax;
+    const step = Math.max(1, Math.min(REPLAY_CHUNK, Math.floor(qMax / 2)));
+    let replayed = 0; let deduped = 0; let paced = true;
+    while (buffer.length) {
+      for (const input of buffer.splice(0, step)) {
+        replayed++;
+        if (c.ingest(input).status === 'deduped') deduped++;
+      }
+      await new Promise((r) => setImmediate(r));
+      if (paced && buffer.length) paced = await roomFor(step, qMax);
+    }
+    facade.ingest = c.ingest;
+    return { replayed, deduped, paced };
+  }
+  // Resolves true once every open stream's queue has room for k more events; false when they stopped taking events
+  // for REPLAY_STALL_MS (a slow client: the replay goes on without waiting, its drops are counted and announced).
+  async function roomFor(k, qMax) {
+    let sent = -1; let since = Date.now();
+    for (;;) {
+      const cs = api.sseClients().filter((s) => !s.closed);
+      if (cs.every((s) => s.queued + k <= qMax)) return true;
+      const total = cs.reduce((a, s) => a + s.sent, 0);
+      if (total !== sent) { sent = total; since = Date.now(); } else if (Date.now() - since > REPLAY_STALL_MS) return false;
+      await new Promise((r) => setTimeout(r, 2));
+    }
+  }
+
   let file = null; let pipe = null; let sysFile = null; let remoteApi = null; let remoteInfo = null;
   let liveMarkers = null; let counters = null;
   startIngest(); // in standby too: connected and buffering, so nothing is missed while the old core hands over
@@ -128,19 +169,17 @@ export async function startSwappableService(opts = {}) {
     const c = createEventCore({ dataDir, audit: { dataDir }, actions: { executor }, bus, idFloor, ...(opts.out ? { log: opts.out } : {}), ...(opts.core ?? {}) });
     try { await c.ready; } catch (e) { try { await c.audit?.close(); } catch { /* ignore */ } throw e; }
     core = c;
-    Object.assign(facade, c, { standby: false, handedOff: false });
+    // ingest keeps buffering until replay() has emptied the buffer (it then hands ingest to the core).
+    Object.assign(facade, c, { standby: false, handedOff: false, ingest: bufferIngest });
     api.reopenStreams(); // a core activated again after its hand-off admits event streams again (Codex review P2)
     // The old core's live state and panic carry over: a swap never takes the live lock off.
     const sys = c.actions?.forSource('system');
     if (sys && live && ['offline', 'live', 'unknown'].includes(live.liveState)) sys.setLiveState(live.liveState, { reason: 'service-swap' });
     if (sys && live?.panic === true) sys.panic({ reason: 'service-swap' });
-    const pending = buffer.splice(0);
-    let deduped = 0;
-    for (const input of pending) {
-      if (c.ingest(input).status === 'deduped') deduped++;
-    }
-    counts.replayed += pending.length;
+    const { replayed, deduped, paced } = await replay(c);
+    counts.replayed += replayed;
     counts.replayDeduped += deduped;
+    if (!paced) counts.replaySlowClients++;
     file = publishApiFile({ dataDir, port: opts.publicPort ?? addr.port, tokens: envTokens ? null : tokens });
     c.audit.recordSystem({ subtype: 'api-start', source: 'api', verdict: 'ok', detail: { port: addr.port, mock: opts.mock === true, swap: true } });
     if (opts.systemPipe !== false && process.platform === 'win32') {
@@ -177,7 +216,7 @@ export async function startSwappableService(opts = {}) {
     }
     state = 'active';
     counts.activations++;
-    return { replayed: pending.length, deduped, overflow: counts.overflow };
+    return { replayed, deduped, overflow: counts.overflow, ...(paced ? {} : { slowClient: true }) };
   }
 
   async function handoff({ streamTimeoutMs = 5000 } = {}) {
