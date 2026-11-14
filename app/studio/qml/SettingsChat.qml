@@ -139,15 +139,10 @@ Column {
         Api.post("ui/api/integrations/remote-token", {}, (ok, b, err) => {
             if (g !== gen) return;
             if (!ok) { info = "No pairing code: " + err; return }
-            clip.text = String(b.token || "");
-            clip.selectAll();
-            clip.copy();
-            clip.text = ""; // the code is never kept or shown here
+            Api.copyText(String(b.token || "")); // the code is never kept or shown here
             info = "Pairing code copied. Paste it on the other device only.";
         });
     }
-
-    TextEdit { id: clip; visible: false; width: 1; height: 1 } // the clipboard has no QML call of its own; copy() on a hidden box
 
     component Words: Text {
         color: Theme.c.text

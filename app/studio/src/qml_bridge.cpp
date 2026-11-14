@@ -5,7 +5,9 @@
 #include "motion.h"
 #include "theme.h"
 
+#include <QClipboard>
 #include <QFileDialog>
+#include <QGuiApplication>
 #include <QJSEngine>
 #include <QJsonDocument>
 #include <QPainter>
@@ -63,6 +65,11 @@ void QmlApi::log(const QString &line)
 QString QmlApi::chooseFolder(const QString &title, const QString &start) const
 {
 	return QFileDialog::getExistingDirectory(nullptr, title, start);
+}
+
+void QmlApi::copyText(const QString &text) const
+{
+	QGuiApplication::clipboard()->setText(text);
 }
 
 // ---- Theme ----

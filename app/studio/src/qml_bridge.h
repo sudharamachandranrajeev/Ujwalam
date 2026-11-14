@@ -28,6 +28,8 @@ public:
 	Q_INVOKABLE void log(const QString &line);
 	// Settings > Folders "Choose...": the Windows folder picker (no Qt Quick Dialogs module to ship). "" when cancelled.
 	Q_INVOKABLE QString chooseFolder(const QString &title, const QString &start) const;
+	// Settings > Chat & bots "Copy pairing code": puts the text on the system clipboard (the widget's QClipboard call).
+	Q_INVOKABLE void copyText(const QString &text) const;
 	// Requests sent and not answered yet (the headless probe waits for 0 before its next action and before it reads).
 	int inFlight() const { return inFlight_; }
 
