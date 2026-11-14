@@ -47,7 +47,7 @@ export const REPLAY_CHUNK = 64;
  *  for it and that client gets the usual counted drop (sse.mjs, ": dropped N events (slow client)"). */
 export const REPLAY_STALL_MS = 1000;
 /** The paced replay ends by this time after it starts, well inside the supervisor's 15 s activate wait and the 10 s
- *  RPC hold at the front; what is still buffered then goes out without waiting for the streams (Codex review P2). */
+ *  RPC hold at the front; what is still buffered then drains in the background, one step at a time (Codex review P2). */
 export const REPLAY_DEADLINE_MS = 3000;
 
 export async function startSwappableService(opts = {}) {
@@ -134,38 +134,43 @@ export async function startSwappableService(opts = {}) {
   // takes events directly only once the buffer is empty, in the same synchronous step.
   // Codex review: a stream counts as stalled by its own progress (another stream sending never hides it) and only the
   // stalled ones leave the pacing; the paced part ends at replayDeadlineMs, so ingress faster than a stream drains can
-  // never hold the activation: after the deadline the buffer goes out in steps without waiting (for at most half the
-  // deadline again), and the last few in one synchronous step together with the switch of ingest to the core. Order
-  // holds and nothing is published twice; a stream that cannot keep up then gets the usual counted, announced drop.
+  // never hold the activation. Order holds and nothing is published twice; a stream that cannot keep up gets the usual
+  // counted, announced drop. Full CI under load (2026-11-14, "no bus drop for sse-1 ... 5504"): the first version of the
+  // deadline ended with a hard stop that flushed whatever was still buffered
+  // in ONE synchronous burst, above the bus queues (bus.mjs: 10 000 for a stream, 1000 by default), whose drops are
+  // announced only at the next heartbeat. Now nothing is ever published more than one step at a time: at the deadline
+  // the activation answers (it never holds the supervisor), and the rest of the buffer drains in the background in
+  // steps, ingest still buffering behind it, until it is empty; then ingest goes to the core. handoff() and stop() wait
+  // for that drain (ingest has stopped by then, so it is finite).
+  let drain = null; // the background part of a late replay
+  const yieldIo = () => new Promise((r) => setImmediate(r)); // bus queues drain, socket writes complete
+  const publishFrom = (c, n, tally) => {
+    for (const input of buffer.splice(0, n)) {
+      counts.replayed++;
+      if (tally) tally.replayed++;
+      if (c.ingest(input).status === 'deduped') { counts.replayDeduped++; if (tally) tally.deduped++; }
+    }
+  };
+  async function drainLate(c, step) {
+    try {
+      while (buffer.length) { publishFrom(c, step); await yieldIo(); }
+    } finally { facade.ingest = c.ingest; }
+  }
   async function replay(c) {
     const qMax = api.limits.sseQueueMax;
     const step = Math.max(1, Math.min(REPLAY_CHUNK, Math.floor(qMax / 2)));
     const deadline = Date.now() + replayDeadlineMs;
     const stalled = new Set(); // stream names
-    let replayed = 0; let deduped = 0;
-    const publish = (n) => {
-      for (const input of buffer.splice(0, n)) {
-        replayed++;
-        if (c.ingest(input).status === 'deduped') deduped++;
-      }
-    };
-    const yieldIo = () => new Promise((r) => setImmediate(r)); // bus queues drain, socket writes complete
+    const tally = { replayed: 0, deduped: 0 };
     while (buffer.length && Date.now() < deadline) {
-      publish(step);
+      publishFrom(c, step, tally);
       await yieldIo();
       if (buffer.length) await roomFor(step, qMax, stalled, deadline);
     }
     const late = buffer.length > 0;
-    if (late) {
-      // Steps without waiting until at most one step is left (unpaced steps outrun any real ingress), then that rest in
-      // the same synchronous step as the switch, so the last burst stays far below the bus queues (bus.mjs: a burst
-      // above them drops for in-process subscribers). Hard stop at half the deadline again, so this part is bounded too.
-      const stop = Date.now() + Math.ceil(replayDeadlineMs / 2);
-      while (buffer.length > step && Date.now() < stop) { publish(step); await yieldIo(); }
-      publish(buffer.length);
-    }
-    facade.ingest = c.ingest;
-    return { replayed, deduped, stalled: stalled.size, late };
+    if (late) drain = drainLate(c, step).finally(() => { drain = null; });
+    else facade.ingest = c.ingest;
+    return { ...tally, stalled: stalled.size, late, pending: buffer.length };
   }
   // Resolves once every open stream that is not stalled has room for k more events, or at the deadline. A stream whose
   // queue stays full with nothing sent for REPLAY_STALL_MS joins `stalled` (a slow client) and is not waited for again.
@@ -207,9 +212,7 @@ export async function startSwappableService(opts = {}) {
     const sys = c.actions?.forSource('system');
     if (sys && live && ['offline', 'live', 'unknown'].includes(live.liveState)) sys.setLiveState(live.liveState, { reason: 'service-swap' });
     if (sys && live?.panic === true) sys.panic({ reason: 'service-swap' });
-    const { replayed, deduped, stalled, late } = await replay(c);
-    counts.replayed += replayed;
-    counts.replayDeduped += deduped;
+    const { replayed, deduped, stalled, late, pending: replayPending } = await replay(c);
     counts.replaySlowClients += stalled;
     if (late) counts.replayLate++;
     file = publishApiFile({ dataDir, port: opts.publicPort ?? addr.port, tokens: envTokens ? null : tokens });
@@ -248,13 +251,14 @@ export async function startSwappableService(opts = {}) {
     }
     state = 'active';
     counts.activations++;
-    return { replayed, deduped, overflow: counts.overflow, ...(stalled ? { slowClient: true } : {}), ...(late ? { late: true } : {}) };
+    return { replayed, deduped, overflow: counts.overflow, ...(stalled ? { slowClient: true } : {}), ...(late ? { late: true, pending: replayPending } : {}) };
   }
 
   async function handoff({ streamTimeoutMs = 5000 } = {}) {
     if (state !== 'active') throw new Error(`handoff: not active (${state})`);
     state = 'handing-off';
     sb?.stop(); sb = null;
+    await drain; // a late replay finishes first (finite now: ingest has stopped), so its events reach the streams below
     liveMarkers?.stop(); liveMarkers = null;
     counters?.stop(); counters = null;
     const g = core.actions?.state();
@@ -284,6 +288,8 @@ export async function startSwappableService(opts = {}) {
     get apiFile() { return file; }, get systemPipe() { return pipe; }, get systemFile() { return sysFile; }, get remote() { return remoteInfo; },
     mockStreamerbot: mockSb, streamerbot: () => sb, stallTracer: tracer, stallFile: tracer ? path.join(dataDir, STALL_FILE) : null,
     state: () => state, swapStats: () => ({ ...counts, bufferedNow: buffer.length }),
+    /** Resolves when the background part of a late replay (if any) has finished. */
+    replayDrained: () => drain ?? Promise.resolve(),
     activate, handoff,
     async stop() {
       if (stopped) return;
@@ -292,6 +298,7 @@ export async function startSwappableService(opts = {}) {
       liveMarkers?.stop();
       counters?.stop();
       sb?.stop();
+      await drain;
       if (mockSb) await mockSb.close();
       const wasActive = state === 'active';
       if (wasActive) {

@@ -319,7 +319,8 @@ test('activation replays a large standby buffer to a reading event stream with n
     const act = b.activate();
     setImmediate(() => { b.facade.ingest(chatIn(N + 1)); b.facade.ingest(chatIn(N + 2)); }); // during the replay
     const r = await act;
-    assert.equal(r.replayed, N + 2);
+    await b.replayDrained(); // a late replay (slow machine) finishes in the background
+    assert.equal(b.swapStats().replayed, N + 2);
     assert.equal(r.slowClient, undefined);
     b.facade.ingest(chatIn(N + 3)); // after activation: straight to the core
     await until(() => c.st.seqs.length >= N + 3 || c.st.comments.length > 0, 'all events');
@@ -340,7 +341,8 @@ test('activation does not wait on a stream that reads nothing: past REPLAY_STALL
     const N = 20_000; // ~5 MB of frames: more than the sockets buffer, so the stream blocks
     for (let i = 1; i <= N; i++) b.facade.ingest(chatIn(i));
     const r = await b.activate();
-    assert.equal(r.replayed, N);
+    await b.replayDrained();
+    assert.equal(b.swapStats().replayed, N);
     assert.equal(r.slowClient, true);
     assert.equal(b.swapStats().replaySlowClients, 1);
     assert.ok(b.api.sseClients()[0].dropped > 0, 'the slow client\'s loss is counted (and announced to it by sse.mjs)');
@@ -422,6 +424,45 @@ test('Codex P2: sustained ingress during the replay cannot keep activation from 
     assert.equal(c.st.seqs.length + dropsOf(c), total, 'every event either arrived or was counted as dropped (and announced)');
     for (const [k, v] of Object.entries(b.core.bus.stats().subscribers)) assert.equal(v.dropped, 0, `no bus drop for ${k} (the last burst stays small)`);
   } finally { if (iv) clearInterval(iv); c.close(); await b.stop(); }
+});
+// Full CI under load (2026-11-14): "no bus drop for sse-1 ... 5504 !== 0". At the hard stop after the deadline the rest
+// of the buffer went out in one synchronous burst, above the bus queue (10 000 for a stream): drops announced only at
+// the 15 s heartbeat. Short deadline (seam) plus a large backlog makes that hard stop certain here.
+test('the replay never publishes more than one step at once, however late: no bus drop with a large backlog past the deadline', async () => {
+  const { b, token } = await standbyB({ standbyBufferMax: 200_000, replayDeadlineMs: 50 });
+  const c = sseIn(b.port, token, { trickleMs: 20 });
+  try {
+    await c.opened;
+    await until(() => b.api.sseClients().length === 1, 'stream');
+    const N = 120_000;
+    for (let i = 1; i <= N; i++) b.facade.ingest(chatIn(i));
+    const r = await b.activate();
+    assert.equal(r.late, true);
+    c.fast();
+    await until(() => c.st.seqs.length + dropsOf(c) >= N, 'every event delivered or counted').catch((e) => { throw new Error(`${e.message}: ${JSON.stringify({ N, got: c.st.seqs.length, drops: dropsOf(c), bus: b.core.bus.stats().subscribers, sse: b.api.sseClients() })}`); });
+    for (const [k, v] of Object.entries(b.core.bus.stats().subscribers)) assert.equal(v.dropped, 0, `no bus drop for ${k}`);
+    assert.equal(c.st.seqs.length + dropsOf(c), N, 'every event arrived or was announced as dropped');
+    for (let i = 1; i < c.st.seqs.length; i++) assert.ok(c.st.seqs[i] > c.st.seqs[i - 1], `order at ${i}`);
+  } finally { c.close(); await b.stop(); }
+});
+test('a hand-off right after a late activation waits for the background replay: every buffered event is published first', async () => {
+  const { b, token } = await standbyB({ standbyBufferMax: 100_000, replayDeadlineMs: 20 });
+  const c = sseIn(b.port, token);
+  try {
+    await c.opened;
+    await until(() => b.api.sseClients().length === 1, 'stream');
+    const N = 50_000;
+    for (let i = 1; i <= N; i++) b.facade.ingest(chatIn(i));
+    const r = await b.activate();
+    assert.equal(r.late, true);
+    assert.ok(r.pending > 0, 'part of the buffer is still to come');
+    const h = await b.handoff();
+    assert.equal(b.swapStats().bufferedNow, 0);
+    assert.equal(b.swapStats().replayed, N);
+    assert.deepEqual(h.streams, { streams: 1, clean: 1 });
+    await until(() => c.st.seqs.length + dropsOf(c) >= N, 'every event delivered or counted');
+    assert.equal(c.st.seqs.length + dropsOf(c), N);
+  } finally { c.close(); await b.stop(); }
 });
 const dropsOf = (c) => c.st.comments.reduce((a, s) => a + Number(/dropped (\d+)/.exec(s)?.[1] ?? 0), 0);
 
