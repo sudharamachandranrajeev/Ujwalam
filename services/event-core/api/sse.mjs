@@ -136,7 +136,7 @@ export function createSseClient(opts) {
     });
   }
 
-  return { close, finish, stats: () => ({ ...totals, queued: q.length, blocked, closed }) };
+  return { close, finish, stats: () => ({ name, ...totals, queued: q.length, blocked, closed }) };
 }
 
 /** Parse ?kinds=a.,b → prefix list, or null when invalid. Each prefix: lower-case dotted word, 1..32 chars, at most 8. */
