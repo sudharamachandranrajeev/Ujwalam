@@ -123,11 +123,11 @@ Dialog {
         stream.applyOutput(index, o);
     }
 
-    // Connect: the sign-in flow is in Settings > Connections.
+    // Connect: the sign-in flow is in Settings > Connections, showing only this output.
     function connectClick() {
         if (!visible || !connectButton.enabled) return false;
         close();
-        box().page = "Connections";
+        box().connectOutput(out.id || "");
         return true;
     }
     function setOwn(on) {

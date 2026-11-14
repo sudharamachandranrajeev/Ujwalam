@@ -160,6 +160,17 @@ static void loginThen(QApplication &app, ApiClient &api, const QString &key, int
 	});
 }
 
+// A probe action that types a secret into Settings > Connections (a test stream key, server address or app client ID,
+// typed into a field the probe tree never lists) is listed in the probe line without its text: the probe output never
+// holds what was typed. The action itself gets the whole text.
+static QString shownProbeAction(const QString &a)
+{
+	for (const char *p : {"conn-key:", "conn-server:", "conn-twitch-client:"})
+		if (a.startsWith(QLatin1String(p)))
+			return QString::fromLatin1(p) + QStringLiteral("(hidden)");
+	return a;
+}
+
 // The Qt Quick studio (D355, flag studio-qml; the launcher sets UJWALAM_STUDIO_QML=1): the same launcher lines, swap
 // close, hidden and probe modes as the widget window below.
 static int runQml(QApplication &app, ApiClient &api, const QString &key, bool headless, bool hidden)
@@ -206,7 +217,7 @@ static int runQml(QApplication &app, ApiClient &api, const QString &key, bool he
 				if (!run->todo.isEmpty() && now < lastAt) {
 					if (now >= run->nextAt && idle) {
 						const QString a = run->todo.takeFirst();
-						run->actions.append(QJsonObject{{QStringLiteral("action"), a}, {QStringLiteral("done"), studio.probeAction(a)}});
+						run->actions.append(QJsonObject{{QStringLiteral("action"), shownProbeAction(a)}, {QStringLiteral("done"), studio.probeAction(a)}});
 						run->nextAt = clock->elapsed() + 700;
 					}
 					return;

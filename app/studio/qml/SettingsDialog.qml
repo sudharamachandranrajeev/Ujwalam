@@ -126,6 +126,7 @@ Dialog {
         transPg.reset();
         postPg.reset();
         chatPg.reset();
+        connPg.reset();
         Api.get("ui/api/flags", (fok, fb) => {
             if (fok && Array.isArray(fb.flags)) store.takeFlags(fb.flags);
             if (store.flags["posting"] === true) postPg.load();
@@ -296,6 +297,14 @@ Dialog {
             if (Theme.effects() !== start.effects) Theme.setEffects(start.effects);
         }
         ready = false;
+    }
+
+    // Edit output > Connect: Settings > Connections with only that output (the widget opens the same page for it in a
+    // window of its own); "Show all outputs" brings the others back.
+    function connectOutput(id) {
+        query = "";
+        page = "Connections";
+        connPg.showOnly(id);
     }
 
     // theme and effects are tried live while Settings is open
@@ -524,7 +533,8 @@ Dialog {
                 anchors.fill: parent
                 title: "Connections"
                 pageId: "connections"
-                lead: "This window does not show sign-in and stream keys yet. Use Settings in the classic studio window for now."
+                lead: !dlg.flagOn("platform-connect") ? "Switch on " + dlg.flagLabel("platform-connect") + " below and click Save to connect platforms here." : ""
+                SettingsConnections { id: connPg; box: dlg }
             }
 
             SettingsPage {
@@ -758,6 +768,7 @@ Dialog {
             transitionsPage: transPg.active ? transPg.probe() : null,
             postingPage: postPg.active ? postPg.probe() : null,
             integrationsPage: chatPg.active ? chatPg.probe() : null,
+            connectionsPage: connPg.active ? connPg.probe() : null,
             size: [width, height]
         };
     }
@@ -792,6 +803,7 @@ Dialog {
         if (p[0].startsWith("tr-")) return transPg.active && transPg.probeAction(p);
         if (p[0].startsWith("ap-")) return postPg.active && postPg.probeAction(p);
         if (p[0].startsWith("int-")) return chatPg.active && chatPg.probeAction(p);
+        if (p[0].startsWith("conn-")) return connPg.active && connPg.probeAction(p);
         switch (p[0]) {
         case "settings-shot": { // settings-shot:<png path>: a picture of the Settings window (it is its own window)
             const file = a.slice("settings-shot:".length);
