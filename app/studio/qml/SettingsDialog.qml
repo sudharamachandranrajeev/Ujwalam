@@ -125,9 +125,11 @@ Dialog {
         streamPg.reset();
         transPg.reset();
         postPg.reset();
+        chatPg.reset();
         Api.get("ui/api/flags", (fok, fb) => {
             if (fok && Array.isArray(fb.flags)) store.takeFlags(fb.flags);
             if (store.flags["posting"] === true) postPg.load();
+            if (store.flags["integrations"] === true) chatPg.load();
             if (store.flags["stream-settings"] === true) streamPg.load(); // in step with the settings, not after them
             if (store.flags["stream-settings"] === true && store.flags["transitions"] === true) transPg.load();
             Api.get("ui/api/settings", (ok, b, err) => {
@@ -217,7 +219,7 @@ Dialog {
         if (transMsNow(d) !== (kindRange(d.transKind) ? s.transMs : 0)) return true;
         if (d.recDir.trim() !== s.recDir.trim() || d.clipDir.trim() !== s.clipDir.trim()) return true;
         for (const id in flagDraft) if ((flagStart[id] === true) !== flagDraft[id]) return true;
-        return streamPg.dirty || transPg.dirty || postPg.dirty;
+        return streamPg.dirty || transPg.dirty || postPg.dirty || chatPg.dirty;
     }
     function body() {
         const d = draft, s = start, out = {};
@@ -270,6 +272,7 @@ Dialog {
         for (const id in flagDraft) if ((flagStart[id] === true) !== flagDraft[id]) flagChanges.push([id, flagDraft[id], flagLabel(id)]);
         transPg.save(); // its own routes, like the Stream page
         postPg.save(); // its own route, only when the card changed
+        chatPg.save(); // its own route, only when a port or the remote choice changed
         streamPg.save(); // its own route; the server checks every value again (before the window closes: closing resets the page)
         saving = true;
         unsaved.close();
@@ -529,8 +532,8 @@ Dialog {
                 anchors.fill: parent
                 title: "Chat & bots"
                 pageId: "chat"
-                lead: !dlg.flagOn("integrations") ? "Switch on " + dlg.flagLabel("integrations") + " below and click Save to use these settings."
-                                                  : "This window does not show the chat and bot settings yet. Use Settings in the classic studio window for now."
+                lead: !dlg.flagOn("integrations") ? "Switch on " + dlg.flagLabel("integrations") + " below and click Save to use these settings." : ""
+                SettingsChat { id: chatPg; box: dlg }
             }
 
             SettingsPage {
@@ -754,6 +757,7 @@ Dialog {
             snap: draft.snap, unsavedOpen: unsaved.opened, guide: guide, streamPage: streamPg.active ? streamPg.probe() : null,
             transitionsPage: transPg.active ? transPg.probe() : null,
             postingPage: postPg.active ? postPg.probe() : null,
+            integrationsPage: chatPg.active ? chatPg.probe() : null,
             size: [width, height]
         };
     }
@@ -787,6 +791,7 @@ Dialog {
         if (p[0].startsWith("stream-")) return streamPg.active && streamPg.probeAction(p);
         if (p[0].startsWith("tr-")) return transPg.active && transPg.probeAction(p);
         if (p[0].startsWith("ap-")) return postPg.active && postPg.probeAction(p);
+        if (p[0].startsWith("int-")) return chatPg.active && chatPg.probeAction(p);
         switch (p[0]) {
         case "settings-shot": { // settings-shot:<png path>: a picture of the Settings window (it is its own window)
             const file = a.slice("settings-shot:".length);

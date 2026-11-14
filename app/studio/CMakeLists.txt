@@ -120,6 +120,7 @@ qt_add_qml_module(ujwalam-studio
 		qml/SettingsStream.qml
 		qml/SettingsTransitions.qml
 		qml/SettingsPosting.qml
+		qml/SettingsChat.qml
 		qml/OutputDialog.qml
 		qml/SettingsDialog.qml)
 if(WIN32)
