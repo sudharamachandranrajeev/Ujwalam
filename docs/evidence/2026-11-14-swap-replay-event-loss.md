@@ -80,6 +80,32 @@ has stopped by then, so it is finite). `replayDrained()` exposes it for tests. N
 drops for every subscriber, every event delivered or announced, in order) and a hand-off right after a late
 activation (all 50 000 published first, stream ended cleanly).
 
+## Follow-up 2: a reading stream dropped 6 in the background drain (full CI after cd9a99a)
+
+Full CI (900 s test step) failed in the large-backlog test after 10 s: `got 106426, drops 6`, bus published 106 496 of
+120 000, `sse-1 dropped 6, stalled false`. Two separate things:
+
+- (a) Throughput, not loss: the background drain was still running when the test's 10 s wall-clock budget ran out.
+  The tests now wait on `replayDrained()` and then on the delivery of the known, finite set with no wall-clock budget
+  (bounded by the test runner's timeout), and the backlog is 15 000 (still 1.5 x the stream's bus queue, so the old
+  hard-stop burst would drop). No production timeout changed.
+- (b) Real defect: cd9a99a's background drain published its steps without the room check, so a stream that reads,
+  only slower than the drain publishes (here in the same process as the core under CI load), overran its queue (256)
+  and lost the oldest as a "slow client". A second, smaller gap: the paced part can end at its deadline while a
+  stream is still full (`roomFor` returns at the deadline), and the drain's first step went out unchecked; that was
+  the remaining 6 drops after pacing was added.
+
+Repro: the large-backlog test with a reader that reads one chunk per 10 ms all the way (slow, never stalled) and the
+assertion that nothing drops. On cd9a99a: `{ got: 1899, drops: 13101, slow: 0 }` (N 15 000; 28 101 of 30 000 at
+N 30 000). With pacing but the drain publishing before its room check: `{ got: 29994, drops: 6 }`.
+
+Fix (`swappable.mjs`): the background drain checks room before every step (same per-stream room check and stall rule
+as the paced part, no deadline), and stops waiting only when `handoff()` or `stop()` needs it finished
+(`drainUnpaced`) or when the buffer reaches half its cap (slow streams then take the counted, announced drop instead of
+the buffer overflowing). A stall now also needs at least 10 looks without progress (`REPLAY_STALL_POLLS`), so a
+process descheduled for a second under load is not mistaken for a stalled reader. Slow clients found in the
+background are counted in `replaySlowClients` too.
+
 ## Tests (run 2026-11-14, one heavy job at a time)
 
 - `node --test tests/service-swap-event-core.test.mjs`: **13/13 pass** (57 s). 20-swap test: `swaps 20, chat sent
@@ -90,6 +116,11 @@ activation (all 50 000 published first, stream ended cleanly).
 - After the bus-drop follow-up, with four BelowNormal busy node processes running: the whole file 5 times, **15/15
   pass each run** (73-75 s; 20-swap test e.g. `chat sent 5893, received 5893`, 0 lost, 0 duplicated). The
   large-backlog test failed before this fix (bus drops above). Swap/SSE/bus suites again **108/108**, lint 0 findings.
+- After follow-up 2, with eight BelowNormal busy node processes running: the whole file 5 times, **15/15 pass each
+  run** (78-91 s; 20-swap test `chat sent 5917 / 6945 / 7909 / 6835 / 6795`, all received, 0 lost, 0 duplicated). Then,
+  still under that load, the file concurrently with the swap/SSE/bus suites (`--test-concurrency=4`, as CI runs them):
+  **123/123 pass** (20-swap test `chat sent 8774, received 8774`). The new late-drain test fails on cd9a99a (drops above)
+  and passes 3/3 alone in about 8 s. Lint 0 findings.
 - Full `npm run ci`: not run in this session (asked not to).
 
 ## Remaining risk

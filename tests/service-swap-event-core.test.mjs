@@ -304,7 +304,9 @@ function sseIn(port, token, { read = true, trickleMs = 0 } = {}) {
   return { st, opened, fast: () => { clearInterval(trickle); trickle = null; st.res?.resume(); }, close: () => { clearInterval(trickle); req.destroy(); } };
 }
 const chatIn = (n) => ({ kind: 'chat.message', platform: 'twitch', source: 'mock', platformMessageId: `seq-${n}`, user: { displayName: 'A' }, text: `message ${n} `.padEnd(200, 'x') });
-const until = async (cond, what) => { const t0 = Date.now(); while (!cond()) { if (Date.now() - t0 > 10_000) throw new Error(`no ${what} within 10 s`); await new Promise((r) => setImmediate(r)); } };
+// ms Infinity: a condition that depends on machine speed only (delivery of a known, finite set); the test runner's own
+// timeout bounds it, so a slow CI machine is never a failure by itself.
+const until = async (cond, what, ms = 10_000) => { const t0 = Date.now(); while (!cond()) { if (Date.now() - t0 > ms) throw new Error(`no ${what} within ${ms} ms`); await new Promise((r) => setImmediate(r)); } };
 
 test('activation replays a large standby buffer to a reading event stream with nothing dropped, in order, events arriving meanwhile after it', async () => {
   const dataDir = tmp();
@@ -419,7 +421,8 @@ test('Codex P2: sustained ingress during the replay cannot keep activation from 
     assert.equal(r.late, true);
     const total = n - b.swapStats().overflow;
     c.fast();
-    await until(() => c.st.seqs.length + dropsOf(c) >= total, 'every event delivered or counted').catch((e) => { throw new Error(`${e.message}: ${JSON.stringify({ total, got: c.st.seqs.length, drops: dropsOf(c), swap: b.swapStats(), bus: b.core.bus.stats().subscribers, sse: b.api.sseClients() })}`); });
+    await b.replayDrained();
+    await until(() => c.st.seqs.length + dropsOf(c) >= total, 'every event delivered or counted', Infinity).catch((e) => { throw new Error(`${e.message}: ${JSON.stringify({ total, got: c.st.seqs.length, drops: dropsOf(c), swap: b.swapStats(), bus: b.core.bus.stats().subscribers, sse: b.api.sseClients() })}`); });
     for (let i = 1; i < c.st.seqs.length; i++) assert.ok(c.st.seqs[i] > c.st.seqs[i - 1], `order at ${i}`);
     assert.equal(c.st.seqs.length + dropsOf(c), total, 'every event either arrived or was counted as dropped (and announced)');
     for (const [k, v] of Object.entries(b.core.bus.stats().subscribers)) assert.equal(v.dropped, 0, `no bus drop for ${k} (the last burst stays small)`);
@@ -427,21 +430,23 @@ test('Codex P2: sustained ingress during the replay cannot keep activation from 
 });
 // Full CI under load (2026-11-14): "no bus drop for sse-1 ... 5504 !== 0". At the hard stop after the deadline the rest
 // of the buffer went out in one synchronous burst, above the bus queue (10 000 for a stream): drops announced only at
-// the 15 s heartbeat. Short deadline (seam) plus a large backlog makes that hard stop certain here.
-test('the replay never publishes more than one step at once, however late: no bus drop with a large backlog past the deadline', async () => {
+// the 15 s heartbeat. Short deadline (seam) plus a backlog of 1.5 x that queue makes the late path certain here. Then
+// (full CI again, "dropped 6" for a reading stream): the background drain did not check room, so a reader slower than
+// the drain lost events. The reader here reads one chunk per 10 ms all the way: slow, never stalled, so nothing may drop.
+test('a late replay drains in steps paced to a slow reading stream: no bus drop, nothing dropped, in order', async () => {
   const { b, token } = await standbyB({ standbyBufferMax: 200_000, replayDeadlineMs: 50 });
-  const c = sseIn(b.port, token, { trickleMs: 20 });
+  const c = sseIn(b.port, token, { trickleMs: 10 });
   try {
     await c.opened;
     await until(() => b.api.sseClients().length === 1, 'stream');
-    const N = 120_000;
+    const N = 15_000;
     for (let i = 1; i <= N; i++) b.facade.ingest(chatIn(i));
     const r = await b.activate();
     assert.equal(r.late, true);
-    c.fast();
-    await until(() => c.st.seqs.length + dropsOf(c) >= N, 'every event delivered or counted').catch((e) => { throw new Error(`${e.message}: ${JSON.stringify({ N, got: c.st.seqs.length, drops: dropsOf(c), bus: b.core.bus.stats().subscribers, sse: b.api.sseClients() })}`); });
+    await b.replayDrained();
+    await until(() => c.st.seqs.length + dropsOf(c) >= N, 'every event delivered or counted', Infinity);
     for (const [k, v] of Object.entries(b.core.bus.stats().subscribers)) assert.equal(v.dropped, 0, `no bus drop for ${k}`);
-    assert.equal(c.st.seqs.length + dropsOf(c), N, 'every event arrived or was announced as dropped');
+    assert.deepEqual({ got: c.st.seqs.length, drops: dropsOf(c), slow: b.swapStats().replaySlowClients }, { got: N, drops: 0, slow: 0 });
     for (let i = 1; i < c.st.seqs.length; i++) assert.ok(c.st.seqs[i] > c.st.seqs[i - 1], `order at ${i}`);
   } finally { c.close(); await b.stop(); }
 });
@@ -460,7 +465,7 @@ test('a hand-off right after a late activation waits for the background replay: 
     assert.equal(b.swapStats().bufferedNow, 0);
     assert.equal(b.swapStats().replayed, N);
     assert.deepEqual(h.streams, { streams: 1, clean: 1 });
-    await until(() => c.st.seqs.length + dropsOf(c) >= N, 'every event delivered or counted');
+    await until(() => c.st.seqs.length + dropsOf(c) >= N, 'every event delivered or counted', Infinity);
     assert.equal(c.st.seqs.length + dropsOf(c), N);
   } finally { c.close(); await b.stop(); }
 });
