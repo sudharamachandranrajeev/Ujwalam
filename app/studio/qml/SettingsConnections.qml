@@ -21,6 +21,8 @@ Column {
     // ---- state ----
     property bool loaded: false
     property int gen: 0                   // a newer load or reset drops older answers
+    property int sent: 0                  // reads sent; an answer older than the last one shown is dropped (polls overlap)
+    property int shown: 0
     property var rows: []                 // ui/api/connect outputs shown (only one after Edit output > Connect)
     property var accounts: ({})
     property string only: ""              // the one output shown (Edit output > Connect), or empty: all
@@ -72,9 +74,11 @@ Column {
 
     // ---- reading ----
     function reload(fresh) {
-        const g = gen;
+        const g = gen, n = ++sent;
         Api.get(fresh ? "ui/api/connect?fresh=1" : "ui/api/connect", (ok, b, err) => {
             if (g !== gen) return; // closed, or opened again, before the answer came
+            if (n < shown) return; // a newer read was already shown: this older job state would undo it
+            shown = n;
             if (!ok) {
                 polling = false;
                 if ((b || {}).error === "platform-connect-off")
